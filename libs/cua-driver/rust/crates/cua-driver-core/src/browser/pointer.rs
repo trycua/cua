@@ -300,24 +300,24 @@ impl BrowserPointerTool {
         Self {
             def: ToolDef {
                 name: "browser_pointer".into(),
-                description: "Perform hover, right-click, double-click, scroll, or drag in an exactly-bound browser tab. Semantic refs must declare pointer for hover, right-click, double-click, and drag; scroll accepts a scroll or pointer capability. The trusted route uses CDP Input events and refuses if standalone background posture cannot be preserved. The explicit dom_event route requires a page ref and synthesizes full-background DOM events. Never activates or brings a tab to the foreground.".into(),
+                description: "Hover, right-click, double-click, scroll or drag in a bound tab, from a ref or x,y. Semantic refs must declare the matching action. Never foregrounds the tab.".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "target_id": { "type": "string", "description": "Opaque target id minted by get_browser_state." },
-                        "tab_id": { "type": "string", "description": "Opaque tab id minted by get_browser_state." },
+                        "target_id": { "type": "string", "description": "Target id from get_browser_state." },
+                        "tab_id": { "type": "string", "description": "Tab id from get_browser_state." },
                         "session": required_session_schema(),
-                        "action": { "type": "string", "enum": ["hover", "right_click", "double_click", "scroll", "drag"], "description": "Pointer gesture. scroll needs delta_x or delta_y; drag needs destination_ref or to_x/to_y." },
-                        "input_route": { "type": "string", "enum": ["trusted", "dom_event"], "default": "trusted", "description": "trusted sends CDP Input events; dom_event synthesizes DOM events in the page and requires ref." },
-                        "delivery_mode": { "type": "string", "enum": ["background", "foreground"], "default": "background", "description": "background (default) refuses trusted input where it would activate the browser window (Linux Chromium). foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)." },
-                        "ref": { "type": "string", "description": "Origin page ref. Alternative to x/y." },
-                        "x": { "type": "number", "description": "Origin viewport x in CSS pixels." },
-                        "y": { "type": "number", "description": "Origin viewport y in CSS pixels." },
-                        "destination_ref": { "type": "string", "description": "Drag destination page ref in the exact same frame." },
-                        "to_x": { "type": "number", "description": "Drag destination viewport x in CSS pixels." },
-                        "to_y": { "type": "number", "description": "Drag destination viewport y in CSS pixels." },
-                        "delta_x": { "type": "number", "description": "Horizontal scroll delta in CSS pixels." },
-                        "delta_y": { "type": "number", "description": "Vertical scroll delta in CSS pixels." }
+                        "action": { "type": "string", "enum": ["hover", "right_click", "double_click", "scroll", "drag"], "description": "scroll needs delta_x/delta_y; drag needs destination_ref or to_x/to_y." },
+                        "input_route": { "type": "string", "enum": ["trusted", "dom_event"], "default": "trusted", "description": "trusted CDP input, or synthetic dom_event (needs ref)." },
+                        "delivery_mode": { "type": "string", "enum": ["background", "foreground"], "default": "background", "description": "background (default) refuses input that would activate the browser window; foreground accepts that." },
+                        "ref": { "type": "string", "description": "Origin ref, instead of x/y." },
+                        "x": { "type": "number", "description": "Origin x in CSS px." },
+                        "y": { "type": "number", "description": "Origin y in CSS px." },
+                        "destination_ref": { "type": "string", "description": "Drag destination ref, same frame." },
+                        "to_x": { "type": "number", "description": "Drag destination x in CSS px." },
+                        "to_y": { "type": "number", "description": "Drag destination y in CSS px." },
+                        "delta_x": { "type": "number", "description": "Horizontal scroll in CSS px." },
+                        "delta_y": { "type": "number", "description": "Vertical scroll in CSS px." }
                     },
                     "required": ["target_id", "tab_id", "session", "action"],
                     "additionalProperties": true

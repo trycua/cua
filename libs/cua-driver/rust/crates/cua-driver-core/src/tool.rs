@@ -196,6 +196,51 @@ impl ToolDef {
     }
 }
 
+/// Tools that stay callable by name but are left out of the default MCP
+/// `tools/list`: deprecated compatibility tools, and operator or cosmetic
+/// tools an agent rarely needs. `tools/list` with `{"detail": "full"}`
+/// returns them.
+pub const UNLISTED_TOOLS: &[&str] = &[
+    // Deprecated compatibility.
+    "escalate_session",
+    "get_session_state",
+    "page",
+    // Operator diagnostics, updates and cursor tuning.
+    "health_report",
+    "check_for_update",
+    "install_ffmpeg",
+    "get_agent_cursor_state",
+    "set_agent_cursor_motion",
+    "set_agent_cursor_theme",
+];
+
+/// The default `tools/list` payload for MCP clients: the full list without
+/// unlisted tools, per-tool `outputSchema` and `risk`, and the
+/// enforcement-adapter inventory. These cost tens of kilobytes of agent
+/// context and are not needed to call a tool; `tools/call` still validates
+/// results against the full schema and enforces risk server-side.
+pub fn slim_mcp_tools_list(full: &Value) -> Value {
+    let mut slim = full.clone();
+    if let Some(object) = slim.as_object_mut() {
+        object.remove("enforcement_adapters");
+    }
+    if let Some(tools) = slim.get_mut("tools").and_then(Value::as_array_mut) {
+        tools.retain(|tool| {
+            !tool
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| UNLISTED_TOOLS.contains(&name))
+        });
+        for tool in tools {
+            if let Some(object) = tool.as_object_mut() {
+                object.remove("outputSchema");
+                object.remove("risk");
+            }
+        }
+    }
+    slim
+}
+
 /// First argument name absent from the tool's advertised closed schema.
 fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
     let schema = advertised_runtime_input_schema(&def.name, &def.input_schema);

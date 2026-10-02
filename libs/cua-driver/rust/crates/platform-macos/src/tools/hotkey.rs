@@ -31,53 +31,31 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "hotkey".into(),
         description:
-            "Press a key combination — e.g. `[\"cmd\", \"c\"]` for Copy, \
-             `[\"cmd\", \"shift\", \"4\"]` for screenshot selection. Follows the same \
-             `delivery_mode` ladder as click/type_text — it does NOT raise the \
-             window by default:\n\
-             • `background` (default): post the combo to the target pid WITHOUT \
-               fronting or raising it — uses the macOS 14+ auth-message envelope so \
-               Chromium/Electron accept it as trusted live input. With an AX target, \
-               focus that exact element first. No top-level focus steal. \
-               `window_id` here only targets the combo; it does not raise.\n\
-             • `foreground`: briefly front the window (NSMenu path, < 1 ms via \
-               SLPSSetFrontProcessWithOptions) so native menu key-equivalents \
-               (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost — the \
-               explicit escalation for menu-bar shortcuts on non-Chromium apps that \
-               ignore a background combo. With an AX target or x,y, the focused field \
-               receives the chord through the foreground HID queue (needed by native \
-               Chromium fields such as the omnibox). Requires window_id.\n\n\
-             A combo is never driver-verifiable (no read-back) → effect:\"unverifiable\"; \
-             confirm via screenshot. NOTE: a keyboard combo does NOT focus a text \
-             field — to type into a backgrounded Electron input, establish real \
-             renderer focus with a PIXEL click first, then `type_text`. If an app only \
-             accepts paste, call `clipboard_write`, then `clipboard_read` and verify its \
-             types (and text when applicable) before selecting or replacing editor content; \
-             only then send Cmd+V.\n\n\
-             Recognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. \
-             Non-modifier keys use the same vocabulary as `press_key`. Order: \
-             modifiers first, one non-modifier last."
+            "Press a key combination such as [\"cmd\",\"c\"]: modifiers first, one non-modifier \
+             last, same key names as press_key. Never read back (effect `unverifiable`). A \
+             hotkey does not focus a field; click first. For paste-only apps, clipboard_write \
+             then verify with clipboard_read before Cmd+V."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["keys"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid": { "type": "integer", "description": "Target process ID." },
+                "session": { "type": "string", "description": "Session label." },
+                "pid": { "type": "integer" },
                 "keys": {
                     "type": "array",
                     "items": { "type": "string" },
                     "minItems": 2,
-                    "description": "Modifier(s) and one non-modifier key, e.g. [\"cmd\", \"c\"]."
+                    "description": "Modifiers then one key, e.g. [\"cmd\",\"c\"]; also fn."
                 },
-                "x": { "type": "number", "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo (so e.g. Cmd+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach." },
-                "y": { "type": "number", "description": "Screenshot-pixel Y (see x)." },
+                "x": { "type": "number", "description": "Screenshot pixel X to click for focus first; requires y." },
+                "y": { "type": "number" },
                 "window_id": {
                     "type": "integer",
-                    "description": "Target window. Required for delivery_mode:\"foreground\" (the NSMenu activation needs a window). Does NOT itself raise the window — raising is gated on delivery_mode."
+                    "description": "Window ID; required for delivery_mode foreground."
                 },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id to send the chord to the frontmost application." },
+                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "\"desktop\" with no pid/window_id targets the frontmost app." },
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false

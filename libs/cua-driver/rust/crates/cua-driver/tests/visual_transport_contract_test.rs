@@ -23,7 +23,7 @@ fn visual_tool_inventory_advertises_the_versioned_contract() {
     }));
     driver.recv();
     driver.send(&serde_json::json!({
-        "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}
+        "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": { "detail": "full" }
     }));
     let response = driver.recv();
     let tool = response["result"]["tools"]

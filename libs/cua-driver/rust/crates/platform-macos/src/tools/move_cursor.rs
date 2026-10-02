@@ -25,18 +25,17 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "move_cursor".into(),
-        description: "Move a cursor to (x, y). In window scope (default), moves only the \
-            agent cursor overlay. With scope=desktop, moves the real OS pointer in native \
-            get_desktop_state screenshot coordinates.".into(),
+        description: "Move the agent cursor overlay to (x, y); with scope=desktop move the real \
+            pointer in get_desktop_state pixels.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["x", "y"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "x": { "type": "number", "description": "Destination X. Window scope: screen points for the agent cursor overlay. Desktop scope: native get_desktop_state screenshot pixels." },
-                "y": { "type": "number", "description": "Destination Y, in the same space as x." },
-                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "\"window\" (default) moves only the agent cursor overlay; \"desktop\" moves the real OS pointer." },
-                "cursor_id": { "type": "string", "description": "Cursor instance to move. Default: 'default'." }
+                "session": { "type": "string", "description": "Session label." },
+                "x": { "type": "number", "description": "Destination X (screen points, or desktop pixels for scope desktop)." },
+                "y": { "type": "number", "description": "Destination Y." },
+                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "\"desktop\" moves the real pointer." },
+                "cursor_id": { "type": "string", "description": "Cursor instance. Default 'default'." }
             },
             "additionalProperties": false
         }),

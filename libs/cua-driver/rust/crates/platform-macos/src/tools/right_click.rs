@@ -28,40 +28,32 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "right_click".into(),
         description:
-            "Right-click against a target pid. Two addressing modes:\n\n\
-             - `element_token` (from the last `get_window_state` snapshot) — \
-               performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / \
-               hidden windows, no cursor move or focus steal. Requires a prior \
-               `get_window_state(pid, window_id)` in this turn.\n\n\
-             - `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted \
-               to the pid. Driver converts image-pixel → screen-point internally. \
-               `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).\n\n\
-             Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` always \
-             required."
+            "Right-click by `element_token` (AXShowMenu, background) or at window-local \
+             screenshot pixels `x,y`. Give either element_token or both x and y."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["pid"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid": { "type": "integer", "description": "Target process ID." },
+                "session": { "type": "string", "description": "Session label." },
+                "pid": { "type": "integer" },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID. Omit when element_token is supplied (the token carries it)."
+                    "description": "Window ID. Omit with element_token."
                 },
                 "x": {
                     "type": "number",
-                    "description": "X in window-local screenshot pixels. Must be provided together with y."
+                    "description": "Screenshot pixel X; requires y."
                 },
                 "y": {
                     "type": "number",
-                    "description": "Y in window-local screenshot pixels. Must be provided together with x."
+                    "description": "Screenshot pixel Y; requires x."
                 },
                 "modifier": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Modifier keys held during the right-click: cmd/shift/option/ctrl. Pixel path only."
+                    "description": "Held keys: cmd, shift, option/alt, ctrl. Pixel path only."
                 },
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },

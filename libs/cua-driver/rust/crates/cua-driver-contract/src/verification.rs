@@ -119,11 +119,7 @@ pub struct WindowPredicate {
 #[serde(deny_unknown_fields)]
 pub struct ElementPredicate {
     pub selector: ElementSelector,
-    /// Assert that at least one trusted element matches the selector.
-    ///
-    /// Element walks are not yet exhaustive on every platform, so absence
-    /// cannot be proven. `false` is rejected instead of returning an
-    /// indefinitely-unknown predicate.
+    /// True: some element matches. False is rejected (absence cannot be proven).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "boolean_schema")]
     pub exists: Option<bool>,
@@ -147,18 +143,17 @@ pub struct StatePredicate {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct VerifyStateInput {
-    /// Exact process whose window may be observed.
+    /// Process ID.
     #[schemars(schema_with = "positive_integer_schema")]
     pub pid: i64,
-    /// Exact native window identifier.
+    /// Window ID.
     #[schemars(schema_with = "integer_schema")]
     pub window_id: u64,
     /// One to eight predicates, combined with logical AND.
     #[schemars(length(min = 1, max = 8))]
     pub expect: Vec<StatePredicate>,
-    /// For multi-call work, prefer a short public session label and repeat it on every call that
-    /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session. This
-    /// field never selects capture modality or authorization.
+    /// Session label. This field never selects
+    /// capture modality or authorization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub session: Option<String>,
@@ -166,12 +161,11 @@ pub struct VerifyStateInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "timeout_schema")]
     pub timeout_ms: Option<u64>,
-    /// Consecutive satisfied samples required before returning success.
+    /// Consecutive satisfied samples required (default 2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "stable_samples_schema")]
     pub stable_samples: Option<u64>,
-    /// Return the final window screenshot as image content for a multimodal
-    /// caller. The driver does not interpret that image.
+    /// Return the final window screenshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include_screenshot: Option<bool>,
 }
@@ -225,12 +219,10 @@ impl ToolOutput for VerifyStateOutput {}
 pub fn contracts() -> Vec<ToolContract> {
     vec![ToolContract {
         name: VerifyStateInput::TOOL_NAME.into(),
-        description: "Deterministically verify bounded predicates against one exact window. \
-            The driver evaluates structured window/accessibility state and may return the final \
-            screenshot as uninterpreted visual evidence for a multimodal caller. Predicate \
-            results are satisfied, unsatisfied, or unknown; unknown never implies success. \
-            Accessibility projections are conservative: absence remains unknown unless the \
-            observed search domain is proven exhaustive."
+        description: "Check up to eight window/element predicates (AND) against one window, \
+            optionally waiting `timeout_ms`. Each is satisfied, unsatisfied or unknown; unknown \
+            is not success, and element absence stays unknown. `include_screenshot` returns the \
+            final screenshot for you to judge."
             .into(),
         platforms: ALL_PLATFORMS.to_vec(),
         aliases: Vec::new(),

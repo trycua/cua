@@ -84,7 +84,7 @@ pub(crate) fn session_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "string",
         "description": format!(
-            "{} Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+            "{}",
             cua_driver_contract::MULTI_CALL_SESSION_DESCRIPTION
         )
     })
@@ -93,7 +93,7 @@ pub(crate) fn session_schema() -> serde_json::Value {
 pub(crate) fn required_session_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "string",
-        "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. This tool requires the label that owns its browser target, tab, and refs."
+        "description": "Session label."
     })
 }
 
@@ -107,9 +107,7 @@ mod tests {
         let description = schema["description"]
             .as_str()
             .expect("browser session description");
-        assert!(description.contains("prefer a short public session label"));
-        assert!(description.contains("repeat it on every call that accepts it"));
-        assert!(description.contains("Browser targets, tabs, and refs"));
+        assert_eq!(description, "Session label.");
     }
 
     #[test]
@@ -118,9 +116,7 @@ mod tests {
         let description = schema["description"]
             .as_str()
             .expect("required browser session description");
-        assert!(description.contains("prefer a short public session label"));
-        assert!(description.contains("repeat it on every call that accepts it"));
-        assert!(description.contains("requires the label"));
+        assert_eq!(description, "Session label.");
         assert!(!description.contains("Omit it"));
     }
 }

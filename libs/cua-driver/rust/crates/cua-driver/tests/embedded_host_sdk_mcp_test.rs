@@ -176,7 +176,7 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
     writeln!(
         stdin,
         "{}",
-        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}})
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"detail":"full"}})
     )
     .unwrap();
     stdin.flush().unwrap();

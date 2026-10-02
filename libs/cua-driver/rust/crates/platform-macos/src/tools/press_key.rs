@@ -181,38 +181,27 @@ fn delivery_failed(error: impl std::fmt::Display) -> ToolResult {
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "press_key".into(),
-        description: "Press and release a single key. Follows the same `delivery_mode` ladder as click/type_text \
-            — it does NOT raise the window by default:\n\
-            • `background` (default): post to the pid WITHOUT fronting/raising — the \
-              auth-message path (Chromium-safe). With element_token it focuses that AX \
-              element first. `window_id` only targets; it does not raise.\n\
-            • `foreground`: guard and briefly front the exact window, focus an addressed AX \
-              element when supplied, send a genuine HID key transition so Chromium content, \
-              inline editors, and native menu equivalents receive it, then restore prior \
-              frontmost. Requires window_id.\n\n\
-            A key press is confirmed only when a bounded native AX value/selection read-back \
-            changes on the same control. Otherwise a successfully attempted post remains \
-            effect:\"unverifiable\" without implying delivery failure or recommending foreground. \
-            Key names: return, tab, escape, up/down/left/right, space, delete, \
-            home, end, pageup, pagedown, f1-f12, plus any letter or digit. \
-            Modifiers array: cmd, shift, option/alt, ctrl, fn.".into(),
+        description: "Press one key (return, tab, escape, arrows, space, delete, home, end, \
+            pageup, pagedown, f1-f12, letters, digits) with optional `modifiers`. Posted to the \
+            pid without fronting it; focuses `element_token` first. Effect is `unverifiable` \
+            unless a native AX value change confirms it.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["key"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid": { "type": "integer", "description": "Target process ID." },
-                "key": { "type": "string", "description": "Key name: return, tab, escape, up, down, etc." },
+                "session": { "type": "string", "description": "Session label." },
+                "pid": { "type": "integer" },
+                "key": { "type": "string", "description": "Key name, e.g. return, tab, escape, up." },
                 "modifiers": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Modifier keys: cmd, shift, option/alt, ctrl, fn."
+                    "description": "Held keys: cmd, shift, option/alt, ctrl, fn."
                 },
-                "window_id": { "type": "integer", "description": "Target window. Required for delivery_mode:\"foreground\". Does NOT itself raise the window — raising is gated on delivery_mode." },
+                "window_id": { "type": "integer", "description": "Window ID; required for delivery_mode foreground." },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "x": { "type": "number", "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_token." },
-                "y": { "type": "number", "description": "Screenshot-pixel Y (see x)." },
-                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id to send the key to the frontmost application." },
+                "x": { "type": "number", "description": "Screenshot pixel X to click for focus first; requires y." },
+                "y": { "type": "number" },
+                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "\"desktop\" with no pid/window_id targets the frontmost app." },
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false

@@ -279,10 +279,7 @@ mod tests {
         let expected: Value = serde_yaml_ng::from_str(yaml).unwrap();
         assert_eq!(pack().entry["frontmatter"], expected);
         assert!(expected["version"].is_string());
-        assert_eq!(
-            expected["metadata"]["openclaw"]["envVars"][0]["required"],
-            false
-        );
+        assert_eq!(expected["metadata"]["openclaw"]["requires"]["bins"][0], "cua-driver");
         let extended = "---\nname: cua-driver\ndescription: |\n  A multiline\n  description.\nversion: '1.2.3'\nfuture: {enabled: true, count: 7, values: [null, 1.5, text]}\n---\nbody";
         let parsed = parse_frontmatter(extended).unwrap();
         assert_eq!(parsed["description"], "A multiline\ndescription.\n");

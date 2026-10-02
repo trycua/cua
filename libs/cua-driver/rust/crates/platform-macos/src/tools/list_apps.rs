@@ -12,29 +12,8 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "list_apps".into(),
-        description: "List macOS apps — both currently running and installed-but-not-running — \
-            with per-app state flags:\n\n\
-            - running: is a process for this app live? (pid is 0 when false)\n\
-            - active: is it the system-frontmost app? (implies running)\n\
-            - launch_path: filesystem path to the `.app` bundle, when known. \
-            Pass this to `launch_app` to start the app cold.\n\
-            - kind: `\"desktop\"` for `.app` bundles on macOS.\n\
-            - last_used: RFC3339 timestamp from the bundle's filesystem mtime, \
-            when readable; otherwise null.\n\n\
-            Standalone running entries include only apps with \
-            NSApplicationActivationPolicyRegular — background helpers and \
-            system UI agents are filtered out. Installed apps resolve their \
-            running/pid state against all live processes by bundle identifier, \
-            so an installed app whose process runs as an accessory \
-            (LSUIElement / menu-bar apps, e.g. Cua Driver itself) still reports \
-            its live pid. Installed apps come from scanning /Applications, \
-            /Applications/Utilities, ~/Applications, /System/Applications, and \
-            /System/Applications/Utilities.\n\n\
-            Use this for \"is X installed?\" as well as \"is X running?\". For \
-            per-window state — on-screen, on-current-Space, minimized, \
-            window titles — call list_windows instead. For just opening an \
-            app — running or not — call launch_app({bundle_id: ...}) directly; \
-            list_apps is not a prerequisite."
+        description: "List running and installed apps with `running`, `active`, pid, bundle_id \
+            and `launch_path`. Not required before launch_app; use list_windows for window state."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",

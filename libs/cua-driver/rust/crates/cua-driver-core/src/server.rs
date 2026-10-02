@@ -913,7 +913,11 @@ async fn dispatch_request(
             Response::ok(id, initialize_result())
         }
 
-        "tools/list" => Response::ok(id, provider.tools_list()),
+        "tools/list" if req.wants_full_tools_list() => Response::ok(id, provider.tools_list()),
+        "tools/list" => Response::ok(
+            id,
+            crate::tool::slim_mcp_tools_list(&provider.tools_list()),
+        ),
 
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),

@@ -45,7 +45,7 @@ fn def() -> &'static ToolDef {
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "session": { "type": "string", "description": "Session label." },
                 "screenshot_out_file": { "type": "string", "description": "Write PNG here instead of base64." },
                 "max_image_dimension": cua_driver_core::tool_schema::desktop_max_image_dimension_schema()
             },

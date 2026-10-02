@@ -40,7 +40,7 @@ fn registered_tool_contracts_match_on_active_backend() {
     }));
     let _ = driver.recv();
 
-    driver.send(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }));
+    driver.send(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": { "detail": "full" } }));
     let resp = driver.recv();
 
     let tools = resp["result"]["tools"]
@@ -143,7 +143,7 @@ fn portable_desktop_contracts_are_accepted_by_active_backend() {
     }));
     let _ = driver.recv();
 
-    driver.send(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }));
+    driver.send(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": { "detail": "full" } }));
     let response = driver.recv();
     let live_tools = response["result"]["tools"]
         .as_array()
@@ -249,7 +249,7 @@ fn canonical_cursor_contracts_match_active_backend() {
         }
     }));
     let _ = driver.recv();
-    driver.send(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }));
+    driver.send(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": { "detail": "full" } }));
     let response = driver.recv();
     let live_tools = response["result"]["tools"]
         .as_array()

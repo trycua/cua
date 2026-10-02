@@ -638,12 +638,12 @@ impl Tool for InstallExtensionTool {
     fn def(&self) -> &ToolDef {
         INSTALL_EXTENSION_DEF.get_or_init(|| ToolDef {
             name: "install_extension".to_owned(),
-            description: "Preview or install one Driver-managed optional extension. The first call without confirm returns the exact signed artifact, destination, license, source, and trust plan without mutation. Re-call with confirm=true to perform that exact verified installation.".to_owned(),
+            description: "Preview (default) or, with confirm=true, install an optional Driver extension; the preview lists the artifact, license and trust plan.".to_owned(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "enum": ["perception"], "description": "Extension to preview or install. Only perception (the local visual-region parser used by parse_visual_regions) is available."},
-                    "confirm": {"type": "boolean", "description": "Install the previewed extension. Omit or false for a read-only plan."}
+                    "name": {"type": "string", "enum": ["perception"], "description": "Only perception (backs parse_visual_regions)."},
+                    "confirm": {"type": "boolean", "description": "Install; omit for a read-only plan."}
                 },
                 "required": ["name"],
                 "additionalProperties": false

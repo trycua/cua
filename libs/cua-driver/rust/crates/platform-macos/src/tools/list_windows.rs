@@ -12,28 +12,20 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "list_windows".into(),
-        description: "List all layer-0 top-level windows currently known to WindowServer. \
-            Includes off-screen windows (minimized, on another Space, hidden-launched). \
-            Use this to find a window_id before calling get_window_state.\n\n\
-            Per-record fields: window_id, pid, app_name, title, bounds \
-            (x/y/width/height, top-left origin), z_index (integer or null; higher values are \
-            closer to the front; null means stacking order is unavailable and callers must not \
-            infer one), is_on_screen, space_ids, current_space_id (the active Space on that \
-            window's display), and on_current_space. The top-level current_space_id is \
-            WindowServer's main/global active Space and can differ from a record's \
-            current_space_id when displays use independent Spaces. To select a frontmost candidate, take the \
-            maximum integer z_index; if every value is null, use an explicit fallback instead of \
-            relying on array order.".into(),
+        description: "List top-level windows, including off-screen and other-Space ones: \
+            window_id, pid, app_name, title, bounds, z_index, is_on_screen, space_ids. \
+            z_index is null when order is unknown; higher is closer to the front. Use it to \
+            find a window_id for get_window_state.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "pid": {
                     "type": "integer",
-                    "description": "Optional pid filter. When set, only this pid's windows are returned."
+                    "description": "Only this pid's windows."
                 },
                 "on_screen_only": {
                     "type": "boolean",
-                    "description": "When true, drop windows not on the current Space. Default false."
+                    "description": "Drop windows not on the current Space."
                 }
             },
             "additionalProperties": false

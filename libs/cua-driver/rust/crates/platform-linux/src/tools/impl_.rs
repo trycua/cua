@@ -12052,7 +12052,7 @@ impl Tool for GetDesktopStateTool {
                 Use the returned PNG directly as the coordinate source for actions whose target is \
                 {kind:\"desktop\",display_id:\"primary\"}. No AT-SPI walk.".into(),
             input_schema: json!({"type":"object","properties":{
-                "session":{"type":"string","description":"For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session."},
+                "session":{"type":"string","description":"Session label."},
                 "screenshot_out_file":{"type":"string","description":"Write PNG here instead of base64."},
                 "max_image_dimension": cua_driver_core::tool_schema::desktop_max_image_dimension_schema()
             },"additionalProperties":false}),

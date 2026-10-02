@@ -1737,13 +1737,6 @@ class _UniffiFfiConverterUInt64(_UniffiConverterPrimitiveInt):
 
 
 class ActionTarget:
-    """
-    Exact capture/input target selected independently for each action.
-
-    `display_id="primary"` is the portable desktop target in this release.
-    Platforms that cannot address another display reject it explicitly rather
-    than silently changing coordinate spaces.
-"""
     def __init__(self):
         raise RuntimeError("ActionTarget cannot be instantiated directly")
 
@@ -3851,9 +3844,7 @@ class _UniffiFfiConverterTypeHotkeyInput(_UniffiConverterRustBuffer):
 @dataclass
 class InvokeMenuInput:
     """
-    Exact, immediate-child application menu path to resolve and invoke through
-    the operating system's accessibility API. Path labels are matched after
-    trimming surrounding whitespace and otherwise remain case-sensitive.
+    Menu item to invoke by exact, case-sensitive label path.
 """
     def __init__(self, *, pid:int, window_id:int, path:typing.List[str], session:typing.Optional[str]):
         self.pid = pid

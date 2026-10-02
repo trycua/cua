@@ -38,21 +38,18 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "double_click".into(),
         description:
-            "Double-click at (x, y) or on an AX element identified by element_token.\n\n\
-             AX path (element_token provided): performs `AXOpen` when the element advertises it \
-             (Finder items, openable list rows/cells); otherwise resolves the element's on-screen \
-             center and falls back to a pixel double-click there.\n\n\
-             Pixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordinates."
+            "Double-click an element (`element_token`; AXOpen when offered) or window-local \
+             screenshot pixels `x,y`."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["pid"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid":           { "type": "integer", "description": "Target process ID." },
-                "x":             { "type": "number",  "description": "Screen X coordinate (pixel path)." },
-                "y":             { "type": "number",  "description": "Screen Y coordinate (pixel path)." },
-                "window_id":     { "type": "integer", "description": "CGWindowID. Omit when element_token is supplied (the token carries it)." },
+                "session": { "type": "string", "description": "Session label." },
+                "pid":           { "type": "integer" },
+                "x":             { "type": "number",  "description": "Screenshot pixel X." },
+                "y":             { "type": "number",  "description": "Screenshot pixel Y." },
+                "window_id":     { "type": "integer", "description": "Window ID. Omit with element_token." },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },

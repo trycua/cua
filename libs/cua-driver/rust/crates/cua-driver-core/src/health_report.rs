@@ -373,62 +373,19 @@ fn def() -> &'static ToolDef {
         // The description is part of the public contract — downstream
         // consumers depend on it spelling out `schema_version="1"` and the per-
         // platform check matrix. A test pins this commitment.
-        description: r#"Single-call end-to-end driver diagnostics. Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and platform capability status. On macOS, prompt-capable direct capture is deliberately skipped; use `cua-driver permissions grant` to verify it explicitly. cua-driver owns the health model; consumers stay thin.
-
-Input — all optional:
-  {
-    "include": ["<check_name>", ...],   // run only these
-    "skip":    ["<check_name>", ...]    // skip these
-  }
-If both are given, `include` wins.
-
-Canonical check names:
-  macOS  : binary_version, platform_supported, session_active,
-           bundle_identity, tcc_accessibility, tcc_screen_recording,
-           ax_capability, screen_capture_capability
-  Windows: binary_version, platform_supported, session_active,
-           ax_capability (via UIA), screen_capture_capability (via DXGI)
-  Linux  : binary_version, platform_supported, session_active,
-           ax_capability (via AT-SPI), screen_capture_capability (via X11)
-
-Output — stable contract, schema_version="1":
-  {
-    "schema_version": "1",
-    "platform": "darwin" | "win32" | "linux",
-    "driver_version": "<semver>",
-    "overall": "ok" | "degraded" | "failed",
-    "checks": [
-      {
-        "name": "<one of the canonical names above>",
-        "status": "pass" | "fail" | "skip",
-        "message": "<one-line summary, always present>",
-        "hint": "<remediation step, present when status=fail>",
-        "data": { /* check-specific structured fields */ }
-      },
-      ...
-    ]
-  }
-
-`overall` rules:
-  - `ok`       — every non-skipped check passes
-  - `degraded` — at least one non-core check fails (binary is still usable)
-  - `failed`   — any core check fails (binary_version, platform_supported, session_active)
-
-Stability: schema_version="1" is the contract. Future breaking changes will be `"2"`. Adding new check names under the same schema_version is non-breaking; consumers must tolerate unknown check names."#.into(),
+        description: r#"One-call driver diagnostics: `overall` (ok, degraded, failed) and a `checks` array of name, status (pass, fail, skip), message and hint. Checks: binary_version, platform_supported, session_active, ax_capability, screen_capture_capability, plus bundle_identity, tcc_accessibility and tcc_screen_recording on macOS. Output is schema_version="1"; tolerate unknown check names."#.into(),
         input_schema: json!({
             "type": "object",
             "properties": {
                 "include": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description":
-                        "Only run these checks (canonical names). Wins over `skip`."
+                    "description": "Only run these checks; wins over `skip`."
                 },
                 "skip": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description":
-                        "Skip these checks (canonical names). Ignored when `include` is set."
+                    "description": "Skip these checks."
                 }
             },
             "additionalProperties": false,

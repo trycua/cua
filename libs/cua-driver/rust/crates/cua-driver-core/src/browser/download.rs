@@ -43,26 +43,26 @@ impl BrowserDownloadTool {
         Self {
             def: ToolDef {
                 name: "browser_download".into(),
-                description: "Trigger one download through an exact live browser ref and save it inside an explicitly approved directory. Requires MCP-host destructive-tool approval, refuses ambiguous or stale capabilities, and never returns the source URL, filename, or destination path.".into(),
+                description: "Activate a page ref to trigger one download into `destination_root`. Needs host approval for destructive tools; never returns the URL, filename or path.".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
                         "session": required_session_schema(),
                         "target_id": {
                             "type": "string",
-                            "description": "Opaque exact browser target id from get_browser_state."
+                            "description": "Target id from get_browser_state."
                         },
                         "tab_id": {
                             "type": "string",
-                            "description": "Opaque exact tab id from get_browser_state."
+                            "description": "Tab id from get_browser_state."
                         },
                         "ref": {
                             "type": "string",
-                            "description": "Live page ref whose activation initiates the download."
+                            "description": "Page ref whose activation starts the download."
                         },
                         "destination_root": {
                             "type": "string",
-                            "description": "Absolute, existing, canonical directory approved to receive the download."
+                            "description": "Existing absolute directory to receive the download."
                         }
                     },
                     "required": ["session", "target_id", "tab_id", "ref", "destination_root"],

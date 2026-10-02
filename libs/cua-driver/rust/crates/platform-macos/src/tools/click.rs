@@ -173,30 +173,9 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "click".into(),
         description:
-            "Click against a target pid. **Prefer `element_token` over pixel \
-             coordinates** — the token works on backgrounded / minimized / hidden / \
-             off-Space windows, identifies one exact snapshot element, and tells \
-             you what you're clicking via the cached element's role + label. Reach for \
-             `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface \
-             that doesn't appear in the AX tree.\n\n\
-             Two addressing modes:\n\n\
-             - element_token (from get_window_state): AX action path. \
-               Works on backgrounded/hidden windows. No cursor move, no focus steal. \
-               The snapshot cache is scoped per (pid, window_id) and is replaced by the \
-               next snapshot of the same window — re-snapshot every turn before clicking.\n\n\
-             - x, y (window-local screenshot pixels, top-left origin of the PNG returned \
-               by get_window_state): CGEvent path. Synthesizes mouse events and posts to \
-               pid. Use modifier for cmd/shift/option/ctrl. Needs a visible on-screen \
-               window to anchor the conversion.\n\n\
-             button: \"left\" (default), \"right\", or \"middle\". Defaults to left so the \
-             field is fully back-compat — omit it and you get the legacy left-click behaviour. \
-             Pixel path: routes through the CGEvent left/right/middle mouse-button primitives. \
-             AX path: \"right\" maps to AXShowMenu (same surface as the dedicated `right_click` \
-             tool); \"middle\" has no AX equivalent and falls back to a pixel middle-click at the \
-             element's center.\n\
-             action: press (default), show_menu, pick, confirm, cancel, open.\n\
-             from_zoom: set true after a zoom call to auto-translate zoom-image pixel \
-             coordinates to full-window space."
+            "Click by `element_token` (preferred; background AX action, re-snapshot first) or at \
+             window-local screenshot pixels `x,y` for surfaces missing from the AX tree. \
+             `button` is left (default), right (AXShowMenu) or middle; `action` picks the AX action."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -207,42 +186,42 @@ fn def() -> &'static ToolDef {
             // cua_driver_core::tool_schema.)
             "required": [],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid":           { "type": "integer", "description": "Target process ID." },
+                "session": { "type": "string", "description": "Session label." },
+                "pid":           { "type": "integer" },
                 "window_id":     { "type": "integer", "description": "Target window ID. Omit when element_token is supplied (the token carries it)." },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "capture_id": { "type": "string", "description": "Optional immutable source capture ID returned by get_window_state or get_desktop_state. With x,y, Driver atomically admits and consumes that exact capture before dispatch; stale, mismatched, or out-of-bounds captures are refused without fallback." },
-                "x":             { "type": "number",  "description": "X in screenshot pixels. A window target uses the get_window_state PNG; a desktop target uses the native get_desktop_state PNG. The driver reverses Retina backing scale and any window-image downscale." },
-                "y":             { "type": "number",  "description": "Y in screenshot pixels from the image selected by target." },
-                "action":        { "type": "string",  "description": "AX action: press, show_menu, pick, confirm, cancel, open." },
+                "capture_id": { "type": "string", "description": "Capture ID from get_window_state/get_desktop_state; with x,y a stale capture is refused." },
+                "x":             { "type": "number",  "description": "Screenshot pixel X (get_window_state PNG, or get_desktop_state PNG for desktop)." },
+                "y":             { "type": "number",  "description": "Screenshot pixel Y." },
+                "action":        { "type": "string",  "description": "AX action: press (default), show_menu, pick, confirm, cancel, open." },
                 "button":        {
                     "type": "string",
                     "enum": ["left", "right", "middle"],
-                    "description": "Mouse button. Default: \"left\" — omit for legacy left-click behaviour. Pixel path uses the matching CGEvent primitive; AX path maps \"right\" to AXShowMenu and falls back to a pixel middle-click at the element's center for \"middle\"."
+                    "description": "Mouse button. Default \"left\"."
                 },
-                "count":         { "type": "integer", "description": "Click count (pixel path only). Default 1." },
+                "count":         { "type": "integer", "description": "Click count (pixel path). Default 1." },
                 "modifier": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Modifier keys: cmd, shift, option/alt, ctrl."
+                    "description": "Held keys: cmd, shift, option/alt, ctrl. Requires delivery_mode foreground."
                 },
                 "from_zoom": {
                     "type": "boolean",
-                    "description": "When true, x and y are in the last zoom image for this pid; driver translates back to full-window coordinates."
+                    "description": "x,y are in the last zoom image."
                 },
                 "debug_image_out": {
                     "type": "string",
-                    "description": "Optional file path. When set on a pixel-addressed click, captures a fresh screenshot, draws a red crosshair at (x, y), and writes the PNG. Use to verify coordinate spaces. Requires window_id; incompatible with from_zoom."
+                    "description": "Write a PNG with a crosshair at x,y to this path (needs window_id; not with from_zoom)."
                 },
                 "delivery_mode": {
                     "type": "string",
                     "enum": ["background", "foreground"],
-                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require \"foreground\" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_token) → snapshot → background pixel (x/y) → snapshot → delivery_mode:\"foreground\"."
+                    "description": "background (default) or foreground (briefly fronts the window; needs window_id; required for modified clicks)."
                 },
                 "scope": {
                     "type": "string",
                     "enum": ["window", "desktop"],
-                    "description": "Coordinate frame for a windowless screen-absolute click (default \"window\"). Pass \"desktop\" when sending x,y with NO pid/window_id — the coordinates are then true screen pixels (read from get_desktop_state with scope=\"desktop\"). Per-call; not a setting."
+                    "description": "\"desktop\" with x,y and no pid/window_id uses get_desktop_state pixels."
                 }
             },
             "additionalProperties": false

@@ -332,11 +332,17 @@ mod tests {
     #[ignore = "downloads the pinned Lume release (network)"]
     async fn downloads_and_verifies_the_pinned_lume() {
         let home = std::env::var("CUA_HOME").expect("set CUA_HOME to a temporary directory");
-        assert!(!home.is_empty() && !home.ends_with("/.cua"), "never the real cua home");
+        assert!(
+            !home.is_empty() && !home.ends_with("/.cua"),
+            "never the real cua home"
+        );
         let bin = ensure().await.unwrap();
         assert_eq!(installed(), Some(bin.clone()));
         assert_eq!(resolve(LumeSource::Builtin), Some(bin.clone()));
-        let out = std::process::Command::new(&bin).arg("--version").output().unwrap();
+        let out = std::process::Command::new(&bin)
+            .arg("--version")
+            .output()
+            .unwrap();
         assert!(String::from_utf8_lossy(&out.stdout).contains(VERSION));
         // Again: already there, nothing downloaded.
         assert_eq!(ensure().await.unwrap(), bin);

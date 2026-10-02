@@ -222,7 +222,7 @@ jobs:
           path: dist/*.whl
           if-no-files-found: error
 
-  validate:
+  validate-wheels:
     needs: [prepare, promote]
     runs-on: ubuntu-latest
     steps:
@@ -267,7 +267,7 @@ jobs:
           PY
 
   publish:
-    needs: [prepare, validate]
+    needs: [prepare, validate-wheels]
     runs-on: ubuntu-latest
     environment: pypi-fleet
     steps:

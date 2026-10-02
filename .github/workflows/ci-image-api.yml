@@ -40,7 +40,10 @@ env:
   DO_NOT_TRACK: "1"
 
 jobs:
-  validate:
+  # Not `validate`: the main ruleset requires a check of that exact name (the
+  # release-metadata gate), so a job named `validate` here would become a
+  # required check on every pull request this workflow runs on.
+  image-api:
     runs-on: ubuntu-latest
     # A cold release build of the cua SDK library alone takes 15 minutes or
     # more on a hosted runner (both runs on PR #19 were cancelled mid-build

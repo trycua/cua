@@ -23,7 +23,7 @@ def test_image_api_ci_covers_the_contract_and_generated_artifacts() -> None:
     assert "libs/python/cua-sandbox/uv.lock" in pull_request_paths
     assert ".github/workflows/cd-image-api.yml" in pull_request_paths
     assert ".github/workflows/cd-image-api.yml" in push_paths
-    commands = "\n".join(step.get("run", "") for step in workflow["jobs"]["validate"]["steps"])
+    commands = "\n".join(step.get("run", "") for step in workflow["jobs"]["image-api"]["steps"])
     assert "uv sync --project libs/python/cua-sandbox --group dev --extra dev" in commands
     assert "generate_image_models.py --check" in commands
     assert 'export PATH="$(go env GOPATH)/bin:$PATH"' in commands
@@ -34,10 +34,10 @@ def test_image_api_ci_covers_the_contract_and_generated_artifacts() -> None:
     assert "test_image_api_workflows.py" in commands
     assert "test_image.py" in commands
 
-    assert workflow["jobs"]["validate"]["timeout-minutes"] >= 15
+    assert workflow["jobs"]["image-api"]["timeout-minutes"] >= 15
     admission = next(
         step
-        for step in workflow["jobs"]["validate"]["steps"]
+        for step in workflow["jobs"]["image-api"]["steps"]
         if step.get("name") == "Validate CRD API-server admission"
     )["run"]
     assert "go install sigs.k8s.io/kind@v0.26.0" in commands

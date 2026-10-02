@@ -98,6 +98,8 @@ public final class LiveStreamSession: ObservableObject {
     private var media: SpaceStreamSession?
     private var relay: FrameRelay?
     private var decoder: H264Decoder?
+    /// The current open's frame mailbox (tests read how much it holds).
+    private(set) var mailbox: FrameMailbox?
     private var sessionID: SessionID?
     /// The window presence cursors are reported against. `nil` for the desktop
     /// source, which is what the protocol wants for a screen-wide cursor.
@@ -227,6 +229,9 @@ public final class LiveStreamSession: ObservableObject {
         inputFailure = nil
         decoder?.reset()
         decoder = nil
+        // A frame still waiting for the main actor is let go now.
+        mailbox?.clear()
+        mailbox = nil
     }
 
     // MARK: - Source
@@ -234,17 +239,29 @@ public final class LiveStreamSession: ObservableObject {
     private func open(_ source: StreamSource, generation: UInt64) async {
         let decoder = H264Decoder()
         // Frames and events of a superseded open never reach this session.
+        //
+        // Decoded frames go through a one-slot mailbox, newest wins: at most
+        // one hop to the main actor is queued, and it takes whatever frame is
+        // newest when it runs. A hop per frame queued one decoded IOSurface
+        // per frame for as long as the main actor was busy (VideoToolbox
+        // allocates a fresh surface for each), with no bound.
+        let mailbox = FrameMailbox()
+        self.mailbox = mailbox
         decoder.onFrame = { [weak self] buffer, descriptor in
-            // A decoded buffer is never written again: handing it to the
-            // main actor is safe, which CoreVideo cannot declare.
-            let frame = DecodedFrame(buffer: buffer)
+            guard mailbox.post(buffer, descriptor) else { return }
             Task { @MainActor [weak self] in
+                guard let (frame, skipped) = mailbox.take() else { return }
                 guard let self, self.generation == generation else { return }
-                self.ingest(frame.buffer, descriptor: descriptor)
+                self.ingest(frame.buffer, descriptor: frame.descriptor, skipped: skipped)
             }
         }
+        // One keyframe request queued at a time (the decoder asks once per
+        // dropped frame).
+        let keyframeAsk = Coalescer()
         decoder.onNeedsKeyframe = { [weak self] in
+            guard keyframeAsk.arm() else { return }
             Task { @MainActor [weak self] in
+                keyframeAsk.disarm()
                 guard let self, self.generation == generation else { return }
                 self.requestKeyframeThrottled()
             }
@@ -370,18 +387,57 @@ public final class LiveStreamSession: ObservableObject {
             let members = try await session.roster()
             publish(roster.apply(me: me, members: members, surfaceSize: surfaceSize))
             presenceTask = Task { [weak self] in
-                // Bounded per call; ends with the task (teardown cancels it).
+                // Bounded per call; ends with the task (teardown cancels it),
+                // when the presence stream ends, or after repeated failures.
+                //
+                // `nextEvent` answers nil at once, every time, once the
+                // stream has ended (a Space or daemon restart, sleep, the
+                // network): this loop used to `continue` straight into the
+                // next call, spinning the main actor on SDK calls for as
+                // long as the stream stayed open.
+                var failures = 0
                 while !Task.isCancelled {
-                    guard let event = try? await session.nextEvent(timeoutMs: 1_000) else {
-                        if Task.isCancelled { return }
+                    let event: CuaSDK.PresenceEvent?
+                    do {
+                        event = try await session.nextEvent(timeoutMs: 1_000)
+                        failures = 0
+                    } catch CuaError.Timeout {
+                        failures = 0
+                        continue
+                    } catch {
+                        failures += 1
+                        guard failures < Self.presenceRetries else { break }
+                        try? await Task.sleep(for: Self.presenceBackoff(failures))
                         continue
                     }
+                    guard let event else { break }
                     self?.apply(event)
                 }
+                if !Task.isCancelled { self?.presenceEnded(session) }
             }
         } catch {
             // Presence is optional: a Space without it still streams.
         }
+    }
+
+    /// Consecutive presence failures before presence is given up on (until
+    /// the next open joins again), and the wait before each retry.
+    static let presenceRetries = 5
+    static func presenceBackoff(_ failures: Int) -> Duration {
+        .milliseconds(min(250 << min(failures, 6), 5_000))
+    }
+
+    /// The presence stream ended: drop its cursors. The next open (a
+    /// reconnect or a source switch) joins again.
+    private func presenceEnded(_ session: SpacePresence) {
+        guard presence === session else { return }
+        presenceTask = nil
+        presence = nil
+        presenceView = nil
+        roster = PresenceRoster()
+        participants = []
+        localParticipant = nil
+        Task { try? await session.leave() }
     }
 
     private func apply(_ event: CuaSDK.PresenceEvent) {
@@ -443,16 +499,22 @@ public final class LiveStreamSession: ObservableObject {
     private var pendingCursor: PresenceCursor?
     private var cursorSend: Task<Void, Never>?
 
-    private func ingest(_ buffer: CVPixelBuffer, descriptor: VideoFrameDescriptor) {
+    private func ingest(_ buffer: CVPixelBuffer, descriptor: VideoFrameDescriptor, skipped: Int = 0) {
         frame = buffer
-        lastFrameDimensions = CGSize(width: CVPixelBufferGetWidth(buffer),
-                                     height: CVPixelBufferGetHeight(buffer))
-        surfaceSize = CGSize(width: descriptor.width_px, height: descriptor.height_px)
+        // Every assignment to a `@Published` property re-renders each view
+        // observing the session, equal or not: set only what changed, so a
+        // frame costs one render and the main thread keeps up.
+        let dimensions = CGSize(width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer))
+        if lastFrameDimensions != dimensions { lastFrameDimensions = dimensions }
+        let surface = CGSize(width: descriptor.width_px, height: descriptor.height_px)
+        if surfaceSize != surface { surfaceSize = surface }
         // Counted here rather than read from the decoder, which is replaced on
-        // every source switch.
-        decodedFrameCount += 1
-        droppedBeforeKeyframeCount = decoder?.droppedBeforeKeyframeCount ?? droppedBeforeKeyframeCount
-        decodeFailureCount = decoder?.decodeFailureCount ?? decodeFailureCount
+        // every source switch; frames the mailbox replaced were decoded too.
+        decodedFrameCount += 1 + skipped
+        let dropped = decoder?.droppedBeforeKeyframeCount ?? droppedBeforeKeyframeCount
+        if droppedBeforeKeyframeCount != dropped { droppedBeforeKeyframeCount = dropped }
+        let failures = decoder?.decodeFailureCount ?? decodeFailureCount
+        if decodeFailureCount != failures { decodeFailureCount = failures }
         if status != .streaming { status = .streaming }
     }
 
@@ -504,6 +566,77 @@ public final class LiveStreamSession: ObservableObject {
 /// buffer it has handed out, so sharing it is safe.
 struct DecodedFrame: @unchecked Sendable {
     let buffer: CVPixelBuffer
+    var descriptor: VideoFrameDescriptor
+}
+
+/// Hands decoded frames from the decoder's queue to the main actor, holding
+/// at most one: a newer frame replaces (and releases) one not yet taken.
+/// `post` answers whether the caller must schedule a `take`; while one is
+/// scheduled, later posts only replace the frame, so however far the main
+/// actor falls behind, one frame and one hop are pending, never a backlog.
+final class FrameMailbox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending: DecodedFrame?
+    private var scheduled = false
+    private var replaced = 0
+
+    /// Leaves `buffer` as the newest frame. True: schedule a `take`.
+    func post(_ buffer: CVPixelBuffer, _ descriptor: VideoFrameDescriptor) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if pending != nil { replaced += 1 }
+        pending = DecodedFrame(buffer: buffer, descriptor: descriptor)
+        if scheduled { return false }
+        scheduled = true
+        return true
+    }
+
+    /// The newest frame and how many it replaced since the last take.
+    func take() -> (DecodedFrame, Int)? {
+        lock.lock()
+        defer { lock.unlock() }
+        scheduled = false
+        guard let frame = pending else { return nil }
+        let skipped = replaced
+        pending = nil
+        replaced = 0
+        return (frame, skipped)
+    }
+
+    /// Drops the waiting frame.
+    func clear() {
+        lock.lock()
+        pending = nil
+        replaced = 0
+        lock.unlock()
+    }
+
+    /// Frames held (0 or 1).
+    var held: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return pending == nil ? 0 : 1
+    }
+}
+
+/// At most one queued hop: `arm` is true once until `disarm`.
+final class Coalescer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var armed = false
+
+    func arm() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if armed { return false }
+        armed = true
+        return true
+    }
+
+    func disarm() {
+        lock.lock()
+        armed = false
+        lock.unlock()
+    }
 }
 
 /// Receives the SDK's frames on its delivery thread and feeds the decoder in
@@ -515,6 +648,8 @@ final class FrameRelay: FrameSink, @unchecked Sendable {
     // read here: a torn read of a `String`.)
     private let lock = NSLock()
     private var decoder: H264Decoder?
+    /// The current open's frame mailbox (tests read how much it holds).
+    private(set) var mailbox: FrameMailbox?
     private var session = SessionID("")
     private let onEvent: @Sendable (MediaEvent) -> Void
 

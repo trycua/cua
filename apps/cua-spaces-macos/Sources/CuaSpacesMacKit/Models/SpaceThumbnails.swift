@@ -38,9 +38,21 @@ public final class SpaceThumbnails {
     public struct Entry: Equatable {
         public var image: NSImage
         public var capturedAt: Date
+        /// The decoded pixels' size in bytes (what the cap counts).
+        public var bytes: Int
     }
 
     public private(set) var entries: [String: Entry] = [:]
+    /// The most bytes of images held; past it the least recently set or
+    /// read Space's image goes first. Images are thumbnails (the policy's
+    /// `maxDimension`, about 0.4 MB each), so the cap holds well over a
+    /// hundred Spaces and only bites on an oversized image.
+    @ObservationIgnored public var byteCap = SpaceThumbnails.defaultByteCap
+    public static let defaultByteCap = 64 << 20
+    /// Bytes held now.
+    public private(set) var totalBytes = 0
+    /// Space ids, least recently used first.
+    @ObservationIgnored private var recency: [String] = []
     /// The SDK call (`Space.thumbnail(maxAgeMs:)`); none: memory only.
     @ObservationIgnored public var fetch: ((String, UInt64?) async -> SpaceThumbnailData?)?
     @ObservationIgnored private var inFlight: Set<String> = []
@@ -53,7 +65,11 @@ public final class SpaceThumbnails {
 
     /// The Space's latest image, read synchronously (nil: none yet).
     public subscript(id: String) -> NSImage? {
-        get { entries[id]?.image }
+        get {
+            guard let entry = entries[id] else { return nil }
+            touch(id)
+            return entry.image
+        }
         set {
             if let newValue { set(id, newValue) } else { remove(id) }
         }
@@ -62,16 +78,46 @@ public final class SpaceThumbnails {
     /// Keeps `image` as the Space's latest, unless a newer one is held.
     public func set(_ id: String, _ image: NSImage, at capturedAt: Date = Date()) {
         if let held = entries[id], held.capturedAt > capturedAt { return }
-        entries[id] = Entry(image: image, capturedAt: capturedAt)
+        let bytes = Self.bytes(of: image)
+        totalBytes += bytes - (entries[id]?.bytes ?? 0)
+        entries[id] = Entry(image: image, capturedAt: capturedAt, bytes: bytes)
+        touch(id)
+        evict(keeping: id)
     }
 
     public func remove(_ id: String) {
-        entries[id] = nil
+        guard let held = entries.removeValue(forKey: id) else { return }
+        totalBytes -= held.bytes
+        recency.removeAll { $0 == id }
     }
 
     /// Forgets the Spaces not in `ids` (deleted or forgotten).
     public func retain(_ ids: Set<String>) {
-        for id in entries.keys where !ids.contains(id) { entries[id] = nil }
+        for id in Array(entries.keys) where !ids.contains(id) { remove(id) }
+    }
+
+    private func touch(_ id: String) {
+        if recency.last == id { return }
+        recency.removeAll { $0 == id }
+        recency.append(id)
+    }
+
+    /// Drops the least recently used images until the rest fit the cap
+    /// (`keeping`'s own image stays even when it alone is over).
+    private func evict(keeping id: String) {
+        var i = 0
+        while totalBytes > byteCap, i < recency.count {
+            let victim = recency[i]
+            if victim == id { i += 1; continue }
+            remove(victim)
+        }
+    }
+
+    /// The decoded size of an image's largest representation.
+    static func bytes(of image: NSImage) -> Int {
+        let reps = image.representations.map { $0.pixelsWide * $0.pixelsHigh * 4 }
+        if let largest = reps.max(), largest > 0 { return largest }
+        return Int(image.size.width * image.size.height * 4)
     }
 
     /// Asks the SDK for the Space's thumbnail no older than `maxAge`
@@ -125,10 +171,23 @@ public final class SpaceThumbnails {
     }
 
     /// The last frame of a stream as an image (it is newer than any
-    /// thumbnail when the stream stops).
-    public static func image(_ buffer: CVPixelBuffer) -> NSImage? {
-        let ci = CIImage(cvPixelBuffer: buffer)
-        guard let cg = CIContext().createCGImage(ci, from: ci.extent) else { return nil }
+    /// thumbnail when the stream stops), scaled down to a thumbnail's size:
+    /// a full-size frame is tens of megabytes held for as long as the app
+    /// runs.
+    public static func image(_ buffer: CVPixelBuffer,
+                             maxDimension: Int = Int(SpaceThumbnails.policy.maxDimension)) -> NSImage? {
+        var ci = CIImage(cvPixelBuffer: buffer)
+        let long = max(ci.extent.width, ci.extent.height)
+        if maxDimension > 0, long > CGFloat(maxDimension) {
+            let k = CGFloat(maxDimension) / long
+            ci = ci.transformed(by: CGAffineTransform(scaleX: k, y: k))
+        }
+        let rect = ci.extent.integral
+        guard let cg = context.createCGImage(ci, from: rect) else { return nil }
         return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
     }
+
+    /// One Core Image context for the app (each one holds its own GPU
+    /// caches; one per call grew them per call).
+    static let context = CIContext()
 }

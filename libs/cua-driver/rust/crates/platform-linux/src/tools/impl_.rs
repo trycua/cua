@@ -128,7 +128,8 @@ fn topmost_window_at(
 /// toplevel (see [`crate::x11::pick_pid_window`]). A dialog the app just
 /// opened therefore receives the following `type_text` / `press_key` even
 /// while the main window is still the WM's active window.
-fn pid_fallback_window_resolver() -> cua_driver_core::window_target::PidFallbackWindowResolver {
+pub(crate) fn pid_fallback_window_resolver(
+) -> cua_driver_core::window_target::PidFallbackWindowResolver {
     Arc::new(|pid| {
         let pid = u32::try_from(pid).ok()?;
         if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {

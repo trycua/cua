@@ -347,6 +347,9 @@ impl Tool for GetWindowStateTool {
             Some(v) => v,
             None => {
                 let chosen = tokio::task::spawn_blocking(move || {
+                    if crate::wayland::is_wayland() {
+                        return super::impl_::pid_fallback_window_resolver()(i64::from(pid));
+                    }
                     if let Some(popup) = crate::input::mapped_popup_windows()
                         .into_iter()
                         .rev()

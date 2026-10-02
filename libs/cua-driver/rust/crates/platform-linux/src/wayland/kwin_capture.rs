@@ -10,6 +10,9 @@ use wayland_client::{protocol::{wl_callback, wl_registry}, Connection, Dispatch,
 use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window_management::{
     self as management, OrgKdePlasmaWindowManagement,
 };
+use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_stacking_order::{
+    self as stacking, OrgKdePlasmaStackingOrder,
+};
 use zbus::zvariant::{Fd, OwnedValue};
 
 use crate::x11::WindowInfo;
@@ -23,6 +26,8 @@ type Properties = HashMap<String, OwnedValue>;
 struct Windows {
     manager: Option<OrgKdePlasmaWindowManagement>,
     uuids: Vec<String>,
+    stacking: Vec<String>,
+    stacking_complete: bool,
     roundtrips: u32,
 }
 
@@ -54,8 +59,8 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Windows {
             version,
         } = event
         {
-            if interface == OrgKdePlasmaWindowManagement::interface().name && version >= 17 {
-                state.manager = Some(registry.bind(name, 17, qh, ()));
+            if interface == OrgKdePlasmaWindowManagement::interface().name && version >= 13 {
+                state.manager = Some(registry.bind(name, version.min(17), qh, ()));
             }
         }
     }
@@ -70,14 +75,39 @@ impl Dispatch<OrgKdePlasmaWindowManagement, ()> for Windows {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let management::Event::WindowWithUuid { uuid, .. } = event {
-            state.uuids.push(uuid);
+        match event {
+            management::Event::WindowWithUuid { uuid, .. } => state.uuids.push(uuid),
+            management::Event::StackingOrderUuidChanged { uuids } => {
+                state.stacking = uuids
+                    .split(';')
+                    .filter(|uuid| !uuid.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+                state.stacking_complete = true;
+            }
+            _ => {}
         }
     }
 }
 
-fn window_uuids() -> anyhow::Result<Vec<String>> {
-    let connection = Connection::connect_to_env()?;
+impl Dispatch<OrgKdePlasmaStackingOrder, ()> for Windows {
+    fn event(
+        state: &mut Self,
+        _: &OrgKdePlasmaStackingOrder,
+        event: stacking::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            stacking::Event::Window { uuid } => state.stacking.push(uuid),
+            stacking::Event::Done => state.stacking_complete = true,
+            _ => {}
+        }
+    }
+}
+
+fn window_snapshot(connection: Connection) -> anyhow::Result<(Vec<String>, Vec<String>)> {
     let mut queue = connection.new_event_queue::<Windows>();
     connection.display().get_registry(&queue.handle(), ());
     let mut state = Windows::default();
@@ -94,17 +124,24 @@ fn window_uuids() -> anyhow::Result<Vec<String>> {
         state.manager.is_some(),
         "KWin window management protocol unavailable"
     );
+    if let Some(manager) = state
+        .manager
+        .as_ref()
+        .filter(|manager| manager.version() >= 17)
+    {
+        manager.get_stacking_order(&queue.handle(), ());
+    }
     connection.display().sync(&queue.handle(), ());
     super::hyprland_capture::dispatch_until(
         &mut queue,
         &mut state,
         deadline,
         "KWin windows",
-        |state| state.roundtrips == 2,
+        |state| state.roundtrips == 2 && state.stacking_complete,
     )?;
     state.uuids.sort();
     state.uuids.dedup();
-    Ok(state.uuids)
+    Ok((state.uuids, state.stacking))
 }
 
 #[derive(Default)]
@@ -220,8 +257,40 @@ fn coordinate(properties: &Properties, name: &str) -> anyhow::Result<f64> {
         .with_context(|| format!("KWin returned invalid {name}"))
 }
 
+async fn current_activity(connection: &zbus::Connection) -> anyhow::Result<Option<String>> {
+    const SERVICE: &str = "org.kde.ActivityManager";
+    let dbus = zbus::fdo::DBusProxy::new(connection).await?;
+    if !dbus.name_has_owner(SERVICE.try_into()?).await? {
+        return Ok(None);
+    }
+    let proxy = zbus::Proxy::new(
+        connection,
+        SERVICE,
+        "/ActivityManager/Activities",
+        "org.kde.ActivityManager.Activities",
+    )
+    .await?;
+    let activity: String = proxy.call("CurrentActivity", &()).await?;
+    Ok((!activity.is_empty()).then_some(activity))
+}
+
+fn on_current_activity(properties: &Properties, current: Option<&str>) -> anyhow::Result<bool> {
+    let Some(activities) = properties.get("activities") else {
+        return Ok(true);
+    };
+    let activities = Vec::<String>::try_from(activities.try_clone()?)
+        .context("KWin returned invalid activities")?;
+    Ok(activities.is_empty()
+        || current.is_some_and(|current| activities.iter().any(|id| id == current)))
+}
+
 pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
-    let uuids = window_uuids()?;
+    let (uuids, stacking) = window_snapshot(Connection::connect_to_env()?)?;
+    let stacking: HashMap<_, _> = stacking
+        .into_iter()
+        .enumerate()
+        .map(|(index, uuid)| (uuid, index))
+        .collect();
     run(async move {
         let connection = zbus::Connection::session().await?;
         let owner = owner(&connection).await?;
@@ -234,6 +303,7 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
         .await?
         .get_property::<String>("current")
         .await?;
+        let activity = current_activity(&connection).await?;
         let mut windows = Vec::new();
         for uuid in uuids {
             let properties = info(&connection, &owner, &uuid).await?;
@@ -274,8 +344,9 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
                 is_on_screen: !minimized
                     && width > 0
                     && height > 0
-                    && (desktops.is_empty() || desktops.contains(&desktop)),
-                z_index: None,
+                    && (desktops.is_empty() || desktops.contains(&desktop))
+                    && on_current_activity(&properties, activity.as_deref())?,
+                z_index: stacking.get(&uuid).copied(),
                 x: coordinate(&properties, "x")?.round() as i32,
                 y: coordinate(&properties, "y")?.round() as i32,
                 width,
@@ -420,6 +491,131 @@ fn decode(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uuid_protocol_versions_preserve_compositor_stacking() {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixStream;
+
+        fn string(value: &str) -> Vec<u8> {
+            let mut bytes = ((value.len() + 1) as u32).to_ne_bytes().to_vec();
+            bytes.extend(value.as_bytes());
+            bytes.push(0);
+            bytes.resize(bytes.len().next_multiple_of(4), 0);
+            bytes
+        }
+        fn send(socket: &mut UnixStream, id: u32, opcode: u32, payload: &[u8]) {
+            socket.write_all(&id.to_ne_bytes()).unwrap();
+            socket
+                .write_all(&(((payload.len() as u32 + 8) << 16) | opcode).to_ne_bytes())
+                .unwrap();
+            socket.write_all(payload).unwrap();
+        }
+        for advertised in [12u32, 13, 14, 15, 16, 17, 20] {
+            let (client, mut server) = UnixStream::pair().unwrap();
+            server
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let fixture = std::thread::spawn(move || {
+                let mut registry = 0;
+                let mut manager = 0;
+                let mut bound = None;
+                let mut requested_stacking = false;
+                loop {
+                    let mut header = [0; 8];
+                    match server.read_exact(&mut header) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                        Err(error) => panic!("Wayland fixture: {error}"),
+                    }
+                    let id = u32::from_ne_bytes(header[..4].try_into().unwrap());
+                    let word = u32::from_ne_bytes(header[4..].try_into().unwrap());
+                    let opcode = word & 0xffff;
+                    let mut payload = vec![0; (word >> 16) as usize - 8];
+                    server.read_exact(&mut payload).unwrap();
+                    let argument = |offset| {
+                        u32::from_ne_bytes(payload[offset..offset + 4].try_into().unwrap())
+                    };
+                    if id == 1 && opcode == 1 {
+                        registry = argument(0);
+                        let mut global = 7u32.to_ne_bytes().to_vec();
+                        global.extend(string(OrgKdePlasmaWindowManagement::interface().name));
+                        global.extend(advertised.to_ne_bytes());
+                        send(&mut server, registry, 0, &global);
+                    } else if id == 1 && opcode == 0 {
+                        let callback = argument(0);
+                        send(&mut server, callback, 0, &0u32.to_ne_bytes());
+                        send(&mut server, 1, 1, &callback.to_ne_bytes());
+                    } else if id == registry && opcode == 0 {
+                        let version = argument(payload.len() - 8);
+                        assert_eq!(version, advertised.min(17));
+                        bound = Some(version);
+                        manager = argument(payload.len() - 4);
+                        for (index, uuid) in ["bottom", "top"].into_iter().enumerate() {
+                            let mut window = (index as u32 + 1).to_ne_bytes().to_vec();
+                            window.extend(string(uuid));
+                            send(&mut server, manager, 4, &window);
+                        }
+                        if version < 17 {
+                            send(&mut server, manager, 3, &string("top;bottom"));
+                        }
+                    } else if id == manager && opcode == 3 {
+                        assert_eq!(bound, Some(17));
+                        requested_stacking = true;
+                        let stacking = argument(0);
+                        for uuid in ["top", "bottom"] {
+                            send(&mut server, stacking, 0, &string(uuid));
+                        }
+                        send(&mut server, stacking, 1, &[]);
+                        send(&mut server, 1, 1, &stacking.to_ne_bytes());
+                    } else {
+                        panic!("unexpected Wayland request {id}/{opcode}");
+                    }
+                }
+                assert_eq!(bound, (advertised >= 13).then_some(advertised.min(17)));
+                assert_eq!(requested_stacking, advertised >= 17);
+            });
+            let result = window_snapshot(Connection::from_socket(client).unwrap());
+            if advertised < 13 {
+                assert_eq!(
+                    result.unwrap_err().to_string(),
+                    "KWin window management protocol unavailable"
+                );
+            } else {
+                let (windows, stacking) = result.unwrap();
+                assert_eq!(windows, ["bottom", "top"]);
+                assert_eq!(stacking, ["top", "bottom"]);
+            }
+            fixture.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn activity_visibility_handles_disabled_all_current_and_inactive_membership() {
+        let mut properties = Properties::new();
+        assert!(on_current_activity(&properties, None).unwrap());
+        for (activities, current, expected) in [
+            (vec![], None, true),
+            (vec![], Some("current"), true),
+            (vec!["current"], Some("current"), true),
+            (vec!["other", "current"], Some("current"), true),
+            (vec!["other"], Some("current"), false),
+            (vec!["other"], None, false),
+        ] {
+            properties.insert(
+                "activities".into(),
+                zbus::zvariant::Value::from(activities).try_into().unwrap(),
+            );
+            assert_eq!(on_current_activity(&properties, current).unwrap(), expected);
+        }
+        properties.insert("activities".into(), 42u32.into());
+        assert_eq!(
+            on_current_activity(&properties, Some("current"))
+                .unwrap_err()
+                .to_string(),
+            "KWin returned invalid activities"
+        );
+    }
 
     #[test]
     fn qt_property_types_are_validated_before_use() {

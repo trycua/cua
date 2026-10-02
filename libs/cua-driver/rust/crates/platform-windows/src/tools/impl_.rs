@@ -1144,9 +1144,10 @@ impl Tool for GetWindowStateTool {
                 in the markdown and as `element_index` in the structured array; pass each \
                 element's `element_token` to `click`, `type_text`, `scroll`, etc.\n\n\
                 INVARIANT: call `get_window_state` once per turn per (pid, window_id) before \
-                any element action against that window. The next snapshot of the same \
+                any element action against that window. The next accessibility snapshot of the same \
                 (pid, window_id) replaces this one, stales its element tokens, and lists the \
-                replaced ids in `invalidated_snapshot_ids`.\n\n\
+                replaced ids in `invalidated_snapshot_ids`. Screenshot-only previews on the \
+                same session preserve those tokens.\n\n\
                 PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
                 indexed row with `element_index`, `role`, `label`, `value`, `enabled`, \
                 `selected`, `actions` (names of UIA patterns exposed as actions, \
@@ -1589,7 +1590,13 @@ impl Tool for GetWindowStateTool {
                         &[],
                         crate::uia::snapshot::SnapshotKind::Uia,
                     );
-                    if let Some((_, replaced)) = state.snapshots.publish_for_session(
+                    let publish_snapshot = if do_tree {
+                        crate::uia::snapshot::Snapshots::publish_for_session
+                    } else {
+                        crate::uia::snapshot::Snapshots::publish_capture_for_session
+                    };
+                    if let Some((_, replaced)) = publish_snapshot(
+                        &state.snapshots,
                         pid as i32,
                         hwnd,
                         payload,

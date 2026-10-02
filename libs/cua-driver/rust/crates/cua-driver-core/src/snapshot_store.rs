@@ -151,6 +151,39 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         session: Option<&str>,
         screenshot_scale: Option<f64>,
     ) -> Option<(u32, Vec<u32>)> {
+        self.publish_snapshot(pid, window_id, payload, session, screenshot_scale, false)
+    }
+
+    /// A screenshot-only preview updates coordinates, not the accessibility tree.
+    /// Preserve the current same-session tree and tokens; the fallback payload
+    /// is used only when this session has no current snapshot of the window.
+    pub fn publish_capture_for_session(
+        &self,
+        pid: i32,
+        window_id: u64,
+        fallback_payload: S,
+        session: Option<&str>,
+        screenshot_scale: Option<f64>,
+    ) -> Option<(u32, Vec<u32>)> {
+        self.publish_snapshot(
+            pid,
+            window_id,
+            fallback_payload,
+            session,
+            screenshot_scale,
+            true,
+        )
+    }
+
+    fn publish_snapshot(
+        &self,
+        pid: i32,
+        window_id: u64,
+        payload: S,
+        session: Option<&str>,
+        screenshot_scale: Option<f64>,
+        capture_only: bool,
+    ) -> Option<(u32, Vec<u32>)> {
         let (id, retired) = {
             let mut inner = self.inner.lock().unwrap();
             if session.is_some_and(crate::session::is_session_ended) {
@@ -159,6 +192,14 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             let lane = inner.entry(pid).or_default();
             let mut retired = Vec::new();
             if let Some(position) = lane.iter().position(|entry| entry.window_id == window_id) {
+                if capture_only && lane[position].screenshot_owner.as_deref() == session {
+                    let mut snapshot = lane.remove(position);
+                    snapshot.screenshot_scale = screenshot_scale;
+                    snapshot.zoom = None;
+                    let id = snapshot.id;
+                    lane.push(snapshot);
+                    return Some((id, Vec::new()));
+                }
                 retired.push(lane.remove(position));
             }
             if lane.len() == LRU_CAP_PER_PID {
@@ -637,6 +678,108 @@ mod tests {
     }
 
     #[test]
+    fn repeated_previews_preserve_elements_but_refresh_coordinates_and_zoom() {
+        let cache = SnapshotStore::new();
+        let (id, _) = cache
+            .publish_for_session(10, 20, Payload(vec![17, 23]), Some("preview-a"), Some(2.0))
+            .unwrap();
+        let token = token_for(id, 1);
+        for new_scale in [1.0, 4.0, 2.0] {
+            cache
+                .set_zoom(
+                    10,
+                    Some("preview-a"),
+                    zoom_on(id, scale(&cache, 20, "preview-a").unwrap()),
+                )
+                .unwrap();
+            assert_eq!(
+                cache.publish_capture_for_session(
+                    10,
+                    20,
+                    Payload(vec![]),
+                    Some("preview-a"),
+                    Some(new_scale)
+                ),
+                Some((id, vec![]))
+            );
+            assert!(matches!(
+                cache
+                    .resolve(10, &serde_json::json!({ "element_token": token }))
+                    .unwrap(),
+                ResolvedElement::Element {
+                    element: 23,
+                    window_id: 20,
+                    ..
+                }
+            ));
+            assert_eq!(scale(&cache, 20, "preview-a"), Some(new_scale));
+            assert_eq!(
+                refusal_code(cache.zoom(10, Some(20), Some("preview-a")).unwrap_err()),
+                "zoom_context_missing"
+            );
+        }
+
+        let (_, invalidated) = cache
+            .publish_for_session(10, 20, Payload(vec![]), Some("preview-a"), None)
+            .unwrap();
+        assert_eq!(invalidated, vec![id]);
+        assert_eq!(
+            token_refusal(&cache, 10, &token)["refusal"]["code"],
+            "stale_element_token"
+        );
+        assert_eq!(scale(&cache, 20, "preview-a"), None);
+    }
+
+    #[test]
+    fn previews_never_borrow_another_sessions_tree_or_another_windows_coordinates() {
+        let cache = SnapshotStore::new();
+        let (empty, invalidated) = cache
+            .publish_capture_for_session(10, 20, Payload(vec![]), Some("preview-a"), Some(2.0))
+            .unwrap();
+        assert!(invalidated.is_empty());
+        assert_eq!(
+            token_refusal(&cache, 10, &token_for(empty, 0))["refusal"]["code"],
+            "invalid_element_token"
+        );
+        let (id, _) = cache
+            .publish_for_session(10, 20, Payload(vec![17]), Some("preview-a"), Some(2.0))
+            .unwrap();
+        cache.publish_for_session(10, 21, Payload(vec![23]), Some("preview-a"), Some(4.0));
+        let (other, invalidated) = cache
+            .publish_capture_for_session(10, 20, Payload(vec![]), Some("preview-b"), Some(1.0))
+            .unwrap();
+        assert_ne!(other, id);
+        assert_eq!(invalidated, vec![id]);
+        assert_eq!(
+            token_refusal(&cache, 10, &token_for(id, 0))["refusal"]["code"],
+            "stale_element_token"
+        );
+        assert_eq!(scale(&cache, 20, "preview-a"), None);
+        assert_eq!(scale(&cache, 20, "preview-b"), Some(1.0));
+        assert_eq!(scale(&cache, 21, "preview-a"), Some(4.0));
+    }
+
+    #[test]
+    fn preview_cannot_resurrect_an_ended_session() {
+        let cache = SnapshotStore::new();
+        let session = format!("preview-ended-{}", uuid::Uuid::new_v4());
+        let (id, _) = cache
+            .publish_for_session(10, 20, Payload(vec![17]), Some(&session), Some(2.0))
+            .unwrap();
+        assert!(crate::session::fire_session_end(&session));
+        cache.retire_session_screenshots(&session);
+        assert_eq!(
+            cache.publish_capture_for_session(10, 20, Payload(vec![]), Some(&session), Some(1.0)),
+            None
+        );
+        assert_eq!(
+            token_refusal(&cache, 10, &token_for(id, 0))["refusal"]["code"],
+            "stale_element_token"
+        );
+        assert_eq!(scale(&cache, 20, &session), None);
+    }
+
+    #[test]
     fn screenshot_coordinates_never_borrow_another_sessions_latest_transform() {
         let cache = SnapshotStore::new();
         cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35));
@@ -968,6 +1111,26 @@ mod tests {
             }
             self.drops.fetch_add(1, Ordering::SeqCst);
         }
+    }
+
+    #[test]
+    fn preview_retains_native_handles_and_drops_unused_payload_outside_lock() {
+        let cache = Arc::new(SnapshotStore::new());
+        let drops = Arc::new(AtomicUsize::new(0));
+        let payload = || DropCounter {
+            owner: Arc::downgrade(&cache),
+            drops: drops.clone(),
+        };
+        let (id, _) = cache
+            .publish_for_session(10, 20, payload(), Some("preview-drops"), Some(2.0))
+            .unwrap();
+        assert_eq!(
+            cache.publish_capture_for_session(10, 20, payload(), Some("preview-drops"), Some(1.0)),
+            Some((id, vec![]))
+        );
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        assert_eq!(cache.remove(10, 20), Some(id));
+        assert_eq!(drops.load(Ordering::SeqCst), 2);
     }
 
     #[test]

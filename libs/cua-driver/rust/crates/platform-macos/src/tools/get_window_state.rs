@@ -33,8 +33,9 @@ fn def() -> &'static ToolDef {
             in the markdown and as `element_index` in the structured array; pass \
             each element's `element_token` to click, type_text, press_key, etc.\n\n\
             INVARIANT: call get_window_state once per turn per (pid, window_id) before any \
-            element action. The next snapshot of the window replaces this one, stales its \
-            element tokens, and lists the replaced ids in `invalidated_snapshot_ids`.\n\n\
+            element action. The next accessibility snapshot of the window replaces this one, \
+            stales its element tokens, and lists the replaced ids in `invalidated_snapshot_ids`. \
+            Screenshot-only previews on the same session preserve those tokens.\n\n\
             PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
             indexed row with `element_index`, `role`, `label`, `value` (the \
             element's text/AXValue when present — use it to verify what a field \
@@ -530,10 +531,16 @@ impl Tool for GetWindowStateTool {
                 .is_some()
                 .then(|| crate::ax::snapshot::AxSnapshot::from_nodes(&[]))
         });
+        let publish_snapshot = if want_tree {
+            crate::ax::snapshot::Snapshots::publish_for_session
+        } else {
+            crate::ax::snapshot::Snapshots::publish_capture_for_session
+        };
         let (snapshot_id, replaced) = snapshot_payload
             .filter(|_| scope_matched && !observation_only)
             .and_then(|payload| {
-                self.state.snapshots.publish_for_session(
+                publish_snapshot(
+                    &self.state.snapshots,
                     pid,
                     u64::from(window_id),
                     payload,

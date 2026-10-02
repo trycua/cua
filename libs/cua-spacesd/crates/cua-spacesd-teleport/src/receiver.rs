@@ -46,8 +46,14 @@ pub struct ImportOutcome {
     pub imported: Vec<String>,
     /// True if the app was launched.
     pub launched: bool,
-    /// Launched pid, if any.
+    /// Launched pid, if any (`open` does not report one).
     pub pid: Option<u32>,
+    /// Why the launch did not happen, when it was asked for and failed. A
+    /// launch failure is not an import failure, but it is never silent: the
+    /// service reports it back to the client.
+    pub launch_error: Option<String>,
+    /// Non-fatal things the user should know (taken from [`ImportRecord`]).
+    pub notices: Vec<String>,
     /// Everything the importer wrote (files, created directories, Keychain
     /// items), for the import ledger.
     pub record: ImportRecord,
@@ -158,23 +164,32 @@ impl Receiver {
             .collect();
         imported.sort();
         imported.dedup();
-        let (launched, pid) = if launch {
-            let mut command = HostCommand::new(EffectKind::AppLaunch, spec.program.clone())
-                .args(spec.args.clone());
-            command.env = spec.env.clone();
-            command.cwd = spec.cwd.clone().map(PathBuf::from);
-            match self.host.spawn(&command) {
-                Ok(pid) => (true, Some(pid)),
-                Err(_) => (false, None),
+        let (launched, pid, launch_error) = if launch {
+            match launch_app(&*self.host, &spec, Platform::current()) {
+                Ok(pid) => {
+                    eprintln!(
+                        "teleport: launched {} ({})",
+                        provider_id,
+                        pid.map(|p| format!("pid {p}"))
+                            .unwrap_or_else(|| "via LaunchServices".into())
+                    );
+                    (true, pid, None)
+                }
+                Err(why) => {
+                    eprintln!("warning: teleport: could not launch {provider_id}: {why}");
+                    (false, None, Some(why))
+                }
             }
         } else {
-            (false, None)
+            (false, None, None)
         };
         Ok(ImportOutcome {
             provider_id,
             imported,
             launched,
             pid,
+            launch_error,
+            notices: std::mem::take(&mut record.notices),
             record,
         })
     }
@@ -193,6 +208,99 @@ impl Receiver {
         launch: bool,
     ) -> Result<ImportOutcome, ImportError> {
         self.import_bundle(Cursor::new(bytes), app, launch)
+    }
+}
+
+/// The `.app` bundle a macOS executable path lives in
+/// (`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` ->
+/// `/Applications/Google Chrome.app`), `None` for a bare program.
+fn app_bundle_of(program: &str) -> Option<&str> {
+    let end = program.find(".app/Contents/MacOS/")? + ".app".len();
+    Some(&program[..end])
+}
+
+/// Opens the imported app. On macOS an app bundle is opened through
+/// LaunchServices (`open -a <bundle> --args ...`), in the logged-in GUI
+/// session: spacesd normally already runs there (its LaunchAgent is
+/// `LimitLoadToSessionType=Aqua`), and when it runs as root the call is moved
+/// into the console user's session with `launchctl asuser`. Spawning the
+/// bundle's inner executable directly (what this did) starts a Dock-less
+/// process that is not registered with LaunchServices. Anything else is
+/// spawned detached. Returns the pid when one is known; `Err` carries a
+/// user-presentable reason.
+pub fn launch_app(
+    host: &dyn HostEffects,
+    spec: &cua_teleport_bundle::LaunchSpec,
+    platform: Platform,
+) -> Result<Option<u32>, String> {
+    let cwd = spec.cwd.clone().map(PathBuf::from);
+    let bundle = match (platform, app_bundle_of(&spec.program)) {
+        (Platform::MacOS, Some(bundle)) => bundle,
+        _ => {
+            let mut command = HostCommand::new(EffectKind::AppLaunch, spec.program.clone())
+                .args(spec.args.clone());
+            command.env = spec.env.clone();
+            command.cwd = cwd;
+            return host
+                .spawn(&command)
+                .map(Some)
+                .map_err(|e| format!("{}: {e}", spec.program));
+        }
+    };
+    let mut open_args: Vec<String> = vec!["-a".into(), bundle.into()];
+    for (k, v) in &spec.env {
+        open_args.push("--env".into());
+        open_args.push(format!("{k}={v}"));
+    }
+    if !spec.args.is_empty() {
+        open_args.push("--args".into());
+        open_args.extend(spec.args.iter().cloned());
+    }
+    let mut program = "/usr/bin/open".to_string();
+    // Running as root (a LaunchDaemon install): enter the console user's GUI
+    // session instead of opening on a session with no windowserver.
+    let is_root = host
+        .run(&HostCommand::new(EffectKind::ProcessLookup, "/usr/bin/id").arg("-u"))
+        .map(|o| o.success && String::from_utf8_lossy(&o.stdout).trim() == "0")
+        .unwrap_or(false);
+    if is_root {
+        let uid = host
+            .run(
+                &HostCommand::new(EffectKind::ProcessLookup, "/usr/bin/stat").args([
+                    "-f",
+                    "%u",
+                    "/dev/console",
+                ]),
+            )
+            .ok()
+            .filter(|o| o.success)
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|u| !u.is_empty() && u != "0" && u.bytes().all(|b| b.is_ascii_digit()))
+            .ok_or_else(|| "no user is logged in to the Space's desktop".to_string())?;
+        let mut wrapped = vec![
+            "asuser".to_string(),
+            uid.clone(),
+            "/usr/bin/sudo".into(),
+            "-n".into(),
+            "-u".into(),
+            format!("#{uid}"),
+            "/usr/bin/open".into(),
+        ];
+        wrapped.extend(open_args);
+        open_args = wrapped;
+        program = "/bin/launchctl".into();
+    }
+    let mut command = HostCommand::new(EffectKind::AppLaunch, program)
+        .args(open_args)
+        .timeout(std::time::Duration::from_secs(30));
+    command.cwd = cwd;
+    match host.run(&command) {
+        Ok(out) if out.success => Ok(None),
+        Ok(out) => Err(format!(
+            "open {bundle}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )),
+        Err(e) => Err(format!("open {bundle}: {e}")),
     }
 }
 
@@ -328,6 +436,93 @@ impl IgnoreRules {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn chrome_spec() -> cua_teleport_bundle::LaunchSpec {
+        cua_teleport_bundle::LaunchSpec {
+            program: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".into(),
+            args: vec!["--user-data-dir=/h/x".into(), "--no-first-run".into()],
+            env: Vec::new(),
+            cwd: None,
+            restore_windows: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_macos_app_opens_through_launch_services() {
+        let host = crate::FakeHost::new().with_responder(|c| {
+            Ok(crate::host::HostOutput {
+                // `id -u` is the desktop user, `open` succeeds.
+                success: true,
+                stdout: if c.program == "/usr/bin/id" {
+                    b"501\n".to_vec()
+                } else {
+                    vec![]
+                },
+                stderr: vec![],
+            })
+        });
+        let pid = launch_app(&host, &chrome_spec(), Platform::MacOS).unwrap();
+        assert_eq!(pid, None);
+        let calls = host.calls_of(EffectKind::AppLaunch);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].program, "/usr/bin/open");
+        assert_eq!(
+            calls[0].args,
+            vec![
+                "-a",
+                "/Applications/Google Chrome.app",
+                "--args",
+                "--user-data-dir=/h/x",
+                "--no-first-run"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_root_spacesd_opens_in_the_console_users_session() {
+        let host = crate::FakeHost::new().with_responder(|c| {
+            Ok(crate::host::HostOutput {
+                success: true,
+                stdout: match c.program.as_str() {
+                    "/usr/bin/id" => b"0\n".to_vec(),
+                    "/usr/bin/stat" => b"501\n".to_vec(),
+                    _ => vec![],
+                },
+                stderr: vec![],
+            })
+        });
+        launch_app(&host, &chrome_spec(), Platform::MacOS).unwrap();
+        let call = &host.calls_of(EffectKind::AppLaunch)[0];
+        assert_eq!(call.program, "/bin/launchctl");
+        assert_eq!(&call.args[..2], ["asuser", "501"]);
+        assert!(call.args.contains(&"/usr/bin/open".to_string()));
+    }
+
+    #[test]
+    fn a_failed_open_is_reported_not_swallowed() {
+        let host = crate::FakeHost::new().with_responder(|c| {
+            Ok(crate::host::HostOutput {
+                success: c.program == "/usr/bin/id",
+                stdout: b"501\n".to_vec(),
+                stderr: b"Unable to find application".to_vec(),
+            })
+        });
+        let err = launch_app(&host, &chrome_spec(), Platform::MacOS).unwrap_err();
+        assert!(err.contains("Unable to find application"), "{err}");
+    }
+
+    #[test]
+    fn a_linux_program_is_spawned_directly() {
+        let host = crate::FakeHost::new();
+        let mut spec = chrome_spec();
+        spec.program = "google-chrome".into();
+        let pid = launch_app(&host, &spec, Platform::Linux).unwrap();
+        assert_eq!(pid, Some(crate::FakeHost::FAKE_PID));
+        assert_eq!(
+            host.calls_of(EffectKind::AppLaunch)[0].program,
+            "google-chrome"
+        );
+    }
 
     #[test]
     fn relative_paths_are_confined() {

@@ -73,6 +73,10 @@ pub struct ImportRecord {
     /// have already called [`Self::file_written`] for it, so this is only
     /// the merge case, into a database the import did not create).
     pub cookie_rows: Vec<CookieRowRef>,
+    /// Things the user should be told about that did not fail the import
+    /// (e.g. the app will ask once for a password). Reported back to the
+    /// client, never ledgered.
+    pub notices: Vec<String>,
 }
 
 impl ImportRecord {
@@ -213,6 +217,7 @@ impl Ledger {
             created_dirs: self.directories.clone(),
             keychain_items: self.keychain_items.clone(),
             cookie_rows: self.cookie_rows.clone(),
+            notices: Vec::new(),
         }
     }
 

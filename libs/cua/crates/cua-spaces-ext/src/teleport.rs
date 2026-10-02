@@ -634,9 +634,9 @@ impl SpaceTeleport for Space {
         // reported back as "not supported by this driver" --
         // `cua-spacesd-server`'s `services/teleport.rs`), so routing
         // through the Keyvault changes nothing about them. `launch_after`
-        // is likewise not threaded through [`Backend::deliver`] yet (every
-        // Keyvault-routed delivery, including the MCP paths, has the same
-        // gap): the app lands but is not auto-launched. `relay_plaintext_ack`
+        // is threaded through the Keyvault's `import_and_teleport` (the
+        // receiver launches the app in the Space's GUI session and the
+        // receipt reports whether it did). `relay_plaintext_ack`
         // (S1) is the direct upload path's own concern -- it answers
         // whether *this* connection crosses an unsealed relay
         // (`self.spacesd()`); the Keyvault's own delivery is a separate
@@ -689,10 +689,11 @@ impl SpaceTeleport for Space {
                 ),
             })?;
         let outcome = client
-            .import_and_teleport_with_progress(
+            .import_and_teleport_launching(
                 spec,
                 self.id().to_string(),
                 options.save_to_keyvault,
+                options.launch_after,
                 stage,
             )
             .await
@@ -707,7 +708,7 @@ impl SpaceTeleport for Space {
             bundle_sha256: String::new(),
             imported: delivery.map(|d| d.imported.clone()).unwrap_or_default(),
             skipped: delivery.map(|d| d.skipped.clone()).unwrap_or_default(),
-            launched: false,
+            launched: delivery.is_some_and(|d| d.launched),
         })
     }
 }
@@ -806,7 +807,14 @@ pub(crate) async fn tool(
                 None => current.approving_default(&target, a.acknowledge_sensitive)?,
             };
             let receipt = s
-                .teleport(sessions, &approval, ImportOptions::default())
+                .teleport(
+                    sessions,
+                    &approval,
+                    ImportOptions {
+                        launch_after: true,
+                        ..ImportOptions::default()
+                    },
+                )
                 .await?;
             Ok(ToolOutcome::json(&receipt))
         }

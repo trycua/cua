@@ -74,7 +74,7 @@ function fixtureEntry(id: string, name: string, capability: CatalogEntry["capabi
 /** The browser preview's catalog (clearly fixtures). */
 export const FIXTURE_CATALOG: CatalogEntry[] = [
   fixtureEntry("firefox", "Firefox", "full"),
-  fixtureEntry("vscode", "Visual Studio Code", "full"),
+  fixtureEntry("vscode", "Visual Studio Code", "install_only"),
   fixtureEntry("com.apple.Safari", "Safari", "unsupported"),
 ];
 

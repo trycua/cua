@@ -107,7 +107,9 @@ only used through site login.
 
 ## What is an item and what stays a file
 
-For Chrome and the other Chromium browsers each of these is its own item:
+For Chrome and the other Chromium browsers, for Firefox, and for Chromium-based
+desktop apps (Slack, Discord, Visual Studio Code, Notion) each of these is its
+own item:
 
 - every cookie, with every attribute the browser keeps (creation and update
   times, priority, source scheme and port, same-site, a partitioned cookie's
@@ -115,17 +117,25 @@ For Chrome and the other Chromium browsers each of these is its own item:
   item from the same name without a partition;
 - every localStorage value, read from the browser's own store and written back
   into the Space's while its browser is not running;
-- saved passwords, as above.
+- saved passwords, only when you tick them in the review (never by default).
 
-On Windows, Chrome's app-bound encryption keeps a cookie or password readable
-only by Chrome itself. Those are listed in the review, greyed, with that reason,
-and are never sent; the rest of the site still is.
+A Chromium app's cookies and passwords decrypt the same way on macOS, Linux and
+Windows: macOS through the app's own Keychain item, Linux through its fixed or
+keyring-backed key, Windows through the key `Local State` keeps, itself
+protected by Windows DPAPI for your account. Firefox's cookies and localStorage
+are never encrypted at rest; its saved passwords decrypt with the profile's own
+`key4.db` master key, and a profile protected by a Firefox master password is
+refused rather than guessed at.
+
+Chrome's Windows app-bound encryption (`v20`, Chrome 127+) keeps a cookie or
+password readable only by Chrome itself. Those are listed in the review,
+greyed, with that reason, and are never sent; the rest of the site still is.
 
 Everything else is saved as a file, by its path: preferences, bookmarks, the
-open tabs and session state, session storage, extensions and, for Electron
-apps such as Slack, their own cookie and localStorage files. A cookie or value
-that cannot be read as an item is not silently dropped: it stays a file or is
-listed as unavailable.
+open tabs and session state, session storage, extensions, history and, for
+Firefox, everything under its profile that is not cookies, localStorage or
+logins. A cookie or value that cannot be read as an item is not silently
+dropped: it stays a file or is listed as unavailable.
 
 ## Saved sessions (cookies)
 

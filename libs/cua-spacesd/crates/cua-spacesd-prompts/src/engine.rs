@@ -341,12 +341,20 @@ fn answer(f: &Found, guard: &Guard, options: &Options) -> DialogReport {
         text = %f.snapshot.texts.join(" / "),
         "answered a security prompt"
     );
-    std::thread::sleep(SETTLE);
-    // Same dialog still up: the password was wrong (or the app re-asked).
+    // Same dialog still up after SETTLE: the password was wrong (or the app
+    // re-asked). Leave as soon as it is gone, so chained prompts follow fast.
     let sig = f.signature();
-    let still = find_dialogs()
-        .map(|all| all.iter().any(|g| g.signature() == sig))
-        .unwrap_or(false);
+    let started = Instant::now();
+    let mut still = true;
+    while started.elapsed() < SETTLE {
+        std::thread::sleep(Duration::from_millis(80));
+        still = find_dialogs()
+            .map(|all| all.iter().any(|g| g.signature() == sig))
+            .unwrap_or(false);
+        if !still {
+            break;
+        }
+    }
     if still {
         f.report(
             Action::Rejected,
@@ -369,8 +377,8 @@ fn answer(f: &Found, _guard: &Guard, options: &Options) -> DialogReport {
 pub struct WatcherConfig {
     /// Time between scans.
     pub interval: Duration,
-    /// A dialog must have been up this long before it is answered, so a
-    /// person typing their own answer is never raced.
+    /// A dialog must have been up this long before it is answered (it must be
+    /// fully built; raise it where a person may be typing their own answer).
     pub debounce: Duration,
     /// Enabled classes.
     pub classes: Vec<String>,
@@ -381,8 +389,10 @@ pub struct WatcherConfig {
 impl Default for WatcherConfig {
     fn default() -> Self {
         Self {
-            interval: Duration::from_secs(1),
-            debounce: Duration::from_secs(3),
+            // Two looks, 150 ms apart: the window has its text and buttons,
+            // and a prompt is on screen for well under half a second.
+            interval: Duration::from_millis(150),
+            debounce: Duration::from_millis(250),
             classes: vec!["keychain".into()],
             max_attempts: 2,
         }

@@ -148,7 +148,29 @@ pub struct Window {
 }
 
 /// Process ids of running processes named exactly `name`.
+///
+/// The watcher asks several times a second. SecurityAgent is started on
+/// demand and then stays, so a found pid is kept while it lives, and a miss
+/// is only re-run (`pgrep`) every 400 ms rather than on every call.
 pub fn pids_named(name: &str) -> Vec<i32> {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static CACHE: Mutex<Option<(String, Instant, Vec<i32>)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((cached_name, at, pids)) = cache.as_mut() {
+        if cached_name == name {
+            pids.retain(|&pid| unsafe { libc::kill(pid, 0) } == 0);
+            if !pids.is_empty() || at.elapsed() < Duration::from_millis(400) {
+                return pids.clone();
+            }
+        }
+    }
+    let pids = pgrep(name);
+    *cache = Some((name.to_owned(), Instant::now(), pids.clone()));
+    pids
+}
+
+fn pgrep(name: &str) -> Vec<i32> {
     let Ok(out) = std::process::Command::new("/usr/bin/pgrep")
         .args(["-x", name])
         .output()

@@ -436,10 +436,9 @@ impl Server {
         // raises a password dialog nobody can answer.
         #[cfg(target_os = "macos")]
         spawn_keychain_keeper(self.ctx.shutdown_token());
-        // And the fallback for any prompt that still gets raised: answer
-        // SecurityAgent / keychain dialogs with the guest password
-        // (Apple Virtual Machines only; `CUA_SPACESD_PROMPT_WATCHER=0` turns
-        // it off).
+        // Opt-in safety net for any prompt that still gets raised: answer
+        // SecurityAgent / keychain dialogs with the guest password (Apple
+        // Virtual Machines only; `CUA_SPACESD_PROMPT_WATCHER=1` turns it on).
         #[cfg(target_os = "macos")]
         spawn_prompt_watcher(self.ctx.shutdown_token());
         let shutdown = self.ctx.shutdown_token();
@@ -553,18 +552,23 @@ pub async fn spawn_local(server: Server) -> std::io::Result<SocketAddr> {
 }
 
 /// Runs the security-prompt watcher (`cua-spacesd-prompts`) on its own
-/// thread until shutdown. It refuses to start anywhere but an Apple Virtual
-/// Machine with a provisioned guest password, and says why in the log.
-/// `CUA_SPACESD_PROMPT_WATCHER=0|off|false` disables it;
-/// `CUA_SPACESD_PROMPT_CLASSES=keychain,authorization` widens it (default:
-/// `keychain` only, so admin authorization panels stay a deliberate choice).
+/// thread until shutdown. Opt-in: `CUA_SPACESD_PROMPT_WATCHER=1` (or `true`,
+/// `on`, `yes`) turns it on. Even then it refuses to start anywhere but an
+/// Apple Virtual Machine with a provisioned guest password, and says why in
+/// the log. `CUA_SPACESD_PROMPT_CLASSES=keychain,authorization` widens it
+/// (default: `keychain` only, so admin authorization panels stay a
+/// deliberate choice).
 #[cfg(target_os = "macos")]
 fn spawn_prompt_watcher(shutdown: tokio_util::sync::CancellationToken) {
-    let off = std::env::var("CUA_SPACESD_PROMPT_WATCHER")
-        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "off" | "false" | "no"))
+    let on = std::env::var("CUA_SPACESD_PROMPT_WATCHER")
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "on" | "yes"
+            )
+        })
         .unwrap_or(false);
-    if off {
-        tracing::info!("security prompt watcher disabled (CUA_SPACESD_PROMPT_WATCHER)");
+    if !on {
         return;
     }
     let mut config = cua_spacesd_prompts::WatcherConfig::default();

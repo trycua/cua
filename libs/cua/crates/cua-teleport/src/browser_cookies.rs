@@ -684,7 +684,6 @@ mod tests {
     }
     use super::*;
     use crate::host::FakeHost;
-    #[cfg(target_os = "macos")]
     use crate::host::{EffectKind, HostOutput};
     use std::sync::Arc;
 
@@ -777,7 +776,6 @@ mod tests {
             .read(&[])
     }
 
-    /// Modern Chrome (96+): only `Network/Cookies` exists.
     fn modern_row<'a>(
         host: &'a str,
         name: &'a str,
@@ -869,6 +867,7 @@ mod tests {
         assert_eq!(rows.iter().filter(|r| r.app_bound).count(), 1);
     }
 
+    /// Modern Chrome (96+): only `Network/Cookies` exists.
     #[test]
     fn reads_a_modern_network_cookies_only_profile() {
         let dir = tempfile::tempdir().unwrap();

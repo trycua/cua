@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Cua Spaces.app (com.trycua.spaces.macos), Developer ID with the hardened
+  runtime (scripts/build-release.sh).
+
+  - automation.apple-events: App Teleport reads browser sessions with
+    osascript (cua-teleport providers). With no `cua daemon` running the
+    app runs the cua runtime in its own process (Cua.auto), so the app is
+    the responsible process for those Apple Events, and macOS refuses them
+    (-1743) from a hardened app without this entitlement. Info.plist carries
+    NSAppleEventsUsageDescription for the prompt.
+
+  Nothing else is needed, and nothing else is granted:
+  - No JIT or unsigned executable memory: no web view, no script engine.
+  - Library validation stays on: the only library the app loads is
+    Contents/Frameworks/libcua_sdk.dylib, signed by the same team.
+  - No keychain-access-groups: the Keyvault protector is a login keychain
+    item whose ACL trusts the calling binary's designated requirement (team
+    YCK386LBJ7 plus the signing identifier), not an access group, so it
+    needs no provisioning profile.
+  - Accessibility, Screen Recording and Touch ID (LocalAuthentication) are
+    TCC or policy prompts, not entitlements, outside the App Sandbox.
+  - Networking needs no entitlement outside the App Sandbox.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+</dict>
+</plist>

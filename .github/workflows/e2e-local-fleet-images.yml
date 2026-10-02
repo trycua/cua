@@ -1,0 +1,116 @@
+name: "E2E: Fleet images, local"
+
+# Boots every public Fleet catalog image locally through the SDK's local
+# provider (tests/e2e/local-runtimes/tests/fleet_catalog.rs): the bare Fleet
+# ref picks the backend (QEMU for containerDisks, gVisor for docker-* rootfs),
+# the declared service ports must answer over TCP/HTTP, and every sandbox is
+# deleted. x86_64 runners with /dev/kvm boot the amd64 containerDisks with
+# hardware acceleration, so the Windows image boots fully here (on arm64
+# developer machines it only runs under TCG with a hard cap).
+#
+# Only public catalog entries run in CI (fleet-catalog.public.json); private
+# registry images are covered by local runs with registry credentials.
+
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Comma list of catalog variants (id, id@amd64, id@rootfs); empty = the job's default"
+        default: ""
+      windows_timeout_secs:
+        description: "Windows readiness budget (seconds)"
+        default: "2700"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-local-fleet-images-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  images:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux containerDisks + rootfs (KVM, gVisor)
+            only: ubuntu-24.04-duo@amd64,omarchy-4.0.2@amd64,ubuntu-24.04-duo@rootfs,omarchy-4.0.2@rootfs
+            memory_mb: "6144"
+            windows: skip
+          - name: windows containerDisk (KVM, UEFI)
+            only: windows-server-2022@amd64
+            memory_mb: "8192"
+            windows: full
+    env:
+      CARGO_BUILD_JOBS: "4"
+      CARGO_TERM_COLOR: never
+      CUA_E2E_FLEET_CATALOG: "1"
+      CUA_E2E_FLEET_CATALOG_ONLY: ${{ inputs.only || matrix.only }}
+      CUA_E2E_FLEET_WINDOWS: ${{ matrix.windows }}
+      CUA_E2E_FLEET_READY_TIMEOUT_SECS: ${{ inputs.windows_timeout_secs || '2700' }}
+      CUA_E2E_FLEET_CPUS: "4"
+      CUA_E2E_FLEET_MEMORY_MB: ${{ matrix.memory_mb }}
+      CUA_E2E_FLEET_CATALOG_PRUNE: "1"
+      CUA_E2E_FLEET_CATALOG_REPORT: ${{ github.workspace }}/fleet-catalog-report.json
+      CUA_HOME: /mnt/cua
+      RUST_LOG: info,cua_vmm=info,cua_image=info
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Free disk space (containerDisks expand to tens of GB)
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo mkdir -p /mnt/cua && sudo chown "$USER" /mnt/cua
+          df -h / /mnt
+      - name: Enable KVM
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+          test -w /dev/kvm
+      - name: Install QEMU, OVMF and gVisor
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-system-x86 qemu-utils ovmf protobuf-compiler libprotobuf-dev
+          scripts/images/install-gvisor.sh
+          qemu-system-x86_64 --version
+          docker info --format '{{json .Runtimes}}'
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: tests/e2e/local-runtimes -> target
+      - name: Build the suite
+        working-directory: tests/e2e/local-runtimes
+        run: cargo test --test fleet_catalog readiness_text_yields_http_paths
+      - name: Boot the catalog images
+        working-directory: tests/e2e/local-runtimes
+        run: timeout 5700 cargo test --test fleet_catalog fleet_catalog_images_run_locally -- --nocapture
+      - name: Leftover sandboxes (must be none)
+        if: always()
+        run: |
+          pgrep -fa qemu-system || true
+          docker ps -a --filter name=cua-e2e- --format '{{.Names}} {{.Status}}' || true
+          ls /mnt/cua/vmm/qemu 2>/dev/null || true
+      - name: Upload report and screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fleet-catalog-${{ strategy.job-index }}
+          path: |
+            fleet-catalog-report.json
+            /mnt/cua/e2e-fleet-catalog/*.png
+          if-no-files-found: warn

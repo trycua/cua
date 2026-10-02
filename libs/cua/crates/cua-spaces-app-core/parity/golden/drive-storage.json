@@ -1,0 +1,575 @@
+{
+  "flow": "drive-storage",
+  "frames": [
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {*This Mac|S3-compatible}",
+        "- fs-path text: Stored in = ~/.cua/volume/data ?/Users/maya/.cua/volume/data",
+        "- mount choice: Add Cua Volume to Finder {On|*Off}",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB}"
+      ],
+      "step": "before the form loads"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {*This Mac|S3-compatible}",
+        "- fs-path text: Stored in = ~/.cua/volume/data ?/Users/maya/.cua/volume/data",
+        "- mount choice: Add Cua Volume to Finder {On|*Off}",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB}"
+      ],
+      "step": "this Mac"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage) [Save] (disabled)",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-prompt prompt: Ask your agent to set it up: = Using the AWS CLI, create a private S3 bucket for Cua Volume with versioning on, and an IAM user whose access is limited to that bucket. Then connect it with `cua volume config set --backend s3 --bucket <bucket> --region <region>`, pipe the new keys into `cua volume config set-keys`, and run `cua volume status`. Don't print the secret key. [Copy]",
+        "- s3-manual link: Enter details manually",
+        "- mount choice: Add Cua Volume to Finder {On|*Off}",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB}"
+      ],
+      "step": "S3-compatible"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage) [Save] (disabled)",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-endpoint field: Endpoint =  ~AWS",
+        "- s3-bucket field: Bucket = ",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {On|*Off}",
+        "- s3-access-key field: Access key ID = ",
+        "- s3-secret secret: Secret access key = ",
+        "- s3-test text: Connection [Test connection] (disabled)",
+        "- s3-use-prompt link: Use a prompt instead",
+        "- mount choice: Add Cua Volume to Finder {On|*Off}",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB}"
+      ],
+      "step": "enter details manually"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage) [Save] (disabled)",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = ",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {On|*Off}",
+        "- s3-access-key field: Access key ID = ",
+        "- s3-secret secret: Secret access key = ",
+        "- s3-test text: Connection [Test connection] (disabled)",
+        "- s3-use-prompt link: Use a prompt instead",
+        "- mount choice: Add Cua Volume to Finder {On|*Off}",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB}"
+      ],
+      "step": "endpoint"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage) [Save] (disabled)",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = cua-volume",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {On|*Off}",
+        "- s3-access-key field: Access key ID = ",
+        "- s3-secret secret: Secret access key = ",
+        "- s3-test text: Connection [Test connection] (disabled)",
+        "- s3-use-prompt link: Use a prompt instead",
+        "- mount choice: Add Cua Volume to Finder {On|*Off}",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB}"
+      ],
+      "step": "bucket"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage) [Save] (disabled)",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = cua-volume",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {*On|Off}",
+        "- s3-access-key field: Access key ID = ",
+        "- s3-secret secret: Secret access key = ",
+        "- s3-test text: Connection [Test connection] (disabled)",
+        "- s3-use-prompt link: Use a prompt instead",
+        "- mount choice: Add Cua Volume to Finder {On|*Off}",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB}"
+      ],
+      "step": "path-style"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage) [Save] (disabled)",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = cua-volume",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {*On|Off}",
+        "- s3-access-key field: Access key ID = maya-drive",
+        "- s3-secret secret: Secret access key = ",
+        "- s3-test text: Connection [Test connection] (disabled)",
+        "- s3-use-prompt link: Use a prompt instead",
+        "- mount choice: Add Cua Volume to Finder {On|*Off}",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB}"
+      ],
+      "step": "key id"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage) [Save]",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = cua-volume",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {*On|Off}",
+        "- s3-access-key field: Access key ID = maya-drive",
+        "- s3-secret secret: Secret access key = fixture-secret",
+        "- s3-test text: Connection [Test connection]",
+        "- s3-use-prompt link: Use a prompt instead",
+        "- mount choice: Add Cua Volume to Finder {On|*Off}",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB}"
+      ],
+      "step": "secret"
+    },
+    {
+      "request": "test s3",
+      "section": [
+        "= Settings",
+        "# Storage (storage) [Save] (disabled)",
+        "- backend choice: Store files on {This Mac|*S3-compatible} (disabled)",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS (disabled)",
+        "- s3-bucket field: Bucket = cua-volume (disabled)",
+        "- s3-region field: Region = us-east-1 ~us-east-1 (disabled)",
+        "- s3-path-style choice: Path-style URLs {*On|Off} (disabled)",
+        "- s3-access-key field: Access key ID = maya-drive (disabled)",
+        "- s3-secret secret: Secret access key = fixture-secret (disabled)",
+        "- s3-test text: Connection [Testing…] (disabled)",
+        "- s3-use-prompt link: Use a prompt instead (disabled)",
+        "- mount choice: Add Cua Volume to Finder {On|*Off} (disabled)",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache] (disabled)",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB} (disabled)"
+      ],
+      "step": "test"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage) [Save]",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = cua-volume",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {*On|Off}",
+        "- s3-access-key field: Access key ID = maya-drive",
+        "- s3-secret secret: Secret access key = fixture-secret",
+        "- s3-test text: Connection [Test connection]",
+        "- s3-check error: Bucket versioning is off",
+        "- s3-use-prompt link: Use a prompt instead",
+        "- mount choice: Add Cua Volume to Finder {On|*Off}",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB}"
+      ],
+      "step": "versioning off"
+    },
+    {
+      "request": "test s3",
+      "section": [
+        "= Settings",
+        "# Storage (storage) [Save] (disabled)",
+        "- backend choice: Store files on {This Mac|*S3-compatible} (disabled)",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS (disabled)",
+        "- s3-bucket field: Bucket = cua-volume (disabled)",
+        "- s3-region field: Region = us-east-1 ~us-east-1 (disabled)",
+        "- s3-path-style choice: Path-style URLs {*On|Off} (disabled)",
+        "- s3-access-key field: Access key ID = maya-drive (disabled)",
+        "- s3-secret secret: Secret access key = fixture-secret (disabled)",
+        "- s3-test text: Connection [Testing…] (disabled)",
+        "- s3-use-prompt link: Use a prompt instead (disabled)",
+        "- mount choice: Add Cua Volume to Finder {On|*Off} (disabled)",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache] (disabled)",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB} (disabled)"
+      ],
+      "step": "test again"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage) [Save]",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = cua-volume",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {*On|Off}",
+        "- s3-access-key field: Access key ID = maya-drive",
+        "- s3-secret secret: Secret access key = fixture-secret",
+        "- s3-test text: Connection = Connected, versioning on [Test connection]",
+        "- s3-use-prompt link: Use a prompt instead",
+        "- mount choice: Add Cua Volume to Finder {On|*Off}",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB}"
+      ],
+      "step": "connected"
+    },
+    {
+      "request": "save s3 with keys",
+      "section": [
+        "= Settings",
+        "# Storage (storage) [Saving…] (disabled)",
+        "- backend choice: Store files on {This Mac|*S3-compatible} (disabled)",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS (disabled)",
+        "- s3-bucket field: Bucket = cua-volume (disabled)",
+        "- s3-region field: Region = us-east-1 ~us-east-1 (disabled)",
+        "- s3-path-style choice: Path-style URLs {*On|Off} (disabled)",
+        "- s3-access-key field: Access key ID = maya-drive (disabled)",
+        "- s3-secret secret: Secret access key = fixture-secret (disabled)",
+        "- s3-test text: Connection = Connected, versioning on [Test connection] (disabled)",
+        "- s3-use-prompt link: Use a prompt instead (disabled)",
+        "- mount choice: Add Cua Volume to Finder {On|*Off} (disabled)",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache] (disabled)",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB} (disabled)"
+      ],
+      "step": "save"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = cua-volume",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {*On|Off}",
+        "- s3-access-key field: Access key ID =  ~Saved",
+        "- s3-secret secret: Secret access key =  ~Saved",
+        "- s3-test text: Connection = Connected, versioning on [Test connection]",
+        "- mount choice: Add Cua Volume to Finder {On|*Off}",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB}"
+      ],
+      "step": "saved"
+    },
+    {
+      "request": "mount",
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {This Mac|*S3-compatible} (disabled)",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS (disabled)",
+        "- s3-bucket field: Bucket = cua-volume (disabled)",
+        "- s3-region field: Region = us-east-1 ~us-east-1 (disabled)",
+        "- s3-path-style choice: Path-style URLs {*On|Off} (disabled)",
+        "- s3-access-key field: Access key ID =  ~Saved (disabled)",
+        "- s3-secret secret: Secret access key =  ~Saved (disabled)",
+        "- s3-test text: Connection = Connected, versioning on [Test connection] (disabled)",
+        "- mount choice: Add Cua Volume to Finder {On|*Off} (disabled)",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache] (disabled)",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB} (disabled)"
+      ],
+      "step": "show in Finder on"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = cua-volume",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {*On|Off}",
+        "- s3-access-key field: Access key ID =  ~Saved",
+        "- s3-secret secret: Secret access key =  ~Saved",
+        "- s3-test text: Connection = Connected, versioning on [Test connection]",
+        "- mount choice: Add Cua Volume to Finder {*On|Off}",
+        "- mount-approval text: Turn on Cua Volume in File System Extensions. [Open System Settings] < x-apple.systempreferences:com.apple.LoginItems-Settings.extension>",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB}"
+      ],
+      "step": "needs approval"
+    },
+    {
+      "request": "open x-apple.systempreferences:com.apple.LoginItems-Settings.extension",
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {This Mac|*S3-compatible} (disabled)",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS (disabled)",
+        "- s3-bucket field: Bucket = cua-volume (disabled)",
+        "- s3-region field: Region = us-east-1 ~us-east-1 (disabled)",
+        "- s3-path-style choice: Path-style URLs {*On|Off} (disabled)",
+        "- s3-access-key field: Access key ID =  ~Saved (disabled)",
+        "- s3-secret secret: Secret access key =  ~Saved (disabled)",
+        "- s3-test text: Connection = Connected, versioning on [Test connection] (disabled)",
+        "- mount choice: Add Cua Volume to Finder {*On|Off} (disabled)",
+        "- mount-approval text: Turn on Cua Volume in File System Extensions. [Open System Settings] (disabled) < x-apple.systempreferences:com.apple.LoginItems-Settings.extension>",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache] (disabled)",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB} (disabled)"
+      ],
+      "step": "open System Settings"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = cua-volume",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {*On|Off}",
+        "- s3-access-key field: Access key ID =  ~Saved",
+        "- s3-secret secret: Secret access key =  ~Saved",
+        "- s3-test text: Connection = Connected, versioning on [Test connection]",
+        "- mount choice: Add Cua Volume to Finder {*On|Off}",
+        "- mount-path text: In Finder at = /Volumes/Cua Volume [Show in Finder] ?/Volumes/Cua Volume < /Volumes/Cua Volume>",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB}"
+      ],
+      "step": "mounted"
+    },
+    {
+      "request": "reveal /Volumes/Cua Volume",
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {This Mac|*S3-compatible} (disabled)",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS (disabled)",
+        "- s3-bucket field: Bucket = cua-volume (disabled)",
+        "- s3-region field: Region = us-east-1 ~us-east-1 (disabled)",
+        "- s3-path-style choice: Path-style URLs {*On|Off} (disabled)",
+        "- s3-access-key field: Access key ID =  ~Saved (disabled)",
+        "- s3-secret secret: Secret access key =  ~Saved (disabled)",
+        "- s3-test text: Connection = Connected, versioning on [Test connection] (disabled)",
+        "- mount choice: Add Cua Volume to Finder {*On|Off} (disabled)",
+        "- mount-path text: In Finder at = /Volumes/Cua Volume [Show in Finder] (disabled) ?/Volumes/Cua Volume < /Volumes/Cua Volume>",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache] (disabled)",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB} (disabled)"
+      ],
+      "step": "show in Finder"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = cua-volume",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {*On|Off}",
+        "- s3-access-key field: Access key ID =  ~Saved",
+        "- s3-secret secret: Secret access key =  ~Saved",
+        "- s3-test text: Connection = Connected, versioning on [Test connection]",
+        "- mount choice: Add Cua Volume to Finder {*On|Off}",
+        "- mount-path text: In Finder at = /Volumes/Cua Volume [Show in Finder] ?/Volumes/Cua Volume < /Volumes/Cua Volume>",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB}"
+      ],
+      "step": "shown"
+    },
+    {
+      "request": "cache limit 5 GB",
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {This Mac|*S3-compatible} (disabled)",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS (disabled)",
+        "- s3-bucket field: Bucket = cua-volume (disabled)",
+        "- s3-region field: Region = us-east-1 ~us-east-1 (disabled)",
+        "- s3-path-style choice: Path-style URLs {*On|Off} (disabled)",
+        "- s3-access-key field: Access key ID =  ~Saved (disabled)",
+        "- s3-secret secret: Secret access key =  ~Saved (disabled)",
+        "- s3-test text: Connection = Connected, versioning on [Test connection] (disabled)",
+        "- mount choice: Add Cua Volume to Finder {*On|Off} (disabled)",
+        "- mount-path text: In Finder at = /Volumes/Cua Volume [Show in Finder] (disabled) ?/Volumes/Cua Volume < /Volumes/Cua Volume>",
+        "- cache text: Cache = 1.2 GB of 10 GB [Clear cache] (disabled)",
+        "- cache-limit choice: Cache size limit {1 GB|5 GB|*10 GB|50 GB} (disabled)"
+      ],
+      "step": "cache limit"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = cua-volume",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {*On|Off}",
+        "- s3-access-key field: Access key ID =  ~Saved",
+        "- s3-secret secret: Secret access key =  ~Saved",
+        "- s3-test text: Connection = Connected, versioning on [Test connection]",
+        "- mount choice: Add Cua Volume to Finder {*On|Off}",
+        "- mount-path text: In Finder at = /Volumes/Cua Volume [Show in Finder] ?/Volumes/Cua Volume < /Volumes/Cua Volume>",
+        "- cache text: Cache = 1.2 GB of 5 GB [Clear cache]",
+        "- cache-limit choice: Cache size limit {1 GB|*5 GB|10 GB|50 GB}"
+      ],
+      "step": "limit set"
+    },
+    {
+      "request": "clear cache",
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {This Mac|*S3-compatible} (disabled)",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS (disabled)",
+        "- s3-bucket field: Bucket = cua-volume (disabled)",
+        "- s3-region field: Region = us-east-1 ~us-east-1 (disabled)",
+        "- s3-path-style choice: Path-style URLs {*On|Off} (disabled)",
+        "- s3-access-key field: Access key ID =  ~Saved (disabled)",
+        "- s3-secret secret: Secret access key =  ~Saved (disabled)",
+        "- s3-test text: Connection = Connected, versioning on [Test connection] (disabled)",
+        "- mount choice: Add Cua Volume to Finder {*On|Off} (disabled)",
+        "- mount-path text: In Finder at = /Volumes/Cua Volume [Show in Finder] (disabled) ?/Volumes/Cua Volume < /Volumes/Cua Volume>",
+        "- cache text: Cache = 1.2 GB of 5 GB [Clear cache] (disabled)",
+        "- cache-limit choice: Cache size limit {1 GB|*5 GB|10 GB|50 GB} (disabled)"
+      ],
+      "step": "clear cache"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = cua-volume",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {*On|Off}",
+        "- s3-access-key field: Access key ID =  ~Saved",
+        "- s3-secret secret: Secret access key =  ~Saved",
+        "- s3-test text: Connection = Connected, versioning on [Test connection]",
+        "- mount choice: Add Cua Volume to Finder {*On|Off}",
+        "- mount-path text: In Finder at = /Volumes/Cua Volume [Show in Finder] ?/Volumes/Cua Volume < /Volumes/Cua Volume>",
+        "- cache text: Cache = 0 KB of 5 GB [Clear cache] (disabled)",
+        "- cache-limit choice: Cache size limit {1 GB|*5 GB|10 GB|50 GB}"
+      ],
+      "step": "cleared"
+    },
+    {
+      "request": "unmount",
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {This Mac|*S3-compatible} (disabled)",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS (disabled)",
+        "- s3-bucket field: Bucket = cua-volume (disabled)",
+        "- s3-region field: Region = us-east-1 ~us-east-1 (disabled)",
+        "- s3-path-style choice: Path-style URLs {*On|Off} (disabled)",
+        "- s3-access-key field: Access key ID =  ~Saved (disabled)",
+        "- s3-secret secret: Secret access key =  ~Saved (disabled)",
+        "- s3-test text: Connection = Connected, versioning on [Test connection] (disabled)",
+        "- mount choice: Add Cua Volume to Finder {*On|Off} (disabled)",
+        "- mount-path text: In Finder at = /Volumes/Cua Volume [Show in Finder] (disabled) ?/Volumes/Cua Volume < /Volumes/Cua Volume>",
+        "- cache text: Cache = 0 KB of 5 GB [Clear cache] (disabled)",
+        "- cache-limit choice: Cache size limit {1 GB|*5 GB|10 GB|50 GB} (disabled)"
+      ],
+      "step": "unmount"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {This Mac|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = cua-volume",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {*On|Off}",
+        "- s3-access-key field: Access key ID =  ~Saved",
+        "- s3-secret secret: Secret access key =  ~Saved",
+        "- s3-test text: Connection = Connected, versioning on [Test connection]",
+        "- mount choice: Add Cua Volume to Finder {*On|Off}",
+        "- mount-path text: In Finder at = /Volumes/Cua Volume [Show in Finder] ?/Volumes/Cua Volume < /Volumes/Cua Volume>",
+        "- cache text: Cache = 0 KB of 5 GB [Clear cache] (disabled)",
+        "- cache-limit choice: Cache size limit {1 GB|*5 GB|10 GB|50 GB}",
+        "- storage-error error: A file on Cua Volume is still uploading."
+      ],
+      "step": "unmount failed"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {This computer|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = cua-volume",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {*On|Off}",
+        "- s3-access-key field: Access key ID =  ~Saved",
+        "- s3-secret secret: Secret access key =  ~Saved",
+        "- s3-test text: Connection = Connected, versioning on [Test connection]",
+        "- mount choice: Mount Cua Volume {*On|Off}",
+        "- mount-path text: Mounted at = ~/Cua Volume [Open] ?/home/maya/Cua Volume < /home/maya/Cua Volume>",
+        "- cache text: Cache = 0 KB of 5 GB [Clear cache] (disabled)",
+        "- cache-limit choice: Cache size limit {1 GB|*5 GB|10 GB|50 GB}",
+        "- storage-error error: A file on Cua Volume is still uploading."
+      ],
+      "step": "linux"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- backend choice: Store files on {This computer|*S3-compatible}",
+        "- s3-endpoint field: Endpoint = http://127.0.0.1:9000 ~AWS",
+        "- s3-bucket field: Bucket = cua-volume",
+        "- s3-region field: Region = us-east-1 ~us-east-1",
+        "- s3-path-style choice: Path-style URLs {*On|Off}",
+        "- s3-access-key field: Access key ID =  ~Saved",
+        "- s3-secret secret: Secret access key =  ~Saved",
+        "- s3-test text: Connection = Connected, versioning on [Test connection]",
+        "- cache text: Cache = 0 KB of 5 GB [Clear cache] (disabled)",
+        "- cache-limit choice: Cache size limit {1 GB|*5 GB|10 GB|50 GB}",
+        "- storage-error error: A file on Cua Volume is still uploading."
+      ],
+      "step": "windows"
+    },
+    {
+      "request": null,
+      "section": [
+        "= Settings",
+        "# Storage (storage)",
+        "- storage text: Cua Volume = Not available on this Mac yet (disabled)",
+        "- storage-error error: A file on Cua Volume is still uploading."
+      ],
+      "step": "no daemon"
+    }
+  ]
+}

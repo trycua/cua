@@ -2,6 +2,7 @@
 name = "cua-driver"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Cross-platform background computer-use automation daemon (MCP server)"
 default-run = "cua-driver"
 
@@ -30,6 +31,10 @@ zeroize = { workspace = true }
 # PostHog ingest is a single fire-and-forget POST with a 3s timeout. Uses
 # rustls (default) so Linux/Windows builds don't require system OpenSSL.
 ureq = { version = "3", features = ["json"] }
+# The switches shared by every Cua program (DO_NOT_TRACK, CUA_TELEMETRY,
+# `[telemetry] enabled` in $CUA_HOME/config.toml). Only its config reader
+# is used; no sender.
+cua-telemetry = { path = "../../../../cua/crates/cua-telemetry", default-features = false }
 # Strict semver comparison for the startup update-available banner so that
 # pre-release tags (`-dev`, `-rc.1`) sort below their corresponding release
 # and we never recommend a pre-release as an "update".

@@ -1,0 +1,12 @@
+{
+  "title": "Guides",
+  "pages": [
+    "capacity-and-claims",
+    "warm-pools",
+    "terraform",
+    "images",
+    "sidecars",
+    "claim-secrets",
+    "troubleshoot"
+  ]
+}

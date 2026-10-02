@@ -7,47 +7,48 @@ from ..types import Snapshot
 if TYPE_CHECKING:
     from ..apps.registry import AppsProxy
 
-_DEFAULT_SESSION_NAME = "simulated"
+_DEFAULT_SESSION_NAME = "native"
 
 
 def get_session(name: Optional[str] = None) -> type[DesktopSession]:
     """Return session class by name.
 
-    Provider names:
-        - "simulated" (alias: "webtop"): Playwright-based browser simulation
-          Fast, no Docker required. UI is HTML/CSS rendering of desktop.
-          Good for web-app testing, UI benchmarks.
-
-        - "native" (alias: "computer"): Real OS in Docker/QEMU container
-          Actual desktop environment with real applications.
-          Requires Docker. Good for real app testing, OS-level tasks.
+    ``native`` (alias ``computer``): a real OS in a sandbox (container or VM),
+    driven through :class:`~cua_bench.computers.remote.RemoteDesktopSession`.
+    The Playwright ``simulated``/``webtop`` provider was removed in cua-bench
+    0.3; those names return the same session with a deprecation warning.
     """
     sess = (name or _DEFAULT_SESSION_NAME).lower()
-
-    # Simulated desktop (Playwright-based)
     if sess in ("simulated", "webtop"):
-        from .webtop import WebDesktopSession
+        import warnings
 
-        return WebDesktopSession
+        warnings.warn(
+            "the simulated provider was removed in cua-bench 0.3; "
+            f"get_session({name!r}) returns the native RemoteDesktopSession",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        sess = "native"
 
-    # Native desktop (Docker/QEMU-based) - uses RemoteDesktopSession with cua-computer SDK
     if sess in ("native", "computer"):
         from .remote import RemoteDesktopSession
 
         return RemoteDesktopSession
 
-    raise ValueError(
-        f"Unknown session provider: {name}. "
-        f"Available: 'simulated' (Playwright), 'native' (Docker/QEMU)"
-    )
+    raise ValueError(f"Unknown session provider: {name}. Available: 'native' (alias 'computer')")
 
 
 class DesktopSetupConfig(TypedDict, total=False):
-    """Configuration for desktop setup provided to providers.
+    """A task's ``computer["setup_config"]``: the sandbox the task runs in.
 
-    Fields mirror high-level desktop appearance and workspace options.
+    Every key is optional. Command-line flags (``--image``, ``--kind``,
+    ``--cpu``, ``--memory``) override the task's values; ``--runtime`` (the
+    engine) is a command-line choice only.
     """
 
+    #: Guest OS: ``linux`` (the default; ``ubuntu`` is an alias), ``windows``
+    #: (``win11``, ``win10`` and older names are aliases), ``macos`` or
+    #: ``android``. macOS and Android run only with ``--on local``.
     os_type: Literal[
         "win11",
         "win10",
@@ -58,19 +59,41 @@ class DesktopSetupConfig(TypedDict, total=False):
         "linux",
         "android",
         "ios",
-        "windows",  # Generic Windows (maps to win11)
+        "windows",
     ]
+    #: Screen width in pixels.
     width: int
+    #: Screen height in pixels.
     height: int
+    #: Registry image or OS alias (``linux``, ``windows``, ``macos:tahoe``), or
+    #: ``pool:<name>`` for an existing Fleet pool. ``--image`` wins, then this,
+    #: then ``CUA_BENCH_IMAGE``, then the canonical image of ``os_type``.
+    image: str
+    #: Preferred kind: ``container`` (Linux only) or ``vm``.
+    kind: str
+    #: Kinds the task supports (a requirement, unlike ``kind``): for
+    #: example ``["vm"]`` for a task that needs its own kernel.
+    kinds: List[str]
+    #: What the target must provide: ``kvm``, ``env:<NAME>`` (a set
+    #: environment variable), ``openai`` (``env:OPENAI_API_KEY``) or
+    #: ``hf-gated`` (``env:HF_TOKEN``).
+    requires: List[str]
+    #: A port the image serves itself, used as the readiness probe.
+    server_port: int
+    #: VM memory, for example ``"8GB"``.
+    memory: str
+    #: VM CPUs, for example ``"4"``.
+    cpu: str
+    #: Ignored (kept so older tasks still load).
     background: str
+    #: Ignored (kept so older tasks still load).
     wallpaper: str
+    #: Ignored (kept so older tasks still load).
     installed_apps: List[str]
-    # Docker/VM configuration
-    image: str  # Docker image to use (e.g., "trycua/winarena:latest", "trycua/cua-xfce:latest")
-    storage: str  # Path to image storage for QEMU-based images (e.g., "~/.local/share/cua-bench/images/windows-qemu")
-    memory: str  # VM memory allocation (e.g., "8GB")
-    cpu: str  # VM CPU allocation (e.g., "4")
-    provider_type: str  # Provider type ("docker", "lume", "cloud")
+    #: Deprecated and ignored.
+    storage: str
+    #: Deprecated: ``"cloud"`` runs on Fleet; use ``--on cloud`` instead.
+    provider_type: str
 
 
 class DesktopSession(Protocol):
@@ -188,7 +211,7 @@ class DesktopSession(Protocol):
         """
         ...
 
-    # --- Playwright-like Automation API ---
+    # --- Selector-based Automation API ---
 
     async def click_element(self, pid: int | str, selector: str) -> None:
         """Find element by CSS selector and click its center.

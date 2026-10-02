@@ -44,8 +44,11 @@ use serde_json::{Map, Value};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+/// A fuzz target: its name and the function that consumes one input.
+pub type Target = (&'static str, fn(&[u8]));
+
 /// Every target with its name, in the order the fuzz crate registers them.
-pub const TARGETS: &[(&str, fn(&[u8]))] = &[
+pub const TARGETS: &[Target] = &[
     ("mcp_request", mcp_request),
     ("tool_arguments", tool_arguments),
     ("typed_input_json", typed_input_json),

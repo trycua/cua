@@ -47,7 +47,15 @@ const KEYS_SPAN: i32 = 24; // semitones across a `keys` strip (2 octaves)
 
 // ── synth ─────────────────────────────────────────────────────────────────────
 #[derive(Clone, Copy, PartialEq)]
-enum Wave { Sine, Square, Saw, Triangle, Kick, Snare, Hat }
+enum Wave {
+    Sine,
+    Square,
+    Saw,
+    Triangle,
+    Kick,
+    Snare,
+    Hat,
+}
 
 impl Wave {
     fn parse(s: &str) -> Wave {
@@ -64,7 +72,9 @@ impl Wave {
     }
 }
 
-fn midi_to_freq(m: f32) -> f32 { 440.0 * 2f32.powf((m - 69.0) / 12.0) }
+fn midi_to_freq(m: f32) -> f32 {
+    440.0 * 2f32.powf((m - 69.0) / 12.0)
+}
 
 /// A short enveloped oscillator. One per note; rodio mixes overlapping ones.
 struct Tone {
@@ -74,9 +84,9 @@ struct Tone {
     phase: f32,
     wave: Wave,
     amp: f32,
-    f0: f32,      // start frequency
-    f1: f32,      // end frequency (0 = no pitch sweep)
-    rng: u32,     // xorshift noise state
+    f0: f32,  // start frequency
+    f1: f32,  // end frequency (0 = no pitch sweep)
+    rng: u32, // xorshift noise state
     prev_noise: f32,
 }
 
@@ -117,22 +127,48 @@ impl Tone {
 impl Iterator for Tone {
     type Item = f32;
     fn next(&mut self) -> Option<f32> {
-        if self.idx >= self.total { return None; }
+        if self.idx >= self.total {
+            return None;
+        }
         let dur = self.total as f32 / self.sr as f32;
         let t = self.idx as f32 / self.sr as f32;
         let p = self.idx as f32 / self.total as f32;
         let atk = 0.004;
-        let env = if t < atk { t / atk } else { (1.0 - (t - atk) / (dur - atk)).max(0.0).powf(1.6) };
-        let freq = if self.f1 > 0.0 { self.f0 * (self.f1 / self.f0).powf(p) } else { self.f0 };
+        let env = if t < atk {
+            t / atk
+        } else {
+            (1.0 - (t - atk) / (dur - atk)).max(0.0).powf(1.6)
+        };
+        let freq = if self.f1 > 0.0 {
+            self.f0 * (self.f1 / self.f0).powf(p)
+        } else {
+            self.f0
+        };
         self.phase += 2.0 * PI * freq / self.sr as f32;
-        if self.phase > 2.0 * PI { self.phase -= 2.0 * PI; }
+        if self.phase > 2.0 * PI {
+            self.phase -= 2.0 * PI;
+        }
         let osc = match self.wave {
             Wave::Sine | Wave::Kick => self.phase.sin(),
-            Wave::Square => if self.phase.sin() >= 0.0 { 1.0 } else { -1.0 },
+            Wave::Square => {
+                if self.phase.sin() >= 0.0 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
             Wave::Saw => self.phase / PI - 1.0,
             Wave::Triangle => (2.0 / PI) * self.phase.sin().asin(),
-            Wave::Snare => { let n = self.noise(); 0.7 * n + 0.3 * self.phase.sin() }
-            Wave::Hat => { let n = self.noise(); let hp = n - self.prev_noise; self.prev_noise = n; hp }
+            Wave::Snare => {
+                let n = self.noise();
+                0.7 * n + 0.3 * self.phase.sin()
+            }
+            Wave::Hat => {
+                let n = self.noise();
+                let hp = n - self.prev_noise;
+                self.prev_noise = n;
+                hp
+            }
         };
         self.idx += 1;
         Some(osc * env * self.amp)
@@ -140,25 +176,44 @@ impl Iterator for Tone {
 }
 
 impl rodio::Source for Tone {
-    fn current_frame_len(&self) -> Option<usize> { None }
-    fn channels(&self) -> u16 { 1 }
-    fn sample_rate(&self) -> u32 { self.sr }
-    fn total_duration(&self) -> Option<std::time::Duration> { None }
+    fn current_frame_len(&self) -> Option<usize> {
+        None
+    }
+    fn channels(&self) -> u16 {
+        1
+    }
+    fn sample_rate(&self) -> u32 {
+        self.sr
+    }
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        None
+    }
 }
 
 // ── state ──────────────────────────────────────────────────────────────────────
 #[derive(Clone, Copy, PartialEq)]
-enum Mode { Controller, Instrument }
+enum Mode {
+    Controller,
+    Instrument,
+}
 
 #[derive(Clone, Copy, PartialEq)]
-enum Kind { Pad, Keys, Drums }
+enum Kind {
+    Pad,
+    Keys,
+    Drums,
+}
 
 /// One note actuation's fading highlight. `key` is the strip cell it lit (-1 for
 /// a drum pad); `inten` fades 1→0 and `age` grows so a pad press expands an
 /// outward ring. Each pulse fades on its own clock, so overlapping presses stay
 /// individually visible.
 #[derive(Clone, Copy)]
-struct Pulse { key: i32, inten: f32, age: f32 }
+struct Pulse {
+    key: i32,
+    inten: f32,
+    age: f32,
+}
 
 struct Audio {
     _stream: rodio::OutputStream,
@@ -213,33 +268,60 @@ const ID_PLAY: isize = 2001;
 const ICON_PLAY: PCWSTR = w!("▶");
 const ICON_PAUSE: PCWSTR = w!("⏸");
 
-fn emit(line: &str) { let _ = writeln!(std::io::stdout(), "{line}"); let _ = std::io::stdout().flush(); }
-fn wide(s: &str) -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() }
+fn emit(line: &str) {
+    let _ = writeln!(std::io::stdout(), "{line}");
+    let _ = std::io::stdout().flush();
+}
+fn wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
 fn arg(args: &[String], flag: &str) -> Option<String> {
-    args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1).cloned())
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1).cloned())
 }
 fn parse_color(s: &str) -> (COLORREF, (u8, u8, u8)) {
     let h = s.trim_start_matches('#');
     let v = u32::from_str_radix(h, 16).unwrap_or(0x00FFFF);
-    let (r, g, b) = (((v >> 16) & 255) as u8, ((v >> 8) & 255) as u8, (v & 255) as u8);
-    (COLORREF(((b as u32) << 16) | ((g as u32) << 8) | r as u32), (r, g, b))
+    let (r, g, b) = (
+        ((v >> 16) & 255) as u8,
+        ((v >> 8) & 255) as u8,
+        (v & 255) as u8,
+    );
+    (
+        COLORREF(((b as u32) << 16) | ((g as u32) << 8) | r as u32),
+        (r, g, b),
+    )
 }
-fn rgb(r: u8, g: u8, b: u8) -> COLORREF { COLORREF(((b as u32) << 16) | ((g as u32) << 8) | r as u32) }
+fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
+    COLORREF(((b as u32) << 16) | ((g as u32) << 8) | r as u32)
+}
 fn mix(a: (u8, u8, u8), b: (u8, u8, u8), t: f32) -> COLORREF {
     let f = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
     rgb(f(a.0, b.0), f(a.1, b.1), f(a.2, b.2))
 }
 fn fr(cw: i32, ch: i32, l: f64, t: f64, r: f64, b: f64) -> RECT {
-    RECT { left: (cw as f64 * l) as i32, top: (ch as f64 * t) as i32,
-           right: (cw as f64 * r) as i32, bottom: (ch as f64 * b) as i32 }
+    RECT {
+        left: (cw as f64 * l) as i32,
+        top: (ch as f64 * t) as i32,
+        right: (cw as f64 * r) as i32,
+        bottom: (ch as f64 * b) as i32,
+    }
 }
-unsafe fn mk_font(h: i32, w: i32, face: PCWSTR) -> HFONT { CreateFontW(h, 0, 0, 0, w, 0, 0, 0, 0, 0, 0, 0, 0, face) }
+unsafe fn mk_font(h: i32, w: i32, face: PCWSTR) -> HFONT {
+    CreateFontW(h, 0, 0, 0, w, 0, 0, 0, 0, 0, 0, 0, 0, face)
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mode = if args.get(1).map(|s| s.as_str()) == Some("controller") { Mode::Controller } else { Mode::Instrument };
+    let mode = if args.get(1).map(|s| s.as_str()) == Some("controller") {
+        Mode::Controller
+    } else {
+        Mode::Instrument
+    };
     let title = arg(&args, "--title").unwrap_or_else(|| "JUKEBOX".into());
-    let (accent, accent_rgb) = parse_color(&arg(&args, "--color").unwrap_or_else(|| "#3bd0ff".into()));
+    let (accent, accent_rgb) =
+        parse_color(&arg(&args, "--color").unwrap_or_else(|| "#3bd0ff".into()));
     let label = arg(&args, "--label").unwrap_or_else(|| "PART".into());
     let kind = match arg(&args, "--kind").as_deref() {
         Some("keys") => Kind::Keys,
@@ -247,64 +329,150 @@ fn main() {
         _ => Kind::Pad,
     };
     let wave = Wave::parse(&arg(&args, "--wave").unwrap_or_else(|| "sine".into()));
-    let root: f32 = arg(&args, "--root").and_then(|s| s.parse().ok()).unwrap_or(48.0);
-    let span: i32 = arg(&args, "--span").and_then(|s| s.parse().ok()).unwrap_or(KEYS_SPAN).clamp(1, 96);
-    let bpm: u32 = arg(&args, "--bpm").and_then(|s| s.parse().ok()).unwrap_or(120);
-    let dur_ms: u64 = arg(&args, "--dur-ms").and_then(|s| s.parse().ok()).unwrap_or(16000);
-    let tracks: Vec<(String, COLORREF)> = arg(&args, "--tracks").map(|s| s.split(',')
-        .filter_map(|t| { let mut it = t.splitn(2, '|'); Some((it.next()?.to_string(), parse_color(it.next().unwrap_or("#888")).0)) })
-        .collect()).unwrap_or_default();
+    let root: f32 = arg(&args, "--root")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(48.0);
+    let span: i32 = arg(&args, "--span")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(KEYS_SPAN)
+        .clamp(1, 96);
+    let bpm: u32 = arg(&args, "--bpm")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(120);
+    let dur_ms: u64 = arg(&args, "--dur-ms")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(16000);
+    let tracks: Vec<(String, COLORREF)> = arg(&args, "--tracks")
+        .map(|s| {
+            s.split(',')
+                .filter_map(|t| {
+                    let mut it = t.splitn(2, '|');
+                    Some((
+                        it.next()?.to_string(),
+                        parse_color(it.next().unwrap_or("#888")).0,
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     let audio = if mode == Mode::Instrument {
-        rodio::OutputStream::try_default().ok().map(|(s, h)| Audio { _stream: s, handle: h })
-    } else { None };
+        rodio::OutputStream::try_default().ok().map(|(s, h)| Audio {
+            _stream: s,
+            handle: h,
+        })
+    } else {
+        None
+    };
 
     unsafe {
         let hmod = GetModuleHandleW(None).unwrap();
         let class = w!("CuaJukeboxWindow");
         let bg = CreateSolidBrush(rgb(0x0b, 0x0c, 0x12));
-        let wc = WNDCLASSW { lpfnWndProc: Some(wnd_proc), hInstance: hmod.into(), lpszClassName: class,
-            hbrBackground: bg, hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(), ..Default::default() };
+        let wc = WNDCLASSW {
+            lpfnWndProc: Some(wnd_proc),
+            hInstance: hmod.into(),
+            lpszClassName: class,
+            hbrBackground: bg,
+            hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            ..Default::default()
+        };
         RegisterClassW(&wc);
 
-        STATE.with(|s| *s.borrow_mut() = Some(State {
-            mode, cw: 0, ch: 0, accent, accent_rgb, label,
-            f_title: HFONT::default(), f_label: HFONT::default(), f_big: HFONT::default(),
-            kind, wave, root, span, pulses: Vec::new(), pad_glow: 0.0, zone_glow: [0.0; 3], hits: 0, audio,
-            bpm, dur_ms, tracks, hbtn: HWND::default(),
-            playing: false, play_start: None, accum_ms: 0,
-        }));
+        STATE.with(|s| {
+            *s.borrow_mut() = Some(State {
+                mode,
+                cw: 0,
+                ch: 0,
+                accent,
+                accent_rgb,
+                label,
+                f_title: HFONT::default(),
+                f_label: HFONT::default(),
+                f_big: HFONT::default(),
+                kind,
+                wave,
+                root,
+                span,
+                pulses: Vec::new(),
+                pad_glow: 0.0,
+                zone_glow: [0.0; 3],
+                hits: 0,
+                audio,
+                bpm,
+                dur_ms,
+                tracks,
+                hbtn: HWND::default(),
+                playing: false,
+                play_start: None,
+                accum_ms: 0,
+            })
+        });
 
         let tw = wide(&title);
         // Fixed sizes the orchestrator also lays out against: a thin 600×80
         // transport bar, and tight 200×160 instrument tiles. Borderless
         // (WS_POPUP) so the tiles pack together with no caption/frame — the
         // whole client is the visualizer. (Esc on the focused transport quits.)
-        let (dw, dh) = if mode == Mode::Controller { (600, 80) } else { (200, 160) };
-        let hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), class, PCWSTR(tw.as_ptr()), WS_POPUP | WS_VISIBLE,
-            CW_USEDEFAULT, CW_USEDEFAULT, dw, dh, None, None, HINSTANCE(hmod.0), None).expect("CreateWindowExW");
+        let (dw, dh) = if mode == Mode::Controller {
+            (600, 80)
+        } else {
+            (200, 160)
+        };
+        let hwnd = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            class,
+            PCWSTR(tw.as_ptr()),
+            WS_POPUP | WS_VISIBLE,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            dw,
+            dh,
+            None,
+            None,
+            HINSTANCE(hmod.0),
+            None,
+        )
+        .expect("CreateWindowExW");
         let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
         SetTimer(hwnd, 1, 40, None); // ~25fps: glow fade / playhead (region-clipped)
 
         let mut msg = MSG::default();
-        while GetMessageW(&mut msg, None, 0, 0).as_bool() { let _ = TranslateMessage(&msg); DispatchMessageW(&msg); }
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
     }
 }
 
 unsafe fn relayout(hwnd: HWND, cw: i32, ch: i32) {
     STATE.with(|s| {
-        let mut b = s.borrow_mut(); let Some(st) = b.as_mut() else { return };
-        st.cw = cw; st.ch = ch;
-        for f in [st.f_title, st.f_label, st.f_big] { if !f.is_invalid() { let _ = DeleteObject(f); } }
-        let seg = wide("Segoe UI"); let mono = wide("Consolas");
+        let mut b = s.borrow_mut();
+        let Some(st) = b.as_mut() else { return };
+        st.cw = cw;
+        st.ch = ch;
+        for f in [st.f_title, st.f_label, st.f_big] {
+            if !f.is_invalid() {
+                let _ = DeleteObject(f);
+            }
+        }
+        let seg = wide("Segoe UI");
+        let mono = wide("Consolas");
         st.f_title = mk_font(-(ch / 16).clamp(14, 30), 800, PCWSTR(seg.as_ptr()));
         st.f_label = mk_font(-(ch / 26).clamp(11, 18), 500, PCWSTR(mono.as_ptr()));
-        st.f_big   = mk_font(-(ch / 9).clamp(20, 64), 800, PCWSTR(seg.as_ptr()));
+        st.f_big = mk_font(-(ch / 9).clamp(20, 64), 800, PCWSTR(seg.as_ptr()));
         if st.mode == Mode::Controller && !st.hbtn.0.is_null() {
             // Thin transport bar: one small square icon button at the left edge,
             // leaving room for the title. Big font so the ▶ / ⏸ glyph reads.
             let r = fr(cw, ch, 0.012, 0.16, 0.085, 0.84);
-            let _ = MoveWindow(st.hbtn, r.left, r.top, r.right - r.left, r.bottom - r.top, true);
+            let _ = MoveWindow(
+                st.hbtn,
+                r.left,
+                r.top,
+                r.right - r.left,
+                r.bottom - r.top,
+                true,
+            );
             SendMessageW(st.hbtn, WM_SETFONT, WPARAM(st.f_big.0 as usize), LPARAM(1));
         }
     });
@@ -318,10 +486,27 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRE
                 if STATE.with(|s| s.borrow().as_ref().map(|st| st.mode)) == Some(Mode::Controller) {
                     let hinst = HINSTANCE(GetModuleHandleW(None).unwrap().0);
                     let hbtn = CreateWindowExW(
-                        WINDOW_EX_STYLE(0), w!("BUTTON"), ICON_PLAY,
-                        WS_CHILD | WS_VISIBLE | WINDOW_STYLE((BS_PUSHBUTTON | BS_CENTER | BS_VCENTER) as u32),
-                        0, 0, 10, 10, hwnd, HMENU(ID_PLAY as *mut core::ffi::c_void), hinst, None).unwrap_or_default();
-                    STATE.with(|s| if let Some(st) = s.borrow_mut().as_mut() { st.hbtn = hbtn; });
+                        WINDOW_EX_STYLE(0),
+                        w!("BUTTON"),
+                        ICON_PLAY,
+                        WS_CHILD
+                            | WS_VISIBLE
+                            | WINDOW_STYLE((BS_PUSHBUTTON | BS_CENTER | BS_VCENTER) as u32),
+                        0,
+                        0,
+                        10,
+                        10,
+                        hwnd,
+                        HMENU(ID_PLAY as *mut core::ffi::c_void),
+                        hinst,
+                        None,
+                    )
+                    .unwrap_or_default();
+                    STATE.with(|s| {
+                        if let Some(st) = s.borrow_mut().as_mut() {
+                            st.hbtn = hbtn;
+                        }
+                    });
                     DragAcceptFiles(hwnd, true); // drop a .mid on the transport to load it
                 }
                 LRESULT(0)
@@ -337,10 +522,21 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRE
                 DragFinish(hdrop);
                 LRESULT(0)
             }
-            WM_SIZE => { let (cw, ch) = ((lp.0 & 0xFFFF) as i16 as i32, ((lp.0 >> 16) & 0xFFFF) as i16 as i32); if cw > 0 && ch > 0 { relayout(hwnd, cw, ch); } LRESULT(0) }
+            WM_SIZE => {
+                let (cw, ch) = (
+                    (lp.0 & 0xFFFF) as i16 as i32,
+                    ((lp.0 >> 16) & 0xFFFF) as i16 as i32,
+                );
+                if cw > 0 && ch > 0 {
+                    relayout(hwnd, cw, ch);
+                }
+                LRESULT(0)
+            }
             WM_COMMAND => {
                 let (id, code) = ((wp.0 & 0xFFFF) as isize, ((wp.0 >> 16) & 0xFFFF) as u32);
-                if code == BN_CLICKED && id == ID_PLAY { on_play_toggle(hwnd); }
+                if code == BN_CLICKED && id == ID_PLAY {
+                    on_play_toggle(hwnd);
+                }
                 LRESULT(0)
             }
             WM_LBUTTONDOWN => {
@@ -350,16 +546,28 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRE
                 }
                 LRESULT(0)
             }
-            WM_TIMER => { on_tick(hwnd); LRESULT(0) }
+            WM_TIMER => {
+                on_tick(hwnd);
+                LRESULT(0)
+            }
             // Esc quits (borderless windows have no close button); closing the
             // transport EOFs its stdout, which tears the whole demo down.
-            WM_KEYDOWN if wp.0 == 0x1B => { PostQuitMessage(0); LRESULT(0) }
+            WM_KEYDOWN if wp.0 == 0x1B => {
+                PostQuitMessage(0);
+                LRESULT(0)
+            }
             // We fully repaint every frame via a double-buffered WM_PAINT, so
             // suppress the default background erase — that erase-then-paint is
             // the other half of GDI flicker.
             WM_ERASEBKGND => LRESULT(1),
-            WM_PAINT => { paint(hwnd); LRESULT(0) }
-            WM_DESTROY => { PostQuitMessage(0); LRESULT(0) }
+            WM_PAINT => {
+                paint(hwnd);
+                LRESULT(0)
+            }
+            WM_DESTROY => {
+                PostQuitMessage(0);
+                LRESULT(0)
+            }
             _ => DefWindowProcW(hwnd, msg, wp, lp),
         }
     }
@@ -370,16 +578,25 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRE
 /// whether the click came from the human or — the point — from cua-driver.
 unsafe fn actuate(hwnd: HWND, x: i32) {
     STATE.with(|s| {
-        let mut b = s.borrow_mut(); let Some(st) = b.as_mut() else { return };
+        let mut b = s.borrow_mut();
+        let Some(st) = b.as_mut() else { return };
         let cw = st.cw.max(1) as f64;
         let frac = ((x as f64 / cw) - WX0) / (WX1 - WX0);
         let (key, freq, wave, vel) = match st.kind {
             Kind::Keys => {
-                let key = (frac * st.span as f64).floor().clamp(0.0, (st.span - 1) as f64) as i32;
+                let key = (frac * st.span as f64)
+                    .floor()
+                    .clamp(0.0, (st.span - 1) as f64) as i32;
                 // Each press is its OWN pulse, fading independently — a chord
                 // lights several keys at once, each on its own clock.
-                st.pulses.push(Pulse { key, inten: 1.0, age: 0.0 });
-                if st.pulses.len() > 32 { st.pulses.remove(0); }
+                st.pulses.push(Pulse {
+                    key,
+                    inten: 1.0,
+                    age: 0.0,
+                });
+                if st.pulses.len() > 32 {
+                    st.pulses.remove(0);
+                }
                 (key, midi_to_freq(st.root + key as f32), st.wave, 104.0)
             }
             Kind::Drums => {
@@ -397,7 +614,9 @@ unsafe fn actuate(hwnd: HWND, x: i32) {
             }
         };
         st.hits += 1;
-        if let Some(a) = &st.audio { let _ = a.handle.play_raw(Tone::note(wave, freq, vel)); }
+        if let Some(a) = &st.audio {
+            let _ = a.handle.play_raw(Tone::note(wave, freq, vel));
+        }
         // Heartbeat for the orchestrator / verification (stdout is null in
         // normal runs, so this is a no-op there).
         emit(&format!("HIT {} key={} {:.0}Hz", st.hits, key, freq));
@@ -410,16 +629,23 @@ unsafe fn actuate(hwnd: HWND, x: i32) {
 /// → play/resume. The icon flips ▶ ⇄ ⏸.
 unsafe fn on_play_toggle(hwnd: HWND) {
     STATE.with(|s| {
-        let mut b = s.borrow_mut(); let Some(st) = b.as_mut() else { return };
+        let mut b = s.borrow_mut();
+        let Some(st) = b.as_mut() else { return };
         if st.playing {
             // → pause: freeze position, show the ▶ (play/resume) icon.
-            if let Some(t0) = st.play_start { st.accum_ms += t0.elapsed().as_millis() as u64; }
-            st.playing = false; st.play_start = None;
-            emit("PAUSE"); let _ = SetWindowTextW(st.hbtn, ICON_PLAY);
+            if let Some(t0) = st.play_start {
+                st.accum_ms += t0.elapsed().as_millis() as u64;
+            }
+            st.playing = false;
+            st.play_start = None;
+            emit("PAUSE");
+            let _ = SetWindowTextW(st.hbtn, ICON_PLAY);
         } else {
             // → play/resume: show the ⏸ (pause) icon.
-            st.playing = true; st.play_start = Some(Instant::now());
-            emit("PLAY"); let _ = SetWindowTextW(st.hbtn, ICON_PAUSE);
+            st.playing = true;
+            st.play_start = Some(Instant::now());
+            emit("PLAY");
+            let _ = SetWindowTextW(st.hbtn, ICON_PAUSE);
         }
     });
     let _ = InvalidateRect(hwnd, None, true);
@@ -427,7 +653,10 @@ unsafe fn on_play_toggle(hwnd: HWND) {
 
 /// Current song position in ms (accumulated finished segments + the running one).
 fn position_ms(st: &State) -> u64 {
-    st.accum_ms + st.play_start.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0)
+    st.accum_ms
+        + st.play_start
+            .map(|t| t.elapsed().as_millis() as u64)
+            .unwrap_or(0)
 }
 
 unsafe fn on_tick(hwnd: HWND) {
@@ -436,37 +665,62 @@ unsafe fn on_tick(hwnd: HWND) {
     // — that frees DWM/GPU bandwidth for the agent-cursor overlay (which is the
     // expensive full-virtual-screen layered window the cursors live on).
     let region: Option<RECT> = STATE.with(|s| {
-        let mut b = s.borrow_mut(); let st = b.as_mut()?;
+        let mut b = s.borrow_mut();
+        let st = b.as_mut()?;
         let (cw, ch) = (st.cw.max(1), st.ch.max(1));
         match st.mode {
             Mode::Instrument => {
-                let had = !st.pulses.is_empty() || st.pad_glow > 0.01
+                let had = !st.pulses.is_empty()
+                    || st.pad_glow > 0.01
                     || st.zone_glow.iter().any(|&z| z > 0.01);
-                for p in st.pulses.iter_mut() { p.age += 0.040; p.inten *= 0.88; }
+                for p in st.pulses.iter_mut() {
+                    p.age += 0.040;
+                    p.inten *= 0.88;
+                }
                 st.pulses.retain(|p| p.inten > 0.03);
                 st.pad_glow *= 0.88;
-                if st.pad_glow < 0.01 { st.pad_glow = 0.0; }
-                for z in st.zone_glow.iter_mut() { *z *= 0.88; if *z < 0.01 { *z = 0.0; } }
+                if st.pad_glow < 0.01 {
+                    st.pad_glow = 0.0;
+                }
+                for z in st.zone_glow.iter_mut() {
+                    *z *= 0.88;
+                    if *z < 0.01 {
+                        *z = 0.0;
+                    }
+                }
                 had.then(|| fr(cw, ch, 0.0, WY0 - 0.03, 1.0, 1.0)) // widget band only
             }
             Mode::Controller => {
-                if !st.playing { return None; }
+                if !st.playing {
+                    return None;
+                }
                 if position_ms(st) > st.dur_ms + 250 {
                     // Song ended → reset to the top. Emit STOP so the orchestrator
                     // clears its playing flag + resets its resume offset to 0.
-                    st.playing = false; st.play_start = None; st.accum_ms = 0;
-                    emit("STOP"); let _ = SetWindowTextW(st.hbtn, ICON_PLAY);
+                    st.playing = false;
+                    st.play_start = None;
+                    st.accum_ms = 0;
+                    emit("STOP");
+                    let _ = SetWindowTextW(st.hbtn, ICON_PLAY);
                     return Some(fr(cw, ch, 0.0, 0.0, 1.0, 1.0)); // full repaint once
                 }
                 Some(fr(cw, ch, 0.0, 0.91, 1.0, 1.0)) // playhead bar only
             }
         }
     });
-    if let Some(r) = region { let _ = InvalidateRect(hwnd, Some(&r), false); }
+    if let Some(r) = region {
+        let _ = InvalidateRect(hwnd, Some(&r), false);
+    }
 }
 
-unsafe fn text(hdc: windows::Win32::Graphics::Gdi::HDC, r: RECT, s: &str, fmt: windows::Win32::Graphics::Gdi::DRAW_TEXT_FORMAT) {
-    let mut t = wide(s); let mut rr = r;
+unsafe fn text(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    r: RECT,
+    s: &str,
+    fmt: windows::Win32::Graphics::Gdi::DRAW_TEXT_FORMAT,
+) {
+    let mut t = wide(s);
+    let mut rr = r;
     DrawTextW(hdc, &mut t, &mut rr, fmt | DT_SINGLELINE);
 }
 
@@ -474,7 +728,8 @@ unsafe fn paint(hwnd: HWND) {
     let mut ps = PAINTSTRUCT::default();
     let hdc = BeginPaint(hwnd, &mut ps);
     STATE.with(|s| {
-        let b = s.borrow(); let Some(st) = b.as_ref() else { return };
+        let b = s.borrow();
+        let Some(st) = b.as_ref() else { return };
         let (cw, ch) = (st.cw.max(1), st.ch.max(1));
         // Double-buffer: build the whole frame in an off-screen DC, then blit it
         // to the window in one BitBlt. Painting straight to the window DC (with a
@@ -490,14 +745,21 @@ unsafe fn paint(hwnd: HWND) {
         let line = CreateSolidBrush(rgb(0x2a, 0x2d, 0x3e));
         let dim = rgb(0x6a, 0x6f, 0x85);
         let ink = rgb(0xe8, 0xea, 0xf2);
-        let full = RECT { left: 0, top: 0, right: cw, bottom: ch };
+        let full = RECT {
+            left: 0,
+            top: 0,
+            right: cw,
+            bottom: ch,
+        };
         FillRect(mem, &full, bg);
 
         match st.mode {
             Mode::Controller => paint_controller(mem, st, cw, ch, &panel, &line, ink, dim),
             Mode::Instrument => paint_instrument(mem, st, cw, ch, &panel, &line, ink, dim),
         }
-        for o in [bg, panel, line] { let _ = DeleteObject(o); }
+        for o in [bg, panel, line] {
+            let _ = DeleteObject(o);
+        }
 
         let _ = BitBlt(hdc, 0, 0, cw, ch, mem, 0, 0, SRCCOPY);
         SelectObject(mem, old);
@@ -507,14 +769,34 @@ unsafe fn paint(hwnd: HWND) {
     let _ = EndPaint(hwnd, &ps);
 }
 
-unsafe fn paint_controller(hdc: windows::Win32::Graphics::Gdi::HDC, st: &State, cw: i32, ch: i32, _panel: &HBRUSH, line: &HBRUSH, _ink: COLORREF, dim: COLORREF) {
+unsafe fn paint_controller(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    st: &State,
+    cw: i32,
+    ch: i32,
+    _panel: &HBRUSH,
+    line: &HBRUSH,
+    _ink: COLORREF,
+    dim: COLORREF,
+) {
     // Thin transport bar. A small icon play/pause button sits at the far left
     // (~9%); lay the rest out horizontally: title, bpm, track swatches, playhead.
-    SelectObject(hdc, st.f_title); SetTextColor(hdc, rgb(0xff, 0xff, 0xff));
-    text(hdc, fr(cw, ch, 0.11, 0.06, 0.55, 0.58), "CUA JUKEBOX", DT_LEFT | DT_VCENTER);
-    SelectObject(hdc, st.f_label); SetTextColor(hdc, dim);
-    text(hdc, fr(cw, ch, 0.115, 0.52, 0.55, 0.95),
-        &format!("{} parts · {} bpm", st.tracks.len(), st.bpm), DT_LEFT | DT_VCENTER);
+    SelectObject(hdc, st.f_title);
+    SetTextColor(hdc, rgb(0xff, 0xff, 0xff));
+    text(
+        hdc,
+        fr(cw, ch, 0.11, 0.06, 0.55, 0.58),
+        "CUA JUKEBOX",
+        DT_LEFT | DT_VCENTER,
+    );
+    SelectObject(hdc, st.f_label);
+    SetTextColor(hdc, dim);
+    text(
+        hdc,
+        fr(cw, ch, 0.115, 0.52, 0.55, 0.95),
+        &format!("{} parts · {} bpm", st.tracks.len(), st.bpm),
+        DT_LEFT | DT_VCENTER,
+    );
 
     // Row of track colour swatches (matches each instrument tile's colour).
     let n = st.tracks.len().max(1);
@@ -523,7 +805,9 @@ unsafe fn paint_controller(hdc: windows::Win32::Graphics::Gdi::HDC, st: &State, 
     for (i, (_name, col)) in st.tracks.iter().enumerate() {
         let sx = x0 + i as f64 * sw_w;
         let sw = fr(cw, ch, sx, 0.18, sx + sw_w * 0.7, 0.66);
-        let cb = CreateSolidBrush(*col); FillRect(hdc, &sw, cb); let _ = DeleteObject(cb);
+        let cb = CreateSolidBrush(*col);
+        FillRect(hdc, &sw, cb);
+        let _ = DeleteObject(cb);
     }
 
     // Playhead along the very bottom.
@@ -531,24 +815,58 @@ unsafe fn paint_controller(hdc: windows::Win32::Graphics::Gdi::HDC, st: &State, 
     FillRect(hdc, &bar, *line);
     let frac = (position_ms(st) as f64 / st.dur_ms.max(1) as f64).clamp(0.0, 1.0);
     if frac > 0.0 {
-        let mut fb = bar; fb.right = bar.left + ((bar.right - bar.left) as f64 * frac) as i32;
+        let mut fb = bar;
+        fb.right = bar.left + ((bar.right - bar.left) as f64 * frac) as i32;
         // Dim while paused, bright while playing.
-        let c = if st.playing { st.accent } else { mix((0x2a, 0x2d, 0x3e), st.accent_rgb, 0.45) };
-        let cb = CreateSolidBrush(c); FillRect(hdc, &fb, cb); let _ = DeleteObject(cb);
+        let c = if st.playing {
+            st.accent
+        } else {
+            mix((0x2a, 0x2d, 0x3e), st.accent_rgb, 0.45)
+        };
+        let cb = CreateSolidBrush(c);
+        FillRect(hdc, &fb, cb);
+        let _ = DeleteObject(cb);
     }
 }
 
-unsafe fn paint_instrument(hdc: windows::Win32::Graphics::Gdi::HDC, st: &State, cw: i32, ch: i32, _panel: &HBRUSH, line: &HBRUSH, ink: COLORREF, dim: COLORREF) {
+unsafe fn paint_instrument(
+    hdc: windows::Win32::Graphics::Gdi::HDC,
+    st: &State,
+    cw: i32,
+    ch: i32,
+    _panel: &HBRUSH,
+    line: &HBRUSH,
+    ink: COLORREF,
+    dim: COLORREF,
+) {
     let black = (0x0b, 0x0c, 0x12);
     // header: swatch + label + hits
     let sw = fr(cw, ch, 0.06, 0.09, 0.10, 0.17);
-    let cb = CreateSolidBrush(st.accent); FillRect(hdc, &sw, cb); let _ = DeleteObject(cb);
-    SelectObject(hdc, st.f_title); SetTextColor(hdc, ink);
-    text(hdc, fr(cw, ch, 0.13, 0.07, 0.78, 0.20), &st.label, DT_LEFT | DT_VCENTER);
-    SelectObject(hdc, st.f_label); SetTextColor(hdc, dim);
-    text(hdc, fr(cw, ch, 0.60, 0.07, 0.95, 0.20), &format!("{}♪", st.hits), DT_LEFT | DT_VCENTER);
+    let cb = CreateSolidBrush(st.accent);
+    FillRect(hdc, &sw, cb);
+    let _ = DeleteObject(cb);
+    SelectObject(hdc, st.f_title);
+    SetTextColor(hdc, ink);
+    text(
+        hdc,
+        fr(cw, ch, 0.13, 0.07, 0.78, 0.20),
+        &st.label,
+        DT_LEFT | DT_VCENTER,
+    );
+    SelectObject(hdc, st.f_label);
+    SetTextColor(hdc, dim);
+    text(
+        hdc,
+        fr(cw, ch, 0.60, 0.07, 0.95, 0.20),
+        &format!("{}♪", st.hits),
+        DT_LEFT | DT_VCENTER,
+    );
 
-    let frame = |r: &RECT, c: COLORREF| { let br = CreateSolidBrush(c); FrameRect(hdc, r, HBRUSH(br.0)); let _ = DeleteObject(br); };
+    let frame = |r: &RECT, c: COLORREF| {
+        let br = CreateSolidBrush(c);
+        FrameRect(hdc, r, HBRUSH(br.0));
+        let _ = DeleteObject(br);
+    };
     let panel_bg = (0x20, 0x23, 0x30);
 
     match st.kind {
@@ -558,11 +876,25 @@ unsafe fn paint_instrument(hdc: windows::Win32::Graphics::Gdi::HDC, st: &State, 
             let g = st.pad_glow.clamp(0.0, 1.0);
             let pad = fr(cw, ch, WX0 + 0.10, WY0, WX1 - 0.10, WY1);
             let body = mix(panel_bg, st.accent_rgb, g * 0.9);
-            let bb = CreateSolidBrush(body); FillRect(hdc, &pad, bb); let _ = DeleteObject(bb);
+            let bb = CreateSolidBrush(body);
+            FillRect(hdc, &pad, bb);
+            let _ = DeleteObject(bb);
             frame(&pad, st.accent);
             SelectObject(hdc, st.f_big);
-            SetTextColor(hdc, if g > 0.4 { rgb(black.0, black.1, black.2) } else { st.accent });
-            let cap = match st.wave { Wave::Kick => "KICK", Wave::Snare => "SNARE", Wave::Hat => "HAT", _ => "PAD" };
+            SetTextColor(
+                hdc,
+                if g > 0.4 {
+                    rgb(black.0, black.1, black.2)
+                } else {
+                    st.accent
+                },
+            );
+            let cap = match st.wave {
+                Wave::Kick => "KICK",
+                Wave::Snare => "SNARE",
+                Wave::Hat => "HAT",
+                _ => "PAD",
+            };
             text(hdc, pad, cap, DT_CENTER | DT_VCENTER);
         }
         Kind::Keys => {
@@ -572,17 +904,40 @@ unsafe fn paint_instrument(hdc: windows::Win32::Graphics::Gdi::HDC, st: &State, 
             let w = (strip.right - strip.left) as f64 / span as f64;
             for k in 0..span {
                 let kx = strip.left + (k as f64 * w) as i32;
-                let cell = RECT { left: kx + 1, top: strip.top + 1, right: kx + w as i32 - 1, bottom: strip.bottom - 1 };
+                let cell = RECT {
+                    left: kx + 1,
+                    top: strip.top + 1,
+                    right: kx + w as i32 - 1,
+                    bottom: strip.bottom - 1,
+                };
                 // Each cell glows by the brightest pulse on THAT key — so a chord
                 // lights several cells at once, each fading independently.
-                let inten = st.pulses.iter().filter(|p| p.key == k).map(|p| p.inten).fold(0.0_f32, f32::max);
-                let c = if inten > 0.02 { mix(panel_bg, st.accent_rgb, inten) }
-                        else if k % 12 == 0 { rgb(0x20, 0x23, 0x30) } else { rgb(0x18, 0x1a, 0x24) };
-                let bb = CreateSolidBrush(c); FillRect(hdc, &cell, bb); let _ = DeleteObject(bb);
+                let inten = st
+                    .pulses
+                    .iter()
+                    .filter(|p| p.key == k)
+                    .map(|p| p.inten)
+                    .fold(0.0_f32, f32::max);
+                let c = if inten > 0.02 {
+                    mix(panel_bg, st.accent_rgb, inten)
+                } else if k % 12 == 0 {
+                    rgb(0x20, 0x23, 0x30)
+                } else {
+                    rgb(0x18, 0x1a, 0x24)
+                };
+                let bb = CreateSolidBrush(c);
+                FillRect(hdc, &cell, bb);
+                let _ = DeleteObject(bb);
             }
             frame(&strip, st.accent);
-            SelectObject(hdc, st.f_label); SetTextColor(hdc, dim);
-            text(hdc, fr(cw, ch, WX0, WY1 + 0.005, WX1, 0.99), "pitch ◄ low · high ►", DT_CENTER | DT_VCENTER);
+            SelectObject(hdc, st.f_label);
+            SetTextColor(hdc, dim);
+            text(
+                hdc,
+                fr(cw, ch, WX0, WY1 + 0.005, WX1, 0.99),
+                "pitch ◄ low · high ►",
+                DT_CENTER | DT_VCENTER,
+            );
         }
         Kind::Drums => {
             // Three pads — KICK · SNARE · HAT — each its own impulse/fade glow.
@@ -594,9 +949,18 @@ unsafe fn paint_instrument(hdc: windows::Win32::Graphics::Gdi::HDC, st: &State, 
                 let pad = fr(cw, ch, zx0 + 0.01, WY0, zx1 - 0.01, WY1);
                 let g = st.zone_glow[z].clamp(0.0, 1.0);
                 let body = mix(panel_bg, st.accent_rgb, g * 0.9);
-                let bb = CreateSolidBrush(body); FillRect(hdc, &pad, bb); let _ = DeleteObject(bb);
+                let bb = CreateSolidBrush(body);
+                FillRect(hdc, &pad, bb);
+                let _ = DeleteObject(bb);
                 frame(&pad, st.accent);
-                SetTextColor(hdc, if g > 0.4 { rgb(black.0, black.1, black.2) } else { st.accent });
+                SetTextColor(
+                    hdc,
+                    if g > 0.4 {
+                        rgb(black.0, black.1, black.2)
+                    } else {
+                        st.accent
+                    },
+                );
                 text(hdc, pad, caps[z], DT_CENTER | DT_VCENTER);
             }
         }

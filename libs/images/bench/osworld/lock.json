@@ -1,0 +1,33 @@
+{
+  "id": "osworld",
+  "version": "verified",
+  "repository": "ghcr.io/trycua/bench-osworld",
+  "visibility": "public",
+  "sources": [
+    "hf://datasets/xlangai/ubuntu_osworld@a5d9c3eaae98eebf6e3a0beb84e7e47cf72ae133/Ubuntu.qcow2.zip#sha256:b795b6cd4c69b252c1b4f10150a347795555032501b60fd031751ed09b896712",
+    "https://files.pythonhosted.org/packages/py2.py3/s/supervisor/supervisor-4.3.0-py2.py3-none-any.whl#sha256:0bcb763fddafba410f35cbde226aa7f8514b9fb82eb05a0c85f6588d1c13f8db",
+    "https://archive.ubuntu.com/ubuntu/pool/main/x/xserver-xorg-video-dummy/xserver-xorg-video-dummy_0.3.8-2build1_amd64.deb#sha256:2ef60bd404142f7bb3d77a2886ac89d8a0dabc101d87ce7496ebe45f19ae8fc3"
+  ],
+  "stamp": "20260924-93d6b29",
+  "dry_run": false,
+  "promoted": false,
+  "index": {
+    "ref": "ghcr.io/trycua/bench-osworld:verified-20260924-93d6b29",
+    "digest": "sha256:afe8e25fdda48cc71c60a6118a1bdfa0235352f311d27b271c5b7f5711f9001a",
+    "floating": "ghcr.io/trycua/bench-osworld:verified"
+  },
+  "disk_index": {
+    "ref": "ghcr.io/trycua/bench-osworld:verified-disk-20260924-93d6b29",
+    "digest": "sha256:b455e0cfd34a83ea95d22ff374781b6c8007714e2cd9ec8f2382550cdca072ba",
+    "floating": "ghcr.io/trycua/bench-osworld:verified-disk"
+  },
+  "children": [
+    {
+      "arch": "amd64",
+      "rootfs": "sha256:ae7ca8f7909d74abeedf5116289b5a7b66e26bfc9cbcbb2215cdb57e7338b732",
+      "containerdisk": "sha256:b319550c5ccd00e0f92996a5664ac22a96af6402772b636df300f5f2d8570d93"
+    }
+  ],
+  "pinned": "ghcr.io/trycua/bench-osworld@sha256:afe8e25fdda48cc71c60a6118a1bdfa0235352f311d27b271c5b7f5711f9001a",
+  "written": "2026-09-24T09:35:04Z"
+}

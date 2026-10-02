@@ -1,0 +1,14 @@
+#!/bin/sh
+# Chromium as the desktop session starts it: with its own sandbox wherever the
+# runtime allows one, and with --no-sandbox only where start-desktop found no
+# unprivileged user namespaces (docker's default seccomp profile), the same
+# rule cua-driver's browser tools follow (CUA_DRIVER_BROWSER_NO_SANDBOX).
+# image.json's launch_app claim and the XFCE web-browser helper use this.
+env_file="${XDG_RUNTIME_DIR:-/run/cua-desktop}/desktop.env"
+if [ -z "${CUA_DRIVER_BROWSER_NO_SANDBOX:-}" ] && [ -r "$env_file" ]; then
+    CUA_DRIVER_BROWSER_NO_SANDBOX="$(sed -n 's/^CUA_DRIVER_BROWSER_NO_SANDBOX=//p' "$env_file" | tail -1)"
+fi
+if [ "${CUA_DRIVER_BROWSER_NO_SANDBOX:-}" = 1 ]; then
+    exec /usr/bin/chromium --no-sandbox "$@"
+fi
+exec /usr/bin/chromium "$@"

@@ -1,0 +1,495 @@
+name: "Image doctor"
+
+# Runs `cua-spacesd doctor` (the image self-test: capabilities against the
+# image's /etc/cua-image/manifest.json claims, input/screenshot/a11y on
+# doctor-owned fixture windows, every compiled encoder, audio, auth mode,
+# init units, compat links) against image refs, one job per lane.
+# Callable from other workflows (cd-image-linux.yml, the nightly,
+# trycua/cloud) and by hand. Refs are pulled from their registry, or, when
+# the caller passes rootfs_artifact / disk_artifact, loaded from artifacts of
+# the calling run (cd-image-linux.yml gates unpublished builds that way, so
+# nothing is pushed before every gate passed). The lane logic is scripts/images/image-doctor-lane.sh,
+# the same script the build job runs before pushing.
+#
+# Lanes:
+#   runc, runsc     rootfs under docker / gVisor, native runner per arch
+#   conformance     the 22 core + 11 desktop conformance tests against the
+#                   real spacesd in the image (runc and runsc)
+#   claim-token     the Fleet per-claim token path in a container (runc and
+#                   runsc): await-token-file install / rotate / revoke
+#   qemu            the containerDisk payload booted under QEMU+KVM, doctor
+#                   over ssh as root; also once with the token delivered
+#                   through a real virtio-fs claim-secrets share
+#   windows         the Windows containerDisk under QEMU+KVM (hosted ubuntu-24.04
+#                   exposes /dev/kvm; vars.CUA_WINDOWS_DOCTOR_RUNNER overrides the
+#                   runner): `cua-spacesd doctor` in the guest, or the doctor
+#                   shim for images without cua-spacesd
+#   parity          eval parity (Linux, amd64+KVM): the rootfs under gVisor and
+#                   the containerDisk under QEMU side by side; doctor on both,
+#                   fidelity diff, and the same evaluator score for each task
+#                   in oracle/null/partial modes (`cua doctor parity`)
+#   lume            macOS golden under Lume on a self-hosted Mac, doctor
+#                   shim or cua-spacesd when the image ships it
+#                   (gated: vars.CUA_MACOS_LUME_RUNNER)
+# arm64 QEMU needs KVM, which hosted arm64 runners lack: it runs only on
+# vars.CUA_ARM64_KVM_RUNNER (a self-hosted Graviton metal label).
+#
+# Tiers: callers gate each tier on its own by calling this once per tier
+# (cd-image-linux.yml doctor-post: name linux-slim-post / linux-full-post;
+# nightly-image-doctor.yml runs 24.04 and 24.04-slim). The doctor enforces
+# each tier's own claims (/etc/cua-image/manifest.json `tier`, `apps`,
+# `tools`).
+#
+# Every lane uploads doctor-<name>-<arch>-<lane> (report.json, JUnit, logs);
+# the summary job renders one table and fails when any lane failed.
+
+on:
+  workflow_call:
+    inputs:
+      rootfs_ref:
+        description: "Digest-pinned rootfs ref (runc, runsc, conformance, claim-token lanes)"
+        type: string
+        default: ""
+      disk_ref:
+        description: "Digest-pinned containerDisk ref (qemu lanes; /disk/disk.img is extracted)"
+        type: string
+        default: ""
+      rootfs_artifact:
+        description: "Artifact of the calling run holding rootfs.tar.zst (docker save of rootfs_ref); loaded instead of pulled"
+        type: string
+        default: ""
+      disk_artifact:
+        description: "Artifact of the calling run holding disk.img; used instead of extracting disk_ref"
+        type: string
+        default: ""
+      arch:
+        description: "amd64 or arm64"
+        type: string
+        default: amd64
+      name:
+        description: "Short image name for artifact names"
+        type: string
+        default: image
+      lanes:
+        description: "Comma-separated lanes"
+        type: string
+        default: "runc,runsc,qemu"
+      strict:
+        type: boolean
+        default: true
+      windows_ref:
+        type: string
+        default: ""
+      macos_ref:
+        type: string
+        default: ""
+    outputs:
+      status:
+        description: "pass or fail"
+        value: ${{ jobs.summary.outputs.status }}
+  workflow_dispatch:
+    inputs:
+      rootfs_ref:
+        type: string
+        default: ""
+      disk_ref:
+        type: string
+        default: ""
+      arch:
+        type: choice
+        options: [amd64, arm64]
+        default: amd64
+      name:
+        type: string
+        default: image
+      lanes:
+        type: string
+        default: "runc,runsc,qemu"
+      strict:
+        type: boolean
+        default: true
+      windows_ref:
+        type: string
+        default: ""
+      macos_ref:
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_BUILD_JOBS: "4"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      container: ${{ steps.plan.outputs.container }}
+      qemu: ${{ steps.plan.outputs.qemu }}
+      qemu_runner: ${{ steps.plan.outputs.qemu_runner }}
+      conformance: ${{ steps.plan.outputs.conformance }}
+      claim: ${{ steps.plan.outputs.claim }}
+      parity: ${{ steps.plan.outputs.parity }}
+      windows: ${{ steps.plan.outputs.windows }}
+      windows_runner: ${{ steps.plan.outputs.windows_runner }}
+      lume: ${{ steps.plan.outputs.lume }}
+    steps:
+      - id: plan
+        env:
+          LANES: ${{ inputs.lanes }}
+          ARCH: ${{ inputs.arch }}
+          ROOTFS: ${{ inputs.rootfs_ref }}
+          DISK: ${{ inputs.disk_ref }}
+          ARM_KVM: ${{ vars.CUA_ARM64_KVM_RUNNER }}
+          WIN_RUNNER: ${{ vars.CUA_WINDOWS_DOCTOR_RUNNER }}
+          LUME_RUNNER: ${{ vars.CUA_MACOS_LUME_RUNNER }}
+          WINDOWS_REF: ${{ inputs.windows_ref }}
+          MACOS_REF: ${{ inputs.macos_ref }}
+        run: |
+          set -euo pipefail
+          has() { [[ ",$LANES," == *",$1,"* ]]; }
+          container='[]'
+          for lane in runc runsc; do
+            if has "$lane" && [ -n "$ROOTFS" ]; then container="$(jq -c --arg l "$lane" '. + [$l]' <<<"$container")"; fi
+          done
+          echo "container=$container" >>"$GITHUB_OUTPUT"
+          qemu=false; runner=ubuntu-24.04
+          if has qemu && [ -n "$DISK" ]; then
+            if [ "$ARCH" = amd64 ]; then qemu=true
+            elif [ -n "$ARM_KVM" ]; then qemu=true; runner="$ARM_KVM"
+            else echo "::notice::arm64 QEMU lane skipped: set vars.CUA_ARM64_KVM_RUNNER to a KVM-capable arm64 runner label"
+            fi
+          fi
+          echo "qemu=$qemu" >>"$GITHUB_OUTPUT"
+          echo "qemu_runner=$runner" >>"$GITHUB_OUTPUT"
+          conformance=false; has conformance && [ -n "$ROOTFS" ] && conformance=true
+          echo "conformance=$conformance" >>"$GITHUB_OUTPUT"
+          claim=false; has claim-token && [ -n "$ROOTFS" ] && claim=true
+          echo "claim=$claim" >>"$GITHUB_OUTPUT"
+          parity=false
+          if has parity && [ -n "$ROOTFS" ] && [ -n "$DISK" ]; then
+            if [ "$ARCH" = amd64 ]; then parity=true
+            else echo "::notice::parity lane runs on amd64 (KVM) only"; fi
+          fi
+          echo "parity=$parity" >>"$GITHUB_OUTPUT"
+          windows=false
+          if has windows && [ -n "$WINDOWS_REF" ]; then windows=true; fi
+          echo "windows=$windows" >>"$GITHUB_OUTPUT"
+          echo "windows_runner=${WIN_RUNNER:-ubuntu-24.04}" >>"$GITHUB_OUTPUT"
+          lume=false
+          if has lume && [ -n "$MACOS_REF" ]; then
+            if [ -n "$LUME_RUNNER" ]; then lume=true
+            else echo "::notice::lume lane skipped: needs a self-hosted Mac with Lume (vars.CUA_MACOS_LUME_RUNNER)"; fi
+          fi
+          echo "lume=$lume" >>"$GITHUB_OUTPUT"
+
+  container:
+    needs: plan
+    if: needs.plan.outputs.container != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: ${{ fromJSON(needs.plan.outputs.container) }}
+    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install gVisor
+        if: matrix.lane == 'runsc'
+        run: scripts/images/install-gvisor.sh
+      - name: Fetch the rootfs artifact
+        if: inputs.rootfs_artifact != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ inputs.rootfs_artifact }}
+          path: ${{ runner.temp }}/rootfs
+      - name: Load or pull
+        env:
+          REF: ${{ inputs.rootfs_ref }}
+          ARTIFACT: ${{ inputs.rootfs_artifact }}
+        run: scripts/images/load-image-artifact.sh "$REF" "${ARTIFACT:+$RUNNER_TEMP/rootfs/rootfs.tar.zst}"
+      - name: Doctor (${{ matrix.lane }})
+        run: |
+          scripts/images/image-doctor-lane.sh --lane "${{ matrix.lane }}" --image "${{ inputs.rootfs_ref }}" \
+            --out "$RUNNER_TEMP/doctor" ${{ inputs.strict && '--strict' || '--no-strict' }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: doctor-${{ inputs.name }}-${{ inputs.arch }}-${{ matrix.lane }}
+          path: ${{ runner.temp }}/doctor
+          if-no-files-found: warn
+          retention-days: 30
+
+  conformance:
+    needs: plan
+    if: needs.plan.outputs.conformance == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [runc, runsc]
+    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install gVisor
+        if: matrix.runtime == 'runsc'
+        run: scripts/images/install-gvisor.sh
+      - name: Build the conformance client image
+        run: docker build -t cua-envdesktop-test libs/cua-spacesd/crates/cua-spacesd-desktop/tests/docker
+      - name: Fetch the rootfs artifact
+        if: inputs.rootfs_artifact != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ inputs.rootfs_artifact }}
+          path: ${{ runner.temp }}/rootfs
+      - name: Load or pull
+        env:
+          REF: ${{ inputs.rootfs_ref }}
+          ARTIFACT: ${{ inputs.rootfs_artifact }}
+        run: scripts/images/load-image-artifact.sh "$REF" "${ARTIFACT:+$RUNNER_TEMP/rootfs/rootfs.tar.zst}"
+      - name: Core (22) + desktop (11) conformance against the image's spacesd
+        run: |
+          libs/cua-spacesd/crates/cua-spacesd-desktop/tests/docker/run-against-image.sh "${{ matrix.runtime }}" "${{ inputs.rootfs_ref }}"
+
+  claim-token:
+    needs: plan
+    if: needs.plan.outputs.claim == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [runc, runsc]
+    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install gVisor
+        if: matrix.runtime == 'runsc'
+        run: scripts/images/install-gvisor.sh
+      - name: Fetch the rootfs artifact
+        if: inputs.rootfs_artifact != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ inputs.rootfs_artifact }}
+          path: ${{ runner.temp }}/rootfs
+      - name: Load or pull
+        env:
+          REF: ${{ inputs.rootfs_ref }}
+          ARTIFACT: ${{ inputs.rootfs_artifact }}
+        run: scripts/images/load-image-artifact.sh "$REF" "${ARTIFACT:+$RUNNER_TEMP/rootfs/rootfs.tar.zst}"
+      - name: Per-claim token path (await-token-file)
+        run: |
+          libs/images/linux/smoke-claim-token.sh --image "${{ inputs.rootfs_ref }}" \
+            --runtime "${{ matrix.runtime }}" --evidence "$RUNNER_TEMP/claim-token"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: claim-token-${{ inputs.name }}-${{ inputs.arch }}-${{ matrix.runtime }}
+          path: ${{ runner.temp }}/claim-token
+          if-no-files-found: ignore
+          retention-days: 14
+
+  qemu:
+    needs: plan
+    if: needs.plan.outputs.qemu == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [env-token, claim-secrets]
+    runs-on: ${{ needs.plan.outputs.qemu_runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install QEMU, firmware, virtiofsd and crane
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          fw=ovmf; [ "${{ inputs.arch }}" = arm64 ] && fw=qemu-efi-aarch64
+          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 qemu-system-arm "$fw" genisoimage virtiofsd
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+      - name: Fetch the disk artifact
+        if: inputs.disk_artifact != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ inputs.disk_artifact }}
+          path: ${{ runner.temp }}/disk/disk
+      - name: Extract disk.img from the containerDisk
+        if: inputs.disk_artifact == ''
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/disk"
+          crane export --platform "linux/${{ inputs.arch }}" "${{ inputs.disk_ref }}" - | tar -x -C "$RUNNER_TEMP/disk" disk/disk.img
+          ls -la "$RUNNER_TEMP/disk/disk"
+      - name: Doctor in the VM (${{ matrix.mode }})
+        run: |
+          claim=(); [ "${{ matrix.mode }}" = claim-secrets ] && claim=(--claim-secrets)
+          scripts/images/image-doctor-lane.sh --lane qemu --disk "$RUNNER_TEMP/disk/disk/disk.img" \
+            --arch "${{ inputs.arch }}" --out "$RUNNER_TEMP/doctor" "${claim[@]}" \
+            ${{ inputs.strict && '--strict' || '--no-strict' }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: doctor-${{ inputs.name }}-${{ inputs.arch }}-qemu-${{ matrix.mode }}
+          path: ${{ runner.temp }}/doctor
+          if-no-files-found: warn
+          retention-days: 30
+
+  parity:
+    needs: plan
+    if: needs.plan.outputs.parity == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install QEMU, gVisor, crane and protoc
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 genisoimage protobuf-compiler libprotobuf-dev
+          sudo chmod 666 /dev/kvm
+          scripts/images/install-gvisor.sh
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+      - name: Build the cua CLI
+        working-directory: libs/cua
+        run: cargo build --release --locked -p cua-cli
+      - name: Fetch the rootfs artifact
+        if: inputs.rootfs_artifact != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ inputs.rootfs_artifact }}
+          path: ${{ runner.temp }}/rootfs
+      - name: Fetch the disk artifact
+        if: inputs.disk_artifact != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ inputs.disk_artifact }}
+          path: ${{ runner.temp }}/disk/disk
+      - name: Parity (rootfs under gVisor vs containerDisk under QEMU)
+        env:
+          ARTIFACT: ${{ inputs.rootfs_artifact }}
+          DISK_ARTIFACT: ${{ inputs.disk_artifact }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DISK_ARTIFACT" ]; then
+            mkdir -p "$RUNNER_TEMP/disk"
+            crane export --platform linux/amd64 "${{ inputs.disk_ref }}" - | tar -x -C "$RUNNER_TEMP/disk" disk/disk.img
+          fi
+          scripts/images/load-image-artifact.sh "${{ inputs.rootfs_ref }}" "${ARTIFACT:+$RUNNER_TEMP/rootfs/rootfs.tar.zst}"
+          scripts/images/image-parity-lane.sh --rootfs "${{ inputs.rootfs_ref }}" \
+            --disk "$RUNNER_TEMP/disk/disk/disk.img" --arch amd64 --runtime runsc \
+            --cua libs/cua/target/release/cua --out "$RUNNER_TEMP/parity"
+      - name: Summary
+        if: always()
+        run: cat "$RUNNER_TEMP/parity/parity.md" >>"$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: parity-${{ inputs.name }}-amd64
+          path: ${{ runner.temp }}/parity
+          if-no-files-found: warn
+          retention-days: 30
+
+  windows:
+    needs: plan
+    if: needs.plan.outputs.windows == 'true'
+    # Hosted ubuntu-24.04 runners expose /dev/kvm; a 2 vCPU / 7 GB runner
+    # boots the guest with 4 GiB (cd-image-windows.yml does the same).
+    runs-on: ${{ needs.plan.outputs.windows_runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+      - name: Install QEMU, OVMF, crane and grpcurl
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf
+          sudo chmod 666 /dev/kvm
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          go install github.com/fullstorydev/grpcurl/cmd/grpcurl@v1.9.3
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+      - name: Build the cua CLI (doctor shim, images without cua-spacesd)
+        working-directory: libs/cua
+        run: |
+          if crane manifest "${{ inputs.windows_ref }}" | jq -e '.annotations["ai.cua.spacesd"] == "true"' >/dev/null; then
+            echo "the image runs cua-spacesd; no shim needed"; exit 0
+          fi
+          cargo build --release --locked -p cua-cli
+      - name: Boot the Windows disk and run the doctor
+        run: |
+          cua=(); [ -x libs/cua/target/release/cua ] && cua=(--cua libs/cua/target/release/cua)
+          scripts/images/image-doctor-windows.sh --image "${{ inputs.windows_ref }}" "${cua[@]}" \
+            --mem 4G --smp "$(nproc)" --out "$RUNNER_TEMP/doctor" \
+            ${{ inputs.strict && '--strict' || '' }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: doctor-${{ inputs.name }}-amd64-windows
+          path: ${{ runner.temp }}/doctor
+          if-no-files-found: warn
+          retention-days: 30
+
+  lume:
+    needs: plan
+    if: needs.plan.outputs.lume == 'true'
+    runs-on: ${{ fromJSON(format('["self-hosted","macOS","ARM64","{0}"]', vars.CUA_MACOS_LUME_RUNNER)) }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Build the cua CLI
+        working-directory: libs/cua
+        run: cargo build --release --locked -p cua-cli
+      - name: Clone, boot and doctor the macOS image under Lume
+        run: |
+          scripts/images/image-doctor-lume.sh --image "${{ inputs.macos_ref }}" \
+            --cua libs/cua/target/release/cua --out "$RUNNER_TEMP/doctor" \
+            ${{ inputs.strict && '--strict' || '' }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: doctor-${{ inputs.name }}-arm64-lume
+          path: ${{ runner.temp }}/doctor
+          if-no-files-found: warn
+          retention-days: 30
+
+  summary:
+    needs: [plan, container, conformance, claim-token, qemu, parity, windows, lume]
+    if: always()
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.verdict.outputs.status }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: doctor-${{ inputs.name }}-*
+          path: reports
+      - name: Summary
+        run: python3 scripts/images/doctor_ledger.py summary reports >>"$GITHUB_STEP_SUMMARY"
+      - id: verdict
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          # A lane that ran and failed fails the gate; skipped lanes (gated
+          # on missing infra) do not.
+          bad="$(jq -r 'to_entries[] | select(.key != "plan") | select(.value.result == "failure" or .value.result == "cancelled") | .key' <<<"$RESULTS")"
+          if [ -n "$bad" ]; then
+            echo "status=fail" >>"$GITHUB_OUTPUT"
+            echo "failed lanes: $bad"; exit 1
+          fi
+          echo "status=pass" >>"$GITHUB_OUTPUT"

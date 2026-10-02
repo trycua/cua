@@ -1,0 +1,589 @@
+{
+  "schema": "cua.transcript.frame/1",
+  "cast": "claude-tool-error",
+  "instant": "read-failed",
+  "cli": "claude",
+  "cli_version": "2.1.278 (Claude Code)",
+  "columns": 100,
+  "rows": 34,
+  "requested_time_ms": 30000,
+  "effective_time_ms": 12483,
+  "events_applied": 55,
+  "unsupported_sequences": 0,
+  "unsupported_resize": false,
+  "alternate_screen": true,
+  "window_title": "✳ definitely-not-here.txt",
+  "cursor": {
+    "row": 31,
+    "column": 2,
+    "visible": true
+  },
+  "lines": [
+    "",
+    "▗ ▗   ▖ ▖  Claude Code v2.1.278",
+    "           Opus 5 (1M context) with low effort · Claude Max",
+    "  ▘▘ ▝▝    /private/tmp/cua-cast-sandbox",
+    "",
+    "",
+    "❯ Read the file ./definitely-not-here.txt and tell me exactly what happened.",
+    "",
+    "  Read 1 file",
+    "",
+    "⏺ I tried to read /private/tmp/cua-cast-sandbox/definitely-not-here.txt and the read failed: \"File",
+    "  does not exist.\" Nothing was created or changed. If you meant a file elsewhere or under a",
+    "  different name, tell me and I'll look.",
+    "",
+    "✻ Cooked for 3s · done 6:00 PM",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ list the files in this directory",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  ⏵⏵ accept edits on (shift+tab to cycle) · ← for agents"
+  ],
+  "attributes": [
+    {
+      "row": 1,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          2,
+          "dim"
+        ],
+        [
+          6,
+          6,
+          "dim"
+        ],
+        [
+          8,
+          8,
+          "dim"
+        ],
+        [
+          11,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          21,
+          "dim"
+        ],
+        [
+          23,
+          30,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 2,
+      "runs": [
+        [
+          11,
+          14,
+          "dim"
+        ],
+        [
+          16,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          20,
+          "dim"
+        ],
+        [
+          22,
+          29,
+          "dim"
+        ],
+        [
+          31,
+          34,
+          "dim"
+        ],
+        [
+          36,
+          38,
+          "dim"
+        ],
+        [
+          40,
+          45,
+          "dim"
+        ],
+        [
+          47,
+          47,
+          "dim"
+        ],
+        [
+          49,
+          54,
+          "dim"
+        ],
+        [
+          56,
+          58,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 3,
+      "runs": [
+        [
+          2,
+          3,
+          "dim"
+        ],
+        [
+          5,
+          6,
+          "dim"
+        ],
+        [
+          11,
+          39,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 6,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          5,
+          "dim"
+        ],
+        [
+          7,
+          9,
+          "dim"
+        ],
+        [
+          11,
+          14,
+          "dim"
+        ],
+        [
+          16,
+          40,
+          "dim"
+        ],
+        [
+          42,
+          44,
+          "dim"
+        ],
+        [
+          46,
+          49,
+          "dim"
+        ],
+        [
+          51,
+          52,
+          "dim"
+        ],
+        [
+          54,
+          60,
+          "dim"
+        ],
+        [
+          62,
+          65,
+          "dim"
+        ],
+        [
+          67,
+          75,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 8,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          12,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 10,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          2,
+          "dim"
+        ],
+        [
+          4,
+          8,
+          "dim"
+        ],
+        [
+          10,
+          11,
+          "dim"
+        ],
+        [
+          13,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          70,
+          "dim"
+        ],
+        [
+          72,
+          74,
+          "dim"
+        ],
+        [
+          76,
+          78,
+          "dim"
+        ],
+        [
+          80,
+          83,
+          "dim"
+        ],
+        [
+          85,
+          91,
+          "dim"
+        ],
+        [
+          93,
+          97,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 11,
+      "runs": [
+        [
+          2,
+          5,
+          "dim"
+        ],
+        [
+          7,
+          9,
+          "dim"
+        ],
+        [
+          11,
+          17,
+          "dim"
+        ],
+        [
+          19,
+          25,
+          "dim"
+        ],
+        [
+          27,
+          29,
+          "dim"
+        ],
+        [
+          31,
+          37,
+          "dim"
+        ],
+        [
+          39,
+          40,
+          "dim"
+        ],
+        [
+          42,
+          49,
+          "dim"
+        ],
+        [
+          51,
+          52,
+          "dim"
+        ],
+        [
+          54,
+          56,
+          "dim"
+        ],
+        [
+          58,
+          62,
+          "dim"
+        ],
+        [
+          64,
+          64,
+          "dim"
+        ],
+        [
+          66,
+          69,
+          "dim"
+        ],
+        [
+          71,
+          79,
+          "dim"
+        ],
+        [
+          81,
+          82,
+          "dim"
+        ],
+        [
+          84,
+          88,
+          "dim"
+        ],
+        [
+          90,
+          90,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 12,
+      "runs": [
+        [
+          2,
+          10,
+          "dim"
+        ],
+        [
+          12,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          21,
+          "dim"
+        ],
+        [
+          23,
+          24,
+          "dim"
+        ],
+        [
+          26,
+          28,
+          "dim"
+        ],
+        [
+          30,
+          33,
+          "dim"
+        ],
+        [
+          35,
+          39,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 14,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          7,
+          "dim"
+        ],
+        [
+          9,
+          11,
+          "dim"
+        ],
+        [
+          13,
+          14,
+          "dim"
+        ],
+        [
+          16,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          21,
+          "dim"
+        ],
+        [
+          23,
+          26,
+          "dim"
+        ],
+        [
+          28,
+          29,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 30,
+      "runs": [
+        [
+          0,
+          99,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 31,
+      "runs": [
+        [
+          0,
+          5,
+          "dim"
+        ],
+        [
+          7,
+          9,
+          "dim"
+        ],
+        [
+          11,
+          15,
+          "dim"
+        ],
+        [
+          17,
+          18,
+          "dim"
+        ],
+        [
+          20,
+          23,
+          "dim"
+        ],
+        [
+          25,
+          33,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 32,
+      "runs": [
+        [
+          0,
+          99,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 33,
+      "runs": [
+        [
+          2,
+          3,
+          "dim"
+        ],
+        [
+          5,
+          10,
+          "dim"
+        ],
+        [
+          12,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          19,
+          "dim"
+        ],
+        [
+          21,
+          30,
+          "dim"
+        ],
+        [
+          32,
+          33,
+          "dim"
+        ],
+        [
+          35,
+          40,
+          "dim"
+        ],
+        [
+          42,
+          42,
+          "dim"
+        ],
+        [
+          44,
+          55,
+          "dim"
+        ]
+      ]
+    }
+  ]
+}

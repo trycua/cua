@@ -3,8 +3,8 @@ name: "Docs: Fleet first-run smoke"
 on:
   pull_request:
     paths:
-      - docs/content/docs/tutorials/your-first-cloud-fleet.mdx
-      - docs/content/docs/how-to-guides/sandbox/recover-first-cloud-fleet.mdx
+      - docs/content/docs/fleets/quickstart.mdx
+      - docs/content/docs/fleets/guides/recover-first-cloud-fleet.mdx
       - docs/public/scripts/first-cloud-fleet/**
       - docs/scripts/tests/test_first_cloud_fleet_tutorial.py
       - docs/scripts/tests/first_cloud_fleet_typescript_smoke.mjs
@@ -16,10 +16,15 @@ on:
 permissions:
   contents: read
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
 jobs:
   first-run:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -31,14 +36,34 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ github.token }}
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: docs-first-run-smoke
       - name: Install the published Python SDK
         run: |
           python -m pip install --upgrade pip
           python -m pip install \
             --extra-index-url https://wheels.cua.ai/simple \
-            "cua-sandbox==0.7.0"
+            "cua-sandbox==0.9.0"
       - name: Test the Python example with mocked Fleet calls
         run: python -m unittest discover -s docs/scripts/tests -p test_first_cloud_fleet_tutorial.py -v
+      # The example imports @trycua/cua, which is not on npm yet: build it
+      # from libs/cua (as ci-cua-sdk.yml does) and install it from the tree.
+      # Switch to "@trycua/cua@<version>" once cd-cua-sdk.yml publishes it.
+      - name: Build @trycua/cua from source
+        working-directory: libs/cua
+        run: |
+          npm --prefix typescript ci --ignore-scripts
+          cargo build --locked --release -p cua-sdk
+          node scripts/stage-uniffi-library.mjs --only=node
+          npm --prefix typescript run build
       - name: Compile and test the TypeScript example with mocked Fleet calls
         shell: bash
         run: |
@@ -48,7 +73,7 @@ jobs:
           npm init -y
           npm pkg set type=module
           npm install \
-            "@trycua/fleet@0.1.2" \
+            "$repo_dir/libs/cua/typescript" \
             "@types/node@22" \
             "tsx@4.20.5" \
             "typescript@5.9.2"

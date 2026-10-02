@@ -1,0 +1,121 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Cua Spaces",
+  "version": "0.3.0",
+  "identifier": "com.trycua.spaces.prototype",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "portal",
+        "create": false,
+        "title": "Cua Spaces",
+        "width": 420,
+        "height": 38,
+        "x": 0,
+        "y": 0,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "alwaysOnTop": true,
+        "shadow": false,
+        "skipTaskbar": true,
+        "visibleOnAllWorkspaces": true,
+        "acceptFirstMouse": true,
+        "visible": false,
+        "center": false
+      },
+      {
+        "label": "main",
+        "create": false,
+        "title": "Cua Spaces",
+        "url": "index.html",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 760,
+        "minHeight": 520,
+        "center": true,
+        "visible": true,
+        "resizable": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 20,
+          "y": 26
+        },
+        "transparent": false,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost ws: wss:; worker-src 'self' blob:; media-src 'self' blob:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg",
+      "nsis",
+      "msi",
+      "deb",
+      "appimage"
+    ],
+    "createUpdaterArtifacts": true,
+    "category": "DeveloperTool",
+    "copyright": "© Cua",
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "entitlements": "entitlements.plist"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "shortDescription": "Reach your cloud Spaces and your own machines",
+    "longDescription": "Cua Spaces connects to cloud Spaces and to your own computers through the Cua relay, and can set this machine up for unattended access.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "installer/nsis-hooks.nsh"
+      },
+      "wix": {
+        "fragmentPaths": [
+          "installer/wix-install-mode.wxs"
+        ],
+        "componentRefs": [
+          "CuaSpacesInstallMode"
+        ]
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": [],
+        "section": "utils"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/trycua/cua/releases/download/cua-spaces-latest/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZEQjRCRUFGREM4NEE3ClJXU25oTnl2dnJUOUFINnNnTk02UDg5dkdzODdBN3RPdVdob2tBQURxTjBvTENNdnUrTVl5S2xNCg=="
+    }
+  }
+}

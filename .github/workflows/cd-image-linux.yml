@@ -1,0 +1,710 @@
+name: "CD: Image linux"
+
+# Builds the canonical Linux Spaces image, libs/images/linux, gates it on the
+# unpublished bytes and publishes it straight to ghcr.io/trycua/linux. Every
+# job is a slice of one command, `cua images release` over
+# libs/images/linux/release.json, so any job reproduces locally with the same
+# flags:
+#
+#   release (tier x arch)  --steps prepare,build,gate,stage
+#                          cua images build (rootfs + disk); gates: cua-spacesd
+#                          doctor --strict under runc AND gVisor, the amd64 disk
+#                          under QEMU+KVM with a local token and with the
+#                          claim-secrets share, conformance (22 core + 11
+#                          desktop), the per-claim token path, eval parity;
+#                          the content digest; the doctored bytes saved
+#   (publish runs only, after every gate)
+#   push (tier x arch)     --steps push/<arch>: the doctored rootfs and disk as
+#                            ghcr.io/trycua/linux:docker-<tag>-<arch>
+#                            ghcr.io/trycua/linux:<tag>-<arch>
+#                          where <tag> is build-[slim-]<yyyymmdd>-<sha7>: dated, so
+#                          immutable; refused unless every gate passed
+#   publish (tier)         --steps attest,publish,verify,promote:
+#                          reports become OCI referrers of those children and
+#                          image-doctor ledger entries; immutable dated pins
+#                            ghcr.io/trycua/linux:<series>-disk-<yyyymmdd>-<sha7>
+#                            ghcr.io/trycua/linux:<series>-<yyyymmdd>-<sha7>
+#                          with ai.cua.doctor.status / .report on each child;
+#                          verify (the pins hold the doctored bytes and link
+#                          each other); only then <series>-disk and <series> move
+#
+# Evidence, logs and the step summary of every job are in its release/evidence
+# artifact (plain directory).
+#
+# The rootfs index carries ai.cua.image.variants = {"containerdisk": <disk@digest>};
+# the disk index points back at the dated rootfs pin. Both carry ai.cua.image.os,
+# ai.cua.spacesd (and the legacy ai.cua.env-driver).
+#
+# Pull requests build and gate only: nothing is pushed. Publishing runs on
+# linux-image-v* tags and on workflow_dispatch with publish=true.
+# ghcr.io/trycua/cua-desktop-linux (the pre-rename repo) is frozen: nothing
+# writes to it any more.
+#
+# Tiers: every step above runs once per tier, each tier gated on its own
+# (`cua images build --target <tier>` of the one Dockerfile; full is FROM slim,
+# so the registry shares slim's layers):
+#   slim   series 24.04-slim   ghcr.io/trycua/linux:24.04-slim[-disk]   CI and bench use it
+#   full   series 24.04        ghcr.io/trycua/linux:24.04[-disk]        the default
+#
+# Weekly schedule (security updates): the same build and gates for both tiers.
+# A tier publishes a new dated pin and moves its floating tags only when every
+# gate passed AND its content changed: the content digest (installed dpkg
+# packages of both arches plus the git trees baked in, scripts/images/content-digest.sh)
+# differs from the ai.cua.image.content-digest annotation of the promoted
+# floating tag. A failed scheduled run opens or updates one tracking issue
+# (scripts/images/report-schedule-failure.sh).
+#
+# The daemon-agnostic plain images (libs/images/plain/*) are built and smoke
+# tested here too; they are not published.
+#
+# cua-spacesd source: repository variable CUA_LINUX_SPACESD_SOURCE (the
+# pre-rename CUA_DESKTOP_LINUX_SPACESD_SOURCE is still read), default `local`
+# = built from libs/cua-spacesd in this run, or the workflow_dispatch input.
+
+on:
+  push:
+    tags: ["linux-image-v*"]
+  schedule:
+    # Weekly, Tuesday 04:17 UTC: Ubuntu security updates.
+    - cron: "17 4 * * 2"
+  pull_request:
+    paths:
+      - "libs/images/linux/**"
+      - "libs/images/common/**"
+      - "libs/images/plain/**"
+      - "libs/images/build.sh"
+      - "scripts/images/**"
+      - "libs/cua-spacesd/**"
+      - "libs/cua/crates/cua-cli/src/image_build.rs"
+      - "libs/cua/crates/cua-cli/src/image_release.rs"
+      - "libs/cua/crates/cua-image/src/publish.rs"
+      - ".github/workflows/cd-image-linux.yml"
+      - ".github/workflows/image-doctor.yml"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Push, pin and promote ghcr.io/trycua/linux:24.04"
+        type: boolean
+        default: false
+      spacesd_source:
+        description: "cua-spacesd source for the linux image"
+        type: choice
+        options: [local, release, none]
+        default: local
+      spacesd_version:
+        description: "Release version when spacesd_source=release"
+        type: string
+        default: latest
+      promote_run:
+        description: "Finish an earlier publish run (its run id) whose gates and pushes passed: attest, pin, verify and promote, resuming what already passed; builds and pushes no image"
+        type: string
+        default: ""
+      doctor_children:
+        description: "Only doctor and attest published disk children, ARCH@sha256:... comma separated (the strict VM doctor, report referrer and ledger entry); pushes no image"
+        type: string
+        default: ""
+
+concurrency:
+  group: cd-image-linux-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  REPO: ghcr.io/trycua/linux
+  IMAGE_DIR: libs/images/linux
+  SERIES: "24.04"
+
+jobs:
+  meta:
+    if: inputs.promote_run == '' && inputs.doctor_children == ''
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      stamp: ${{ steps.meta.outputs.stamp }}
+      publish: ${{ steps.meta.outputs.publish }}
+      spacesd_source: ${{ steps.meta.outputs.spacesd_source }}
+      spacesd_version: ${{ steps.meta.outputs.spacesd_version }}
+    steps:
+      - id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.spacesd_version }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          INPUT_SOURCE: ${{ inputs.spacesd_source }}
+          VAR_SOURCE: ${{ vars.CUA_LINUX_SPACESD_SOURCE || vars.CUA_DESKTOP_LINUX_SPACESD_SOURCE }}
+        run: |
+          set -euo pipefail
+          publish=false
+          case "$EVENT" in
+            push) [[ "$REF" == refs/tags/linux-image-v* ]] && publish=true ;;
+            workflow_dispatch) [ "$INPUT_PUBLISH" = true ] && publish=true ;;
+            # Publishes only the tiers whose content changed (the changes job).
+            schedule) publish=true ;;
+          esac
+          # Registry names belong to trycua/cua: any other repository
+          # (trycua/cua-staging) builds and gates but never pushes.
+          if [ "$publish" = true ] && [ "$GITHUB_REPOSITORY" != trycua/cua ]; then
+            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: build and gate only, no registry push"
+            publish=false
+          fi
+          stamp="$(date -u +%Y%m%d)-${SHA:0:7}"
+          source="${INPUT_SOURCE:-${VAR_SOURCE:-local}}"
+          # A publish is only as good as its spacesd: never pin an image without it.
+          if [ "$publish" = true ] && [ "$source" = none ]; then
+            echo "::error::spacesd_source=none cannot be published"; exit 1
+          fi
+          # source=release: pin one published cua-spacesd release. `latest` is the
+          # newest cua-spacesd-v* release that is neither a draft nor a
+          # prerelease (GitHub's own "latest" is repo-wide, so not usable).
+          version="${INPUT_VERSION:-latest}"
+          version="${version#cua-spacesd-v}"; version="${version#v}"
+          if [ "$source" = release ]; then
+            if [ "$version" = latest ]; then
+              version="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+                --jq '[.[] | select(.draft == false and .prerelease == false and (.tag_name | startswith("cua-spacesd-v")))][0].tag_name // ""')"
+              version="${version#cua-spacesd-v}"
+              [ -n "$version" ] || { echo "::error::no published cua-spacesd-v* release"; exit 1; }
+            fi
+            for arch in x86_64 aarch64; do
+              gh release view "cua-spacesd-v$version" -R "$GITHUB_REPOSITORY" --json assets \
+                --jq '.assets[].name' | grep -qx "cua-spacesd-linux-$arch.tar.gz" \
+                || { echo "::error::cua-spacesd-v$version has no cua-spacesd-linux-$arch.tar.gz"; exit 1; }
+            done
+          fi
+          {
+            # The per-arch children's tag: dated, so immutable once pushed.
+            echo "tag=build-$stamp"
+            echo "stamp=$stamp"
+            echo "publish=$publish"
+            echo "spacesd_source=$source"
+            echo "spacesd_version=$version"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  spacesd:
+    needs: meta
+    if: needs.meta.outputs.spacesd_source == 'local'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Build cua-spacesd for linux/${{ matrix.arch }}
+        run: libs/images/linux/build-spacesd-linux.sh ${{ matrix.arch }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-spacesd-linux-${{ matrix.arch }}
+          path: libs/images/linux/dist/${{ matrix.arch }}/cua-spacesd
+          if-no-files-found: error
+          retention-days: 7
+
+  cli:
+    if: inputs.promote_run == '' && inputs.doctor_children == ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cli-${{ matrix.arch }}
+      - name: Build the cua CLI
+        working-directory: libs/cua
+        run: cargo build --release --locked -p cua-cli
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-cli-linux-${{ matrix.arch }}
+          path: libs/cua/target/release/cua
+          if-no-files-found: error
+          retention-days: 7
+
+  # Each tier and arch runs its release pipeline (libs/images/linux/release.json)
+  # up to the doctored artifacts: build, every gate (doctor lanes under runc,
+  # gVisor and QEMU, conformance, the per-claim token path, eval parity) and
+  # the content digest. `cua images release` reproduces a job locally:
+  #   cua images release libs/images/linux --tier TIER --arch ARCH --stamp STAMP --steps prepare,build,gate,stage
+  release:
+    needs: [meta, spacesd, cli]
+    # spacesd is skipped unless source=local; run anyway, but not after a failure.
+    if: ${{ !cancelled() && needs.meta.result == 'success' && needs.cli.result == 'success' && needs.spacesd.result != 'failure' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        tier: [slim, full]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    # arm64 runs its VM doctor under TCG (hosted arm64 runners have no KVM).
+    timeout-minutes: 360
+    env:
+      ARCH: ${{ matrix.arch }}
+      TIER: ${{ matrix.tier }}
+      STAMP: ${{ needs.meta.outputs.stamp }}
+      SPACESD_SOURCE: ${{ needs.meta.outputs.spacesd_source }}
+      SPACESD_VERSION: ${{ needs.meta.outputs.spacesd_version }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Fetch cua-spacesd
+        if: env.SPACESD_SOURCE == 'local'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cua-spacesd-linux-${{ matrix.arch }}
+          path: libs/images/linux/dist/${{ matrix.arch }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cua-cli-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/bin
+      - name: Host tools (QEMU, firmware, gVisor, crane)
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP/bin/cua"
+          echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
+          scripts/images/install-release-tools.sh --free-disk
+      - name: cua images release (build, gates, stage)
+        run: |
+          # prepare only builds cua-spacesd from source: skip it unless the
+          # image takes that build (the Dockerfile still bind-mounts dist/).
+          steps=prepare,build,gate,stage
+          if [ "$SPACESD_SOURCE" != local ]; then
+            steps=build,gate,stage
+            mkdir -p "$IMAGE_DIR/dist"
+          fi
+          cua images release "$IMAGE_DIR" --tier "$TIER" --arch "$ARCH" --stamp "$STAMP" --work release \
+            --steps "$steps" \
+            --var "spacesd_source=$SPACESD_SOURCE" --var "spacesd_version=$SPACESD_VERSION"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: evidence-linux-${{ matrix.tier }}-${{ matrix.arch }}
+          path: release/evidence
+          if-no-files-found: warn
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: artifacts-linux-${{ matrix.tier }}-${{ matrix.arch }}
+          path: release/artifacts/${{ matrix.arch }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  plain:
+    needs: cli
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [plain/ubuntu-xfce-vnc, plain/ubuntu-server]
+        arch: [amd64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 90
+    env:
+      IMAGE: ${{ matrix.image }}
+      ARCH: ${{ matrix.arch }}
+      CUA_IMAGES_OUT: ${{ github.workspace }}/.images-out
+      SMOKE_EVIDENCE: ${{ github.workspace }}/.images-evidence
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cua-cli-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/bin
+      - name: Install QEMU, firmware and gVisor
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP/bin/cua"
+          echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
+          sudo apt-get update -qq
+          fw=ovmf; [ "$ARCH" = arm64 ] && fw=qemu-efi-aarch64
+          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 qemu-system-arm "$fw" genisoimage
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+          scripts/images/install-gvisor.sh
+      - name: Build rootfs + disk (cua images build)
+        run: cua images build "libs/images/$IMAGE" --platform "linux/$ARCH" --tag ci --outputs rootfs,disk
+      - name: Smoke test rootfs (runc + gVisor)
+        run: |
+          set -euo pipefail
+          name="$(basename "$IMAGE")"
+          for rt in runc runsc; do
+            libs/images/plain/smoke-test.sh "$name" --image "cua-e2e-local/$name:docker-ci-$ARCH" --runtime "$rt" --evidence "$SMOKE_EVIDENCE"
+          done
+      - name: Smoke test disk (QEMU boot)
+        run: |
+          set -euo pipefail
+          name="$(basename "$IMAGE")"
+          case "$IMAGE" in
+            plain/ubuntu-server) probe=(--fwd 22 --probe 22 --ssh) ;;
+            *) probe=(--fwd "5901,22" --probe 5901 --rfb "$SMOKE_EVIDENCE/vm-$ARCH.png" --ssh) ;;
+          esac
+          timeout=300; [ -w /dev/kvm ] || timeout=1200
+          mkdir -p "$SMOKE_EVIDENCE"
+          libs/images/common/boot-qemu.sh "$CUA_IMAGES_OUT/$name/$ARCH/disk.img" --arch "$ARCH" --timeout "$timeout" \
+            --log "$SMOKE_EVIDENCE/vm-$ARCH-serial.log" "${probe[@]}"
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: evidence-plain-${{ matrix.arch }}-${{ strategy.job-index }}
+          path: ${{ env.SMOKE_EVIDENCE }}
+          # The directory is a dot-directory: upload-artifact v4.4+ skips
+          # hidden paths (the directory itself included) unless asked.
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Which tiers publish: every tier on a release tag or dispatch; on the
+  # weekly schedule only the tiers whose content digest differs from the one
+  # their promoted floating tag records (so an unchanged rebuild moves nothing).
+  changes:
+    needs: [meta, release]
+    if: needs.meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      tiers: ${{ steps.changes.outputs.tiers }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: "evidence-linux-*"
+          path: evidence
+      - name: Install crane
+        run: |
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+      - id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          tiers=()
+          for tier in slim full; do
+            series="$SERIES"; [ "$tier" = full ] || series="$SERIES-$tier"
+            # The tier's digest: its per-arch content digests, in arch order
+            # (scripts/images/release-publish.sh annotates the same value).
+            d="sha256:$(cat "evidence/evidence-linux-$tier-amd64/content-digest-amd64" "evidence/evidence-linux-$tier-arm64/content-digest-arm64" | sha256sum | cut -d' ' -f1)"
+            promoted="$(scripts/images/content-digest.sh --promoted "$REPO:$series")"
+            if [ "$EVENT" = schedule ] && [ "$promoted" = "$d" ]; then
+              echo "::notice::$REPO:$series is unchanged ($d); not publishing"
+              echo "- $series: unchanged ($d)" >>"$GITHUB_STEP_SUMMARY"
+            else
+              tiers+=("$tier")
+              echo "- $series: publish ($d, promoted ${promoted:-none})" >>"$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          echo "tiers=$(jq -cn '$ARGS.positional' --args ${tiers[@]+"${tiers[@]}"})" >>"$GITHUB_OUTPUT"
+
+  # Publish runs only, after every gate of both arches passed: push the exact
+  # doctored bytes as dated, immutable per-arch children (release step push/<arch>).
+  push:
+    needs: [meta, release, changes]
+    if: needs.changes.outputs.tiers != '[]'
+    strategy:
+      fail-fast: true
+      matrix:
+        arch: [amd64, arm64]
+        tier: ${{ fromJSON(needs.changes.outputs.tiers) }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    env:
+      ARCH: ${{ matrix.arch }}
+      TIER: ${{ matrix.tier }}
+      STAMP: ${{ needs.meta.outputs.stamp }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cua-cli-linux-amd64
+          path: ${{ runner.temp }}/bin
+      # Both arches' gate results: push refuses unless every required gate passed.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: "evidence-linux-${{ matrix.tier }}-*"
+          path: release/evidence
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: artifacts-linux-${{ matrix.tier }}-${{ matrix.arch }}
+          path: release/artifacts/${{ matrix.arch }}
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: cua images release (push)
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP/bin/cua"; export PATH="$RUNNER_TEMP/bin:$PATH"
+          scripts/images/install-release-tools.sh --push-only
+          cua images release "$IMAGE_DIR" --tier "$TIER" --arch "$ARCH" --stamp "$STAMP" --work release \
+            --publish --steps "push/$ARCH" --scope "push-$ARCH"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pushed-linux-${{ matrix.tier }}-${{ matrix.arch }}
+          path: |
+            release/evidence/pushed-${{ matrix.arch }}
+            release/evidence/pack-${{ matrix.arch }}.json
+            release/evidence/state-push-${{ matrix.arch }}.json
+            release/evidence/logs
+          if-no-files-found: error
+          retention-days: 90
+
+  # Then, per tier: attach every doctor report to the child it checked (and
+  # the ledger), publish the immutable dated pins, verify them against the
+  # doctored bytes and move the floating tags (release steps attest, publish,
+  # verify, promote).
+  publish:
+    needs: [meta, changes, push]
+    strategy:
+      # One tier at a time: both push to the image-doctor-ledger branch. (A
+      # concurrency group would cancel a third pending job; ledger_push also
+      # replays onto a ledger another workflow pushed first.)
+      max-parallel: 1
+      matrix:
+        tier: ${{ fromJSON(needs.changes.outputs.tiers) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      TIER: ${{ matrix.tier }}
+      STAMP: ${{ needs.meta.outputs.stamp }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cua-cli-linux-amd64
+          path: ${{ runner.temp }}/bin
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: "{evidence,pushed}-linux-${{ matrix.tier }}-*"
+          path: release/evidence
+          merge-multiple: true
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: cua images release (attest, publish, verify, promote)
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP/bin/cua"; export PATH="$RUNNER_TEMP/bin:$PATH"
+          scripts/images/install-release-tools.sh --push-only
+          cua images release "$IMAGE_DIR" --tier "$TIER" --stamp "$STAMP" --work release --publish --promote \
+            --steps attest,publish,verify,promote --scope publish --var record_ledger=true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: linux-release-${{ matrix.tier }}
+          path: release/evidence
+          if-no-files-found: warn
+          retention-days: 90
+
+  # Verify and promote pins an earlier run published (its gates passed, its
+  # promote did not run): the same `cua images release --steps verify,promote`
+  # over that run's evidence. Nothing is built or pushed except the floating tags.
+  promote-run:
+    if: github.event_name == 'workflow_dispatch' && inputs.promote_run != ''
+    strategy:
+      # One tier at a time: both push to the image-doctor-ledger branch.
+      max-parallel: 1
+      matrix:
+        tier: [slim, full]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    env:
+      TIER: ${{ matrix.tier }}
+      RUN: ${{ inputs.promote_run }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # The publish job's inputs (gated evidence and push records, as it
+      # merges them), then its own evidence when it got that far: --resume
+      # skips what already passed there.
+      - name: That run's gated evidence, push records and publish evidence
+        run: |
+          set -euo pipefail
+          ev=release/evidence; mkdir -p "$ev"
+          # gh never overwrites on extract: each artifact to its own directory,
+          # merged in order (later wins, as merge-multiple does).
+          merge() { gh run download "$RUN" -R "$GITHUB_REPOSITORY" -n "$1" -D "$RUNNER_TEMP/a/$1" && cp -R "$RUNNER_TEMP/a/$1/." "$ev/"; }
+          for arch in amd64 arm64; do merge "evidence-linux-$TIER-$arch"; done
+          for arch in amd64 arm64; do merge "pushed-linux-$TIER-$arch"; done
+          merge "linux-release-$TIER" 2>/dev/null || echo "that run has no publish evidence for $TIER"
+          stamp="$(jq -r .stamp "$ev/summary-amd64.json")"
+          [[ "$stamp" =~ ^[0-9]{8}-[0-9a-f]{7}$ ]] || { echo "no stamp in that run's evidence" >&2; exit 1; }
+          echo "STAMP=$stamp" >>"$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Tools and the cua CLI
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
+          scripts/images/install-release-tools.sh --push-only
+          # That run's CLI when it is still kept (7 days), else compile it.
+          if gh run download "$RUN" -R "$GITHUB_REPOSITORY" -n cua-cli-linux-amd64 -D "$RUNNER_TEMP/cli" 2>/dev/null; then
+            install -m 0755 "$RUNNER_TEMP/cli/cua" "$RUNNER_TEMP/cua"
+          else
+            (cd libs/cua && cargo build --release --locked -p cua-cli) && install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
+          fi
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: cua images release (attest, publish, verify, promote; resumed)
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/cua" images release "$IMAGE_DIR" --tier "$TIER" --stamp "$STAMP" --work release --resume \
+            --publish --promote --steps attest,publish,verify,promote --scope publish \
+            --var record_ledger=true --var "run_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: linux-promote-${{ matrix.tier }}
+          path: release/evidence
+          if-no-files-found: warn
+
+  # Doctor and attest disk children that are already published (for example
+  # arm64 disks a release only boot smoked): the strict VM doctor per child on
+  # a runner of its arch (TCG where the runner has no KVM), then its report
+  # becomes an OCI referrer and an image-doctor ledger entry. No image is
+  # pushed or re-tagged. Dispatch with doctor_children=arm64@sha256:...,...
+  doctor-children-plan:
+    if: github.event_name == 'workflow_dispatch' && inputs.doctor_children != ''
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        env:
+          CHILDREN: ${{ inputs.doctor_children }}
+        run: |
+          set -euo pipefail
+          m="$(python3 -c '
+          import json, re, sys
+          out = []
+          for item in sys.argv[1].split(","):
+              arch, _, digest = item.strip().partition("@")
+              if arch not in ("amd64", "arm64") or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                  sys.exit(f"bad child {item!r}: want ARCH@sha256:<64 hex>")
+              out.append({"arch": arch, "digest": digest, "runner": "ubuntu-24.04-arm" if arch == "arm64" else "ubuntu-24.04"})
+          print(json.dumps(out))' "$CHILDREN")"
+          echo "matrix=$m" >>"$GITHUB_OUTPUT"
+
+  doctor-children:
+    needs: doctor-children-plan
+    strategy:
+      fail-fast: false
+      # Children doctor in parallel; ledger_push replays onto a ledger the
+      # other job pushed first.
+      matrix:
+        include: ${{ fromJSON(needs.doctor-children-plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    permissions:
+      contents: write
+      packages: write
+    env:
+      ARCH: ${{ matrix.arch }}
+      DIGEST: ${{ matrix.digest }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Host tools
+        run: scripts/images/install-release-tools.sh --free-disk
+      - name: The published disk
+        run: |
+          set -euo pipefail
+          mkdir -p child
+          crane export --platform "linux/$ARCH" "$REPO@$DIGEST" - | tar -x -C child disk/disk.img
+          sha256sum child/disk/disk.img
+      # The doctor of this commit, run against the image's own service: the
+      # image's baked doctor predates checks that scale under TCG
+      # (audio.uplink_route, audio.avsync).
+      - name: cua-spacesd (doctor) for linux/${{ matrix.arch }}
+        run: |
+          libs/images/linux/build-spacesd-linux.sh "$ARCH"
+          docker system prune -af --volumes >/dev/null
+      - name: Strict VM doctor (KVM when present, else TCG with stretched budgets)
+        run: |
+          scripts/images/image-doctor-lane.sh --lane qemu --disk child/disk/disk.img --arch "$ARCH" \
+            --doctor-bin "libs/images/linux/dist/$ARCH/cua-spacesd" --out "attest/doctor-$ARCH-qemu"
+      - name: Attach the report and record the ledger
+        run: |
+          set -euo pipefail
+          python3 -c 'import json,sys;json.dump({"repo":sys.argv[1],"arch":sys.argv[2],"containerdisk":sys.argv[3]},open("attest/pushed.json","w"))' \
+            "$REPO" "$ARCH" "$DIGEST"
+          git config --global user.name cua-image-doctor
+          git config --global user.email noreply@github.com
+          ATTEST_DIR="$PWD/attest" scripts/images/attest-doctor-reports.sh attest "$RUN_URL" true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: doctor-child-${{ matrix.arch }}-${{ strategy.job-index }}
+          path: attest
+          if-no-files-found: warn
+
+  tag-safety-test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - run: scripts/images/test-check-tag-safety.sh
+      - run: scripts/images/test-ledger-push-race.sh
+      - run: scripts/images/test-schedule-scripts.sh
+      - name: boot-qemu.sh SSH probe retries (fake ssh)
+        run: libs/images/common/tests/test-ssh-retry.sh
+      - name: Manifest generator, ledger and docs-gate tests
+        run: |
+          python3 -m unittest discover -s libs/images/common/tools/tests
+          python3 -m unittest discover -s scripts/images/tests
+      - name: Report publishing against a throwaway registry
+        run: |
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          go install oras.land/oras/cmd/oras@v1.3.0
+          PATH="$(go env GOPATH)/bin:$PATH" scripts/images/test-publish-doctor-report.sh
+
+  # A failed scheduled run opens (or comments on) one tracking issue.
+  report-schedule-failure:
+    needs: [meta, spacesd, cli, release, plain, changes, push, publish]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW: ${{ github.workflow }}
+        run: scripts/images/report-schedule-failure.sh "$WORKFLOW" "$RUN_URL"

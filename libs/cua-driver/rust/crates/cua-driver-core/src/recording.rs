@@ -1204,15 +1204,21 @@ fn state_status(state: &StateCapture, expected: bool) -> Value {
     status
 }
 
+/// How a turn's click marker is expected and whether it was captured.
+struct ClickEvidence {
+    expected: bool,
+    captured: bool,
+    /// Recorded when no click marker applies to the turn.
+    not_applicable_classification: &'static str,
+}
+
 fn write_evidence_manifest(
     turn_dir: &Path,
     before: &TurnCapture,
     after: &TurnCapture,
     state_expected: bool,
-    click_expected: bool,
-    click_captured: bool,
+    click: ClickEvidence,
     supplemental: &DispatchClickCapture,
-    click_not_applicable_classification: &'static str,
 ) -> anyhow::Result<()> {
     let mut manifest = serde_json::json!({
         "schema": "cua-turn-evidence/v1",
@@ -1232,12 +1238,12 @@ fn write_evidence_manifest(
                 after.screenshot_classification,
             ),
         },
-        "click": if click_expected {
-            capture_status(click_captured, true, None)
+        "click": if click.expected {
+            capture_status(click.captured, true, None)
         } else {
             serde_json::json!({
                 "status": "not_applicable",
-                "classification": click_not_applicable_classification,
+                "classification": click.not_applicable_classification,
             })
         },
     });
@@ -1285,10 +1291,9 @@ fn semantic_action_without_point(action: &Value) -> bool {
         && action["result_error"] == false
         && action.get("click_point").is_none()
         && action.get("click_point_image").is_none()
-        && (args["element_index"].as_u64().is_some()
-            || args["element_token"]
-                .as_str()
-                .is_some_and(|token| !token.is_empty()))
+        && args["element_token"]
+            .as_str()
+            .is_some_and(|token| !token.is_empty())
         && args.get("x").is_none()
         && args.get("y").is_none()
         && args.get("raw").is_none_or(|value| value == false)
@@ -1483,18 +1488,20 @@ fn write_turn_with_after(
         &before,
         &after,
         pid.is_some() && capture_visual_state,
-        click_expected,
-        click_captured,
-        &supplemental,
-        if refused_before_target_resolution {
-            "action_refused_before_target_resolution"
-        } else if refused_before_dispatch {
-            "action_refused_before_dispatch"
-        } else if semantic_without_point {
-            "semantic_action_without_point"
-        } else {
-            "not_a_click_action"
+        ClickEvidence {
+            expected: click_expected,
+            captured: click_captured,
+            not_applicable_classification: if refused_before_target_resolution {
+                "action_refused_before_target_resolution"
+            } else if refused_before_dispatch {
+                "action_refused_before_dispatch"
+            } else if semantic_without_point {
+                "semantic_action_without_point"
+            } else {
+                "not_a_click_action"
+            },
         },
+        &supplemental,
     )?;
 
     Ok(())
@@ -1650,7 +1657,7 @@ mod tests {
     fn semantic_click_fixture() -> Value {
         serde_json::json!({
             "tool": "click", "result_error": false,
-            "arguments": {"pid": 1, "window_id": 2, "element_index": 3},
+            "arguments": {"pid": 1, "window_id": 2, "element_token": "s00000001:3"},
             "action_truth": {
                 "effect": "unverifiable", "transport": "linux_at_spi_action",
                 "route": "accessibility", "requested_delivery": "background",
@@ -1665,7 +1672,7 @@ mod tests {
             generation: 0,
             turn_dir: root.to_path_buf(),
             tool_name: "click".into(),
-            args: serde_json::json!({"pid": 901, "window_id": 902, "element_index": 3}),
+            args: serde_json::json!({"pid": 901, "window_id": 902, "element_token": "s00000001:3"}),
             start_ms: 0,
             session_start_ms: 0,
             window_id: Some(902),
@@ -1799,7 +1806,7 @@ mod tests {
             .begin_turn(
                 "click",
                 &serde_json::json!({
-                    "pid":901, "window_id":902, "element_index":3,
+                    "pid":901, "window_id":902, "element_token": "s00000001:3",
                 }),
                 0,
                 RecordingCaller::default(),
@@ -1921,11 +1928,6 @@ mod tests {
             original["action_truth"]["transport"] = serde_json::json!(transport);
             assert!(semantic_action_without_point(&original));
             let mut token = original.clone();
-            token["arguments"]
-                .as_object_mut()
-                .unwrap()
-                .remove("element_index");
-            token["arguments"]["element_token"] = serde_json::json!("e:fixture");
             token["action_truth"]["requested_delivery"] = serde_json::json!("foreground");
             token["action_truth"]["actual_delivery"] = serde_json::json!("foreground");
             token["action_truth"]["effect"] = serde_json::json!("confirmed");
@@ -1964,7 +1966,7 @@ mod tests {
                     "/action_truth/attempts",
                     serde_json::json!([[{}], [{}, {}]]),
                 ),
-                ("/arguments/element_index", serde_json::json!([null, -1])),
+                ("/arguments/element_token", serde_json::json!([null, ""])),
             ] {
                 for replacement in replacements.as_array().unwrap() {
                     let mut action = original.clone();
@@ -2056,7 +2058,7 @@ mod tests {
                 generation: 0,
                 turn_dir: root.path().to_path_buf(),
                 tool_name: "click".into(),
-                args: serde_json::json!({"pid":1,"element_index":3}),
+                args: serde_json::json!({"pid":1,"element_token": "s00000001:3"}),
                 start_ms: 0,
                 session_start_ms: 0,
                 window_id: None,
@@ -2116,7 +2118,7 @@ mod tests {
                 let args = if pixel {
                     serde_json::json!({"pid":1,"x":point.0,"y":point.1})
                 } else {
-                    serde_json::json!({"pid":1,"element_index":3})
+                    serde_json::json!({"pid":1,"element_token": "s00000001:3"})
                 };
                 write_turn(
                     PendingTurn {
@@ -2206,20 +2208,10 @@ mod tests {
         });
         setup_test_marker();
         set_element_bounds_fn(|pid, args, capture_point| {
-            use crate::tool_args::ArgsExt;
-            let cache = crate::element_cache::current_runtime_cache::<
+            let cache = crate::snapshot_store::current_runtime_store::<
                 crate::snapshot_test_support::Payload,
             >()?;
-            let target = cache
-                .resolve_element_args(
-                    pid as i32,
-                    args.opt_u64("element_index").map(|index| index as usize),
-                    args.get("element_token").and_then(Value::as_str),
-                    args.get("snapshot_id").and_then(Value::as_str),
-                    args.opt_u64("window_id"),
-                    "recording",
-                )
-                .ok()?;
+            let target = cache.resolve(pid as i32, args).ok()?;
             let (index, window, _) = target.into_parts(None);
             let window = window?;
             Some((

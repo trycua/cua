@@ -5,6 +5,8 @@
 //! - `MotionConfig` — glide duration, spring, dwell, idle-hide timings
 //! - `CubicBezier` + `PathPlanner` — Bezier path math (ported 1:1 from C#)
 //! - `OverlayCommand` — messages sent from MCP tools to the overlay thread
+//! - `SurfaceFit` — keeps each platform's overlay surface fitted to the live
+//!   display geometry, so screen-coordinate cursors stay on the pointer
 
 pub mod badge_glyphs;
 pub mod bezier;
@@ -15,6 +17,7 @@ pub mod path_planner;
 pub mod render_map;
 pub mod render_state;
 pub mod session_badge;
+pub mod surface_fit;
 pub mod theme;
 pub mod theme_artifact;
 pub mod z_order;
@@ -37,6 +40,7 @@ pub use session_badge::{
     BADGE_CHIP_GROUP_GAP, BADGE_CHIP_SIZE, BADGE_CURSOR_GAP, BADGE_HEIGHT, BADGE_MAX_WIDTH,
     MAX_SESSION_LABEL_CHARS,
 };
+pub use surface_fit::{SurfaceFit, SurfaceGeometry, SURFACE_REFIT_INTERVAL};
 pub use theme::{
     session_fill_hex, session_fill_rgba, CursorAction, CursorVisualState, DeliveryModifier,
     PlaybackKind, ReducedMotion, TargetModifier, DEFAULT_CURSOR_FILL, DEFAULT_THEME_ID,
@@ -408,6 +412,35 @@ pub fn pointer_for_anchor(x: f64, y: f64, heading: f64) -> (f64, f64) {
     )
 }
 
+/// Cursor key for a named session's keyboard and text feedback: the explicit
+/// `session` label, else the trusted lifecycle `_session_id`. Anonymous calls
+/// return `None` and keep their existing behavior.
+pub fn named_session_cursor_key(args: &serde_json::Value) -> Option<String> {
+    ["session", "_session_id"].into_iter().find_map(|key| {
+        args.get(key)
+            .and_then(serde_json::Value::as_str)
+            .filter(|session| !session.is_empty())
+            .map(str::to_owned)
+    })
+}
+
+/// Where a keyboard or text action places its session cursor: the explicit
+/// element or pixel target, else the cursor's remembered position, else the
+/// target window's centre, else the current pointer. Non-finite points are
+/// skipped so a bad geometry read cannot poison position reuse.
+pub fn keyboard_cursor_target(
+    explicit: Option<(f64, f64)>,
+    remembered: Option<(f64, f64)>,
+    window_center: Option<(f64, f64)>,
+    current_pointer: Option<(f64, f64)>,
+) -> Option<(f64, f64)> {
+    let finite = |point: Option<(f64, f64)>| point.filter(|(x, y)| x.is_finite() && y.is_finite());
+    finite(explicit)
+        .or_else(|| finite(remembered))
+        .or_else(|| finite(window_center))
+        .or_else(|| finite(current_pointer))
+}
+
 /// Build the shared overlay command for one native pointer position.
 ///
 /// Native drag implementations report the actual event coordinate. Anchoring
@@ -468,6 +501,48 @@ mod pointer_tracking_tests {
         assert!(sibling.get());
         drop(sibling_guard);
         assert!(!sibling.get());
+    }
+
+    #[test]
+    fn named_sessions_opt_into_keyboard_cursor_positioning() {
+        use serde_json::json;
+        assert_eq!(
+            named_session_cursor_key(&json!({"session": "editing-run"})).as_deref(),
+            Some("editing-run")
+        );
+        assert_eq!(
+            named_session_cursor_key(&json!({"_session_id": "implicit"})).as_deref(),
+            Some("implicit")
+        );
+        assert_eq!(
+            named_session_cursor_key(&json!({"cursor_id": "legacy"})),
+            None
+        );
+        assert_eq!(named_session_cursor_key(&json!({"session": ""})), None);
+    }
+
+    #[test]
+    fn keyboard_cursor_uses_explicit_then_remembered_then_window_then_pointer() {
+        let explicit = Some((10.0, 20.0));
+        let remembered = Some((30.0, 40.0));
+        let window = Some((50.0, 60.0));
+        let pointer = Some((70.0, 80.0));
+        assert_eq!(
+            keyboard_cursor_target(explicit, remembered, window, pointer),
+            explicit
+        );
+        assert_eq!(
+            keyboard_cursor_target(None, remembered, window, pointer),
+            remembered
+        );
+        assert_eq!(keyboard_cursor_target(None, None, window, pointer), window);
+        assert_eq!(keyboard_cursor_target(None, None, None, pointer), pointer);
+        assert_eq!(keyboard_cursor_target(None, None, None, None), None);
+        assert_eq!(
+            keyboard_cursor_target(Some((f64::NAN, 1.0)), Some((12.0, 34.0)), None, None),
+            Some((12.0, 34.0)),
+            "invalid coordinates must not poison session position reuse"
+        );
     }
 
     #[test]

@@ -1,10 +1,10 @@
-"""Agent integration — adapters that make Sandbox and Localhost work as
+"""Agent integration — adapters that make a Sandbox work as an
 AsyncComputerHandler for the cua-agent ComputerAgent.
 
 Usage::
 
     from cua_sandbox import Image, Sandbox
-    from cua_sandbox.agent import SandboxHandler, LocalhostHandler
+    from cua_sandbox.agent import SandboxHandler
 
     async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
         handler = SandboxHandler(sb)
@@ -17,7 +17,6 @@ import asyncio
 import base64
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from cua_sandbox.localhost import Localhost
 from cua_sandbox.sandbox import Sandbox
 
 
@@ -81,18 +80,6 @@ class SandboxHandler:
             await self._sb.mouse.mouse_up(x, y)
 
 
-class LocalhostHandler(SandboxHandler):
-    """Adapts a Localhost instance to the AsyncComputerHandler protocol.
-
-    Localhost exposes the same interface as Sandbox, so we just reuse
-    the SandboxHandler with a Localhost in place of a Sandbox.
-    """
-
-    def __init__(self, host: Localhost):
-        # Localhost has the same interface shape as Sandbox
-        self._sb = host  # type: ignore[assignment]
-
-
 def is_sandbox(obj: Any) -> bool:
-    """Check if an object is a Sandbox or Localhost instance."""
-    return isinstance(obj, (Sandbox, Localhost))
+    """Check if an object is a Sandbox instance."""
+    return isinstance(obj, Sandbox)

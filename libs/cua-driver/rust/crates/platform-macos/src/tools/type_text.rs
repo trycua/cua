@@ -67,9 +67,9 @@ fn def() -> &'static ToolDef {
              within the daemon transport budget. Longer synthesized routes are \
              refused before character events and return a safe chunk size; \
              one-call AX insertion remains uncapped.\n\n\
-             Optional `element_index` + `window_id` (from the last \
+             Optional `element_token` (from the last \
              `get_window_state` snapshot) directs the write to a specific field. \
-             Without `element_index`, the write goes to the pid's currently \
+             Without `element_token`, the write goes to the pid's currently \
              focused element.\n\n\
              WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, \
              X's compose box): AXValue is not independent proof that the \
@@ -84,7 +84,7 @@ fn def() -> &'static ToolDef {
              browser's own native address bar/toolbar stays trusted). For a browser \
              TAB the reliable path is the `page` tool (drives the DOM via CDP); for \
              an embedded web view use this tool's px form: pass x,y (no \
-             element_index) to pixel-click the field then type, in one call. NOTE: \
+             element_token) to pixel-click the field then type, in one call. NOTE: \
              a px focus-click won't reliably open+focus a CLOSED control; AX-press \
              to open/activate it first (works in the background), then px-type. \
              Always confirm via the screenshot; if px-background still drops, \
@@ -99,12 +99,10 @@ fn def() -> &'static ToolDef {
                 "text": { "type": "string",  "description": "Text to insert at the target's cursor." },
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it)."
+                    "description": "CGWindowID. Omit when element_token is supplied (the token carries it)."
                 },
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
-                "x": { "type": "number", "description": "Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click." },
+                "x": { "type": "number", "description": "Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_token) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click." },
                 "y": { "type": "number", "description": "Screenshot-pixel Y of the field (see x)." },
                 "delay_ms": {
                     "type": "integer",
@@ -215,18 +213,8 @@ impl Tool for TypeTextTool {
         // cua_driver_core::text_sanitize docs for rationale.
         let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
-        // Surface 6: element_token / element_index precedence resolution.
-        let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "type_text",
-        ) {
+        let resolved = match self.state.snapshots.resolve(pid, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -248,12 +236,6 @@ impl Tool for TypeTextTool {
             return error;
         }
 
-        // Validate element_index requires window_id (still applies for
-        // the legacy integer path; token path already resolved window_id).
-        if element_index.is_some() && window_id.is_none() {
-            return ToolResult::error("window_id is required when element_index is used.");
-        }
-
         // Argument-shape errors are reported before any gating or retained
         // lookups: a malformed call must fail the same way regardless of
         // background-target state.
@@ -261,7 +243,7 @@ impl Tool for TypeTextTool {
         let py = args.get("y").and_then(|v| v.as_f64());
         if px.is_some() && py.is_some() && element_index.is_some() {
             return ToolResult::error(
-                "Pass either element_index (ax) or x,y (px) to type_text, not both.",
+                "Pass either element_token (ax) or x,y (px) to type_text, not both.",
             );
         }
 
@@ -274,20 +256,19 @@ impl Tool for TypeTextTool {
         // AX write only (exact element, no CGEvent fallback), or a structured
         // refusal. delivery_mode:"foreground" stays the caller's explicit
         // last resort and is not gated here.
-        let (_mutation_lease, keyboard_policy) =
-            if !delivery_mode.is_foreground() && window_id.is_some() {
-                let wid = window_id.expect("checked above");
-                let gate_element_ptr = element_guard.as_ref().map(|(g, _)| g.as_ptr() as usize);
+        let (_mutation_lease, keyboard_policy) = match window_id {
+            Some(wid) if !delivery_mode.is_foreground() => {
+                let gate_element_ptr = element_guard.as_ref().map(|(g, _)| g.as_ptr());
                 match background_keyboard_policy(pid, wid, gate_element_ptr).await {
                     Ok((lease, policy)) => (Some(lease), policy),
                     Err(refusal_result) => return refusal_result,
                 }
-            } else {
-                (None, BackgroundKeyboardPolicy::Allowed)
-            };
+            }
+            _ => (None, BackgroundKeyboardPolicy::Allowed),
+        };
 
         // ── px form: focus by pixel-click, then type into the focused element ──
-        // Pass x,y (no element_index) for an *element px action*: pixel-click the
+        // Pass x,y (no element_token) for an *element px action*: pixel-click the
         // field to give the Chromium/Electron renderer the real keyboard focus the
         // AX path can't, then fall through to the focused-element type path (which
         // escalates AX → CGEvent and lands once focused). Reuses ClickTool's exact
@@ -364,6 +345,12 @@ impl Tool for TypeTextTool {
                     .update_position(&cursor_key, screen_x, screen_y);
             }
         }
+        // Untargeted text still gives a named session visible feedback: its
+        // remembered position, or the window centre on the first action.
+        if element_guard.is_none() && !used_pixel_focus {
+            super::cursor_tools::position_keyboard_cursor(&self.state, &args, window_id, None)
+                .await;
+        }
         let text_clone = text.clone();
         let char_count = text.chars().count();
 
@@ -397,9 +384,11 @@ impl Tool for TypeTextTool {
                         element_ptr,
                         delay_ms,
                         is_terminal_target,
-                        delivery_mode,
-                        window_id,
-                        blocking_policy,
+                        KeyboardRoute {
+                            delivery_mode,
+                            window_id,
+                            keyboard_policy: blocking_policy,
+                        },
                     )
                 })
                 .await
@@ -835,7 +824,7 @@ async fn background_keyboard_policy(
     };
     let lease = super::acquire_background_mutation(pid).await;
     let element_guard =
-        element_ptr.map(|ptr| unsafe { crate::ax::cache::RetainedElement::retain(ptr) });
+        element_ptr.map(|ptr| unsafe { crate::ax::snapshot::RetainedElement::retain(ptr) });
     let facts = match tokio::task::spawn_blocking(move || {
         let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
         crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
@@ -1159,6 +1148,14 @@ fn await_typed_delivery(
     }
 }
 
+/// How `type_text_blocking` may deliver: the requested mode, the addressed
+/// window, and the background keyboard policy decided for it.
+struct KeyboardRoute {
+    delivery_mode: super::DeliveryMode,
+    window_id: Option<u32>,
+    keyboard_policy: BackgroundKeyboardPolicy,
+}
+
 /// Best-effort-background ladder for `type_text`.
 ///
 /// - `delivery_mode == Background` (default): AX insert → read-back; on a
@@ -1175,14 +1172,37 @@ fn type_text_blocking(
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
     delay_ms: u64,
     is_terminal_target: bool,
-    delivery_mode: super::DeliveryMode,
-    window_id: Option<u32>,
-    keyboard_policy: BackgroundKeyboardPolicy,
+    route: KeyboardRoute,
 ) -> anyhow::Result<TypeTextDelivery> {
+    let KeyboardRoute {
+        delivery_mode,
+        window_id,
+        keyboard_policy,
+    } = route;
     // Original field value before any rung drives read-back verification only.
     // An unreadable value is not evidence that the field is empty — and for a
     // window-addressed request it must come from the exact target window,
     // never a same-process sibling.
+    // A background terminal insert has no semantic AX rung: when the
+    // exact-target decision restricted this request to semantic-only, there is
+    // nothing safe to run, and an over-budget synthesis cannot start. Both
+    // refusals need no read of the target, so they come before any AX call.
+    if is_terminal_target && !delivery_mode.is_foreground() {
+        if let BackgroundKeyboardPolicy::SemanticOnly(refusal) = &keyboard_policy {
+            return Ok(TypeTextDelivery::Refused(refusal.clone()));
+        }
+        if let Some(refusal) = synthesis_preflight(
+            TextDeliveryRoute::UnicodeSynthesis,
+            text.chars().count(),
+            delay_ms,
+        ) {
+            return Ok(TypeTextDelivery::SynthesisRefused {
+                path: PATH_KEY_EVENTS,
+                refusal,
+                ax_attempt: AxAttempt::NotAttempted,
+            });
+        }
+    }
     let before = read_axvalue_bound(pid, element_ptr_and_idx, window_id);
 
     // --- Foreground rung: explicit agent request (skip AX/background ladder). ---
@@ -1285,23 +1305,8 @@ fn type_text_blocking(
 
     // --- Background rung 0: terminal emulator → CGEvent only (AX is dropped). ---
     if is_terminal_target {
-        // A terminal insert has no semantic AX rung: when the exact-target
-        // decision restricted this request to semantic-only, there is nothing
-        // safe to run — refuse before posting anything.
-        if let BackgroundKeyboardPolicy::SemanticOnly(refusal) = keyboard_policy {
-            return Ok(TypeTextDelivery::Refused(refusal));
-        }
-        if let Some(refusal) = synthesis_preflight(
-            TextDeliveryRoute::UnicodeSynthesis,
-            text.chars().count(),
-            delay_ms,
-        ) {
-            return Ok(TypeTextDelivery::SynthesisRefused {
-                path: PATH_KEY_EVENTS,
-                refusal,
-                ax_attempt: AxAttempt::NotAttempted,
-            });
-        }
+        // The semantic-only and synthesis-budget refusals already ran before
+        // the read-back above.
         tracing::debug!(
             "type_text: pid {pid} is a terminal emulator; skipping AX value-set, \
              using CGEvent key-event synthesis"
@@ -1455,9 +1460,11 @@ mod tests {
             None,
             0,
             /*is_terminal_target=*/ true,
-            super::super::DeliveryMode::Background,
-            Some(7),
-            BackgroundKeyboardPolicy::SemanticOnly(refusal.clone()),
+            KeyboardRoute {
+                delivery_mode: super::super::DeliveryMode::Background,
+                window_id: Some(7),
+                keyboard_policy: BackgroundKeyboardPolicy::SemanticOnly(refusal.clone()),
+            },
         );
         match r {
             Ok(TypeTextDelivery::Refused(returned)) => assert_eq!(returned, refusal),
@@ -1474,9 +1481,11 @@ mod tests {
             None,
             0,
             /*is_terminal_target=*/ true,
-            super::super::DeliveryMode::Background,
-            None,
-            BackgroundKeyboardPolicy::Allowed,
+            KeyboardRoute {
+                delivery_mode: super::super::DeliveryMode::Background,
+                window_id: None,
+                keyboard_policy: BackgroundKeyboardPolicy::Allowed,
+            },
         )
         .expect("preflight refusal must not attempt the invalid pid");
         let TypeTextDelivery::SynthesisRefused {

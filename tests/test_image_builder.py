@@ -165,7 +165,7 @@ class TestLinuxFromRegistry:
         skip_if_unsupported(Image.linux())
 
     async def test_ubuntu_22(self):
-        # from_registry with plain images only works if the image has computer-server.
+        # from_registry with plain images only works if the image runs a guest daemon cua-sandbox can talk to.
         # Use the cua base image which always has it.
         image = Image.from_registry("docker.io/trycua/cua-xfce:latest")
         out = await _run(image, "cat /etc/os-release")

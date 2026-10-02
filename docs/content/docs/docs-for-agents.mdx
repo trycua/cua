@@ -1,0 +1,56 @@
+---
+title: Docs for agents
+description: Give a coding agent Cua's docs and source as Markdown or over MCP.
+---
+
+## Markdown
+
+Every page has a Markdown twin: append `.md` to its URL, or send `Accept: text/markdown`.
+
+- [`/docs/llms.txt`](https://cua.ai/docs/llms.txt): index of every page.
+- [`/docs/llms-full.txt`](https://cua.ai/docs/llms-full.txt): all pages in one file.
+
+## MCP server
+
+`https://vk-mcp.cua.ai/mcp` (streamable HTTP, read-only) searches the docs and the versioned source.
+
+```bash skip="third-party-cli"
+claude mcp add --transport http cua-docs https://vk-mcp.cua.ai/mcp
+```
+
+Cursor (`mcp.json`), Windsurf (`~/.codeium/windsurf/mcp_config.json`) and Cline take the same entry:
+
+```json test="config" id="json-config" schema="mcp-client-config"
+{
+  "mcpServers": {
+    "Cua Docs & Code": {
+      "url": "https://vk-mcp.cua.ai/mcp"
+    }
+  }
+}
+```
+
+GitHub Copilot reads `.vscode/mcp.json` with `servers` in place of `mcpServers`:
+
+```json test="config" id="json-config-2" schema="mcp-client-config"
+{
+  "servers": {
+    "Cua Docs & Code": {
+      "url": "https://vk-mcp.cua.ai/mcp"
+    }
+  }
+}
+```
+
+| Tool | Input | Returns |
+| --- | --- | --- |
+| `query_docs_db` | `sql`: a `SELECT` over `pages` / `pages_fts` (`url`, `title`, `category`, `content`) | Rows |
+| `query_docs_vectors` | `query`, `limit` (10, max 100), `where`, `select` | Page chunks with `_distance` |
+| `query_code_db` | `sql`: a `SELECT` over `code_files` / `code_files_fts` (`component`, `version`, `file_path`, `content`, `language`) | Rows |
+| `query_code_vectors` | `query`, `limit`, `where` (e.g. `version = '0.7.3'`), `select`, `component` | Code chunks with `_distance` |
+
+The code index covers tagged releases of Python, TypeScript and JavaScript sources. List what it holds before relying on a version:
+
+```sql skip="live-cloud-only"
+SELECT DISTINCT component, version FROM code_files;
+```

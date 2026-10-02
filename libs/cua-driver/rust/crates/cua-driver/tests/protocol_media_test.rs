@@ -24,6 +24,7 @@ fn spawn_unrestricted() -> Option<RawDriver> {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "host desktop: captures real windows (Screen Recording); see libs/cua-driver/tests/manual-e2e-allowlist.txt"]
 fn zoom_tool_returns_jpeg() {
     //! Snapshot a visible window, zoom into it, and verify the result contains
     //! a JPEG image. `zoom` crops the screenshot this session last captured, so
@@ -85,6 +86,13 @@ fn zoom_tool_returns_jpeg() {
             ));
             continue;
         }
+
+        // Window-relative pixels need this connection's current screenshot.
+        d.send(&serde_json::json!({
+            "jsonrpc":"2.0","id": 100 + tried as u64,"method":"tools/call",
+            "params":{"name":"get_window_state","arguments":{"pid": win["pid"], "window_id": wid}}
+        }));
+        d.recv();
 
         d.send(&serde_json::json!({
             "jsonrpc":"2.0","id": request_id + 1,"method":"tools/call",
@@ -204,11 +212,16 @@ fn zoom_from_zoom_click_round_trip() {
         "Expected error when from_zoom=true with no context, got: {resp:?}"
     );
     assert!(
-        err_text.contains("no zoom context"),
-        "Expected 'no zoom context' error, got: {err_text}"
+        err_text.contains("zoom coordinate context is missing"),
+        "Expected missing zoom context error, got: {err_text}"
     );
 
-    // Step 2: call zoom on that window to store context.
+    // Step 2: read the window, then zoom on it to store context.
+    d.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":40,"method":"tools/call",
+        "params":{"name":"get_window_state","arguments":{"pid": pid, "window_id": window_id}}
+    }));
+    d.recv();
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":4,"method":"tools/call",
         "params":{"name":"zoom","arguments":{"window_id": window_id, "pid": pid, "x1":0,"y1":0,"x2":50,"y2":50}}
@@ -237,13 +250,14 @@ fn zoom_from_zoom_click_round_trip() {
     let err_text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
     // Translation should succeed — if click fails it's for another reason (target app state), not missing context.
     assert!(
-        !err_text.contains("no zoom context"),
-        "After zoom(), from_zoom click should not say 'no zoom context', got: {err_text}"
+        !err_text.contains("zoom coordinate context is missing"),
+        "After zoom(), from_zoom click should have zoom context, got: {err_text}"
     );
 }
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "host desktop: captures the whole display with screencapture (Screen Recording); see libs/cua-driver/tests/manual-e2e-allowlist.txt"]
 fn recording_session() {
     //! Enable recording, invoke a non-read-only tool (recorded), disable, verify action.json written.
     let Some(mut d) = spawn_unrestricted() else {

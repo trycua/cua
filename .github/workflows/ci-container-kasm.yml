@@ -7,6 +7,9 @@ on:
       - ".github/workflows/ci-container-kasm.yml"
       - ".github/workflows/docker-reusable-build.yml"
 
+permissions:
+  contents: read
+
 jobs:
   build:
     uses: ./.github/workflows/docker-reusable-build.yml

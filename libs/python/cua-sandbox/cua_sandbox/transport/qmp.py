@@ -1,7 +1,7 @@
 """QMPTransport — control a QEMU VM directly via QMP (no guest agent required).
 
 Uses the QEMU Machine Protocol to provide mouse, keyboard, and screenshot
-control without needing computer-server installed inside the guest OS.
+control without any agent installed inside the guest OS.
 This enables sandboxing of stock OS images (e.g. Android-x86, raw Linux ISOs).
 
 QMP commands used:
@@ -378,7 +378,7 @@ class QMPTransport(Transport):
         raise NotImplementedError(
             "Shell commands require QEMU Guest Agent (virtio-serial) inside the guest. "
             "QMPTransport currently supports screenshot, mouse, and keyboard only. "
-            "For shell access, use an image with computer-server installed."
+            "For shell access, use an image with cua-spacesd installed."
         )
 
 

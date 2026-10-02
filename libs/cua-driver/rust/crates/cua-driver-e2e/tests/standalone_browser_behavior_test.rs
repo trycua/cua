@@ -450,7 +450,7 @@ fn browser_specs() -> Vec<BrowserSpec> {
             .into_iter()
             .map(|(spec, _)| spec)
             .collect::<Vec<_>>();
-        return select_browser_products(browsers, true);
+        select_browser_products(browsers, true)
     }
     #[cfg(target_os = "windows")]
     let candidates = {
@@ -1194,6 +1194,12 @@ fn wait_for_devtools_listener_to_close(profile: &Path, port: u16) {
     }
 }
 
+/// Per-row browser launch switches.
+struct BrowserLaunchFlags {
+    force_high_device_scale: bool,
+    disable_quiet_notification_prompts: bool,
+}
+
 fn spawn_browser_command(
     driver: &mut McpDriver,
     spec: &BrowserSpec,
@@ -1201,9 +1207,12 @@ fn spawn_browser_command(
     cdp_port: u16,
     url: &str,
     position: (i32, i32),
-    force_high_device_scale: bool,
-    disable_quiet_notification_prompts: bool,
+    flags: BrowserLaunchFlags,
 ) {
+    let BrowserLaunchFlags {
+        force_high_device_scale,
+        disable_quiet_notification_prompts,
+    } = flags;
     let mut command = command_for_browser(
         spec,
         profile,
@@ -1259,8 +1268,10 @@ fn launch_browser_with_driver(
         cdp_port,
         "about:blank",
         TEST_BROWSER_INITIAL_POSITION,
-        label.contains("multi-tab"),
-        label.contains("browser-owned-permission"),
+        BrowserLaunchFlags {
+            force_high_device_scale: label.contains("multi-tab"),
+            disable_quiet_notification_prompts: label.contains("browser-owned-permission"),
+        },
     );
     navigate_initial_page(cdp_port, &server);
     record_browser_provenance(spec, cdp_port);
@@ -2097,8 +2108,7 @@ fn run_native_omnibox_select_all(spec: &BrowserSpec) {
             serde_json::json!({
                 "pid": fixture.pid as i64,
                 "window_id": fixture.window_id,
-                "element_index": index,
-                "snapshot_id": snapshot.snapshot_id(),
+                "element_token": snapshot.element_token(index),
                 "value": initial,
             }),
         );

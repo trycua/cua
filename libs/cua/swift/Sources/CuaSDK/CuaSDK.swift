@@ -1875,8 +1875,9 @@ fileprivate struct UniffiCallbackInterfaceAudioSink {
     // Create the VTable using a series of closures.
     // Swift automatically converts these into C callback functions.
     //
-    // Store the vtable directly.
-    static let vtable: UniffiVTableCallbackInterfaceAudioSink = UniffiVTableCallbackInterfaceAudioSink(
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceAudioSink] = [UniffiVTableCallbackInterfaceAudioSink(
         uniffiFree: { (uniffiHandle: UInt64) -> () in
             do {
                 try FfiConverterTypeAudioSink.handleMap.remove(handle: uniffiHandle)
@@ -1915,19 +1916,11 @@ fileprivate struct UniffiCallbackInterfaceAudioSink {
                 writeReturn: writeReturn
             )
         }
-    )
-
-    // Rust stores this pointer for future callback invocations, so it must live
-    // for the process lifetime (not just for the init function call).
-    static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceAudioSink> = {
-        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceAudioSink>.allocate(capacity: 1)
-        ptr.initialize(to: vtable)
-        return UnsafePointer(ptr)
-    }()
+    )]
 }
 
 private func uniffiCallbackInitAudioSink() {
-    uniffi_cua_sdk_fn_init_callback_vtable_audiosink(UniffiCallbackInterfaceAudioSink.vtablePtr)
+    uniffi_cua_sdk_fn_init_callback_vtable_audiosink(UniffiCallbackInterfaceAudioSink.vtable)
 }
 
 #if swift(>=5.8)
@@ -4105,8 +4098,9 @@ fileprivate struct UniffiCallbackInterfaceFrameSink {
     // Create the VTable using a series of closures.
     // Swift automatically converts these into C callback functions.
     //
-    // Store the vtable directly.
-    static let vtable: UniffiVTableCallbackInterfaceFrameSink = UniffiVTableCallbackInterfaceFrameSink(
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceFrameSink] = [UniffiVTableCallbackInterfaceFrameSink(
         uniffiFree: { (uniffiHandle: UInt64) -> () in
             do {
                 try FfiConverterTypeFrameSink.handleMap.remove(handle: uniffiHandle)
@@ -4169,19 +4163,11 @@ fileprivate struct UniffiCallbackInterfaceFrameSink {
                 writeReturn: writeReturn
             )
         }
-    )
-
-    // Rust stores this pointer for future callback invocations, so it must live
-    // for the process lifetime (not just for the init function call).
-    static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceFrameSink> = {
-        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceFrameSink>.allocate(capacity: 1)
-        ptr.initialize(to: vtable)
-        return UnsafePointer(ptr)
-    }()
+    )]
 }
 
 private func uniffiCallbackInitFrameSink() {
-    uniffi_cua_sdk_fn_init_callback_vtable_framesink(UniffiCallbackInterfaceFrameSink.vtablePtr)
+    uniffi_cua_sdk_fn_init_callback_vtable_framesink(UniffiCallbackInterfaceFrameSink.vtable)
 }
 
 #if swift(>=5.8)
@@ -9562,8 +9548,9 @@ fileprivate struct UniffiCallbackInterfaceSpaceCreateListener {
     // Create the VTable using a series of closures.
     // Swift automatically converts these into C callback functions.
     //
-    // Store the vtable directly.
-    static let vtable: UniffiVTableCallbackInterfaceSpaceCreateListener = UniffiVTableCallbackInterfaceSpaceCreateListener(
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceSpaceCreateListener] = [UniffiVTableCallbackInterfaceSpaceCreateListener(
         uniffiFree: { (uniffiHandle: UInt64) -> () in
             do {
                 try FfiConverterTypeSpaceCreateListener.handleMap.remove(handle: uniffiHandle)
@@ -9602,19 +9589,11 @@ fileprivate struct UniffiCallbackInterfaceSpaceCreateListener {
                 writeReturn: writeReturn
             )
         }
-    )
-
-    // Rust stores this pointer for future callback invocations, so it must live
-    // for the process lifetime (not just for the init function call).
-    static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceSpaceCreateListener> = {
-        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceSpaceCreateListener>.allocate(capacity: 1)
-        ptr.initialize(to: vtable)
-        return UnsafePointer(ptr)
-    }()
+    )]
 }
 
 private func uniffiCallbackInitSpaceCreateListener() {
-    uniffi_cua_sdk_fn_init_callback_vtable_spacecreatelistener(UniffiCallbackInterfaceSpaceCreateListener.vtablePtr)
+    uniffi_cua_sdk_fn_init_callback_vtable_spacecreatelistener(UniffiCallbackInterfaceSpaceCreateListener.vtable)
 }
 
 #if swift(>=5.8)
@@ -13706,8 +13685,9 @@ fileprivate struct UniffiCallbackInterfaceTeleportApprover {
     // Create the VTable using a series of closures.
     // Swift automatically converts these into C callback functions.
     //
-    // Store the vtable directly.
-    static let vtable: UniffiVTableCallbackInterfaceTeleportApprover = UniffiVTableCallbackInterfaceTeleportApprover(
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceTeleportApprover] = [UniffiVTableCallbackInterfaceTeleportApprover(
         uniffiFree: { (uniffiHandle: UInt64) -> () in
             do {
                 try FfiConverterTypeTeleportApprover.handleMap.remove(handle: uniffiHandle)
@@ -13746,19 +13726,11 @@ fileprivate struct UniffiCallbackInterfaceTeleportApprover {
                 writeReturn: writeReturn
             )
         }
-    )
-
-    // Rust stores this pointer for future callback invocations, so it must live
-    // for the process lifetime (not just for the init function call).
-    static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceTeleportApprover> = {
-        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceTeleportApprover>.allocate(capacity: 1)
-        ptr.initialize(to: vtable)
-        return UnsafePointer(ptr)
-    }()
+    )]
 }
 
 private func uniffiCallbackInitTeleportApprover() {
-    uniffi_cua_sdk_fn_init_callback_vtable_teleportapprover(UniffiCallbackInterfaceTeleportApprover.vtablePtr)
+    uniffi_cua_sdk_fn_init_callback_vtable_teleportapprover(UniffiCallbackInterfaceTeleportApprover.vtable)
 }
 
 #if swift(>=5.8)

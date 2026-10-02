@@ -144,7 +144,7 @@ schemars = { version = "1.2", default-features = false, features = ["derive", "s
 rmcp = { version = "=3.4.1", default-features = false }
 
 # Bindings. Pinned exactly, same as libs/cua-driver/rust.
-uniffi = "=0.31.1"
+uniffi = "=0.31.0"
 
 # In-workspace crates.
 cua-proto = { path = "crates/cua-proto", version = "0.1.0" }

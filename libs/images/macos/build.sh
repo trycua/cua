@@ -25,8 +25,14 @@
 #   --base-image   pull this image instead (slim only; default
 #                  MACOS_BASE_REPO:MACOS_BASE_TAG in versions.env, checked against
 #                  MACOS_BASE_DIGEST)
-#   --app          a prebuilt app bundle; default: build libs/cua-spacesd
-#                  (cargo, release) and bundle it with build-macos-app.sh
+#   --app          a prebuilt app bundle (default $CUA_MACOS_APP); default:
+#                  build libs/cua-spacesd (cargo, release) and bundle it with
+#                  build-macos-app.sh
+#   --spacesd-source  local (default) or release (the bundle is a published
+#                  cua-spacesd release asset; needs --app). Default
+#                  $CUA_MACOS_SPACESD_SOURCE. Recorded in the image manifest
+#                  and /etc/cua-image/spacesd-source. With --app the doctor
+#                  expects the bundle's own build-info git_sha.
 #   --push TAG     after the gate passes, `lume push` TAG to the macos repo.
 #                  TAG must be a new immutable pin of this tier
 #                  (<version>[-slim|-xcode[-X.Y]]-<yyyymmdd>-<sha7>);
@@ -53,8 +59,9 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
-VERSION=26 TIER=slim BASE_VM="" BASE_IMAGE="" APP="" PUSH_TAG="" KEEP=0 MEMORY="" VM="" EXPECT_GIT=""
+VERSION=26 TIER=slim BASE_VM="" BASE_IMAGE="" APP="${CUA_MACOS_APP:-}" PUSH_TAG="" KEEP=0 MEMORY="" VM="" EXPECT_GIT=""
 OUT="${CUA_IMAGES_OUT:-$HOME/.cache/cua-images}/macos"
+SPACESD_SOURCE="${CUA_MACOS_SPACESD_SOURCE:-local}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --version) VERSION="$2"; shift 2 ;;
@@ -64,6 +71,7 @@ while [ $# -gt 0 ]; do
         --base-vm) BASE_VM="$2"; shift 2 ;;
         --base-image) BASE_IMAGE="$2"; shift 2 ;;
         --app) APP="$2"; shift 2 ;;
+        --spacesd-source) SPACESD_SOURCE="$2"; shift 2 ;;
         --push) PUSH_TAG="$2"; shift 2 ;;
         --keep) KEEP=1; shift ;;
         --out) OUT="$2"; shift 2 ;;
@@ -80,6 +88,11 @@ case "$TIER" in
     full) SUFFIX="" PIN_RE="^${VERSION}-[0-9]{8}-[0-9a-f]{7}$" ;;
     xcode) SUFFIX=-xcode PIN_RE="^${VERSION}-xcode(-[0-9.]+)?-[0-9]{8}-[0-9a-f]{7}$" ;;
     *) echo "--tier is slim, full or xcode" >&2; exit 2 ;;
+esac
+case "$SPACESD_SOURCE" in
+    local) ;;
+    release) [ -n "$APP" ] || { echo "--spacesd-source release needs --app (the release's app bundle)" >&2; exit 2; } ;;
+    *) echo "--spacesd-source is local or release" >&2; exit 2 ;;
 esac
 if [ "$TIER" != slim ] && [ -z "$BASE_VM" ]; then
     echo "--tier $TIER builds on the gated VM of the tier below: pass --base-vm" >&2; exit 2
@@ -149,6 +162,7 @@ if [ -z "$APP" ]; then
     EXPECT_GIT="${EXPECT_GIT:-$REV}"
 fi
 ditto "$APP" "$SETUP/Cua Spacesd.app"
+printf '%s\n' "$SPACESD_SOURCE" >"$SETUP/spacesd-source"
 cp "$HERE"/files/*.sh "$HERE"/files/*.plist "$HERE/image.json" "$HERE/versions.env" "$SETUP/"
 
 # This tier's downloads: fetched once into the cache, checked, then linked
@@ -179,8 +193,10 @@ case "$TIER" in
         ln -f "$xip" "$SETUP/cache/" 2>/dev/null || cp "$xip" "$SETUP/cache/" ;;
 esac
 "$SETUP/Cua Spacesd.app/Contents/MacOS/cua-spacesd" build-info >"$OUT/build-info.json"
+# A prebuilt bundle: the doctor checks the guest runs exactly that build.
+EXPECT_GIT="${EXPECT_GIT:-$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("git_sha",""))' "$OUT/build-info.json")}"
 python3 "$REPO/libs/images/common/tools/cua-image-manifest" generate \
-    --image-json "$HERE/image.json" --tier "$TIER" --variant lume --arch arm64 --spacesd-source local \
+    --image-json "$HERE/image.json" --tier "$TIER" --variant lume --arch arm64 --spacesd-source "$SPACESD_SOURCE" \
     --spacesd /usr/local/bin/cua-spacesd --build-info "$OUT/build-info.json" \
     --source-revision "$REV" --ref "$REPOSITORY:$VERSION$SUFFIX" --out "$SETUP/manifest.json"
 # The build boots with a token the way the cua SDK delivers one (setup share);

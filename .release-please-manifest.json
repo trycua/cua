@@ -4,6 +4,6 @@
   "libs/lume": "0.6.0",
   "libs/python/cua-sandbox": "0.9.0",
   "libs/cua": "0.2.0",
-  "libs/cua-spacesd": "0.1.1",
+  "libs/cua-spacesd": "0.1.2",
   "apps/cua-spaces": "0.1.0"
 }

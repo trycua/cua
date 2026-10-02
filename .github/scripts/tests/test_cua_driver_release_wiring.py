@@ -453,6 +453,49 @@ fi
         self.assertNotIn('"path": "scripts/install.ps1"', config)
         self.assertIn('"path": "rust/Skills/cua-driver/SKILL.md"', config)
 
+    def test_release_please_bumps_the_spacesd_lockfiles(self) -> None:
+        """cua-spacesd and its e2e workspaces lock the driver and spacesd
+        crates by path: each release PR must bump them there too, or every
+        --locked build of those workspaces fails until they are re-locked."""
+        import tomllib
+
+        packages = json.loads(self.read("release-please-config.json"))["packages"]
+        workspaces = {
+            "libs/cua-driver": REPO_ROOT / "libs/cua-driver/rust",
+            "libs/cua-spacesd": REPO_ROOT / "libs/cua-spacesd/crates",
+        }
+        lockfiles = [
+            "libs/cua-spacesd/Cargo.lock",
+            "libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+            "libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+        ]
+        for package, root in workspaces.items():
+            crates = set()
+            for manifest in root.rglob("Cargo.toml"):
+                if "target" in manifest.parts:
+                    continue
+                crate = tomllib.loads(manifest.read_text()).get("package", {})
+                if crate.get("version") == {"workspace": True}:
+                    crates.add(crate["name"])
+            entries = {
+                (entry["path"], entry.get("jsonpath"))
+                for entry in packages[package]["extra-files"]
+                if isinstance(entry, dict)
+            }
+            for lockfile in lockfiles:
+                locked = tomllib.loads(self.read(lockfile))["package"]
+                for crate in locked:
+                    if "source" in crate or crate["name"] not in crates:
+                        continue
+                    with self.subTest(package=package, lockfile=lockfile, crate=crate["name"]):
+                        self.assertIn(
+                            (
+                                f"/{lockfile}",
+                                f"$.package[?(@.name.value=='{crate['name']}')].version",
+                            ),
+                            entries,
+                        )
+
     def test_driver_installer_version_advances_only_after_publication(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
 

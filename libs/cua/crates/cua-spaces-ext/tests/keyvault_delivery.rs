@@ -167,7 +167,7 @@ async fn rig() -> Rig {
     }
 }
 
-/// Third party requests the `github.com` chrome site into the target; the user
+/// Third party requests the chrome app into the target; the user
 /// approves; the returned token authorizes exactly one delivery.
 async fn grant(r: &Rig, target: &str) -> (String, Vec<String>) {
     let pending = r
@@ -175,10 +175,8 @@ async fn grant(r: &Rig, target: &str) -> (String, Vec<String>) {
         .request_access(
             &r.koala,
             AccessRequest {
-                selectors: vec![Selector::Site {
+                selectors: vec![Selector::App {
                     app: "chrome".into(),
-                    site: "github.com".into(),
-                    account: None,
                 }],
                 targets: vec![target.into()],
                 uses: Some(0),
@@ -220,12 +218,15 @@ async fn broker_delivers_a_granted_capability_and_wipes_on_release() {
                 token: Some(token.clone()),
                 items: items.clone(),
                 target: r.target.clone(),
+                include_passwords: false,
+                launch: false,
             },
         )
         .await
         .expect("a granted capability delivers");
     assert_eq!(outcome.deliveries.len(), 1);
-    assert!(outcome.expires_ms > 0, "the delivery carries a TTL");
+    // Auto-wipe is off by default: the copy stays until it is wiped.
+    assert_eq!(outcome.expires_ms, 0, "no expiry by default");
 
     let imports = r.mock.state.teleport_imports();
     assert_eq!(imports.len(), 1, "the target received exactly one import");
@@ -234,9 +235,9 @@ async fn broker_delivers_a_granted_capability_and_wipes_on_release() {
         carries(&import.bundle, SECRET),
         "the session reached the target"
     );
-    assert!(
-        import.options.expires_at_ms > 0,
-        "the receiver got the TTL so it wipes on its own"
+    assert_eq!(
+        import.options.expires_at_ms, 0,
+        "the receiver got no expiry, so only a wipe removes it"
     );
     // The capability token never travels with the delivery (not in argv-like
     // fields, not in the bundle): the broker delivers over its own channel.
@@ -291,6 +292,8 @@ async fn a_capability_for_a_different_target_is_refused() {
                 token: Some(token),
                 items,
                 target: other,
+                include_passwords: false,
+                launch: false,
             },
         )
         .await
@@ -316,6 +319,8 @@ async fn a_tripped_kill_switch_denies_delivery() {
                 token: Some(token),
                 items,
                 target: r.target.clone(),
+                include_passwords: false,
+                launch: false,
             },
         )
         .await
@@ -325,4 +330,58 @@ async fn a_tripped_kill_switch_denies_delivery() {
         r.mock.state.teleport_imports().is_empty(),
         "nothing was delivered while disabled"
     );
+}
+
+/// A direct teleport through the daemon's backend reports where it is:
+/// reading (the Keychain moment on macOS), packing, the upload's bytes and
+/// the import, in that order; with auto-wipe off the copy has no expiry.
+#[tokio::test]
+async fn a_direct_teleport_reports_its_stages_through_the_daemon_backend() {
+    use cua_keyvault::broker::{ImportSpec, TeleportStage};
+    let r = rig().await;
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = {
+        let seen = seen.clone();
+        Arc::new(move |s: TeleportStage| seen.lock().unwrap().push(s))
+    };
+    let outcome = r
+        .broker
+        .import_and_teleport_with_progress(
+            &r.cua,
+            ImportSpec {
+                app: "chrome".into(),
+                whole_app: true,
+                ..Default::default()
+            },
+            r.target.clone(),
+            false,
+            Some(sink),
+        )
+        .await
+        .expect("a first-party direct teleport delivers");
+    assert_eq!(outcome.expires_ms, 0, "auto-wipe is off by default");
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(seen.first(), Some(&TeleportStage::Reading), "{seen:?}");
+    let packing = seen
+        .iter()
+        .position(|s| *s == TeleportStage::Packing)
+        .expect("packs");
+    let importing = seen
+        .iter()
+        .position(|s| *s == TeleportStage::Importing)
+        .expect("imports");
+    assert!(packing < importing, "{seen:?}");
+    assert!(
+        seen[packing..importing]
+            .iter()
+            .any(|s| matches!(s, TeleportStage::Uploading { total, .. } if *total > 0)),
+        "the upload reports its bytes: {seen:?}"
+    );
+    assert!(
+        !seen.contains(&TeleportStage::Saving),
+        "save: false saves nothing"
+    );
+    let imports = r.mock.state.teleport_imports();
+    assert_eq!(imports.len(), 1);
+    assert_eq!(imports[0].options.expires_at_ms, 0);
 }

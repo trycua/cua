@@ -56,7 +56,7 @@
           "os-omarchy New Space [Starting] 10 1%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, Starting 10 Starting…"
+          "os-omarchy New Space, Linux, This Mac, Starting 10 Starting…"
         ]
       }
     },
@@ -100,7 +100,7 @@
           "os-omarchy New Space [Starting] 11 1%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, Starting 11 Starting…"
+          "os-omarchy New Space, Linux, This Mac, Starting 11 Starting…"
         ]
       }
     },
@@ -144,7 +144,7 @@
           "os-omarchy New Space [Starting] 11 1%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, Starting 11 Starting…"
+          "os-omarchy New Space, Linux, This Mac, Starting 11 Starting…"
         ]
       }
     },
@@ -188,7 +188,7 @@
           "os-omarchy New Space [Starting] 15 1%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, Starting 15 Starting…"
+          "os-omarchy New Space, Linux, This Mac, Starting 15 Starting…"
         ]
       }
     },
@@ -232,7 +232,7 @@
           "os-omarchy New Space [Starting] 18 1%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, Starting 18 Downloading image…"
+          "os-omarchy New Space, Linux, This Mac, Starting 18 Downloading image…"
         ]
       }
     },
@@ -276,7 +276,7 @@
           "os-omarchy New Space [Starting] 104 10%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, Starting 104 Downloading image…"
+          "os-omarchy New Space, Linux, This Mac, Starting 104 Downloading image…"
         ]
       }
     },
@@ -320,7 +320,7 @@
           "os-omarchy New Space [Starting] 360 36%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, Starting 360 Downloading image…"
+          "os-omarchy New Space, Linux, This Mac, Starting 360 Downloading image…"
         ]
       }
     },
@@ -364,7 +364,7 @@
           "os-omarchy New Space [Starting] 360 36%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, Starting 360 Booting…"
+          "os-omarchy New Space, Linux, This Mac, Starting 360 Booting…"
         ]
       }
     },
@@ -408,7 +408,7 @@
           "os-omarchy New Space [Starting] 361 36%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, Starting 361 Booting…"
+          "os-omarchy New Space, Linux, This Mac, Starting 361 Booting…"
         ]
       }
     },
@@ -452,7 +452,7 @@
           "os-omarchy New Space [Starting] 362 36%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, Starting 362 Starting services…"
+          "os-omarchy New Space, Linux, This Mac, Starting 362 Starting services…"
         ]
       }
     },
@@ -496,7 +496,7 @@
           "os-omarchy New Space [Starting] 525 52%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, Starting 525 Starting services…"
+          "os-omarchy New Space, Linux, This Mac, Starting 525 Starting services…"
         ]
       }
     },
@@ -540,7 +540,7 @@
           "os-omarchy New Space [Starting] 851 85%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, Starting 851 Starting services…"
+          "os-omarchy New Space, Linux, This Mac, Starting 851 Starting services…"
         ]
       }
     },
@@ -584,7 +584,7 @@
           "os-omarchy New Space [Starting] 963 96%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, Starting 963 Starting services…"
+          "os-omarchy New Space, Linux, This Mac, Starting 963 Starting services…"
         ]
       }
     },
@@ -628,7 +628,7 @@
           "os-omarchy New Space [Starting] 968 96%"
         ],
         "tiles": [
-          "os-omarchy New Space, Linux, Starting 968 Starting services…"
+          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting services…"
         ]
       }
     },
@@ -696,8 +696,8 @@
           "os-omarchy New Space [Starting] 968 96%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, Starting 10 Starting…",
-          "os-omarchy New Space, Linux, Starting 968 Starting services…"
+          "os-ubuntu New Space, Linux, This Mac, Starting 10 Starting…",
+          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting services…"
         ]
       }
     },
@@ -765,8 +765,8 @@
           "os-omarchy New Space [Starting] 968 96%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, Starting 59 Creating…",
-          "os-omarchy New Space, Linux, Starting 968 Starting services…"
+          "os-ubuntu New Space, Linux, This Mac, Starting 59 Creating…",
+          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting services…"
         ]
       }
     },
@@ -834,8 +834,8 @@
           "os-omarchy New Space [Starting] 968 96%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, Starting 124 Creating…",
-          "os-omarchy New Space, Linux, Starting 968 Starting services…"
+          "os-ubuntu New Space, Linux, This Mac, Starting 124 Creating…",
+          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting services…"
         ]
       }
     },
@@ -903,8 +903,8 @@
           "os-omarchy New Space [Starting] 987 98%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, Starting 124 Creating…",
-          "os-omarchy New Space, Linux, Starting 987 Connecting…"
+          "os-ubuntu New Space, Linux, This Mac, Starting 124 Creating…",
+          "os-omarchy New Space, Linux, This Mac, Starting 987 Connecting…"
         ]
       }
     },
@@ -972,8 +972,8 @@
           "os-omarchy New Space [Starting] 987 98%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, Starting 172 Starting services…",
-          "os-omarchy New Space, Linux, Starting 987 Connecting…"
+          "os-ubuntu New Space, Linux, This Mac, Starting 172 Starting services…",
+          "os-omarchy New Space, Linux, This Mac, Starting 987 Connecting…"
         ]
       }
     },
@@ -1041,8 +1041,8 @@
           "os-omarchy New Space [Starting] 989 98%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, Starting 831 Starting services…",
-          "os-omarchy New Space, Linux, Starting 989 Connecting…"
+          "os-ubuntu New Space, Linux, This Mac, Starting 831 Starting services…",
+          "os-omarchy New Space, Linux, This Mac, Starting 989 Connecting…"
         ]
       }
     },
@@ -1110,8 +1110,8 @@
           "os-omarchy New Space [Starting] 989 98%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, Starting 831 Starting services…",
-          "os-omarchy New Space, Linux, Starting 989 Downloading image…"
+          "os-ubuntu New Space, Linux, This Mac, Starting 831 Starting services…",
+          "os-omarchy New Space, Linux, This Mac, Starting 989 Downloading image…"
         ]
       }
     },
@@ -1179,8 +1179,8 @@
           "os-omarchy New Space [Starting] 1000 100%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, Starting 831 Starting services…",
-          "os-omarchy New Space, Linux, Starting 1000 Ready"
+          "os-ubuntu New Space, Linux, This Mac, Starting 831 Starting services…",
+          "os-omarchy New Space, Linux, This Mac, Starting 1000 Ready"
         ]
       }
     },
@@ -1248,8 +1248,8 @@
           "os-omarchy New Space [Starting] 1000 100%"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, Starting 900 Starting services…",
-          "os-omarchy New Space, Linux, Starting 1000 Ready"
+          "os-ubuntu New Space, Linux, This Mac, Starting 900 Starting services…",
+          "os-omarchy New Space, Linux, This Mac, Starting 1000 Ready"
         ]
       }
     },
@@ -1297,10 +1297,10 @@
             "facts": [
               "Status: Running",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: local:omarchy [copy local:omarchy doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Omarchy",
               "Kind: Virtual machine",
-              "Architecture: x64",
-              "Identifier: local:omarchy [copy local:omarchy doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Architecture: x64"
             ],
             "id": "local:omarchy",
             "previewText": "Loading the desktop…",
@@ -1318,8 +1318,8 @@
           "os-omarchy Omarchy [Running] - -"
         ],
         "tiles": [
-          "os-ubuntu New Space, Linux, Starting 900 Starting services…",
-          "os-omarchy Omarchy, Linux, Running - -"
+          "os-ubuntu New Space, Linux, This Mac, Starting 900 Starting services…",
+          "os-omarchy Omarchy, Linux, This Mac, Running - -"
         ]
       }
     }

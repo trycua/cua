@@ -1,12 +1,17 @@
 ---
 title: Cua Spaces
 description: 'The Cua Spaces app and SDK: register any sandbox or machine once, then stream it, run agents in it and teleport apps into it.'
+landing:
+  summary: 'The Mac app for working alongside your agents. Watch, take over, share files and teleport apps.'
+  cta: Explore Cua Spaces
 ---
 
-A Space is a desktop your agents can use and you can watch: a local container
-or VM, a cloud sandbox, or your own machine. Each runs cua-spacesd, which
-streams the screen, takes input through Cua Driver, and receives teleported
-apps and files.
+A Space is a desktop your agents can use and you can watch: a container or VM
+on your own Mac, or one of your team's machines (your own cloud is coming
+soon). Each runs cua-spacesd, which streams the screen, takes input through
+Cua Driver, and receives teleported apps and files. Cua Spaces is
+source-available under the FSL-1.1-MIT. For teams, join the
+[waitlist](https://cua.ai/teams).
 
 The **Cua Spaces app** puts your Spaces in the menu bar and notch, so you can
 watch them, open them and teleport apps in with a drag.
@@ -19,9 +24,8 @@ run agents in them from Python, TypeScript, Swift or Rust.
 
 | Kind | Id | Comes from |
 |------|----|------------|
+| Local | `local:<name>` | `spaces.create(options)`: a new Space, on this machine by default |
 | Direct | `direct:<host:port>` | `spaces.add(url, token)`: an existing machine |
-| Cloud | `cloud:<name>` | `spaces.create(on="cloud")` |
-| Local | `local:<name>` | `spaces.create(on="local")` |
 | Relay | `relay:<machine-id>` | Your machines set up with `cua host setup`, listed automatically |
 
 The app, the `cua` CLI, the SDKs and `cua daemon` share one registry (`~/.cua/spaces.json`).

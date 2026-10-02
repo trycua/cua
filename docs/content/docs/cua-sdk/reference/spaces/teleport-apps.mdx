@@ -175,6 +175,10 @@ The user's answer to the consent screen.
 | `acknowledge_sensitive` / `acknowledgeSensitive` | `bool` | `false` | Saw and accepted the secrets. |
 | `save_to_keyvault` / `saveToKeyvault` | `bool` | `false` | "Save to Keyvault": keep the captured session sealed in the user's own Cua Keyvault after this delivery. |
 | `acknowledge_relay_plaintext` / `acknowledgeRelayPlaintext` | `bool` | `false` | Saw and accepted `TeleportPlan.relay_unsealed`'s warning (S1). |
+| `cookie_domains` / `cookieDomains` | `Option<Vec<String>>` | `None` | The review's per-site choice: the sites whose cookies to send (`None`: every cookie in the selection). |
+| `exclude` | `Vec<String>` | `[]` | Consent items (their keys) the user turned off. |
+| `from_vault` / `fromVault` | `Option<Vec<String>>` | `None` | Send these saved Keyvault items (ids) instead of reading the live app: nothing is captured from the host. |
+| `include_passwords` / `includePasswords` | `bool` | `false` | Also send the saved passwords: only when ticked in the review. |
 
 ## `TeleportConsentItem` record
 

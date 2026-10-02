@@ -137,6 +137,7 @@ impl ServerBuilder {
         let fs = FsState::new(ctx.clone());
         let tunnel = TunnelState::new(ctx.clone());
         let volume = VolumeShared::new(ctx.clone());
+        let volume_state = volume.clone();
         let teleport = TeleportServiceImpl::new(ctx.clone(), receiver);
         let mut core_features = vec![
             // Unix openpty; Windows ConPTY.
@@ -346,7 +347,12 @@ impl ServerBuilder {
         let app = http.fallback_service(grpc).layer(cors_layer()).layer(
             axum::middleware::from_fn_with_state(ctx.clone(), crate::browser_guard::guard),
         );
-        Server { ctx, app, manifest }
+        Server {
+            ctx,
+            app,
+            manifest,
+            volume: volume_state,
+        }
     }
 }
 
@@ -392,6 +398,7 @@ pub struct Server {
     ctx: ServerContext,
     app: Router,
     manifest: RouteManifest,
+    volume: VolumeShared,
 }
 
 impl Server {
@@ -421,6 +428,14 @@ impl Server {
         if crate::telemetry::spawn_reporter(&self.ctx.config().data_dir) {
             tracing::info!("aggregate telemetry on (CUA_SPACESD_TELEMETRY)");
         }
+        // A mount left by a previous daemon that died without unmounting
+        // answers nothing; clear it before anything touches the path.
+        self.volume.clear_stale_mount().await;
+        // The `cua` keychain (Chrome's fallback home for its Safe Storage
+        // key) must never be locked: whatever touches it while it is
+        // raises a password dialog nobody can answer.
+        #[cfg(target_os = "macos")]
+        spawn_keychain_keeper(self.ctx.shutdown_token());
         let shutdown = self.ctx.shutdown_token();
         let grace = self.ctx.config().shutdown_grace;
         let keepalive = self.ctx.config().keepalive_interval;
@@ -499,6 +514,9 @@ impl Server {
         {
             tracing::warn!(?grace, "grace period elapsed with connections still open");
         }
+        // Unmount the volume before the process exits: a daemon that leaves
+        // its NFS mount behind leaves a dead mount that hangs `ls`.
+        self.volume.finish().await;
         Ok(())
     }
 }
@@ -526,4 +544,27 @@ pub async fn spawn_local(server: Server) -> std::io::Result<SocketAddr> {
         }
     });
     Ok(addr)
+}
+
+/// Unlocks the `cua` keychain now and keeps it unlocked (after a reboot, a
+/// wake, a timeout): see `cua_spacesd_teleport::keychain::keep_cua_keychain_unlocked`.
+#[cfg(target_os = "macos")]
+fn spawn_keychain_keeper(shutdown: tokio_util::sync::CancellationToken) {
+    // Nothing in an unattended Space can answer a Keychain dialog: have any
+    // Security API call made in this process fail instead of showing one.
+    cua_spacesd_teleport::keychain::forbid_keychain_prompts();
+    tokio::spawn(async move {
+        let host = cua_spacesd_teleport::default_host();
+        loop {
+            let h = host.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                cua_spacesd_teleport::keychain::keep_cua_keychain_unlocked(&*h)
+            })
+            .await;
+            tokio::select! {
+                _ = tokio::time::sleep(cua_spacesd_teleport::keychain::KEEPER_INTERVAL) => {}
+                _ = shutdown.cancelled() => return,
+            }
+        }
+    });
 }

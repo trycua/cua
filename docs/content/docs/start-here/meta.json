@@ -3,7 +3,8 @@
   "icon": "GraduationCap",
   "pages": [
     "sandbox-images",
-    "your-first-cloud-fleet",
+    "create-a-space-with-the-sdk",
+    "host-spaces-on-your-spare-mac",
     "drive-your-first-app",
     "create-a-local-macos-sandbox",
     "run-in-github-actions",

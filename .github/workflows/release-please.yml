@@ -244,10 +244,17 @@ jobs:
               DRIVER_VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
               cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \
                 -p cua-driver --precise "$DRIVER_VERSION"
+              # cua-spacesd and its standalone e2e workspaces lock the driver
+              # crates by path: follow the new version without upgrading deps.
+              for manifest in libs/cua-spacesd/Cargo.toml libs/cua-spacesd/tests/*/Cargo.toml; do
+                cargo metadata --format-version 1 --manifest-path "$manifest" > /dev/null
+              done
               python3 .github/scripts/sync_driver_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product driver
               git add libs/cua-driver/rust/Cargo.lock \
-                docs/content/docs/cua-driver/reference
+                libs/cua-spacesd/Cargo.lock libs/cua-spacesd/tests/*/Cargo.lock \
+                docs/content/docs/cua-driver/reference \
+                scripts/docs-generators/cli-specs/cua-driver.json
               COMMIT_MESSAGE="chore(cua-driver-rs): synchronize generated release files"
             elif [[ "$LUME" == "true" ]]; then
               python3 .github/scripts/sync_lume_release_docs.py

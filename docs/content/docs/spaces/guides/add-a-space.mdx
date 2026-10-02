@@ -1,6 +1,6 @@
 ---
 title: Add a Space
-description: 'Create a Space locally or in the cloud, or from any image, follow or cancel the create, add a GPU, add an existing machine, then list, delete or remove it.'
+description: 'Create a Space on your machine, from any image, follow or cancel the create, add a GPU, add an existing machine, then list, delete or remove it.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -13,7 +13,7 @@ prints (`local:<name>`, `cloud:<name>`, `direct:<host:port>`,
 ## Create a Space
 
 ```python skip="pseudo"
-created = await spaces.create(cua.SpaceCreateOptions(on="local", cpus=2, memory_mb=4096))
+created = await spaces.create(cua.SpaceCreateOptions(cpus=2, memory_mb=4096))
 space = await spaces.space(created.space.id)
 ```
 
@@ -22,18 +22,6 @@ Runs `ghcr.io/trycua/linux:24.04` (or `image`) with a fresh env token. `on`,
 without `on`, the Space runs where `cua config get default.on` says (local
 unless you changed it; the Spaces app sets it in Settings, Default location).
 `cua runtime doctor` shows what this host has.
-
-## In the cloud
-
-Needs `cua auth login`, or `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET`. Cloud
-Spaces are metered until deleted.
-
-```python skip="placeholder"
-created = await spaces.create(cua.SpaceCreateOptions(on="cloud"))
-space = await spaces.space(created.space.id)
-# ...
-await spaces.delete(created.space.id)
-```
 
 `reuse=True` returns a registered, reachable Space in the same location first
 (`created.reused` says so). With `wait=False`, `created.pending_id` names a
@@ -173,7 +161,7 @@ MagicDNS name as the host:port): `cua spaces add` reaches it like any other
 address and the Space registers as `direct:<addr>`. That only attaches one
 already-running Space; hosting Spaces for `on="host:<name>"` still goes
 through the cua.ai relay, set up with
-[`cua host setup`](/spaces/guides/host-spaces-on-your-spare-mac).
+[`cua host setup`](/start-here/host-spaces-on-your-spare-mac).
 
  `spaces.delete(id)` deletes a
 Space's sandbox and forgets it (a Space added by address is only forgotten);

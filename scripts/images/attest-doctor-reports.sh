@@ -29,7 +29,14 @@ ledger_checkout() {
     else
         git -C "$REPO_ROOT" worktree add -q --detach "$dir"
         git -C "$dir" checkout -q --orphan "$LEDGER_BRANCH"
-        git -C "$dir" rm -rq . >/dev/null 2>&1 || true
+        # An orphan checkout keeps the whole tree staged: empty the index
+        # and the worktree, or the first ledger commit carries the repo.
+        git -C "$dir" read-tree --empty
+        git -C "$dir" clean -fdxq
+        if [ -n "$(git -C "$dir" ls-files | head -1)" ] || [ -n "$(ls -A "$dir" | grep -vx .git)" ]; then
+            echo "error: the new ledger worktree is not empty" >&2
+            return 1
+        fi
         printf '# image-doctor ledger\n\nWritten by the image workflows only (scripts/images/doctor_ledger.py).\n' >"$dir/README.md"
     fi
     echo "$dir"

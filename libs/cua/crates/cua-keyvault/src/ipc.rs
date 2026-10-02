@@ -25,13 +25,15 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use zeroize::Zeroize;
 
 use crate::audit::{AuditEntry, Verification};
+#[cfg(unix)]
+use crate::broker::StageSink;
 use crate::broker::{
-    AccessRequest, ApproveOptions, Broker, Decision, ImportSpec, InitRequest, Inventory,
-    LoginOutcome, LoginRequest, PasswordImportSpec, PendingView, RuleSpec, Status, TeleportOutcome,
-    TeleportRequest, UnlockRequest,
+    AccessRequest, ApproveOptions, Broker, Decision, ImportReport, ImportSpec, InitRequest,
+    Inventory, ItemPage, LockOutcome, LoginOutcome, LoginRequest, PasswordImportSpec, PendingView,
+    RuleSpec, SiteIcon, Status, TeleportOutcome, TeleportRequest, TeleportStage, UnlockRequest,
 };
 use crate::caller::{CallerIdentity, TrustPolicy};
-use crate::model::{Delivery, Grant, ItemMeta, ItemPolicy, UnattendedRule, UnlockPolicy};
+use crate::model::{Delivery, Grant, ItemPolicy, UnattendedRule, UnlockPolicy};
 use crate::{Error, Result};
 
 /// Largest frame accepted either way.
@@ -58,6 +60,11 @@ pub enum Request {
         /// On (true) or off.
         disabled: bool,
     },
+    /// Auto-wipe of delivered copies (off: they stay until wiped).
+    SetAutoWipe {
+        /// On (true) or off.
+        on: bool,
+    },
     /// Unlock policy.
     SetUnlockPolicy {
         /// Policy.
@@ -66,13 +73,23 @@ pub enum Request {
         #[serde(default)]
         auto_lock_minutes: Option<u32>,
     },
-    /// Items (coarse: labels and counts only).
-    ListItems,
-    /// One item's full detail (cookie names, domains, origins). Needs presence.
-    DescribeItem {
-        /// Item id.
-        id: String,
+    /// One page of items. Names (domains and keys) only inside the browse
+    /// window; outside it: app, type, lock state and times.
+    ListItems {
+        /// Items to skip.
+        #[serde(default)]
+        offset: usize,
+        /// Page size (default and most: [`crate::broker::MAX_PAGE`]).
+        #[serde(default)]
+        limit: Option<usize>,
     },
+    /// Site icons (empty while the browse window is closed).
+    ListFavicons,
+    /// Open the browse window (needs presence): item names become visible
+    /// for a few minutes.
+    Browse,
+    /// Close the browse window.
+    EndBrowse,
     /// A host app's per-site inventory.
     Inventory {
         /// Provider id.
@@ -87,10 +104,23 @@ pub enum Request {
     ImportPasswords(PasswordImportSpec),
     /// Sign in to a site in a target Space with a saved password.
     Login(LoginRequest),
-    /// Delete an item.
-    DeleteItem {
-        /// Item id.
-        id: String,
+    /// Delete items, wiping every live copy of them in Spaces.
+    DeleteItems {
+        /// Item ids.
+        ids: Vec<String>,
+    },
+    /// Lock or unlock items together. Unlocking allows unattended access
+    /// and asks for presence once for the batch.
+    SetLocked {
+        /// Item ids.
+        ids: Vec<String>,
+        /// Lock (true) or unlock.
+        locked: bool,
+    },
+    /// "Never ask again" on the unlock prompt.
+    SetSkipUnlockPrompt {
+        /// On (true) or off.
+        on: bool,
     },
     /// Set an item's policy.
     SetItemPolicy {
@@ -154,6 +184,14 @@ pub enum Request {
         /// Keep the captured item(s) in the vault afterward.
         #[serde(default)]
         save: bool,
+        /// Stream [`TeleportStage`] frames (`Response::stage`) before the
+        /// reply. Off for older clients, which read one reply per request.
+        #[serde(default)]
+        progress: bool,
+        /// Open the app in the Space after importing it. On unless a client
+        /// says otherwise (older clients never sent it).
+        #[serde(default = "default_true")]
+        launch: bool,
     },
     /// Wipe deliveries on a target.
     Release {
@@ -218,6 +256,10 @@ pub struct Response {
     /// Error (when not `ok`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<WireError>,
+    /// A progress frame before the reply (only to a request that asked
+    /// for them); the reply itself never has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<TeleportStage>,
 }
 
 impl Response {
@@ -226,6 +268,7 @@ impl Response {
             ok: true,
             result: Some(serde_json::to_value(v).unwrap_or(Value::Null)),
             error: None,
+            stage: None,
         }
     }
 
@@ -237,9 +280,24 @@ impl Response {
                 code: error_code(e).into(),
                 message: e.to_string(),
             }),
+            stage: None,
+        }
+    }
+
+    // Stage frames stream over the Unix socket only.
+    #[cfg(unix)]
+    fn stage(s: TeleportStage) -> Self {
+        Self {
+            ok: true,
+            result: None,
+            error: None,
+            stage: Some(s),
         }
     }
 }
+
+/// Most stage frames one request streams (each upload chunk is one).
+pub const MAX_STAGE_FRAMES: usize = 100_000;
 
 async fn read_frame<R: AsyncReadExt + Unpin>(r: &mut R) -> std::io::Result<Option<Vec<u8>>> {
     let mut len = [0u8; 4];
@@ -293,6 +351,7 @@ pub async fn dispatch(broker: &Broker, caller: &CallerIdentity, req: Request) ->
         Request::Unlock(r) => reply!(broker.unlock(caller, r).await),
         Request::Lock => reply!(broker.lock(caller).await),
         Request::SetDisabled { disabled } => reply!(broker.set_disabled(caller, disabled).await),
+        Request::SetAutoWipe { on } => reply!(broker.set_auto_wipe(caller, on).await),
         Request::SetUnlockPolicy {
             policy,
             auto_lock_minutes,
@@ -301,15 +360,30 @@ pub async fn dispatch(broker: &Broker, caller: &CallerIdentity, req: Request) ->
                 .set_unlock_policy(caller, policy, auto_lock_minutes)
                 .await
         ),
-        Request::ListItems => reply!(broker.list_items(caller).await),
-        Request::DescribeItem { id } => reply!(broker.describe_item(caller, &id).await),
+        Request::ListItems { offset, limit } => reply!(
+            broker
+                .list_items(caller, offset, limit.unwrap_or(crate::broker::MAX_PAGE))
+                .await
+        ),
+        Request::ListFavicons => reply!(broker.list_favicons(caller).await),
+        Request::Browse => reply!(
+            broker
+                .browse(caller)
+                .await
+                .map(|until| serde_json::json!({ "browse_until_ms": until }))
+        ),
+        Request::EndBrowse => reply!(broker.end_browse(caller).await),
         Request::Inventory { app, profile } => {
             reply!(broker.inventory(caller, &app, profile.as_deref()).await)
         }
         Request::Import(spec) => reply!(broker.import(caller, spec).await),
         Request::ImportPasswords(spec) => reply!(broker.import_passwords(caller, spec).await),
         Request::Login(r) => reply!(broker.login(caller, r).await),
-        Request::DeleteItem { id } => reply!(broker.delete_item(caller, &id).await),
+        Request::DeleteItems { ids } => reply!(broker.delete_items(caller, ids).await),
+        Request::SetLocked { ids, locked } => reply!(broker.set_locked(caller, ids, locked).await),
+        Request::SetSkipUnlockPrompt { on } => {
+            reply!(broker.set_skip_unlock_prompt(caller, on).await)
+        }
         Request::SetItemPolicy { id, policy } => {
             reply!(broker.set_item_policy(caller, &id, policy).await)
         }
@@ -338,8 +412,18 @@ pub async fn dispatch(broker: &Broker, caller: &CallerIdentity, req: Request) ->
         Request::AddRule(spec) => reply!(broker.add_rule(caller, spec).await),
         Request::RemoveRule { id } => reply!(broker.remove_rule(caller, &id).await),
         Request::Teleport(r) => reply!(broker.teleport(caller, r).await),
-        Request::ImportAndTeleport { spec, target, save } => {
-            reply!(broker.import_and_teleport(caller, spec, target, save).await)
+        Request::ImportAndTeleport {
+            spec,
+            target,
+            save,
+            launch,
+            ..
+        } => {
+            reply!(
+                broker
+                    .import_and_teleport_launching(caller, spec, target, save, launch, None)
+                    .await
+            )
         }
         Request::Release { target } => reply!(broker.release(caller, &target).await),
         Request::ListDeliveries => reply!(broker.list_deliveries(caller).await),
@@ -469,6 +553,20 @@ async fn handle(mut stream: tokio::net::UnixStream, broker: Arc<Broker>, policy:
         // bytes as soon as they are parsed.
         frame.zeroize();
         let resp = match parsed {
+            Ok(Request::ImportAndTeleport {
+                spec,
+                target,
+                save,
+                progress: true,
+                launch,
+            }) => {
+                match teleport_streaming(&mut stream, &broker, &caller, spec, target, save, launch)
+                    .await
+                {
+                    Some(r) => r,
+                    None => return,
+                }
+            }
             Ok(req) => dispatch(&broker, &caller, req).await,
             Err(e) => Response::err(&Error::Invalid(format!("bad request: {e}"))),
         };
@@ -483,6 +581,57 @@ async fn handle(mut stream: tokio::net::UnixStream, broker: Arc<Broker>, policy:
             return;
         }
     }
+}
+
+/// `import_and_teleport` with its stages written as frames while it runs;
+/// the reply is returned for the caller to write. None when the client went
+/// away (the teleport still finishes).
+#[cfg(unix)]
+async fn teleport_streaming(
+    stream: &mut tokio::net::UnixStream,
+    broker: &Broker,
+    caller: &CallerIdentity,
+    spec: ImportSpec,
+    target: String,
+    save: bool,
+    launch: bool,
+) -> Option<Response> {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TeleportStage>();
+    let sink: StageSink = Arc::new(move |s| {
+        let _ = tx.send(s);
+    });
+    let work = broker.import_and_teleport_launching(caller, spec, target, save, launch, Some(sink));
+    tokio::pin!(work);
+    let mut connected = true;
+    let mut sent = 0usize;
+    // Bounded: the teleport future ends, and at most MAX_STAGE_FRAMES go out.
+    let result = loop {
+        tokio::select! {
+            r = &mut work => break r,
+            Some(s) = rx.recv() => {
+                if connected && sent < MAX_STAGE_FRAMES {
+                    sent += 1;
+                    let frame = serde_json::to_vec(&Response::stage(s)).unwrap_or_default();
+                    connected = write_frame(stream, &frame).await.is_ok();
+                }
+            }
+        }
+    };
+    if !connected {
+        return None;
+    }
+    while let Ok(s) = rx.try_recv() {
+        if sent >= MAX_STAGE_FRAMES {
+            break;
+        }
+        sent += 1;
+        let frame = serde_json::to_vec(&Response::stage(s)).unwrap_or_default();
+        write_frame(stream, &frame).await.ok()?;
+    }
+    Some(match result {
+        Ok(v) => Response::ok(v),
+        Err(e) => Response::err(&e),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -654,17 +803,38 @@ impl KeyvaultClient {
 
     /// Sends one request and returns the raw result.
     pub async fn call(&mut self, req: &Request) -> Result<Value> {
+        self.call_with_stages(req, &mut |_| {}).await
+    }
+
+    /// [`Self::call`], handing each stage frame before the reply to `on`.
+    async fn call_with_stages(
+        &mut self,
+        req: &Request,
+        on: &mut (dyn FnMut(TeleportStage) + Send),
+    ) -> Result<Value> {
         let mut bytes = serde_json::to_vec(req)?;
         let written = write_frame(&mut self.stream, &bytes).await;
         // `init` and `unlock` frames carry a passphrase.
         bytes.zeroize();
         written?;
-        let mut frame = read_frame(&mut self.stream)
-            .await?
-            .ok_or_else(|| Error::Backend("the Keyvault closed the connection".into()))?;
-        let parsed = serde_json::from_slice::<Response>(&frame);
-        frame.zeroize();
-        let resp = parsed?;
+        // Bounded: the server sends at most MAX_STAGE_FRAMES before the reply.
+        let mut resp = None;
+        for _ in 0..=MAX_STAGE_FRAMES {
+            let mut frame = read_frame(&mut self.stream)
+                .await?
+                .ok_or_else(|| Error::Backend("the Keyvault closed the connection".into()))?;
+            let parsed = serde_json::from_slice::<Response>(&frame);
+            frame.zeroize();
+            let r = parsed?;
+            match r.stage {
+                Some(s) => on(s),
+                None => {
+                    resp = Some(r);
+                    break;
+                }
+            }
+        }
+        let resp = resp.ok_or_else(|| Error::Backend("too many progress frames".into()))?;
         if resp.ok {
             Ok(resp.result.unwrap_or(Value::Null))
         } else {
@@ -701,13 +871,56 @@ impl KeyvaultClient {
     pub async fn lock(&mut self) -> Result<()> {
         self.call(&Request::Lock).await.map(|_| ())
     }
-    /// Items (coarse metadata).
-    pub async fn list_items(&mut self) -> Result<Vec<ItemMeta>> {
-        self.typed(&Request::ListItems).await
+    /// Every item, page by page. Names are present only inside the browse
+    /// window ([`Self::browse`]).
+    pub async fn list_items(&mut self) -> Result<ItemPage> {
+        let mut all = ItemPage::default();
+        loop {
+            let page: ItemPage = self
+                .typed(&Request::ListItems {
+                    offset: all.items.len(),
+                    limit: None,
+                })
+                .await?;
+            let empty = page.items.is_empty();
+            all.total = page.total;
+            all.names_visible = page.names_visible;
+            all.items.extend(page.items);
+            if empty || all.items.len() >= all.total {
+                return Ok(all);
+            }
+        }
     }
-    /// One item's full detail (needs presence).
-    pub async fn describe_item(&mut self, id: &str) -> Result<ItemMeta> {
-        self.typed(&Request::DescribeItem { id: id.into() }).await
+    /// Site icons, empty while the browse window is closed.
+    pub async fn list_favicons(&mut self) -> Result<Vec<SiteIcon>> {
+        let v = self.call(&Request::ListFavicons).await?;
+        serde_json::from_value(v).map_err(|e| Error::Invalid(e.to_string()))
+    }
+    /// Opens the browse window (the daemon asks for presence). Returns when
+    /// it closes, Unix ms.
+    pub async fn browse(&mut self) -> Result<u64> {
+        let v = self.call(&Request::Browse).await?;
+        Ok(v.get("browse_until_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or(0))
+    }
+    /// Closes the browse window.
+    pub async fn end_browse(&mut self) -> Result<()> {
+        self.call(&Request::EndBrowse).await.map(|_| ())
+    }
+    /// Deletes items and wipes their live copies. Returns the wiped imports.
+    pub async fn delete_items(&mut self, ids: Vec<String>) -> Result<Vec<String>> {
+        self.typed(&Request::DeleteItems { ids }).await
+    }
+    /// Locks or unlocks items together (unlocking asks for presence once).
+    pub async fn set_locked(&mut self, ids: Vec<String>, locked: bool) -> Result<LockOutcome> {
+        self.typed(&Request::SetLocked { ids, locked }).await
+    }
+    /// "Never ask again" on the unlock prompt.
+    pub async fn set_skip_unlock_prompt(&mut self, on: bool) -> Result<()> {
+        self.call(&Request::SetSkipUnlockPrompt { on })
+            .await
+            .map(|_| ())
     }
     /// Inventory.
     pub async fn inventory(&mut self, app: &str, profile: Option<&str>) -> Result<Inventory> {
@@ -718,11 +931,11 @@ impl KeyvaultClient {
         .await
     }
     /// Import.
-    pub async fn import(&mut self, spec: ImportSpec) -> Result<Vec<ItemMeta>> {
+    pub async fn import(&mut self, spec: ImportSpec) -> Result<ImportReport> {
         self.typed(&Request::Import(spec)).await
     }
     /// Import a browser's saved passwords (first party; presence).
-    pub async fn import_passwords(&mut self, spec: PasswordImportSpec) -> Result<Vec<ItemMeta>> {
+    pub async fn import_passwords(&mut self, spec: PasswordImportSpec) -> Result<ImportReport> {
         self.typed(&Request::ImportPasswords(spec)).await
     }
     /// Sign in to a site in a Space with a saved password.
@@ -777,8 +990,50 @@ impl KeyvaultClient {
         target: String,
         save: bool,
     ) -> Result<TeleportOutcome> {
-        self.typed(&Request::ImportAndTeleport { spec, target, save })
+        self.typed(&Request::ImportAndTeleport {
+            spec,
+            target,
+            save,
+            progress: false,
+            launch: true,
+        })
+        .await
+    }
+    /// [`Self::import_and_teleport`], telling `on` each [`TeleportStage`]
+    /// as the daemon reaches it.
+    pub async fn import_and_teleport_with_progress(
+        &mut self,
+        spec: ImportSpec,
+        target: String,
+        save: bool,
+        on: impl FnMut(TeleportStage) + Send,
+    ) -> Result<TeleportOutcome> {
+        self.import_and_teleport_launching(spec, target, save, true, on)
             .await
+    }
+    /// [`Self::import_and_teleport_with_progress`] with an explicit `launch`
+    /// (whether the Space opens the app once it is imported).
+    pub async fn import_and_teleport_launching(
+        &mut self,
+        spec: ImportSpec,
+        target: String,
+        save: bool,
+        launch: bool,
+        mut on: impl FnMut(TeleportStage) + Send,
+    ) -> Result<TeleportOutcome> {
+        let v = self
+            .call_with_stages(
+                &Request::ImportAndTeleport {
+                    spec,
+                    target,
+                    save,
+                    progress: true,
+                    launch,
+                },
+                &mut on,
+            )
+            .await?;
+        Ok(serde_json::from_value(v)?)
     }
     /// Release.
     pub async fn release(&mut self, target: &str) -> Result<Vec<String>> {
@@ -810,6 +1065,10 @@ impl KeyvaultClient {
     /// Kill switch.
     pub async fn set_disabled(&mut self, disabled: bool) -> Result<()> {
         self.typed(&Request::SetDisabled { disabled }).await
+    }
+    /// Auto-wipe of delivered copies.
+    pub async fn set_auto_wipe(&mut self, on: bool) -> Result<()> {
+        self.typed(&Request::SetAutoWipe { on }).await
     }
 }
 
@@ -913,6 +1172,87 @@ mod tests {
         std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     }
 
+    /// A streaming `import_and_teleport`: stage frames, then the reply; the
+    /// client hands each stage over in order and returns the outcome. The
+    /// request opts in, so an older daemon that ignores the flag (one reply,
+    /// no stages) still works.
+    #[tokio::test]
+    async fn teleport_stages_stream_before_the_reply() {
+        let (client_end, mut server_end) = tokio::net::UnixStream::pair().unwrap();
+        let server = tokio::spawn(async move {
+            let req = read_frame(&mut server_end).await.unwrap().unwrap();
+            let req: Request = serde_json::from_slice(&req).unwrap();
+            assert!(matches!(
+                req,
+                Request::ImportAndTeleport { progress: true, .. }
+            ));
+            for st in [
+                TeleportStage::Reading,
+                TeleportStage::Packing,
+                TeleportStage::Uploading { done: 5, total: 10 },
+                TeleportStage::Importing,
+            ] {
+                let f = serde_json::to_vec(&Response::stage(st)).unwrap();
+                write_frame(&mut server_end, &f).await.unwrap();
+            }
+            let done = Response::ok(TeleportOutcome {
+                authority: "interactive".into(),
+                ..Default::default()
+            });
+            write_frame(&mut server_end, &serde_json::to_vec(&done).unwrap())
+                .await
+                .unwrap();
+        });
+        let mut client = KeyvaultClient {
+            stream: client_end,
+            server: None,
+        };
+        let mut seen = Vec::new();
+        let out = client
+            .import_and_teleport_with_progress(ImportSpec::default(), "dev-1".into(), false, |st| {
+                seen.push(st)
+            })
+            .await
+            .unwrap();
+        server.await.unwrap();
+        assert_eq!(out.authority, "interactive");
+        assert_eq!(
+            seen,
+            [
+                TeleportStage::Reading,
+                TeleportStage::Packing,
+                TeleportStage::Uploading { done: 5, total: 10 },
+                TeleportStage::Importing,
+            ]
+        );
+        // On the wire a stage is tagged and the reply carries none.
+        let wire = serde_json::to_value(Response::stage(TeleportStage::Uploading {
+            done: 1,
+            total: 2,
+        }))
+        .unwrap();
+        assert_eq!(wire["stage"]["stage"], "uploading");
+        assert!(
+            serde_json::to_value(Response::ok(1))
+                .unwrap()
+                .get("stage")
+                .is_none()
+        );
+        // An older client's request (no flag) asks for no stages.
+        let old: Request = serde_json::from_str(
+            r#"{"op":"import_and_teleport","spec":{"app":"chrome"},"target":"t"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            old,
+            Request::ImportAndTeleport {
+                progress: false,
+                launch: true,
+                ..
+            }
+        ));
+    }
+
     #[test]
     fn cua_home_override_outside_the_real_home_is_untrusted() {
         // No override -> trusted (~/.cua).
@@ -964,4 +1304,8 @@ mod tests {
             }
         }
     }
+}
+
+fn default_true() -> bool {
+    true
 }

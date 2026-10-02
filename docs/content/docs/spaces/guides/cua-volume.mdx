@@ -191,6 +191,25 @@ The mount goes away when the Space detaches the volume, when its session is
 revoked and when the guest's cua-spacesd stops. `cua-spacesd doctor` checks
 the mount end to end (`volume.mount`).
 
+### When the guest's cua-spacesd restarts
+
+An update, a crash or a reboot restarts the guest's cua-spacesd, which holds
+the volume's connection and the network-sharing (hotspot) connection. You do
+not need to reconnect the Space:
+
+- On a clean stop (`SIGTERM`) the daemon unmounts the volume before it exits,
+  so no dead mount is left behind.
+- When it starts, the daemon unmounts anything a previous daemon left at the
+  mount path (a crash, a force-quit) before it does anything else.
+- Your machine notices the connection closed, or that the new daemon reports
+  the volume detached, and mounts the volume again, then restarts the hotspot
+  if one was on. It retries with a growing wait (2 s, then 4 s, up to a
+  minute) while the daemon is still coming up, and keeps a persistent agent's
+  view on the volume.
+- A mount whose server is gone never hangs a program for long: the NFS mount
+  is `soft`, interruptible and times out in seconds, and the system marks it
+  dead and unmounts it (`deadtimeout`).
+
 ## Sync across devices
 
 Two machines using the same bucket see each other's changes within
@@ -267,7 +286,6 @@ copy in Finder, Resolve clears the entry and keeps both files.
 |---------|-------|--------|
 | `fs` (default) | `~/.cua/volume/data` on this machine | Nothing |
 | `s3` | Any S3-compatible bucket with versioning on (AWS S3, R2, MinIO) | `cua volume config set` and `cua volume config set-keys` |
-| `cloud` | The Cua cloud's bucket, short-lived keys scoped to your folders | Off by default; the Cua cloud must enable Cua Volume for your account |
 
 ```bash test="cli-shape" id="cua-volume-config"
 cua volume config show
@@ -280,12 +298,6 @@ the credential store; they never go in `~/.cua/volume/config.json`. Restart the
 daemon after changing the backend from the terminal. Settings > Storage in
 Cua tests the bucket first (reachable, keys allowed to write, versioning on)
 and switches the running drive without a restart.
-
-<Callout type="info">
-The `cloud` backend is off until the Cua cloud turns on Cua Volume: the
-server answers `drive_disabled` until then. When on, keys last 15 to 60
-minutes and reach only the folders your session may use.
-</Callout>
 
 ## Limits
 

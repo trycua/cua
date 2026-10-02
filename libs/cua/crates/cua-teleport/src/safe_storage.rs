@@ -125,6 +125,7 @@ impl<'a> SafeStorageKeys<'a> {
                 let key = *self.v11()?;
                 chromium_crypto::decrypt(&key, &value[3..])
             }
+            Some(b"v20") => Err(app_bound_unsupported()),
             _ if self.platform == Platform::Windows => Err(windows_unsupported()),
             _ => Err(TeleportError::Provider(
                 "a Safe-Storage-encrypted value uses an encryption version this build does not \
@@ -133,6 +134,18 @@ impl<'a> SafeStorageKeys<'a> {
             )),
         }
     }
+}
+
+/// Chrome 127+ on Windows encrypts new cookies with App-Bound Encryption
+/// (`v20`): the key is bound to Chrome's own elevation service, so no other
+/// program, this one included, can decrypt the values.
+fn app_bound_unsupported() -> TeleportError {
+    TeleportError::Provider(
+        "these cookies are protected by Chrome's App-Bound Encryption (v20, Windows Chrome \
+         127+), which only Chrome itself can decrypt, so they cannot be teleported. Sign in \
+         again in the destination browser instead."
+            .into(),
+    )
 }
 
 fn windows_unsupported() -> TeleportError {
@@ -148,6 +161,17 @@ mod tests {
     use super::*;
     use crate::host::{FakeHost, HostOutput};
     use std::sync::Arc;
+
+    #[test]
+    fn v20_values_get_a_clear_app_bound_message_on_every_platform() {
+        for platform in [Platform::Windows, Platform::MacOS, Platform::Linux] {
+            let host = FakeHost::new();
+            let mut keys = SafeStorageKeys::new(&host, platform, "Chrome Safe Storage");
+            let err = keys.decrypt(b"v20\x00\x01\x02").unwrap_err().to_string();
+            assert!(err.contains("App-Bound Encryption"), "{err}");
+            assert!(err.contains("Sign in again"), "{err}");
+        }
+    }
 
     #[test]
     fn macos_v10_reads_the_named_service_through_the_host() {

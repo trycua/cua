@@ -263,6 +263,20 @@ pub struct SpacesdFeature {
 }
 ```
 
+### `SpaceThumbnail`
+
+A Space's latest thumbnail, from the cache every client ...
+
+```rust
+pub struct SpaceThumbnail {
+  pub image: Vec<u8>,
+  pub format: ImageFormat,
+  pub width: u32,
+  pub height: u32,
+  pub captured_at_ms: u64,
+}
+```
+
 ### `TransferResult`
 
 Result of an upload or download.

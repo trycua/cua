@@ -1315,6 +1315,8 @@ external fun uniffi_cua_sdk_checksum_method_space_teleport(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_teleport_manifest(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_space_thumbnail(
+): Short
 external fun uniffi_cua_sdk_checksum_method_space_unshare(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_upload(
@@ -2220,6 +2222,8 @@ external fun uniffi_cua_sdk_fn_method_space_supports(`ptr`: Long,`feature`: Rust
 external fun uniffi_cua_sdk_fn_method_space_teleport(`ptr`: Long,`app`: RustBuffer.ByValue,`scope`: RustBuffer.ByValue,`approver`: Long,`requestId`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_teleport_manifest(`ptr`: Long,`app`: RustBuffer.ByValue,`scope`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_space_thumbnail(`ptr`: Long,`maxAgeMs`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_unshare(`ptr`: Long,`who`: RustBuffer.ByValue,
 ): Long
@@ -3593,7 +3597,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_space_request_site_login() != 2223.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_space_screenshot() != 9108.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_space_screenshot() != 41142.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_send_file() != 29056.toShort()) {
@@ -3627,6 +3631,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_teleport_manifest() != 31596.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_space_thumbnail() != 10979.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_unshare() != 58172.toShort()) {
@@ -16162,10 +16169,10 @@ public interface SpaceInterface {
     suspend fun `requestSiteLogin`(`url`: kotlin.String, `options`: SiteLoginOptions?): SiteLoginReport
 
     /**
-     * Captures the Space's display (the app's tile thumbnails): PNG at
-     * full size on the primary display unless `options` say otherwise.
-     * Fails with `CapabilityMissing` (`spacesd`) when the image runs no
-     * cua-spacesd.
+     * Captures the Space's display: PNG at full size on the primary
+     * display unless `options` say otherwise (for a small preview,
+     * [`Space::thumbnail`] reads the shared cache instead). Fails with
+     * `CapabilityMissing` (`spacesd`) when the image runs no cua-spacesd.
      */
     suspend fun `screenshot`(`options`: ScreenshotOptions?): Screenshot
 
@@ -16247,6 +16254,17 @@ public interface SpaceInterface {
      * What teleporting `app` (`full` or `tabs`) would move from this host.
      */
     suspend fun `teleportManifest`(`app`: kotlin.String, `scope`: kotlin.String?): TeleportManifest
+
+    /**
+     * The Space's latest thumbnail (a small JPEG of its primary display)
+     * from the cache every client on this machine shares: returned at
+     * once when it is younger than `max_age_ms` (unset: any age), else
+     * captured fresh through cua-spacesd and kept for the next caller.
+     * When that capture fails, the older one comes back (`captured_at_ms`
+     * says how old). Asking keeps the daemon refreshing running Spaces'
+     * thumbnails in the background for a while (about every 90 s).
+     */
+    suspend fun `thumbnail`(`maxAgeMs`: kotlin.ULong?): SpaceThumbnail
 
     /**
      * Stops sharing this Space with `who` at once, or with everyone when
@@ -16975,10 +16993,10 @@ open class Space: Disposable, AutoCloseable, SpaceInterface
 
 
     /**
-     * Captures the Space's display (the app's tile thumbnails): PNG at
-     * full size on the primary display unless `options` say otherwise.
-     * Fails with `CapabilityMissing` (`spacesd`) when the image runs no
-     * cua-spacesd.
+     * Captures the Space's display: PNG at full size on the primary
+     * display unless `options` say otherwise (for a small preview,
+     * [`Space::thumbnail`] reads the shared cache instead). Fails with
+     * `CapabilityMissing` (`spacesd`) when the image runs no cua-spacesd.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -17268,6 +17286,36 @@ open class Space: Disposable, AutoCloseable, SpaceInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeTeleportManifest.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * The Space's latest thumbnail (a small JPEG of its primary display)
+     * from the cache every client on this machine shares: returned at
+     * once when it is younger than `max_age_ms` (unset: any age), else
+     * captured fresh through cua-spacesd and kept for the next caller.
+     * When that capture fails, the older one comes back (`captured_at_ms`
+     * says how old). Asking keeps the daemon refreshing running Spaces'
+     * thumbnails in the background for a while (about every 90 s).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `thumbnail`(`maxAgeMs`: kotlin.ULong?) : SpaceThumbnail {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_space_thumbnail(
+                uniffiHandle,
+                FfiConverterOptionalULong.lower(`maxAgeMs`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSpaceThumbnail.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -36161,6 +36209,78 @@ public object FfiConverterTypeSpaceStreamTicket: FfiConverterRustBuffer<SpaceStr
             FfiConverterUInt.write(value.`width`, buf)
             FfiConverterUInt.write(value.`height`, buf)
             FfiConverterBoolean.write(value.`needsHeaders`, buf)
+    }
+}
+
+
+
+/**
+ * A Space's latest thumbnail, from the cache every client on this machine
+ * shares ([`crate::native::spaces::Space::thumbnail`]).
+ */
+data class SpaceThumbnail (
+    /**
+     * Encoded image (a small JPEG of the primary display).
+     */
+    var `image`: kotlin.ByteArray
+    ,
+    /**
+     * Encoding.
+     */
+    var `format`: ImageFormat
+    ,
+    /**
+     * Pixel width.
+     */
+    var `width`: kotlin.UInt
+    ,
+    /**
+     * Pixel height.
+     */
+    var `height`: kotlin.UInt
+    ,
+    /**
+     * When it was captured, Unix milliseconds.
+     */
+    var `capturedAtMs`: kotlin.ULong
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceThumbnail: FfiConverterRustBuffer<SpaceThumbnail> {
+    override fun read(buf: ByteBuffer): SpaceThumbnail {
+        return SpaceThumbnail(
+            FfiConverterByteArray.read(buf),
+            FfiConverterTypeImageFormat.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceThumbnail) = (
+            FfiConverterByteArray.allocationSize(value.`image`) +
+            FfiConverterTypeImageFormat.allocationSize(value.`format`) +
+            FfiConverterUInt.allocationSize(value.`width`) +
+            FfiConverterUInt.allocationSize(value.`height`) +
+            FfiConverterULong.allocationSize(value.`capturedAtMs`)
+    )
+
+    override fun write(value: SpaceThumbnail, buf: ByteBuffer) {
+            FfiConverterByteArray.write(value.`image`, buf)
+            FfiConverterTypeImageFormat.write(value.`format`, buf)
+            FfiConverterUInt.write(value.`width`, buf)
+            FfiConverterUInt.write(value.`height`, buf)
+            FfiConverterULong.write(value.`capturedAtMs`, buf)
     }
 }
 

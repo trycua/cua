@@ -228,7 +228,7 @@ test("the controller drives a host end to end", async () => {
   await c.confirm()
   assert.equal(c.state.step, "done")
   assert.deepEqual(calls[0], ["plan", "vscode", { moves: "app_with_files", files: ["/tmp/project"] }])
-  assert.deepEqual(calls[1], ["run", "vscode", { approved: true, acknowledgeSensitive: false }])
+  assert.deepEqual(calls[1], ["run", "vscode", { approved: true, acknowledgeSensitive: false, saveToKeyvault: false, acknowledgeRelayPlaintext: false }])
   assert.ok(changes >= 6)
   stop()
   // A failing catalog surfaces an error.

@@ -27,7 +27,7 @@ struct TeleportPickerSheet: View {
                 case .consent:
                     review
                 case .running:
-                    ProgressView(value: teleport.progress).padding(20)
+                    TeleportRunning(progress: teleport.progress, status: teleport.status)
                 case .done:
                     Text("Done").padding(20)
                 case .error:
@@ -101,43 +101,7 @@ struct TeleportPickerSheet: View {
 
     @ViewBuilder private var review: some View {
         if let review = teleport.review {
-            Form {
-                Section {
-                    ForEach(review.items, id: \.key) { item in
-                        LabeledContent(item.label) {
-                            Text(item.sensitive ? "Secret" : item.detail).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                if review.needsAcknowledgement {
-                    Toggle("Send the secrets listed above", isOn: Binding(
-                        get: { review.acknowledged },
-                        set: { teleport.send(.acknowledge(value: $0)) }))
-                        .toggleStyle(.checkbox)
-                }
-                if review.offersSaveToKeyvault {
-                    Toggle("Save to Keyvault for reuse", isOn: Binding(
-                        get: { review.saveToKeyvault },
-                        set: { teleport.send(.saveToKeyvault(value: $0)) }))
-                        .toggleStyle(.checkbox)
-                        .help("Keep this signed-in session sealed in your Cua Keyvault so it can " +
-                              "be delivered again without asking again.")
-                }
-                if review.needsRelayPlaintextAcknowledgement {
-                    Section {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Toggle("Send without end-to-end encryption", isOn: Binding(
-                                get: { review.acknowledgedRelayPlaintext },
-                                set: { teleport.send(.acknowledgeRelayPlaintext(value: $0)) }))
-                                .toggleStyle(.checkbox)
-                            Text("This Space predates end-to-end sealing. The relay could read these secrets in transit.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            .formStyle(.grouped)
+            TeleportReview(teleport: teleport, review: review)
         }
     }
 
@@ -264,5 +228,27 @@ struct TeleportTileView: View {
         .accessibilityLabel(tile.title)
         .accessibilityHint(tile.help)
         .accessibilityAddTraits(tile.selected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// The run: the bar, and under it the step it is on in words, so the
+/// Keychain prompts that come with reading a browser's cookies are expected.
+struct TeleportRunning: View {
+    let progress: Double
+    let status: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ProgressView(value: progress)
+            Text(status ?? " ")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .contentTransition(.opacity)
+                .animation(.easeInOut(duration: 0.15), value: status)
+                .accessibilityIdentifier("teleport-run-status")
+        }
+        .padding(20)
     }
 }

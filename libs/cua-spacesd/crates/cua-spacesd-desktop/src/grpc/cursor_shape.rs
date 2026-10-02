@@ -597,6 +597,10 @@ mod tests {
     }
 
     fn rig(warp: bool) -> Rig {
+        rig_with(warp, fast())
+    }
+
+    fn rig_with(warp: bool, config: ProberConfig) -> Rig {
         let hub = PresenceHub::new();
         let fake = Fake::new(warp);
         let activity = InputActivity::new();
@@ -608,7 +612,7 @@ mod tests {
             Arc::new(Display),
             activity.clone(),
             Arc::new(move || flag.load(Ordering::SeqCst)),
-            fast(),
+            config,
         );
         let (me, _, rx) = hub.join_with(
             Principal {
@@ -677,7 +681,15 @@ mod tests {
 
     #[tokio::test]
     async fn recent_or_pending_input_skips_the_probe_for_the_hit_test() {
-        let mut rig = rig(true);
+        // A quiet window a slow runner cannot outlast between the input and
+        // the cursor update (50 ms flaked on Windows CI).
+        let mut rig = rig_with(
+            true,
+            ProberConfig {
+                idle_quiet: Duration::from_millis(500),
+                ..fast()
+            },
+        );
         rig.activity.note("someone-else", Some((5.0, 5.0)));
         rig.hub.update_cursor(&rig.id, at(0.15, 0.5));
         assert_eq!(
@@ -685,8 +697,9 @@ mod tests {
             (CursorShape::Arrow as i32, CursorShapeSource::HitTest as i32)
         );
         assert!(rig.fake.moves.lock().unwrap().is_empty(), "never moved");
-        // A pending injection also blocks it.
-        tokio::time::sleep(Duration::from_millis(80)).await;
+        // A pending injection also blocks it, once the input is no longer
+        // recent.
+        tokio::time::sleep(Duration::from_millis(600)).await;
         let announced = rig.activity.announce("bob");
         rig.hub.update_cursor(&rig.id, at(0.05, 0.5));
         assert_eq!(

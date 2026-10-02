@@ -1781,6 +1781,11 @@ uint64_t uniffi_cua_sdk_fn_method_space_teleport(uint64_t ptr, RustBuffer app, R
 uint64_t uniffi_cua_sdk_fn_method_space_teleport_manifest(uint64_t ptr, RustBuffer app, RustBuffer scope
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_THUMBNAIL
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_THUMBNAIL
+uint64_t uniffi_cua_sdk_fn_method_space_thumbnail(uint64_t ptr, RustBuffer max_age_ms
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_UNSHARE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_UNSHARE
 uint64_t uniffi_cua_sdk_fn_method_space_unshare(uint64_t ptr, RustBuffer who
@@ -4847,6 +4852,12 @@ uint16_t uniffi_cua_sdk_checksum_method_space_teleport(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_TELEPORT_MANIFEST
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_TELEPORT_MANIFEST
 uint16_t uniffi_cua_sdk_checksum_method_space_teleport_manifest(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_THUMBNAIL
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_THUMBNAIL
+uint16_t uniffi_cua_sdk_checksum_method_space_thumbnail(void
 
 );
 #endif

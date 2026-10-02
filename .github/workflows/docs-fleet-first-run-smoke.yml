@@ -51,7 +51,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install \
             --extra-index-url https://wheels.cua.ai/simple \
-            "cua-sandbox==0.8.0"
+            "cua-sandbox==0.9.0"
       - name: Test the Python example with mocked Fleet calls
         run: python -m unittest discover -s docs/scripts/tests -p test_first_cloud_fleet_tutorial.py -v
       # The example imports @trycua/cua, which is not on npm yet: build it

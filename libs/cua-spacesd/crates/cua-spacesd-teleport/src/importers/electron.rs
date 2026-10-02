@@ -19,7 +19,7 @@ use cua_teleport_bundle::layout::electron::{
 use cua_teleport_bundle::{LaunchSpec, Platform};
 
 use super::write_entry;
-use crate::host::{default_host, EffectKind, HostCommand, HostEffects};
+use crate::host::{default_host, HostEffects};
 use crate::keychain;
 use crate::{ImportProvider, ImportRecord, Result};
 
@@ -88,7 +88,9 @@ impl ImportProvider for ElectronImporter {
         //  * the launch below is `open -a`, which merely focuses an app that is
         //    already running. The destination then keeps the signed-out session
         //    it started with.
-        terminate_running(&*self.host, platform, self.app.display);
+        if let Some(pattern) = process_pattern(platform, self.app.display) {
+            super::terminate_running(&*self.host, &pattern);
+        }
 
         record.create_dir_all(&dest_home.join(profile_dir(&self.app, platform)))?;
         while let Some(entry) = reader.next_entry()? {
@@ -104,49 +106,10 @@ impl ImportProvider for ElectronImporter {
     }
 }
 
-/// Stop a running instance of the app so an import is not racing it and the
-/// following launch really starts it fresh. Best-effort: if nothing is running,
-/// or the platform has no matching mechanism, this is a no-op. Matching on the
-/// executable path inside the bundle keeps it from hitting unrelated processes
-/// that merely mention the app's name. Bounded: at most ~10 s of polling.
-fn terminate_running(host: &dyn HostEffects, platform: Platform, display: &str) {
-    let Some(pattern) = process_pattern(platform, display) else {
-        // pkill isn't available on Windows; the launcher replaces the process.
-        return;
-    };
-    let running = || {
-        host.run(&HostCommand::new(EffectKind::ProcessLookup, "pgrep").args(["-f", &pattern]))
-            .map(|output| output.success)
-            .unwrap_or(false)
-    };
-    if !running() {
-        return;
-    }
-    let kill = |signal: &str| {
-        let _ = host.run(
-            &HostCommand::new(EffectKind::ProcessTerminate, "pkill").args([signal, "-f", &pattern]),
-        );
-    };
-
-    // Ask politely, then WAIT for the process to actually be gone: an Electron
-    // app shutting down gracefully writes its profile out as the last thing it
-    // does, so an import that starts too early is overwritten by that flush.
-    kill("-TERM");
-    for _ in 0..40 {
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        if !running() {
-            return;
-        }
-    }
-    // Refused to go quietly — take it down hard and let the filesystem settle.
-    kill("-KILL");
-    std::thread::sleep(std::time::Duration::from_millis(500));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host::{FakeHost, HostOutput};
+    use crate::host::{EffectKind, FakeHost, HostOutput};
     use crate::importers::fixtures::bundle;
     use std::io::Cursor;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -280,7 +243,7 @@ mod tests {
         }]);
         let dest = tempfile::tempdir().unwrap();
         // Keychain commands succeed; no Slack is running.
-        let host = Arc::new(FakeHost::new().with_responder(|c| {
+        let host = Arc::new(FakeHost::new().with_home(dest.path()).with_responder(|c| {
             Ok(match c.kind {
                 EffectKind::ProcessLookup => HostOutput::failed(),
                 _ => HostOutput::ok(""),

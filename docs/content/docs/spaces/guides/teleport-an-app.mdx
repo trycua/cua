@@ -125,24 +125,41 @@ drag-payload helpers over a `TeleportHost` you provide.
 ## The `cua` keychain on macOS Spaces
 
 Chrome and other Chromium browsers keep their cookie key ("Safe Storage") in
-the Keychain. Session teleport installs that key into the Space's login
-keychain and pre-authorizes the browser. When the login keychain's password
-is not one the Space knows, cua-spacesd keeps the key in its own keychain,
-`~/Library/Keychains/cua.keychain-db`, instead. It behaves like this so that
-no password dialog ever appears in a Space nobody is watching:
+the Keychain. Session teleport installs that key into a keychain that
+cua-spacesd owns, `~/Library/Keychains/cua.keychain-db`, and pre-authorizes
+the browser there. It never reads, writes or deletes anything in the Space's
+login keychain, so no password dialog ever appears in a Space nobody is
+watching, whether or not the browser was opened in the Space first:
 
-- The `cua` keychain is on the keychain search list, after the login keychain.
-  It is not the default keychain, so system services such as Spotlight do not
-  reach for it.
+- The login keychain of a Lume image can have a password nobody knows (the
+  image's autologin file is padded wrong, so macOS re-keys the keychain at
+  every boot), and an item a browser made there trusts only that browser.
+  Reading it with `/usr/bin/security` raises "security wants to use your
+  confidential information stored in 'Chrome Safe Storage'" with nobody to
+  answer it.
+- The `cua` keychain is created with a password the Space knows and is the
+  **first** entry on the keychain search list. Browsers look their key up
+  through the search list and take the first match, so Chrome finds the key
+  teleport installed before any key it made itself. That key is left alone,
+  not read and not deleted. Cookies Chrome stored in the Space under its own
+  key before the teleport do not survive it; the teleport replaces the
+  session.
+- It is not the default keychain, so new items are not written there by other
+  apps.
 - cua-spacesd unlocks it when it starts and again every 20 seconds, so it is
-  open after a reboot and within seconds of a wake. The password comes from
-  the Space's protected configuration (`CUA_ENV_LOGIN_KEYCHAIN_PW`,
+  open after a reboot and within seconds of a wake, and puts it back first on
+  the search list if something reset it. The password comes from the Space's
+  protected configuration (`CUA_ENV_LOGIN_KEYCHAIN_PW`,
   `~/.cua/spacesd/keychain-password`, `/etc/cua/keychain-password`, then the
   image's account password).
 - It never auto-locks: no lock after a timeout and none on sleep
   (`security set-keychain-settings` without `-l` or `-u`).
-- Most Spaces never create it: the Cua macOS image gives the login keychain
-  the account password, so the key goes there.
+- Every `security` call has a 20 second deadline. A call that is stuck
+  behind a dialog is stopped, the dialog is dismissed, and the teleport fails
+  with an error that says so instead of hanging.
+- A running Chrome in the Space is quit before its profile is replaced and
+  opened again afterwards, so it reads the key teleport installed.
+- A Space that was never teleported into has no `cua` keychain.
 
 ## Session teleport
 

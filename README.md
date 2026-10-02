@@ -71,7 +71,7 @@ Bring your own agent and model, or explore CUA-S1 for specialized decisions. Cua
 
 ## Cua Spaces
 
-Cua Spaces is a desktop app that gives your agents full desktops. Each desktop is a Space: a macOS VM built locally on your Mac, or a Linux or Omarchy image. Spaces run on your Mac and on other machines you own, and the app keeps them in your menu bar and notch. Support for your own cloud account is coming soon.
+Cua Spaces is a desktop app that gives your agents full desktops. Each desktop is a Space: a macOS VM built locally on your Mac, or a Linux or Omarchy image. Spaces run on your Mac, on other machines you own, and in your own cloud account (AWS, Google Cloud or Modal), and the app keeps them in your menu bar and notch.
 
 - **Teleport.** Move a signed-in app, such as Chrome or Slack, into a Space and it opens there still signed in. Your sessions stay in the Cua Keyvault, encrypted on your Mac, and reach a Space only after you approve.
 - **Multiplayer.** You and your agents work on the same desktop, each with your own cursor. Step in to make a choice, then hand the desktop back.

@@ -254,6 +254,21 @@ fn def() -> &'static ToolDef {
     })
 }
 
+/// Whether AX hit-test delivery preserves a pixel-addressed point.
+///
+/// `AXUIElementPerformAction` returns success even for actions the element
+/// does not advertise, landing at the element's centre. For container-like
+/// hit-test results (canvas / WebGL / video surfaces) that silently discards
+/// the requested point while the caller sees ✅ (see #4350). Only elements
+/// advertising `AXPress` keep the AX fast path; everything else declines AX
+/// delivery so the request falls through to the routed CGEvent path, which
+/// preserves the exact point.
+fn hit_test_ax_press_keeps_point(advertised_actions: &[String]) -> bool {
+    advertised_actions
+        .iter()
+        .any(|action| action == "AXPress")
+}
+
 #[async_trait]
 impl Tool for ClickTool {
     fn def(&self) -> &ToolDef {
@@ -1003,6 +1018,17 @@ impl Tool for ClickTool {
                     let delivered = if focus_only {
                         crate::input::ax_actions::focus_element(element as usize).is_ok()
                     } else {
+                        // A pixel-addressed press must keep its point. AXPress on an
+                        // element that does not advertise it lands at the element's
+                        // centre (canvas/WebGL/video surfaces) while still returning
+                        // success — the requested point would be silently discarded
+                        // and reported as ✅ (see #4350). Decline AX delivery so the
+                        // request falls through to the routed CGEvent path below,
+                        // which preserves the exact point.
+                        if !hit_test_ax_press_keeps_point(&copy_action_names(element)) {
+                            CFRelease(element as _);
+                            return Ok(false);
+                        }
                         let press = core_foundation::string::CFString::new("AXPress");
                         AXUIElementPerformAction(element, press.as_concrete_TypeRef())
                             == kAXErrorSuccess
@@ -1593,6 +1619,22 @@ fn map_action(action: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #4350: a pixel-addressed press keeps the AX fast path only when the
+    /// hit-tested element advertises `AXPress`. Canvas-like containers do not,
+    /// and AXPressing them centre-clicks while returning success — the
+    /// requested point would be silently discarded and reported as ✅.
+    #[test]
+    fn ax_hit_test_press_requires_advertised_axpress() {
+        assert!(hit_test_ax_press_keeps_point(&["AXPress".to_string()]));
+        assert!(hit_test_ax_press_keeps_point(
+            &["AXShowMenu".to_string(), "AXPress".to_string()]
+        ));
+        assert!(!hit_test_ax_press_keeps_point(&[]));
+        assert!(!hit_test_ax_press_keeps_point(&["AXShowMenu".to_string()]));
+        // Action names are case-sensitive AX constants.
+        assert!(!hit_test_ax_press_keeps_point(&["axpress".to_string()]));
+    }
 
     /// Surface 5: schema must advertise the new `button` field with the three
     /// canonical values and default to "left". Hermes / Codex / Claude Code

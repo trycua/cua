@@ -559,6 +559,8 @@ async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     let output = tokio::process::Command::new("lsof")
         .args([
             "-a",
+            // Numeric addresses: never block on DNS while enumerating listeners.
+            "-n",
             "-p",
             &pid.to_string(),
             "-iTCP",
@@ -919,6 +921,16 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        // Prefer the exact isolated-profile endpoint (process arguments plus
+        // the DevToolsActivePort-proven port) over listener order: a spawned
+        // browser inherits its host's listening descriptor, so the host's
+        // endpoint can answer /json/version first and the ownership check
+        // against the expected WebSocket URL then fails for the whole retry
+        // window (see #4342). Listener discovery below remains the fallback.
+        let classification = self.classify_browser(pid).await?;
+        if let Some(endpoint) = active_port_endpoint(pid, classification.product_kind).await? {
+            return Ok(Some(endpoint));
+        }
         for port in loopback_ports_for_pid(pid).await? {
             if let Some(ws_url) = browser_websocket_url(port).await {
                 return Ok(Some(OwnedEndpoint {
@@ -1592,6 +1604,16 @@ mod tests {
     fn lsof_parser_accepts_only_loopback_listeners() {
         let input = "n127.0.0.1:9222\nn*:9333\nn[::1]:9444\nn0.0.0.0:9555\n";
         assert_eq!(parse_loopback_lsof_ports(input), vec![9222, 9444]);
+    }
+
+    #[test]
+    fn lsof_parser_surfaces_inherited_and_owned_listeners_sorted() {
+        // #4342: a spawned browser inherits its host's listening descriptor,
+        // so one pid owns two loopback listeners. Both must surface (sorted) —
+        // first-answer-wins scanning then picked the host endpoint, which is
+        // why discover_owned_endpoint prefers the DevToolsActivePort endpoint.
+        let input = "n127.0.0.1:60703\nn127.0.0.1:60638\n";
+        assert_eq!(parse_loopback_lsof_ports(input), vec![60638, 60703]);
     }
 
     #[test]

@@ -336,7 +336,23 @@ fn new_tab_button(
     nodes: &[AXNode],
     descriptor: &BrowserSetupDescriptor,
 ) -> Result<usize, BrowserRefusal> {
-    unique_actionable(nodes, "AXButton", "New Tab", "AXPress")?.ok_or_else(|| {
+    let mut button = None;
+    for node in nodes.iter().filter(|node| {
+        node.role == "AXButton" && field_equals(node, "New Tab") && has_action(node, "AXPress")
+    }) {
+        if let Some(prior) = button {
+            // A tree can expose the same AX control through several ancestors.
+            if !is_same_element(prior, node.element_ptr) {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "multiple exact AXButton controls matched \"New Tab\"",
+                ));
+            }
+        } else {
+            button = Some(node.element_ptr);
+        }
+    }
+    button.ok_or_else(|| {
         refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
@@ -1846,6 +1862,67 @@ mod tests {
             walk: cua_driver_core::walk_budget::WalkBudget::nodes_only(0).outcome(),
             window_scope: Some(crate::ax::WindowScope::Matched),
         }
+    }
+
+    struct ApplicationElement(AXUIElementRef);
+
+    impl ApplicationElement {
+        fn new(pid: i32) -> Self {
+            Self(unsafe { crate::ax::bindings::AXUIElementCreateApplication(pid) })
+        }
+    }
+
+    impl Drop for ApplicationElement {
+        fn drop(&mut self) {
+            unsafe { CFRelease(self.0 as CFTypeRef) };
+        }
+    }
+
+    #[test]
+    fn new_tab_button_accepts_repeated_accessibility_identity() {
+        let elements = (0..4)
+            .map(|_| ApplicationElement::new(std::process::id() as i32))
+            .collect::<Vec<_>>();
+        let nodes = elements
+            .iter()
+            .map(|element| tree_node("AXButton", Some("New Tab"), element.0 as usize, 1))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            new_tab_button(&nodes, chrome()).unwrap(),
+            elements[0].0 as usize
+        );
+    }
+
+    #[test]
+    fn new_tab_button_refuses_distinct_identities_at_the_same_frame() {
+        let first = ApplicationElement::new(std::process::id() as i32);
+        let second = ApplicationElement::new(std::process::id() as i32 + 1);
+        let mut nodes = vec![
+            tree_node("AXButton", Some("New Tab"), first.0 as usize, 1),
+            tree_node("AXButton", Some("New Tab"), second.0 as usize, 1),
+        ];
+        for node in &mut nodes {
+            node.frame = Some([1628.0, 35.0, 28.0, 41.0]);
+        }
+        assert_eq!(nodes[0].frame, nodes[1].frame);
+        assert_eq!(
+            new_tab_button(&nodes, chrome()).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
+    fn new_tab_button_requires_an_exact_actionable_match() {
+        let nodes = vec![
+            node("AXButton", Some("New Tab"), None, &[]),
+            node("AXRadioButton", Some("New Tab"), None, &["AXPress"]),
+            node("AXButton", Some("New Tab preview"), None, &["AXPress"]),
+        ];
+        assert_eq!(
+            new_tab_button(&nodes, chrome()).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
     }
 
     #[test]

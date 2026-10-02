@@ -162,7 +162,19 @@ fn all_builders(s: &str) -> Vec<Event> {
             },
             Outcome::Ok,
         ),
-        events::host_setup(s, true, true, Outcome::Error, Some(s)),
+        events::host_setup(
+            s,
+            true,
+            true,
+            Outcome::Error,
+            Some(s),
+            &events::HostSetupDetail {
+                signed_in: true,
+                token_state: s,
+                failed_stage: Some(s),
+                http_status: Some(65535),
+            },
+        ),
         events::host_space_provided(s, s, Outcome::Error, Some(s)),
         events::keyvault_action(
             events::KeyvaultAction::Unlock,
@@ -987,9 +999,29 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
     assert_eq!(v.props["mount_method"], "fskit");
     assert_eq!(v.props["storage"], "s3");
     assert_eq!(
-        events::host_setup("RELAY", false, true, Outcome::Ok, None).props["profile"],
+        events::host_setup("RELAY", false, true, Outcome::Ok, None, &Default::default()).props["profile"],
         "spare"
     );
+    // A failure says where it stopped and what the server answered; the
+    // token itself never appears (only whether there was one).
+    let failed = events::host_setup(
+        "relay",
+        true,
+        false,
+        Outcome::Error,
+        Some("Unauthenticated"),
+        &events::HostSetupDetail {
+            signed_in: true,
+            token_state: "expired",
+            failed_stage: Some("register"),
+            http_status: Some(401),
+        },
+    );
+    assert_eq!(failed.props["signed_in"], true);
+    assert_eq!(failed.props["token_state"], "expired");
+    assert_eq!(failed.props["failed_stage"], "register");
+    assert_eq!(failed.props["http_status"], 401);
+    assert_eq!(failed.props["error_kind"], "unauthenticated");
     assert_eq!(
         events::share("unshare", "editor", Outcome::Ok)
             .unwrap()

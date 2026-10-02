@@ -194,6 +194,14 @@ public final class AppModel {
             if case .failed = self.signIn { return false }
             return self.identity != nil
         }
+        // "Set up for access" signs in inline when relay setup has no
+        // account, then carries on.
+        self.host.signIn = { [weak self] in
+            guard let self else { return false }
+            await self.beginSignIn()
+            if case .failed = self.signIn { return false }
+            return self.identity != nil
+        }
         // A row takes a window drop by the core's rule (the notch tiles' too).
         dropTargets.isDropTarget = { [weak self] id in
             self?.spaces.first { $0.id == id }.map { appSpaceAcceptsDrop(space: $0) } ?? false

@@ -29,6 +29,18 @@ public struct HostSetupFailure: Equatable, Sendable {
     public static let retryingLabel = "Retrying\u{2026}"
     public static let detailsLabel = "Details"
     public static let copyLabel = "Copy"
+    public static let signInLabel = "Sign In"
+
+    /// A failure whose kind the error itself says (the account refused,
+    /// whatever its words), with the raw error as details.
+    public static func presenting(_ raw: String, as kind: Kind) -> HostSetupFailure {
+        let (title, message) = words(kind)
+        return HostSetupFailure(kind: kind, title: title, message: message, details: raw)
+    }
+
+    /// The failure's button: Sign In when the account is what is missing
+    /// (it signs in inline, then sets up), Retry otherwise.
+    public var actionLabel: String { kind == .signedOut ? Self.signInLabel : Self.retryLabel }
 
     /// Maps the raw setup error to what the sheet shows.
     public static func presenting(_ raw: String) -> HostSetupFailure {

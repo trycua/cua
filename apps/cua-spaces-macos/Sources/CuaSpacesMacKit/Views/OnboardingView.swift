@@ -226,6 +226,10 @@ public struct OnboardingView: View {
                         }
                         .padding(.horizontal, 20)
                     }
+                    if let progress = onboarding.host.progress {
+                        HostSetupProgressView(text: progress)
+                            .padding(.horizontal, 20)
+                    }
                 }
             } else {
                 VStack(alignment: .leading, spacing: 10) {

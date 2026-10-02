@@ -884,6 +884,19 @@ pub fn persistent_agent(
     })
 }
 
+/// What a host setup knew about its account and where it stopped.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HostSetupDetail<'a> {
+    /// A Cua account session is stored on this machine.
+    pub signed_in: bool,
+    /// `provided`, `expired`, `missing` or `not_needed`.
+    pub token_state: &'a str,
+    /// The stage a failure stopped at (`token`, `register`, ...).
+    pub failed_stage: Option<&'a str>,
+    /// The HTTP status behind the failure, if a server answered.
+    pub http_status: Option<u16>,
+}
+
 /// `cua_host_setup`. `profile` is the request's (`desktop`, `spare`);
 /// `share_desktop` and `provide_spaces` both on is `both`.
 pub fn host_setup(
@@ -892,6 +905,7 @@ pub fn host_setup(
     provide_spaces: bool,
     outcome: Outcome,
     error_variant: Option<&str>,
+    detail: &HostSetupDetail<'_>,
 ) -> Event {
     let profile = match (share_desktop, provide_spaces) {
         (true, true) => "both",
@@ -909,6 +923,25 @@ pub fn host_setup(
         .s(
             "error_kind",
             error_variant.map(error_kind).unwrap_or("none"),
+        )
+        .b("signed_in", detail.signed_in)
+        .s(
+            "token_state",
+            pick(schema::HOST_TOKEN_STATES, detail.token_state, "missing"),
+        )
+        .s(
+            "failed_stage",
+            detail
+                .failed_stage
+                .map(|st| pick(schema::HOST_SETUP_STAGES, st, "none"))
+                .unwrap_or("none"),
+        )
+        .n(
+            "http_status",
+            detail
+                .http_status
+                .filter(|c| (100..600).contains(c))
+                .map_or(0, u64::from),
         )
 }
 

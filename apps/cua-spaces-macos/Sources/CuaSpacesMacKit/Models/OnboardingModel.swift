@@ -30,7 +30,7 @@ public final class OnboardingModel {
     /// This machine's host setup (the same form and host as the main window).
     public let host: HostModel
     /// The signed-in account's token, for relay host setup.
-    public var accountToken: (() async -> String?)? {
+    public var accountToken: ((_ forceRefresh: Bool) async throws -> String?)? {
         get { host.accountToken }
         set { host.accountToken = newValue }
     }

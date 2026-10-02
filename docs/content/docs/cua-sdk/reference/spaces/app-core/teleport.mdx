@@ -144,8 +144,8 @@ Returned by [`app_picker_initial`](#app_picker_initial), [`app_picker_reduce`](#
 | `acknowledged` | `bool` |  | Secrets acknowledged. |
 | `save_to_keyvault` / `saveToKeyvault` | `bool` |  | "Save to Keyvault" checked: keep the captured session sealed in the Cua Keyvault after delivery, for reuse without asking again (shown alongside the acknowledgement, only when the plan is sensitive). |
 | `acknowledged_relay_plaintext` / `acknowledgedRelayPlaintext` | `bool` |  | `Plan.relay_unsealed`'s warning acknowledged (S1). |
-| `events` | [`Vec<AppTeleportRunEvent>`](#appteleportrunevent-record) |  | Run events (last `MAX_EVENTS`). |
-| `report` | [`Option<AppTeleportRunReport>`](#appteleportrunreport-record) |  | The run's report. |
+| `events` | [`Vec<AppTeleportRunEvent>`](/cua-sdk/reference/spaces/app-core/teleport-run#appteleportrunevent-record) |  | Run events (last `MAX_EVENTS`). |
+| `report` | [`Option<AppTeleportRunReport>`](/cua-sdk/reference/spaces/app-core/teleport-run#appteleportrunreport-record) |  | The run's report. |
 | `error` | `Option<String>` |  | Error text. |
 | `install_prompt` / `installPrompt` | [`Option<AppInstallCuaPrompt>`](#appinstallcuaprompt-record) |  | The "needs the Cua app" prompt. |
 | `error_back` / `errorBack` | [`AppPickerStep`](#apppickerstep-enum) |  | Where Back from an error goes. |
@@ -177,29 +177,6 @@ Returned by [`app_teleport_plan`](#app_teleport_plan), [`app_teleport_plan_from_
 | `warnings` | `Vec<String>` |  | Caveats. |
 | `relay_unsealed` / `relayUnsealed` | `bool` |  | This Space is reached through a relay connection that predates end-to-end sealing: a secret this plan sends would cross it in the clear (S1). Needs `acknowledgeRelayPlaintext` the same way a secret needs `acknowledgeSensitive`. Defaults to `false`: older fixtures and a plan from a relay that predates the capability both read as sealed (never retroactively flagged). |
 | `json` | `String` |  | The SDK's JSON for this plan. |
-
-## `AppTeleportRunEvent` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `step` | `u32` |  | Step index. |
-| `steps` | `u32` |  | Steps. |
-| `kind` | `String` |  | Step kind. |
-| `phase` | [`AppTeleportRunPhase`](#appteleportrunphase-enum) |  | Phase. |
-| `detail` | `String` |  | Detail. |
-| `done_bytes` / `doneBytes` | `u64` |  | Bytes done. |
-| `total_bytes` / `totalBytes` | `u64` |  | Bytes total. |
-
-## `AppTeleportRunReport` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `app_id` / `appId` | `String` |  | App id. |
-| `installed` | `Vec<String>` |  | Installed. |
-| `sent` | `Vec<String>` |  | Sent. |
-| `imported` | `Vec<String>` |  | Imported. |
-| `skipped` | `Vec<String>` |  | Skipped. |
-| `launched` | `bool` |  | Launched. |
 
 ## `AppTransferOverlayState` record
 
@@ -590,41 +567,6 @@ AppTeleportMove::AppWithState
 | `AppOnly` | Just the app. |
 | `AppWithFiles` | The app with files or folders. |
 | `AppWithState` | The app with its signed-in state. |
-
-## `AppTeleportRunPhase` enum
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-.started
-.progress
-.finished
-.failed
-.done
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-AppTeleportRunPhase::Started
-AppTeleportRunPhase::Progress
-AppTeleportRunPhase::Finished
-AppTeleportRunPhase::Failed
-AppTeleportRunPhase::Done
-```
-
-</Tab>
-</Tabs>
-
-| Variant | Description |
-| --- | --- |
-| `Started` | A step started. |
-| `Progress` | Bytes moved. |
-| `Finished` | A step finished. |
-| `Failed` | A step failed. |
-| `Done` | All done. |
 
 ## `AppTransferPhase` enum
 

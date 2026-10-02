@@ -48,6 +48,7 @@ More of this crate: [client](/cua-sdk/reference/rust/cua-spaces-client), [agents
 - `site_login`: The Keyvault seam and the whole `request_site_login` ...
 - `stream`: Streams: targets, media tickets, and a Rust media ...
 - `teleport_broker`: The Keyvault broker seam the `teleport_app` MCP tool ...
+- `thumbnails`: Space thumbnails, cached once for every client on this ...
 - `volume`: A volume mounted in a Space's guest, served from this ...
 - `walk`: Host-side folder walks for transfers, optionally ...
 
@@ -1606,6 +1607,10 @@ impl Spaces {
   fn fleet_pool_name(&self, runtime: FleetRuntime, image: &str) -> String;
   async fn recover_interrupted_creates(&self, budget: Duration) -> Vec<RecoveredCreate>;
   async fn delete(&self, space: &str) -> Result<String>;
+  fn thumbnails(&self) -> &ThumbnailCache;
+  async fn thumbnail(&self, space: &str, max_age: Option<Duration>) -> Result<Thumbnail>;
+  async fn refresh_thumbnails(&self) -> usize;
+  fn spawn_thumbnail_refresh(&self) -> JoinHandle<()>;
   fn power_of(&self, id: &str) -> (String, String);
   async fn stop(&self, space: &str) -> Result<SpacePower>;
   async fn start(&self, space: &str) -> Result<SpacePower>;
@@ -1928,6 +1933,44 @@ pub enum SessionDelivery {
   Pending,
   Denied(String),
   Delivered { app: String, target: String, items: Vec<String>, imported: Vec<String>, import_ids: Vec<String>, expires_ms: u64 },
+}
+```
+
+### `thumbnails::Thumbnail`
+
+One Space's latest thumbnail.
+
+```rust
+pub struct Thumbnail {
+  pub image: Vec<u8>,
+  pub format: String,
+  pub width: u32,
+  pub height: u32,
+  pub captured_at: SystemTime,
+}
+impl Thumbnail {
+  fn is_fresh(&self, max_age: Option<Duration>, now: SystemTime) -> bool;
+}
+```
+
+### `thumbnails::ThumbnailCache`
+
+The cache.
+
+```rust
+pub struct ThumbnailCache { /* private fields */ }
+impl ThumbnailCache {
+  fn new(dir: Option<PathBuf>, disk_bytes: u64) -> Self;
+  fn in_home(home: &Path) -> Self;
+  fn dir(&self) -> Option<&Path>;
+  fn get(&self, space: &str) -> Option<Thumbnail>;
+  fn spaces(&self) -> Vec<String>;
+  fn put(&self, space: &str, t: Thumbnail);
+  fn remove(&self, space: &str);
+  fn retain(&self, keep: &HashSet<String>);
+  fn note_interest(&self, now: Instant);
+  fn interested(&self, now: Instant) -> bool;
+  fn due(&self, space: &str, now: SystemTime) -> bool;
 }
 ```
 
@@ -2267,6 +2310,20 @@ pub const MAX_WAIT_SECS: u32 = 120;
 pub const DELIVERY_QUEUE: usize = 256;
 /// A window narrower or shorter than this ...
 pub const MIN_STREAMABLE_SIDE: f64 = 40.0;
+
+// mod thumbnails
+/// A running Space's thumbnail is captured ...
+pub const BACKGROUND_INTERVAL: Duration = _;
+/// Disk cap for the whole cache.
+pub const DISK_BYTES: u64 = _;
+/// How long one request keeps the ...
+pub const INTEREST_WINDOW: Duration = _;
+/// Long edge of a captured thumbnail ...
+pub const MAX_DIMENSION: u32 = 320;
+/// JPEG quality of a captured thumbnail.
+pub const QUALITY: u32 = 70;
+/// How often the daemon checks which ...
+pub const REFRESH_TICK: Duration = _;
 
 // mod volume
 /// The guest feature.

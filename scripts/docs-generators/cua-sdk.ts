@@ -829,6 +829,15 @@ export const PAGES: PageSpec[] = [
     spaces: true,
   },
   {
+    slug: 'spaces/app-core/teleport-run',
+    title: 'Teleport run',
+    description: 'A teleport in progress: its events as the picker shows them and the one status line.',
+    intro: '`app_teleport_run_event` maps one `Teleport.run` event for the picker, `app_teleport_run_status` sums a run\'s events into its status line, and `app_picker_status` says what the picker is doing.',
+    items: ['app_picker_status'],
+    prefixes: ['AppTeleportRun', 'app_teleport_run_'],
+    spaces: true,
+  },
+  {
     slug: 'spaces/app-core/teleport-grid',
     title: 'Teleport picker grid',
     description: 'The teleport picker\'s tiles in both apps: tabs, app and window tiles with their icon and preview sources, and the arrow keys.',

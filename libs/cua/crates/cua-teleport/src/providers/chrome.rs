@@ -454,11 +454,22 @@ fn manifest_item(
     }
 }
 
+/// Where curated profile file `name` lives on disk: `Cookies` resolves to
+/// `Network/Cookies` first (Chrome 96+), then the legacy root file; every
+/// other file is at the profile root.
+fn profile_file_path(profile_dir: &Path, name: &str) -> PathBuf {
+    if name == "Cookies" {
+        cua_teleport_bundle::layout::chrome::cookies_store(profile_dir)
+    } else {
+        profile_dir.join(name)
+    }
+}
+
 /// The concrete-item count and plural noun for one curated profile file, or
 /// `None` (unknown file, or a locked/absent/unreadable database) so the consent
 /// UI falls back to the byte size. Pure: a path in, an `Option` out.
 fn profile_file_count(profile_dir: &Path, name: &str) -> Option<(u64, &'static str)> {
-    let path = profile_dir.join(name);
+    let path = profile_file_path(profile_dir, name);
     match name {
         "Bookmarks" => count_bookmarks(&path).map(|n| (n, "bookmarks")),
         "Cookies" => count_sqlite_rows(&path, "cookies").map(|n| (n, "cookies")),
@@ -640,7 +651,7 @@ impl ExportProvider for ChromeProvider {
 
         if scope == TransferScope::FullProfile {
             for (name, sensitive) in PROFILE_FILES {
-                let disk = profile_dir.join(name);
+                let disk = profile_file_path(&profile_dir, name);
                 items.push(manifest_item(
                     name,
                     &dest_rel_path(&profile, name),
@@ -1055,6 +1066,67 @@ mod tests {
             .find(|item| item.label == "Preferences")
             .unwrap();
         assert!(!prefs.sensitive);
+    }
+
+    /// Modern Chrome keeps its cookies only in `Network/Cookies`. The
+    /// manifest must count them, and the export must send them as decrypted
+    /// rows without shipping the raw database (or any `Network/` file) too.
+    #[test]
+    fn modern_network_cookies_are_counted_and_exported_as_rows_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("Default");
+        let key = cua_teleport_bundle::chromium_crypto::derive_key(
+            cua_teleport_bundle::chromium_crypto::LINUX_V10_PASSWORD,
+            cua_teleport_bundle::chromium_crypto::LINUX_V10_PBKDF2_ROUNDS,
+        );
+        crate::browser_cookies::write_network_cookies_db_for_tests(
+            &profile,
+            &[crate::browser_cookies::TestCookieRow {
+                host_key: "example.test",
+                name: "sid",
+                encrypted_value: cua_teleport_bundle::chromium_crypto::encrypt_v10(&key, b"v"),
+                path: "/",
+                expires_utc: 0,
+                is_secure: true,
+                is_httponly: true,
+                samesite: 1,
+            }],
+        )
+        .unwrap();
+        assert!(!profile.join("Cookies").exists());
+        let provider = ChromeProvider::new()
+            .without_devtools()
+            .with_profile_dir(&profile);
+
+        let manifest = provider
+            .manifest(&app(), None, TransferScope::FullProfile)
+            .unwrap();
+        let cookies = manifest
+            .items
+            .iter()
+            .find(|item| item.label == "Cookies")
+            .unwrap();
+        assert!(cookies.est_bytes > 0, "size read from Network/Cookies");
+        assert_eq!(cookies.count, Some(1));
+
+        let mut bundle = Vec::new();
+        provider
+            .export(&app(), TransferScope::FullProfile, &mut bundle)
+            .unwrap();
+        let entries = BundleReader::open(Cursor::new(bundle))
+            .unwrap()
+            .read_all()
+            .unwrap();
+        assert!(!entries.iter().any(|e| e.rel_path.ends_with("Cookies")));
+        let rows = cua_teleport_bundle::cookies::parse(
+            &entries
+                .iter()
+                .find(|e| e.rel_path == cua_teleport_bundle::cookies::COOKIES_ENTRY)
+                .unwrap()
+                .bytes,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].value, b"v");
     }
 
     /// A full export carries the curated profile in the canonical (Linux)

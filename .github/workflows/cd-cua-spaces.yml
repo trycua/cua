@@ -85,8 +85,10 @@ name: "CD: Cua Spaces"
 # or Windows updater artifacts. Installer assets and the feed carry keyless
 # Sigstore (cosign) bundles, which install.sh / install.ps1 verify.
 #
-# Release Please owns the version (component `cua-spaces`, apps/cua-spaces/VERSION)
-# and creates a draft release plus the `cua-spaces-v<version>` tag; this
+# Release Please owns the version (component `cua-spaces`, driven by the macOS
+# app: apps/cua-spaces-macos/VERSION and CHANGELOG.md; the Tauri app in
+# apps/cua-spaces shares it as extra files but never triggers a release) and
+# creates a draft release plus the `cua-spaces-v<version>` tag; this
 # workflow fills that release and publishes it. It can also run manually with
 # an explicit version. The macOS app takes the tag's version:
 # CFBundleShortVersionString X.Y.Z, CFBundleVersion X.Y.Z.<run number>, and
@@ -418,7 +420,7 @@ jobs:
           gh release view "cua-spaces-v$VERSION" --repo "$GITHUB_REPOSITORY" --json body --jq .body \
             > "$notes" 2>/dev/null || : > "$notes"
           if ! grep -q '[^[:space:]]' "$notes" || grep -qx 'Automated Cua Spaces release.' "$notes"; then
-            python3 apps/cua-spaces-macos/scripts/changelog-notes.py "$VERSION" apps/cua-spaces/CHANGELOG.md > "$notes"
+            python3 apps/cua-spaces-macos/scripts/changelog-notes.py "$VERSION" apps/cua-spaces-macos/CHANGELOG.md > "$notes"
           fi
           apps/cua-spaces-macos/scripts/make-appcast.sh \
             --dmg "installer-assets/cua-spaces-$VERSION-darwin-universal.dmg" --version "$VERSION" \

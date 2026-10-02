@@ -481,7 +481,6 @@ mod tests {
         assert_eq!(everything.len(), 3);
     }
 
-    #[cfg(target_os = "macos")]
     fn one_row() -> Vec<TestCookieRow<'static>> {
         vec![TestCookieRow {
             host_key: ".github.com",
@@ -547,6 +546,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn macos_cookies_use_the_named_browsers_safe_storage_item() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().to_path_buf();

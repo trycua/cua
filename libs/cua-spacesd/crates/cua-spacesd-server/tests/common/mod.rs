@@ -273,7 +273,15 @@ pub async fn target() -> Target {
         ..ServerConfig::default()
     };
     let ctx = ServerContext::new(config, Some(IN_PROCESS_TOKEN.into()));
-    let host = Arc::new(cua_spacesd_teleport::FakeHost::new());
+    // Everything fails by default (nothing running, no Keychain), except
+    // launching: on macOS the app is opened through `open`, which succeeds.
+    let host = Arc::new(cua_spacesd_teleport::FakeHost::new().with_responder(|c| {
+        Ok(if c.kind == cua_spacesd_teleport::EffectKind::AppLaunch {
+            cua_spacesd_teleport::host::HostOutput::ok("")
+        } else {
+            cua_spacesd_teleport::host::HostOutput::failed()
+        })
+    }));
     let receiver = Arc::new(cua_spacesd_teleport::Receiver::with_host(
         home.path().to_path_buf(),
         host.clone(),

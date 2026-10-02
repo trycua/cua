@@ -165,6 +165,10 @@ pub enum Request {
         /// reply. Off for older clients, which read one reply per request.
         #[serde(default)]
         progress: bool,
+        /// Open the app in the Space after importing it. On unless a client
+        /// says otherwise (older clients never sent it).
+        #[serde(default = "default_true")]
+        launch: bool,
     },
     /// Wipe deliveries on a target.
     Release {
@@ -371,9 +375,17 @@ pub async fn dispatch(broker: &Broker, caller: &CallerIdentity, req: Request) ->
         Request::RemoveRule { id } => reply!(broker.remove_rule(caller, &id).await),
         Request::Teleport(r) => reply!(broker.teleport(caller, r).await),
         Request::ImportAndTeleport {
-            spec, target, save, ..
+            spec,
+            target,
+            save,
+            launch,
+            ..
         } => {
-            reply!(broker.import_and_teleport(caller, spec, target, save).await)
+            reply!(
+                broker
+                    .import_and_teleport_launching(caller, spec, target, save, launch, None)
+                    .await
+            )
         }
         Request::Release { target } => reply!(broker.release(caller, &target).await),
         Request::ListDeliveries => reply!(broker.list_deliveries(caller).await),
@@ -508,8 +520,11 @@ async fn handle(mut stream: tokio::net::UnixStream, broker: Arc<Broker>, policy:
                 target,
                 save,
                 progress: true,
+                launch,
             }) => {
-                match teleport_streaming(&mut stream, &broker, &caller, spec, target, save).await {
+                match teleport_streaming(&mut stream, &broker, &caller, spec, target, save, launch)
+                    .await
+                {
                     Some(r) => r,
                     None => return,
                 }
@@ -541,12 +556,13 @@ async fn teleport_streaming(
     spec: ImportSpec,
     target: String,
     save: bool,
+    launch: bool,
 ) -> Option<Response> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TeleportStage>();
     let sink: StageSink = Arc::new(move |s| {
         let _ = tx.send(s);
     });
-    let work = broker.import_and_teleport_with_progress(caller, spec, target, save, Some(sink));
+    let work = broker.import_and_teleport_launching(caller, spec, target, save, launch, Some(sink));
     tokio::pin!(work);
     let mut connected = true;
     let mut sent = 0usize;
@@ -898,6 +914,7 @@ impl KeyvaultClient {
             target,
             save,
             progress: false,
+            launch: true,
         })
         .await
     }
@@ -908,6 +925,19 @@ impl KeyvaultClient {
         spec: ImportSpec,
         target: String,
         save: bool,
+        on: impl FnMut(TeleportStage) + Send,
+    ) -> Result<TeleportOutcome> {
+        self.import_and_teleport_launching(spec, target, save, true, on)
+            .await
+    }
+    /// [`Self::import_and_teleport_with_progress`] with an explicit `launch`
+    /// (whether the Space opens the app once it is imported).
+    pub async fn import_and_teleport_launching(
+        &mut self,
+        spec: ImportSpec,
+        target: String,
+        save: bool,
+        launch: bool,
         mut on: impl FnMut(TeleportStage) + Send,
     ) -> Result<TeleportOutcome> {
         let v = self
@@ -917,6 +947,7 @@ impl KeyvaultClient {
                     target,
                     save,
                     progress: true,
+                    launch,
                 },
                 &mut on,
             )
@@ -1135,6 +1166,7 @@ mod tests {
             old,
             Request::ImportAndTeleport {
                 progress: false,
+                launch: true,
                 ..
             }
         ));
@@ -1191,4 +1223,8 @@ mod tests {
             }
         }
     }
+}
+
+fn default_true() -> bool {
+    true
 }

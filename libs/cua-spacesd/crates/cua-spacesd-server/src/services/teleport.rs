@@ -523,6 +523,12 @@ impl TeleportService for TeleportServiceImpl {
                 "close_running_app: not supported by this driver; close the app first".into(),
             );
         }
+        for notice in &outcome.notices {
+            skipped.push(format!("notice: {notice}"));
+        }
+        if let Some(why) = &outcome.launch_error {
+            skipped.push(format!("launch: {why}"));
+        }
         Ok(Response::new(ImportSessionResponse {
             received_bytes: import.received,
             duplicate,

@@ -26,6 +26,8 @@ struct FakeBackend {
     delivered: Mutex<Vec<(String, String, Vec<String>, u64)>>,
     wiped: Mutex<Vec<(String, String)>>,
     notified: Mutex<Vec<String>>,
+    /// The `launch` flag of every launching delivery.
+    launches: Mutex<Vec<bool>>,
     captures: Mutex<Vec<ImportSpec>>,
     /// Name -> immutable Space id. A name absent here resolves to a stable
     /// `sandbox-<name>`; a test can insert a new id to model a rename or a
@@ -170,6 +172,23 @@ impl Backend for FakeBackend {
         stage(TeleportStage::Importing);
         self.deliver(target, provider_id, payloads, expires_ms)
             .await
+    }
+
+    async fn deliver_launching(
+        &self,
+        target: &str,
+        provider_id: &str,
+        payloads: Vec<ItemPayload>,
+        expires_ms: u64,
+        stage: cua_keyvault::broker::StageSink,
+        launch: bool,
+    ) -> cua_keyvault::Result<DeliveryOutcome> {
+        self.launches.lock().unwrap().push(launch);
+        let mut out = self
+            .deliver_with_progress(target, provider_id, payloads, expires_ms, stage)
+            .await?;
+        out.launched = launch;
+        Ok(out)
     }
 
     async fn wipe(&self, target: &str, import_id: &str) -> cua_keyvault::Result<Vec<String>> {
@@ -1740,6 +1759,36 @@ async fn import_and_teleport_reports_its_stages_in_order() {
         ]);
         assert_eq!(*seen.lock().unwrap(), want, "save={save}");
     }
+}
+
+/// A direct teleport opens the app in the Space (and says so), unless the
+/// caller asked not to; the grant-gated agent path never launches anything.
+#[tokio::test]
+async fn import_and_teleport_launches_the_app_unless_told_not_to() {
+    let r = rig().await;
+    let spec = || ImportSpec {
+        app: "chrome".into(),
+        sites: vec![SiteChoice {
+            site: "github.com".into(),
+            include_storage: false,
+            include_passwords: false,
+        }],
+        ..Default::default()
+    };
+    let on = r
+        .broker
+        .import_and_teleport(&r.cua, spec(), "dev-1".into(), false)
+        .await
+        .unwrap();
+    assert!(on.deliveries[0].launched);
+    let off = r
+        .broker
+        .import_and_teleport_launching(&r.cua, spec(), "dev-1".into(), false, false, None)
+        .await
+        .unwrap();
+    assert!(!off.deliveries[0].launched);
+    // Only the first asked for a launching delivery.
+    assert_eq!(*r.backend.launches.lock().unwrap(), vec![true]);
 }
 
 /// `import_and_teleport` is what a direct (non-MCP) teleport uses instead of

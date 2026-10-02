@@ -103,6 +103,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "libs/cua-driver/hyprland-plugin/proofs/production_primary_conflict_proof.py" = ["F821"]
+# Docs snippets reference placeholders (URL, TOKEN) defined by the page around them.
+"scripts/docs-generators/examples/**" = ["F821"]
 
 [tool.ruff.format]
 docstring-code-format = true

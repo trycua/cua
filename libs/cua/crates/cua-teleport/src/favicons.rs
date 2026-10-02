@@ -180,7 +180,12 @@ mod tests {
         let before = std::fs::metadata(&db).unwrap().modified().unwrap();
         let out = read_favicons(
             &db,
-            &["github.com".into(), "notion.so".into(), "nopng.test".into(), "absent.test".into()],
+            &[
+                "github.com".into(),
+                "notion.so".into(),
+                "nopng.test".into(),
+                "absent.test".into(),
+            ],
         )
         .unwrap();
         assert_eq!(out.len(), 2, "no icon for a site without a PNG or a row");

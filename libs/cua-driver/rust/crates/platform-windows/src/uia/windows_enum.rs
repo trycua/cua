@@ -1232,3 +1232,105 @@ mod tests {
         assert_eq!(max_active.load(Ordering::Acquire), 1);
     }
 }
+
+/// Hit chain (nearest first), each node's bounds `[x, y, w, h]`, and whether
+/// the hit is inside a `Document`.
+pub(crate) type PointShapeChain = (
+    Vec<crate::pointer_shape_map::UiaHitNode>,
+    Vec<Option<[f64; 4]>>,
+    bool,
+);
+
+/// Budget for the presence hit-test's UIA work. Short: a hover cursor that
+/// misses its deadline just falls back to the arrow.
+const POINT_SHAPE_TIMEOUT: Duration = Duration::from_millis(150);
+/// How far up to look for an enclosing `Document` from page text.
+const POINT_SHAPE_DOCUMENT_DEPTH: usize = 16;
+
+/// The element under screen point `(sx, sy)` and up to three generic
+/// ancestors, as [`crate::pointer_shape_map::UiaHitNode`]s, plus whether the
+/// hit sits inside a `Document` and each node's bounding rectangle
+/// (`[x, y, w, h]`).
+///
+/// Uses desktop-wide `ElementFromPoint`, which is the right question here
+/// ("what is under the pointer", whatever window it belongs to). Where it
+/// stops at an outer host pane (UWP frames, see
+/// [`try_invoke_in_window_at_point`]), the answer degrades to the arrow.
+/// `None` when UIA is unavailable, busy with another call, or over budget.
+pub(crate) fn point_shape_chain(sx: i32, sy: i32) -> Option<PointShapeChain> {
+    run_uia_with_deadline(
+        "pointer shape hit-test",
+        POINT_SHAPE_TIMEOUT,
+        "the arrow",
+        move || point_shape_chain_unbounded(sx, sy),
+    )
+    .ok()
+    .flatten()
+}
+
+fn point_shape_chain_unbounded(sx: i32, sy: i32) -> Option<PointShapeChain> {
+    use crate::pointer_shape_map::{control_type, is_generic_control, UiaHitNode};
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationValuePattern, UIA_TextPatternId, UIA_ValuePatternId,
+    };
+
+    // Keep this first so COM interfaces drop before CoUninitialize.
+    let _com = ComInit::new();
+    let uia = get_uia()?;
+    unsafe {
+        let hit = uia.ElementFromPoint(POINT { x: sx, y: sy }).ok()?;
+        let walker = uia.ControlViewWalker().ok()?;
+        let node_of = |e: &IUIAutomationElement| -> UiaHitNode {
+            let control_type = e.CurrentControlType().map(|c| c.0).unwrap_or(0);
+            let value_read_only = e
+                .GetCurrentPattern(UIA_ValuePatternId)
+                .and_then(|p| p.cast::<IUIAutomationValuePattern>())
+                .and_then(|p| p.CurrentIsReadOnly())
+                .ok()
+                .map(|b| b.as_bool());
+            let text_pattern = matches!(control_type, control_type::DOCUMENT | control_type::EDIT)
+                && e.GetCurrentPattern(UIA_TextPatternId).is_ok();
+            UiaHitNode {
+                control_type,
+                enabled: e.CurrentIsEnabled().ok().map(|b| b.as_bool()),
+                value_read_only,
+                text_pattern,
+            }
+        };
+        let rect_of = |e: &IUIAutomationElement| -> Option<[f64; 4]> {
+            let r = e.CurrentBoundingRectangle().ok()?;
+            let (w, h) = (r.right - r.left, r.bottom - r.top);
+            (w > 0 && h > 0).then_some([r.left as f64, r.top as f64, w as f64, h as f64])
+        };
+
+        let mut elements = vec![hit];
+        let mut chain = vec![node_of(&elements[0])];
+        while elements.len() < 4 && is_generic_control(chain[chain.len() - 1].control_type) {
+            let Ok(parent) = walker.GetParentElement(&elements[elements.len() - 1]) else {
+                break;
+            };
+            chain.push(node_of(&parent));
+            elements.push(parent);
+        }
+        let in_document = chain[0].control_type == control_type::TEXT && {
+            let mut found = chain
+                .iter()
+                .any(|n| n.control_type == control_type::DOCUMENT);
+            let mut current = elements[elements.len() - 1].clone();
+            let mut depth = elements.len();
+            while !found && depth < POINT_SHAPE_DOCUMENT_DEPTH {
+                let Ok(parent) = walker.GetParentElement(&current) else {
+                    break;
+                };
+                found =
+                    parent.CurrentControlType().map(|c| c.0).unwrap_or(0) == control_type::DOCUMENT;
+                current = parent;
+                depth += 1;
+            }
+            found
+        };
+        let rects = elements.iter().map(rect_of).collect();
+        Some((chain, rects, in_document))
+    }
+}

@@ -12,14 +12,19 @@ Layout
 
 Usage
 ─────
-  # Local only (default):
-  pytest tests/test_android_multitouch.py -v
+  Opt-in only: the whole module skips unless CUA_TEST_ANDROID_MULTITOUCH=1,
+  because the local tests boot a real Android emulator (4 GB) on the host.
+
+  # Local emulator:
+  CUA_TEST_ANDROID_MULTITOUCH=1 pytest tests/test_android_multitouch.py -v -k local
 
   # Cloud (once implemented):
-  CUA_TEST_API_KEY=sk-... pytest tests/test_android_multitouch.py -v -k cloud
+  CUA_TEST_ANDROID_MULTITOUCH=1 CUA_TEST_API_KEY=sk-... \
+      pytest tests/test_android_multitouch.py -v -k cloud
 
 Environment variables
 ─────────────────────
+  CUA_TEST_ANDROID_MULTITOUCH  set to 1 to run this module (default: skipped)
   CUA_ANDROID_TEST_APK   path or URL to a pre-built TouchTest debug APK
                          default: latest release from
                          https://github.com/trycua/android-touch-test-app
@@ -54,8 +59,14 @@ from cua_sandbox.sandbox import Sandbox
 
 # ── Config ─────────────────────────────────────────────────────────────────
 
+# Boots an emulator or a cloud VM: opt-in, default OFF (never opt-out).
+pytestmark = pytest.mark.skipif(
+    os.environ.get("CUA_TEST_ANDROID_MULTITOUCH") != "1",
+    reason="set CUA_TEST_ANDROID_MULTITOUCH=1 to run the Android multi-touch tests",
+)
+
 _APK_RELEASE_URL = (
-    "https://github.com/trycua/android-touch-test-app" "/releases/latest/download/app-debug.apk"
+    "https://github.com/trycua/android-touch-test-app/releases/latest/download/app-debug.apk"
 )
 _APK_ENV = os.environ.get("CUA_ANDROID_TEST_APK", "")
 # If env var is a local path use it directly; otherwise download from releases.
@@ -457,7 +468,7 @@ async def cloud_android_sb():
         pytest.skip("CUA_TEST_API_KEY not set — cloud tests skipped")
 
     image = Image.android("14").apk_install(_APK_RELEASE_URL)
-    async with Sandbox.ephemeral(image, api_key=_API_KEY) as sb:
+    async with Sandbox.ephemeral(image, api_key=_API_KEY, local=False) as sb:
         # Launch app
         await sb.shell.run(f"am start -n {_APK_ACTIVITY}")
         await asyncio.sleep(_LAUNCH_WAIT_S)

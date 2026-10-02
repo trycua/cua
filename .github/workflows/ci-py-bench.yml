@@ -4,8 +4,13 @@ on:
   pull_request:
     paths:
       - "libs/cua-bench/**"
+      - "libs/cua-bench-rl/**"
+      - "libs/python/cua-sandbox/**"
       - ".github/workflows/ci-py-bench.yml"
       - ".github/workflows/py-reusable-build.yml"
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -13,3 +18,60 @@ jobs:
     with:
       package_name: "bench"
       package_dir: "libs/cua-bench"
+
+  test:
+    name: Offline tests, CLI goldens and export snapshots
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CUA_TELEMETRY_ENABLED: "false"
+      HF_DATASETS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+      CUA_BENCH_NO_BANNER: "1"
+    defaults:
+      run:
+        working-directory: libs/cua-bench
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-bench/uv.lock
+
+      - name: Install
+        run: uv sync --frozen --extra dev
+
+      # Hermetic: cua-sandbox is replaced by in-memory fakes. Live tests
+      # (tests/live, CUA_E2E_*) never run here.
+      - name: Tests (CLI goldens, export snapshots, runner)
+        run: uv run --frozen pytest -q cua_bench/tests --ignore=cua_bench/tests/live
+
+  test-rl:
+    name: cua-bench-rl (workers, dataloader) tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CUA_TELEMETRY_ENABLED: "false"
+    defaults:
+      run:
+        working-directory: libs/cua-bench-rl
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-bench-rl/uv.lock
+
+      - name: Install
+        run: uv sync --frozen --extra dev
+
+      - name: Tests
+        run: uv run --frozen pytest -q

@@ -1,118 +1,72 @@
 ---
-title: 'Cua documentation'
-description: 'Open-source computer-use automation for real machines and isolated desktops.'
+title: Cua documentation
+description: Computer-use infrastructure on your own machines. Sandboxes, Spaces, and agents that drive real desktops.
+landing:
+  hero: Cua Developers
+  path: 'One walkthrough per product, from setup to a result you can check.'
+  products: [cua-sdk, cua-driver, spaces, cua-bench]
+  examples:
+    - title: Cua Bots
+      description: Persistent bots on Cua Spaces, each with its own computer, memory, routines and rules. A Mac and iPhone app in SwiftUI.
+      href: /spaces/examples/cua-bots
+      cta: Open the example
+      video: /videos/cua-bots-launch.mp4
+      poster: /videos/cua-bots-launch.jpg
+      alt: 'The Cua Bots launch film: koala-faced bots, then "Self-host your bots" and real Cua Bots screens'
+      links:
+        - title: Source on GitHub
+          href: https://github.com/trycua/cua/tree/main/samples/cua-bots-macos
+    - title: 'Background computer-use with **Cua Driver**'
+      description: 'An MCP tool for your agent. In this example, it builds and QAs a WPF app on Windows while you keep working.'
+      href: /cua-driver/guides/recipes
+      cta: Cua Driver recipes
+      video: https://trycua.github.io/assets/videos/cua-driver/windows-wpf-agent-qa.mp4
+      poster: https://trycua.github.io/assets/posters/cua-driver/windows-wpf-agent-qa.jpg
+      alt: Claude Code builds a WPF CRM on Windows, runs it, patches the code and checks the app again
+      links:
+        - title: View the original post on X
+          href: https://x.com/trycua/status/2059688966085853245
 ---
-
-Cua is an open-source MIT-licensed platform ([github.com/trycua/cua](https://github.com/trycua/cua)) for **computer-use automation**: letting AI agents operate computers by clicking, typing, and reading the screen and accessibility tree. What we refer to as **Computer-Use 2.0** treats the GUI as one tool surface in an agent loop, alongside code, shell, files, and APIs. Use Cloud Fleets to provision isolated cloud desktops, Cua Driver to operate a machine you already have, Lume to manage local macOS VMs, or Cua-Bench to evaluate computer-use agents.
-
-For live service availability and incident updates, see [Cua Status](https://status.cua.ai).
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
 
-## Choose your path
-
 <Cards>
-  <Card title="Your first Cloud Fleet" href="/tutorials/your-first-cloud-fleet">
-    Provision a Cloud Fleet, claim an isolated Linux computer, transform a file, verify the result,
-    and delete the cloud resources when you finish.
+  <Card title="Cua SDK" href="/cua-sdk">
+    Create and drive computers from your own code. Python, TypeScript, Swift and Rust.
   </Card>
-  <Card title="Drive a real app — Cua Driver" href="/tutorials/drive-your-first-app">
-    Run a background driver on macOS, Windows, or Linux so an agent can operate native GUI apps you
-    already have without bringing them to the foreground or moving the real mouse. It speaks MCP
-    over stdio and is also a plain CLI.
+  <Card title="Cua Driver" href="/cua-driver">
+    Let an agent drive native apps on macOS, Windows and Linux in the background.
   </Card>
-  <Card title="Create a local macOS VM with Lume" href="/tutorials/create-your-first-lume-vm">
-    Install Lume on an Apple Silicon Mac, create a vanilla Tahoe guest, and connect over SSH.
+  <Card title="Cua Spaces" href="/spaces">
+    The Mac app for working alongside your agents. Watch, take over, share files and teleport apps.
   </Card>
-  <Card title="Build your first Cua-Bench task" href="/tutorials/your-first-cua-bench-task">
-    Create and verify a simulated computer-use task before evaluating agents.
+  <Card title="Cua Bench" href="/cua-bench">
+    Run and score computer-use benchmarks on your machine.
+  </Card>
+  <Card title="Lume" href="/lume">
+    macOS and Linux VMs on Apple silicon.
+  </Card>
+  <Card title="Cua CLI" href="/cua-cli">
+    `cua`: sandboxes, auth, the daemon and MCP from the terminal.
   </Card>
 </Cards>
 
-Local sandboxes and Cloud Fleets share the [Sandbox SDK](/reference/sandbox-sdk),
-but their credentials, images, connections, and cleanup behavior differ. Start
-with [How sandboxes work](/concepts/how-sandboxes-work) for the shared model and
-[Runtime support](/reference/sandbox-sdk/runtime-support) for the differences.
-The Lume tutorial uses the Lume CLI directly, not the Sandbox SDK.
+## Start here
 
-Building Cua Driver into your own product? Start with [Choose a Cua Driver
-integration](/concepts/choose-a-cua-driver-integration) to decide whether MCP,
-the SDK, or an app-hosted service should own the runtime.
+- [Sandbox images](/start-here/sandbox-images): the desktop and benchmark images, and one line to start each.
+- [Create a Space with the Cua SDK](/start-here/create-a-space-with-the-sdk): create a Linux Space on your machine from Python or TypeScript, use it, watch it and delete it.
+- [Host Spaces on your spare Mac](/start-here/host-spaces-on-your-spare-mac): let your laptop create Spaces on another machine, over the relay, ssh or Tailscale.
+- [Drive your first app with Cua Driver](/start-here/drive-your-first-app): let your agent operate a native app on the machine you already have.
+- [Create a local macOS sandbox with the Cua CLI](/start-here/create-a-local-macos-sandbox): a macOS Tahoe sandbox on Apple silicon with `cua sb create macos`.
+- [Run a sandbox in GitHub Actions](/start-here/run-in-github-actions): a Linux sandbox per CI job, with logs and a screenshot as artifacts.
+- [Build your first Cua Bench task](/start-here/your-first-cua-bench-task): create a task, score it with its oracle, then hand it to an agent.
 
-## Cua Driver in action
+## Examples
 
-See agents work across real desktop apps. Each example identifies its platform,
-workflow, and input scope.
+- [Cua Bots](/spaces/examples/cua-bots): persistent bots on Cua Spaces, each with its own computer, in a Mac and iPhone app. The same kind of app in TypeScript, Rust (Tauri) and Swift is in [Examples in other languages](/spaces/examples/other-languages).
+- [Background computer-use with Cua Driver](/cua-driver/guides/recipes): an MCP tool for your agent. In this example, it builds and QAs a WPF app on Windows ([video](https://x.com/trycua/status/2059688966085853245)).
 
-### Real desktop workflows with GPT-6 Astra + Cua Driver
+![Cua Bots: a bot finished its research, with the result card, a notification and its profile](/img/cua-bots/cua-bots-mac-research-ready.png)
 
-Map layouts, PDF review, and design edits across macOS apps:
-
-<VideoDemo
-  src="https://github.com/user-attachments/assets/e9344780-e780-46e7-bcce-91f61eda9599"
-  poster="/media/workflow-demos/highlights-poster.jpg"
-  title="Real desktop workflows with GPT-6 Astra + Cua Driver"
-  aspectRatio={8 / 5}
-  autoPlay={false}
-  loop={false}
-  preload="metadata"
->
-  Selected interactions from QGIS, Preview, GIMP, and Inkscape, with the recorded agent cursor and
-  action captions.
-</VideoDemo>
-
-Recorded on macOS with GPT-6 Astra + Cua Driver. Selected gestures play at 1x;
-setup, waits, retries and intervening edits are cut. These examples include
-foreground/desktop input and fictional data. Clip duration is not task
-completion time.
-
-Try a workflow with starter files and output checks:
-
-- [Build and inspect a map](/how-to-guides/recipes/build-and-inspect-a-map).
-- [Redact and annotate a PDF](/how-to-guides/recipes/redact-and-annotate-a-pdf).
-- [Prepare an exhibition panel](/how-to-guides/recipes/prepare-an-exhibition-panel).
-
-### Background examples on Windows and Linux
-
-These recordings show agents operating desktop apps while the user's active window
-stays in place. Each demo was recorded by the Cua team on the named platform.
-
-<div className="not-prose my-8 grid gap-5 md:grid-cols-2">
-  <VideoDemo
-    src="https://github.com/user-attachments/assets/4159f98d-9623-40d0-a85f-37c913b1403b"
-    poster="https://github.com/user-attachments/assets/54536146-328a-431c-95b4-14a799248026"
-    title="Build and check a WPF app on Windows"
-    sourceUrl="https://x.com/trycua/status/2059688966085853245"
-  >
-    Claude Code builds a WPF CRM, runs it, patches the code, and checks the app again.
-  </VideoDemo>
-
-  <VideoDemo
-    src="https://github.com/user-attachments/assets/7096c772-aa24-4286-a453-6aedfbeb3e23"
-    poster="https://github.com/user-attachments/assets/74d428cb-1adc-4ebc-bc43-590f0966e84b"
-    title="Fill a Linux spreadsheet over SSH"
-    sourceUrl="https://x.com/trycua/status/2067639346719826213"
-  >
-    An agent enters a monthly budget in Gnumeric on a remote machine with no attached display or GPU.
-  </VideoDemo>
-</div>
-
-## How these docs are organised
-
-Tutorials: learn by doing. [Choose a first tutorial](/tutorials).
-
-Concepts: understand how and why Cua works. Start with [Concepts](/concepts).
-
-Use Cua with: choose a model provider, agent harness, or local runtime. Start with [Use Cua with](/use-cua-with).
-
-How-to guides: recipes for a goal. Start with [How-to guides](/how-to-guides).
-
-Reference: precise technical description. Start with [Reference](/reference).
-
-## Find a tool or API
-
-- [Cloud Fleets overview](/cloud-fleets): pools, claims, and cloud capacity.
-- [Sandbox SDK reference](/reference/sandbox-sdk): the shared Python API and its runtime-specific contracts.
-- [Cua CLI reference](/reference/cua-cli/cli-reference): the general command-line interface, with separate [authentication](/reference/cua-cli/authentication) and [CLI MCP server](/reference/cua-cli/mcp-server) references.
-- [Lume reference](/reference/lume/cli-reference): local VM commands.
-- [Connect your agent to Cua docs](/how-to-guides/agent-context/connect-your-agent-to-cua-docs): documentation lookup, distinct from controlling a desktop with Driver.
+Coding agents can read these docs as Markdown or query them over MCP: see [Docs for agents](/docs-for-agents).
+Service status: [status.cua.ai](https://status.cua.ai).

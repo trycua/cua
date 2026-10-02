@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import cua_bench as cb
+from cua_bench.images import image as bench_image
 
 
 # Called once per batch
@@ -32,6 +33,8 @@ def load():
                 "provider": "native",
                 "setup_config": {
                     "os_type": os_type,
+                    # bench-ui (pywebview) windows need the bench-web image.
+                    "image": bench_image("BENCH_WEB"),
                     "width": 1024,
                     "height": 768,
                     "background": "#c0c0c0",

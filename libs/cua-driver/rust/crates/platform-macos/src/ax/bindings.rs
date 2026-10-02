@@ -92,7 +92,7 @@ extern "C" {
     ) -> bool;
 
     /// Private SPI: maps an AX window element to its CGWindowID.
-    /// Stable since macOS 10.9; used by yabai, Hammerspoon, Accessibility Inspector.
+    /// Stable since macOS 10.9.
     pub fn _AXUIElementGetWindow(element: AXUIElementRef, window_id: *mut u32) -> AXError;
 
     /// Private SPI: materializes an AX element from its 20-byte remote token
@@ -254,6 +254,12 @@ unsafe fn coerce_binary_value(value: CFTypeRef) -> Option<bool> {
     None
 }
 
+/// Read a boolean-valued AX attribute (CFBoolean, or a 0/1 CFNumber).
+///
+/// # Safety
+///
+/// `element` must be a valid, retained `AXUIElementRef` for the duration of
+/// the call.
 pub unsafe fn copy_binary_attr(element: AXUIElementRef, attr_name: &str) -> Option<bool> {
     let attr = CFStr::new(attr_name);
     let mut value: CFTypeRef = std::ptr::null();

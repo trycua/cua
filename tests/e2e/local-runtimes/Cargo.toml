@@ -1,0 +1,19 @@
+[package]
+name = "cua-e2e-local-runtimes"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Real local-runtime e2e tests for cua-vmm / cua-image (gated by CUA_E2E_* env vars)."
+
+[dependencies]
+cua-vmm = { path = "../../../libs/cua/crates/cua-vmm" }
+cua-image = { path = "../../../libs/cua/crates/cua-image" }
+# fleet_catalog.rs drives the SDK's local provider end to end.
+cua-daemon = { path = "../../../libs/cua/crates/cua-daemon", default-features = false }
+cua-sandbox-core = { path = "../../../libs/cua/crates/cua-sandbox-core" }
+tokio = { version = "1", features = ["full"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde_json = "1"
+
+# Standalone workspace: env-gated local-runtime e2e tests (not part of libs/cua).
+[workspace]

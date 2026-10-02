@@ -92,13 +92,13 @@ The separately staged Sandbox migration preserves its existing API:
 
 ```python
 async with pool.claim(service="server") as sb:
-    await sb.shell.run("uname -a")  # Still computer-server.
+    await sb.shell.run("uname -a")  # Served by cua-spacesd.
     async with sb.driver.connect(service="mcp", transport="mcp") as driver:
         result = await driver.get_screen_size(GetScreenSizeInput(session=None))
 ```
 
 Sandbox closes its Driver connections before disconnecting the Fleet transport.
-Its direct-envelope path and existing computer-server interfaces are unchanged.
+Its direct-envelope path and existing spacesd-backed interfaces are unchanged.
 The migration must not ship until a Driver release containing the shared client
 is available and Sandbox's optional dependency and lockfile select that release.
 

@@ -119,6 +119,90 @@
         "nightly": true,
         "registries": []
       }
+    },
+    "cua-sdk": {
+      "releasePleasePath": "libs/cua",
+      "displayName": "cua SDK",
+      "stableTagPrefix": "cua-sdk-v",
+      "nightlyTagPrefix": "nightly-cua-sdk-v",
+      "versionAuthorityFile": "libs/cua/VERSION",
+      "changelog": "libs/cua/CHANGELOG.md",
+      "builderWorkflow": ".github/workflows/cd-cua-sdk.yml",
+      "changeDetectionPaths": [
+        "libs/cua",
+        ".github/workflows/cd-cua-sdk.yml",
+        ".github/workflows/ci-cua-sdk.yml"
+      ],
+      "buildVersionSites": [
+        {
+          "kind": "plain",
+          "path": "libs/cua/VERSION"
+        },
+        {
+          "kind": "regex",
+          "path": "libs/cua/python/pyproject.toml",
+          "pattern": "(?m)^(version = \")\\d+\\.\\d+\\.\\d+(\")$",
+          "replacement": "\\g<1>{version}\\g<2>",
+          "expectedMatches": 1
+        },
+        {
+          "kind": "regex",
+          "path": "libs/cua/python/src/cua/__init__.py",
+          "pattern": "(?m)^(__version__ = \")\\d+\\.\\d+\\.\\d+(\"  # x-release-please-version)$",
+          "replacement": "\\g<1>{version}\\g<2>",
+          "expectedMatches": 1
+        },
+        {
+          "kind": "regex",
+          "path": "libs/cua/typescript/package.json",
+          "pattern": "(?m)^(  \"version\": \")\\d+\\.\\d+\\.\\d+(\",)$",
+          "replacement": "\\g<1>{version}\\g<2>",
+          "expectedMatches": 1
+        }
+      ],
+      "channels": {
+        "nightly": true,
+        "registries": []
+      }
+    },
+    "cua-spacesd": {
+      "releasePleasePath": "libs/cua-spacesd",
+      "displayName": "cua-spacesd",
+      "stableTagPrefix": "cua-spacesd-v",
+      "nightlyTagPrefix": "nightly-cua-spacesd-v",
+      "versionAuthorityFile": "libs/cua-spacesd/VERSION",
+      "changelog": "libs/cua-spacesd/CHANGELOG.md",
+      "builderWorkflow": ".github/workflows/cd-cua-spacesd.yml",
+      "changeDetectionPaths": [
+        "libs/cua-spacesd",
+        ".github/workflows/cd-cua-spacesd.yml"
+      ],
+      "changeDetectionExcludePaths": [
+        "libs/cua-spacesd/docs",
+        "libs/cua-spacesd/examples"
+      ],
+      "buildVersionSites": [
+        {
+          "kind": "plain",
+          "path": "libs/cua-spacesd/VERSION"
+        },
+        {
+          "kind": "regex",
+          "path": "libs/cua-spacesd/Cargo.toml",
+          "pattern": "(?m)^(version = \")\\d+\\.\\d+\\.\\d+(\")$",
+          "replacement": "\\g<1>{version}\\g<2>",
+          "expectedMatches": 1
+        },
+        {
+          "kind": "cargo-workspace-lock",
+          "path": "libs/cua-spacesd/Cargo.lock",
+          "manifestPath": "libs/cua-spacesd/Cargo.toml"
+        }
+      ],
+      "channels": {
+        "nightly": true,
+        "registries": []
+      }
     }
   }
 }

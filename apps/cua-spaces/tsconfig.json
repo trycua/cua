@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["vite/client", "vitest/globals"],
+    "paths": {
+      "@cua/spacesd-html5/core/*": ["../../libs/cua/crates/cua-spacesd-html5/web/src/core/*"],
+      "@trycua/cua/teleport": ["../../libs/cua/typescript/src/teleport/index.ts"],
+      "@trycua/cua/spaces/presence": ["../../libs/cua/typescript/src/spaces/presence.ts"]
+    }
+  },
+  "include": ["src", "vite.config.ts", "../../libs/cua/crates/cua-spacesd-html5/web/src/core"],
+  "exclude": ["../../libs/cua/crates/cua-spacesd-html5/web/src/core/*.test.ts"]
+}

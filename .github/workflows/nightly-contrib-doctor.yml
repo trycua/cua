@@ -1,0 +1,181 @@
+name: "Nightly: contrib providers doctor"
+
+# Measures the contrib providers' support matrix. For each provider whose
+# key is configured as a repository secret, a lane builds cua (with
+# --features contrib), cua-spacesd and cua-driver from this commit, creates
+# ghcr.io/trycua/linux:24.04 on the provider with the cua-sandbox action
+# (the builds under test injected as overlays), and runs
+# `cua doctor <ref> --strict --json` inside it. The report goes into the
+# ledger (libs/cua/crates/cua-contrib/matrix/ledger) and the docs support
+# matrix is regenerated from it, so the published verdicts are measured.
+#
+# Providers without a key are skipped with a named reason; their ledger entry
+# is kept. At most two provider sandboxes run at once, each named
+# cua-e2e-contrib-<provider>-<run> and deleted by the action even on failure
+# (the provider's lifetime backstop, --claim-ttl 60m, covers a cancelled run).
+#
+# Secrets: E2B_API_KEY, DAYTONA_API_KEY, MODAL_TOKEN_ID + MODAL_TOKEN_SECRET.
+# The Modal lane also builds cua-modal-helper (Modal's official Go SDK).
+
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-contrib-doctor
+  cancel-in-progress: false
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  IMAGE: ghcr.io/trycua/linux:24.04
+
+jobs:
+  lane:
+    name: doctor on ${{ matrix.provider }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      # At most two provider sandboxes at once.
+      max-parallel: 2
+      matrix:
+        include:
+          - provider: e2b
+            kind: container
+            secrets: E2B_API_KEY
+          - provider: daytona
+            kind: container
+            secrets: DAYTONA_API_KEY
+          - provider: modal
+            kind: container
+            secrets: MODAL_TOKEN_ID MODAL_TOKEN_SECRET
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - id: key
+        name: Are the ${{ matrix.provider }} secrets set?
+        env:
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          NEEDED: ${{ matrix.secrets }}
+        run: |
+          missing=""
+          for v in $NEEDED; do
+            [ -n "${!v:-}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            reason="not set as repository secrets:$missing"
+            python3 libs/cua/crates/cua-contrib/matrix/contrib_matrix.py skip \
+              --provider "${{ matrix.provider }}" --reason "$reason"
+            echo "::notice title=contrib ${{ matrix.provider }} skipped::$reason"
+            echo "run=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "run=true" >>"$GITHUB_OUTPUT"
+          fi
+      - id: build
+        if: steps.key.outputs.run == 'true'
+        uses: ./.github/actions/build-cua-under-test
+        with:
+          cua-features: contrib
+      - name: Build cua-modal-helper (Modal's official Go SDK)
+        if: steps.key.outputs.run == 'true' && matrix.provider == 'modal'
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version-file: libs/cua/crates/cua-contrib/modal-helper/go.mod
+      - if: steps.key.outputs.run == 'true' && matrix.provider == 'modal'
+        working-directory: libs/cua/crates/cua-contrib/modal-helper
+        run: |
+          go build -o "$RUNNER_TEMP/bin/cua-modal-helper" .
+          echo "CUA_MODAL_HELPER=$RUNNER_TEMP/bin/cua-modal-helper" >>"$GITHUB_ENV"
+      - id: sandbox
+        if: steps.key.outputs.run == 'true'
+        continue-on-error: true
+        uses: ./.github/actions/cua-sandbox
+        env:
+          # Only this lane's provider key.
+          E2B_API_KEY: ${{ matrix.provider == 'e2b' && secrets.E2B_API_KEY || '' }}
+          DAYTONA_API_KEY: ${{ matrix.provider == 'daytona' && secrets.DAYTONA_API_KEY || '' }}
+          MODAL_TOKEN_ID: ${{ matrix.provider == 'modal' && secrets.MODAL_TOKEN_ID || '' }}
+          MODAL_TOKEN_SECRET: ${{ matrix.provider == 'modal' && secrets.MODAL_TOKEN_SECRET || '' }}
+        with:
+          image: ${{ env.IMAGE }}
+          on: ${{ matrix.provider }}
+          name: cua-e2e-contrib-${{ matrix.provider }}-${{ github.run_id }}
+          cua-bin: ${{ steps.build.outputs.cua }}
+          overlay: |
+            cua-spacesd=${{ steps.build.outputs.cua-spacesd }}
+            cua-driver=${{ steps.build.outputs.cua-driver }}
+          doctor: strict
+          claim-ttl: 60m
+      - name: Record the result in the ledger
+        if: always() && steps.key.outputs.run == 'true'
+        env:
+          ARTIFACTS: ${{ steps.sandbox.outputs.artifacts-dir }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          m=libs/cua/crates/cua-contrib/matrix/contrib_matrix.py
+          if [ -n "$ARTIFACTS" ] && [ -s "$ARTIFACTS/doctor.json" ]; then
+            python3 "$m" ingest --provider "${{ matrix.provider }}" --kind "${{ matrix.kind }}" \
+              --image "$IMAGE" --report "$ARTIFACTS/doctor.json" --sha "$GITHUB_SHA" --run-url "$RUN_URL"
+          else
+            reason="$(tail -n 5 "$ARTIFACTS/create.log" 2>/dev/null | tr '\n' ' ' || true)"
+            python3 "$m" fail --provider "${{ matrix.provider }}" --kind "${{ matrix.kind }}" \
+              --image "$IMAGE" --reason "${reason:-no doctor report (see the run log)}" \
+              --sha "$GITHUB_SHA" --run-url "$RUN_URL"
+          fi
+      - if: always() && steps.key.outputs.run == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ledger-${{ matrix.provider }}-${{ matrix.kind }}
+          path: libs/cua/crates/cua-contrib/matrix/ledger/${{ matrix.provider }}-${{ matrix.kind }}.json
+
+  publish:
+    name: regenerate the support matrix
+    needs: lane
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: ledger-*
+          path: ledger-new
+          merge-multiple: true
+      - name: Update the ledger and the docs matrix
+        id: update
+        run: |
+          set -euo pipefail
+          mkdir -p libs/cua/crates/cua-contrib/matrix/ledger
+          if compgen -G "ledger-new/*.json" >/dev/null; then
+            cp ledger-new/*.json libs/cua/crates/cua-contrib/matrix/ledger/
+          fi
+          python3 libs/cua/crates/cua-contrib/matrix/contrib_matrix.py write
+          if git diff --quiet; then echo "changed=false" >>"$GITHUB_OUTPUT"; else echo "changed=true" >>"$GITHUB_OUTPUT"; fi
+      - name: Open or update the ledger pull request
+        if: steps.update.outputs.changed == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch=contrib-ledger/nightly
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add libs/cua/crates/cua-contrib/matrix/ledger docs/content/docs/cua-sdk/guides/contrib-providers.mdx
+          git commit -m "docs(cua-contrib): measured support matrix from the nightly doctor lanes"
+          git push --force origin "$branch"
+          gh pr view "$branch" >/dev/null 2>&1 || gh pr create --head "$branch" \
+            --title "docs(cua-contrib): measured support matrix" \
+            --body "The contrib providers' doctor reports from $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID."

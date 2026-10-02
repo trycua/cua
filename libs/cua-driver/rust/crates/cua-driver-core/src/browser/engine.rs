@@ -2645,7 +2645,12 @@ impl BrowserEngine {
             .collect_semantic_session(&conn, &cdp_session, &document, local_tree.as_ref(), None)
             .await?;
         semantic.complete &= document_complete;
-        let title = semantic.document_title().unwrap_or(&tab.title).to_owned();
+        // The stored tab title is the bind-time one. Prefer the document's own
+        // title, then the browser's live target title.
+        let title = match semantic.document_title() {
+            Some(title) => title.to_owned(),
+            None => live_title(&conn, &tab.cdp_target_id, &tab.title).await,
+        };
 
         let oopif = if local_tree.is_some() {
             match self.attached_iframe_children(&conn, &cdp_session).await {
@@ -2897,6 +2902,27 @@ fn collect_interactive(
             .or_else(|| content_document.get("frameId"))
             .and_then(Value::as_str);
         collect_interactive(content_document, child_frame_id, false, out);
+    }
+}
+
+/// The page title as the browser reports it now (`Target.getTargetInfo`),
+/// or `fallback` (the title recorded at bind time) when it cannot say.
+async fn live_title(conn: &Arc<CdpConnection>, cdp_target_id: &str, fallback: &str) -> String {
+    match conn
+        .call(
+            None,
+            "Target.getTargetInfo",
+            json!({ "targetId": cdp_target_id }),
+        )
+        .await
+    {
+        Ok(info) => info
+            .pointer("/targetInfo/title")
+            .and_then(Value::as_str)
+            .filter(|t| !t.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| fallback.to_owned()),
+        Err(_) => fallback.to_owned(),
     }
 }
 

@@ -1,0 +1,19 @@
+[package]
+name = "cua-chromium-storage"
+description = "Chromium localStorage (the Local Storage LevelDB) read and written as items, for Keyvault and teleport."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+[dependencies]
+cua-teleport-bundle.workspace = true
+base64.workspace = true
+thiserror.workspace = true
+tempfile.workspace = true
+tracing.workspace = true
+# A maintained, pure-Rust LevelDB (reads Chromium's Snappy tables and log).
+rusty-leveldb = "4"

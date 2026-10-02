@@ -32,7 +32,7 @@
       "desktop": "StumpWM",
       "kind": "Published candidate image",
       "image": "public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm:git-ee87f38043c043831a8761016015d6ef5ae783d9",
-      "limits": "[Publication summary](https://github.com/trycua/cua/pull/3585) reports computer-server and Cua Driver included, guest tests and CI anonymous-pull checks passed. Component versions, service ports, and Fleet claim checks are not recorded there. Commit-named candidate tag, not a digest pin or `latest`; no built-in SDK mapping."
+      "limits": "[Publication summary](https://github.com/trycua/cua/pull/3585) reports the legacy computer-server guest agent and Cua Driver included, guest tests and CI anonymous-pull checks passed. Component versions, service ports, and Fleet claim checks are not recorded there. Commit-named candidate tag, not a digest pin or `latest`; no built-in SDK mapping."
     },
     {
       "os": "Linux",
@@ -40,7 +40,7 @@
       "desktop": "Xfce / Xfwm4",
       "kind": "Published candidate image",
       "image": "public.ecr.aws/k5j5w0x5/cua-nixos-xfce:git-ee87f38043c043831a8761016015d6ef5ae783d9",
-      "limits": "[Publication summary](https://github.com/trycua/cua/pull/3585) reports computer-server and Cua Driver included, guest tests and CI anonymous-pull checks passed. Component versions, service ports, and Fleet claim checks are not recorded there. Commit-named candidate tag, not a digest pin or `latest`; no built-in SDK mapping."
+      "limits": "[Publication summary](https://github.com/trycua/cua/pull/3585) reports the legacy computer-server guest agent and Cua Driver included, guest tests and CI anonymous-pull checks passed. Component versions, service ports, and Fleet claim checks are not recorded there. Commit-named candidate tag, not a digest pin or `latest`; no built-in SDK mapping."
     }
   ]
 }

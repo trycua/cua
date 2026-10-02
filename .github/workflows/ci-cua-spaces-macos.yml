@@ -1,0 +1,132 @@
+name: "CI: Cua Spaces for macOS (SwiftUI)"
+
+# The native SwiftUI shell (apps/cua-spaces-macos) and the app core it
+# shares with the Tauri app (libs/cua/crates/cua-spaces-app-core): core
+# tests and parity flows, the UniFFI mirror drift gate, the app export
+# (libs/cua/crates/cua-spaces-ffi) and its Swift binding
+# (libs/spaces-app-swift: drift gate and tests), the Swift package's unit,
+# parity and snapshot tests, the app bundle (with Sparkle, and a launch
+# check), and the XCUITests. Unsigned; the only secret is the optional
+# Sparkle key, for the appcast dry run. The Keyvault's live paths need a daemon and are not
+# exercised here (the view models run against a fake broker).
+
+on:
+  pull_request:
+    paths:
+      - "apps/cua-spaces-macos/**"
+      - "libs/cua/crates/cua-spaces-app-core/**"
+      - "libs/cua/crates/cua-spaces-ffi/**"
+      - "libs/cua/crates/cua-spaces-ext/**"
+      - "libs/cua/crates/cua-teleport/**"
+      - "libs/cua/crates/cua-keyvault/**"
+      - "libs/cua/crates/cua-sdk/**"
+      - "libs/cua/scripts/generate-app-core-ffi.py"
+      - "libs/cua/swift/**"
+      - "libs/spaces-sdk-swift/**"
+      - "libs/spaces-app-swift/**"
+      - "libs/images/sandbox-images.json"
+      - "libs/cua/crates/cua-icon-cache/**"
+      - ".github/workflows/ci-cua-spaces-macos.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-spaces-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: app core (Rust) + FFI mirror gate
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: libs/cua
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (toolchain from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: FFI mirrors match the core
+        run: python3 scripts/generate-app-core-ffi.py --check
+      - name: No UI keeps its own icon cache
+        run: scripts/check-icon-caches.sh
+      - name: The SDK icon cache (hit/miss, single flight, negatives, eviction)
+        run: cargo test --locked -p cua-icon-cache -- --test-threads=4
+      - name: Core tests and parity flows
+        run: cargo test --locked -p cua-spaces-app-core --features keyvault-client -- --test-threads=4
+      - name: Clippy and fmt
+        run: |
+          cargo fmt -p cua-spaces-app-core -- --check
+          cargo clippy --locked -p cua-spaces-app-core --all-targets --features keyvault-client -- -D warnings
+
+  swift:
+    name: SwiftUI app (swift test, bundle, XCUITest)
+    needs: core
+    runs-on: macos-26
+    env:
+      CARGO_BUILD_JOBS: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (toolchain from rust-toolchain.toml)
+        working-directory: libs/cua
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # The app loads the Cua Spaces app export (libcua_spaces_ffi, which
+      # carries the cua SDK too), staged as libs/cua/swift/lib/libcua_sdk.dylib.
+      - name: Build and stage the Cua Spaces app library
+        working-directory: libs/cua
+        run: |
+          cargo build --locked --release -p cua-spaces-ffi
+          ../spaces-app-swift/scripts/stage-library.sh
+      - name: The Cua Spaces app binding is up to date
+        run: node libs/spaces-app-swift/scripts/generate-bindings.mjs --check --skip-build
+      - name: spaces-app-swift tests
+        run: libs/spaces-app-swift/scripts/test.sh
+      - name: Swift tests (view models, parity, snapshots)
+        working-directory: apps/cua-spaces-macos
+        run: scripts/test.sh
+      - name: Upload snapshot differences
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-spaces-macos-snapshot-diffs
+          path: apps/cua-spaces-macos/Tests/CuaSpacesMacTests/Snapshots/*.actual.png
+          if-no-files-found: ignore
+          retention-days: 7
+      # Embeds Sparkle and ends with scripts/check-launch.sh: every library
+      # resolves inside the bundle and loads, and the app starts and exits.
+      - name: Build the app bundle (and its launch check)
+        working-directory: apps/cua-spaces-macos
+        run: scripts/build-app.sh release
+      # With the release key only (it is absent on forks): two fake releases
+      # through make-appcast.sh, checked with Sparkle's sign_update and the
+      # public key the app ships (catches a secret that does not match it).
+      - name: Sparkle key available
+        id: sparkle
+        env:
+          CUA_SPACES_SPARKLE_ED_PRIVATE_KEY: ${{ secrets.CUA_SPACES_SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          if [ -n "$CUA_SPACES_SPARKLE_ED_PRIVATE_KEY" ]; then echo "enabled=true"; else echo "enabled=false"; fi >> "$GITHUB_OUTPUT"
+      - name: Sparkle appcast dry run
+        if: steps.sparkle.outputs.enabled == 'true'
+        working-directory: apps/cua-spaces-macos
+        env:
+          CUA_SPACES_SPARKLE_ED_PRIVATE_KEY: ${{ secrets.CUA_SPACES_SPARKLE_ED_PRIVATE_KEY }}
+        run: scripts/appcast-dry-run.sh ".build/app/Cua Spaces.app"
+      - name: UI tests (XCUITest)
+        working-directory: apps/cua-spaces-macos
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild test -project CuaSpacesMac.xcodeproj -scheme CuaSpacesMacUITests \
+            -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO

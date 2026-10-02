@@ -1,0 +1,79 @@
+{
+  "id": "osworld",
+  "variant": "rootfs",
+  "where": "local",
+  "arch": "amd64",
+  "image": "ghcr.io/trycua/bench-osworld@sha256:afe8e25fdda48cc71c60a6118a1bdfa0235352f311d27b271c5b7f5711f9001a",
+  "child": null,
+  "container_runtime": "runc",
+  "pinned_ref": "ghcr.io/trycua/bench-osworld@sha256:afe8e25fdda48cc71c60a6118a1bdfa0235352f311d27b271c5b7f5711f9001a",
+  "doctor": "pass",
+  "seconds": 175.2,
+  "ok": false,
+  "checks": [
+    {
+      "check": "ready",
+      "status": "pass",
+      "detail": "after 11s"
+    },
+    {
+      "check": "server",
+      "status": "pass",
+      "detail": "GET /screenshot on :5000 -> 200",
+      "seconds": 1.64
+    },
+    {
+      "check": "guestd",
+      "status": "pass",
+      "detail": "GetCapabilities: arch, bootTime, displayServer, displays, features, hostname, initialized, limits, os, protocolRevision, protocolVersion, runtime, sideChannels, version",
+      "seconds": 0.09
+    },
+    {
+      "check": "screen",
+      "status": "fail",
+      "detail": "1920x1080 (want 1920x1080), color variety 0.000",
+      "seconds": 124.68
+    },
+    {
+      "check": "input",
+      "status": "fail",
+      "detail": {
+        "ok": false,
+        "changed_fraction": 0.0
+      },
+      "seconds": 4.15
+    },
+    {
+      "check": "bench.server_screenshot",
+      "status": "pass",
+      "detail": "200, 6537 bytes"
+    },
+    {
+      "check": "bench.server_execute",
+      "status": "pass",
+      "detail": {
+        "error": "",
+        "output": "user\n:0\n",
+        "returncode": 0,
+        "status": "success"
+      }
+    },
+    {
+      "check": "bench.server_accessibility",
+      "status": "fail",
+      "detail": "500, 0 chars: <!doctype html>\n<html lang=en>\n  <head>\n    <title>AttributeError: &#39;NoneType&#39; object has no attribute &#39;items&#39;\n // Werkzeug Debugger</title>\n    <link rel=\"stylesheet\" href=\"?__debugger__=yes&amp;cmd=resource&amp;f=style.css\">\n    <link rel=\"shortcut icon\"\n        href=\"?__debugger__="
+    },
+    {
+      "check": "bench.server_screen_size",
+      "status": "pass",
+      "detail": "{\n  \"height\": 1080,\n  \"width\": 1920\n}\n"
+    },
+    {
+      "check": "doctor",
+      "status": "pass",
+      "detail": "rc=0 (report in rootfs-local-amd64-doctor.json); all checks pass",
+      "seconds": 8.59
+    }
+  ],
+  "date": "2026-09-24T09:43:34Z"
+}

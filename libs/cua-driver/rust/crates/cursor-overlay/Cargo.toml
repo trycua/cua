@@ -10,6 +10,8 @@ theme-authoring = []
 
 [dependencies]
 cua-driver-contract = { path = "../cua-driver-contract" }
+# Shared agent cursor lifecycle (idle timeout, fade, session end).
+cua-driver-core = { path = "../cua-driver-core", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

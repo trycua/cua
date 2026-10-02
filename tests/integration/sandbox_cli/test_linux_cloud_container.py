@@ -2,7 +2,7 @@
 
     cua sb launch ubuntu:24.04 --json
     # parse name from JSON output, connect with SDK, run assertions
-    cua sb delete <name>
+    cua sb delete --force <name>
 
 Mirrors tests/integration/sandbox_sdk/test_linux_cloud_container.py but exercises the
 CLI launch path and persistent state tracking instead of Sandbox.ephemeral().
@@ -45,7 +45,7 @@ async def test_linux_cloud_container():
             screenshot = await sb.screenshot()
             assert screenshot[:4] == b"\x89PNG"
     finally:
-        _cua("sb", "delete", name)
+        _cua("sb", "delete", "--force", name)
 
 
 async def main():
@@ -63,7 +63,7 @@ async def main():
             with open("/tmp/cli_linux_cloud_container.png", "wb") as f:
                 f.write(screenshot)
     finally:
-        _cua("sb", "delete", name)
+        _cua("sb", "delete", "--force", name)
 
 
 if __name__ == "__main__":

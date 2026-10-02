@@ -1,0 +1,97 @@
+{
+  "name": "@trycua/cua",
+  "version": "0.2.0",
+  "description": "The cua SDK for Node and the browser: sandboxes, cua-spacesd, media streaming, Spaces and the cua daemon, on a Rust core",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trycua/cua.git"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./spaces": {
+      "types": "./dist/spaces/index.d.ts",
+      "import": "./dist/spaces/index.js"
+    },
+    "./spaces/transport": {
+      "types": "./dist/spaces/transport/index.d.ts",
+      "import": "./dist/spaces/transport/index.js"
+    },
+    "./spaces/host": {
+      "types": "./dist/spaces/host.d.ts",
+      "import": "./dist/spaces/host.js"
+    },
+    "./spaces/pip": {
+      "types": "./dist/spaces/pip.d.ts",
+      "import": "./dist/spaces/pip.js"
+    },
+    "./spaces/presence": {
+      "types": "./dist/spaces/presence.d.ts",
+      "import": "./dist/spaces/presence.js"
+    },
+    "./spaces/routines": {
+      "types": "./dist/spaces/routines.d.ts",
+      "import": "./dist/spaces/routines.js"
+    },
+    "./spaces/groups": {
+      "types": "./dist/spaces/groups.d.ts",
+      "import": "./dist/spaces/groups.js"
+    },
+    "./teleport": {
+      "types": "./dist/teleport/index.d.ts",
+      "import": "./dist/teleport/index.js"
+    },
+    "./browser": {
+      "types": "./browser/index.d.ts",
+      "import": "./browser/index.js"
+    }
+  },
+  "files": [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/mcp.d.ts",
+    "dist/mcp.js",
+    "dist/native",
+    "dist/spaces",
+    "dist/teleport",
+    "browser",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --import ./test/setup.mjs --test test/*.test.mjs",
+    "generate:uniffi": "node ../scripts/generate-uniffi-bindings.mjs --only=typescript",
+    "generate:uniffi:check": "node ../scripts/generate-uniffi-bindings.mjs --check --only=typescript",
+    "stage:uniffi": "node ../scripts/stage-uniffi-library.mjs --only=node",
+    "build:browser": "node ../scripts/build-wasm.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "uniffi-bindgen-react-native": "0.31.0-3",
+    "@modelcontextprotocol/client": "2.1.0"
+  },
+  "dependencies": {
+    "@ubjs/core": "0.31.0-3",
+    "@ubjs/node": "0.31.0-3"
+  },
+  "peerDependencies": {
+    "@modelcontextprotocol/client": "^2.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@modelcontextprotocol/client": {
+      "optional": true
+    }
+  }
+}

@@ -1,0 +1,336 @@
+{
+  "schema_version": 1,
+  "name": "bench-web",
+  "description": "bench-web: linux plus open-source Chromium (CDP), bench-web-ctl, MiniWoB++ pages and bench-ui (pywebview), for MiniWoB++, WebVoyager, Online-Mind2Web and WebGym, and the desktop apps of the Cua Bench registry tasksets.",
+  "repository": "ghcr.io/trycua/bench-web",
+  "platforms": [
+    "linux/amd64",
+    "linux/arm64"
+  ],
+  "outputs": {
+    "rootfs": {
+      "tag_prefix": "docker-",
+      "runtimes": [
+        "docker",
+        "gvisor"
+      ],
+      "init": "supervisord"
+    },
+    "containerdisk": {
+      "tag_prefix": "",
+      "runtimes": [
+        "kubevirt",
+        "qemu"
+      ],
+      "init": "systemd",
+      "path": "/disk/disk.img",
+      "firmware": {
+        "amd64": [
+          "bios",
+          "efi"
+        ],
+        "arm64": [
+          "efi"
+        ]
+      }
+    }
+  },
+  "desktop": {
+    "display": ":1",
+    "resolution": "1280x800",
+    "user": "cua",
+    "uid": 1000,
+    "runtime_dir": "/run/cua-desktop",
+    "session_bus": "unix:path=/run/cua-desktop/bus"
+  },
+  "services": [
+    {
+      "name": "env",
+      "port": 3211,
+      "protocol": "grpc",
+      "component": "cua-spacesd",
+      "auth": "bearer token: CUA_ENV_TOKEN or /run/cua/env-token",
+      "readiness": "tcp"
+    },
+    {
+      "name": "viewer",
+      "port": 3211,
+      "protocol": "http",
+      "component": "cua-spacesd",
+      "readiness": "http:/viewer/"
+    },
+    {
+      "name": "env-media",
+      "port": 3212,
+      "protocol": "udp",
+      "component": "cua-spacesd"
+    },
+    {
+      "name": "ssh",
+      "port": 22,
+      "protocol": "tcp",
+      "variants": [
+        "containerdisk"
+      ]
+    },
+    {
+      "name": "server",
+      "port": 7000,
+      "protocol": "http",
+      "component": "bench-web-ctl",
+      "readiness": "http:/healthz"
+    },
+    {
+      "name": "chromium-cdp",
+      "port": 9222,
+      "protocol": "http",
+      "component": "chromium",
+      "readiness": "http:/json/version"
+    },
+    {
+      "name": "miniwob",
+      "port": 7560,
+      "protocol": "http",
+      "component": "miniwob"
+    }
+  ],
+  "fixtures": {
+    "root": "/opt/cua/fixtures",
+    "launcher": "cua-fixtures start|stop|status [grid|form|http|tone|avsync|all]",
+    "log_dir": "/tmp/cua-fixtures",
+    "apps": [
+      {
+        "name": "grid",
+        "title": "CUA Fixture Grid",
+        "wm_class": "cua-fixture-grid",
+        "color": "r=col*255//(cols-1), g=row*255//(rows-1), b=128; 8x6 cells of 80px"
+      },
+      {
+        "name": "form",
+        "title": "CUA Fixture Form",
+        "wm_class": "cua-fixture-form",
+        "a11y_names": [
+          "Name",
+          "Notes",
+          "Subscribe",
+          "Color",
+          "Submit",
+          "Status"
+        ]
+      },
+      {
+        "name": "http",
+        "port": 18080,
+        "routes": [
+          "/",
+          "/health",
+          "/bytes/<n>",
+          "POST /echo"
+        ]
+      },
+      {
+        "name": "tone",
+        "path": "/opt/cua/fixtures/tone",
+        "sequence_hz_ms": [
+          [
+            440,
+            500
+          ],
+          [
+            0,
+            250
+          ],
+          [
+            880,
+            500
+          ],
+          [
+            0,
+            250
+          ]
+        ],
+        "loop": true
+      },
+      {
+        "name": "avsync",
+        "title": "CUA Fixture AV Sync",
+        "wm_class": "cua-fixture-avsync",
+        "period_s": 1,
+        "flash_ms": 100,
+        "beep_hz": 1000,
+        "skew_budget_ms": 40
+      }
+    ],
+    "audio_probe": "/opt/cua/fixtures/audio_probe.py --source <pulse source> --seconds N --freq F..."
+  },
+  "audio": {
+    "server": "pipewire + wireplumber + pipewire-pulse",
+    "runtime_dir": "/run/cua-desktop",
+    "default_sink": "cua_desktop",
+    "desktop_capture": "cua_desktop.monitor",
+    "default_source": "cua_mic",
+    "uplink_input_sink": "cua_mic_in",
+    "format": "48000 Hz stereo"
+  },
+  "claims": {
+    "_doc": "What the image promises; cua-image-manifest turns this into /etc/cua-image/manifest.json and cua-spacesd doctor checks it (claimed = required). bench-web: Chromium runs with --disable-dev-shm-usage, so Docker's default 64 MiB /dev/shm is enough.",
+    "features_required": [
+      "pty",
+      "fs_watch",
+      "tunnel.forward",
+      "driver",
+      "a11y",
+      "background_input",
+      "desktop_stream",
+      "window_stream",
+      "h264_sw",
+      "quic_media",
+      "windows",
+      "launch_app",
+      "clipboard.text",
+      "presence",
+      "presence.cursor_shape",
+      "audio.desktop",
+      "audio.uplink",
+      "audio.opus"
+    ],
+    "features_optional": [
+      "hotspot",
+      "relay_attach",
+      "h264_hw",
+      "audio.per_app",
+      "clipboard.files",
+      "clipboard.image",
+      "teleport.*",
+      "volume.mount"
+    ],
+    "feature_attributes": {
+      "presence.cursor_shape": {
+        "hit_test": "atspi",
+        "system": "xfixes",
+        "probe": "xtest"
+      }
+    },
+    "codecs_required": [
+      "openh264"
+    ],
+    "auth_modes": [
+      "local",
+      "pod-secret",
+      "kubevirt-bridge"
+    ],
+    "units": {
+      "supervisord": [
+        "dbus-system",
+        "desktop",
+        "audio",
+        "cua-env-token-sync",
+        "cua-spacesd",
+        "chromium",
+        "cdp-proxy",
+        "bench-web-ctl",
+        "miniwob"
+      ],
+      "systemd": [
+        "cua-desktop.service",
+        "cua-audio.service",
+        "cua-env-token-sync.service",
+        "cua-spacesd.service",
+        "bench-web-chromium.service",
+        "bench-web-cdp.service",
+        "bench-web-ctl.service",
+        "bench-web-miniwob.service"
+      ]
+    },
+    "unit_processes": {
+      "dbus-system": "dbus-daemon --system",
+      "desktop": "Xvfb",
+      "audio": "pipewire",
+      "cua-env-token-sync": "token-sync",
+      "cua-spacesd": "cua-spacesd",
+      "chromium": "chromium",
+      "cdp-proxy": "socat",
+      "bench-web-ctl": "bench-web-ctl.py",
+      "miniwob": "http.server"
+    },
+    "compat_links": [
+      {
+        "path": "/usr/local/bin/cua-env-driver",
+        "target": "cua-spacesd"
+      },
+      {
+        "path": "/usr/local/bin/cua-guestd",
+        "target": "cua-spacesd"
+      },
+      {
+        "path": "/opt/cua/bin/start-env-driver.sh",
+        "target": "start-spacesd.sh"
+      },
+      {
+        "path": "/opt/cua/bin/start-guestd.sh",
+        "target": "start-spacesd.sh"
+      },
+      {
+        "path": "/etc/cua-image/env-driver-source",
+        "target": "spacesd-source"
+      },
+      {
+        "path": "/etc/cua-image/guestd-source",
+        "target": "spacesd-source"
+      },
+      {
+        "unit_alias": "cua-env-driver.service",
+        "unit": "cua-spacesd.service"
+      },
+      {
+        "unit_alias": "cua-guestd.service",
+        "unit": "cua-spacesd.service"
+      }
+    ],
+    "apps": {
+      "python3": [
+        "python3",
+        "--version"
+      ],
+      "chromium": [
+        "chromium",
+        "--version"
+      ]
+    },
+    "launch_app": {
+      "app": "/opt/cua/bin/cua-chromium",
+      "args": [
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--new-window",
+        "about:blank"
+      ],
+      "window_match": "Chromium",
+      "timeout_s": 60
+    },
+    "parity_expected_diff": [
+      "kernel",
+      "runtime",
+      "init",
+      "cpu_model",
+      "cpu_count",
+      "memory_mib",
+      "clock_skew_ms",
+      "gpu",
+      "encoder"
+    ],
+    "resources": {
+      "min_disk_gib": 2,
+      "min_shm_mib": 64,
+      "min_memory_mib": 2048
+    },
+    "tz": "Etc/UTC",
+    "locale": "C.UTF-8",
+    "dns_probe": "packages.mozilla.org",
+    "av_skew_budget_ms": {
+      "container": 40,
+      "gvisor": 80,
+      "vm": 40
+    }
+  }
+}

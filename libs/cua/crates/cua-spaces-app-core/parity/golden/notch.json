@@ -1,0 +1,1120 @@
+{
+  "flow": "notch",
+  "frames": [
+    {
+      "frame": {
+        "closed": [
+          644.0,
+          942.0,
+          224.0,
+          40.0
+        ],
+        "hasNotch": true,
+        "notch": [
+          660.0,
+          950.0,
+          192.0,
+          32.0
+        ],
+        "notchStyle": true,
+        "open": [
+          436.0,
+          799.0,
+          640.0,
+          183.0
+        ],
+        "prompt": [
+          641.0,
+          922.0,
+          230.0,
+          60.0
+        ],
+        "stage": [
+          412.0,
+          775.0,
+          688.0,
+          207.0
+        ],
+        "tab": [
+          852.0,
+          950.0,
+          72.0,
+          32.0
+        ]
+      },
+      "layout": "mbp14"
+    },
+    {
+      "frame": {
+        "closed": [
+          644.0,
+          942.0,
+          224.0,
+          40.0
+        ],
+        "hasNotch": true,
+        "notch": [
+          660.0,
+          950.0,
+          192.0,
+          32.0
+        ],
+        "notchStyle": true,
+        "open": [
+          436.0,
+          763.0,
+          640.0,
+          219.0
+        ],
+        "prompt": [
+          641.0,
+          922.0,
+          230.0,
+          60.0
+        ],
+        "stage": [
+          412.0,
+          739.0,
+          688.0,
+          243.0
+        ],
+        "tab": [
+          852.0,
+          950.0,
+          72.0,
+          32.0
+        ]
+      },
+      "layout": "mbp14 +prompt"
+    },
+    {
+      "frame": {
+        "closed": [
+          2336.0,
+          1047.0,
+          272.0,
+          33.0
+        ],
+        "hasNotch": false,
+        "notch": [
+          2352.0,
+          1055.0,
+          240.0,
+          25.0
+        ],
+        "notchStyle": false,
+        "open": [
+          2152.0,
+          904.0,
+          640.0,
+          176.0
+        ],
+        "prompt": [
+          2333.0,
+          1027.0,
+          278.0,
+          53.0
+        ],
+        "stage": [
+          2128.0,
+          880.0,
+          688.0,
+          200.0
+        ],
+        "tab": [
+          2592.0,
+          1055.0,
+          72.0,
+          25.0
+        ]
+      },
+      "layout": "external 1920"
+    },
+    {
+      "frame": {
+        "closed": [
+          2336.0,
+          1047.0,
+          272.0,
+          33.0
+        ],
+        "hasNotch": false,
+        "notch": [
+          2352.0,
+          1055.0,
+          240.0,
+          25.0
+        ],
+        "notchStyle": false,
+        "open": [
+          2152.0,
+          868.0,
+          640.0,
+          212.0
+        ],
+        "prompt": [
+          2333.0,
+          1027.0,
+          278.0,
+          53.0
+        ],
+        "stage": [
+          2128.0,
+          844.0,
+          688.0,
+          236.0
+        ],
+        "tab": [
+          2592.0,
+          1055.0,
+          72.0,
+          25.0
+        ]
+      },
+      "layout": "external 1920 +prompt"
+    },
+    {
+      "motion": {
+        "closeDamping": 1.0,
+        "closeDelayMs": 400,
+        "closeResponse": 0.4,
+        "contentDelayMs": 90,
+        "contentIn": 0.22,
+        "contentOut": 0.1,
+        "contentScale": 0.92,
+        "hoverDamping": 0.65,
+        "hoverDwellMs": 300,
+        "hoverResponse": 0.3,
+        "hoverScale": 1.08,
+        "hoverScaleY": 1.12,
+        "openDamping": 0.8,
+        "openResponse": 0.42,
+        "reducedDuration": 0.15
+      }
+    },
+    {
+      "frame": {
+        "activity": "provisioning: Starting 1 Space",
+        "cue": true,
+        "dropMode": false,
+        "effects": [
+          "cancel-timers",
+          "start-dwell:300"
+        ],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": [
+          "5",
+          "Spaces"
+        ],
+        "tiles": []
+      },
+      "notch": "hover-enter"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": null,
+          "query": ""
+        },
+        "hidden": false,
+        "label": "4 Spaces",
+        "open": true,
+        "permission": null,
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]",
+          "Lab PC [os-windows]",
+          "Builder [os-macos] (no drop)",
+          "Starter [os-linux] (no drop)"
+        ]
+      },
+      "notch": "dwell-elapsed"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": null,
+          "query": ""
+        },
+        "hidden": false,
+        "label": "4 Spaces",
+        "open": true,
+        "permission": "Allow Accessibility to teleport dragged windows.",
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]",
+          "Lab PC [os-windows]",
+          "Builder [os-macos] (no drop)",
+          "Starter [os-linux] (no drop)"
+        ]
+      },
+      "notch": "drag-permission false"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [
+          "cancel-timers",
+          "start-close:400"
+        ],
+        "empty": null,
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": null,
+          "query": ""
+        },
+        "hidden": false,
+        "label": "4 Spaces",
+        "open": true,
+        "permission": "Allow Accessibility to teleport dragged windows.",
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]",
+          "Lab PC [os-windows]",
+          "Builder [os-macos] (no drop)",
+          "Starter [os-linux] (no drop)"
+        ]
+      },
+      "notch": "hover-exit"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [
+          "cancel-timers"
+        ],
+        "empty": null,
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": null,
+          "query": ""
+        },
+        "hidden": false,
+        "label": "4 Spaces",
+        "open": true,
+        "permission": "Allow Accessibility to teleport dragged windows.",
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]",
+          "Lab PC [os-windows]",
+          "Builder [os-macos] (no drop)",
+          "Starter [os-linux] (no drop)"
+        ]
+      },
+      "notch": "hover-enter"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": null,
+          "query": ""
+        },
+        "hidden": false,
+        "label": "4 Spaces",
+        "open": true,
+        "permission": "Allow Accessibility to teleport dragged windows.",
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]",
+          "Lab PC [os-windows]",
+          "Builder [os-macos] (no drop)",
+          "Starter [os-linux] (no drop)"
+        ]
+      },
+      "notch": "close-elapsed"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [
+          "cancel-timers",
+          "start-close:400"
+        ],
+        "empty": null,
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": null,
+          "query": ""
+        },
+        "hidden": false,
+        "label": "4 Spaces",
+        "open": true,
+        "permission": "Allow Accessibility to teleport dragged windows.",
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]",
+          "Lab PC [os-windows]",
+          "Builder [os-macos] (no drop)",
+          "Starter [os-linux] (no drop)"
+        ]
+      },
+      "notch": "hover-exit"
+    },
+    {
+      "frame": {
+        "activity": "provisioning: Starting 1 Space",
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": [
+          "5",
+          "Spaces"
+        ],
+        "tiles": []
+      },
+      "notch": "close-elapsed"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": true,
+        "effects": [
+          "cancel-timers"
+        ],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "4 Spaces",
+        "open": true,
+        "permission": null,
+        "phase": "tiles",
+        "prompt": "Drop on a Space",
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]",
+          "Lab PC [os-windows]",
+          "Builder [os-macos] (no drop)",
+          "Starter [os-linux] (no drop)"
+        ]
+      },
+      "notch": "drop-targeted true"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [
+          "start-close:400"
+        ],
+        "empty": null,
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": null,
+          "query": ""
+        },
+        "hidden": false,
+        "label": "4 Spaces",
+        "open": true,
+        "permission": "Allow Accessibility to teleport dragged windows.",
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]",
+          "Lab PC [os-windows]",
+          "Builder [os-macos] (no drop)",
+          "Starter [os-linux] (no drop)"
+        ]
+      },
+      "notch": "drop-targeted false"
+    },
+    {
+      "frame": {
+        "activity": "provisioning: Starting 1 Space",
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": [
+          "5",
+          "Spaces"
+        ],
+        "tiles": []
+      },
+      "notch": "close-elapsed"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [
+          "cancel-timers"
+        ],
+        "empty": null,
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": null,
+          "query": ""
+        },
+        "hidden": false,
+        "label": "4 Spaces",
+        "open": true,
+        "permission": "Allow Accessibility to teleport dragged windows.",
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]",
+          "Lab PC [os-windows]",
+          "Builder [os-macos] (no drop)",
+          "Starter [os-linux] (no drop)"
+        ]
+      },
+      "notch": "click"
+    },
+    {
+      "frame": {
+        "activity": "provisioning: Starting 1 Space",
+        "cue": false,
+        "dropMode": false,
+        "effects": [
+          "cancel-timers"
+        ],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": [
+          "5",
+          "Spaces"
+        ],
+        "tiles": []
+      },
+      "notch": "dismiss"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [
+          "capture:42"
+        ],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Teleport to Cua",
+        "open": false,
+        "permission": null,
+        "phase": "prompt",
+        "prompt": "Teleport to Cua",
+        "tab": null,
+        "tiles": []
+      },
+      "notch": "drag start"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Teleport to Cua",
+        "open": false,
+        "permission": null,
+        "phase": "prompt",
+        "prompt": "Teleport to Cua",
+        "tab": null,
+        "tiles": []
+      },
+      "notch": "drag ghost-ready"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": true,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "4 Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "tiles",
+        "prompt": "Drop Notes on a Space",
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]",
+          "Lab PC [os-windows]",
+          "Builder [os-macos] (no drop)",
+          "Starter [os-linux] (no drop)"
+        ]
+      },
+      "notch": "drag enter-notch"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": true,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "4 Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "tiles",
+        "prompt": "Drop Notes on a Space",
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]",
+          "Lab PC [os-windows] (targeted)",
+          "Builder [os-macos] (no drop)",
+          "Starter [os-linux] (no drop)"
+        ]
+      },
+      "notch": "drag over"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": true,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "4 Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "tiles",
+        "prompt": "Drop Notes on a Space",
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]",
+          "Lab PC [os-windows]",
+          "Builder [os-macos] (no drop)",
+          "Starter [os-linux] (no drop)"
+        ]
+      },
+      "notch": "drag out"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Teleport to Cua",
+        "open": false,
+        "permission": null,
+        "phase": "prompt",
+        "prompt": "Teleport to Cua",
+        "tab": null,
+        "tiles": []
+      },
+      "notch": "drag leave-notch"
+    },
+    {
+      "frame": {
+        "activity": "provisioning: Starting 1 Space",
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": [
+          "5",
+          "Spaces"
+        ],
+        "tiles": []
+      },
+      "notch": "drag cancel"
+    },
+    {
+      "frame": {
+        "activity": "provisioning: Starting 1 Space",
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": [
+          "5",
+          "Spaces"
+        ],
+        "tiles": []
+      },
+      "notch": "drag-permission true"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [
+          "cancel-timers"
+        ],
+        "empty": null,
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": null,
+          "query": ""
+        },
+        "hidden": false,
+        "label": "4 Spaces",
+        "open": true,
+        "permission": null,
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]",
+          "Lab PC [os-windows]",
+          "Builder [os-macos] (no drop)",
+          "Starter [os-linux] (no drop)"
+        ]
+      },
+      "notch": "click"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": 1,
+          "query": "win"
+        },
+        "hidden": false,
+        "label": "1 Space",
+        "open": true,
+        "permission": null,
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": [
+          "Lab PC [os-windows]"
+        ]
+      },
+      "notch": "search \"win\""
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": "No Spaces match “zzz”.",
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": 0,
+          "query": "zzz"
+        },
+        "hidden": false,
+        "label": "0 Spaces",
+        "open": true,
+        "permission": null,
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": []
+      },
+      "notch": "search \"zzz\""
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": null,
+          "query": ""
+        },
+        "hidden": false,
+        "label": "4 Spaces",
+        "open": true,
+        "permission": null,
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]",
+          "Lab PC [os-windows]",
+          "Builder [os-macos] (no drop)",
+          "Starter [os-linux] (no drop)"
+        ]
+      },
+      "notch": "escape"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": 1,
+          "query": "ubuntu"
+        },
+        "hidden": false,
+        "label": "1 Space",
+        "open": true,
+        "permission": null,
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]"
+        ]
+      },
+      "notch": "search \"ubuntu\""
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": {
+          "buttons": [
+            "List view [list.bullet]",
+            "Settings [gearshape]"
+          ],
+          "matches": null,
+          "query": ""
+        },
+        "hidden": false,
+        "label": "4 Spaces",
+        "open": true,
+        "permission": null,
+        "phase": "tiles",
+        "prompt": null,
+        "tab": null,
+        "tiles": [
+          "Aurora [os-ubuntu]",
+          "Lab PC [os-windows]",
+          "Builder [os-macos] (no drop)",
+          "Starter [os-linux] (no drop)"
+        ]
+      },
+      "notch": "escape"
+    },
+    {
+      "frame": {
+        "activity": "provisioning: Starting 1 Space",
+        "cue": false,
+        "dropMode": false,
+        "effects": [
+          "cancel-timers"
+        ],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": [
+          "5",
+          "Spaces"
+        ],
+        "tiles": []
+      },
+      "notch": "escape"
+    },
+    {
+      "frame": {
+        "activity": "hotspot: Sharing your network to a Space [personalhotspot]",
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": [
+          "5",
+          "Spaces"
+        ],
+        "tiles": []
+      },
+      "notch": "activity hotspot=true transfer=null"
+    },
+    {
+      "frame": {
+        "activity": "transfer: Transferring to a Space 250/1000",
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": [
+          "5",
+          "Spaces"
+        ],
+        "tiles": []
+      },
+      "notch": "activity hotspot=true transfer={\"sent\":250,\"total\":1000}"
+    },
+    {
+      "frame": {
+        "activity": "transfer: Transferring to a Space 1000/1000",
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": [
+          "5",
+          "Spaces"
+        ],
+        "tiles": []
+      },
+      "notch": "activity hotspot=false transfer={\"sent\":1000,\"total\":1000}"
+    },
+    {
+      "frame": {
+        "activity": "provisioning: Starting 1 Space",
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": [
+          "5",
+          "Spaces"
+        ],
+        "tiles": []
+      },
+      "notch": "activity hotspot=false transfer=null"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [
+          "cancel-timers"
+        ],
+        "empty": null,
+        "header": null,
+        "hidden": true,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": null,
+        "tiles": []
+      },
+      "notch": "visibility shown=false"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": true,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": null,
+        "tiles": []
+      },
+      "notch": "hover-enter"
+    },
+    {
+      "frame": {
+        "activity": null,
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": true,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": null,
+        "tiles": []
+      },
+      "notch": "drag start"
+    },
+    {
+      "frame": {
+        "activity": "provisioning: Starting 1 Space",
+        "cue": false,
+        "dropMode": false,
+        "effects": [],
+        "empty": null,
+        "header": null,
+        "hidden": false,
+        "label": "Cua Spaces",
+        "open": false,
+        "permission": null,
+        "phase": "closed",
+        "prompt": null,
+        "tab": [
+          "5",
+          "Spaces"
+        ],
+        "tiles": []
+      },
+      "notch": "visibility shown=true"
+    }
+  ]
+}

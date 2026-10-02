@@ -593,6 +593,13 @@ pub struct TrustedInvocationEvidence {
     session_id: Option<String>,
     transport_session_id: Option<String>,
     browser_download_mcp_host_approved: bool,
+    /// Who originated the input (`_input_origin`): a trusted host relaying
+    /// a human's input marks it so no agent cursor is drawn for it.
+    input_origin: Option<crate::agent_cursor::InputOrigin>,
+    /// Window-relative pixels are native window pixels (see
+    /// [`ToolRegistry::invoke_with_native_window_pixels`]). Never read from
+    /// arguments: only that in-process entry point sets it.
+    native_window_pixels: bool,
 }
 
 impl TrustedInvocationEvidence {
@@ -612,9 +619,35 @@ impl TrustedInvocationEvidence {
                 .remove(crate::browser::download::MCP_HOST_DOWNLOAD_APPROVAL_ARG)
                 .and_then(|value| value.as_bool())
                 == Some(true);
+            evidence.input_origin = arguments
+                .remove(crate::agent_cursor::INPUT_ORIGIN_ARG)
+                .and_then(|value| {
+                    value
+                        .as_str()
+                        .and_then(crate::agent_cursor::InputOrigin::parse)
+                });
         }
         crate::tool_args::sanitize_reserved_args(args);
         evidence
+    }
+
+    /// Record the call's input origin for the cursor key it resolves to
+    /// (`session`, else `_session_id`, else `cursor_id`, after namespacing),
+    /// so every platform overlay and the cursor hook embedder see it.
+    fn record_input_origin(&self, args: &Value) {
+        let Some(origin) = self.input_origin else {
+            return;
+        };
+        if let Some(key) = ["session", "_session_id", "cursor_id"]
+            .into_iter()
+            .find_map(|key| {
+                args.get(key)
+                    .and_then(Value::as_str)
+                    .filter(|v| !v.is_empty())
+            })
+        {
+            crate::agent_cursor::set_input_origin(key, origin);
+        }
     }
 
     fn apply_runtime_args(&self, args: &mut Value) {
@@ -633,6 +666,12 @@ impl TrustedInvocationEvidence {
         if self.browser_download_mcp_host_approved {
             arguments.insert(
                 crate::browser::download::MCP_HOST_DOWNLOAD_APPROVAL_ARG.to_owned(),
+                Value::Bool(true),
+            );
+        }
+        if self.native_window_pixels {
+            arguments.insert(
+                crate::snapshot_store::NATIVE_WINDOW_PIXELS_ARG.to_owned(),
                 Value::Bool(true),
             );
         }
@@ -687,6 +726,7 @@ impl ToolRegistry {
         let weak_captures = Arc::downgrade(&capture_service);
         let session_end_hook =
             crate::session::register_scoped_session_end_hook(move |session_id| {
+                crate::agent_cursor::forget_input_origin(session_id);
                 if let Some(ownership) = weak_ownership.upgrade() {
                     ownership.remove_session(session_id);
                 }
@@ -1003,11 +1043,43 @@ impl ToolRegistry {
 
     /// Invoke a tool by name and (if recording is enabled) write its result to disk.
     pub async fn invoke(&self, name: &str, args: Value) -> ToolResult {
+        self.invoke_in_process(name, args, false).await
+    }
+
+    /// Invoke for a trusted in-process host whose window-relative pixel
+    /// arguments (`x`/`y`, `from_x`/`to_y`, ...) are native window pixels
+    /// it measured itself, for example a Space stream relaying a viewer's
+    /// input at the captured window's native geometry.
+    ///
+    /// Window-relative pixel actions otherwise need a current snapshot of
+    /// that window with a screenshot owned by the calling session, which
+    /// supplies the screenshot-to-native scale. This entry point uses scale
+    /// 1.0 instead and needs no prior read. Element targets are unchanged:
+    /// they still take an `element_token` from a current snapshot.
+    ///
+    /// It is a Rust API only. The marker it sets travels as trusted
+    /// invocation evidence, never as a caller argument: dispatch strips every
+    /// underscore-prefixed argument before evidence is applied, no protocol
+    /// adapter extracts the marker, and nested registry calls (replay) do not
+    /// inherit it. MCP, the CLI, the SDK ABI and the wire therefore cannot
+    /// reach it.
+    pub async fn invoke_with_native_window_pixels(&self, name: &str, args: Value) -> ToolResult {
+        self.invoke_in_process(name, args, true).await
+    }
+
+    async fn invoke_in_process(
+        &self,
+        name: &str,
+        args: Value,
+        native_window_pixels: bool,
+    ) -> ToolResult {
         if let Ok(context) = DISPATCH_AUTHORIZATION_CONTEXT.try_with(Arc::clone) {
             let mut args = args;
-            let evidence = DISPATCH_TRUSTED_INVOCATION_EVIDENCE
+            let mut evidence = DISPATCH_TRUSTED_INVOCATION_EVIDENCE
                 .try_with(Clone::clone)
                 .unwrap_or_default();
+            // Only the outermost in-process call vouches for its pixels.
+            evidence.native_window_pixels = native_window_pixels;
             crate::tool_args::sanitize_reserved_args(&mut args);
             if let Some(bound_session) = context.public_session() {
                 let Some(arguments) = args.as_object_mut() else {
@@ -1044,14 +1116,43 @@ impl ToolRegistry {
                 ))
             }
         };
-        self.invoke_with_context(name, args, context).await
+        let evidence = TrustedInvocationEvidence {
+            native_window_pixels,
+            ..TrustedInvocationEvidence::default()
+        };
+        self.invoke_with_context_and_evidence(name, args, context, evidence)
+            .await
     }
 
     /// Invoke from a protocol adapter that already stripped caller-owned
     /// reserved fields before adding its own transport evidence.
     #[doc(hidden)]
-    pub async fn invoke_from_trusted_adapter(&self, name: &str, mut args: Value) -> ToolResult {
-        let evidence = TrustedInvocationEvidence::extract_from_adapter_args(&mut args);
+    pub async fn invoke_from_trusted_adapter(&self, name: &str, args: Value) -> ToolResult {
+        self.invoke_from_trusted_adapter_in_process(name, args, false)
+            .await
+    }
+
+    /// [`Self::invoke_from_trusted_adapter`] for an in-process host whose
+    /// window-relative pixels are native window pixels; see
+    /// [`Self::invoke_with_native_window_pixels`].
+    #[doc(hidden)]
+    pub async fn invoke_from_trusted_adapter_with_native_window_pixels(
+        &self,
+        name: &str,
+        args: Value,
+    ) -> ToolResult {
+        self.invoke_from_trusted_adapter_in_process(name, args, true)
+            .await
+    }
+
+    async fn invoke_from_trusted_adapter_in_process(
+        &self,
+        name: &str,
+        mut args: Value,
+        native_window_pixels: bool,
+    ) -> ToolResult {
+        let mut evidence = TrustedInvocationEvidence::extract_from_adapter_args(&mut args);
+        evidence.native_window_pixels = native_window_pixels;
         let context = match crate::session_authorization::configured_registry()
             .and_then(|registry| registry.legacy_context())
         {
@@ -1216,6 +1317,7 @@ impl ToolRegistry {
             args["_session_id"] = Value::String(implicit.clone());
             args["_transport_session_id"] = Value::String(implicit);
         }
+        evidence.record_input_origin(&args);
         let runtime_session = args
             .get("_session_id")
             .and_then(Value::as_str)
@@ -1800,15 +1902,15 @@ impl ToolRegistry {
             );
         }
         if result.is_error != Some(true) && matches!(name, "start_session" | "end_session") {
-            self.history.as_ref().map(|history| {
+            if let Some(history) = self.history.as_ref() {
                 history.session_event(
                     public_args
                         .get("session")
                         .and_then(Value::as_str)
                         .or(runtime_session.as_deref()),
                     name == "start_session",
-                )
-            });
+                );
+            }
         }
 
         // Record non-read-only, non-recording tool calls. The recording-
@@ -4119,6 +4221,175 @@ resources:
             }
             assert_eq!(hits.load(Ordering::SeqCst), 2);
         }
+    }
+
+    /// A trusted host relaying a human's input (a Cua Spaces viewer) marks
+    /// the call human-origin: its session draws no agent cursor on any
+    /// platform. A public caller cannot claim that origin.
+    #[tokio::test]
+    async fn trusted_human_origin_suppresses_the_agent_cursor_and_is_not_forgeable() {
+        use crate::agent_cursor::{input_origin, overlay_suppressed, InputOrigin};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let last_args = Arc::new(Mutex::new(None));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ArgumentProbe {
+            hits: hits.clone(),
+            last_args: last_args.clone(),
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+        let session_of = |args: &serde_json::Value| {
+            args["_session_id"]
+                .as_str()
+                .expect("session key")
+                .to_owned()
+        };
+
+        let result = registry
+            .invoke_from_trusted_adapter(
+                "click",
+                serde_json::json!({"_session_id": "viewer-human-origin-1", "_input_origin": "human"}),
+            )
+            .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        let received = last_args.lock().unwrap().clone().expect("arguments");
+        let human = session_of(&received);
+        assert!(human.ends_with("viewer-human-origin-1"));
+        assert_eq!(input_origin(&human), InputOrigin::Human);
+        assert!(overlay_suppressed(&human));
+
+        // An agent's trusted session keeps its cursor.
+        registry
+            .invoke_from_trusted_adapter(
+                "click",
+                serde_json::json!({"_session_id": "agent-origin-run-1"}),
+            )
+            .await;
+        let agent = session_of(&last_args.lock().unwrap().clone().unwrap());
+        assert!(!overlay_suppressed(&agent));
+
+        // A public caller's reserved argument is stripped, never honoured.
+        registry
+            .invoke(
+                "click",
+                serde_json::json!({"session": "forged-human-origin-1", "_input_origin": "human"}),
+            )
+            .await;
+        let forged = last_args.lock().unwrap().clone().unwrap();
+        assert!(forged.get("_input_origin").is_none());
+        assert!(!overlay_suppressed(&session_of(&forged)));
+        assert!(!overlay_suppressed(forged["session"].as_str().unwrap()));
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+
+        // Ending the session forgets its origin.
+        crate::session::end_session(&human);
+        assert!(!overlay_suppressed(&human));
+    }
+
+    /// Calls `click` through the registry it is registered in.
+    struct NestedClickProbe {
+        registry: Arc<std::sync::OnceLock<std::sync::Weak<super::ToolRegistry>>>,
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for NestedClickProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            let registry = self.registry.get().and_then(std::sync::Weak::upgrade);
+            registry
+                .expect("registry is alive")
+                .invoke("click", serde_json::json!({}))
+                .await
+        }
+    }
+
+    #[tokio::test]
+    async fn native_window_pixels_come_only_from_the_in_process_entry_points() {
+        use crate::snapshot_store::NATIVE_WINDOW_PIXELS_ARG;
+        let hits = Arc::new(AtomicUsize::new(0));
+        let last_args = Arc::new(Mutex::new(None));
+        let handle = Arc::new(std::sync::OnceLock::new());
+        let def = |name: &str| super::ToolDef {
+            name: name.into(),
+            description: "test input".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ArgumentProbe {
+            hits: hits.clone(),
+            last_args: last_args.clone(),
+            def: def("click"),
+        }));
+        registry.register(Box::new(NestedClickProbe {
+            registry: handle.clone(),
+            // A read-only composite, so it holds no input lane while the
+            // nested click runs.
+            def: super::ToolDef {
+                read_only: true,
+                ..def("list_windows")
+            },
+        }));
+        let registry = Arc::new(registry);
+        handle.set(Arc::downgrade(&registry)).unwrap();
+        let marked = |args: &Option<serde_json::Value>| {
+            args.as_ref().expect("arguments")[NATIVE_WINDOW_PIXELS_ARG]
+                == serde_json::Value::Bool(true)
+        };
+        let forged = serde_json::json!({ NATIVE_WINDOW_PIXELS_ARG: true });
+
+        // A public or adapter caller cannot assert native pixels.
+        registry.invoke("click", forged.clone()).await;
+        assert!(!marked(&last_args.lock().unwrap()));
+        registry
+            .invoke_from_trusted_adapter("click", forged.clone())
+            .await;
+        assert!(!marked(&last_args.lock().unwrap()));
+
+        // The in-process entry points do.
+        registry
+            .invoke_with_native_window_pixels("click", serde_json::json!({}))
+            .await;
+        assert!(marked(&last_args.lock().unwrap()));
+        registry
+            .invoke_from_trusted_adapter_with_native_window_pixels(
+                "click",
+                serde_json::json!({"_session_id": "native-pixels-viewer"}),
+            )
+            .await;
+        let received = last_args.lock().unwrap().clone();
+        assert!(marked(&received));
+        assert!(received.unwrap()["_session_id"]
+            .as_str()
+            .unwrap()
+            .ends_with("native-pixels-viewer"));
+
+        // A nested call (replay) does not inherit the outer call's claim.
+        // (The outer probe's result is not a list_windows payload; only the
+        // nested click's arguments matter here.)
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            registry.invoke_with_native_window_pixels("list_windows", serde_json::json!({})),
+        )
+        .await
+        .expect("the nested call completes");
+        assert_eq!(hits.load(Ordering::SeqCst), 5);
+        assert!(!marked(&last_args.lock().unwrap()));
     }
 
     #[tokio::test]

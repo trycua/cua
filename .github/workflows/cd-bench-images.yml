@@ -1,0 +1,404 @@
+name: "CD: Benchmark images"
+
+# Converted benchmark images (libs/images/bench/<id>, scripts/bench-images).
+# Each Linux benchmark ships two cross-linked indexes, like ghcr.io/trycua/linux:
+#   ghcr.io/trycua/bench-<id>:<ver>        rootfs (docker / gVisor)
+#   ghcr.io/trycua/bench-<id>:<ver>-disk   containerDisk (KubeVirt / QEMU)
+#   ...:<ver>[-disk]-<yyyymmdd>-<sha7>     immutable pins (floating tags exist only
+#                                          on bench-* repos; scripts/images/check-tag-safety.sh)
+# linked by ai.cua.image.variants and annotated with ai.cua.image.os,
+# ai.cua.spacesd, ai.cua.image.requires and ai.cua.bench.{id,version,server};
+# every variant carries /etc/cua-image/manifest.json.
+#
+# Dockerfile benchmarks build FROM the slim tier of the Linux image
+# (bench.json build.base_target=slim: `libs/images/build.sh linux --target
+# slim`, the 24.04-slim series), never the full tier's developer tooling, so
+# the bench image carries only what its tasks need.
+#
+# Pull requests run the offline checks only. workflow_dispatch builds one
+# benchmark: every arch on a native runner, smokes the local build (both
+# variants, `cua-spacesd doctor --strict`), and with push=true stages the
+# immutable pins (children, then indexes), smokes each pushed variant again
+# from its registry digest, and promotes <ver>/<ver>-disk only when every
+# arch and variant passed the doctor. promote_stamp=<stamp> skips the build
+# and staging: it re-runs the native doctor against the pins already staged
+# in libs/images/bench/<id>/lock.json (the stamp must match) and promotes
+# those exact digests only when every arch and variant passes. OSWorld needs
+# ~100 GB of disk: on a hosted ubuntu-24.04 runner its work tree goes to /mnt
+# (the second disk) and the upstream zip is dropped once unpacked.
+
+on:
+  pull_request:
+    paths:
+      - "libs/images/bench/**"
+      - "scripts/bench-images/**"
+      - "scripts/images/check-tag-safety.sh"
+      - "scripts/images/test-check-tag-safety.sh"
+      - ".github/workflows/cd-bench-images.yml"
+  workflow_dispatch:
+    inputs:
+      bench:
+        description: "Benchmark id (libs/images/bench/<id>)"
+        type: choice
+        options: [web, osworld]
+        default: web
+      push:
+        description: "Push to ghcr.io/trycua/bench-<id>"
+        type: boolean
+        default: false
+      amd64_runner:
+        description: "Runner label for amd64 (OSWorld needs ~100 GB across / and /mnt)"
+        type: string
+        default: ubuntu-24.04
+      promote_stamp:
+        description: "Verify and promote this already-staged stamp (lock.json) instead of building (needs push=true)"
+        type: string
+        default: ""
+
+concurrency:
+  group: cd-bench-images-${{ github.ref }}-${{ inputs.bench || 'pr' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: bench.json, documents and tag safety (offline)
+        run: |
+          python3 scripts/bench-images/bench.py validate
+          python3 scripts/bench-images/test_bench.py
+          bash scripts/images/test-check-tag-safety.sh
+          for f in scripts/bench-images/*.sh libs/images/bench/*/vm/*.sh; do bash -n "$f"; done
+
+  meta:
+    if: github.event_name == 'workflow_dispatch'
+    needs: checks
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+      stamp: ${{ steps.m.outputs.stamp }}
+      kind: ${{ steps.m.outputs.kind }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - id: m
+        env:
+          BENCH: ${{ inputs.bench }}
+          AMD64_RUNNER: ${{ inputs.amd64_runner }}
+          PROMOTE_STAMP: ${{ inputs.promote_stamp }}
+        run: |
+          stamp="$(date -u +%Y%m%d)-$(git rev-parse --short=7 HEAD)"
+          if [ -n "$PROMOTE_STAMP" ]; then
+            lock="libs/images/bench/$BENCH/lock.json"
+            [ "$(jq -r .stamp "$lock")" = "$PROMOTE_STAMP" ] || { echo "::error::$lock is not stamp $PROMOTE_STAMP"; exit 1; }
+            [ "$(jq -r .dry_run "$lock")" = false ] || { echo "::error::$lock is a dry run"; exit 1; }
+            stamp="$PROMOTE_STAMP"
+          fi
+          arches="$(python3 scripts/bench-images/bench.py get "$BENCH" arch)"
+          {
+            echo "matrix=$(jq -c --arg r "$AMD64_RUNNER" '[.[] | {arch: ., runner: (if . == "arm64" then "ubuntu-24.04-arm" else $r end)}]' <<<"$arches")"
+            echo "stamp=$stamp"
+            echo "kind=$(python3 scripts/bench-images/bench.py get "$BENCH" build.kind)"
+          } >>"$GITHUB_OUTPUT"
+
+  # `cua images release` over libs/images/bench/<id>/release.json, sliced per
+  # job; reproduce any job locally with the same flags, e.g.
+  #   cua images release libs/images/bench/osworld --stamp STAMP --steps prepare,build,gate
+  build:
+    needs: meta
+    if: inputs.promote_stamp == ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.meta.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: write
+    env:
+      BENCH: ${{ inputs.bench }}
+      ARCH: ${{ matrix.arch }}
+      STAMP: ${{ needs.meta.outputs.stamp }}
+      CARGO_BUILD_JOBS: "4"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - name: Host tools (QEMU, gVisor, crane, oras, skopeo)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
+          scripts/images/install-release-tools.sh --free-disk
+      # A qcow2 benchmark (OSWorld) is large: the upstream zip (11 GiB) and
+      # disk (23 GiB), the VM disk (~11 GiB), the rootfs layers and the smoke
+      # pulls. The lowdisk capability turns on its reclaim steps, and the
+      # work tree goes to /mnt when the runner has a second disk.
+      - name: Work directory
+        run: |
+          work="$GITHUB_WORKSPACE/release"
+          if [ -d /mnt ] && [ "$(df -BG --output=avail /mnt | tail -1 | tr -dc 0-9)" -ge 50 ]; then
+            sudo install -d -o "$(id -u)" -g "$(id -g)" /mnt/release; work=/mnt/release
+          fi
+          echo "WORK=$work" >>"$GITHUB_ENV"
+          assume=""; [ "${{ needs.meta.outputs.kind }}" = qcow2 ] && assume="--assume lowdisk"
+          echo "ASSUME=$assume" >>"$GITHUB_ENV"
+      - name: cua CLI and the SDK binding for the smoke
+        run: |
+          (cd libs/cua && cargo build --release -p cua-sdk -p cua-cli)
+          cp libs/cua/target/release/libcua_sdk.so libs/cua/python/src/cua/
+          install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
+          # The later jobs (index, verify, promote) reuse these instead of
+          # compiling the CLI again.
+          mkdir -p "$RUNNER_TEMP/bench-cli"
+          cp libs/cua/target/release/cua libs/cua/target/release/libcua_sdk.so "$RUNNER_TEMP/bench-cli/"
+          rm -rf libs/cua/target
+          uv venv .venv && VIRTUAL_ENV=.venv uv pip install -e libs/cua/python -e libs/python/cua-sandbox -e libs/cua-bench pillow
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bench-cli-${{ matrix.arch }}
+          path: ${{ runner.temp }}/bench-cli
+          retention-days: 7
+      - name: cua images release (prepare, build, gates)
+        run: |
+          # shellcheck disable=SC2086
+          "$RUNNER_TEMP/cua" images release "libs/images/bench/$BENCH" --arch "$ARCH" --stamp "$STAMP" --work "$WORK" \
+            --steps prepare,build,gate --var python=.venv/bin/python $ASSUME
+      - name: Log in to ghcr.io
+        if: inputs.push
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: cua images release (push this arch's children)
+        if: inputs.push
+        run: |
+          "$RUNNER_TEMP/cua" images release "libs/images/bench/$BENCH" --arch "$ARCH" --stamp "$STAMP" --work "$WORK" \
+            --publish --steps "push/$ARCH" --scope "push-$ARCH" --var python=.venv/bin/python
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: bench-${{ inputs.bench }}-${{ matrix.arch }}-build
+          path: ${{ env.WORK }}/evidence
+          if-no-files-found: warn
+
+  index:
+    if: inputs.push && inputs.promote_stamp == ''
+    needs: [meta, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      BENCH: ${{ inputs.bench }}
+      STAMP: ${{ needs.meta.outputs.stamp }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: bench-${{ inputs.bench }}-*-build
+          path: release/evidence
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        # This run's build job's CLI; a promote_stamp run has none and compiles it.
+        continue-on-error: true
+        with:
+          name: bench-cli-amd64
+          path: ${{ runner.temp }}/bench-cli
+      - name: Tools and the cua CLI
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
+          scripts/images/install-release-tools.sh --push-only
+          if [ -f "$RUNNER_TEMP/bench-cli/cua" ]; then
+            install -m 0755 "$RUNNER_TEMP/bench-cli/cua" "$RUNNER_TEMP/cua"
+          else
+            (cd libs/cua && cargo build --release -p cua-cli) && install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
+          fi
+      - name: cua images release (publish the indexes as immutable pins)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+          "$RUNNER_TEMP/cua" images release "libs/images/bench/$BENCH" --stamp "$STAMP" --work release \
+            --publish --steps publish --scope index
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bench-${{ inputs.bench }}-lock
+          path: libs/images/bench/${{ inputs.bench }}/lock.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: bench-${{ inputs.bench }}-index-evidence
+          path: release/evidence
+          if-no-files-found: warn
+
+  # The strict doctor again on a fresh runner per arch, against the staged
+  # index from the registry (this run's, or the checked-in lock's with
+  # promote_stamp).
+  verify:
+    needs: [meta, index]
+    if: ${{ !cancelled() && inputs.push && (needs.index.result == 'success' || (inputs.promote_stamp != '' && needs.index.result == 'skipped')) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.meta.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    # A disk doctored under TCG (hosted arm64) boots and checks several times slower.
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      packages: read
+    env:
+      BENCH: ${{ inputs.bench }}
+      ARCH: ${{ matrix.arch }}
+      STAMP: ${{ needs.meta.outputs.stamp }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CARGO_BUILD_JOBS: "4"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: inputs.promote_stamp == ''
+        with:
+          name: bench-${{ inputs.bench }}-lock
+          path: libs/images/bench/${{ inputs.bench }}
+      - name: Host tools (QEMU, gVisor, crane)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
+          scripts/images/install-release-tools.sh --free-disk
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        # This run's build job's CLI; a promote_stamp run has none and compiles it.
+        continue-on-error: true
+        with:
+          name: bench-cli-${{ matrix.arch }}
+          path: ${{ runner.temp }}/bench-cli
+      - name: cua CLI and the SDK binding
+        run: |
+          if [ -f "$RUNNER_TEMP/bench-cli/cua" ] && [ -f "$RUNNER_TEMP/bench-cli/libcua_sdk.so" ]; then
+            cp "$RUNNER_TEMP/bench-cli/libcua_sdk.so" libs/cua/python/src/cua/
+            install -m 0755 "$RUNNER_TEMP/bench-cli/cua" "$RUNNER_TEMP/cua"
+          else
+            (cd libs/cua && cargo build --release -p cua-sdk -p cua-cli)
+            cp libs/cua/target/release/libcua_sdk.so libs/cua/python/src/cua/
+            install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
+            rm -rf libs/cua/target
+          fi
+          uv venv .venv && VIRTUAL_ENV=.venv uv pip install -e libs/cua/python -e libs/python/cua-sandbox -e libs/cua-bench pillow
+      - name: cua images release (verify both variants from the registry)
+        run: |
+          "$RUNNER_TEMP/cua" images release "libs/images/bench/$BENCH" --arch "$ARCH" --stamp "$STAMP" --work release \
+            --publish --steps "verify/$ARCH" --scope "verify-$ARCH" --var python=.venv/bin/python
+      # Hosted arm64 runners have no KVM, so the release skips
+      # verify/<arch>/containerdisk (it needs accel-<arch>) and attest would
+      # find no doctor evidence for that disk. Doctor the staged disk child
+      # under TCG instead (stretched budgets), as cd-image-linux.yml does.
+      - name: Strict VM doctor of the staged disk under TCG (no KVM)
+        run: |
+          if [ -w /dev/kvm ]; then echo "KVM present: the release verified the disk"; exit 0; fi
+          scripts/bench-images/doctor-disk.sh "$BENCH" "$ARCH" release/evidence/verify
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: bench-${{ inputs.bench }}-${{ matrix.arch }}-verify
+          path: release/evidence
+          if-no-files-found: warn
+
+  promote:
+    needs: [meta, verify]
+    if: ${{ !cancelled() && needs.verify.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      # contents: write for the image-doctor-ledger branch (attest) and the
+      # catalog branch; pull-requests: write to open the catalog PR.
+      contents: write
+      packages: write
+      pull-requests: write
+    env:
+      BENCH: ${{ inputs.bench }}
+      STAMP: ${{ needs.meta.outputs.stamp }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: bench-${{ inputs.bench }}-*-verify
+          path: release/evidence
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: inputs.promote_stamp == ''
+        with:
+          name: bench-${{ inputs.bench }}-lock
+          path: libs/images/bench/${{ inputs.bench }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        # This run's build job's CLI; a promote_stamp run has none and compiles it.
+        continue-on-error: true
+        with:
+          name: bench-cli-amd64
+          path: ${{ runner.temp }}/bench-cli
+      - name: Tools and the cua CLI
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
+          scripts/images/install-release-tools.sh --push-only
+          if [ -f "$RUNNER_TEMP/bench-cli/cua" ]; then
+            install -m 0755 "$RUNNER_TEMP/bench-cli/cua" "$RUNNER_TEMP/cua"
+          else
+            (cd libs/cua && cargo build --release -p cua-cli) && install -m 0755 libs/cua/target/release/cua "$RUNNER_TEMP/cua"
+          fi
+      - name: cua images release (promote <ver> and <ver>-disk; doctor evidence required)
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+          # Committed native evidence first (an arch whose VM lane needs a
+          # KVM runner), this run's verify evidence on top.
+          mkdir -p release/evidence/verify
+          cp -n "libs/images/bench/$BENCH/evidence/"*.json release/evidence/verify/ 2>/dev/null || true
+          "$RUNNER_TEMP/cua" images release "libs/images/bench/$BENCH" --stamp "$STAMP" --work release \
+            --publish --promote --steps attest,promote --scope promote --var record_ledger=true
+          lock="libs/images/bench/$BENCH/lock.json"
+          {
+            echo "### ghcr.io/trycua/bench-$BENCH promoted"
+            echo "- \`$(jq -r .index.floating "$lock")\`: \`$(jq -r .index.digest "$lock")\` (\`$(jq -r .index.ref "$lock")\`)"
+            echo "- \`$(jq -r .disk_index.floating "$lock")\`: \`$(jq -r .disk_index.digest "$lock")\` (\`$(jq -r .disk_index.ref "$lock")\`)"
+          } >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bench-${{ inputs.bench }}-promoted-lock
+          path: libs/images/bench/${{ inputs.bench }}/lock.json
+      # The release's catalog step: move the catalog digests of the promoted
+      # <ver> and <ver>-disk tags and record their sizes, then open a PR with
+      # libs/images/sandbox-images.json, the promoted lock.json and the
+      # regenerated cua_bench/images.py. A PR opened
+      # with GITHUB_TOKEN does not trigger CI on its own; push to it (or close
+      # and reopen it) to run the required checks.
+      - name: Catalog PR (sandbox-images.json and lock.json at the promoted digests)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          lock="libs/images/bench/$BENCH/lock.json"
+          python3 scripts/images/record-image-sizes.py --refresh-digest \
+            --ref "$(jq -r .index.floating "$lock")" --ref "$(jq -r .disk_index.floating "$lock")"
+          python3 scripts/images/record-image-sizes.py --check
+          # cua-bench's BENCH_<NAME> pins are generated from the lock files.
+          python3 scripts/images/gen-image-constants.py
+          files=(libs/images/sandbox-images.json "$lock" libs/cua-bench/cua_bench/images.py)
+          if git diff --quiet -- "${files[@]}"; then
+            echo "catalog already at the promoted digests"; exit 0
+          fi
+          branch="chore/bench-$BENCH-catalog-$STAMP"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add -- "${files[@]}"
+          git commit -m "chore(images): catalog bench-$BENCH $STAMP"
+          git push -u origin "$branch" --force
+          url="$(gh pr create --base main --head "$branch" \
+            --title "chore(images): catalog bench-$BENCH $STAMP" \
+            --body "The catalog step of ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}: \`libs/images/sandbox-images.json\` moves bench-$BENCH's promoted tags to their new digests with fresh sizes (\`record-image-sizes.py --refresh-digest\`), and \`$lock\` records the promoted stamp (with cua-bench's generated \`cua_bench/images.py\` pin)." \
+            || gh pr view "$branch" --json url -q .url)"
+          echo "- catalog PR: $url" >>"$GITHUB_STEP_SUMMARY"

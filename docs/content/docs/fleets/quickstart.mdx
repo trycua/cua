@@ -1,0 +1,114 @@
+---
+title: Quickstart
+description: Your first cloud sandbox and your first pool. Start a desktop in the cloud, verify a file hash, then apply a pool and claim from it.
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Start a Linux desktop in the cloud, hash a file inside it and check the hash
+on your machine, then create a pool of your own and claim a sandbox from it.
+
+## Prerequisites
+
+- The `cua` CLI, signed in (`cua auth login --remote` without a browser):
+
+```bash test="cli-shape" id="cua-auth-login"
+curl -fsSL https://cua.ai/install.sh | sh
+cua auth login
+```
+
+- For scripts: Python `>=3.11,<3.14` with [`uv`](https://docs.astral.sh/uv/),
+  or Node.js 20. They read `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET` from
+  `cua auth keys create NAME` ([credentials](/cua-sdk/guides/cloud#credentials)).
+
+Usage is billed while a sandbox runs; releasing it ends the charge.
+
+## Run a cloud sandbox
+
+<Tabs groupId="language" persist items={['CLI', 'Python', 'TypeScript']}>
+  <Tab value="CLI">
+
+```bash test="cli-shape" id="cua-sb-create"
+cua sb create linux --on cloud --name first-fleet
+printf 'pear\napple\npear\nbanana\n' > fruit.txt
+cua sb cp fruit.txt first-fleet:/tmp/fruit.txt
+cua sb exec first-fleet sha256sum /tmp/fruit.txt
+shasum -a 256 fruit.txt
+cua sb screenshot first-fleet -o first-fleet.png
+```
+
+  </Tab>
+  <Tab value="Python">
+
+The script pins `cua-sandbox==0.9.0` and runs `Image.linux()` with
+`local=False` (`CUA_FLEET_IMAGE` overrides the image).
+
+```bash skip="third-party-cli"
+curl -fsSLO https://cua.ai/docs-assets/scripts/first-cloud-fleet/first_cloud_fleet.py
+uv run first_cloud_fleet.py
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```bash skip="host-install"
+npm install @trycua/cua@0.2.0 && npm install --save-dev tsx
+curl -fsSLo first-cloud-fleet.ts \
+  https://cua.ai/docs-assets/scripts/first-cloud-fleet/first-cloud-fleet.ts.txt
+npx tsx first-cloud-fleet.ts
+```
+
+  </Tab>
+</Tabs>
+
+Both hashes are
+`d9359aad71bda9a11a4fd2e8d72044d6f0f77519c6b6fb30d251806febcfb4d0`. Your
+machine computed the second one, so the check does not rely on the guest. The
+canonical image keeps warm capacity, so this takes seconds; another image's
+first start can take a few minutes.
+
+## Create a pool and claim from it
+
+The sandbox above ran on a pool the SDK manages. Apply a pool you own, with
+one warm replica, claim a sandbox from it, and delete it:
+
+```python test="docs,fleet" id="first-pool" prelude="fakefleet,pool-name"
+import os
+
+from cua_sandbox import CloudOptions, Image, Pool, PoolOptions, Sandbox, SandboxSpec
+
+pool = await Pool.apply(
+    os.environ["CUA_POOL_NAME"],             # globally unique, lowercase
+    SandboxSpec(image=Image.linux(), services={"env": 3211}),
+    PoolOptions(replicas=1),
+)
+async with Sandbox.ephemeral(cloud=CloudOptions(pool=pool.name)) as sb:
+    print((await sb.shell.run("uname -a")).stdout.strip())
+await pool.delete()
+```
+
+## Result
+
+```text output
+Claimed ...
+Verified SHA-256: d9359aad71bda9a11a4fd2e8d72044d6f0f77519c6b6fb30d251806febcfb4d0
+Screenshot: .../first-cloud-fleet.png
+Claim released
+```
+
+## Clean up
+
+```bash test="cli-shape" id="cua-sb-rm-first-fleet"
+cua sb rm -f first-fleet
+```
+
+The scripts release their sandbox even when a step fails. A killed process's
+sandbox expires after its TTL (15 minutes); idle managed pools are deleted
+after 30 minutes, or now with `cua fleet pools gc`
+([Troubleshoot](/fleets/guides/troubleshoot#clean-up-leftovers)).
+
+## Next
+
+- [Create capacity and claim from it](/fleets/guides/capacity-and-claims)
+- [Manage pools with Terraform](/fleets/guides/terraform)
+- [Keep sandboxes warm](/fleets/guides/warm-pools)

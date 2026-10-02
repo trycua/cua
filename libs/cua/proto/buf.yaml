@@ -1,0 +1,18 @@
+# Source of truth for the cua.env.v1 (in-sandbox spacesd) and
+# cua.daemon.v1 (local cua daemon) contracts. See ../README.md.
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+    # Every service, rpc, message, field, enum, enum value and oneof must carry
+    # a leading comment. This is a public contract; undocumented surface is a
+    # lint failure, not a review nit.
+    - COMMENTS
+  enum_zero_value_suffix: _UNSPECIFIED
+  service_suffix: Service
+breaking:
+  use:
+    - FILE
+    - WIRE_JSON

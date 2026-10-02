@@ -1,0 +1,14 @@
+{
+  "name": "claude-tool-error",
+  "description": "A turn whose tool call fails. Exercises the error row and the agent recovering from it.",
+  "cmd": ["claude", "--permission-mode", "acceptEdits"],
+  "steps": [
+    {"wait": 6},
+    {"send": "Read the file ./definitely-not-here.txt and tell me exactly what happened."},
+    {"wait": 1.5},
+    {"key": "enter"},
+    {"expect": "definitely-not-here", "timeout": 60},
+    {"wait": 30},
+    {"wait": 15}
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "name": "cua-hyprland-plugin",
+  "plugin_version": "0.1.0",
+  "state": "input_v3_candidate",
+  "protocol": {
+    "major": 2,
+    "minor": 0,
+    "max_frame_bytes": 4120
+  },
+  "compositor_epoch": 15628813867259269429,
+  "abi": {
+    "compiled_hash": "efb50993780079460b0cbed1363e2166a2de1d9f_aq_0.15_hu_0.14_hg_0.5_hc_0.1_hlg_0.6",
+    "runtime_hash": "efb50993780079460b0cbed1363e2166a2de1d9f_aq_0.15_hu_0.14_hg_0.5_hc_0.1_hlg_0.6",
+    "match": true
+  },
+  "configured": true,
+  "transport": {
+    "ready": true,
+    "socket": "/run/user/1000/hypr/efb50993780079460b0cbed1363e2166a2de1d9f_1790369080_884163718/cua-inject-v2.sock",
+    "mode": "0600",
+    "peer_policy": "same_uid",
+    "last_error": ""
+  },
+  "capabilities": {
+    "supported": [
+      "discovery"
+    ],
+    "enabled": [
+      "discovery"
+    ],
+    "mutation": "trusted_local_per_action"
+  },
+  "connections": {
+    "accepted": 0,
+    "rejected_peers": 0,
+    "rejected_busy": 0,
+    "timed_out_handshakes": 0,
+    "timed_out_idle": 0,
+    "malformed_frames": 0
+  },
+  "keyboard_layout_independent": true,
+  "foreground_numlock_compatible": true,
+  "input": {
+    "protocol": 3,
+    "test_only": false,
+    "seat_lifetime": "compositor",
+    "upgrade": "desktop_restart",
+    "transport_ready": true,
+    "epoch": "d1ed0302e6d5f5901647d8994666477a",
+    "lease_active": false,
+    "seat_resources": 12,
+    "pointer_resources": 8,
+    "keyboard_resources": 8,
+    "dispatches": 72,
+    "lanes": [
+      {
+        "lane": 0,
+        "epoch": "d1ed0302e6d5f5901647d8994666477a",
+        "desktop_generation": 13,
+        "reserved": false,
+        "socket_cleanup": "bound",
+        "lease_active": false,
+        "seat_resources": 6,
+        "pointer_resources": 4,
+        "keyboard_resources": 4,
+        "dispatches": 72,
+        "held_button": 0,
+        "held_keys": 0,
+        "drag_active": false,
+        "pointer_focus": false,
+        "keyboard_focus": false
+      },
+      {
+        "lane": 1,
+        "epoch": "1606bcefd3155ad199b8976cbc83d8db",
+        "desktop_generation": 13,
+        "reserved": false,
+        "socket_cleanup": "bound",
+        "lease_active": false,
+        "seat_resources": 6,
+        "pointer_resources": 4,
+        "keyboard_resources": 4,
+        "dispatches": 0,
+        "held_button": 0,
+        "held_keys": 0,
+        "drag_active": false,
+        "pointer_focus": false,
+        "keyboard_focus": false
+      }
+    ]
+  }
+}

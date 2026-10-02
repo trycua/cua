@@ -4,7 +4,9 @@
 //! invoke time AND emits a stderr deprecation warning. The aliased name
 //! is NOT in `tools/list`. Rust now does the same.
 
+#[cfg(target_os = "windows")]
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]

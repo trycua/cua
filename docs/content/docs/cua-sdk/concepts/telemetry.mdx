@@ -1,0 +1,98 @@
+---
+title: Telemetry and privacy
+description: What the cua SDK, the cua CLI, cua daemon, cua-spacesd and the Cua Spaces app collect, what they never collect, and how to turn it off.
+---
+
+Cua sends anonymous usage data so we can see which features are used and
+where things break. It never contains your content. You can see every event
+before or after it is sent, and turn it off with one switch.
+
+## Turn it off
+
+Any of these turns usage telemetry off for every Cua program on the machine
+(SDK in any language, `cua` CLI, `cua daemon`, the Spaces app, and Cua Driver):
+
+| Switch | Scope |
+|---|---|
+| `DO_NOT_TRACK=1` | This environment. Wins over everything. |
+| `CUA_TELEMETRY=0` | This environment. `CUA_TELEMETRY=1` turns it back on. |
+| `cua telemetry off` or `cua config set telemetry off` | This machine (`[telemetry] enabled = "off"` in `$CUA_HOME/config.toml`). |
+| Spaces app: "Share anonymous usage data" on the first run's Welcome page, or Settings, Privacy | Same setting as above. |
+| SDK: `cua.telemetry.disable()` (Python), `telemetrySetEnabled(false)` (TypeScript, Swift, Kotlin) | Same setting as above. |
+
+CI environments (`CI`, `GITHUB_ACTIONS`, `BUILDKITE`, ...) are off by default.
+`CUA_TELEMETRY=1` turns them on, and their events are marked `is_ci`.
+The older `CUA_TELEMETRY_ENABLED=false` and `CUA_DRIVER_RS_TELEMETRY_ENABLED=false`
+still work.
+
+## See what is sent
+
+```bash test="cli-shape" id="cua-telemetry-see-what-is-sent"
+cua telemetry status      # on or off, why, and the properties every event carries
+cua telemetry show-last   # the last events, exactly as sent
+cua telemetry schema      # every event and property, with its allowed values
+cua telemetry reset-id    # a new anonymous install id
+```
+
+Nothing is sent from a machine until the first-run notice has been shown
+there once (in the terminal, or in the Spaces app's onboarding or Settings).
+The process that shows it sends nothing. In the Spaces app the notice is on
+the first run's Welcome page, next to a "Share anonymous usage data" switch:
+nothing is queued or sent until you leave that page, and if you turn the
+switch off there, nothing is sent at all (the setting is saved for every Cua
+program on the machine).
+
+## How it works
+
+- **Anonymous id.** 128 random bits in `$CUA_HOME/telemetry/install_id`, created
+  on the first event actually sent, never while telemetry is off. It is not
+  derived from your machine or account. `reset-id` deletes it.
+- **No person profiles, no location.** Every event sets `$process_person_profile: false`
+  and `$geoip_disable: true`. Like any HTTPS request, the upload reaches
+  PostHog (EU) from your IP address; it is never an event property and is
+  not used for location.
+- **Closed vocabularies.** Every property is one of a fixed list of values, a
+  bucket, a boolean or a version. An image reference that is not in the public
+  image catalog is sent as `custom`; an app outside the public teleport catalog
+  as `other`; an error as its category (`not_found`, `timeout`), never its message.
+  An event with any other property or value is dropped before it is queued.
+- **Never in the way.** Events go out in batches from a background thread with a
+  3 second budget. Offline, up to 500 events wait on disk for 7 days at most.
+  Exiting waits at most 0.4 seconds.
+
+## What is collected
+
+A fixed set of events with closed-vocabulary properties. The full list, each
+property and why it is collected: [Telemetry events](/cua-sdk/concepts/telemetry-events).
+
+## What we use it for
+
+These are the questions the events answer, and nothing else:
+
+- How many people install and launch Cua Spaces, and how many finish the
+  first run? Where do they leave it (which page), and what do they pick on
+  each page?
+- How many make a first Space, of which kind and where? How long until it is
+  ready, and how often does a create fail (in which phase, or by stalling) or
+  get abandoned?
+- Do people teleport, and does it work? Do they run an agent?
+- Do they use the Cua Volume, persistent agents, host Spaces, the Keyvault,
+  sharing and multiplayer? Do they update?
+- Are they still using Cua a day, a week and a month later?
+
+The activation funnel joins events on the anonymous install id, in order:
+app launched (`cua_onboarding_step` `app_launched`), first run completed
+(`onboarding_completed`), signed in (`signed_in`), first Space created
+(`first_space_created`), first Space ready (`first_space_ready`), first
+teleport (`first_teleport`) and first agent run (`first_agent_run`). The
+`first_*` steps are sent once per install. Retention counts installs with a
+`cua_app_active` event on day 1, 7 and 30 after their first one.
+
+## Never collected
+
+File paths, file names, usernames, hostnames, IP addresses, emails, window
+titles, URLs, clipboard, keystrokes or typed text, screenshots, screen or
+accessibility content, prompts, model output, sandbox or Space names, error
+messages, and anything stored in the Keyvault (only consent decisions are
+counted). Tests enforce this: every event builder is fed paths, emails,
+hostnames and window titles, and none may appear in a payload.

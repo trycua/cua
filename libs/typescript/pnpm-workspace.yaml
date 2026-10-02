@@ -1,5 +1,4 @@
 packages:
-  - "computer"
   - "core"
   - "agent"
   - "fleet"

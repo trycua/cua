@@ -1,0 +1,161 @@
+{
+  "name": "create-progress",
+  "about": "A create's bar moves smoothly: the catalog names the new Space's distribution, kind and platform from the start (Omarchy's icon and System, not Linux), a pull moves by its bytes, and a phase without a fraction moves with the time it usually takes for the image's family (an emulated VM's boot, a container's start), easing toward, never reaching, the phase's end. Shells tick a few times a second with `now`; the bar never goes back.",
+  "now": 1800000000000,
+  "rows": [],
+  "creates": [
+    {
+      "type": "start",
+      "id": "pending:1",
+      "name": "",
+      "os": "linux",
+      "provider": "local",
+      "now": 1800000001000,
+      "image": "ghcr.io/trycua/omarchy:edge",
+      "kind": "vm",
+      "hostArch": "aarch64"
+    },
+    {
+      "type": "tick",
+      "now": 1800000001250
+    },
+    {
+      "type": "progress",
+      "id": "pending:1",
+      "phase": "preparing",
+      "fraction": null,
+      "now": 1800000001300
+    },
+    {
+      "type": "tick",
+      "now": 1800000002000
+    },
+    {
+      "type": "progress",
+      "id": "pending:1",
+      "phase": "pulling",
+      "fraction": null,
+      "now": 1800000002500
+    },
+    {
+      "type": "progress",
+      "id": "pending:1",
+      "phase": "pulling",
+      "fraction": 0.25,
+      "now": 1800000011000
+    },
+    {
+      "type": "progress",
+      "id": "pending:1",
+      "phase": "pulling",
+      "fraction": 1.0,
+      "now": 1800000041000
+    },
+    {
+      "type": "progress",
+      "id": "pending:1",
+      "phase": "booting",
+      "fraction": null,
+      "now": 1800000046000
+    },
+    {
+      "type": "tick",
+      "now": 1800000047000
+    },
+    {
+      "type": "progress",
+      "id": "pending:1",
+      "phase": "waiting_for_services",
+      "fraction": null,
+      "now": 1800000048000
+    },
+    {
+      "type": "tick",
+      "now": 1800000078000
+    },
+    {
+      "type": "tick",
+      "now": 1800000138000
+    },
+    {
+      "type": "tick",
+      "now": 1800000248000
+    },
+    {
+      "type": "tick",
+      "now": 1800000901000
+    },
+    {
+      "type": "start",
+      "id": "pending:2",
+      "name": "",
+      "os": "linux",
+      "provider": "local",
+      "now": 1800000901000,
+      "image": "ghcr.io/trycua/linux:24.04-slim",
+      "kind": "container",
+      "hostArch": "aarch64"
+    },
+    {
+      "type": "progress",
+      "id": "pending:2",
+      "phase": "creating",
+      "fraction": null,
+      "now": 1800000902000
+    },
+    {
+      "type": "tick",
+      "now": 1800000902500
+    },
+    {
+      "type": "progress",
+      "id": "pending:1",
+      "phase": "connecting",
+      "fraction": null,
+      "now": 1800000903000
+    },
+    {
+      "type": "progress",
+      "id": "pending:2",
+      "phase": "waiting_for_services",
+      "fraction": null,
+      "now": 1800000903000
+    },
+    {
+      "type": "tick",
+      "now": 1800000906000
+    },
+    {
+      "type": "progress",
+      "id": "pending:1",
+      "phase": "pulling",
+      "fraction": 0.5,
+      "now": 1800000906100
+    },
+    {
+      "type": "finish",
+      "id": "pending:1",
+      "spaceId": "local:omarchy"
+    },
+    {
+      "type": "tick",
+      "now": 1800000907000
+    }
+  ],
+  "refreshed": [
+    {
+      "id": "local:omarchy",
+      "name": "omarchy",
+      "provider": "local",
+      "spacesdVersion": "0.4.0",
+      "features": [
+        "desktop_stream"
+      ],
+      "os": "linux",
+      "image": "ghcr.io/trycua/omarchy:edge",
+      "kind": "vm",
+      "arch": "amd64",
+      "reachable": true
+    }
+  ]
+}

@@ -619,3 +619,68 @@ Discard and rebuild the private seed when its signature becomes ad-hoc, the
 permission check fails, the public base or toolchain needs an update, or the
 seed has been booted for a test. Keep the last known-good stopped seed until its
 replacement passes one full worker run and one SIP-on permission-flow check.
+
+## Focused product-owned window regression
+
+`product_window_regression.py` checks the signed driver's own PiP window through
+its public CLI. Use a disposable logged-in worker and the existing stable
+`CuaDriverLocal.app` identity, built from the exact committed source with
+`install-local.sh --require-stable-signing` as above. The driver must already
+have its normal app-owned Accessibility and Screen Recording permissions. The
+check does not install anything or request grants. Keep the golden image stopped.
+
+From Terminal in the worker, launch a separate standard-mode diagnostic socket:
+
+```bash
+SOURCE_SHA="$(cat .cua-e2e-source-sha)"
+BIN=/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local
+RUN="$(mktemp -d /tmp/cua-product-window.XXXXXX)"
+open -n -g -a /Applications/CuaDriverLocal.app \
+  --stdout "$RUN/daemon.stdout" --stderr "$RUN/daemon.stderr" --args \
+  serve --permission-mode standard --no-permissions-gate \
+  --socket "$RUN/driver.sock" --pid-file "$RUN/driver.pid" --no-overlay \
+  --experimental-pip --experimental-pip-geometry 320x200+100+100
+for attempt in {1..30}; do
+  [[ -f "$RUN/driver.pid" && -S "$RUN/driver.sock" ]] && break
+  sleep 1
+done
+PID="$(cat "$RUN/driver.pid")"
+RESULT=0
+python3 libs/cua-driver/tests/runners/macos-lume/product_window_regression.py \
+  --socket "$RUN/driver.sock" --pid "$PID" --source-sha "$SOURCE_SHA" \
+  --artifacts "$RUN/checks" || RESULT=$?
+"$BIN" --socket "$RUN/driver.sock" --expected-pid "$PID" stop
+for attempt in {1..30}; do
+  if ! kill -0 "$PID" 2>/dev/null && [[ ! -S "$RUN/driver.sock" ]]; then break; fi
+  sleep 1
+done
+if kill -0 "$PID" 2>/dev/null || [[ -S "$RUN/driver.sock" ]]; then
+  echo "Diagnostic cleanup is incomplete; retain this worker for inspection" >&2
+  RESULT=1
+fi
+printf 'result=%s evidence=%s\n' "$RESULT" "$RUN"
+```
+
+Keep the exit result, source/signature/build provenance, daemon logs, and the
+whole new `checks` directory. A successful `result.json` requires independent
+WindowServer bounds for own/external moves and resizes, exact ownership and
+closed-window refusals, a fixed-size refusal, and the public own-process focus
+refusal. Refusal observations cover the recorded target bounds and frontmost
+process; they do not prove every possible side effect absent.
+
+The menu check launches fresh TextEdit and Calculator instances with state
+restoration disabled only in their argument domain. It waits for the existing
+background-launch watchdog to expire, then minimizes Calculator through its
+menu while restoring the original of two scratch documents. A read-only
+WindowServer/NSWorkspace observer checks minimization and window order. A
+no-target desktop typing call then verifies that only the original document
+receives a nonce, with no intervening activation or focus helper. Cleanup checks
+that every test-owned app process exited; it leaves the supplied driver for the
+caller to stop with its exact PID.
+
+This is a focused native product/CLI check, not the full desktop matrix or an
+embedded-SDK cancellation test. The hermetic native-operation and SDK tests own
+queued/started cancellation and shutdown coverage. For thread-routing mutation
+sensitivity, a disposable build that executes own-process `with_window` directly
+on the worker must fail the own geometry case; do not treat that failure as a
+reproduction of the historical crash.

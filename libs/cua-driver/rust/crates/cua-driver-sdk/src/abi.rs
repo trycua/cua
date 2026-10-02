@@ -7,6 +7,7 @@
 
 use crate::runtime::{DriverRuntime, RuntimeCreateError, RuntimeOptions, RuntimeSession};
 use crate::{DriverError, DriverMetadata};
+use cua_driver_core::native_operation::{NativeOperation as OperationState, NATIVE_OPERATION};
 use cua_driver_core::{
     authorization::{
         PermissionMode, DANGEROUS_BYPASS_ENV, DISABLE_UNRESTRICTED_ENV, PERMISSION_MODE_ENV,
@@ -23,12 +24,9 @@ use std::ffi::c_void;
 use std::future::Future;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex, OnceLock,
-};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
-use tokio::sync::{oneshot, Notify};
+use tokio::sync::oneshot;
 
 pub const CUA_DRIVER_ABI_MAJOR: u16 = 1;
 pub const CUA_DRIVER_ABI_MINOR: u16 = 1;
@@ -103,38 +101,6 @@ pub struct CuaDriverHandle {
 /// authorization context.
 pub struct CuaDriverSessionHandle {
     session: Arc<RuntimeSession>,
-}
-
-struct OperationState {
-    cancelled: AtomicBool,
-    changed: Notify,
-}
-
-impl OperationState {
-    fn new() -> Self {
-        Self {
-            cancelled: AtomicBool::new(false),
-            changed: Notify::new(),
-        }
-    }
-
-    fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
-        // There is exactly one cancellation waiter per operation. `notify_one`
-        // stores a permit when cancellation wins the race before that waiter
-        // first polls; `notify_waiters` would lose that wake-up.
-        self.changed.notify_one();
-    }
-
-    async fn cancelled(&self) {
-        loop {
-            let changed = self.changed.notified();
-            if self.cancelled.load(Ordering::Acquire) {
-                return;
-            }
-            changed.await;
-        }
-    }
 }
 
 /// Opaque token for one asynchronous operation.
@@ -502,7 +468,7 @@ where
     executor.spawn(async move {
         // A nested task converts a native panic into a JoinError so it cannot
         // unwind through either the callback or the exported C function.
-        let mut work = tokio::spawn(future);
+        let mut work = tokio::spawn(NATIVE_OPERATION.scope(state.clone(), future));
         let completed = tokio::select! {
             joined = &mut work => match joined {
                 Ok(result) => result,
@@ -1716,6 +1682,100 @@ mod tests {
         }
         assert!(first.is_null());
         assert!(second.is_null());
+    }
+
+    #[tokio::test]
+    async fn cancellation_prevents_a_queued_native_write() {
+        let (sender, receiver) = oneshot::channel();
+        let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
+        let (queued_tx, queued_rx) = oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (observed_tx, observed_rx) = oneshot::channel();
+        let mut operation = spawn_completion(
+            abi_executor().unwrap().handle().clone(),
+            async move {
+                let native = OperationState::current();
+                tokio::task::spawn_blocking(move || {
+                    queued_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    observed_tx.send(native.begin()).unwrap();
+                    Ok("native completion".into())
+                })
+                .await
+                .unwrap()
+            },
+            rust_completion,
+            context,
+        )
+        .unwrap();
+        queued_rx.await.unwrap();
+        unsafe {
+            cua_driver_operation_cancel_v1(operation);
+        }
+        let completed = tokio::time::timeout(Duration::from_secs(2), receiver)
+            .await
+            .unwrap()
+            .unwrap();
+        release_tx.send(()).unwrap();
+        let started = tokio::time::timeout(Duration::from_secs(2), observed_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        unsafe {
+            cua_driver_operation_release_v1(&mut operation);
+        }
+        assert_eq!(completed.status, CuaDriverStatus::Cancelled);
+        assert!(
+            !started,
+            "cancelled queued work started a late native write"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_native_work_must_finish_before_completion() {
+        let (sender, mut receiver) = oneshot::channel();
+        let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
+        let (started_tx, started_rx) = oneshot::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let mut operation = spawn_completion(
+            abi_executor().unwrap().handle().clone(),
+            async move {
+                let native = OperationState::current();
+                tokio::task::spawn_blocking(move || {
+                    assert!(native.begin());
+                    started_tx.send(()).unwrap();
+                    finish_rx.recv().unwrap();
+                    Ok("native work completed".into())
+                })
+                .await
+                .unwrap()
+            },
+            rust_completion,
+            context,
+        )
+        .unwrap();
+        started_rx.await.unwrap();
+        unsafe {
+            cua_driver_operation_cancel_v1(operation);
+        }
+        let early = tokio::time::timeout(Duration::from_millis(100), &mut receiver).await;
+        finish_tx.send(()).unwrap();
+        let premature = early.is_ok();
+        let completed = match early {
+            Ok(value) => value.unwrap(),
+            Err(_) => tokio::time::timeout(Duration::from_secs(2), receiver)
+                .await
+                .unwrap()
+                .unwrap(),
+        };
+        unsafe {
+            cua_driver_operation_release_v1(&mut operation);
+        }
+        assert!(
+            !premature,
+            "completion returned while started native work was still running"
+        );
+        assert_eq!(completed.status, CuaDriverStatus::Ok);
     }
 
     #[tokio::test]

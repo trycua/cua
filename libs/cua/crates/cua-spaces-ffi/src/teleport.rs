@@ -302,6 +302,7 @@ impl Teleport {
             cookies: cua_keyvault::broker::CookieFilter::default(),
             confirm_passwords: true,
             paths: Some(paths.clone()),
+            domains: None,
         };
         run(async move {
             let mut client = cua_keyvault::client::KeyvaultClient::connect_default()

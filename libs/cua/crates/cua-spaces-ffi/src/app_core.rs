@@ -1040,6 +1040,31 @@ pub fn app_picker_review(state: AppPickerState) -> Option<AppReviewView> {
     core::teleport::flow::review(&state)
 }
 
+/// The key a review's site choice is remembered under (`<app>|<space>`).
+#[uniffi::export]
+pub fn app_review_remember_key(app: String, space: String) -> String {
+    core::teleport::review::remember_key(&app, &space)
+}
+
+/// What was picked last time for `key` (an app and a Space), if anything.
+#[uniffi::export]
+pub fn app_review_remembered(
+    choices: Vec<AppRememberedChoice>,
+    key: String,
+) -> Option<Vec<String>> {
+    core::teleport::review::remembered(&choices, &key)
+}
+
+/// `choices` with the sites just sent remembered for `key`.
+#[uniffi::export]
+pub fn app_review_remember(
+    choices: Vec<AppRememberedChoice>,
+    key: String,
+    domains: Vec<String>,
+) -> Vec<AppRememberedChoice> {
+    core::teleport::review::remember(&choices, &key, &domains)
+}
+
 /// The consent the confirmed review carries.
 #[uniffi::export]
 pub fn app_picker_consent(state: AppPickerState) -> AppTeleportConsent {
@@ -1386,37 +1411,92 @@ pub fn kv_space_access_key(
     core::keyvault::view::space_access_key(&overview, now_ms, &space)
 }
 
-/// The Passwords-style sidebar.
+/// The sidebar: All Items, Waiting, Access, Recent, and one row per app.
 #[uniffi::export]
 pub fn kv_sidebar(overview: KeyvaultOverview, now_ms: i64) -> KvSidebar {
     core::keyvault::browse::sidebar(&overview, now_ms)
 }
 
-/// The list for a sidebar selection.
+/// The pane for a sidebar selection (the vault list is [`kv_vault_view`]).
 #[uniffi::export]
-pub fn kv_list(
-    overview: KeyvaultOverview,
-    selection: KvSelection,
-    now_ms: i64,
-    query: String,
-) -> KvListView {
-    core::keyvault::browse::list(&overview, &selection, now_ms, &query)
+pub fn kv_list(overview: KeyvaultOverview, selection: KvSelection, now_ms: i64) -> KvListView {
+    core::keyvault::browse::list(&overview, &selection, now_ms)
 }
 
-/// One site's detail.
+/// The vault list's next state (search, selection, open groups).
 #[uniffi::export]
-pub fn kv_site_detail(
+pub fn kv_vault_reduce(
     overview: KeyvaultOverview,
-    key: String,
-    now_ms: i64,
-) -> Option<KvSiteDetail> {
-    core::keyvault::browse::site_detail(&overview, &key, now_ms)
+    state: KvVaultState,
+    action: KvVaultAction,
+) -> KvVaultState {
+    core::keyvault::vault::reduce(&overview, &state, &action)
 }
 
-/// The site switch's command.
+/// The vault list: apps, sites and items with their locks, the selection and
+/// the batch bar.
 #[uniffi::export]
-pub fn kv_site_toggle(group: KvSiteGroup, on: bool) -> KvCommand {
-    core::keyvault::view::site_toggle(&group, on)
+pub fn kv_vault_view(overview: KeyvaultOverview, state: KvVaultState, now_ms: i64) -> KvVaultView {
+    core::keyvault::vault::view(&overview, &state, now_ms)
+}
+
+/// The selection without what the vault no longer holds.
+#[uniffi::export]
+pub fn kv_vault_prune(overview: KeyvaultOverview, state: KvVaultState) -> KvVaultState {
+    core::keyvault::vault::prune(&overview, &state)
+}
+
+/// What the Keyvault holds for `provider_id` that a teleport can send.
+#[uniffi::export]
+pub fn kv_vault_source(overview: KeyvaultOverview, provider_id: String) -> KvVaultSource {
+    core::keyvault::vault::vault_source(&overview, &provider_id)
+}
+
+/// The command that locks items.
+#[uniffi::export]
+pub fn kv_lock_command(ids: Vec<String>) -> KvCommand {
+    core::keyvault::vault::lock_command(&ids)
+}
+
+/// The command that unlocks items (the daemon asks for Touch ID once).
+#[uniffi::export]
+pub fn kv_unlock_command(ids: Vec<String>) -> KvCommand {
+    core::keyvault::vault::unlock_command(&ids)
+}
+
+/// The command that deletes items and wipes their copies in Spaces.
+#[uniffi::export]
+pub fn kv_delete_command(ids: Vec<String>) -> KvCommand {
+    core::keyvault::vault::delete_command(&ids)
+}
+
+/// The unlock prompt for `count` items (`name`: the one item's name). None
+/// when the user chose "Never ask again".
+#[uniffi::export]
+pub fn kv_unlock_prompt(
+    overview: KeyvaultOverview,
+    count: u32,
+    name: Option<String>,
+) -> Option<KvUnlockPrompt> {
+    core::keyvault::vault::unlock_prompt(&overview, count, name.as_deref())
+}
+
+/// The unlock prompt whatever the setting says.
+#[uniffi::export]
+pub fn kv_unlock_prompt_always(count: u32, name: Option<String>) -> KvUnlockPrompt {
+    core::keyvault::vault::unlock_prompt_always(count, name.as_deref())
+}
+
+/// The delete confirmation.
+#[uniffi::export]
+pub fn kv_delete_confirm(count: u32, live_copies: u32) -> KvDeleteConfirm {
+    core::keyvault::vault::delete_confirm(count, live_copies)
+}
+
+/// How many Spaces hold a live copy of any of `ids`.
+#[uniffi::export]
+pub fn kv_live_copy_spaces(overview: KeyvaultOverview, ids: Vec<String>, now_ms: i64) -> u32 {
+    core::keyvault::vault::live_copy_spaces(&overview, &ids, now_ms)
 }
 
 /// Opens the approval sheet with nothing selected.
@@ -1583,6 +1663,14 @@ impl KeyvaultClient {
     pub async fn lock(&self) -> Result<()> {
         let inner = self.inner.clone();
         cua_sdk::support::run(async move { inner.lock().await.map_err(kv_error) }).await
+    }
+
+    /// What `app` holds, per domain with counts (the daemon asks for Touch ID
+    /// when the browse window is closed). Never a value.
+    pub async fn inventory(&self, app: String, profile: Option<String>) -> Result<KvInventory> {
+        let inner = self.inner.clone();
+        cua_sdk::support::run(async move { inner.inventory(&app, profile).await.map_err(kv_error) })
+            .await
     }
 }
 

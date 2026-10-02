@@ -10,6 +10,8 @@
 //! webview uses; `json` carries the SDK's own JSON for the entry or plan so
 //! the shell can hand it back to `plan` / `run` untouched.
 
+use super::review::{self, ReviewChoice, ReviewDomain, ReviewToggle, SendSource, VaultSource};
+use crate::keyvault::wire::KvInventory;
 use crate::util::{contains_word, to_fixed};
 use serde::{Deserialize, Serialize};
 
@@ -289,7 +291,7 @@ pub struct RunReport {
 }
 
 /// The consent the run carries (`cua_teleport::ux::Consent`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Consent {
     /// Confirmed.
@@ -302,6 +304,16 @@ pub struct Consent {
     /// [`Plan::relay_unsealed`]'s warning acknowledged (S1).
     #[serde(default)]
     pub acknowledge_relay_plaintext: bool,
+    /// The sites whose cookies to send (the review's per-site choice);
+    /// `None` when the review did not list sites.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cookie_domains: Option<Vec<String>>,
+    /// Consent items (keys) the user turned off.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+    /// Send these saved Keyvault items instead of reading the live app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_vault: Option<Vec<String>>,
 }
 
 /// The "needs the Cua app" prompt for a Keyvault refusal.
@@ -419,6 +431,9 @@ pub struct PickerState {
     /// [`Plan::relay_unsealed`]'s warning acknowledged (S1).
     #[serde(default)]
     pub acknowledged_relay_plaintext: bool,
+    /// What the review sends: which sites, which items, from where.
+    #[serde(default)]
+    pub choice: ReviewChoice,
     /// Run events (last [`MAX_EVENTS`]).
     pub events: Vec<RunEvent>,
     /// The run's report.
@@ -521,6 +536,60 @@ pub enum PickerEvent {
         /// Checked.
         value: bool,
     },
+    /// The browser's sites with counts arrived (and what was picked last time
+    /// for this app and Space, if anything).
+    DomainsLoaded {
+        /// The inventory.
+        inventory: KvInventory,
+        /// The sites sent last time.
+        #[serde(default)]
+        remembered: Option<Vec<String>>,
+    },
+    /// The inventory could not be read (the review then sends what the plan
+    /// lists, as before).
+    DomainsFailed,
+    /// Pick or drop one site.
+    ToggleDomain {
+        /// The site.
+        domain: String,
+    },
+    /// Pick or drop every site the search shows.
+    SelectShownDomains {
+        /// Pick (true) or drop.
+        value: bool,
+    },
+    /// The sites list's search text.
+    DomainQuery {
+        /// Text.
+        text: String,
+    },
+    /// Turn a consent line on or off.
+    ToggleItem {
+        /// The consent item's key.
+        key: String,
+    },
+    /// Where to send from.
+    SendFrom {
+        /// The source.
+        source: SendSource,
+    },
+    /// The app's saved Keyvault items (what the Keyvault holds for it).
+    #[serde(rename_all = "camelCase")]
+    VaultItems {
+        /// How many can be sent.
+        count: u32,
+        /// When the newest was saved, Unix ms.
+        newest_ms: i64,
+        /// Now, Unix ms.
+        now_ms: i64,
+        /// The ones chosen to send (ids).
+        selected: Vec<String>,
+    },
+    /// The chosen saved items changed.
+    VaultSelection {
+        /// The ids.
+        selected: Vec<String>,
+    },
     /// Confirm the review.
     Confirm,
     /// A run event.
@@ -553,6 +622,7 @@ pub fn initial(space_name: &str) -> PickerState {
         acknowledged: false,
         save_to_keyvault: false,
         acknowledged_relay_plaintext: false,
+        choice: ReviewChoice::default(),
         events: vec![],
         report: None,
         error: None,
@@ -581,6 +651,7 @@ fn to_options(s: &PickerState, entry: &CatalogEntry, files: Vec<String>) -> Pick
         acknowledged: false,
         save_to_keyvault: false,
         acknowledged_relay_plaintext: false,
+        choice: ReviewChoice::default(),
         error: None,
         install_prompt: None,
         ..s.clone()
@@ -690,18 +761,46 @@ pub fn can_plan(s: &PickerState) -> bool {
 /// The review can be confirmed: a plan, secrets acknowledged when any, and
 /// the relay-plaintext warning acknowledged when it applies (S1).
 pub fn can_confirm(s: &PickerState) -> bool {
-    s.plan.as_ref().is_some_and(|p| {
-        (!p.sensitive || s.acknowledged) && (!p.relay_unsealed || s.acknowledged_relay_plaintext)
-    })
+    let from_vault_ok = s.choice.source != SendSource::Vault || !s.choice.vault.selected.is_empty();
+    from_vault_ok
+        && s.plan.as_ref().is_some_and(|p| {
+            (!p.sensitive || s.acknowledged)
+                && (!p.relay_unsealed || s.acknowledged_relay_plaintext)
+        })
+}
+
+/// Whether a consent key is the browser's cookie store.
+fn is_cookie_key(key: &str) -> bool {
+    key.rsplit('/')
+        .next()
+        .unwrap_or(key)
+        .eq_ignore_ascii_case("cookies")
+}
+
+/// The plan sends a browser's cookies.
+fn sends_cookies(plan: &Plan) -> bool {
+    plan.consent.iter().any(|c| is_cookie_key(&c.key))
+}
+
+/// Consent lines the user may turn off: not installs, and not the cookie
+/// store while its sites are listed (the site choice is that line).
+fn toggleable(c: &ConsentItem, choice: &ReviewChoice) -> bool {
+    c.kind != ConsentKind::Install && !(is_cookie_key(&c.key) && !choice.domains.is_empty())
 }
 
 /// The consent the confirmed review carries.
 pub fn consent(s: &PickerState) -> Consent {
+    let vault = s.choice.source == SendSource::Vault;
     Consent {
         approved: can_confirm(s),
         acknowledge_sensitive: s.acknowledged,
-        save_to_keyvault: s.save_to_keyvault,
+        // Items sent from the vault are already saved.
+        save_to_keyvault: s.save_to_keyvault && !vault,
         acknowledge_relay_plaintext: s.acknowledged_relay_plaintext,
+        cookie_domains: (!vault && !s.choice.domains.is_empty())
+            .then(|| s.choice.selected_domains.clone()),
+        exclude: s.choice.excluded.clone(),
+        from_vault: vault.then(|| s.choice.vault.selected.clone()),
     }
 }
 
@@ -934,6 +1033,7 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
                 n.acknowledged = false;
                 n.save_to_keyvault = false;
                 n.acknowledged_relay_plaintext = false;
+                n.choice = ReviewChoice::default();
             }
         }
         PickerEvent::Acknowledge { value } => {
@@ -952,6 +1052,85 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
         PickerEvent::AcknowledgeRelayPlaintext { value } => {
             if s.step == Step::Consent {
                 n.acknowledged_relay_plaintext = *value;
+            }
+        }
+        PickerEvent::DomainsLoaded {
+            inventory,
+            remembered,
+        } => {
+            if s.step == Step::Consent {
+                let keep = n.choice.clone();
+                n.choice = review::with_inventory(keep, inventory, remembered.as_deref());
+                n.choice.loaded = true;
+            }
+        }
+        PickerEvent::DomainsFailed => {
+            if s.step == Step::Consent {
+                n.choice.loaded = true;
+            }
+        }
+        PickerEvent::ToggleDomain { domain } => {
+            if s.step == Step::Consent {
+                review::toggle_domain(&mut n.choice, domain);
+            }
+        }
+        PickerEvent::SelectShownDomains { value } => {
+            if s.step == Step::Consent {
+                review::set_shown_domains(&mut n.choice, *value);
+            }
+        }
+        PickerEvent::DomainQuery { text } => {
+            if s.step == Step::Consent {
+                n.choice.query = text.clone();
+            }
+        }
+        PickerEvent::ToggleItem { key } => {
+            let ok = s.step == Step::Consent
+                && s.plan.as_ref().is_some_and(|p| {
+                    p.consent
+                        .iter()
+                        .any(|c| &c.key == key && toggleable(c, &s.choice))
+                });
+            if ok {
+                match n.choice.excluded.iter().position(|k| k == key) {
+                    Some(i) => {
+                        n.choice.excluded.remove(i);
+                    }
+                    None => n.choice.excluded.push(key.clone()),
+                }
+            }
+        }
+        PickerEvent::SendFrom { source } => {
+            if s.step == Step::Consent && (*source == SendSource::Live || s.choice.vault.available)
+            {
+                n.choice.source = *source;
+            }
+        }
+        PickerEvent::VaultItems {
+            count,
+            newest_ms,
+            now_ms,
+            selected,
+        } => {
+            if s.step == Step::Consent {
+                n.choice.vault = VaultSource {
+                    available: *count > 0,
+                    items: *count,
+                    saved: if *newest_ms > 0 {
+                        format!("saved {}", crate::keyvault::view::ago(now_ms - newest_ms))
+                    } else {
+                        String::new()
+                    },
+                    selected: selected.clone(),
+                };
+                if *count == 0 {
+                    n.choice.source = SendSource::Live;
+                }
+            }
+        }
+        PickerEvent::VaultSelection { selected } => {
+            if s.step == Step::Consent && s.choice.vault.available {
+                n.choice.vault.selected = selected.clone();
             }
         }
         PickerEvent::Confirm => {
@@ -986,6 +1165,7 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
                 n.acknowledged = false;
                 n.save_to_keyvault = false;
                 n.acknowledged_relay_plaintext = false;
+                n.choice = ReviewChoice::default();
             }
             Step::Error => {
                 n.step = s.error_back;
@@ -1029,6 +1209,35 @@ pub struct ReviewView {
     pub leaves_text: Option<String>,
     /// Caveats.
     pub warnings: Vec<String>,
+    /// Lines the user can turn off (files, folders, state, secrets), each
+    /// with whether it is sent. The cookie store is the site list below.
+    pub toggles: Vec<ReviewToggle>,
+    /// The plan sends a browser's cookies, so the sites can be chosen.
+    pub offers_domains: bool,
+    /// The sites have not been read yet (the shell asks the Keyvault for
+    /// them, which may ask for Touch ID).
+    pub needs_domains: bool,
+    /// The sites with counts, filtered by the search.
+    pub domains: Vec<ReviewDomain>,
+    /// "3 of 12 sites".
+    pub domain_summary: String,
+    /// The sites search text.
+    pub domain_query: String,
+    /// The sites chosen (what is remembered for next time).
+    pub selected_domains: Vec<String>,
+    /// Where it sends from.
+    pub source: SendSource,
+    /// The app has saved Keyvault items to send instead of reading the live
+    /// app.
+    pub offers_vault: bool,
+    /// The saved items.
+    pub vault: VaultSource,
+    /// "Send from the Keyvault (212 items, saved 2 days ago)".
+    pub vault_label: String,
+    /// "Read Chrome now (macOS asks for Keychain access)".
+    pub live_label: String,
+    /// What the Keychain will do for this source, in a line.
+    pub source_note: String,
 }
 
 /// The review, when a plan is under review.
@@ -1043,10 +1252,80 @@ pub fn review(s: &PickerState) -> Option<ReviewView> {
     if plan.relay_unsealed {
         warnings.push(RELAY_PLAINTEXT_WARNING.into());
     }
+    let choice = &s.choice;
+    let vault = choice.source == SendSource::Vault;
+    let cookies = sends_cookies(plan);
+    // What leaves, less what was turned off (and the cookie store when no
+    // site is chosen).
+    let no_sites = !choice.domains.is_empty() && choice.selected_domains.is_empty();
+    let bytes: u64 = plan
+        .consent
+        .iter()
+        .filter(|c| !choice.excluded.contains(&c.key) && !(no_sites && is_cookie_key(&c.key)))
+        .map(|c| c.bytes)
+        .sum();
+    let leaves_text = if vault {
+        let n = choice.vault.selected.len();
+        Some(format!(
+            "{n} saved item{} from the Keyvault",
+            if n == 1 { "" } else { "s" }
+        ))
+    } else {
+        (bytes > 0).then(|| format!("{} leaves this Mac", format_bytes(bytes)))
+    };
+    let app = &plan.app.name;
     Some(ReviewView {
         title: format!("Teleport {} to {}", plan.app.name, s.space_name),
         items: plan.consent.clone(),
         steps: plan.steps.clone(),
+        toggles: plan
+            .consent
+            .iter()
+            .filter(|c| toggleable(c, choice))
+            .map(|c| ReviewToggle {
+                key: c.key.clone(),
+                label: c.label.clone(),
+                detail: c.detail.clone(),
+                bytes: c.bytes,
+                sensitive: c.sensitive,
+                selected: !choice.excluded.contains(&c.key),
+            })
+            .collect(),
+        offers_domains: cookies && !vault,
+        needs_domains: cookies && !vault && !choice.loaded,
+        domains: review::domain_rows(choice),
+        domain_summary: review::domain_summary(choice),
+        domain_query: choice.query.clone(),
+        selected_domains: choice.selected_domains.clone(),
+        source: choice.source,
+        offers_vault: choice.vault.available,
+        vault: choice.vault.clone(),
+        vault_label: if choice.vault.available {
+            let n = choice.vault.items;
+            let saved = if choice.vault.saved.is_empty() {
+                String::new()
+            } else {
+                format!(", {}", choice.vault.saved)
+            };
+            format!(
+                "Send from the Keyvault ({n} item{}{saved})",
+                if n == 1 { "" } else { "s" }
+            )
+        } else {
+            String::new()
+        },
+        live_label: if cookies {
+            format!("Read {app} now")
+        } else {
+            format!("Read {app} on this Mac")
+        },
+        source_note: if vault {
+            "Nothing is read from this Mac, so macOS does not ask for Keychain access.".into()
+        } else if cookies {
+            format!("Reading {app}'s cookies makes macOS ask for Keychain access.")
+        } else {
+            String::new()
+        },
         needs_acknowledgement: plan.sensitive,
         acknowledged: s.acknowledged,
         offers_save_to_keyvault: plan.sensitive,
@@ -1054,8 +1333,7 @@ pub fn review(s: &PickerState) -> Option<ReviewView> {
         needs_relay_plaintext_acknowledgement: plan.relay_unsealed,
         acknowledged_relay_plaintext: s.acknowledged_relay_plaintext,
         can_confirm: can_confirm(s),
-        leaves_text: (plan.total_bytes > 0)
-            .then(|| format!("{} leaves this Mac", format_bytes(plan.total_bytes))),
+        leaves_text,
         warnings,
     })
 }
@@ -1334,5 +1612,286 @@ mod tests {
         assert!(!review_ns.offers_save_to_keyvault);
         let ns = reduce(&ns, &PickerEvent::SaveToKeyvault { value: true });
         assert!(!ns.save_to_keyvault);
+    }
+
+    /// A chrome plan that sends its cookie store, a bookmarks file and tabs.
+    fn browser_plan() -> Plan {
+        let mut p = plan(true);
+        p.consent = vec![
+            ConsentItem {
+                kind: ConsentKind::Install,
+                key: "chrome".into(),
+                label: "Google Chrome".into(),
+                detail: "pinned".into(),
+                bytes: 0,
+                sensitive: false,
+            },
+            ConsentItem {
+                kind: ConsentKind::State,
+                key: "Default/Bookmarks".into(),
+                label: "Bookmarks".into(),
+                detail: "".into(),
+                bytes: 200,
+                sensitive: false,
+            },
+            ConsentItem {
+                kind: ConsentKind::Secret,
+                key: ".config/google-chrome/Default/Cookies".into(),
+                label: "Cookies".into(),
+                detail: "".into(),
+                bytes: 800,
+                sensitive: true,
+            },
+        ];
+        p.total_bytes = 1000;
+        p
+    }
+
+    fn inventory() -> KvInventory {
+        use crate::keyvault::wire::KvDomainCount;
+        let d = |domain: &str, cookies: u32, signin: bool, idp: bool| KvDomainCount {
+            domain: domain.into(),
+            cookies,
+            signin,
+            identity_provider: idp,
+            ..Default::default()
+        };
+        KvInventory {
+            provider_id: "chrome".into(),
+            app_display: "Google Chrome".into(),
+            domains: vec![
+                d("github.com", 12, true, false),
+                d("google.com", 30, true, true),
+                d("notion.so", 4, true, false),
+                d("doubleclick.net", 9, false, false),
+            ],
+            notes: vec![],
+        }
+    }
+
+    fn review_state() -> PickerState {
+        let s = reduce(
+            &consent_state(),
+            &PickerEvent::Planned {
+                plan: browser_plan(),
+            },
+        );
+        reduce(&s, &PickerEvent::Acknowledge { value: true })
+    }
+
+    /// The browser's sites are asked for once, start minimal (or from what
+    /// was picked last time), and the consent carries exactly the chosen ones.
+    #[test]
+    fn the_review_lists_sites_with_counts_and_sends_only_the_chosen_ones() {
+        let s = review_state();
+        let rv = review(&s).unwrap();
+        assert!(rv.offers_domains && rv.needs_domains && rv.domains.is_empty());
+        assert_eq!(
+            rv.toggles
+                .iter()
+                .map(|t| t.key.as_str())
+                .collect::<Vec<_>>(),
+            ["Default/Bookmarks", ".config/google-chrome/Default/Cookies"],
+            "until the sites are listed the cookie line is a plain line"
+        );
+        assert!(consent(&s).cookie_domains.is_none());
+
+        let s = reduce(
+            &s,
+            &PickerEvent::DomainsLoaded {
+                inventory: inventory(),
+                remembered: None,
+            },
+        );
+        let rv = review(&s).unwrap();
+        assert!(!rv.needs_domains);
+        assert_eq!(
+            rv.domain_summary, "2 of 4 sites",
+            "minimal: sign-in sites, never an identity provider"
+        );
+        assert_eq!(rv.selected_domains, ["github.com", "notion.so"]);
+        assert_eq!(rv.domains[0].counts, "9 cookies");
+        assert_eq!(
+            rv.toggles
+                .iter()
+                .map(|t| t.key.as_str())
+                .collect::<Vec<_>>(),
+            ["Default/Bookmarks"],
+            "the cookie line is now the site list"
+        );
+        assert_eq!(
+            consent(&s).cookie_domains,
+            Some(vec!["github.com".to_string(), "notion.so".to_string()])
+        );
+
+        // Pick one more, drop one, search, turn the bookmarks off.
+        let s = reduce(
+            &s,
+            &PickerEvent::ToggleDomain {
+                domain: "google.com".into(),
+            },
+        );
+        let s = reduce(
+            &s,
+            &PickerEvent::ToggleDomain {
+                domain: "github.com".into(),
+            },
+        );
+        let s = reduce(
+            &s,
+            &PickerEvent::ToggleItem {
+                key: "Default/Bookmarks".into(),
+            },
+        );
+        let s = reduce(
+            &s,
+            &PickerEvent::ToggleItem {
+                key: "chrome".into(),
+            },
+        );
+        let s = reduce(
+            &s,
+            &PickerEvent::ToggleItem {
+                key: "unknown".into(),
+            },
+        );
+        let c = consent(&s);
+        assert_eq!(
+            c.cookie_domains,
+            Some(vec!["google.com".to_string(), "notion.so".to_string()])
+        );
+        assert_eq!(
+            c.exclude,
+            ["Default/Bookmarks"],
+            "installs and unknown lines cannot be turned off"
+        );
+        assert!(c.approved && c.from_vault.is_none());
+        let rv = review(&s).unwrap();
+        assert_eq!(rv.leaves_text.as_deref(), Some("800 B leaves this Mac"));
+        let s2 = reduce(&s, &PickerEvent::DomainQuery { text: "not".into() });
+        assert_eq!(review(&s2).unwrap().domains.len(), 1);
+        let s3 = reduce(&s2, &PickerEvent::SelectShownDomains { value: false });
+        assert_eq!(
+            consent(&s3).cookie_domains,
+            Some(vec!["google.com".to_string()])
+        );
+
+        // No sites chosen: no cookies leave, and the bytes follow.
+        let none = reduce(&s, &PickerEvent::SelectShownDomains { value: false });
+        let none = reduce(
+            &none,
+            &PickerEvent::DomainQuery {
+                text: String::new(),
+            },
+        );
+        let none = reduce(&none, &PickerEvent::SelectShownDomains { value: false });
+        assert_eq!(consent(&none).cookie_domains, Some(vec![]));
+        assert_eq!(review(&none).unwrap().leaves_text, None);
+
+        // What was picked last time wins over the minimal default.
+        let r = reduce(
+            &review_state(),
+            &PickerEvent::DomainsLoaded {
+                inventory: inventory(),
+                remembered: Some(vec!["doubleclick.net".into()]),
+            },
+        );
+        assert_eq!(review(&r).unwrap().selected_domains, ["doubleclick.net"]);
+
+        // A failed read leaves the plan as it was.
+        let f = reduce(&review_state(), &PickerEvent::DomainsFailed);
+        assert!(!review(&f).unwrap().needs_domains);
+        assert!(consent(&f).cookie_domains.is_none());
+        // Going Back forgets the choices.
+        assert_eq!(
+            reduce(&s, &PickerEvent::Back).choice,
+            ReviewChoice::default()
+        );
+    }
+
+    /// Sending from the Keyvault: offered only when the app has saved items,
+    /// reads nothing from the host, needs a selection, and carries the ids.
+    #[test]
+    fn the_review_can_send_the_apps_saved_keyvault_items_instead_of_reading_it() {
+        let s = review_state();
+        assert!(!review(&s).unwrap().offers_vault);
+        // Not offered: choosing it does nothing.
+        let nope = reduce(
+            &s,
+            &PickerEvent::SendFrom {
+                source: SendSource::Vault,
+            },
+        );
+        assert_eq!(review(&nope).unwrap().source, SendSource::Live);
+
+        let now = 1_800_000_000_000_i64;
+        let s = reduce(
+            &s,
+            &PickerEvent::VaultItems {
+                count: 212,
+                newest_ms: now - 2 * 24 * 3_600_000,
+                now_ms: now,
+                selected: vec!["a".into(), "b".into()],
+            },
+        );
+        let rv = review(&s).unwrap();
+        assert!(rv.offers_vault);
+        assert_eq!(
+            rv.vault_label,
+            "Send from the Keyvault (212 items, saved 2 days ago)"
+        );
+        assert_eq!(
+            rv.source,
+            SendSource::Live,
+            "reading the live app stays the default"
+        );
+        assert!(rv.source_note.contains("Keychain access"));
+
+        let s = reduce(
+            &s,
+            &PickerEvent::SendFrom {
+                source: SendSource::Vault,
+            },
+        );
+        let rv = review(&s).unwrap();
+        assert_eq!(rv.source, SendSource::Vault);
+        assert!(
+            !rv.offers_domains,
+            "no sites to pick: the saved items are the list"
+        );
+        assert!(rv.source_note.contains("Nothing is read from this Mac"));
+        assert_eq!(
+            rv.leaves_text.as_deref(),
+            Some("2 saved items from the Keyvault")
+        );
+        let c = consent(&s);
+        assert_eq!(c.from_vault, Some(vec!["a".to_string(), "b".to_string()]));
+        assert!(c.cookie_domains.is_none() && !c.save_to_keyvault);
+        assert!(c.approved);
+
+        // Nothing selected: nothing to send.
+        let empty = reduce(&s, &PickerEvent::VaultSelection { selected: vec![] });
+        assert!(!review(&empty).unwrap().can_confirm);
+        assert!(!consent(&empty).approved);
+        let back = reduce(
+            &empty,
+            &PickerEvent::VaultSelection {
+                selected: vec!["c".into()],
+            },
+        );
+        assert_eq!(consent(&back).from_vault, Some(vec!["c".to_string()]));
+
+        // The saved items vanished (deleted): back to the live app.
+        let gone = reduce(
+            &s,
+            &PickerEvent::VaultItems {
+                count: 0,
+                newest_ms: 0,
+                now_ms: now,
+                selected: vec![],
+            },
+        );
+        assert_eq!(review(&gone).unwrap().source, SendSource::Live);
+        assert!(!review(&gone).unwrap().offers_vault);
     }
 }

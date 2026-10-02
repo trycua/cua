@@ -50,6 +50,22 @@ login](/spaces/guides/site-login), without ever exposing the password to an
 agent. **Keep me signed in** (cookies) does not have this limitation.
 </Callout>
 
+### Choosing sites and sending from the Keyvault
+
+In Cua Spaces, **Keep me signed in** lists the browser's sites with counts
+(for example `github.com, 12 cookies, 3 storage values`) so you send the
+sites you mean to, not the whole profile. It starts from what you sent to that
+Space last time, or from the sites that look like they keep a sign-in; an
+identity provider (Google, Microsoft, Apple, Okta) is never picked for you.
+Other lines of the consent screen can be turned off one by one. Cookies are
+read once to build the list's counts from the plaintext columns of Chrome's
+store; nothing is decrypted until you teleport.
+
+If the Keyvault already holds items for the app (from **Save to Keyvault**),
+the review can **send from the Keyvault** instead: you pick from the saved
+items, nothing is read from this Mac, and macOS does not ask for Keychain
+access. See [Keyvault](/spaces/guides/keyvault).
+
 ## In Cua Spaces
 
 - **Teleport an app…** in a Space's window or viewer opens the picker: search,

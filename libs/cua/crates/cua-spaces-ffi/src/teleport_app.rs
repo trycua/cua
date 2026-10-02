@@ -616,7 +616,7 @@ mod space_side {
     }
 
     /// The user's answer to the consent screen.
-    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, uniffi::Record)]
+    #[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
     pub struct TeleportConsent {
         /// Confirmed.
         pub approved: bool,
@@ -630,6 +630,17 @@ mod space_side {
         /// Saw and accepted `TeleportPlan.relay_unsealed`'s warning (S1).
         #[uniffi(default = false)]
         pub acknowledge_relay_plaintext: bool,
+        /// The review's per-site choice: the sites whose cookies to send
+        /// (`None`: every cookie in the selection).
+        #[uniffi(default = None)]
+        pub cookie_domains: Option<Vec<String>>,
+        /// Consent items (their keys) the user turned off.
+        #[uniffi(default = [])]
+        pub exclude: Vec<String>,
+        /// Send these saved Keyvault items (ids) instead of reading the
+        /// live app: nothing is captured from the host.
+        #[uniffi(default = None)]
+        pub from_vault: Option<Vec<String>>,
     }
 
     /// One progress event of [`Teleport::run`].
@@ -856,6 +867,9 @@ mod space_side {
                     acknowledge_sensitive: consent.acknowledge_sensitive,
                     save_to_keyvault: consent.save_to_keyvault,
                     acknowledge_relay_plaintext: consent.acknowledge_relay_plaintext,
+                    cookie_domains: consent.cookie_domains.clone(),
+                    exclude: consent.exclude.clone(),
+                    from_vault: consent.from_vault.clone(),
                 })
                 .map_err(crate::teleport_app::ux_err)?;
             let sessions = sessions(self);

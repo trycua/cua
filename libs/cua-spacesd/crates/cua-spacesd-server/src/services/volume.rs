@@ -331,7 +331,10 @@ async fn clear_stale_mounts() {
         let r = if cfg!(target_os = "linux") {
             // Lazy: a dead FUSE/NFS mount may refuse a plain unmount.
             // SAFETY: geteuid never fails.
+            #[cfg(unix)]
             let root = unsafe { libc::geteuid() } == 0;
+            #[cfg(not(unix))]
+            let root = false;
             if root {
                 run("umount", &["-l", &p]).await
             } else {

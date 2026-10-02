@@ -121,6 +121,7 @@ public enum AppEnvironment {
             onboarding.accountToken = token
             model.host.accountToken = token
         }
+        if !fixtures { model.approvals = .live() }
         if let startError { model.show(error: startError) }
         if let live, let supervisor {
             if live.cua.mode() == .daemon {
@@ -231,7 +232,8 @@ public enum AppEnvironment {
     /// `approval`, `onboarding`, `onboarding-mode`, `this-machine`, `host-setup`,
     /// `host-configured`, `settings`, `settings-devices` (Settings on its
     /// Devices tab), `settings-about` (on its About tab), `settings-experiments`
-    /// (on its Experiments tab), `device-approval` (the approval sheet for the first
+    /// (on its Experiments tab), `settings-agent-approvals` (Agent approvals on a throwaway
+    /// policy; `CUA_SPACES_APPROVALS_OFF=cloud,display` starts those rows off), `device-approval` (the approval sheet for the first
     /// device asking; `CUA_SPACES_APPROVE_CODE` types its code),
     /// `device-enroll` (the enroll sheet), `device-enroll-code` (it, having
     /// chosen Approve from another device), `space`, `space-window` (the selected
@@ -362,8 +364,22 @@ public enum AppEnvironment {
                 model.onboarding.send(.presentationDone)
                 model.onboarding.send(.driveContinue)
                 model.onboarding.send(.modeChosen(mode: .client))
-            case "settings", "settings-devices", "settings-storage", "settings-about", "settings-experiments":
+            case "settings", "settings-devices", "settings-storage", "settings-about", "settings-experiments", "settings-agent-approvals":
                 if env["CUA_SPACES_START_VIEW"] == "settings-devices" { model.settingsTab = .devices }
+                if env["CUA_SPACES_START_VIEW"] == "settings-agent-approvals" {
+                    // A throwaway policy whose approval always accepts; a
+                    // row can start off (`CUA_SPACES_APPROVALS_OFF=cloud`).
+                    let home = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("cua-approvals-fixture-\(ProcessInfo.processInfo.processIdentifier)").path
+                    try? FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
+                    model.approvals = .fixture(home: home)
+                    for id in (env["CUA_SPACES_APPROVALS_OFF"] ?? "").split(separator: ",") {
+                        if let row = model.approvals.view.rows.first(where: { $0.id == id }) {
+                            await model.approvals.set(row, to: false)
+                        }
+                    }
+                    model.settingsTab = .approvals
+                }
                 if env["CUA_SPACES_START_VIEW"] == "settings-about" { model.settingsTab = .about }
                 if env["CUA_SPACES_START_VIEW"] == "settings-experiments" { model.settingsTab = .experiments }
                 if env["CUA_SPACES_START_VIEW"] == "settings-storage" {

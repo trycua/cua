@@ -18,6 +18,9 @@ struct SettingsScene: View {
             DevicesSettingsView(devices: model.devices)
                 .tabItem { Label(model.devices.view.labels.title, systemImage: "laptopcomputer.and.iphone") }
                 .tag(SettingsTab.devices)
+            ApprovalsSettingsView(model: model.approvals)
+                .tabItem { Label("Agents", systemImage: "hand.raised") }
+                .tag(SettingsTab.approvals)
             ExperimentsSettingsView(model: model)
                 .tabItem { Label(model.experimentsPage.title, systemImage: "flask") }
                 .tag(SettingsTab.experiments)

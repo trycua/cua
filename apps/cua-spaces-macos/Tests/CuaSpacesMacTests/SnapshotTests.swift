@@ -373,6 +373,15 @@ struct SnapshotTests {
         try assertSnapshot(SettingsView(model: m), "settings", size: CGSize(width: 520, height: 640))
     }
 
+    /// Settings → Agent approvals on a throwaway policy: the defaults, then
+    /// with a row turned off (the fake approval accepts).
+    @Test func agentApprovals() async throws {
+        let m = ApprovalsTests().model()
+        try assertSnapshot(ApprovalsSettingsView(model: m), "agent-approvals", size: CGSize(width: 520, height: 880))
+        await m.set(m.view.rows[0], to: false)
+        try assertSnapshot(ApprovalsSettingsView(model: m), "agent-approvals-off", size: CGSize(width: 520, height: 880))
+    }
+
     /// Launch at login waiting for approval in System Settings (a fake
     /// login item; the Mac's own is never touched).
     @Test func settingsLoginItemApproval() async throws {

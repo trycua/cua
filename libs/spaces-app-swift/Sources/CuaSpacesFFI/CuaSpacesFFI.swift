@@ -835,6 +835,188 @@ public func FfiConverterTypeAppCliInstaller_lower(_ value: AppCliInstaller) -> U
 
 
 /**
+ * The Agent approvals pane's model.
+ */
+public protocol ApprovalsPaneProtocol: AnyObject, Sendable {
+
+    /**
+     * Sets one row after the user confirms; returns the refreshed pane, or
+     * an error (declined, or the file could not be written) that leaves the
+     * file unchanged.
+     */
+    func set(id: String, require: Bool) async throws  -> ApprovalsView
+
+    /**
+     * The current settings (the defaults when there is no file).
+     */
+    func view()  -> ApprovalsView
+
+}
+/**
+ * The Agent approvals pane's model.
+ */
+open class ApprovalsPane: ApprovalsPaneProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cua_spaces_ffi_fn_clone_approvalspane(self.handle, $0) }
+    }
+    /**
+     * The pane for the Cua home (`None`: `$CUA_HOME`, else `~/.cua`), which
+     * asks the user with Touch ID or the login password.
+     */
+public convenience init(cuaHome: String?) {
+    let handle =
+        try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_constructor_approvalspane_new(
+        FfiConverterOptionString.lower(cuaHome),$0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cua_spaces_ffi_fn_free_approvalspane(handle, $0) }
+    }
+
+
+    /**
+     * A pane over `home` (a throwaway directory) whose approval is always
+     * `accept` (fixtures and tests; never asks anyone).
+     */
+public static func fixture(home: String, accept: Bool) -> ApprovalsPane  {
+    return try!  FfiConverterTypeApprovalsPane_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_constructor_approvalspane_fixture(
+        FfiConverterString.lower(home),
+        FfiConverterBool.lower(accept),$0
+    )
+})
+}
+
+
+
+    /**
+     * Sets one row after the user confirms; returns the refreshed pane, or
+     * an error (declined, or the file could not be written) that leaves the
+     * file unchanged.
+     */
+open func set(id: String, require: Bool)async throws  -> ApprovalsView  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_spaces_ffi_fn_method_approvalspane_set(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(id),FfiConverterBool.lower(require)
+                )
+            },
+            pollFunc: ffi_cua_spaces_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_spaces_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_spaces_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeApprovalsView_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The current settings (the defaults when there is no file).
+     */
+open func view() -> ApprovalsView  {
+    return try!  FfiConverterTypeApprovalsView_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_method_approvalspane_view(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeApprovalsPane: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = ApprovalsPane
+
+    public static func lift(_ handle: UInt64) throws -> ApprovalsPane {
+        return ApprovalsPane(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: ApprovalsPane) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ApprovalsPane {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: ApprovalsPane, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApprovalsPane_lift(_ handle: UInt64) throws -> ApprovalsPane {
+    return try FfiConverterTypeApprovalsPane.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApprovalsPane_lower(_ value: ApprovalsPane) -> UInt64 {
+    return FfiConverterTypeApprovalsPane.lower(value)
+}
+
+
+
+
+
+
+/**
  * Receives decoded video frames and control events. The SDK decodes on
  * the session's delivery thread (VideoToolbox on macOS, OpenH264
  * elsewhere); implementations must return quickly.
@@ -32051,6 +32233,253 @@ public func FfiConverterTypeAppWizardView_lower(_ value: AppWizardView) -> RustB
 
 
 /**
+ * A gate that is not a setting: no toggle, always asks.
+ */
+public struct ApprovalLocked: Equatable, Hashable {
+    /**
+     * The row title.
+     */
+    public var title: String
+    /**
+     * One line under the title.
+     */
+    public var detail: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The row title.
+         */title: String,
+        /**
+         * One line under the title.
+         */detail: String) {
+        self.title = title
+        self.detail = detail
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ApprovalLocked: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeApprovalLocked: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ApprovalLocked {
+        return
+            try ApprovalLocked(
+                title: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ApprovalLocked, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApprovalLocked_lift(_ buf: RustBuffer) throws -> ApprovalLocked {
+    return try FfiConverterTypeApprovalLocked.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApprovalLocked_lower(_ value: ApprovalLocked) -> RustBuffer {
+    return FfiConverterTypeApprovalLocked.lower(value)
+}
+
+
+/**
+ * One capability row.
+ */
+public struct ApprovalRow: Equatable, Hashable {
+    /**
+     * Stable id (`cloud`, `machines`, ...).
+     */
+    public var id: String
+    /**
+     * The row title.
+     */
+    public var title: String
+    /**
+     * One line under the title.
+     */
+    public var detail: String
+    /**
+     * On: the agent needs the user's approval before it does this.
+     */
+    public var require: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Stable id (`cloud`, `machines`, ...).
+         */id: String,
+        /**
+         * The row title.
+         */title: String,
+        /**
+         * One line under the title.
+         */detail: String,
+        /**
+         * On: the agent needs the user's approval before it does this.
+         */require: Bool) {
+        self.id = id
+        self.title = title
+        self.detail = detail
+        self.require = require
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ApprovalRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeApprovalRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ApprovalRow {
+        return
+            try ApprovalRow(
+                id: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf),
+                require: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ApprovalRow, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterBool.write(value.require, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApprovalRow_lift(_ buf: RustBuffer) throws -> ApprovalRow {
+    return try FfiConverterTypeApprovalRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApprovalRow_lower(_ value: ApprovalRow) -> RustBuffer {
+    return FfiConverterTypeApprovalRow.lower(value)
+}
+
+
+/**
+ * The whole pane.
+ */
+public struct ApprovalsView: Equatable, Hashable {
+    /**
+     * The line at the top.
+     */
+    public var intro: String
+    /**
+     * The settings, one toggle each.
+     */
+    public var rows: [ApprovalRow]
+    /**
+     * The locked section's title.
+     */
+    public var lockedTitle: String
+    /**
+     * The gates that cannot be turned off (no toggle).
+     */
+    public var locked: [ApprovalLocked]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The line at the top.
+         */intro: String,
+        /**
+         * The settings, one toggle each.
+         */rows: [ApprovalRow],
+        /**
+         * The locked section's title.
+         */lockedTitle: String,
+        /**
+         * The gates that cannot be turned off (no toggle).
+         */locked: [ApprovalLocked]) {
+        self.intro = intro
+        self.rows = rows
+        self.lockedTitle = lockedTitle
+        self.locked = locked
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ApprovalsView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeApprovalsView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ApprovalsView {
+        return
+            try ApprovalsView(
+                intro: FfiConverterString.read(from: &buf),
+                rows: FfiConverterSequenceTypeApprovalRow.read(from: &buf),
+                lockedTitle: FfiConverterString.read(from: &buf),
+                locked: FfiConverterSequenceTypeApprovalLocked.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ApprovalsView, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.intro, into: &buf)
+        FfiConverterSequenceTypeApprovalRow.write(value.rows, into: &buf)
+        FfiConverterString.write(value.lockedTitle, into: &buf)
+        FfiConverterSequenceTypeApprovalLocked.write(value.locked, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApprovalsView_lift(_ buf: RustBuffer) throws -> ApprovalsView {
+    return try FfiConverterTypeApprovalsView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApprovalsView_lower(_ value: ApprovalsView) -> RustBuffer {
+    return FfiConverterTypeApprovalsView.lower(value)
+}
+
+
+/**
  * One decoded video frame : packed top-down BGRA.
  */
 public struct DecodedVideoFrame: Equatable, Hashable {
@@ -58162,6 +58591,56 @@ fileprivate struct FfiConverterSequenceTypeAppWizardField: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeApprovalLocked: FfiConverterRustBuffer {
+    typealias SwiftType = [ApprovalLocked]
+
+    public static func write(_ value: [ApprovalLocked], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeApprovalLocked.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ApprovalLocked] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ApprovalLocked]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeApprovalLocked.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeApprovalRow: FfiConverterRustBuffer {
+    typealias SwiftType = [ApprovalRow]
+
+    public static func write(_ value: [ApprovalRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeApprovalRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ApprovalRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ApprovalRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeApprovalRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeKvAccessRow: FfiConverterRustBuffer {
     typealias SwiftType = [KvAccessRow]
 
@@ -62803,6 +63282,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_unlock_with_passphrase() != 34391) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_method_approvalspane_set() != 14528) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_method_approvalspane_view() != 4530) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_method_decodedframesink_on_decoded_frame() != 27543) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -62897,6 +63382,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_constructor_keyvaultclient_new() != 7295) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_constructor_approvalspane_fixture() != 28090) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_constructor_approvalspane_new() != 50921) {
         return InitializationResult.apiChecksumMismatch
     }
 

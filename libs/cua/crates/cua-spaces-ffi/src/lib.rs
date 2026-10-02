@@ -19,12 +19,14 @@
 //! Keyvault exactly like `cua daemon` in the Cua Spaces build.
 
 mod app_core;
+mod approvals;
 mod app_core_types;
 pub mod media_decode;
 mod teleport;
 mod teleport_app;
 
 pub use app_core::*;
+pub use approvals::*;
 pub use app_core_types::*;
 pub use teleport::*;
 pub use teleport_app::*;

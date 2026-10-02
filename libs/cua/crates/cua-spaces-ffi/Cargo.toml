@@ -19,6 +19,7 @@ cua-spaces-app-core = { workspace = true, features = ["keyvault-client", "instal
 cua-spaces-ext.workspace = true
 cua-spaces = { path = "../cua-spaces" }
 cua-teleport.workspace = true
+cua-home.workspace = true
 cua-keyvault.workspace = true
 cua-host.workspace = true
 cua-spacesd-client.workspace = true

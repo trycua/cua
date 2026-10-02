@@ -18,6 +18,7 @@ public struct PendingTeleport: Equatable {
 public enum SettingsTab: Hashable, Sendable {
     case general
     case devices
+    case approvals
     case experiments
     case about
 }
@@ -60,6 +61,12 @@ public final class AppModel {
     public let host: HostModel
     /// This Mac's enrollment on the relay, the account's devices, approvals.
     public let devices: DevicesModel
+    /// What an agent must ask for (Settings → Agent approvals). A throwaway
+    /// policy until the app sets the live one (fixtures and tests never read
+    /// the real Cua home).
+    public var approvals: ApprovalsModel = .fixture(
+        home: FileManager.default.temporaryDirectory
+            .appendingPathComponent("cua-approvals-\(UUID().uuidString)").path)
     /// Persistent agents, the Cua Volume and the notifications feed.
     public let persistent: PersistentModel
     /// Settings, Storage: the Cua Volume's store, Finder volume and cache.

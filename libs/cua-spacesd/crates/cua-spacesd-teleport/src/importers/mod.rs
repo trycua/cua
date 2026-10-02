@@ -15,8 +15,44 @@ use std::path::Path;
 
 use cua_teleport_bundle::bundle::VerifiedEntry;
 
+use crate::host::{EffectKind, HostCommand, HostEffects};
 use crate::ledger::ImportRecord;
 use crate::Result;
+
+/// Stop a running instance of the app so an import is not racing it and the
+/// following launch really starts it fresh. Best-effort: if nothing is running,
+/// or the platform has no matching mechanism, this is a no-op. `pattern` is a `pgrep -f` pattern; matching on the
+/// executable path inside the bundle keeps it from hitting unrelated processes
+/// that merely mention the app's name. Bounded: at most ~10 s of polling.
+pub(crate) fn terminate_running(host: &dyn HostEffects, pattern: &str) {
+    let running = || {
+        host.run(&HostCommand::new(EffectKind::ProcessLookup, "pgrep").args(["-f", pattern]))
+            .map(|output| output.success)
+            .unwrap_or(false)
+    };
+    if !running() {
+        return;
+    }
+    let kill = |signal: &str| {
+        let _ = host.run(
+            &HostCommand::new(EffectKind::ProcessTerminate, "pkill").args([signal, "-f", pattern]),
+        );
+    };
+
+    // Ask politely, then WAIT for the process to actually be gone: an Electron
+    // app shutting down gracefully writes its profile out as the last thing it
+    // does, so an import that starts too early is overwritten by that flush.
+    kill("-TERM");
+    for _ in 0..40 {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        if !running() {
+            return;
+        }
+    }
+    // Refused to go quietly — take it down hard and let the filesystem settle.
+    kill("-KILL");
+    std::thread::sleep(std::time::Duration::from_millis(500));
+}
 
 /// Write one verified bundle entry to `dest`, creating parent directories.
 /// Unix permissions come from the entry (0600 when it carries none, or when

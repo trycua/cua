@@ -17,8 +17,16 @@ use cua_spacesd_teleport::host::HostOutput;
 use cua_spacesd_teleport::{EffectKind, FakeHost, ImportError, Receiver, TransferScope};
 
 fn fake_receiver(dest: &Path) -> (Arc<FakeHost>, Receiver) {
-    // Every host command "succeeds" (`open` returns 0), nothing real runs.
-    let host = Arc::new(FakeHost::new().with_responder(|_| Ok(HostOutput::ok("501"))));
+    // Every host command "succeeds" (`open` returns 0), nothing real runs, and
+    // no browser is running (a `pgrep` that matched would make the import wait
+    // for it to quit).
+    let host = Arc::new(FakeHost::new().with_responder(|c| {
+        Ok(if c.kind == EffectKind::ProcessLookup {
+            HostOutput::failed()
+        } else {
+            HostOutput::ok("501")
+        })
+    }));
     let receiver = Receiver::with_host(dest.to_path_buf(), host.clone());
     (host, receiver)
 }
@@ -109,6 +117,8 @@ fn a_failed_launch_is_reported_and_the_import_still_succeeds() {
                 stdout: vec![],
                 stderr: b"The application cannot be opened".to_vec(),
             }
+        } else if c.kind == EffectKind::ProcessLookup {
+            HostOutput::failed()
         } else {
             HostOutput::ok("501")
         })
@@ -128,7 +138,15 @@ fn import_without_launch_records_nothing() {
     let (host, receiver) = fake_receiver(dest.path());
     let outcome = receiver.import_bytes(&chrome_bundle(), "", false).unwrap();
     assert!(!outcome.launched);
-    assert!(host.calls().is_empty(), "{:?}", host.calls());
+    // Only the look for a running Chrome (to quit before its profile is
+    // replaced): nothing is launched, killed, or written to the Keychain.
+    assert!(
+        host.calls()
+            .iter()
+            .all(|c| c.kind == EffectKind::ProcessLookup),
+        "{:?}",
+        host.calls()
+    );
 }
 
 #[test]

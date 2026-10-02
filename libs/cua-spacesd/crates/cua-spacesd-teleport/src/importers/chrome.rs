@@ -24,6 +24,10 @@ use super::write_entry;
 use crate::host::{default_host, HostEffects};
 use crate::{ImportProvider, ImportRecord, Result};
 
+/// `pgrep -f` pattern for every process of the destination's Google Chrome
+/// (the main process and its helpers all live inside the bundle).
+const MACOS_PROCESS_PATTERN: &str = "Google Chrome.app/Contents/";
+
 /// The Chrome/Chromium importer.
 pub struct ChromeImporter {
     max_total_bytes: u64,
@@ -76,6 +80,16 @@ impl ImportProvider for ChromeImporter {
         record: &mut ImportRecord,
     ) -> Result<LaunchSpec> {
         let mut reader = BundleReader::open_with_limit(bundle, self.max_total_bytes)?;
+        // Stop a running Chrome BEFORE touching its profile (macOS). A Chrome
+        // the user already opened in the Space (the usual case once it has been
+        // "opened once") holds the Cookies database open, caches the Safe
+        // Storage key it read at startup, and would keep serving its old
+        // signed-out session: the launch below is `open -a`, which only focuses
+        // an app that is already running. Quitting it makes the teleport land,
+        // and the relaunch read the key this import installed.
+        if platform == Platform::MacOS {
+            super::terminate_running(&*self.host, MACOS_PROCESS_PATTERN);
+        }
         let mut tab_urls: Vec<String> = Vec::new();
         let mut cookies_entry: Option<Vec<u8>> = None;
         let mut local_storage_entry: Option<Vec<u8>> = None;

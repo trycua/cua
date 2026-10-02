@@ -490,14 +490,14 @@ mod tests {
         }
     }
 
-    fn keychain_fake() -> Arc<FakeHost> {
+    fn keychain_fake(home: &Path) -> Arc<FakeHost> {
         // No pre-existing item: a secret READ (`find-generic-password ... -w`)
         // fails, so `ensure_safe_storage_secret` takes the create path. Every
         // other call -- the interactive `security -i` add, `install_generic`'s
         // own post-install PRESENCE check (`find-generic-password` WITHOUT
         // `-w`, attributes only), and `set-partition-list` -- succeeds, since
         // those happen only after (and because) the item was just installed.
-        Arc::new(FakeHost::new().with_responder(|c| {
+        Arc::new(FakeHost::new().with_home(home).with_responder(|c| {
             if c.args.iter().any(|a| a == "find-generic-password")
                 && c.args.iter().any(|a| a == "-w")
             {
@@ -513,7 +513,7 @@ mod tests {
     fn creates_a_fresh_key_when_none_exists_and_writes_readable_rows() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = first_run_cookies_db(dir.path());
-        let host = keychain_fake();
+        let host = keychain_fake(dir.path());
 
         let items = vec![
             item(".github.com", "user_session", "gh-session-abc"),
@@ -607,13 +607,21 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         first_run_cookies_db(dir.path());
         let existing_secret = b"already-on-this-machine";
-        let host = Arc::new(FakeHost::new().with_responder(move |c| {
-            if c.args.iter().any(|a| a == "-w") {
-                Ok(HostOutput::ok(existing_secret.to_vec()))
-            } else {
-                Ok(HostOutput::ok(""))
-            }
-        }));
+        // spacesd's own keychain, left by an earlier teleport.
+        let keychains = dir.path().join("Library/Keychains");
+        std::fs::create_dir_all(&keychains).unwrap();
+        std::fs::write(keychains.join("cua.keychain-db"), b"").unwrap();
+        let host = Arc::new(
+            FakeHost::new()
+                .with_home(dir.path())
+                .with_responder(move |c| {
+                    if c.args.iter().any(|a| a == "-w") {
+                        Ok(HostOutput::ok(existing_secret.to_vec()))
+                    } else {
+                        Ok(HostOutput::ok(""))
+                    }
+                }),
+        );
         let mut record = ImportRecord::default();
         let secret = ensure_safe_storage_secret(
             host.as_ref(),
@@ -794,7 +802,7 @@ mod tests {
     #[test]
     fn never_launched_profile_creates_the_keychain_key_on_macos() {
         let dir = tempfile::tempdir().unwrap();
-        let host = keychain_fake();
+        let host = keychain_fake(dir.path());
         let mut record = ImportRecord::default();
         install_cookies(
             host.as_ref(),

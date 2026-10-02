@@ -550,6 +550,9 @@ pub async fn spawn_local(server: Server) -> std::io::Result<SocketAddr> {
 /// wake, a timeout): see `cua_spacesd_teleport::keychain::keep_cua_keychain_unlocked`.
 #[cfg(target_os = "macos")]
 fn spawn_keychain_keeper(shutdown: tokio_util::sync::CancellationToken) {
+    // Nothing in an unattended Space can answer a Keychain dialog: have any
+    // Security API call made in this process fail instead of showing one.
+    cua_spacesd_teleport::keychain::forbid_keychain_prompts();
     tokio::spawn(async move {
         let host = cua_spacesd_teleport::default_host();
         loop {

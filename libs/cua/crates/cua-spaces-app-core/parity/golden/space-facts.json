@@ -6,11 +6,11 @@
       "facts": [
         "Status: Running",
         "Image: ghcr.io/trycua/linux:24.04-slim ?ghcr.io/trycua/linux:24.04-slim | sha256:4f1c2a9d8e7b6c5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+        "Identifier: local:aurora [copy local:aurora doc.on.doc Copy / checkmark Copied 1500ms]",
         "System: Ubuntu 24.04.3 LTS",
         "Kind: Container",
         "Architecture: ARM",
-        "Memory: 2.1 GB / 4 GB",
-        "Identifier: local:aurora [copy local:aurora doc.on.doc Copy / checkmark Copied 1500ms]"
+        "Memory: 2.1 GB / 4 GB"
       ]
     },
     {
@@ -18,10 +18,10 @@
       "facts": [
         "Status: Running",
         "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+        "Identifier: local:omarchy [copy local:omarchy doc.on.doc Copy / checkmark Copied 1500ms]",
         "System: Omarchy",
         "Kind: Virtual machine",
-        "Architecture: x64 [warn exclamationmark.triangle Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-        "Identifier: local:omarchy [copy local:omarchy doc.on.doc Copy / checkmark Copied 1500ms]"
+        "Architecture: x64 [warn exclamationmark.triangle Emulated on this Mac’s ARM processor. Performance may be degraded.]"
       ]
     },
     {
@@ -29,20 +29,20 @@
       "facts": [
         "Status: Running",
         "Image: ghcr.io/trycua/macos:26 [copy ghcr.io/trycua/macos:26 doc.on.doc Copy / checkmark Copied 1500ms]",
+        "Identifier: local:studio [copy local:studio doc.on.doc Copy / checkmark Copied 1500ms]",
         "System: macOS 26.5.2 (25F84)",
         "Kind: Virtual machine",
         "Architecture: ARM",
         "Memory: 6.4 GB / 8 GB",
-        "Storage: 39 GB / 80 GB",
-        "Identifier: local:studio [copy local:studio doc.on.doc Copy / checkmark Copied 1500ms]"
+        "Storage: 39 GB / 80 GB"
       ]
     },
     {
       "case": "Windows by address, no usage yet",
       "facts": [
         "Status: Running",
-        "System: Windows Server 2022 Datacenter 10.0.20348",
-        "Identifier: direct:10.0.0.5:3211 [copy direct:10.0.0.5:3211 doc.on.doc Copy / checkmark Copied 1500ms]"
+        "Identifier: direct:10.0.0.5:3211 [copy direct:10.0.0.5:3211 doc.on.doc Copy / checkmark Copied 1500ms]",
+        "System: Windows Server 2022 Datacenter 10.0.20348"
       ]
     },
     {
@@ -50,16 +50,16 @@
       "facts": [
         "Status: Running",
         "Image: ghcr.io/example/arch:latest [copy ghcr.io/example/arch:latest doc.on.doc Copy / checkmark Copied 1500ms]",
-        "System: Arch Linux",
-        "Identifier: local:old [copy local:old doc.on.doc Copy / checkmark Copied 1500ms]"
+        "Identifier: local:old [copy local:old doc.on.doc Copy / checkmark Copied 1500ms]",
+        "System: Arch Linux"
       ]
     },
     {
       "case": "no OS name at all",
       "facts": [
         "Status: timed out",
-        "System: Linux",
-        "Identifier: cloud:builder [copy cloud:builder doc.on.doc Copy / checkmark Copied 1500ms]"
+        "Identifier: cloud:builder [copy cloud:builder doc.on.doc Copy / checkmark Copied 1500ms]",
+        "System: Linux"
       ]
     },
     {
@@ -67,9 +67,9 @@
       "facts": [
         "Status: Running",
         "Image: ghcr.io/trycua/linux:24.04-disk [copy ghcr.io/trycua/linux:24.04-disk doc.on.doc Copy / checkmark Copied 1500ms]",
+        "Identifier: cloud:review-bot [copy cloud:review-bot doc.on.doc Copy / checkmark Copied 1500ms]",
         "System: Ubuntu 24.04.3 LTS",
-        "Kind: Virtual machine",
-        "Identifier: cloud:review-bot [copy cloud:review-bot doc.on.doc Copy / checkmark Copied 1500ms]"
+        "Kind: Virtual machine"
       ]
     },
     {
@@ -77,8 +77,8 @@
       "facts": [
         "Status: Running",
         "Image: ghcr.io/example/windows@sha256:9b0e6c1d2a3f4e5d6c7b8a9f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9d ?ghcr.io/example/windows@sha256:9b0e6c1d2a3f4e5d6c7b8a9f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9d | sha256:9b0e6c1d2a3f4e5d6c7b8a9f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9d [copy ghcr.io/example/windows@sha256:9b0e6c1d2a3f4e5d6c7b8a9f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9d doc.on.doc Copy / checkmark Copied 1500ms]",
-        "System: Windows",
-        "Identifier: cloud:ci-7 [copy cloud:ci-7 doc.on.doc Copy / checkmark Copied 1500ms]"
+        "Identifier: cloud:ci-7 [copy cloud:ci-7 doc.on.doc Copy / checkmark Copied 1500ms]",
+        "System: Windows"
       ]
     },
     {
@@ -86,10 +86,10 @@
       "facts": [
         "Status: Running",
         "Image: ghcr.io/trycua/linux:24.04-disk [copy ghcr.io/trycua/linux:24.04-disk doc.on.doc Copy / checkmark Copied 1500ms]",
+        "Identifier: cloud:x64 [copy cloud:x64 doc.on.doc Copy / checkmark Copied 1500ms]",
         "System: Ubuntu 24.04.3 LTS",
         "Kind: Virtual machine",
-        "Architecture: x64",
-        "Identifier: cloud:x64 [copy cloud:x64 doc.on.doc Copy / checkmark Copied 1500ms]"
+        "Architecture: x64"
       ]
     }
   ]

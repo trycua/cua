@@ -43,7 +43,7 @@ function findFile(dir, name, budget = { n: 0 }) {
 
 test("every contract tool maps to a generated method", () => {
   const rows = spacesApi.spacesToolMethods()
-  assert.equal(rows.length, 79)
+  assert.equal(rows.length, 86)
   const classes = { Spaces: spacesApi.Spaces, Space: spacesApi.Space }
   for (const row of rows) {
     const [cls, method] = row.method.split(".")
@@ -176,7 +176,7 @@ async function daemonExercise(cli, teleport) {
       const discovery = JSON.parse(readFileSync(join(home, "daemon.json"), "utf8"))
       const session = new McpSession(new McpHttpTransport({ url: discovery.loopback_url, token: discovery.token }))
       const tools = await session.listTools()
-      assert.equal(tools.length, 79)
+      assert.equal(tools.length, 86)
       const rows = await session.callJson("list_spaces")
       assert.deepEqual(rows.map((r) => r.id), [info.id])
       assert.equal(await session.callText("space_bash", { space: info.id, command: "echo webview" }), "webview\n[exit 0]")

@@ -17,6 +17,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use cua_keyvault::broker::TeleportStage;
 use cua_spacesd_client::{Command, pb};
 pub use cua_teleport::ux::{
     ApprovedPlan, CatalogEntry, Consent, PlanOptions, PlanStep, RunEvent, RunPhase, RunReport,
@@ -24,7 +25,9 @@ pub use cua_teleport::ux::{
 };
 use cua_teleport::ux::{InstallSource, MoveKind};
 
-use crate::teleport::{AppSessions, ImportOptions, SpaceTeleport as _, TeleportScope};
+use crate::teleport::{
+    AppSessions, ImportOptions, SpaceTeleport as _, TeleportScope, TeleportSelection,
+};
 use cua_spaces::Space;
 use cua_spaces::error::{Error, Result};
 
@@ -308,8 +311,18 @@ impl SpaceAppTeleport for Space {
                 // The plan's consent already listed and acknowledged these
                 // exact items.
                 let approval = manifest.approving(&self.id().to_string(), items, plan.sensitive)?;
+                // Saved Keyvault items are sent without reading the live app,
+                // so the host's Keychain is never asked.
+                let cookies = plan.from_vault.is_none()
+                    && items.iter().any(|i| i.to_lowercase().contains("cookies"));
+                let selection = TeleportSelection {
+                    cookie_domains: plan.cookie_domains.clone(),
+                    from_vault: plan.from_vault.clone(),
+                    include_passwords: plan.include_passwords,
+                };
+                let app = plan.app.name.clone();
                 let receipt = self
-                    .teleport(
+                    .teleport_selected(
                         sessions.clone(),
                         &approval,
                         ImportOptions {
@@ -322,14 +335,21 @@ impl SpaceAppTeleport for Space {
                             // user's acknowledgement (S1).
                             relay_plaintext_ack: plan.relay_unsealed,
                         },
+                        &selection,
+                        &mut |st| {
+                            let (done, total) = match &st {
+                                TeleportStage::Uploading { done, total } => (*done, *total),
+                                _ => (0, 0),
+                            };
+                            progress(
+                                RunPhase::Progress,
+                                stage_text(&st, &app, cookies, cfg!(target_os = "macos")),
+                                done,
+                                total,
+                            );
+                        },
                     )
                     .await?;
-                progress(
-                    RunPhase::Progress,
-                    format!("{} bytes verified", receipt.bundle_bytes),
-                    receipt.bundle_bytes,
-                    receipt.bundle_bytes,
-                );
                 report.imported = receipt.imported;
                 report.skipped = receipt.skipped;
                 report.launched |= receipt.launched;
@@ -546,16 +566,43 @@ impl SpaceAppTeleportFacts for Space {
     }
 }
 
+/// A step as it starts, in words the app shows under its progress bar.
 fn describe(step: &PlanStep) -> String {
     match step {
-        PlanStep::Install { ids } => format!("installing {}", ids.join(", ")),
-        PlanStep::SendFiles { paths, .. } => format!("sending {} item(s)", paths.len()),
-        PlanStep::ImportState {
-            provider_id, items, ..
-        } => {
-            format!("importing {} {provider_id} item(s)", items.len())
+        PlanStep::Install { ids } => format!("Installing {}", ids.join(", ")),
+        PlanStep::SendFiles { paths, .. } => match paths.len() {
+            1 => "Sending 1 item".into(),
+            n => format!("Sending {n} items"),
+        },
+        PlanStep::ImportState { .. } => "Preparing the sign-in".into(),
+        PlanStep::Launch { bin, .. } => format!(
+            "Opening {}",
+            std::path::Path::new(bin)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(bin)
+        ),
+    }
+}
+
+/// The Keyvault's stage of a signed-in state move, in words. Reading says
+/// why macOS is about to ask for the Keychain (the app's cookies are
+/// encrypted with a key kept there). Uploading leaves the bytes to the
+/// event (the app appends "12 / 80 MB").
+fn stage_text(stage: &TeleportStage, app: &str, cookies: bool, macos: bool) -> String {
+    match stage {
+        TeleportStage::Reading => {
+            let what = if cookies { "cookies" } else { "sign-in" };
+            if macos && cookies {
+                format!("Reading {app} {what} (macOS will ask for Keychain access)\u{2026}")
+            } else {
+                format!("Reading {app} {what}\u{2026}")
+            }
         }
-        PlanStep::Launch { bin, .. } => format!("starting {bin}"),
+        TeleportStage::Saving => "Saving to Keyvault".into(),
+        TeleportStage::Packing => "Packing profile".into(),
+        TeleportStage::Uploading { .. } => "Uploading".into(),
+        TeleportStage::Importing => "Importing into the Space".into(),
     }
 }
 
@@ -596,6 +643,42 @@ impl AppSessions {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stages_read_as_steps_and_name_the_keychain_prompt() {
+        use cua_keyvault::broker::TeleportStage as S;
+        assert_eq!(
+            super::stage_text(&S::Reading, "Chrome", true, true),
+            "Reading Chrome cookies (macOS will ask for Keychain access)\u{2026}"
+        );
+        assert_eq!(
+            super::stage_text(&S::Reading, "Chrome", true, false),
+            "Reading Chrome cookies\u{2026}"
+        );
+        assert_eq!(
+            super::stage_text(&S::Reading, "Slack", false, true),
+            "Reading Slack sign-in\u{2026}"
+        );
+        assert_eq!(
+            super::stage_text(&S::Packing, "Chrome", true, true),
+            "Packing profile"
+        );
+        assert_eq!(
+            super::stage_text(&S::Uploading { done: 1, total: 2 }, "Chrome", true, true),
+            "Uploading"
+        );
+        assert_eq!(
+            super::stage_text(&S::Importing, "Chrome", true, true),
+            "Importing into the Space"
+        );
+        assert_eq!(
+            super::stage_text(&S::Saving, "Chrome", true, true),
+            "Saving to Keyvault"
+        );
+        for st in [S::Reading, S::Saving, S::Packing, S::Importing] {
+            assert!(!super::stage_text(&st, "Chrome", true, true).contains('\u{2014}'));
+        }
+    }
+
     use super::*;
 
     #[test]

@@ -282,6 +282,10 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
     };
     #[cfg(feature = "spaces")]
     let host_spaces = cua_spaces::host_spaces::HostSpacesServer::new(runtime.spaces().clone());
+    // Running Spaces' thumbnails stay fresh while a client asks for them
+    // (the Spaces apps' notch and previews, SDK scripts); idle otherwise.
+    #[cfg(feature = "spaces")]
+    let _thumbnails = runtime.spaces().spawn_thumbnail_refresh();
     let own = std::env::current_exe()
         .ok()
         .and_then(|e| crate::identity::of(&e));

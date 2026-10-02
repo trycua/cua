@@ -87,6 +87,11 @@ public final class NotchController {
     @ObservationIgnored public var onTeleport: ((String, TeleportCatalogEntry?) -> Void)?
     /// A tile was clicked.
     @ObservationIgnored public var onOpenSpace: ((String) -> Void)?
+    /// The live-access line was clicked: the Keyvault's Access page.
+    @ObservationIgnored public var onOpenAccess: (() -> Void)?
+    /// Its Dismiss: hide the indicator and the tiles' key (nothing is
+    /// revoked or wiped).
+    @ObservationIgnored public var onDismissAccess: (() -> Void)?
     /// Opens (or brings forward) the main window, which may have been
     /// closed while the notch stayed up. Set by the notch view.
     @ObservationIgnored public var showMain: (() -> Void)?
@@ -199,7 +204,7 @@ public final class NotchController {
 
     /// The layout needs the prompt row when the open panel shows a line
     /// above the tiles (a drop hint or the permission line).
-    static func needsRow(_ v: AppNotchView) -> Bool { v.prompt != nil || v.permission != nil }
+    static func needsRow(_ v: AppNotchView) -> Bool { v.prompt != nil || v.permission != nil || v.access != nil }
 
     /// Re-reads the layout and sizes the panel to its stage frame. The panel
     /// only changes size here (screen change, the row appearing), never

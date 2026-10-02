@@ -124,6 +124,40 @@ pub mod chrome {
         }
     }
 
+    /// The cookie store of a Chromium-family profile directory. Chrome 96
+    /// moved it to `Network/Cookies`; current Chrome (154) reads `Cookies` in
+    /// the profile root again, so neither location is privileged. When both
+    /// exist (a profile that crossed versions) the one written most recently
+    /// wins, counting its `-wal` file, since a live Chrome's latest rows sit
+    /// there; a tie goes to the root file. With one, that one; with neither,
+    /// the root path (what current Chrome would create). Applies to every
+    /// profile and every Chromium-family browser.
+    pub fn cookies_store(profile_dir: &std::path::Path) -> std::path::PathBuf {
+        let network = profile_dir.join("Network").join("Cookies");
+        let root = profile_dir.join("Cookies");
+        match (network.is_file(), root.is_file()) {
+            (true, true) => {
+                if last_written(&network) > last_written(&root) {
+                    network
+                } else {
+                    root
+                }
+            }
+            (true, false) => network,
+            _ => root,
+        }
+    }
+
+    /// Newest mtime of a SQLite database and its `-wal` sidecar.
+    fn last_written(db: &std::path::Path) -> Option<std::time::SystemTime> {
+        let mut wal = db.as_os_str().to_owned();
+        wal.push("-wal");
+        [db.to_path_buf(), std::path::PathBuf::from(wal)]
+            .iter()
+            .filter_map(|p| p.metadata().and_then(|m| m.modified()).ok())
+            .max()
+    }
+
     /// Bundle path of a profile-relative file (canonical Linux layout).
     pub fn dest_rel_path(profile: &str, rel: &str) -> String {
         format!("{LINUX_USER_DATA_DIR}/{profile}/{rel}")

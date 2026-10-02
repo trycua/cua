@@ -209,7 +209,7 @@ mod test_daemon {
             .expect("create the test Keyvault");
         // The user imports the fixture profile's session into the vault, as
         // they would on the Keyvault page; teleport moves only what is here.
-        let items = broker
+        let report = broker
             .import(
                 &user,
                 ImportSpec {
@@ -220,7 +220,7 @@ mod test_daemon {
             )
             .await
             .expect("import the fixture Firefox session");
-        assert!(!items.is_empty(), "the fixture profile yields a vault item");
+        assert!(report.saved > 0, "the fixture profile yields a vault item");
         let socket = home.path().join("cua.sock");
         let handle = server::start(
             runtime.clone(),

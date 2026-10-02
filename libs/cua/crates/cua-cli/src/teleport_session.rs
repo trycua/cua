@@ -348,7 +348,7 @@ pub async fn complete(
                 "browser": app,
                 "target": sandbox,
                 "delivered": delivered,
-                "next": "The sandbox's browser now has these sites' sessions. Delete the sandbox when done; delivered sessions are also wiped when the grant expires.",
+                "next": "The sandbox's browser now has these sites' sessions. Delete the sandbox when done; Wipe in Cua's Keyvault also removes them.",
             }))
         }
     }

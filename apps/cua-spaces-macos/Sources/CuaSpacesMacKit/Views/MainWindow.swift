@@ -117,6 +117,9 @@ extension KvApprovalState: @retroactive Identifiable {
 struct Sidebar: View {
     @Bindable var model: AppModel
 
+    /// The Spaces a Keyvault sign-in is live in (read once per draw).
+    private var signedIn: Set<String> { model.signedInSpaceIds }
+
     var body: some View {
         let sidebar = model.sidebar
         let kv = model.keyvault
@@ -140,10 +143,14 @@ struct Sidebar: View {
                         .badge(badge(row))
                         .tag(MainSelection.keyvault(.category(category: row.category)))
                 }
-                ForEach(kv.sidebar.sites, id: \.key) { site in
-                    Text(site.title)
-                        .lineLimit(1)
-                        .tag(MainSelection.keyvault(.site(key: site.key)))
+                ForEach(kv.sidebar.apps, id: \.key) { app in
+                    HStack(spacing: 8) {
+                        AppIcon(keyvault: kv, providerId: app.key, name: app.title)
+                            .frame(width: 18, height: 18)
+                        Text(app.title).lineLimit(1)
+                    }
+                    .badge(Int(app.items))
+                    .tag(MainSelection.keyvault(.app(key: app.key)))
                 }
             } header: {
                 KeyvaultHeader(keyvault: kv, title: model.chrome.keyvaultTitle)
@@ -166,7 +173,9 @@ struct Sidebar: View {
 
     /// A Space row; also a drop target for a dragged real window.
     private func spaceRow(_ row: AppSidebarRow) -> some View {
-        SpaceRowView(row: row, targeted: model.dropTargets.targetedId == row.id) { on in
+        SpaceRowView(row: row, targeted: model.dropTargets.targetedId == row.id,
+                     signedIn: signedIn.contains(row.id),
+                     onSignedIn: { model.showAccess(spaceId: row.id) }) { on in
             if let space = model.spaces.first(where: { $0.id == row.id }) {
                 model.setPower(space, on: on)
             }
@@ -218,6 +227,10 @@ struct SidebarFooter: View {
 struct SpaceRowView: View {
     let row: AppSidebarRow
     var targeted = false
+    /// A Keyvault sign-in is live in it: "Signed in", which opens the
+    /// Keyvault's Access page.
+    var signedIn = false
+    var onSignedIn: (() -> Void)?
     /// The power button was pressed: turn it on (`true`) or off.
     var onPower: ((Bool) -> Void)?
     @State private var hovering = false
@@ -254,6 +267,9 @@ struct SpaceRowView: View {
                         .truncationMode(.tail)
                         .help(trailing)
                 }
+                if signedIn {
+                    SignedInBadge { onSignedIn?() }
+                }
                 if let power = row.power, let onPower,
                    hovering || row.selected || power.busy {
                     PowerButton(button: power) { onPower(power.turnOn) }
@@ -283,6 +299,29 @@ struct SpaceRowView: View {
         case .provisioning: return .blue
         case .suspended, .deleting: return .secondary
         }
+    }
+}
+
+/// "Signed in": a Keyvault sign-in is live in this Space. Opens the
+/// Keyvault's Access page on it.
+struct SignedInBadge: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label("Signed in", systemImage: "key.fill")
+                .labelStyle(.titleAndIcon)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(.quaternary))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("Keyvault access is live in this Space. Show it in Keyvault.")
+        .accessibilityLabel("Signed in. Show in Keyvault")
+        .accessibilityIdentifier("space-signed-in")
     }
 }
 

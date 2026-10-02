@@ -164,6 +164,34 @@ struct NotchTests {
         #expect(s.content == nil)
     }
 
+    /// Entering the dwell zone answers at once: the cue starts on the
+    /// first hover event (not when the dwell ends), with a springy curve a
+    /// few points wider and taller; leaving early springs it back. Reduce
+    /// Motion swaps the spring for a fade (the view draws a faint rim).
+    @Test func theCueRespondsAtOnceWithASpringAndFadesUnderReduceMotion() {
+        let clock = ManualScheduler()
+        let notch = NotchModel(scheduler: clock)
+        var s = NotchStage(settledOn: notch.view.phase, cue: notch.view.hoverCue)
+        notch.send(.hoverEnter)
+        #expect(notch.view.hoverCue, "the cue shows before any time passes")
+        #expect(s.update(phase: notch.view.phase, cue: notch.view.hoverCue, motion: motion,
+                         reduceMotion: false) == [.shape(.cue, .cue)])
+        clock.advance(motion.hoverDwellMs / 2)
+        notch.send(.hoverExit)
+        #expect(!notch.view.hoverCue && notch.view.phase == .closed, "left early: back, never opened")
+        #expect(s.update(phase: notch.view.phase, cue: notch.view.hoverCue, motion: motion,
+                         reduceMotion: false) == [.shape(.closed, .cue)])
+        // The spring: quick, a little bounce, wider and taller.
+        #expect(motion.hoverResponse <= 0.3)
+        #expect(motion.hoverDamping >= 0.6 && motion.hoverDamping <= 0.7)
+        #expect(motion.hoverScale > 1 && motion.hoverScaleY > 1)
+        #expect(NotchStage.animation(.cue, motion)
+                == .spring(response: motion.hoverResponse, dampingFraction: motion.hoverDamping))
+        var r = NotchStage(settledOn: .closed)
+        #expect(r.update(phase: .closed, cue: true, motion: motion, reduceMotion: true) == [.shape(.cue, .fade)])
+        #expect(r.update(phase: .closed, cue: false, motion: motion, reduceMotion: true) == [.shape(.closed, .fade)])
+    }
+
     @Test func aDragMorphsPromptToTilesAndBack() {
         var s = NotchStage(settledOn: .closed)
         let open = s.update(phase: .prompt, cue: false, motion: motion, reduceMotion: false)

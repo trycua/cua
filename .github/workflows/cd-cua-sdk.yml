@@ -3,7 +3,7 @@ name: "CD: cua SDK"
 # Builds and publishes the cua SDK for tag `cua-sdk-v<version>`:
 #   - native libcua_sdk (+ the copy-based N-API runtime) per platform,
 #   - platform wheels of PyPI `cua` (linux x86_64/aarch64 with the
-#     glibc 2.31 floor from debian:11, macOS universal2, Windows x64/arm64),
+#     glibc 2.31 floor from debian:11, macOS arm64/x86_64, Windows x64/arm64),
 #   - `@trycua/cua` + six optional native npm packages (+ the browser build),
 #   - `CuaSDKFFI.xcframework.zip` for the Swift `.binaryTarget`,
 #   - the `cua` CLI binaries, plus standalone `cua-cli-<version>-<platform>`
@@ -286,7 +286,9 @@ jobs:
         include:
           - { platform: linux, arch: x86_64, runner: ubuntu-latest, native: linux-x64-gnu, lib: libcua_sdk.so }
           - { platform: linux, arch: arm64, runner: ubuntu-24.04-arm, native: linux-arm64-gnu, lib: libcua_sdk.so }
-          - { platform: darwin, arch: universal, runner: macos-26, native: darwin, lib: libcua_sdk.dylib }
+          # One wheel per macOS arch: a universal2 wheel is over PyPI's 100 MB file limit.
+          - { platform: darwin, arch: arm64, runner: macos-26, native: darwin-arm64, lib: libcua_sdk.dylib }
+          - { platform: darwin, arch: x86_64, runner: macos-15-intel, native: darwin-x64, lib: libcua_sdk.dylib }
           - { platform: windows, arch: x86_64, runner: windows-latest, native: win32-x64-msvc, lib: cua_sdk.dll }
           - { platform: windows, arch: arm64, runner: windows-11-arm, native: win32-arm64-msvc, lib: cua_sdk.dll }
     defaults:
@@ -301,13 +303,6 @@ jobs:
         with:
           pattern: native-*
           path: native
-      - name: Universal macOS library
-        if: matrix.platform == 'darwin'
-        run: |
-          mkdir -p native/darwin
-          lipo -create native/native-darwin-arm64/libcua_sdk.dylib native/native-darwin-x64/libcua_sdk.dylib \
-            -output native/darwin/libcua_sdk.dylib
-          lipo -create native/native-darwin-arm64/cua native/native-darwin-x64/cua -output native/darwin/cua
       - name: Build the wheel
         working-directory: libs/cua/python
         run: |
@@ -315,7 +310,7 @@ jobs:
           sed -i.bak "s/^version = .*/version = \"$VERSION\"/" pyproject.toml && rm pyproject.toml.bak
           sed -i.bak "s/^__version__ = .*/__version__ = \"$VERSION\"/" src/cua/__init__.py && rm src/cua/__init__.py.bak
           python -m pip install --upgrade pip build hatchling
-          DIR="../../../native/${{ matrix.native == 'darwin' && 'darwin' || format('native-{0}', matrix.native) }}"
+          DIR="../../../native/native-${{ matrix.native }}"
           EXE=cua; [ "${{ matrix.platform }}" = windows ] && EXE=cua.exe
           python build_wheel.py --library "$DIR/${{ matrix.lib }}" --cli "$DIR/$EXE" --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
       - name: Import the wheel

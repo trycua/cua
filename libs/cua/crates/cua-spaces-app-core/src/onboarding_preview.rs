@@ -210,7 +210,7 @@ fn scaled(r: NotchRadii, s: f64) -> NotchRadii {
 
 fn sample_space(name: &str, os: SpaceOs, os_name: &str, scene: ThumbnailScene) -> Space {
     Space {
-        id: format!("cloud:{name}"),
+        id: format!("local:{name}"),
         name: name.into(),
         os,
         status: SpaceStatus::Running,
@@ -221,7 +221,7 @@ fn sample_space(name: &str, os: SpaceOs, os_name: &str, scene: ThumbnailScene) -
         fleet_id: None,
         size: None,
         region: None,
-        provider: Some(SpaceProvider::Cloud),
+        provider: Some(SpaceProvider::Local),
         sdk: None,
         os_name: Some(os_name.into()),
         os_pretty_name: None,

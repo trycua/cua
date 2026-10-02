@@ -6,7 +6,12 @@
    "idempotent": true,
    "input_schema": {
     "additionalProperties": false,
-    "properties": {},
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
     "type": "object"
    },
    "name": "list_apps",
@@ -26,6 +31,10 @@
      "pid": {
       "description": "Only list windows owned by this process ID.",
       "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
      }
     },
     "type": "object"
@@ -34,14 +43,14 @@
    "read_only": true
   },
   {
-   "description": "Walk a running app's AT-SPI tree and return BOTH a structured `elements` array (preferred) AND a Markdown rendering of the same tree (back-compat). Every actionable element is tagged with [element_index N] in the markdown and as `element_index` in the structured array.\n\nPREFERRED CONSUMERS read `structuredContent.elements` (one entry per indexed row with `element_index`, `role`, `label`, `value`, `enabled`, `selected`, `actions` (names of AT-SPI actions exposed by the element, omitted when empty), `frame: {x,y,w,h}` when AT-SPI reports usable bounds, `parent_index`, `depth`). The markdown `tree_markdown` stays available and unchanged in shape for existing text-parsing callers — but new fields will only be added to the structured side. Set `query` to project BOTH representations to matching rows plus their ancestor chain while preserving original indices. `total_element_count` reports the complete snapshot and `returned_element_count` reports the projection.\n\nAlways returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces). Choose the modality at ACTION time: an element ax action (element_index/element_token → accessibility rung) or an element px action (x,y → pixel rung off this screenshot). capture_mode is deprecated and ignored. On Wayland, where output capture cannot prove the requested surface's identity, the truthful tree is returned without a screenshot and `screenshot_error.code` is `surface_identity_unproven`.\n\nThe mirror image: pass `include_accessibility_tree:false` to SKIP the AT-SPI walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Setting BOTH `include_accessibility_tree:false` and `include_screenshot:false` is an error. Optional `max_dimension` caps the returned screenshot's long edge in pixels for a cheap thumbnail.\n\nOptional `max_elements` / `max_depth` bound the AT-SPI walk to mitigate context-window blow-up on Electron / large web apps that produce 10k+ element trees. When applied, BOTH the markdown and the structured elements are truncated identically. Omit both for current default behaviour.\n\nTIME BUDGET: `timeout_ms` (default 1000) bounds the whole AT-SPI walk. Large apps (LibreOffice, GIMP, file managers) can exceed it; the call then returns the PARTIAL tree with `truncated: true`, `truncation_reason`, `nodes_visited`/`nodes_pending` and `elements_complete: false`. Every element listed is real and clickable; elements after the cut are simply missing. Retry with a larger `timeout_ms` (e.g. 5000) or narrow with `query`/`max_depth` when the element you need is absent.\n\nSCREENSHOT SCALE: the screenshot is delivered at or below 1.15 megapixels (long edge <= max_image_dimension, 1568 by default), because larger images are downsized before a model reads them and its pixel coordinates would then be uniformly short. Element `screenshot_frame`s and x/y for the pointer tools are pixels of the delivered screenshot (`frame` stays in screen coordinates, as on every platform); `frame_scale` < 1 reports the downsizing. An explicit per-call `max_image_dimension` (0 = native) replaces this cap.\n\nPOPUP MENUS: a context menu / popover / combo list is an override-redirect window that list_windows never shows. A click or right_click that opened one names it in its result (`popup: {window_id, bounds, title}`); pass that window_id here to walk the popup's own AT-SPI toplevel so its menu items get element indices (then click them by element_index). Omitting window_id while a popup of this pid is open walks that popup.",
+   "description": "Walk a running app's AT-SPI tree and return BOTH a structured `elements` array (preferred) AND a Markdown rendering of the same tree (back-compat). Every actionable element is tagged with [element_index N] in the markdown and as `element_index` in the structured array; pass each element's `element_token` to `click`, `type_text`, `set_value`, etc.\n\nPREFERRED CONSUMERS read `structuredContent.elements` (one entry per indexed row with `element_index`, `role`, `label`, `value`, `enabled`, `selected`, `actions` (names of AT-SPI actions exposed by the element, omitted when empty), `frame: {x,y,w,h}` when AT-SPI reports usable bounds, `parent_index`, `depth`). The markdown `tree_markdown` stays available and unchanged in shape for existing text-parsing callers — but new fields will only be added to the structured side. Set `query` to project BOTH representations to matching rows plus their ancestor chain while preserving original indices. `total_element_count` reports the complete snapshot and `returned_element_count` reports the projection.\n\nAlways returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces). Choose the modality at ACTION time: an element ax action (element_token → accessibility rung) or an element px action (x,y → pixel rung off this screenshot). capture_mode is deprecated and ignored. On Wayland, where output capture cannot prove the requested surface's identity, the truthful tree is returned without a screenshot and `screenshot_error.code` is `surface_identity_unproven`.\n\nThe mirror image: pass `include_accessibility_tree:false` to SKIP the AT-SPI walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Setting BOTH `include_accessibility_tree:false` and `include_screenshot:false` is an error. Optional `max_dimension` caps the returned screenshot's long edge in pixels for a cheap thumbnail.\n\nOptional `max_elements` / `max_depth` bound the AT-SPI walk to mitigate context-window blow-up on Electron / large web apps that produce 10k+ element trees. When applied, BOTH the markdown and the structured elements are truncated identically. Omit both for current default behaviour.\n\nTIME BUDGET: `timeout_ms` (default 1000) bounds the whole AT-SPI walk. Large apps (LibreOffice, GIMP, file managers) can exceed it; the call then returns the PARTIAL tree with `truncated: true`, `truncation_reason`, `nodes_visited`/`nodes_pending` and `elements_complete: false`. Every element listed is real and clickable; elements after the cut are simply missing. Retry with a larger `timeout_ms` (e.g. 5000) or narrow with `query`/`max_depth` when the element you need is absent.\n\nSCREENSHOT SCALE: the screenshot is delivered at or below 1.15 megapixels (long edge <= max_image_dimension, 1568 by default), because larger images are downsized before a model reads them and its pixel coordinates would then be uniformly short. Element `screenshot_frame`s and x/y for the pointer tools are pixels of the delivered screenshot (`frame` stays in screen coordinates, as on every platform); `frame_scale` < 1 reports the downsizing. An explicit per-call `max_image_dimension` (0 = native) replaces this cap.\n\nPOPUP MENUS: a context menu / popover / combo list is an override-redirect window that list_windows never shows. A click or right_click that opened one names it in its result (`popup: {window_id, bounds, title}`); pass that window_id here to walk the popup's own AT-SPI toplevel so its menu items get element indices (then click them by element_token). Omitting window_id while a popup of this pid is open walks that popup.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
     "additionalProperties": false,
     "properties": {
      "capture_mode": {
-      "description": "DEPRECATED and ignored. get_window_state always returns BOTH the element tree and a screenshot — ground on both. The modality is chosen at action time by how you address the target: an element ax action (element_index/element_token) or an element px action (x,y). Any value (including the old \"som\"/\"screenshot\" aliases) is accepted but has no effect.",
+      "description": "DEPRECATED and ignored. get_window_state always returns BOTH the element tree and a screenshot — ground on both. The modality is chosen at action time by how you address the target: an element ax action (element_token) or an element px action (x,y). Any value (including the old \"som\"/\"screenshot\" aliases) is accepted but has no effect.",
       "enum": [
        "ax",
        "vision"
@@ -299,6 +308,10 @@
       "description": "App name or command to launch. Tried as a direct command first, then matched against installed .desktop applications (exact display name, desktop-file id, or Exec basename; else an unambiguous display-name substring).",
       "type": "string"
      },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
      "urls": {
       "description": "URLs to open via xdg-open.",
       "items": {
@@ -322,6 +335,10 @@
      "pid": {
       "description": "PID of the process to terminate.",
       "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
      }
     },
     "required": [
@@ -342,6 +359,10 @@
      "pid": {
       "description": "Process ID of the app to activate.",
       "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
      },
      "window_id": {
       "description": "X11 window id (xid) to activate. If omitted, the first window of `pid` is used.",
@@ -454,7 +475,7 @@
    "read_only": false
   },
   {
-   "description": "Click against a target pid. **Prefer `element_index` over pixel coordinates** — element_index works on backgrounded / hidden windows, surfaces a stable handle, and tells you what you're clicking via the cached AT-SPI element's role + label. Reach for `x, y` only when the target is a canvas / custom-drawn surface that doesn't appear in the AT-SPI tree.\n\nProvide either (window_id + x/y) or (pid + element_index). x/y are WINDOW-LOCAL pixels of window_id (the get_window_state screenshot frame); a point outside the window is refused (point_outside_window) and every pixel result reports the resolved window_point / screen_point. Background delivery first resolves the accessible under the point and fires its action (the result says `hit: <role> \"<name>\" action=...`; a file / list item is selected through its container: `selected: ...`), else presses the real virtual pointer there. A click that opens a popup menu names it (`popup: {window_id, bounds}`): pass that window_id to get_window_state to index its items. element_index cache is scoped per (pid, window_id) and is replaced by the next get_window_state of the same window — re-snapshot every turn before clicking.\n\nAfter a zoom call, pass from_zoom=true to auto-translate zoom-image coords back to full-window space.\n\n`count`: 1 (default), 2 for a double-click, 3 for a triple-click (selects a line / paragraph in editors) — one press train with real double-click cadence, in background and foreground alike; there is no separate triple_click tool.\n\nbutton: \"left\" (default), \"right\", or \"middle\". Defaults to left so the field is fully back-compat. X11: routes through XSendEvent ButtonPress/Release with the matching button code. Native Wayland: only left-button is supported via the virtual-pointer protocol — right/middle return an error rather than silently degrading to left. `modifier` holds ctrl/shift/alt/super for the click on X11. Native Wayland refuses modified pointer clicks until its input protocol can carry keyboard modifier state.",
+   "description": "Click against a target pid. **Prefer `element_token` over pixel coordinates** — element_token works on backgrounded / hidden windows, surfaces a stable handle, and tells you what you're clicking via the cached AT-SPI element's role + label. Reach for `x, y` only when the target is a canvas / custom-drawn surface that doesn't appear in the AT-SPI tree.\n\nProvide either (window_id + x/y) or (pid + element_token). x/y are WINDOW-LOCAL pixels of window_id (the get_window_state screenshot frame); a point outside the window is refused (point_outside_window) and every pixel result reports the resolved window_point / screen_point. Background delivery first resolves the accessible under the point and fires its action (the result says `hit: <role> \"<name>\" action=...`; a file / list item is selected through its container: `selected: ...`), else presses the real virtual pointer there. A click that opens a popup menu names it (`popup: {window_id, bounds}`): pass that window_id to get_window_state to index its items. The token is stale once the next get_window_state of the same window replaces its snapshot — re-snapshot every turn before clicking.\n\nAfter a zoom call, pass from_zoom=true to auto-translate zoom-image coords back to full-window space.\n\n`count`: 1 (default), 2 for a double-click, 3 for a triple-click (selects a line / paragraph in editors) — one press train with real double-click cadence, in background and foreground alike; there is no separate triple_click tool.\n\nbutton: \"left\" (default), \"right\", or \"middle\". Defaults to left so the field is fully back-compat. X11: routes through XSendEvent ButtonPress/Release with the matching button code. Native Wayland: only left-button is supported via the virtual-pointer protocol — right/middle return an error rather than silently degrading to left. `modifier` holds ctrl/shift/alt/super for the click on X11. Native Wayland refuses modified pointer clicks until its input protocol can carry keyboard modifier state.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -499,12 +520,8 @@
       ],
       "type": "string"
      },
-     "element_index": {
-      "description": "Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.",
-      "type": "integer"
-     },
      "element_token": {
-      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.",
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
       "type": "string"
      },
      "from_zoom": {
@@ -533,11 +550,6 @@
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
-      "type": "string"
-     },
-     "snapshot_id": {
-      "description": "Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.",
-      "pattern": "^s[0-9a-f]{8}$",
       "type": "string"
      },
      "target": {
@@ -605,7 +617,7 @@
    "read_only": false
   },
   {
-   "description": "Double-click at (x,y) or an element_index (AT-SPI bounds). Background delivery on X11 sends real button events from the session's virtual master pointer (path mpx_pointer); a point covered by another application's window is refused (target_occluded), one covered by this app's own dialog is retargeted to it (retargeted_to). No focus steal. Provide either (window_id + x/y) or (pid + element_index). After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.",
+   "description": "Double-click at (x,y) or an element_token (AT-SPI bounds). Background delivery on X11 sends real button events from the session's virtual master pointer (path mpx_pointer); a point covered by another application's window is refused (target_occluded), one covered by this app's own dialog is retargeted to it (retargeted_to). No focus steal. Provide either (window_id + x/y) or (pid + element_token). After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -632,12 +644,8 @@
       ],
       "type": "string"
      },
-     "element_index": {
-      "description": "Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.",
-      "type": "integer"
-     },
      "element_token": {
-      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.",
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
       "type": "string"
      },
      "from_zoom": {
@@ -650,11 +658,6 @@
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
-      "type": "string"
-     },
-     "snapshot_id": {
-      "description": "Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.",
-      "pattern": "^s[0-9a-f]{8}$",
       "type": "string"
      },
      "window_id": {
@@ -679,7 +682,7 @@
    "read_only": false
   },
   {
-   "description": "Right-click at (x,y) or an element_index (AT-SPI bounds). Background delivery on X11 sends real button events from the session's virtual master pointer (path mpx_pointer); a point covered by another application's window is refused (target_occluded), one covered by this app's own dialog is retargeted to it (retargeted_to), one outside the window is refused (point_outside_window; x/y are window-local pixels, the result reports window_point / screen_point). No focus steal. When a context menu opens, the result names it (`popup: {window_id, bounds, title}`): call get_window_state(pid, window_id=<that id>) to index its menu items and click them by element_index. Provide either (window_id + x/y) or (pid + element_index). After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.",
+   "description": "Right-click at (x,y) or an element_token (AT-SPI bounds). Background delivery on X11 sends real button events from the session's virtual master pointer (path mpx_pointer); a point covered by another application's window is refused (target_occluded), one covered by this app's own dialog is retargeted to it (retargeted_to), one outside the window is refused (point_outside_window; x/y are window-local pixels, the result reports window_point / screen_point). No focus steal. When a context menu opens, the result names it (`popup: {window_id, bounds, title}`): call get_window_state(pid, window_id=<that id>) to index its menu items and click them by element_token. Provide either (window_id + x/y) or (pid + element_token). After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -706,12 +709,8 @@
       ],
       "type": "string"
      },
-     "element_index": {
-      "description": "Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.",
-      "type": "integer"
-     },
      "element_token": {
-      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.",
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
       "type": "string"
      },
      "from_zoom": {
@@ -731,11 +730,6 @@
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
-      "type": "string"
-     },
-     "snapshot_id": {
-      "description": "Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.",
-      "pattern": "^s[0-9a-f]{8}$",
       "type": "string"
      },
      "window_id": {
@@ -1185,6 +1179,10 @@
       },
       "minItems": 2,
       "type": "array"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
      }
     },
     "required": [
@@ -1219,12 +1217,8 @@
       ],
       "type": "string"
      },
-     "element_index": {
-      "description": "Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.",
-      "type": "integer"
-     },
      "element_token": {
-      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.",
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
       "type": "string"
      },
      "pid": {
@@ -1242,11 +1236,6 @@
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
-      "type": "string"
-     },
-     "snapshot_id": {
-      "description": "Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.",
-      "pattern": "^s[0-9a-f]{8}$",
       "type": "string"
      },
      "target": {
@@ -1307,11 +1296,11 @@
       "type": "string"
      },
      "window_id": {
-      "description": "Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it).",
+      "description": "Window id from list_windows. Required with x/y; optional with element_token (the token carries it).",
       "type": "integer"
      },
      "x": {
-      "description": "Pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Window-local pixels of the target window's own get_window_state screenshot by default (same convention as click); for get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\") — a bare pid+x/y is otherwise misinterpreted as window-local and can focus the wrong widget.",
+      "description": "Pixel X of the field to type into — the element px action form. Pass x,y (no element_token) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Window-local pixels of the target window's own get_window_state screenshot by default (same convention as click); for get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\") — a bare pid+x/y is otherwise misinterpreted as window-local and can focus the wrong widget.",
       "type": "number"
      },
      "y": {
@@ -1351,12 +1340,8 @@
       ],
       "type": "string"
      },
-     "element_index": {
-      "description": "Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.",
-      "type": "integer"
-     },
      "element_token": {
-      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.",
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
       "type": "string"
      },
      "key": {
@@ -1385,11 +1370,6 @@
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
-      "type": "string"
-     },
-     "snapshot_id": {
-      "description": "Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.",
-      "pattern": "^s[0-9a-f]{8}$",
       "type": "string"
      },
      "target": {
@@ -1450,7 +1430,7 @@
       "type": "integer"
      },
      "x": {
-      "description": "Pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index. Window-local pixels by default (same convention as click); for get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\").",
+      "description": "Pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_token. Window-local pixels by default (same convention as click); for get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\").",
       "type": "number"
      },
      "y": {
@@ -1482,12 +1462,8 @@
       ],
       "type": "string"
      },
-     "element_index": {
-      "description": "Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.",
-      "type": "integer"
-     },
      "element_token": {
-      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.",
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
       "type": "string"
      },
      "keys": {
@@ -1513,11 +1489,6 @@
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
-      "type": "string"
-     },
-     "snapshot_id": {
-      "description": "Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.",
-      "pattern": "^s[0-9a-f]{8}$",
       "type": "string"
      },
      "target": {
@@ -1601,12 +1572,17 @@
    "input_schema": {
     "additionalProperties": false,
     "properties": {
-     "element_index": {
-      "description": "Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.",
-      "type": "integer"
+     "delivery_mode": {
+      "default": "background",
+      "description": "Input delivery mode. 'background' (default) never activates or raises the target window. On X11 it injects via XTEST / the XInput2 master pointer (no focus steal). On Wayland it goes through libei + xdg-desktop-portal, which injects to the compositor's input focus — Wayland's security model has no per-window background targeting, so a specific non-focused window cannot be aimed at; when no libei backend is available the tool returns a structured background_unavailable error. 'foreground' is the explicit escalation: activate the target (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then restore the prior active window — a brief focus swap unless the target was already active. Matches the macOS / Windows delivery_mode surface.",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
      },
      "element_token": {
-      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.",
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
       "type": "string"
      },
      "pid": {
@@ -1617,11 +1593,6 @@
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
      },
-     "snapshot_id": {
-      "description": "Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.",
-      "pattern": "^s[0-9a-f]{8}$",
-      "type": "string"
-     },
      "value": {
       "description": "New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back.",
       "type": [
@@ -1630,7 +1601,7 @@
       ]
      },
      "window_id": {
-      "description": "Required when element_index is used; optional when element_token is supplied (the token carries it).",
+      "description": "Omit when element_token is supplied (the token carries it).",
       "type": "integer"
      }
     },
@@ -1695,12 +1666,8 @@
       ],
       "type": "string"
      },
-     "element_index": {
-      "description": "Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.",
-      "type": "integer"
-     },
      "element_token": {
-      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.",
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
       "type": "string"
      },
      "pid": {
@@ -1718,11 +1685,6 @@
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
-      "type": "string"
-     },
-     "snapshot_id": {
-      "description": "Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.",
-      "pattern": "^s[0-9a-f]{8}$",
       "type": "string"
      },
      "target": {
@@ -1779,15 +1741,15 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
      },
      "window_id": {
-      "description": "Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it).",
+      "description": "Window id from list_windows. Required with x/y; optional with element_token (the token carries it).",
       "type": "integer"
      },
      "x": {
-      "description": "Window-local screenshot-pixel X of the scroll target. Pass with y and without element_index.",
+      "description": "Window-local screenshot-pixel X of the scroll target. Pass with y and without element_token.",
       "type": "number"
      },
      "y": {
-      "description": "Window-local screenshot-pixel Y of the scroll target. Pass with x and without element_index.",
+      "description": "Window-local screenshot-pixel Y of the scroll target. Pass with x and without element_token.",
       "type": "number"
      }
     },
@@ -2178,7 +2140,12 @@
    "idempotent": true,
    "input_schema": {
     "additionalProperties": false,
-    "properties": {},
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
     "type": "object"
    },
    "name": "check_permissions",
@@ -2197,6 +2164,10 @@
        "type": "string"
       },
       "type": "array"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
      },
      "skip": {
       "description": "Skip these checks (canonical names). Ignored when `include` is set.",
@@ -2217,7 +2188,12 @@
    "idempotent": true,
    "input_schema": {
     "additionalProperties": false,
-    "properties": {},
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
     "type": "object"
    },
    "name": "get_config",
@@ -2254,6 +2230,10 @@
       "description": "Legacy per-field shape. Max dimension for screenshot resizing (0 = no limit).",
       "type": "integer"
      },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
      "value": {
       "description": "New value for `key`. JSON type depends on the key."
      }
@@ -2269,14 +2249,19 @@
    "idempotent": true,
    "input_schema": {
     "additionalProperties": false,
-    "properties": {},
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
     "type": "object"
    },
    "name": "get_accessibility_tree",
    "read_only": true
   },
   {
-   "description": "Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixels, with 20% padding. Output is at most 500 px wide.\n\nAfter a zoom, pass from_zoom=true to click/type_text to auto-translate coordinates back to full-window space. Coordinate actions return `screenshot_context_missing` when the latest snapshot does not contain a screenshot owned by this session. `from_zoom` actions return `zoom_context_missing` when the zoom was never created or was replaced; call `get_window_state`, then `zoom`, again on the same connection.",
+   "description": "Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixels, with 20% padding. Output is at most 500 px wide.\n\nAfter a zoom, pass from_zoom=true to click/type_text to auto-translate coordinates back to full-window space. Coordinate actions return `screenshot_context_missing` when no current snapshot contains a screenshot owned by this session. `from_zoom` actions return `zoom_context_missing` when the zoom was never created or was replaced; call `get_window_state`, then `zoom`, again on the same connection.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
@@ -2285,6 +2270,10 @@
      "pid": {
       "description": "Optional target pid. When omitted, the driver resolves the unique current snapshot for this session and window.",
       "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
      },
      "window_id": {
       "description": "Window id of the window captured by get_window_state.",
@@ -2370,6 +2359,10 @@
      },
      "selector": {
       "description": "CSS selector for click_element (e.g. 'button.submit', '#login a').",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
      },
      "target_url_contains": {
@@ -2944,7 +2937,12 @@
    "idempotent": true,
    "input_schema": {
     "additionalProperties": false,
-    "properties": {},
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
     "type": "object"
    },
    "name": "stop_recording",
@@ -2956,14 +2954,19 @@
    "idempotent": true,
    "input_schema": {
     "additionalProperties": false,
-    "properties": {},
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
     "type": "object"
    },
    "name": "get_recording_state",
    "read_only": true
   },
   {
-   "description": "Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. `dir` must point at a directory previously written by `start_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the recorded tool is called with its recorded `arguments` via the same dispatch path an MCP / CLI call uses.\n\nCaveats:\n- Element-indexed actions (`click({pid, element_index})` etc.) will fail because element indices are per-snapshot and don't survive across sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools replay cleanly. Failures are reported but don't stop replay unless `stop_on_error` is true.\n- `get_window_state` and other read-only tools are NOT currently recorded, so replays do not re-populate the per-(pid, window_id) element cache.\n- If recording is ENABLED while replay runs, the replay itself is recorded into the currently configured output directory.  That's deliberate: recording a replay against a new build and diffing the two trajectories is the regression-test workflow.",
+   "description": "Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. `dir` must point at a directory previously written by `start_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the recorded tool is called with its recorded `arguments` via the same dispatch path an MCP / CLI call uses.\n\nCaveats:\n- Element-token actions (`click({pid, element_token})` etc.) will fail because element tokens are per-snapshot and don't survive across sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools replay cleanly. Failures are reported but don't stop replay unless `stop_on_error` is true.\n- `get_window_state` and other read-only tools are NOT currently recorded, so replays do not re-populate the per-(pid, window_id) element cache.\n- If recording is ENABLED while replay runs, the replay itself is recorded into the currently configured output directory.  That's deliberate: recording a replay against a new build and diffing the two trajectories is the regression-test workflow.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -2977,6 +2980,10 @@
      },
      "dir": {
       "description": "Trajectory directory previously written by `start_recording`. Absolute or ~-rooted.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
      },
      "stop_on_error": {
@@ -3002,6 +3009,10 @@
      "confirm": {
       "description": "Run the install command. Without it, only the planned command is reported.",
       "type": "boolean"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
      }
     },
     "type": "object"
@@ -3183,7 +3194,12 @@
    "idempotent": true,
    "input_schema": {
     "additionalProperties": false,
-    "properties": {},
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
     "type": "object"
    },
    "name": "check_for_update",
@@ -3205,6 +3221,10 @@
       "enum": [
        "perception"
       ],
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
      }
     },
@@ -3268,6 +3288,10 @@
       },
       "required": [],
       "type": "object"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
      }
     },
     "required": [

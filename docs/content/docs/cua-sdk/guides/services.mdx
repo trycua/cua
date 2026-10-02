@@ -20,9 +20,6 @@ listener must bind a guest-reachable address (`0.0.0.0`, not only
 
 ## Start a server
 
-<Tabs groupId="where" persist items={['Local', 'Cloud']}>
-  <Tab value="Local">
-
 ```python test="container" id="start-local" session="local" prelude="local-cleanup"
 from cua_sandbox import Image, Sandbox, http
 
@@ -32,33 +29,13 @@ sb = await Sandbox.create(
     env={"PYTHONUNBUFFERED": "1"},
     services={"api": 8000},
     wait_for=http("api", "/"),
-    local=True,
 )
 ```
-
-  </Tab>
-  <Tab value="Cloud">
-
-```python test="docs" id="start-cloud" session="cloud" prelude="fakefleet"
-from cua_sandbox import Image, Sandbox, http
-
-sb = await Sandbox.create(
-    Image.from_registry("python:3.12-slim"),
-    command=["python", "-m", "http.server", "8000"],
-    env={"PYTHONUNBUFFERED": "1"},
-    services={"api": 8000},
-    wait_for=http("api", "/"),
-    local=False,
-)
-```
-
-  </Tab>
-</Tabs>
 
 ```bash test="cli-shape" id="cua-sb-create"
 cua sb create python:3.12-slim --name api \
   --service api=8000 --wait http:api/ --env PYTHONUNBUFFERED=1 \
-  -- python -m http.server 8000                 # add --on cloud for the cloud
+  -- python -m http.server 8000
 cua sb url api api
 ```
 
@@ -81,7 +58,6 @@ import { embedded, http, SandboxCreateOptions } from '@trycua/cua';
 
 const sb = await embedded().sandboxes().create(
   SandboxCreateOptions.create({
-    on: 'local', // or 'cloud'
     image: 'python:3.12-slim',
     command: ['python', '-m', 'http.server', '8000'],
     env: new Map([['PYTHONUNBUFFERED', '1']]),
@@ -114,9 +90,6 @@ server.run("streamable-http", host="0.0.0.0", port=8765)
 COMMAND = ["sh", "-c", "pip install -q 'mcp>=2' && exec python -c " + shlex.quote(SERVER)]
 ```
 
-<Tabs groupId="where" persist items={['Local', 'Cloud']}>
-  <Tab value="Local">
-
 ```python test="container" id="mcp-local" session="mcp" prelude="local-cleanup"
 from cua_sandbox import Image, Sandbox, tcp
 
@@ -125,27 +98,8 @@ sb = await Sandbox.create(
     command=COMMAND,
     services={"mcp": 8765},
     wait_for=tcp("mcp"),
-    local=True,
 )
 ```
-
-  </Tab>
-  <Tab value="Cloud">
-
-```python test="docs" id="mcp-cloud" session="mcp" prelude="fakefleet"
-from cua_sandbox import Image, Sandbox, tcp
-
-sb = await Sandbox.create(
-    Image.from_registry("python:3.12-slim"),
-    command=COMMAND,
-    services={"mcp": 8765},
-    wait_for=tcp("mcp"),
-    local=False,
-)
-```
-
-  </Tab>
-</Tabs>
 
 `sb.mcp(service)` opens an official `mcp` client (`pip install "cua-sandbox[mcp]"`).
 `sb.mcp_config(service)` returns the URL and headers for any other client;

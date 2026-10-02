@@ -6,8 +6,8 @@
     "start-here",
     "cua-sdk",
     "cua-driver",
-    "fleets",
     "spaces",
+    "fleets",
     "cua-bench",
     "lume",
     "cua-cli"

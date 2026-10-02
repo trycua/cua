@@ -25,8 +25,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Deleting…",
-              "System: Linux",
-              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:demo",
             "previewText": "Deleting…",
@@ -45,8 +45,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",
@@ -64,8 +64,8 @@
           "os-linux Keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Demo, Linux, Deleting… - Deleting…",
-          "os-linux Keep, Linux, Running - -"
+          "os-linux Demo, Linux, This Mac, Deleting… - Deleting…",
+          "os-linux Keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": true,
@@ -95,8 +95,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Deleting…",
-              "System: Linux",
-              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:demo",
             "previewText": "Deleting…",
@@ -115,8 +115,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",
@@ -134,8 +134,8 @@
           "os-linux Keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Demo, Linux, Deleting… - Deleting…",
-          "os-linux Keep, Linux, Running - -"
+          "os-linux Demo, Linux, This Mac, Deleting… - Deleting…",
+          "os-linux Keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": null,
@@ -165,8 +165,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Deleting…",
-              "System: Linux",
-              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:demo",
             "previewText": "Deleting…",
@@ -185,8 +185,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",
@@ -204,8 +204,8 @@
           "os-linux Keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Demo, Linux, Deleting… - Deleting…",
-          "os-linux Keep, Linux, Running - -"
+          "os-linux Demo, Linux, This Mac, Deleting… - Deleting…",
+          "os-linux Keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": null,
@@ -235,8 +235,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Deleting…",
-              "System: Linux",
-              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:demo",
             "previewText": "Deleting…",
@@ -255,8 +255,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",
@@ -274,8 +274,8 @@
           "os-linux Keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Demo, Linux, Deleting… - Deleting…",
-          "os-linux Keep, Linux, Running - -"
+          "os-linux Demo, Linux, This Mac, Deleting… - Deleting…",
+          "os-linux Keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": true,
@@ -305,8 +305,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",
@@ -322,7 +322,7 @@
           "os-linux Keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Keep, Linux, Running - -"
+          "os-linux Keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": true,
@@ -352,8 +352,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",
@@ -369,7 +369,7 @@
           "os-linux Keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Keep, Linux, Running - -"
+          "os-linux Keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": null,
@@ -397,8 +397,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",
@@ -414,7 +414,7 @@
           "os-linux Keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Keep, Linux, Running - -"
+          "os-linux Keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": null,
@@ -444,8 +444,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Deleting…",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Deleting…",
@@ -461,7 +461,7 @@
           "os-linux Keep [Deleting…] - -"
         ],
         "tiles": [
-          "os-linux Keep, Linux, Deleting… - Deleting…"
+          "os-linux Keep, Linux, This Mac, Deleting… - Deleting…"
         ]
       },
       "isDeleting": true,
@@ -489,8 +489,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",
@@ -506,7 +506,7 @@
           "os-linux Keep [Running] - -"
         ],
         "tiles": [
-          "os-linux Keep, Linux, Running - -"
+          "os-linux Keep, Linux, This Mac, Running - -"
         ]
       },
       "isDeleting": false,

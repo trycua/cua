@@ -118,6 +118,10 @@ async fn uploads_in_offset_addressed_chunks_over_both_transports() {
             sent.last(),
             Some(&(outcome.bundle_bytes, outcome.bundle_bytes))
         );
+        // The total is reported as the last chunk (the import) goes out,
+        // then again once the Space has it.
+        let n = outcome.bundle_bytes;
+        assert_eq!(sent.iter().filter(|p| **p == (n, n)).count(), 2, "{sent:?}");
     }
 }
 

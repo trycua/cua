@@ -26,9 +26,9 @@ CANONICAL = {
 
 #: Web benchmarks: MiniWoB, WebVoyager, Online-Mind2Web and WebGym tasks.
 #: Guide: /cua-bench/guides/adapter-benchmarks#bench-web. Lock: libs/images/bench/web/lock.json.
-#: Pinned to ghcr.io/trycua/bench-web:1.0-20260927-9a3828d.
+#: Pinned to ghcr.io/trycua/bench-web:1.0-20261002-01636cb.
 #: Floating ghcr.io/trycua/bench-web:1.0 (promoted: yes).
-BENCH_WEB = "ghcr.io/trycua/bench-web@sha256:e1781d7449146d35ee0d4b114890bbb7452cab1cd500821b9d281877ed5a8954"
+BENCH_WEB = "ghcr.io/trycua/bench-web@sha256:3b7e1d9d4e34694175cf1b44ffefc09b557c94b1c8f946fe50646d68df39ca87"
 
 #: OSWorld-Verified: OSWorld Verified desktop tasks.
 #: Guide: /cua-bench/guides/adapter-benchmarks#osworld-verified. Lock: libs/images/bench/osworld/lock.json.

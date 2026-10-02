@@ -58,12 +58,7 @@ cb run cua-bench-basic --agent cua-agent --model anthropic/claude-sonnet-4-20250
 | `--dry-run` | Prints each variant's image, kind and backend; starts nothing. |
 
 `--on local` (the default) runs sandboxes on this machine (Docker, gVisor when
-installed; check with `cua runtime doctor`). `--on cloud` runs the same
-taskset in the Cua cloud after `cb login`:
-
-```bash test="cli-shape" id="bench-registry-cloud"
-cb run cua-bench-basic --agent cua-agent --model anthropic/claude-sonnet-4-20250514 -j 16 --on cloud
-```
+installed; check with `cua runtime doctor`).
 
 Agents: `cua-agent` (any model the [Cua agent](/cua-sdk) supports) or your own
 with `--agent-import-path module:Class`. `--model` needs that provider's API

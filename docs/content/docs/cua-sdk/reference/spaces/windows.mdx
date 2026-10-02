@@ -12,7 +12,7 @@ description: "A Space's app icons (batched, through the SDK's one icon cache), w
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-`app_icons` answers a whole window list in one call: cached icons come from memory or `$CUA_HOME/cache/icons`, and every miss costs one guest round trip. `window_thumbnail` previews one window, reused for a few seconds. `displays` lists the displays with their resolution and `usage` the memory and storage use.
+`app_icons` answers a whole window list in one call: cached icons come from memory or `$CUA_HOME/cache/icons`, and every miss costs one guest round trip. `thumbnail` is the Space's latest small preview from the cache every client on the machine shares (`$CUA_HOME/cache/thumbnails`, kept fresh by the daemon while someone asks). `window_thumbnail` previews one window, reused for a few seconds. `displays` lists the displays with their resolution and `usage` the memory and storage use.
 
 ## Windows, icons and displays
 
@@ -126,6 +126,61 @@ pub async fn app_icon(&self, app_name: String, app_id: String, pid: u32) -> Resu
 | `pid` | `u32` | required |
 
 **Returns** [`Option<SpaceAppIcon>`](#spaceappicon-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `Space.thumbnail`
+
+The Space's latest thumbnail (a small JPEG of its primary display)
+from the cache every client on this machine shares: returned at
+once when it is younger than `max_age_ms` (unset: any age), else
+captured fresh through cua-spacesd and kept for the next caller.
+When that capture fails, the older one comes back (`captured_at_ms`
+says how old). Asking keeps the daemon refreshing running Spaces'
+thumbnails in the background for a while (about every 90 s).
+
+<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Python">
+
+```python
+async def thumbnail(self, max_age_ms: Optional[int]) -> SpaceThumbnail
+```
+
+</Tab>
+<Tab value="TypeScript">
+
+```ts
+thumbnail(maxAgeMs: bigint | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceThumbnail>
+```
+
+</Tab>
+<Tab value="Swift">
+
+```swift
+func thumbnail(maxAgeMs: UInt64?) async throws -> SpaceThumbnail
+```
+
+</Tab>
+<Tab value="Kotlin">
+
+```kotlin
+@Throws(CuaException::class)
+suspend fun thumbnail(maxAgeMs: ULong?): SpaceThumbnail
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn thumbnail(&self, max_age_ms: Option<u64>) -> Result<SpaceThumbnail, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `max_age_ms` | `Option<u64>` | required |
+
+**Returns** [`SpaceThumbnail`](#spacethumbnail-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Space.window_thumbnail`
 
@@ -310,6 +365,21 @@ Returned by [`Space.displays`](#spacedisplays).
 | `width_px` / `widthPx` | `u32` |  | Framebuffer width in physical pixels. |
 | `height_px` / `heightPx` | `u32` |  | Framebuffer height in physical pixels. |
 | `scale_factor` / `scaleFactor` | `f64` |  | Physical pixels per logical point. |
+
+## `SpaceThumbnail` record
+
+A Space's latest thumbnail, from the cache every client on this machine
+shares (`crate.native.spaces.Space.thumbnail`).
+
+Returned by [`Space.thumbnail`](#spacethumbnail).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `image` | `Vec<u8>` |  | Encoded image (a small JPEG of the primary display). |
+| `format` | [`ImageFormat`](/cua-sdk/reference/spacesd/computer#imageformat-enum) |  | Encoding. |
+| `width` | `u32` |  | Pixel width. |
+| `height` | `u32` |  | Pixel height. |
+| `captured_at_ms` / `capturedAtMs` | `u64` |  | When it was captured, Unix milliseconds. |
 
 ## `SpaceUsage` record
 

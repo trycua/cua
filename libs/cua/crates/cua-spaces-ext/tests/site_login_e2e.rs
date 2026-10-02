@@ -166,8 +166,7 @@ async fn rig() -> Option<Rig> {
         )
         .await
         .unwrap();
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].site.as_deref(), Some("example.test"));
+    assert_eq!(items.saved, 1);
     let import_ms = t.elapsed().as_millis();
     let mcp = McpServer::new(spaces.clone());
     Some(Rig {

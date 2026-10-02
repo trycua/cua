@@ -54,11 +54,11 @@ jobs:
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         run: |
           case "$ACTOR:$TRIGGERING_ACTOR" in
-            "f-trycua:f-trycua"|"cua-release-bot[bot]:cua-release-bot[bot]")
+            "f-trycua:f-trycua"|"ddupont808:ddupont808"|"cua-release-bot[bot]:cua-release-bot[bot]")
               echo "Version bump authorized for $ACTOR."
               ;;
             *)
-              echo "::error::Only f-trycua may manually bump package versions."
+              echo "::error::Only f-trycua or ddupont808 may manually bump package versions."
               exit 1
               ;;
           esac

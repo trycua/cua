@@ -2297,8 +2297,8 @@
         "deleteLabel": "Delete Space",
         "facts": [
           "Status: Running",
-          "System: Linux",
-          "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]"
+          "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: Linux"
         ],
         "previewText": "Loading the desktop…",
         "showSections": true,
@@ -2312,8 +2312,8 @@
         "deleteLabel": "Remove",
         "facts": [
           "Status: timed out",
-          "System: Linux",
-          "Identifier: direct:10.0.0.5:3211 [copy direct:10.0.0.5:3211 doc.on.doc Copy / checkmark Copied 1500ms]"
+          "Identifier: direct:10.0.0.5:3211 [copy direct:10.0.0.5:3211 doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: Linux"
         ],
         "previewText": "Not reachable",
         "showSections": false,

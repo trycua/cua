@@ -34,6 +34,8 @@ on:
       - "libs/python/cua-sandbox/pyproject.toml"
       - "libs/python/cua-sandbox/uv.lock"
       - "libs/python/cua-sandbox/cua_sandbox/__init__.py"
+      - "apps/cua-spaces-macos/VERSION"
+      - "apps/cua-spaces-macos/Support/Info.plist"
       - ".github/workflows/ci-test-scripts.yml"
       - ".github/workflows/periodic-cua-sandbox-live.yml"
       - ".github/workflows/ci-contributor-attribution.yml"
@@ -160,6 +162,8 @@ jobs:
             node .github/scripts/tests/release_please_sandbox_preview.cjs
           NODE_PATH="$RUNNER_TEMP/sandbox-release-preview/node_modules" \
             node .github/scripts/tests/release_please_perception_preview.cjs
+          NODE_PATH="$RUNNER_TEMP/sandbox-release-preview/node_modules" \
+            node .github/scripts/tests/release_please_spaces_preview.cjs
 
       - name: Validate historical release backfill
         run: python3 .github/scripts/release_backfill.py validate

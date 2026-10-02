@@ -43,7 +43,8 @@ def copy_release_sources(destination: Path) -> None:
         "libs/cua/python/src/cua/__init__.py",
         "libs/cua/typescript/package.json",
         "libs/cua/typescript/package-lock.json",
-        "apps/cua-spaces/VERSION",
+        "apps/cua-spaces-macos/VERSION",
+        "apps/cua-spaces-macos/Support/Info.plist",
         "apps/cua-spaces/package.json",
         "apps/cua-spaces/src-tauri/tauri.conf.json",
         "apps/cua-spaces/src-tauri/Cargo.toml",
@@ -342,7 +343,8 @@ SDK_AND_SPACES_SOURCES = (
     "libs/cua/python/src/cua/__init__.py",
     "libs/cua/typescript/package.json",
     "libs/cua/typescript/package-lock.json",
-    "apps/cua-spaces/VERSION",
+    "apps/cua-spaces-macos/VERSION",
+    "apps/cua-spaces-macos/Support/Info.plist",
     "apps/cua-spaces/package.json",
     "apps/cua-spaces/src-tauri/tauri.conf.json",
     "apps/cua-spaces/src-tauri/Cargo.toml",
@@ -375,6 +377,20 @@ def test_sdk_and_spaces_version_drift_fails(tmp_path: Path, product: str, relati
     assert marker in text
     path.write_text(text.replace(marker, marker + "9.9.9-drift", 1))
     assert main(["--repo-root", str(tmp_path), "--product", product]) == 1
+
+
+def test_spaces_macos_info_plist_drift_fails(tmp_path: Path):
+    for source in SDK_AND_SPACES_SOURCES:
+        target = tmp_path / source
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO_ROOT / source, target)
+    plist = tmp_path / "apps/cua-spaces-macos/Support/Info.plist"
+    text = plist.read_text()
+    marker = "<key>CFBundleShortVersionString</key>\n\t<string>"
+    assert marker in text
+    plist.write_text(text.replace(marker, marker + "9.9.9-drift", 1))
+    with pytest.raises(VersionError, match="Info.plist"):
+        validate(tmp_path, "spaces")
 
 
 @pytest.mark.parametrize(

@@ -620,7 +620,8 @@ public final class AppModel {
             menuBar: settings.menuBar, defaultLocation: settings.defaultLocation, locationLockedBy: nil,
             telemetry: telemetryInput, agents: agentRows, agentsBusy: agentsBusy, agentsPending: agentsPending,
             billing: identity == nil ? nil : billingStatus, loginItem: loginItemInput,
-            experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe))
+            experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe,
+            keyvaultUnlockPrompt: keyvault.unlockPromptShows, keyvaultProtection: keyvault.page.protection))
     }
 
     /// Settings, General with Settings, Storage after General while the Cua
@@ -762,6 +763,11 @@ public final class AppModel {
             setLaunchAtLogin(option == "on")
         case "keyvault-auto-wipe":
             await keyvault.setAutoWipe(option == "on")
+            if let error = keyvault.error { show(error: error) }
+        case "keyvault-unlock-prompt":
+            // On shows the prompt (Never ask again off); off is the stored
+            // "Never ask again".
+            await keyvault.setSkipUnlockPrompt(option != "on")
             if let error = keyvault.error { show(error: error) }
         case "telemetry":
             do {

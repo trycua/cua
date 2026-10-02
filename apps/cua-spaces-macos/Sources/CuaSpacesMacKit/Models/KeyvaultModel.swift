@@ -1,10 +1,28 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import AppKit
 import CuaSDK
 import CuaSpacesFFI
 import Foundation
 import Observation
+
+/// Items waiting for the user's answer to the unlock prompt.
+public struct PendingUnlock: Identifiable, Equatable {
+    public let ids: [String]
+    public let prompt: KvUnlockPrompt
+    public var id: String { ids.joined(separator: ",") }
+}
+
+/// What the user answered.
+public enum UnlockAnswer { case deny, allow, neverAskAgain }
+
+/// Items waiting for the user's confirmation to delete.
+public struct PendingDelete: Identifiable, Equatable {
+    public let ids: [String]
+    public let confirm: KvDeleteConfirm
+    public var id: String { ids.joined(separator: ",") }
+}
 
 /// The Keyvault browser: the broker's overview (through the core's
 /// `KeyvaultClient`) and the core's views of it. The app never reads secret
@@ -16,8 +34,22 @@ import Observation
 public final class KeyvaultModel {
     let client: KeyvaultClientProtocol?
     public private(set) var overview: KeyvaultOverview
-    public var selection: KvSelection = .category(category: .all)
-    public var query = ""
+    /// The sidebar's pick. An app narrows the vault list to it.
+    public var selection: KvSelection = .category(category: .all) {
+        didSet { applySelection() }
+    }
+    /// The vault list's own state (search, selection, open groups); the
+    /// core's reducer owns it.
+    public private(set) var vault = KvVaultState(query: "", selected: [], expanded: [], app: nil)
+    /// Items to unlock once the user answers the prompt (nil: no prompt).
+    public var unlockPrompt: PendingUnlock?
+    /// Items to delete once the user confirms (nil: nothing to confirm).
+    public var deleteConfirm: PendingDelete?
+    /// Looks up an app's icon (provider id to PNG data). The app wires the
+    /// SDK's icon cache; tests leave it empty.
+    public var iconSource: (@Sendable (_ providerId: String) async -> Data?)?
+    public private(set) var icons: [String: NSImage] = [:]
+    @ObservationIgnored private var iconsAsked: Set<String> = []
     public var approval: KvApprovalState?
     public private(set) var busy = false
     public var error: String?
@@ -35,7 +67,8 @@ public final class KeyvaultModel {
         self.clock = clock
         self.overview = overview ?? KeyvaultOverview(
             availability: "not_running", message: "The Cua daemon is not running, so the Keyvault is unavailable.",
-            status: nil, serverVerified: false, items: [], pending: [], grants: [], rules: [],
+            status: nil, serverVerified: false, items: [], namesVisible: false, itemsTotal: 0,
+            pending: [], grants: [], rules: [],
             deliveries: [], audit: [], auditVerification: nil, partialErrors: [])
     }
 
@@ -89,10 +122,111 @@ public final class KeyvaultModel {
         !row.imports.isEmpty && row.imports.allSatisfy(dismissed.contains)
     }
     public var sidebar: KvSidebar { kvSidebar(overview: overview, nowMs: nowMs) }
-    public var list: KvListView { kvList(overview: overview, selection: selection, nowMs: nowMs, query: query) }
+    public var list: KvListView { kvList(overview: overview, selection: selection, nowMs: nowMs) }
 
-    public func siteDetail(_ key: String) -> KvSiteDetail? {
-        kvSiteDetail(overview: overview, key: key, nowMs: nowMs)
+    // MARK: - The vault list (the core's grouping, selection and search)
+
+    /// The vault list as drawn: apps, sites and items with their locks.
+    public var vaultView: KvVaultView { kvVaultView(overview: overview, state: vault, nowMs: nowMs) }
+
+    /// The search text.
+    public var query: String {
+        get { vault.query }
+        set { send(.query(text: newValue)) }
+    }
+
+    /// Feeds one input to the list (search, select, open or close).
+    public func send(_ action: KvVaultAction) {
+        vault = kvVaultReduce(overview: overview, state: vault, action: action)
+    }
+
+    private func applySelection() {
+        var next = vault
+        switch selection {
+        case .app(let key): next.app = key
+        case .category: next.app = nil
+        }
+        if next.app != vault.app { next.selected = [] }
+        vault = kvVaultReduce(overview: overview, state: next, action: .query(text: next.query))
+    }
+
+    /// An app the list has not shown before opens, so its sites are in view;
+    /// one the user closed stays closed.
+    @ObservationIgnored private var seenApps: Set<String> = []
+
+    private func openNewApps() {
+        for id in Set(overview.items.map(\.providerId)).subtracting(seenApps).sorted() {
+            seenApps.insert(id)
+            if !vault.expanded.contains(id) { send(.toggleOpen(key: id)) }
+        }
+    }
+
+    /// Shows the items' names (Touch ID, asked by the daemon).
+    public func showItems() async { await run(.browse) }
+
+    // MARK: - Locks (one prompt and one Touch ID for a batch)
+
+    /// A click on a lock, or the batch bar's Unlock: asks first (unless the
+    /// user chose Never ask again), then the daemon asks for Touch ID once.
+    public func requestUnlock(ids: [String], name: String? = nil) async {
+        guard !ids.isEmpty else { return }
+        if let prompt = kvUnlockPrompt(overview: overview, count: UInt32(ids.count), name: name) {
+            unlockPrompt = PendingUnlock(ids: ids, prompt: prompt)
+        } else {
+            await run(kvUnlockCommand(ids: ids))
+        }
+    }
+
+    /// The prompt's answers: Allow, Never ask again (stored in the vault,
+    /// revertible in Settings), Deny.
+    public func answerUnlock(_ answer: UnlockAnswer) async {
+        guard let pending = unlockPrompt else { return }
+        unlockPrompt = nil
+        switch answer {
+        case .deny: return
+        case .allow:
+            await run(kvUnlockCommand(ids: pending.ids))
+        case .neverAskAgain:
+            await run(.setSkipUnlockPrompt(on: true))
+            await run(kvUnlockCommand(ids: pending.ids))
+        }
+    }
+
+    /// Locks items (narrowing: no prompt, no Touch ID).
+    public func lock(ids: [String]) async {
+        guard !ids.isEmpty else { return }
+        await run(kvLockCommand(ids: ids))
+    }
+
+    /// The batch bar's and a row's delete: confirm first.
+    public func requestDelete(ids: [String]) {
+        guard !ids.isEmpty else { return }
+        let copies = kvLiveCopySpaces(overview: overview, ids: ids, nowMs: nowMs)
+        deleteConfirm = PendingDelete(ids: ids, confirm: kvDeleteConfirm(count: UInt32(ids.count), liveCopies: copies))
+    }
+
+    /// Deletes the items and wipes their live copies in Spaces.
+    public func confirmDelete() async {
+        guard let pending = deleteConfirm else { return }
+        deleteConfirm = nil
+        await run(kvDeleteCommand(ids: pending.ids))
+    }
+
+    /// "Never ask again" is on (Settings turns it back off).
+    public var unlockPromptShows: Bool? { overview.status?.skipUnlockPrompt.map { !$0 } }
+
+    public func setSkipUnlockPrompt(_ on: Bool) async { await run(.setSkipUnlockPrompt(on: on)) }
+
+    // MARK: - App icons
+
+    /// Asks for the icons of the apps the list shows (each once).
+    public func loadIcons() async {
+        guard let source = iconSource else { return }
+        let ids = Set(overview.items.map(\.providerId)).subtracting(iconsAsked)
+        iconsAsked.formUnion(ids)
+        for id in ids.sorted() {
+            if let data = await source(id), let image = NSImage(data: data) { icons[id] = image }
+        }
     }
 
     public var approvalView: KvApprovalView? {
@@ -103,6 +237,8 @@ public final class KeyvaultModel {
     public func refresh() async {
         guard let client else { return }
         overview = await client.overview()
+        vault = kvVaultPrune(overview: overview, state: vault)
+        openNewApps()
         // Forget dismissals of copies that were wiped or expired (only
         // when the broker answered: an unavailable page lists none).
         if overview.availability == "ready" {
@@ -201,14 +337,6 @@ public final class KeyvaultModel {
     public var autoWipe: Bool? { overview.status?.autoWipe }
 
     public func setAutoWipe(_ on: Bool) async { await run(.setAutoWipe(on: on)) }
-
-    public func setUnattended(itemIds: [String], on: Bool) async {
-        await run(.setUnattended(itemIds: itemIds, unattended: on))
-    }
-
-    public func toggleSite(_ group: KvSiteGroup, on: Bool) async {
-        await run(kvSiteToggle(group: group, on: on))
-    }
 
     public func run(_ command: KvCommand) async {
         guard let client else { return }

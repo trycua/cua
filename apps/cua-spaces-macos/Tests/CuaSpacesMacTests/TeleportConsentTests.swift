@@ -14,12 +14,15 @@ struct TeleportConsentTests {
     @Test func saveToKeyvaultReachesTheSdkConsent() {
         let c = sdkConsent(AppTeleportConsent(
             approved: true, acknowledgeSensitive: true,
-            saveToKeyvault: true, acknowledgeRelayPlaintext: true))
+            saveToKeyvault: true, acknowledgeRelayPlaintext: true,
+            cookieDomains: nil, exclude: [], fromVault: nil))
         #expect(c == TeleportConsent(approved: true, acknowledgeSensitive: true,
-                                     saveToKeyvault: true, acknowledgeRelayPlaintext: true))
+                                     saveToKeyvault: true, acknowledgeRelayPlaintext: true,
+            cookieDomains: nil, exclude: [], fromVault: nil))
         let off = sdkConsent(AppTeleportConsent(
             approved: true, acknowledgeSensitive: true,
-            saveToKeyvault: false, acknowledgeRelayPlaintext: false))
+            saveToKeyvault: false, acknowledgeRelayPlaintext: false,
+            cookieDomains: nil, exclude: [], fromVault: nil))
         #expect(!off.saveToKeyvault)
     }
 }

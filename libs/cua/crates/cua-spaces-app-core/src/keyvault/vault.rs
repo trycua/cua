@@ -107,7 +107,8 @@ impl KvLock {
         match self {
             KvLock::Locked => "lock.fill",
             KvLock::Unlocked => "lock.open",
-            KvLock::Mixed => "lock.badge.clock",
+            // Some are unlocked: the open lock, drawn dimmer by the shell.
+            KvLock::Mixed => "lock.open",
         }
     }
 }

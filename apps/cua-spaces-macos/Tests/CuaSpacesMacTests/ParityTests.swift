@@ -788,7 +788,7 @@ struct ParityTests {
     func kvSidebarFrame(_ v: KvSidebar) -> [String: Any] {
         [
             "categories": v.categories.map { c in c.count.map { "\(c.title):\($0)" } ?? c.title },
-            "sites": v.sites.map { "\($0.title) (\($0.accounts))\($0.waiting ? " waiting" : "")" },
+            "apps": v.apps.map { "\($0.title) (\($0.items))\($0.waiting ? " waiting" : "")" },
         ]
     }
 
@@ -803,17 +803,82 @@ struct ParityTests {
     func kvListFrame(_ v: KvListView) -> [String: Any] {
         [
             "title": v.title,
-            "sites": v.sites.map { g in
-                "\(g.title) [\(word(g.unattended))]: " + g.rows.map { r in
-                    "\(r.account) \(r.item.policy.unattended ? "on" : "off")\(r.toggleEnabled ? "" : " locked") <"
-                        + r.consent.map { "\(word($0.kind)):\($0.text)" }.joined(separator: "; ") + ">"
-                }.joined(separator: " | ")
-            },
+            "vault": v.vault,
             "pending": v.pending.map { "\($0.caller) (\($0.badge.text)) \($0.summary) for \($0.wants)" },
             "access": v.access.map { "\($0.text) / \($0.detail) [\($0.actionLabel)]" },
             "recent": v.recent.map { "\($0.decision.verb) \($0.decision.what) (\(word($0.decision.tone))) \($0.age)" },
             "empty": opt(v.emptyText),
         ]
+    }
+
+    func lockWord(_ l: KvLock) -> String {
+        switch l {
+        case .locked: return "locked"
+        case .unlocked: return "unlocked"
+        case .mixed: return "mixed"
+        }
+    }
+
+    func triMark(_ t: KvTri) -> String {
+        switch t {
+        case .on: return "[x]"
+        case .mixed: return "[-]"
+        case .off: return "[ ]"
+        }
+    }
+
+    func vaultRowLine(_ r: KvVaultRow) -> String {
+        "\(r.selected ? "[x]" : "[ ]") \(r.kindLabel) \(r.title) | \(r.subtitle) | \(r.lockSymbol) | \(r.updated)"
+            + (r.identityProvider ? " | always asks" : "")
+    }
+
+    func kvVaultFrame(_ v: KvVaultView) -> [String: Any] {
+        var lines: [String] = []
+        for a in v.apps {
+            lines.append("\(triMark(a.selected)) \(a.name) \(a.providerId) | \(a.summary) | \(lockWord(a.lock)) | \(a.updated)")
+            for s in a.sites {
+                lines.append("  \(triMark(s.selected)) \(s.site) | \(s.counts) | \(lockWord(s.lock)) | \(s.updated)\(s.open ? " | open" : "")")
+                for r in s.rows { lines.append("    " + vaultRowLine(r)) }
+            }
+            if let f = a.files {
+                lines.append("  \(triMark(f.selected)) files (\(f.count)) | \(lockWord(f.lock))\(f.open ? " | open" : "")")
+                for r in f.rows { lines.append("    " + vaultRowLine(r)) }
+            }
+        }
+        let sel = v.selection
+        return [
+            "shown": "\(v.shown)/\(v.total)",
+            "lines": lines,
+            "empty": opt(v.emptyText),
+            "selection": "\(sel.title) (unlock \(sel.unlockIds.count) / lock \(sel.lockIds.count) / always ask \(sel.alwaysAsk))",
+            "canUnlock": sel.canUnlock,
+            "canLock": sel.canLock,
+        ]
+    }
+
+    func kvUnlockPromptFrame(_ p: KvUnlockPrompt?) -> Any {
+        guard let p else { return NSNull() }
+        return [p.title, p.message, p.subject, "\(p.deny) / \(p.allow) / \(p.neverAsk)"]
+    }
+
+    func kvDeleteConfirmFrame(_ c: KvDeleteConfirm) -> Any {
+        [c.title, c.message, "\(c.confirm) / \(c.cancel)"]
+    }
+
+    func vaultAction(_ a: [String: Any]) -> KvVaultAction {
+        switch a["type"] as! String {
+        case "query": return .query(text: a["text"] as! String)
+        case "toggle": return .toggle(id: a["id"] as! String)
+        case "toggle-group": return .toggleGroup(key: a["key"] as! String)
+        case "select-all": return .selectAll
+        case "toggle-open": return .toggleOpen(key: a["key"] as! String)
+        default: return .clear
+        }
+    }
+
+    func vaultState(_ s: [String: Any]) -> KvVaultState {
+        KvVaultState(query: s["query"] as! String, selected: s["selected"] as! [String],
+                     expanded: s["expanded"] as! [String], app: s["app"] as? String)
     }
 
     func approvalFrame(_ v: KvApprovalView) -> [String: Any] {
@@ -830,13 +895,14 @@ struct ParityTests {
         case .approve(let id, let items)?: return ["type": "approve", "requestId": id, "items": items.map { $0 as Any } ?? NSNull()]
         case .deny(let id)?: return ["type": "deny", "requestId": id]
         case .setUnattended(let ids, let on)?: return ["type": "set-unattended", "itemIds": ids, "unattended": on]
+        case .setLocked(let ids, let locked)?: return ["type": "set-locked", "itemIds": ids, "locked": locked]
         case nil: return NSNull()
         default: return "unmapped"
         }
     }
 
     func selection(_ s: [String: Any]) -> KvSelection {
-        if (s["kind"] as! String) == "site" { return .site(key: s["key"] as! String) }
+        if (s["kind"] as! String) == "app" { return .app(key: s["key"] as! String) }
         let c: KvCategory = switch s["category"] as! String {
         case "waiting": .waiting
         case "access": .access
@@ -861,7 +927,7 @@ struct ParityTests {
         frames.append(["sidebar": kvSidebarFrame(kvSidebar(overview: o, nowMs: now))])
         frames.append(["page": kvPageFrame(kvPage(overview: o, nowMs: now))])
         for sel in f["selections"] as! [[String: Any]] {
-            frames.append(["list": sel, "frame": kvListFrame(kvList(overview: o, selection: selection(sel), nowMs: now, query: ""))])
+            frames.append(["list": sel, "frame": kvListFrame(kvList(overview: o, selection: selection(sel), nowMs: now))])
         }
         for a in f["approvals"] as! [[String: Any]] {
             let req = a["request"] as! String
@@ -874,12 +940,27 @@ struct ParityTests {
             frames.append(["approval": req, "approveCommand": command(kvApprovalApproveCommand(overview: o, state: st))])
         }
         frames.append(["denyCommand": command(kvApprovalDenyCommand(state: KvApprovalState(requestId: f["deny"] as! String, selected: [])))])
-        let t = f["siteToggle"] as! [String: Any]
-        let detail = kvSiteDetail(overview: o, key: t["key"] as! String, nowMs: now)!
-        frames.append([
-            "siteDetail": ["switch": detail.siteSwitch, "state": word(detail.siteState), "enabled": detail.siteSwitchEnabled],
-            "siteToggle": command(kvSiteToggle(group: detail.group, on: t["on"] as! Bool)),
-        ])
+        let vault = f["vault"] as! [String: Any]
+        var vst = vaultState(vault["state"] as! [String: Any])
+        frames.append(["vault": "open", "frame": kvVaultFrame(kvVaultView(overview: o, state: vst, nowMs: now))])
+        for action in vault["actions"] as! [[String: Any]] {
+            vst = kvVaultReduce(overview: o, state: vst, action: vaultAction(action))
+            frames.append(["vault": action, "frame": kvVaultFrame(kvVaultView(overview: o, state: vst, nowMs: now))])
+        }
+        var one = vaultState(vault["state"] as! [String: Any])
+        one.app = (vault["app"] as! String)
+        frames.append(["vaultApp": vault["app"] as! String, "frame": kvVaultFrame(kvVaultView(overview: o, state: one, nowMs: now))])
+        for u in vault["unlock"] as! [[String: Any]] {
+            let p = kvUnlockPrompt(overview: o, count: UInt32(u["count"] as! Int), name: u["name"] as? String)
+            frames.append(["unlockPrompt": u, "frame": kvUnlockPromptFrame(p)])
+        }
+        var skip = o
+        skip.status?.skipUnlockPrompt = true
+        frames.append(["unlockPromptSkipped": kvUnlockPromptFrame(kvUnlockPrompt(overview: skip, count: 1, name: nil))])
+        for d in vault["delete"] as! [[String: Any]] {
+            let c = kvDeleteConfirm(count: UInt32(d["count"] as! Int), liveCopies: UInt32(d["liveCopies"] as! Int))
+            frames.append(["deleteConfirm": d, "frame": kvDeleteConfirmFrame(c)])
+        }
         var off = o
         off.status?.disabled = true
         frames.append(["page": kvPageFrame(kvPage(overview: off, nowMs: now))])
@@ -899,8 +980,7 @@ struct ParityTests {
             "labels": [
                 "deny: \(l.deny)", "review: \(l.review)", "cancel: \(l.cancel)", "setUp: \(l.setUp)",
                 "unlock: \(l.unlock)", "revokeAll: \(l.revokeAll)", "confirmNote: \(l.confirmNote)",
-                "protectionTitle: \(l.protectionTitle)", "accountsTitle: \(l.accountsTitle)",
-                "appLabel: \(l.appLabel)", "everyAccount: \(l.everyAccount)",
+                "protectionTitle: \(l.protectionTitle)",
             ],
             "killSwitchHelp": [on.killSwitchHelp, offPage.killSwitchHelp],
             "badges": kvSidebar(overview: o, nowMs: now).categories.map { "\($0.title):\($0.badge.map { String($0) } ?? "-")" },
@@ -1745,7 +1825,6 @@ struct ParityTests {
     func word(_ v: AppConsentKind) -> String { "\(v)" }
     func word(_ v: AppNotchPhase) -> String { "\(v)" }
     func word(_ v: KvTri) -> String { "\(v)" }
-    func word(_ v: KvConsentChipKind) -> String { "\(v)" }
     func word(_ v: KvDecisionTone) -> String { "\(v)" }
 
     // MARK: - your-cloud

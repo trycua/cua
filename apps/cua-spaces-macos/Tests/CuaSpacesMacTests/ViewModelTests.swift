@@ -23,9 +23,43 @@ final class FakeKeyvault: KeyvaultClientProtocol, @unchecked Sendable {
         case .setDisabled(let disabled): current.status?.disabled = disabled
         case .setAutoWipe(let on): current.status?.autoWipe = on
         case .approve(let id, _), .deny(let id): current.pending.removeAll { $0.id == id }
+        case .setLocked(let ids, let locked):
+            // The broker's rule: an identity provider always asks.
+            var changed: [String] = [], skipped: [String] = []
+            for i in current.items.indices where ids.contains(current.items[i].id) {
+                if !locked && current.items[i].identityProvider { skipped.append(current.items[i].id); continue }
+                if current.items[i].policy.unattended == locked { changed.append(current.items[i].id) }
+                current.items[i].policy.unattended = !locked
+            }
+            return .locked(changed: changed, skipped: skipped)
+        case .deleteItems(let ids):
+            current.items.removeAll { ids.contains($0.id) }
+            current.itemsTotal = UInt32(current.items.count)
+            let wiped = current.deliveries.filter { d in d.items.contains { ids.contains($0) } }.map(\.importId)
+            for i in current.deliveries.indices where wiped.contains(current.deliveries[i].importId) {
+                current.deliveries[i].wiped = true
+            }
+            return .deleted(count: UInt32(ids.count), wiped: wiped)
+        case .setSkipUnlockPrompt(let on): current.status?.skipUnlockPrompt = on
+        case .browse:
+            current.namesVisible = true
+            current.items = KeyvaultFixtures.items().filter { n in current.items.contains { $0.id == n.id } }
+                .map { n in var m = n; m.policy = current.items.first { $0.id == n.id }!.policy; return m }
+            return .browsing(untilMs: UInt64(KeyvaultFixtures.now + 300_000))
         default: break
         }
         return .done
+    }
+
+    /// What the Keyvault would list for an app (the review's sites).
+    var inventoryResult: KvInventory = KeyvaultFixtures.chromeInventory()
+    var inventoryFails = false
+    var inventoryAsks = 0
+
+    func inventory(app: String, profile: String?) async throws -> KvInventory {
+        inventoryAsks += 1
+        if inventoryFails { throw CuaError.InvalidArgument(message: "no cookies") }
+        return inventoryResult
     }
 
     /// Passphrases the page sent (test fixtures, never real secrets).
@@ -990,10 +1024,11 @@ struct ViewModelTests {
         #expect(!v.canApprove)
         await model.keyvault.approve()
         #expect(fake.commands.isEmpty, "nothing ticked, nothing sent")
-        model.keyvault.sendApproval(.toggle(key: "gh-bob"))
+        // Rows are sites; ticking one approves exactly its items.
+        model.keyvault.sendApproval(.toggle(key: "chrome|example.test"))
         #expect(model.keyvault.approvalView?.canApprove == true)
         await model.keyvault.approve()
-        #expect(fake.commands == [.approve(requestId: "req-1", items: ["gh-bob"])])
+        #expect(fake.commands == [.approve(requestId: "req-1", items: ["gh-ada", "gh-bob"])])
         #expect(model.keyvault.approval == nil)
     }
 
@@ -1009,12 +1044,12 @@ struct ViewModelTests {
         #expect(model.keyvault.approvalView?.blockedReason == "Keyvault is off. Turn it on to approve.")
     }
 
-    @Test func keyvaultCategoriesAndSites() async throws {
+    @Test func keyvaultCategoriesAndApps() async throws {
         let model = makeModel(kv: FakeKeyvault(try fixtureOverview()))
         await model.keyvault.refresh()
         let sidebar = model.keyvault.sidebar
-        #expect(sidebar.categories.map(\.title) == ["All", "Waiting", "Access", "Recent"])
-        #expect(sidebar.sites.map(\.title).contains("github.example.test"))
+        #expect(sidebar.categories.map(\.title) == ["All Items", "Waiting", "Access", "Recent"])
+        #expect(sidebar.apps.map(\.title) == ["Chrome", "Slack"])
         model.keyvault.selection = .category(category: .waiting)
         #expect(model.keyvault.list.pending.count == 2)
     }

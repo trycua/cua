@@ -346,14 +346,14 @@ struct SnapshotTests {
         let m = try await model()
         let sel = KvSelection.category(category: .all)
         m.keyvault.selection = sel
-        try assertSnapshot(CategoryList(keyvault: m.keyvault, page: m.keyvault.page), "keyvault-all",
+        try assertSnapshot(VaultList(keyvault: m.keyvault, page: m.keyvault.page), "keyvault-all",
                            size: CGSize(width: 640, height: 520))
     }
 
     @Test func approvalSheet() async throws {
         let m = try await model()
         m.keyvault.openApproval("req-1")
-        m.keyvault.sendApproval(.toggle(key: "gh-ada"))
+        m.keyvault.sendApproval(.toggle(key: "chrome|example.test"))
         try assertSnapshot(ApprovalSheet(keyvault: m.keyvault), "approval", size: CGSize(width: 480, height: 360))
     }
 

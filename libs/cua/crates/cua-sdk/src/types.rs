@@ -242,6 +242,33 @@ pub struct Screenshot {
     pub screenshot_id: String,
 }
 
+/// A Space's latest thumbnail, from the cache every client on this machine
+/// shares ([`crate::native::spaces::Space::thumbnail`]).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SpaceThumbnail {
+    /// Encoded image (a small JPEG of the primary display).
+    pub image: Vec<u8>,
+    /// Encoding.
+    pub format: ImageFormat,
+    /// Pixel width.
+    pub width: u32,
+    /// Pixel height.
+    pub height: u32,
+    /// When it was captured, Unix milliseconds.
+    pub captured_at_ms: u64,
+}
+
+impl ImageFormat {
+    /// The cache's format word (`jpeg`, `png`, `webp`).
+    pub(crate) fn from_word(word: &str) -> Self {
+        match word {
+            "png" => ImageFormat::Png,
+            "webp" => ImageFormat::Webp,
+            _ => ImageFormat::Jpeg,
+        }
+    }
+}
+
 /// A point.
 #[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
 pub struct Point {

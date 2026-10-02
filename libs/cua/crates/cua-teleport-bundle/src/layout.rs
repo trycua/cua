@@ -124,22 +124,6 @@ pub mod chrome {
         }
     }
 
-    /// The cookie store of a Chromium-family profile directory: modern
-    /// Chrome (96+) keeps it at `Network/Cookies`, older builds at `Cookies`.
-    /// The modern location wins when it exists; with neither present the
-    /// modern one is returned (what a fresh launch would create). Applies to
-    /// every profile (`Default`, `Profile 1`, ...) and every Chromium-family
-    /// browser (Brave, Edge, Arc share the layout).
-    pub fn cookies_store(profile_dir: &std::path::Path) -> std::path::PathBuf {
-        let network = profile_dir.join("Network").join("Cookies");
-        let legacy = profile_dir.join("Cookies");
-        if !network.is_file() && legacy.is_file() {
-            legacy
-        } else {
-            network
-        }
-    }
-
     /// Bundle path of a profile-relative file (canonical Linux layout).
     pub fn dest_rel_path(profile: &str, rel: &str) -> String {
         format!("{LINUX_USER_DATA_DIR}/{profile}/{rel}")

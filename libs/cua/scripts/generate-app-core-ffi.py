@@ -24,6 +24,7 @@ TYPES = [
     ("spaces/roster.rs", "spaces::roster", ["NoticeKind", "Notice", "RosterState", "RosterAction"]),
     ("spaces/creating.rs", "spaces::creating", ["PendingCreate", "PendingDelete", "PendingPower", "CreatesState", "CreateAction"]),
     ("spaces/sidebar.rs", "spaces::sidebar", ["PowerButton", "SidebarRow", "SidebarSection", "SidebarView", "FactCopy", "FactWarning", "Fact", "DetailActionId", "DetailAction", "DeleteConfirm", "DetailCopy", "SpaceUsage", "SpaceDetail"]),
+    ("spaces/cover.rs", "spaces::cover", ["StreamPhase", "DesktopCoverInput", "DesktopCoverKind", "DesktopCover", "ThumbnailPolicy"]),
     ("spaces/stream.rs", "spaces::stream", ["StreamDisplay", "StreamSectionInput", "StreamRowKind", "StreamRowIcon", "StreamRowActionId", "StreamRowAction", "StreamRow", "StreamSection", "PipEvent", "PipCommand"]),
     ("notch/geometry.rs", "notch::geometry", ["WindowMode", "LogicalRect"]),
     ("teleport/drag.rs", "teleport::drag", ["DragOverlayPhase", "DragOverlayState", "DragOverlayEvent", "DragOverlayEffect", "DragOverlayTransition"]),

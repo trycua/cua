@@ -106,8 +106,8 @@ RUN install -d -m 0755 /etc/apt/keyrings
 # Per-arch pins: the PPA keeps only its newest build per arch, and the
 # arches do not always move together. CHROMIUM_VERSION, when set, wins.
 ARG CHROMIUM_VERSION=
-ARG CHROMIUM_VERSION_AMD64=154.0.8037.92-1xtradeb1.2404.1
-ARG CHROMIUM_VERSION_ARM64=154.0.8037.92-1xtradeb1.2404.1
+ARG CHROMIUM_VERSION_AMD64=154.0.8037.57-1xtradeb1.2404.1
+ARG CHROMIUM_VERSION_ARM64=154.0.8037.57-1xtradeb1.2404.1
 ARG CHROMIUM_PPA_KEY=5301FA4FD93244FBC6F6149982BB6851C64F6880
 RUN curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${CHROMIUM_PPA_KEY}" \
       | gpg --dearmor >/etc/apt/keyrings/xtradeb-apps.gpg \
@@ -161,21 +161,10 @@ RUN --mount=type=bind,source=linux/dist,target=/dist \
         install -m 0755 "$src" "$bin" ;; \
       release) \
         case "$TARGETARCH" in amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; *) arch="$TARGETARCH" ;; esac; \
-        CUA_SPACESD_VERSION="${CUA_SPACESD_VERSION#cua-spacesd-v}"; CUA_SPACESD_VERSION="${CUA_SPACESD_VERSION#v}"; \
-        if [ "$CUA_SPACESD_VERSION" = latest ]; then \
-          CUA_SPACESD_VERSION="$(curl -fsSL 'https://api.github.com/repos/trycua/cua/releases?per_page=100' \
-            | python3 -c 'import json,sys; print(next(r["tag_name"][len("cua-spacesd-v"):] for r in json.load(sys.stdin) if r["tag_name"].startswith("cua-spacesd-v") and not r["draft"] and not r["prerelease"]))')"; \
-          echo "latest cua-spacesd release: $CUA_SPACESD_VERSION"; \
-        fi; \
         url="$(echo "$CUA_SPACESD_RELEASE_URL" | sed "s/{version}/$CUA_SPACESD_VERSION/g; s/{arch}/$arch/g")"; \
         echo "fetching $url"; \
-        curl -fsSL -o /tmp/cua-spacesd.tar.gz "$url"; \
-        sum="$(curl -fsSL "$url.sha256" | cut -d' ' -f1)"; \
-        echo "$sum  /tmp/cua-spacesd.tar.gz" | sha256sum -c -; \
-        tar -xzf /tmp/cua-spacesd.tar.gz -C /usr/local/bin cua-spacesd; \
-        rm /tmp/cua-spacesd.tar.gz; \
-        chmod 0755 "$bin"; \
-        echo "$CUA_SPACESD_VERSION" >/tmp/cua-spacesd-version ;; \
+        curl -fsSL "$url" | tar -xz -C /usr/local/bin cua-spacesd; \
+        chmod 0755 "$bin" ;; \
       none) echo "building without cua-spacesd" ;; \
       *) echo "unknown CUA_SPACESD_SOURCE=$CUA_SPACESD_SOURCE" >&2; exit 1 ;; \
     esac; \
@@ -186,7 +175,6 @@ RUN --mount=type=bind,source=linux/dist,target=/dist \
     fi; \
     mkdir -p /etc/cua-image; \
     echo "$CUA_SPACESD_SOURCE" >/etc/cua-image/spacesd-source; \
-    if [ -f /tmp/cua-spacesd-version ]; then mv /tmp/cua-spacesd-version /etc/cua-image/spacesd-release; fi; \
     ln -s spacesd-source /etc/cua-image/env-driver-source; \
     ln -s spacesd-source /etc/cua-image/guestd-source
 

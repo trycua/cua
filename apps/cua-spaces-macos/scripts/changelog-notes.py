@@ -4,7 +4,7 @@
 """Prints one version's section of a Release Please CHANGELOG.md (the
 Sparkle appcast's release notes when the release has none of its own).
 
-    changelog-notes.py 0.2.0 apps/cua-spaces-macos/CHANGELOG.md
+    changelog-notes.py 0.2.0 apps/cua-spaces/CHANGELOG.md
 """
 import re
 import sys

@@ -158,18 +158,6 @@ cua installed; folders the user edited are skipped) and stops and starts the
 running daemon when its executable is inside this bundle, with one notice
 only if either failed.
 
-### Release versions
-
-Release Please drives the `cua-spaces` component from this directory: a
-releasable conventional commit (`fix:`, `feat:`) that touches
-`apps/cua-spaces-macos` opens the `cua-spaces` release PR, which bumps
-`VERSION`, `CHANGELOG.md` and `CFBundleShortVersionString` in
-`Support/Info.plist`, plus the Tauri app's versions in `apps/cua-spaces` (it
-shares the version but its commits never open a release). Release Please
-splits commits by package path and skips a path with no commits (even for a
-targeted bump), so a change only under `libs/spaces-app-swift` does not open
-one on its own: land it with the app change that uses it.
-
 ### Publishing the appcast (runbook)
 
 1. The key: the `CUA_SPACES_SPARKLE_ED_PRIVATE_KEY` secret (base64 Ed25519

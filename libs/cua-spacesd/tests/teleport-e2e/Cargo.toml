@@ -22,7 +22,6 @@ cua-teleport = { path = "../../../cua/crates/cua-teleport" }
 cua-spacesd-client = { path = "../../../cua/crates/cua-spacesd-client" }
 cua-spacesd-server = { path = "../../crates/cua-spacesd-server" }
 cua-spacesd-teleport = { path = "../../crates/cua-spacesd-teleport" }
-cua-teleport-bundle = { path = "../../../cua/crates/cua-teleport-bundle" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 tempfile = "3"
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }

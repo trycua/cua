@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import plistlib
 from pathlib import Path
 import re
 import sys
@@ -262,14 +261,9 @@ def sdk_versions(root: Path) -> tuple[str, dict[str, str]]:
 
 
 def spaces_app_versions(root: Path) -> tuple[str, dict[str, str]]:
-    # Release Please drives Cua Spaces from the macOS app (component
-    # `cua-spaces` at apps/cua-spaces-macos); the Tauri app shares its version.
-    macos = root / "apps/cua-spaces-macos"
-    expected = (macos / "VERSION").read_text().strip()
-    stable_version_tuple(expected)
-    with (macos / "Support/Info.plist").open("rb") as info_file:
-        info = plistlib.load(info_file)
     base = root / "apps/cua-spaces"
+    expected = (base / "VERSION").read_text().strip()
+    stable_version_tuple(expected)
     package = json.loads((base / "package.json").read_text())
     tauri = json.loads((base / "src-tauri/tauri.conf.json").read_text())
     cargo = tomllib.loads((base / "src-tauri/Cargo.toml").read_text())
@@ -278,11 +272,10 @@ def spaces_app_versions(root: Path) -> tuple[str, dict[str, str]]:
     if len(locked) != 1:
         raise VersionError("Cua Spaces Cargo.lock must lock the app crate exactly once")
     return expected, {
-        "apps/cua-spaces-macos/Support/Info.plist": str(info["CFBundleShortVersionString"]),
-        "apps/cua-spaces/package.json": str(package["version"]),
-        "apps/cua-spaces/src-tauri/tauri.conf.json": str(tauri["version"]),
-        "apps/cua-spaces/src-tauri/Cargo.toml": str(cargo["package"]["version"]),
-        "apps/cua-spaces/src-tauri/Cargo.lock": str(locked[0]["version"]),
+        "package.json": str(package["version"]),
+        "src-tauri/tauri.conf.json": str(tauri["version"]),
+        "src-tauri/Cargo.toml": str(cargo["package"]["version"]),
+        "src-tauri/Cargo.lock": str(locked[0]["version"]),
     }
 
 
@@ -339,7 +332,7 @@ def validate(root: Path, product: str) -> None:
         require_equal("cua SDK", expected, values)
     if product in {"all", "spaces"}:
         expected, values = spaces_app_versions(root)
-        values[".release-please-manifest.json"] = str(manifest["apps/cua-spaces-macos"])
+        values[".release-please-manifest.json"] = str(manifest["apps/cua-spaces"])
         require_equal("Cua Spaces app", expected, values)
 
 

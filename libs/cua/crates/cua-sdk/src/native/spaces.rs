@@ -3027,10 +3027,10 @@ impl Space {
         .await
     }
 
-    /// Captures the Space's display (the app's tile thumbnails): PNG at
-    /// full size on the primary display unless `options` say otherwise.
-    /// Fails with `CapabilityMissing` (`spacesd`) when the image runs no
-    /// cua-spacesd.
+    /// Captures the Space's display: PNG at full size on the primary
+    /// display unless `options` say otherwise (for a small preview,
+    /// [`Space::thumbnail`] reads the shared cache instead). Fails with
+    /// `CapabilityMissing` (`spacesd`) when the image runs no cua-spacesd.
     pub async fn screenshot(
         &self,
         options: Option<crate::types::ScreenshotOptions>,
@@ -3040,6 +3040,65 @@ impl Space {
         run(async move {
             let shot = s.spacesd()?.screenshot(request).await?;
             Ok(super::spacesd::screenshot_reply(shot))
+        })
+        .await
+    }
+
+    /// The Space's latest thumbnail (a small JPEG of its primary display)
+    /// from the cache every client on this machine shares: returned at
+    /// once when it is younger than `max_age_ms` (unset: any age), else
+    /// captured fresh through cua-spacesd and kept for the next caller.
+    /// When that capture fails, the older one comes back (`captured_at_ms`
+    /// says how old). Asking keeps the daemon refreshing running Spaces'
+    /// thumbnails in the background for a while (about every 90 s).
+    pub async fn thumbnail(&self, max_age_ms: Option<u64>) -> Result<crate::types::SpaceThumbnail> {
+        let host = self.host.clone();
+        let id = self.info.id.clone();
+        run(async move {
+            let max_age = max_age_ms.map(Duration::from_millis);
+            Ok(match &host {
+                Host::Embedded(s) => {
+                    let t = s.thumbnail(&id, max_age).await?;
+                    crate::types::SpaceThumbnail {
+                        format: crate::types::ImageFormat::from_word(&t.format),
+                        width: t.width,
+                        height: t.height,
+                        captured_at_ms: t
+                            .captured_at
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0),
+                        image: t.image,
+                    }
+                }
+                Host::Daemon(d) => {
+                    let r = d
+                        .spaces()
+                        .get_space_thumbnail(dpb::GetSpaceThumbnailRequest {
+                            space: id,
+                            max_age: max_age.map(|d| pbjson_types::Duration {
+                                seconds: d.as_secs() as i64,
+                                nanos: d.subsec_nanos() as i32,
+                            }),
+                        })
+                        .await
+                        .map_err(daemon_err)?
+                        .into_inner();
+                    let captured_at_ms = r
+                        .captured_at
+                        .map(|t| {
+                            (t.seconds.max(0) as u64) * 1000 + (t.nanos.max(0) as u64) / 1_000_000
+                        })
+                        .unwrap_or(0);
+                    crate::types::SpaceThumbnail {
+                        image: r.image,
+                        format: crate::types::ImageFormat::from_word(&r.format),
+                        width: r.width,
+                        height: r.height,
+                        captured_at_ms,
+                    }
+                }
+            })
         })
         .await
     }

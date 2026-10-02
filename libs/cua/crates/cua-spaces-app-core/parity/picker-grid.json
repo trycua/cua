@@ -1,0 +1,133 @@
+{
+  "name": "picker-grid",
+  "about": "The teleport picker's grid in both apps: the tab strip, the Apps tab (Recent, Apps, Not available; each tile previews its app's frontmost window, what it can take as the tooltip, the app that cannot move dimmed), arrow keys across it, a search, the Open windows tab and the From <Space> tab (the guest's screen target is not a tile), then each tab's primary button (its label names the destination; live only with a choosable tile selected).",
+  "spaceName": "Aurora",
+  "entries": [
+    {
+      "id": "unsupported-app",
+      "name": "Figma",
+      "hostPath": "/Applications/Figma.app",
+      "hostAppId": "com.figma.Desktop",
+      "version": null,
+      "capability": "unsupported",
+      "reason": "no Linux build",
+      "moves": [],
+      "providerId": null,
+      "installSource": null,
+      "installId": null,
+      "installVersion": null,
+      "launchBin": null,
+      "lastUsedMs": null,
+      "json": "{}"
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "hostPath": "/Applications/Slack.app",
+      "hostAppId": "com.tinyspeck.slackmacgap",
+      "version": "4.41",
+      "capability": "full",
+      "reason": null,
+      "moves": [
+        "app_only",
+        "app_with_state"
+      ],
+      "providerId": "slack",
+      "installSource": "manifest",
+      "installId": "slack",
+      "installVersion": "4.41.105",
+      "launchBin": "slack",
+      "lastUsedMs": 1799999000000,
+      "json": "{\"id\":\"slack\"}"
+    },
+    {
+      "id": "code",
+      "name": "Visual Studio Code",
+      "hostPath": "/Applications/Visual Studio Code.app",
+      "hostAppId": "com.microsoft.VSCode",
+      "version": "1.99",
+      "capability": "install_only",
+      "reason": null,
+      "moves": [
+        "app_only",
+        "app_with_files"
+      ],
+      "providerId": null,
+      "installSource": "manifest",
+      "installId": "vscode",
+      "installVersion": "1.99.0",
+      "launchBin": "code",
+      "lastUsedMs": null,
+      "json": "{\"id\":\"code\"}"
+    }
+  ],
+  "windows": [
+    {
+      "windowId": 41,
+      "appId": "slack",
+      "appName": "Slack",
+      "windowTitle": "general - Acme",
+      "supported": true,
+      "bundlePath": "/Applications/Slack.app"
+    },
+    {
+      "windowId": 40,
+      "appId": "slack",
+      "appName": "Slack",
+      "windowTitle": "Huddle",
+      "supported": true,
+      "bundlePath": "/Applications/Slack.app"
+    },
+    {
+      "windowId": 12,
+      "appId": "com.microsoft.VSCode",
+      "appName": "Code",
+      "windowTitle": "main.rs - cua",
+      "supported": true
+    },
+    {
+      "windowId": 7,
+      "appId": "finder",
+      "appName": "Finder",
+      "windowTitle": "",
+      "supported": false
+    }
+  ],
+  "remote": [
+    {
+      "id": "w-screen",
+      "appName": "cua driver",
+      "title": "Screen",
+      "visible": true,
+      "appId": "cua-driver",
+      "targetEpoch": 1
+    },
+    {
+      "id": "w-1",
+      "appName": "Firefox",
+      "title": "Mozilla Firefox",
+      "visible": true,
+      "appId": "firefox",
+      "targetEpoch": 3,
+      "pid": 812
+    },
+    {
+      "id": "w-2",
+      "appName": "xterm",
+      "title": "",
+      "visible": true,
+      "appId": "xterm",
+      "targetEpoch": 1,
+      "pid": 904
+    }
+  ],
+  "steps": [
+    1,
+    1,
+    1,
+    -1,
+    5
+  ],
+  "query": "code",
+  "remoteQuery": "fire"
+}

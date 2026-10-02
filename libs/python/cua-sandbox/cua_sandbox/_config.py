@@ -92,6 +92,68 @@ def has_fleet_auth() -> bool:
     return bool(get_fleet_token() or (get_client_id() and get_client_secret()))
 
 
+#: The one "no Fleet credentials" message (``cua_fleet::MISSING_CREDENTIALS``).
+FLEET_CREDENTIALS_MISSING = (
+    "Fleet credentials missing: run `cua auth login` or set "
+    "CUA_CLIENT_ID/CUA_CLIENT_SECRET, or pass local=True"
+)
+
+
+def has_fleet_session() -> bool:
+    """Whether a ``cua auth login`` session is stored (no network access).
+
+    Fleet uses it when no token or client credentials are configured. Set
+    ``CUA_FLEET_SESSION=0`` to ignore it.
+    """
+    if os.environ.get("CUA_FLEET_SESSION", "").strip().lower() in ("0", "false", "off", "no"):
+        return False
+    try:
+        from cua_sandbox._sdk import sdk
+
+        return bool(sdk().embedded(fleet_from_env=False).auth().status().logged_in)
+    except Exception:  # noqa: BLE001 - no SDK or unreadable store: no session
+        return False
+
+
+def may_have_fleet_session() -> bool:
+    """Whether a ``cua auth login`` session may be stored, decided WITHOUT
+    reading the OS credential vault: the SDK's non-secret session marker
+    (``~/.cua/session.json``, written at login and on the first read of an
+    older session) or the file store's file. Implicit calls (the default
+    ``Sandbox.list()``) check this first; explicit cloud calls read the
+    session (:func:`has_fleet_session`), which writes the marker."""
+    try:
+        from cua_sandbox._sdk import native
+
+        return bool(native().may_have_fleet_session())
+    except Exception:  # noqa: BLE001 - no SDK: no session to find
+        return False
+
+
+def fleet_auth_source(*, read_session: bool = True) -> Optional[str]:
+    """Where Fleet credentials come from, in the order the SDK uses them.
+
+    ``"FLEETS_TOKEN"`` (a workload token), ``"client credentials"``
+    (``CUA_CLIENT_ID``/``CUA_CLIENT_SECRET``), ``"cua auth login session"``
+    (the stored session, refreshed by the SDK while it is used) or ``None``
+    when nothing is configured. A stored session is only looked up when
+    neither of the first two is set. ``read_session=False`` decides that from
+    the non-secret session marker alone, without reading the OS credential
+    vault (for dashboards and other implicit checks).
+    """
+    if get_fleet_token():
+        return "FLEETS_TOKEN"
+    if get_client_id() and get_client_secret():
+        return "client credentials"
+    found = has_fleet_session() if read_session else may_have_fleet_session()
+    return "cua auth login session" if found else None
+
+
+def has_fleet_access() -> bool:
+    """Fleet credentials, or a ``cua auth login`` session to fall back to."""
+    return has_fleet_auth() or has_fleet_session()
+
+
 def get_token_url() -> str:
     return os.environ.get("CUA_TOKEN_URL") or _global_config.token_url
 
@@ -105,8 +167,10 @@ def get_client_secret(override: Optional[str] = None) -> Optional[str]:
 
 
 def _read_credentials_key() -> Optional[str]:
-    """Read a legacy API key from ``~/.cua/credentials`` when present."""
-    credential_path = os.path.join(os.path.expanduser("~"), ".cua", "credentials")
+    """Read a legacy API key from ``$CUA_HOME/credentials`` when present."""
+    from cua_sandbox._paths import cua_home
+
+    credential_path = cua_home() / "credentials"
     try:
         with open(credential_path) as credential_file:
             for line in credential_file:

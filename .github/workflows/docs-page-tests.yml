@@ -1,0 +1,53 @@
+name: "Docs: page tests"
+
+# Unit tests that pin curated docs pages to the code they describe (versions,
+# API shapes, example scripts). No network, no sandboxes, no secrets.
+
+on:
+  pull_request:
+    paths:
+      - "docs/content/docs/**"
+      - "docs/public/scripts/**"
+      - "docs/scripts/tests/test_unified_sandbox_docs.py"
+      - "docs/scripts/tests/test_fleet_driver_guide.py"
+      - "docs/scripts/tests/test_sandbox_secret_example.py"
+      - "docs/scripts/tests/test_fleet_docs_version_facts.py"
+      - "docs/scripts/tests/test_openai_agents_fleet_example.py"
+      - "libs/python/cua-sandbox/**"
+      - "libs/cua/VERSION"
+      - "libs/cua/python/pyproject.toml"
+      - "libs/cua/typescript/package.json"
+      - "libs/typescript/fleet/package.json"
+      - ".github/workflows/docs-page-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  page-tests:
+    name: Docs page tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - name: Run the page tests
+        # test_sandbox_secret_example imports cua_sandbox (pure Python; the
+        # native cua SDK is not loaded) and checks the installed version.
+        run: >
+          uv run --no-project --python 3.12 --with pytest
+          --with-editable libs/cua/python --with-editable libs/python/cua-sandbox
+          pytest -q
+          docs/scripts/tests/test_unified_sandbox_docs.py
+          docs/scripts/tests/test_fleet_driver_guide.py
+          docs/scripts/tests/test_sandbox_secret_example.py
+          docs/scripts/tests/test_fleet_docs_version_facts.py
+          docs/scripts/tests/test_openai_agents_fleet_example.py

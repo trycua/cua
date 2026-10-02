@@ -1,0 +1,1 @@
+Local is the default: `Sandbox.create(image)` runs on this machine, `local=False` or `cloud=CloudOptions(...)` in the cloud, and every other parameter means the same on both. `Sandbox.connect(name)` and the class methods take `local=None`: the local sandbox of that name when one exists, else the cloud.

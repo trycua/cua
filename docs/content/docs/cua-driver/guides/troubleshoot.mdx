@@ -1,0 +1,145 @@
+---
+title: Troubleshoot
+description: Fix stale macOS permissions and empty results, and work around known per-app and per-platform limits.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Start with the built-in checks:
+
+```bash test="cli-shape" id="cua-driver-diagnose"
+cua-driver status
+cua-driver doctor
+cua-driver diagnose
+```
+
+`diagnose` output can contain usernames, paths, and process IDs: sanitize it
+before sharing.
+
+| Symptom | Fix |
+| --- | --- |
+| `list_apps` or `list_windows` returns `[]` | The daemon cannot see the desktop. On Windows over SSH, see [Windows over SSH](/cua-driver/guides/vms-and-remote#windows-over-ssh); on Linux, start `serve` inside the desktop session. |
+| No screenshot in `get_window_state` on macOS | Screen Recording is missing: without this grant it returns the tree only (no PNG). Accessibility is needed for every tree read and input. |
+| `permissions status` says `unknown` | No app-owned daemon answered. Run `open -n -g -a CuaDriver --args serve`. |
+| Permission granted in System Settings but reported false | Stale grant: [reset it](#reset-stale-macos-permissions). |
+| `libXi.so.6: cannot open shared object file` | `sudo apt install libxi6 at-spi2-core`. |
+| `doctor` warns AT-SPI is unreachable | `get_window_state` needs the accessibility bus; start the app inside a full desktop session. |
+| Action returned success but nothing changed | Check `effect` and follow `escalation`; see [the action ladder](/cua-driver/concepts/how-cua-driver-works#the-action-ladder). |
+| `stale_element_token` | Call `get_window_state` again and use a fresh `element_token`. The refusal lists the process's current snapshots, so you can tell whether you already hold a newer one. The accessibility route still works. |
+| `screenshot_context_missing` | A window-relative pixel action came before a screenshot read of that window in the same session. Call `get_window_state` (with its screenshot) first, using the same `session` label for one-shot CLI calls. |
+| `invalid_arguments` (`unknown argument element_index`) | Action tools take `element_token` only; read it from the latest `get_window_state` row. |
+| `desktop_scope_disabled` | A legacy window-less call: pass a window target, or `target: {kind: "desktop", display_id: "primary"}`. |
+
+## Reset stale macOS permissions
+
+Use this when CuaDriver is enabled in **System Settings → Privacy & Security**
+but `permissions status` or `diagnose` reports `accessibility: false` or
+`screen_recording: false`. A grant for an older bundle ID
+(`com.trycua.cuadriver`, `com.trycua.cuadriverrs`) or signature does not
+cover the current `com.trycua.driver`.
+
+Quit every MCP client that starts Cua Driver, then stop the daemon and confirm
+it is not running:
+
+```bash test="cli-shape" id="cua-driver-stop"
+cua-driver stop
+cua-driver status
+```
+
+Reset only Cua Driver's grants (repeat for the two older IDs if this Mac ran
+them; `No such bundle identifier` for those is fine):
+
+```bash skip="destructive"
+tccutil reset Accessibility com.trycua.driver
+tccutil reset ScreenCapture com.trycua.driver
+tccutil reset AppleEvents com.trycua.driver
+```
+
+Never run an unscoped reset or edit `TCC.db`. If `tccutil` cannot find
+`com.trycua.driver`, re-register the app and retry:
+
+```bash skip="host-macos-permissions"
+/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister \
+  -f /Applications/CuaDriver.app
+```
+
+Grant again, turning CuaDriver on under **Accessibility** and **Screen
+Recording** (add `/Applications/CuaDriver.app` with **+** if it is missing),
+then check:
+
+```bash test="cli-shape" id="cua-driver-permissions-grant"
+cua-driver permissions grant
+cua-driver permissions status --json
+```
+
+Expect `accessibility: true`, `screen_recording: true`, and
+`source.attribution: "driver-daemon"`. If not, check that `diagnose` points at
+`/Applications/CuaDriver.app` and not an older copy or a terminal-owned
+process.
+
+## Known limits
+
+Cua Driver refuses a route it cannot deliver safely instead of reporting a
+silent success. These are the cases callers hit most.
+
+### Canvas apps and games need the foreground
+
+Blender, Unity, most native games, and some WebGL-heavy Electron apps ignore
+per-process routed input. Pixel clicks silently no-op. Use element actions
+where the app exposes them; otherwise retry that action with
+`delivery_mode: "foreground"` while nobody is using the machine.
+
+### Chromium turns pixel right-clicks into left-clicks
+
+On macOS, a pixel `right_click` on Chrome, Edge, Brave, or Arc web content
+fires a left click. Use `right_click` with `element_token` on accessible
+targets; for pure web content, activate the browser briefly for that one
+right-click.
+
+### Off-Space SwiftUI windows lose their tree
+
+macOS 14+ strips accessibility detail from SwiftUI windows on another Space;
+`get_window_state` returns `off_space: true`. Switch to that Space, or use an
+AppKit app. AppKit windows are not affected.
+
+### Minimized windows drop keyboard commits
+
+On macOS, Return, Space, or Tab sent to a field in a minimized window does
+nothing. Use `set_value` to write the field, or click the commit button by
+element.
+
+### Native Wayland keyboard input is focus-bound
+
+On Sway, GNOME, and KDE, background `press_key`, `hotkey`, or `type_text` into
+a field that is not AT-SPI-editable returns `background_unavailable`. Type into
+accessible fields with `type_text`, drive controls by `element_token`, use
+`delivery_mode: "foreground"` where the desktop supports it, or run the app
+under XWayland (`GDK_BACKEND=x11`, `QT_QPA_PLATFORM=xcb`).
+
+### Cinnamon leaves accessibility off
+
+Cua Driver does not change Cinnamon's accessibility flags (doing so launches
+Orca or fights the settings schemas), so some apps return an empty AT-SPI
+tree. Screenshots and browser routes still work.
+
+### Element frames and pixel coordinates use different spaces
+
+`elements[].frame` is screen-absolute (points on macOS, pixels elsewhere).
+Window-targeted `x, y` are pixels in that window's screenshot. Prefer
+`element_token`. If you must convert:
+
+```text output
+scale_x = screenshot_width  / bounds.width      # bounds from list_windows
+scale_y = screenshot_height / bounds.height
+x = (frame.x + frame.w / 2 - bounds.x) * scale_x
+y = (frame.y + frame.h / 2 - bounds.y) * scale_y
+```
+
+Recompute the scale from every snapshot: it is normally 2 on Retina, and less
+than 1 when a large window is downscaled to `max_image_dimension`.
+
+<Callout type="info">
+  Browser-specific limits (trusted input, Safari and Firefox, embedded webviews) are listed in
+  [Drive a browser](/cua-driver/guides/browsers). Platform coverage is in
+  [Platform support](/cua-driver/concepts/platform-support).
+</Callout>

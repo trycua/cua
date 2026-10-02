@@ -137,14 +137,14 @@ fn shell_owner_with_min_version(min_version: Option<u32>) -> Option<String> {
         DBUS_DEST,
         DBUS_PATH,
         &format!("{DBUS_IFACE}.GetConnectionUnixProcessID"),
-        &[owner.clone()],
+        std::slice::from_ref(&owner),
         Duration::from_millis(800),
     )?;
     let uid_raw = gdbus_call_to(
         DBUS_DEST,
         DBUS_PATH,
         &format!("{DBUS_IFACE}.GetConnectionUnixUser"),
-        &[owner.clone()],
+        std::slice::from_ref(&owner),
         Duration::from_millis(800),
     )?;
     let pid = parse_first_u32(&pid_raw)?;

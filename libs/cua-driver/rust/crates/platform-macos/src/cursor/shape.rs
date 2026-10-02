@@ -88,7 +88,7 @@ fn tiff_data(image: &NSImage) -> Option<Retained<NSData>> {
 fn tiff_bytes(cursor: &NSCursor) -> Option<Vec<u8>> {
     let image = cursor_image(cursor)?;
     let data = tiff_data(&image)?;
-    Some(unsafe { data.bytes() }.to_vec())
+    Some(data.bytes().to_vec())
 }
 
 fn fingerprint(cursor: &NSCursor) -> Option<Fingerprint> {

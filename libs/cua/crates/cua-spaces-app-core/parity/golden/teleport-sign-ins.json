@@ -1,0 +1,410 @@
+{
+  "flow": "teleport-sign-ins",
+  "frames": [
+    {
+      "frame": {
+        "canPlan": false,
+        "entry": null,
+        "error": null,
+        "move": null,
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [],
+        "selectedId": null,
+        "sensitive": [],
+        "step": "loading"
+      },
+      "picker": "initial"
+    },
+    {
+      "frame": {
+        "canPlan": false,
+        "entry": null,
+        "error": null,
+        "move": null,
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "pick"
+      },
+      "picker": "loaded"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_only",
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "options"
+      },
+      "picker": "choose"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "options"
+      },
+      "picker": "move"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "options"
+      },
+      "picker": "sensitive"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "slack",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "slack",
+        "sensitive": [],
+        "step": "pick"
+      },
+      "picker": "back"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [
+          "sign_ins:Keep me signed in:Sends the session cookies.:off",
+          "passwords:Saved passwords:Sends the passwords saved in the app.:off",
+          "history:Browsing history:Sends the history of pages visited, and the bookmarks where the browser keeps them together.:off"
+        ],
+        "step": "options"
+      },
+      "picker": "choose"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [
+          "sign_ins:Keep me signed in:Sends the session cookies.:on",
+          "passwords:Saved passwords:Sends the passwords saved in the app.:off",
+          "history:Browsing history:Sends the history of pages visited, and the bookmarks where the browser keeps them together.:off"
+        ],
+        "step": "options"
+      },
+      "picker": "sensitive"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins",
+          "history"
+        ],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [
+          "sign_ins:Keep me signed in:Sends the session cookies.:on",
+          "passwords:Saved passwords:Sends the passwords saved in the app.:off",
+          "history:Browsing history:Sends the history of pages visited, and the bookmarks where the browser keeps them together.:on"
+        ],
+        "step": "options"
+      },
+      "picker": "sensitive"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [
+          "sign_ins:Keep me signed in:Sends the session cookies.:on",
+          "passwords:Saved passwords:Sends the passwords saved in the app.:off",
+          "history:Browsing history:Sends the history of pages visited, and the bookmarks where the browser keeps them together.:off"
+        ],
+        "step": "options"
+      },
+      "picker": "sensitive"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": null,
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "planning"
+      },
+      "picker": "plan"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "planned"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": false,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "confirm"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": true,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "consent"
+      },
+      "picker": "acknowledge"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": null,
+        "review": {
+          "canConfirm": true,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "running"
+      },
+      "picker": "confirm"
+    },
+    {
+      "frame": {
+        "canPlan": true,
+        "entry": "com.google.Chrome",
+        "error": null,
+        "move": "app_with_state",
+        "permille": 0,
+        "planSensitive": [
+          "sign_ins"
+        ],
+        "report": "com.google.Chrome",
+        "review": {
+          "canConfirm": true,
+          "items": [
+            "state:Open tabs",
+            "secret:Cookies (secret)",
+            "state:Preferences"
+          ],
+          "leavesText": "28 KB leaves this Mac",
+          "needsAcknowledgement": true,
+          "needsRelayPlaintextAcknowledgement": false,
+          "title": "Teleport Google Chrome to Space B",
+          "warnings": []
+        },
+        "sections": [
+          "Apps: Google Chrome, Slack"
+        ],
+        "selectedId": "com.google.Chrome",
+        "sensitive": [],
+        "step": "done"
+      },
+      "picker": "finished"
+    },
+    {
+      "consent": {
+        "acknowledgeRelayPlaintext": false,
+        "acknowledgeSensitive": true,
+        "approved": true,
+        "saveToKeyvault": false
+      }
+    }
+  ]
+}

@@ -1,9 +1,7 @@
 name: "CI: License direction"
 
 # Checks that MIT packages only depend on internal packages under permissive
-# licences, and reports packages without a declared licence. Report-only
-# (continue-on-error: true) while the existing cua-agent[omni] -> cua-som edge
-# is reviewed; remove continue-on-error to make it blocking.
+# licences, and reports packages without a declared licence. Blocking.
 # See scripts/check-license-direction.py for the rules.
 
 on:
@@ -12,6 +10,7 @@ on:
       - "**/Cargo.toml"
       - "**/package.json"
       - "**/pyproject.toml"
+      - "**/Package.swift"
       - "**/LICENSE*"
       - "scripts/check-license-direction.py"
       - ".github/workflows/license-check.yml"
@@ -21,6 +20,7 @@ on:
       - "**/Cargo.toml"
       - "**/package.json"
       - "**/pyproject.toml"
+      - "**/Package.swift"
       - "**/LICENSE*"
       - "scripts/check-license-direction.py"
       - ".github/workflows/license-check.yml"
@@ -45,10 +45,11 @@ jobs:
 
       - name: Check licence direction
         id: check
-        continue-on-error: true
-        run: python3 scripts/check-license-direction.py
+        # --include-dev: an FSL-1.1-MIT package must not be even a dev
+        # dependency of an MIT one (LICENSING.md).
+        run: python3 scripts/check-license-direction.py --include-dev
 
       - name: Flag violations
-        if: steps.check.outcome == 'failure'
+        if: failure() && steps.check.outcome == 'failure'
         run: |
-          echo "::warning title=License direction::An MIT package depends on an internal package outside the licence allow-list. See the 'Check licence direction' step output."
+          echo "::error title=License direction::An MIT package depends on an internal package outside the licence allow-list. See the 'Check licence direction' step output."

@@ -1,4 +1,4 @@
-# cua-driver — Linux
+# cua-driver: Linux
 
 Start with `cua-driver doctor` in the graphical user's session. X11,
 XWayland, and native Wayland expose different capture and input facilities;
@@ -12,7 +12,7 @@ Wayland has no portable protocol for setting another application's top-level
 geometry, so this tool refuses there unless a future compositor-owned adapter
 can provide exact targeting and readback.
 
-AT-SPI is talked to natively over D-Bus (the `atspi`/zbus crate) — no
+AT-SPI is talked to natively over D-Bus (the `atspi`/zbus crate): no
 `pyatspi` or GObject-introspection typelibs are required at runtime.
 
 ## Delivery
@@ -79,7 +79,7 @@ the screenshot is taken from the screen (`screenshot_composited:true`) so the
 menu or dialog is visible; the window's own drawable never shows them. The
 payload states its frame (`coordinate_frame:"window"`, `frame_note`): `x`/`y`
 of the pointer tools are pixels of THIS screenshot. Closed menus are listed
-with a `description` ("closed menu with N items…") and are not walked —
+with a `description` ("closed menu with N items…") and are not walked;
 click the menu (a real press) and read the popup by its window_id.
 `press_key` / `hotkey` that map a new top-level report it as `window_opened`
 with `window_change` evidence. Action results carry the same text as
@@ -94,6 +94,30 @@ stays in screen coordinates, as on every platform); `frame_scale` < 1 and
 `screenshot_original_width` report the downsizing, and the driver scales your
 pixels back to the window.
 An explicit per-call `max_image_dimension` (0 = native) replaces this cap.
+
+**Budget the pixels before you aim.** The cap is a pixel budget, so on a
+high-resolution window the delivered image is a small fraction of native and
+fine controls stop being readable. Measured on a 3840x2342 window: `frame_scale`
+0.357, so a 24px toolbar icon arrives at ~8.6px and a 1px border at ~0.36px:
+sub-pixel for any reader, sighted or not. Check `frame_scale` in the
+`get_window_state` payload and, when a target is smaller than roughly 30px, frame
+it with `zoom` before choosing a coordinate. Zooming a 196x728 window-px region
+returned a 235x873 image (about 1.2x native), which restores a 24px icon to
+~29px. `zoom` takes screenshot pixels and the follow-up action needs
+`from_zoom: true`. It also requires a screenshot-owning snapshot from the same
+session first, and refuses with `screenshot_context_missing` otherwise, so
+`get_window_state` with a screenshot must precede the first `zoom`.
+
+**When the active model takes no images.** Some clients drop image content
+entirely, so `get_window_state` and `zoom` return an image the reader never sees.
+The loop still closes for most questions, and none of this needs a vision model:
+`verify_state` proves state and returns a real `satisfied` / `unsatisfied` /
+`unknown` verdict; an out-of-band read such as
+`xprop -root _NET_ACTIVE_WINDOW` proves which window holds focus; and scanning the
+written capture for colour transitions (PIL or equivalent) proves coarse layout.
+What none of them prove is that a specific small control was activated. For that
+use the `cua-perception` extension (see `VISUAL.md`) or an app that exposes a
+usable accessibility tree.
 
 **Windows without `_NET_WM_PID`.** Tk, many Java/AWT builds, Wine, and legacy
 Xlib/Xt clients do not publish `_NET_WM_PID`. On X11, `list_windows` then asks
@@ -113,7 +137,7 @@ GTK/VCL menu holds a keyboard grab that makes the X server drop keys from the
 virtual keyboard. `press_key` / `hotkey` / `type_text` / `set_value` then go
 through the core keyboard (`path: "xtest_core_grab"`, the result names the
 popup and states that the core focus and active window were verified
-unchanged), or — when another application holds the core focus — are refused
+unchanged), or, when another application holds the core focus, are refused
 with `code: "popup_keyboard_grab"` and a hint: dismiss the popup (click
 outside it, or click one of its rows by element_token after
 `get_window_state(pid, window_id=<popup>)`) and retry. Typing an absolute path
@@ -161,13 +185,13 @@ native `do_action` acknowledgement alone is not task completion.
 
 ## AT-SPI needs the session bus (headless / containers / `runuser`)
 
-AT-SPI — the accessibility tree behind `get_window_state`, `element_token`
-clicks, and focus-free `type_text` — lives **entirely on the desktop
+AT-SPI (the accessibility tree behind `get_window_state`, `element_token`
+clicks, and focus-free `type_text`) lives **entirely on the desktop
 session's D-Bus**. cua-driver reaches it via `DBUS_SESSION_BUS_ADDRESS`. When
 the daemon is started _inside_ a normal desktop login that variable is already
-exported and everything works. When it is started **outside** the session —
-a container entrypoint, a headless box, `runuser`/`su` into the desktop user,
-a systemd _system_ unit, or a VNC session running its own ad-hoc bus — the
+exported and everything works. When it is started **outside** the session
+(a container entrypoint, a headless box, `runuser`/`su` into the desktop user,
+a systemd _system_ unit, or a VNC session running its own ad-hoc bus), the
 variable is unset, the AT-SPI registry walk comes back empty, and
 `get_window_state` reports **every** window as having no elements.
 
@@ -178,7 +202,7 @@ process's `/proc/<pid>/environ` (`xfce4-session`, `gnome-session`, …). So the
 common headless cases now "just work". The two things that still must be true:
 
 1. **An accessibility bus must be running** in that session, and
-   **`toolkit-accessibility` must be on** — cua-driver advertises a screen
+   **`toolkit-accessibility` must be on**: cua-driver advertises a screen
    reader at startup to flip it, but a session with no a11y bus at all
    (`/usr/libexec/at-spi-bus-launcher`) can't expose a tree. `cua-driver
 doctor` now probes `org.a11y.Bus` for real (not just "is there a bus?")
@@ -205,11 +229,11 @@ Each input rung and its stable public route:
 | `type_text` into editable       | `background`              | `accessibility`                                                      | `confirmed` only with `value_readback` evidence          |
 | `type_text`, non-editable focus | `background`/`foreground` | `synthetic_events` or `global_input`                                 | Use `verify_state` or multimodal reading                 |
 
-**A background element px action does land on X11** — for an AX-exposing app it
+**A background element px action does land on X11**: for an AX-exposing app it
 takes the focus-free AT-SPI `do_action`-at-point path (`x11_atspi`), exactly
 like the macOS/Windows background pixel click. It falls to the MPX
 virtual-pointer path (`x11_pixel`) only for non-AX surfaces, **and that path
-needs a real Xorg + `/dev/uinput`** — under Xvnc / minimal containers without
+needs a real Xorg + `/dev/uinput`**: under Xvnc / minimal containers without
 uinput, escalate to `delivery_mode:"foreground"`. The AT-SPI path only fires
 a control under the point: when the hit test finds nothing deeper than the
 application's own frame or window (Chromium page content before its AT-SPI
@@ -339,30 +363,30 @@ Fleet image.
 
 If a tool call surprises you on Linux:
 
-1. `cua-driver doctor` — reports the display server (X11 / Wayland),
+1. `cua-driver doctor`: reports the display server (X11 / Wayland),
    **whether `org.a11y.Bus` actually answers on the session bus** (not just
    "is there a bus"), the discovered `DBUS_SESSION_BUS_ADDRESS`, and
    `ffmpeg` availability (for recording).
-2. Check `XDG_SESSION_TYPE` — X11 still has toolkit-specific delivery limits; `wayland`
+2. Check `XDG_SESSION_TYPE`: X11 still has toolkit-specific delivery limits; `wayland`
    needs `CUA_DRIVER_RS_ENABLE_WAYLAND=1` for the native backend,
    else XWayland.
-3. **Empty AT-SPI tree** (`get_window_state` returns `degraded:true`) — in
+3. **Empty AT-SPI tree** (`get_window_state` returns `degraded:true`): in
    order of likelihood: (a) the daemon isn't on the desktop session bus
-   (headless / container / `runuser` / root-against-user-session — see
+   (headless / container / `runuser` / root-against-user-session; see
    _AT-SPI needs the session bus_ above; doctor will say
    `DBUS_SESSION_BUS_ADDRESS unset`); (b) the a11y bridge is off
    (`gsettings set org.gnome.desktop.interface toolkit-accessibility true`);
-   (c) GTK4 / Qt6 / Chromium populate lazily — re-snapshot after an
+   (c) GTK4 / Qt6 / Chromium populate lazily: re-snapshot after an
    interaction or an AX-enable settle.
 
 ## Forbidden vectors
 
-Same idea as macOS / Windows — don't shell out to anything that
+Same idea as macOS / Windows: don't shell out to anything that
 foregrounds a target:
 
-- `wmctrl -a <window>` / `wmctrl -R <window>` — activates / raises.
-- `xdotool windowactivate <wid>` — activates.
-- `xdotool key --window <wid> alt+Tab` — focus churn.
+- `wmctrl -a <window>` / `wmctrl -R <window>`: activates / raises.
+- `xdotool windowactivate <wid>`: activates.
+- `xdotool key --window <wid> alt+Tab`: focus churn.
 
 Prefer cua-driver tools with an explicit `window_id`. When in doubt,
 ask the user.

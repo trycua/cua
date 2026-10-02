@@ -1,0 +1,187 @@
+{
+  "name": "teleport-sign-ins",
+  "about": "The signed-in state move's opt-ins: \"Keep me signed in\" (the session cookies) and the separate, unchecked \"Saved passwords\" and \"Browsing history\"; an app that offers none shows none.",
+  "spaceName": "Space B",
+  "entries": [
+    {
+      "id": "com.google.Chrome",
+      "name": "Google Chrome",
+      "hostPath": "/Applications/Google Chrome.app",
+      "hostAppId": "com.google.Chrome",
+      "version": "141.0",
+      "capability": "full",
+      "reason": "Google Chrome must already be in the Space: the install manifest has no Linux build of it",
+      "moves": [
+        "app_with_state"
+      ],
+      "providerId": "chrome",
+      "sensitiveGroups": [
+        "sign_ins",
+        "passwords",
+        "history"
+      ],
+      "installSource": "space",
+      "installId": null,
+      "installVersion": null,
+      "launchBin": null,
+      "lastUsedMs": null,
+      "json": "{\"id\":\"com.google.Chrome\"}"
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "hostPath": "/Applications/Slack.app",
+      "hostAppId": "com.tinyspeck.slackmacgap",
+      "version": "4.41",
+      "capability": "full",
+      "reason": null,
+      "moves": [
+        "app_only",
+        "app_with_state"
+      ],
+      "providerId": "slack",
+      "installSource": "manifest",
+      "installId": "slack",
+      "installVersion": "4.41.105",
+      "launchBin": "slack",
+      "lastUsedMs": null,
+      "json": "{\"id\":\"slack\"}"
+    }
+  ],
+  "plan": {
+    "app": {
+      "id": "com.google.Chrome",
+      "name": "Google Chrome",
+      "hostPath": "/Applications/Google Chrome.app",
+      "hostAppId": "com.google.Chrome",
+      "version": "141.0",
+      "capability": "full",
+      "reason": "Google Chrome must already be in the Space: the install manifest has no Linux build of it",
+      "moves": [
+        "app_with_state"
+      ],
+      "providerId": "chrome",
+      "sensitiveGroups": [
+        "sign_ins",
+        "passwords",
+        "history"
+      ],
+      "installSource": "space",
+      "installId": null,
+      "installVersion": null,
+      "launchBin": null,
+      "lastUsedMs": null,
+      "json": "{\"id\":\"com.google.Chrome\"}"
+    },
+    "spaceId": "direct:192.168.64.1:13211",
+    "moves": "app_with_state",
+    "steps": [
+      {
+        "kind": "state",
+        "summary": "Import 3 chrome item(s)"
+      }
+    ],
+    "consent": [
+      {
+        "kind": "state",
+        "key": "tabs.json",
+        "label": "Open tabs",
+        "detail": "1 tabs",
+        "bytes": 0,
+        "sensitive": false
+      },
+      {
+        "kind": "secret",
+        "key": ".config/google-chrome/Default/Cookies",
+        "label": "Cookies",
+        "detail": "4 cookies, ~/Library/Application Support/Google/Chrome/Default/Cookies",
+        "bytes": 20480,
+        "sensitive": true
+      },
+      {
+        "kind": "state",
+        "key": ".config/google-chrome/Default/Preferences",
+        "label": "Preferences",
+        "detail": "~/Library/Application Support/Google/Chrome/Default/Preferences",
+        "bytes": 8192,
+        "sensitive": false
+      }
+    ],
+    "sensitive": true,
+    "totalBytes": 28672,
+    "warnings": [],
+    "json": "{\"space_id\":\"direct:192.168.64.1:13211\"}"
+  },
+  "picker": [
+    {
+      "type": "loaded"
+    },
+    {
+      "type": "choose",
+      "id": "slack"
+    },
+    {
+      "type": "move",
+      "move": "app_with_state"
+    },
+    {
+      "type": "sensitive",
+      "group": "sign_ins",
+      "value": true
+    },
+    {
+      "type": "back"
+    },
+    {
+      "type": "choose",
+      "id": "com.google.Chrome"
+    },
+    {
+      "type": "sensitive",
+      "group": "sign_ins",
+      "value": true
+    },
+    {
+      "type": "sensitive",
+      "group": "history",
+      "value": true
+    },
+    {
+      "type": "sensitive",
+      "group": "history",
+      "value": false
+    },
+    {
+      "type": "plan"
+    },
+    {
+      "type": "planned"
+    },
+    {
+      "type": "confirm"
+    },
+    {
+      "type": "acknowledge",
+      "value": true
+    },
+    {
+      "type": "confirm"
+    },
+    {
+      "type": "finished",
+      "report": {
+        "appId": "com.google.Chrome",
+        "installed": [],
+        "sent": [],
+        "imported": [
+          "Cookies",
+          "Preferences"
+        ],
+        "skipped": [],
+        "launched": true
+      }
+    }
+  ],
+  "spaces": [],
+  "notch": []
+}

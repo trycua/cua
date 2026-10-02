@@ -1,0 +1,31 @@
+[package]
+name = "cua-spacesd-teleport"
+description = "Teleport RECEIVE side of cua-spacesd: verify and import app-session bundles (materialize files, Keychain install, relaunch) and the file-transfer path rules"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+# The effect-free contract shared with the sender (cua-teleport in the cua
+# SDK). The driver never depends on the sender.
+cua-teleport-bundle = { path = "../../../cua/crates/cua-teleport-bundle" }
+# Writing the destination browser's localStorage (a LevelDB) back, while it is
+# not running (`importers/chrome.rs`).
+cua-chromium-storage = { path = "../../../cua/crates/cua-chromium-storage" }
+hex.workspace = true
+ignore = "0.4"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+# Creating the destination's own Safe Storage secret when re-encrypting
+# cookies (`cookies.rs`): never the source's key, always a fresh one this
+# guest generates for itself.
+rand.workspace = true
+# Writing the destination's real `Cookies` database (`cookies.rs`).
+rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
+
+[dev-dependencies]
+tempfile.workspace = true

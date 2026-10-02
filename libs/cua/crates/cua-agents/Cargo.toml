@@ -1,0 +1,26 @@
+[package]
+name = "cua-agents"
+description = "Coding agents (Claude Code, Codex, Gemini CLI, Antigravity, OpenCode, Goose, Pi, Hermes, OpenClaw) inside any sandbox with cua-spacesd: pinned, verified installs, one ACP-normalized event stream, follow-ups, interrupts, and runs that outlive the client."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+cua-spacesd-client.workspace = true
+cua-proto = { workspace = true, features = ["client"] }
+cua-agent-setup.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["time"] }
+rand.workspace = true
+sha2.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }

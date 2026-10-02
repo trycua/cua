@@ -1,0 +1,696 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+import "cua/env/v1/common.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Screen capture and synthetic input.
+//
+// Implemented by calling the cua-driver-core tool registry in-process (not
+// over MCP). Every input RPC states its delivery mode explicitly and reports
+// what actually happened in a `DeliveryReport`.
+//
+// Coordinates: screenshots report both their pixel size and the logical
+// region they cover, so clients never guess a Retina scale. Input can be
+// expressed in screen points, window points, normalized units or the pixels
+// of a specific screenshot (see `CoordinateSpace`); the server performs the
+// single conversion to native coordinates.
+service ComputerService {
+  // Captures a display, a window or a region of either.
+  rpc Screenshot(ScreenshotRequest) returns (ScreenshotResponse);
+  // Performs one pointer (mouse) operation.
+  rpc Pointer(PointerRequest) returns (PointerResponse);
+  // Performs one keyboard operation.
+  rpc Keyboard(KeyboardRequest) returns (KeyboardResponse);
+  // Reads the clipboard.
+  rpc GetClipboard(GetClipboardRequest) returns (GetClipboardResponse);
+  // Replaces the clipboard.
+  rpc SetClipboard(SetClipboardRequest) returns (SetClipboardResponse);
+  // Returns the user-visible pointer position.
+  rpc GetCursorPosition(GetCursorPositionRequest) returns (GetCursorPositionResponse);
+  // Lists displays attached to the guest desktop.
+  rpc ListDisplays(ListDisplaysRequest) returns (ListDisplaysResponse);
+}
+
+// Encoded image format.
+enum ImageFormat {
+  // Not set. Treated as `IMAGE_FORMAT_PNG`.
+  IMAGE_FORMAT_UNSPECIFIED = 0;
+  // PNG (lossless).
+  IMAGE_FORMAT_PNG = 1;
+  // JPEG (lossy, honours `quality`).
+  IMAGE_FORMAT_JPEG = 2;
+  // WebP (lossy, honours `quality`).
+  IMAGE_FORMAT_WEBP = 3;
+}
+
+// Request for `ComputerService.Screenshot`.
+message ScreenshotRequest {
+  // What to capture. Unset captures the primary display.
+  oneof source {
+    // A display id, or "primary".
+    string display_id = 1;
+    // A single window. Captured without occluding windows where the
+    // platform supports it (see capability "window_stream").
+    WindowRef window = 2;
+  }
+  // Sub-region in logical points, relative to the source's top-left corner.
+  // Unset captures the whole source.
+  Rect region = 3;
+  // Output format.
+  ImageFormat format = 4;
+  // Quality 1 to 100 for lossy formats. 0 means 80.
+  uint32 quality = 5;
+  // Downscale so the longer edge is at most this many pixels, preserving
+  // aspect ratio. 0 means no limit (native resolution).
+  uint32 max_dimension = 6;
+  // Draw the pointer into the image.
+  bool include_cursor = 7;
+}
+
+// Response for `ComputerService.Screenshot`.
+message ScreenshotResponse {
+  // Encoded image bytes.
+  bytes image = 1;
+  // Format of `image`.
+  ImageFormat format = 2;
+  // Pixel size of `image` (after any downscale).
+  PixelSize image_size = 3;
+  // Pixel size of the captured area at native (physical) resolution.
+  PixelSize native_size = 4;
+  // Image pixels per logical point. To convert an image pixel to a screen
+  // point: `screen = logical_bounds.origin + pixel / scale`.
+  double scale = 5;
+  // The captured area in global logical points (`COORDINATE_SPACE_SCREEN`).
+  Rect logical_bounds = 6;
+  // Id to reference this capture's pixel space in later input requests
+  // (`COORDINATE_SPACE_SCREENSHOT`). Valid until the geometry of the source
+  // changes; the server keeps at least the 16 most recent ids.
+  string screenshot_id = 7;
+  // Display the capture came from (for a window capture, the display
+  // containing most of the window).
+  string display_id = 8;
+  // When the frame was captured.
+  google.protobuf.Timestamp captured_at = 9;
+}
+
+// Where and how an input request is delivered.
+message InputTarget {
+  // Window to deliver to. Unset delivers to whatever is under the pointer
+  // (pointer) or focused (keyboard). Required for `DELIVERY_BACKGROUND` on
+  // most platforms and for `COORDINATE_SPACE_WINDOW`.
+  WindowRef window = 1;
+  // Display for `COORDINATE_SPACE_NORMALIZED` without a window. Empty means
+  // the primary display.
+  string display_id = 2;
+  // Delivery mode.
+  Delivery delivery = 3;
+  // Coordinate space of every point in the request.
+  CoordinateSpace space = 4;
+  // Required with `COORDINATE_SPACE_SCREENSHOT`: which screenshot's pixel
+  // space the points refer to.
+  string screenshot_id = 5;
+}
+
+// Mouse button.
+enum MouseButton {
+  // Not set. Treated as `MOUSE_BUTTON_LEFT`.
+  MOUSE_BUTTON_UNSPECIFIED = 0;
+  // Primary button.
+  MOUSE_BUTTON_LEFT = 1;
+  // Secondary button.
+  MOUSE_BUTTON_RIGHT = 2;
+  // Middle button / wheel press.
+  MOUSE_BUTTON_MIDDLE = 3;
+  // Back (button 4).
+  MOUSE_BUTTON_BACK = 4;
+  // Forward (button 5).
+  MOUSE_BUTTON_FORWARD = 5;
+}
+
+// Unit of scroll deltas.
+enum ScrollUnit {
+  // Not set. Treated as `SCROLL_UNIT_LINE`.
+  SCROLL_UNIT_UNSPECIFIED = 0;
+  // Wheel notches / text lines.
+  SCROLL_UNIT_LINE = 1;
+  // Logical points (precise, trackpad-style scrolling).
+  SCROLL_UNIT_PIXEL = 2;
+}
+
+// Click (press and release) one or more times.
+message PointerClick {
+  // Where to click. Unset clicks at the current pointer position.
+  Point position = 1;
+  // Which button.
+  MouseButton button = 2;
+  // Number of clicks: 1 single, 2 double, 3 triple. 0 means 1.
+  uint32 count = 3;
+  // Modifier keys held during the click.
+  repeated Key modifiers = 4;
+}
+
+// Move the pointer.
+message PointerMove {
+  // Destination.
+  Point position = 1;
+  // Animate the move over this duration. Unset jumps instantly.
+  google.protobuf.Duration duration = 2;
+}
+
+// Press a button without releasing it.
+message PointerDown {
+  // Where to press. Unset presses at the current position.
+  Point position = 1;
+  // Which button.
+  MouseButton button = 2;
+}
+
+// Release a pressed button.
+message PointerUp {
+  // Where to release. Unset releases at the current position.
+  Point position = 1;
+  // Which button.
+  MouseButton button = 2;
+}
+
+// Press at `from`, move along `path` to `to`, release.
+message PointerDrag {
+  // Start point.
+  Point from = 1;
+  // End point.
+  Point to = 2;
+  // Optional intermediate points, in order.
+  repeated Point path = 3;
+  // Which button.
+  MouseButton button = 4;
+  // Total drag duration. Unset means 300 ms.
+  google.protobuf.Duration duration = 5;
+  // Modifier keys held during the drag.
+  repeated Key modifiers = 6;
+}
+
+// Scroll by a delta.
+message PointerScroll {
+  // Where to scroll. Unset scrolls at the current pointer position. The
+  // pointer is not moved for background delivery.
+  Point position = 1;
+  // Horizontal delta; positive scrolls content right.
+  double delta_x = 2;
+  // Vertical delta; positive scrolls content down.
+  double delta_y = 3;
+  // Unit of the deltas.
+  ScrollUnit unit = 4;
+}
+
+// Request for `ComputerService.Pointer`.
+message PointerRequest {
+  // Target, delivery and coordinate space.
+  InputTarget target = 1;
+  // The operation.
+  oneof action {
+    // Click.
+    PointerClick click = 2;
+    // Move.
+    PointerMove move = 3;
+    // Button down.
+    PointerDown down = 4;
+    // Button up.
+    PointerUp up = 5;
+    // Drag.
+    PointerDrag drag = 6;
+    // Scroll.
+    PointerScroll scroll = 7;
+  }
+}
+
+// Response for `ComputerService.Pointer`.
+message PointerResponse {
+  // What actually happened.
+  DeliveryReport report = 1;
+  // User-visible pointer position afterwards, in screen points.
+  Point cursor_position = 2;
+}
+
+// Named keys, independent of keyboard layout. Printable characters that are
+// not listed here are sent with `KeyInput.character`.
+//
+// Values are grouped in numeric blocks with gaps left for additions within
+// each block: modifiers 1-19, editing and navigation 20-59, function keys
+// 60-99, letters 100-129, digits 130-149, punctuation 150-179, numeric
+// keypad 180-219, system and lock keys 220-239, media and hardware keys
+// 240-269, browser and launcher keys 270-299.
+enum Key {
+  // Not set. Rejected.
+  KEY_UNSPECIFIED = 0;
+
+  // Shift (either side).
+  KEY_SHIFT = 1;
+  // Left Shift.
+  KEY_SHIFT_LEFT = 2;
+  // Right Shift.
+  KEY_SHIFT_RIGHT = 3;
+  // Control (either side).
+  KEY_CONTROL = 4;
+  // Left Control.
+  KEY_CONTROL_LEFT = 5;
+  // Right Control.
+  KEY_CONTROL_RIGHT = 6;
+  // Alt / Option (either side).
+  KEY_ALT = 7;
+  // Left Alt / Option.
+  KEY_ALT_LEFT = 8;
+  // Right Alt / Option / AltGr.
+  KEY_ALT_RIGHT = 9;
+  // Meta: Command on macOS, Windows key on Windows, Super on Linux (either
+  // side).
+  KEY_META = 10;
+  // Left Meta.
+  KEY_META_LEFT = 11;
+  // Right Meta.
+  KEY_META_RIGHT = 12;
+  // Fn (where the platform exposes it).
+  KEY_FN = 13;
+  // Caps Lock.
+  KEY_CAPS_LOCK = 14;
+
+  // Enter / Return.
+  KEY_ENTER = 20;
+  // Tab.
+  KEY_TAB = 21;
+  // Space bar.
+  KEY_SPACE = 22;
+  // Backspace (Delete on macOS keyboards).
+  KEY_BACKSPACE = 23;
+  // Forward delete.
+  KEY_DELETE = 24;
+  // Escape.
+  KEY_ESCAPE = 25;
+  // Insert.
+  KEY_INSERT = 26;
+  // Home.
+  KEY_HOME = 27;
+  // End.
+  KEY_END = 28;
+  // Page Up.
+  KEY_PAGE_UP = 29;
+  // Page Down.
+  KEY_PAGE_DOWN = 30;
+  // Up arrow.
+  KEY_ARROW_UP = 31;
+  // Down arrow.
+  KEY_ARROW_DOWN = 32;
+  // Left arrow.
+  KEY_ARROW_LEFT = 33;
+  // Right arrow.
+  KEY_ARROW_RIGHT = 34;
+  // Context menu / Application key.
+  KEY_CONTEXT_MENU = 35;
+  // Help.
+  KEY_HELP = 36;
+
+  // F1.
+  KEY_F1 = 60;
+  // F2.
+  KEY_F2 = 61;
+  // F3.
+  KEY_F3 = 62;
+  // F4.
+  KEY_F4 = 63;
+  // F5.
+  KEY_F5 = 64;
+  // F6.
+  KEY_F6 = 65;
+  // F7.
+  KEY_F7 = 66;
+  // F8.
+  KEY_F8 = 67;
+  // F9.
+  KEY_F9 = 68;
+  // F10.
+  KEY_F10 = 69;
+  // F11.
+  KEY_F11 = 70;
+  // F12.
+  KEY_F12 = 71;
+  // F13.
+  KEY_F13 = 72;
+  // F14.
+  KEY_F14 = 73;
+  // F15.
+  KEY_F15 = 74;
+  // F16.
+  KEY_F16 = 75;
+  // F17.
+  KEY_F17 = 76;
+  // F18.
+  KEY_F18 = 77;
+  // F19.
+  KEY_F19 = 78;
+  // F20.
+  KEY_F20 = 79;
+  // F21.
+  KEY_F21 = 80;
+  // F22.
+  KEY_F22 = 81;
+  // F23.
+  KEY_F23 = 82;
+  // F24.
+  KEY_F24 = 83;
+
+  // Letter A (physical key position on a US layout).
+  KEY_A = 100;
+  // Letter B.
+  KEY_B = 101;
+  // Letter C.
+  KEY_C = 102;
+  // Letter D.
+  KEY_D = 103;
+  // Letter E.
+  KEY_E = 104;
+  // Letter F.
+  KEY_F = 105;
+  // Letter G.
+  KEY_G = 106;
+  // Letter H.
+  KEY_H = 107;
+  // Letter I.
+  KEY_I = 108;
+  // Letter J.
+  KEY_J = 109;
+  // Letter K.
+  KEY_K = 110;
+  // Letter L.
+  KEY_L = 111;
+  // Letter M.
+  KEY_M = 112;
+  // Letter N.
+  KEY_N = 113;
+  // Letter O.
+  KEY_O = 114;
+  // Letter P.
+  KEY_P = 115;
+  // Letter Q.
+  KEY_Q = 116;
+  // Letter R.
+  KEY_R = 117;
+  // Letter S.
+  KEY_S = 118;
+  // Letter T.
+  KEY_T = 119;
+  // Letter U.
+  KEY_U = 120;
+  // Letter V.
+  KEY_V = 121;
+  // Letter W.
+  KEY_W = 122;
+  // Letter X.
+  KEY_X = 123;
+  // Letter Y.
+  KEY_Y = 124;
+  // Letter Z.
+  KEY_Z = 125;
+
+  // Digit 0 (top row).
+  KEY_DIGIT_0 = 130;
+  // Digit 1.
+  KEY_DIGIT_1 = 131;
+  // Digit 2.
+  KEY_DIGIT_2 = 132;
+  // Digit 3.
+  KEY_DIGIT_3 = 133;
+  // Digit 4.
+  KEY_DIGIT_4 = 134;
+  // Digit 5.
+  KEY_DIGIT_5 = 135;
+  // Digit 6.
+  KEY_DIGIT_6 = 136;
+  // Digit 7.
+  KEY_DIGIT_7 = 137;
+  // Digit 8.
+  KEY_DIGIT_8 = 138;
+  // Digit 9.
+  KEY_DIGIT_9 = 139;
+
+  // Minus / underscore.
+  KEY_MINUS = 150;
+  // Equal / plus.
+  KEY_EQUAL = 151;
+  // Left bracket / brace.
+  KEY_BRACKET_LEFT = 152;
+  // Right bracket / brace.
+  KEY_BRACKET_RIGHT = 153;
+  // Backslash / pipe.
+  KEY_BACKSLASH = 154;
+  // Semicolon / colon.
+  KEY_SEMICOLON = 155;
+  // Quote / double quote.
+  KEY_QUOTE = 156;
+  // Backquote / tilde.
+  KEY_BACKQUOTE = 157;
+  // Comma / less-than.
+  KEY_COMMA = 158;
+  // Period / greater-than.
+  KEY_PERIOD = 159;
+  // Slash / question mark.
+  KEY_SLASH = 160;
+  // The extra key left of Z on ISO keyboards.
+  KEY_INTL_BACKSLASH = 161;
+
+  // Keypad 0.
+  KEY_NUMPAD_0 = 180;
+  // Keypad 1.
+  KEY_NUMPAD_1 = 181;
+  // Keypad 2.
+  KEY_NUMPAD_2 = 182;
+  // Keypad 3.
+  KEY_NUMPAD_3 = 183;
+  // Keypad 4.
+  KEY_NUMPAD_4 = 184;
+  // Keypad 5.
+  KEY_NUMPAD_5 = 185;
+  // Keypad 6.
+  KEY_NUMPAD_6 = 186;
+  // Keypad 7.
+  KEY_NUMPAD_7 = 187;
+  // Keypad 8.
+  KEY_NUMPAD_8 = 188;
+  // Keypad 9.
+  KEY_NUMPAD_9 = 189;
+  // Keypad +.
+  KEY_NUMPAD_ADD = 190;
+  // Keypad -.
+  KEY_NUMPAD_SUBTRACT = 191;
+  // Keypad *.
+  KEY_NUMPAD_MULTIPLY = 192;
+  // Keypad /.
+  KEY_NUMPAD_DIVIDE = 193;
+  // Keypad decimal point.
+  KEY_NUMPAD_DECIMAL = 194;
+  // Keypad Enter.
+  KEY_NUMPAD_ENTER = 195;
+  // Keypad =.
+  KEY_NUMPAD_EQUAL = 196;
+  // Num Lock / Clear.
+  KEY_NUM_LOCK = 197;
+
+  // Print Screen / SysRq.
+  KEY_PRINT_SCREEN = 220;
+  // Scroll Lock.
+  KEY_SCROLL_LOCK = 221;
+  // Pause / Break.
+  KEY_PAUSE = 222;
+
+  // Play / pause toggle.
+  KEY_MEDIA_PLAY_PAUSE = 240;
+  // Stop.
+  KEY_MEDIA_STOP = 241;
+  // Next track.
+  KEY_MEDIA_NEXT = 242;
+  // Previous track.
+  KEY_MEDIA_PREVIOUS = 243;
+  // Volume up.
+  KEY_VOLUME_UP = 244;
+  // Volume down.
+  KEY_VOLUME_DOWN = 245;
+  // Mute toggle.
+  KEY_VOLUME_MUTE = 246;
+  // Brightness up.
+  KEY_BRIGHTNESS_UP = 247;
+  // Brightness down.
+  KEY_BRIGHTNESS_DOWN = 248;
+  // Eject.
+  KEY_EJECT = 249;
+  // Power.
+  KEY_POWER = 250;
+  // Sleep.
+  KEY_SLEEP = 251;
+
+  // Browser back.
+  KEY_BROWSER_BACK = 270;
+  // Browser forward.
+  KEY_BROWSER_FORWARD = 271;
+  // Browser refresh.
+  KEY_BROWSER_REFRESH = 272;
+  // Browser home.
+  KEY_BROWSER_HOME = 273;
+  // Browser search.
+  KEY_BROWSER_SEARCH = 274;
+  // Launch mail client.
+  KEY_LAUNCH_MAIL = 275;
+  // Launch application 1 (often "My Computer" / Mission Control).
+  KEY_LAUNCH_APP1 = 276;
+  // Launch application 2 (often calculator / Launchpad).
+  KEY_LAUNCH_APP2 = 277;
+}
+
+// One key, either named or as a character.
+message KeyInput {
+  // Exactly one must be set.
+  oneof key {
+    // A named key.
+    Key named = 1;
+    // A single Unicode scalar value, mapped through the guest's current
+    // keyboard layout to the key (and Shift/AltGr) that produces it. Fails
+    // with `ERROR_REASON_DELIVERY_FAILED` if no key produces it; use
+    // `KeyboardType` for arbitrary text.
+    string character = 2;
+  }
+}
+
+// How `KeyboardType` enters text.
+enum TextEntryMode {
+  // Not set. Treated as `TEXT_ENTRY_MODE_KEYSTROKES`.
+  TEXT_ENTRY_MODE_UNSPECIFIED = 0;
+  // Synthesize a key press per character (Unicode injection for characters
+  // without a key). Honors the caret position and triggers key handlers.
+  TEXT_ENTRY_MODE_KEYSTROKES = 1;
+  // Insert the text in one operation (accessibility value insertion or
+  // paste). Fast, but inserts relative to the element's own insertion point
+  // and may not fire per-key handlers.
+  TEXT_ENTRY_MODE_INSERT = 2;
+}
+
+// Type text.
+message KeyboardType {
+  // UTF-8 text. Newlines are typed as Enter.
+  string text = 1;
+  // Entry mode.
+  TextEntryMode mode = 2;
+  // Delay between characters for `TEXT_ENTRY_MODE_KEYSTROKES`. Unset means
+  // no deliberate delay.
+  google.protobuf.Duration delay = 3;
+}
+
+// Press and release one key, optionally with modifiers held.
+message KeyboardPress {
+  // The key.
+  KeyInput key = 1;
+  // Modifiers held while the key is pressed.
+  repeated Key modifiers = 2;
+  // Number of presses. 0 means 1.
+  uint32 repeat = 3;
+}
+
+// Press a chord: keys go down in order and up in reverse order (for example
+// Control, Shift, T).
+message KeyboardHotkey {
+  // Keys in press order. At least one.
+  repeated KeyInput keys = 1;
+}
+
+// Press a key without releasing it.
+message KeyboardDown {
+  // The key.
+  KeyInput key = 1;
+}
+
+// Release a pressed key.
+message KeyboardUp {
+  // The key.
+  KeyInput key = 1;
+}
+
+// Request for `ComputerService.Keyboard`.
+message KeyboardRequest {
+  // Target and delivery. `space` and points are ignored.
+  InputTarget target = 1;
+  // The operation.
+  oneof action {
+    // Type text.
+    KeyboardType type = 2;
+    // Press one key.
+    KeyboardPress press = 3;
+    // Press a chord.
+    KeyboardHotkey hotkey = 4;
+    // Key down.
+    KeyboardDown down = 5;
+    // Key up.
+    KeyboardUp up = 6;
+  }
+}
+
+// Response for `ComputerService.Keyboard`.
+message KeyboardResponse {
+  // What actually happened.
+  DeliveryReport report = 1;
+}
+
+// Clipboard content.
+message ClipboardContent {
+  // Plain UTF-8 text. At most 1 MiB. Unset means no text flavor.
+  optional string text = 1;
+  // Absolute guest paths of files on the clipboard (file copy/paste). To
+  // put host files on the guest clipboard, upload them first with
+  // `FilesystemService`, then set their paths here. Requires capability
+  // "clipboard.files".
+  repeated string file_paths = 2;
+  // A PNG image (for example a copied screenshot). At most 16 MiB.
+  // Requires capability "clipboard.image".
+  optional bytes image_png = 3;
+}
+
+// Request for `ComputerService.GetClipboard`.
+message GetClipboardRequest {}
+
+// Response for `ComputerService.GetClipboard`.
+message GetClipboardResponse {
+  // Current content. Only flavors the driver understands are reported.
+  ClipboardContent content = 1;
+  // Clipboard generation counter; changes whenever the content changes.
+  uint64 generation = 2;
+}
+
+// Request for `ComputerService.SetClipboard`.
+message SetClipboardRequest {
+  // New content. Replaces every flavor.
+  ClipboardContent content = 1;
+}
+
+// Response for `ComputerService.SetClipboard`.
+message SetClipboardResponse {
+  // Generation after the write.
+  uint64 generation = 1;
+}
+
+// Request for `ComputerService.GetCursorPosition`.
+message GetCursorPositionRequest {}
+
+// Response for `ComputerService.GetCursorPosition`.
+message GetCursorPositionResponse {
+  // Position in global logical points (`COORDINATE_SPACE_SCREEN`).
+  Point position = 1;
+  // Display containing the pointer.
+  string display_id = 2;
+}
+
+// Request for `ComputerService.ListDisplays`.
+message ListDisplaysRequest {}
+
+// Response for `ComputerService.ListDisplays`.
+message ListDisplaysResponse {
+  // Attached displays, primary first.
+  repeated Display displays = 1;
+}

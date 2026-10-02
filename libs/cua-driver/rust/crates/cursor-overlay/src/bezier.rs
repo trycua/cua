@@ -1,5 +1,5 @@
-//! Cubic Bezier math — 1:1 port of `Bezier.swift` and
-//! `CursorMotionSegment` from `AgentCursorPathPlanner.cs`.
+//! Cubic Bezier math, ported from `Bezier.swift` and `CursorMotionSegment`.
+//! Derived from trope-cua (MIT); see THIRD_PARTY_NOTICES.md.
 //!
 //! `B(t) = (1-t)³P₀ + 3(1-t)²tP₁ + 3(1-t)t²P₂ + t³P₃`
 

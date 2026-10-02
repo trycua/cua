@@ -1,0 +1,239 @@
+name: "CD: Image macOS"
+
+# Builds the macOS tiers of ghcr.io/trycua/macos on a self-hosted Apple
+# Silicon Mac with Lume, each tier on the VM of the tier below that just
+# passed `cua-spacesd doctor --strict`, the accessibility probe and the live
+# input test, with `cua images release` over libs/images/macos/release.json
+# (the same command publishes from a Mac by hand):
+#
+#   base --> 26-slim --> 26 (full, the default) --> 26-xcode[-X.Y]
+#
+# Stages per tier: build -> gates (strict doctor + ax probe, live input on a
+# clone) -> [publish: <pin>-raw via push.sh -> annotated pin (tier, content
+# key) -> doctor report attached and recorded in the image-doctor ledger ->
+# verify; then every tier's floating tags move through
+# check-tag-safety.sh --moving].
+#
+# Triggers:
+#   - macos-image-v* tags: build and publish every tier.
+#   - workflow_dispatch: build up to `upto`; publish when `publish` is set.
+#   - schedule: the first Saturday of the month (the cron fires every
+#     Saturday; the plan exits unless the day is <= 7). Builds and gates every
+#     tier, and publishes a tier only when its content key (tools/content-key.py:
+#     OS build, cua-spacesd build, claimed app/tool versions, simulator
+#     runtimes, claims) differs from the one on the floating tag, so an
+#     unchanged rebuild moves nothing. A failed scheduled run opens or
+#     comments on ONE tracking issue (label image-rebuild-macos).
+#   - pull_request touching libs/images/macos (same repository only): build and
+#     gate slim and full, never publish.
+#
+# Every job is gated on vars.CUA_MACOS_LUME_RUNNER (the self-hosted runner's
+# extra label); without it the workflow plans and stops. The Xcode tier needs
+# the pinned .xip in the runner's ~/XcodesCache (Apple requires a signed-in
+# download; libs/images/macos/versions.env names the file and its SHA-1).
+# Runner needs: lume (`lume serve`), crane, oras, jq, uv, gh, Rust (the cua CLI
+# and the live input test are built on the runner).
+
+on:
+  push:
+    tags: ["macos-image-v*"]
+  pull_request:
+    paths:
+      - "libs/images/macos/**"
+      - ".github/workflows/cd-image-macos.yml"
+  schedule:
+    - cron: "0 6 * * 6"
+  workflow_dispatch:
+    inputs:
+      upto:
+        description: "Last tier to build"
+        type: choice
+        options: [slim, full, xcode]
+        default: full
+      publish:
+        description: "Push pins and move the floating tags after the gates"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-image-macos
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.plan.outputs.run }}
+      upto: ${{ steps.plan.outputs.upto }}
+      publish: ${{ steps.plan.outputs.publish }}
+      only_changed: ${{ steps.plan.outputs.only_changed }}
+      stamp: ${{ steps.plan.outputs.stamp }}
+    steps:
+      - id: plan
+        env:
+          RUNNER_LABEL: ${{ vars.CUA_MACOS_LUME_RUNNER }}
+          EVENT: ${{ github.event_name }}
+          UPTO_INPUT: ${{ inputs.upto }}
+          PUBLISH_INPUT: ${{ inputs.publish }}
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          run=true upto=full publish=false only_changed=false
+          if [ -z "$RUNNER_LABEL" ]; then
+            echo "::notice::macOS image build skipped: needs a self-hosted Mac with Lume (vars.CUA_MACOS_LUME_RUNNER)"
+            run=false
+          fi
+          case "$EVENT" in
+            push) upto=xcode publish=true ;;
+            workflow_dispatch) upto="$UPTO_INPUT" publish="$PUBLISH_INPUT" ;;
+            schedule)
+              if [ "$(date -u +%-d)" -gt 7 ]; then
+                echo "::notice::not the first Saturday of the month"; run=false
+              fi
+              upto=xcode publish=true only_changed=true ;;
+            pull_request)
+              [ "$SAME_REPO" = true ] || { echo "::notice::fork pull requests do not run on the self-hosted Mac"; run=false; } ;;
+          esac
+          # Registry names belong to trycua/cua: any other repository
+          # (trycua/cua-staging) builds and gates but never pushes.
+          if [ "$publish" = true ] && [ "$GITHUB_REPOSITORY" != trycua/cua ]; then
+            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: build and gate only, no registry push"
+            publish=false
+          fi
+          {
+            echo "run=$run"; echo "upto=$upto"; echo "publish=$publish"
+            echo "only_changed=$only_changed"; echo "stamp=$(date -u +%Y%m%d)-${SHA::7}"
+          } >>"$GITHUB_OUTPUT"
+
+  tiers:
+    needs: plan
+    if: needs.plan.outputs.run == 'true' && vars.CUA_MACOS_LUME_RUNNER != ''
+    runs-on: ${{ fromJSON(format('["self-hosted","macOS","ARM64","{0}"]', vars.CUA_MACOS_LUME_RUNNER)) }}
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: write
+    # One job, tiers in order: each tier clones the gated VM of the tier
+    # below, which exists only on this machine.
+    strategy:
+      max-parallel: 1
+      matrix:
+        upto: ["${{ needs.plan.outputs.upto }}"]
+    env:
+      PREFIX: cua-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      OUT: ${{ github.workspace }}/macos-tiers
+      STAMP: ${{ needs.plan.outputs.stamp }}
+      PUBLISH: ${{ needs.plan.outputs.publish }}
+      ONLY_CHANGED: ${{ needs.plan.outputs.only_changed }}
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Runner hygiene
+        run: |
+          # Stale CI VMs from cancelled runs (never the SDK's cua-base-* cache).
+          lume ls --format json | python3 -c '
+          import json, sys
+          for vm in json.load(sys.stdin):
+              if vm["name"].startswith("cua-ci-") and vm.get("status") != "running":
+                  print(vm["name"])' | while read -r vm; do lume delete "$vm" --force || true; done
+          free_gb="$(df -g "$HOME" | awk 'NR==2 {print $4}')"
+          [ "$free_gb" -ge 200 ] || { echo "::error::only ${free_gb} GB free; the tiers need 200 GB"; exit 1; }
+      - name: Build the cua CLI
+        working-directory: libs/cua
+        run: |
+          cargo build --locked --release -p cua-cli --bin cua
+          echo "CUA=$CARGO_TARGET_DIR/release/cua" >>"$GITHUB_ENV"
+      - name: Build and gate the tiers (cua images release)
+        run: |
+          set -euo pipefail
+          # slim starts from MACOS_BASE_REPO:MACOS_BASE_TAG (versions.env,
+          # digest-checked); each tier above clones $PREFIX-<tier below>.
+          # Gates: the strict doctor + ax probe, and live input on a clone.
+          case "${{ matrix.upto }}" in slim) tiers="slim" ;; full) tiers="slim full" ;; *) tiers="slim full xcode" ;; esac
+          echo "TIERS_BUILT=$tiers" >>"$GITHUB_ENV"
+          for tier in $tiers; do
+            "$CUA" images release libs/images/macos --tier "$tier" --stamp "$STAMP" \
+              --var prefix="$PREFIX" --work "$OUT/$tier"
+          done
+      - name: Content keys
+        id: keys
+        run: |
+          set -euo pipefail
+          publish_tiers=""
+          for tier in $TIERS_BUILT; do
+            key="$(python3 libs/images/macos/tools/content-key.py "$OUT/$tier/evidence/doctor/arm64-lume" \
+              --image-json libs/images/macos/image.json --tier "$tier")"
+            case "$tier" in slim) tag=26-slim ;; full) tag=26 ;; xcode) tag=26-xcode ;; esac
+            live="$(crane manifest "ghcr.io/trycua/macos:$tag" 2>/dev/null |
+              jq -r '.annotations["ai.cua.image.content-key"] // ""' || true)"
+            if [ "$ONLY_CHANGED" = true ] && [ "$key" = "$live" ]; then
+              echo "::notice::$tier unchanged ($key); not publishing"
+            else
+              publish_tiers="$publish_tiers $tier"
+            fi
+          done
+          echo "tiers=${publish_tiers# }" >>"$GITHUB_OUTPUT"
+      - name: Publish pins, then move floating tags (cua images release)
+        if: env.PUBLISH == 'true' && steps.keys.outputs.tiers != ''
+        env:
+          GITHUB_USERNAME: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TIERS: ${{ steps.keys.outputs.tiers }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          echo "$GITHUB_TOKEN" | crane auth login ghcr.io -u "$GITHUB_USERNAME" --password-stdin
+          echo "$GITHUB_TOKEN" | oras login ghcr.io -u "$GITHUB_USERNAME" --password-stdin
+          # Every pin first (push <pin>-raw, annotate, attach the doctor
+          # report, record it in the ledger, verify), then the floating tags.
+          for tier in $TIERS; do
+            "$CUA" images release libs/images/macos --tier "$tier" --stamp "$STAMP" --resume --publish \
+              --var prefix="$PREFIX" --var run_url="$RUN_URL" --var record_ledger=true --work "$OUT/$tier"
+          done
+          for tier in $TIERS; do
+            "$CUA" images release libs/images/macos --tier "$tier" --stamp "$STAMP" --resume --publish --promote \
+              --steps promote --var prefix="$PREFIX" --var run_url="$RUN_URL" --var record_ledger=true --work "$OUT/$tier"
+          done
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-tiers-${{ github.run_id }}
+          path: |
+            ${{ env.OUT }}/*/evidence
+            ${{ env.OUT }}/*/out/size.json
+            !${{ env.OUT }}/*/evidence/ledger
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Delete the build VMs
+        if: always()
+        run: |
+          for tier in slim full xcode; do
+            lume stop "$PREFIX-$tier" >/dev/null 2>&1 || true
+            lume delete "$PREFIX-$tier" --force >/dev/null 2>&1 || true
+          done
+
+  tracking-issue:
+    needs: [plan, tiers]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          label=image-rebuild-macos
+          gh label create "$label" --color B60205 --description "Scheduled macOS image rebuild failed" 2>/dev/null || true
+          body="The scheduled macOS image rebuild failed: $RUN_URL"
+          issue="$(gh issue list --label "$label" --state open --limit 1 --json number --jq '.[0].number // empty')"
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "$body"
+          else
+            gh issue create --label "$label" --title "Scheduled macOS image rebuild is failing" --body "$body"
+          fi

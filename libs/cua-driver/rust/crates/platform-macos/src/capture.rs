@@ -128,14 +128,12 @@ where
     where
         V: Clone,
     {
-        let expired = match self.map.get(key) {
-            Some(entry) => {
-                let age = now
-                    .checked_duration_since(entry.inserted_at)
-                    .unwrap_or(Duration::ZERO);
-                age >= self.ttl
-            }
-            None => return None,
+        let expired = {
+            let entry = self.map.get(key)?;
+            let age = now
+                .checked_duration_since(entry.inserted_at)
+                .unwrap_or(Duration::ZERO);
+            age >= self.ttl
         };
 
         if expired {

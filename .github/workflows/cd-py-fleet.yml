@@ -331,5 +331,5 @@ jobs:
     with:
       tag_name: "fleet-v${{ needs.prepare.outputs.version }}"
       release_name: "cua-fleet v${{ needs.prepare.outputs.version }}"
-      module_path: "libs/python/cua-fleet"
+      module_path: "libs/fleet"
       body: ""

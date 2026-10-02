@@ -1,0 +1,16 @@
+{
+  "title": "Guides",
+  "pages": [
+    "connect-your-agent",
+    "use-the-sdk",
+    "browsers",
+    "visual-regions",
+    "trajectories",
+    "permissions",
+    "vms-and-remote",
+    "test-in-a-sandbox",
+    "operate",
+    "troubleshoot",
+    "recipes"
+  ]
+}

@@ -456,20 +456,11 @@ pub struct HistoryEvent {
     pub data: HistoryEventData,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PersistedState {
     enabled: bool,
     paused: bool,
-}
-
-impl Default for PersistedState {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            paused: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -521,7 +512,9 @@ pub struct PendingHistoryAction {
 
 enum WriterMessage {
     Event {
-        event: HistoryEvent,
+        // Boxed: an event is ~0.5 KiB and the control variants are one
+        // pointer, so every queued Flush/Shutdown would otherwise pay for it.
+        event: Box<HistoryEvent>,
         application_pid: Option<i64>,
         application_window_id: Option<u64>,
     },
@@ -1067,14 +1060,16 @@ impl HistoryManager {
                 writer_loop(
                     &mut store,
                     rx,
-                    thread_health,
-                    thread_dropped_events,
-                    thread_pending_dropped_events,
-                    thread_app_provider,
-                    thread_key_provider,
-                    thread_namespace,
-                    quota_bytes,
-                    retention_days,
+                    WriterContext {
+                        health: thread_health,
+                        dropped_events: thread_dropped_events,
+                        pending_dropped_events: thread_pending_dropped_events,
+                        app_provider: thread_app_provider,
+                        key_provider: thread_key_provider,
+                        namespace: thread_namespace,
+                        quota_bytes,
+                        retention_days,
+                    },
                 )
             })
             .map_err(|_| HistoryError::new(HistoryHealthCategory::WriterStopped))?;
@@ -1100,7 +1095,7 @@ impl HistoryManager {
             .ok_or_else(|| HistoryError::new(HistoryHealthCategory::WriterStopped))?;
         event.data.sequence = self.next_sequence.fetch_add(1, Ordering::Relaxed);
         tx.send(WriterMessage::Event {
-            event,
+            event: Box::new(event),
             application_pid: None,
             application_window_id: None,
         })
@@ -1163,7 +1158,7 @@ impl HistoryManager {
             health.data.sequence = self.next_sequence.fetch_add(1, Ordering::Relaxed);
             if tx
                 .try_send(WriterMessage::Event {
-                    event: health,
+                    event: Box::new(health),
                     application_pid: None,
                     application_window_id: None,
                 })
@@ -1176,7 +1171,7 @@ impl HistoryManager {
         event.data.sequence = self.next_sequence.fetch_add(1, Ordering::Relaxed);
         if matches!(
             tx.try_send(WriterMessage::Event {
-                event,
+                event: Box::new(event),
                 application_pid,
                 application_window_id,
             }),
@@ -1395,9 +1390,8 @@ impl Drop for HistoryManager {
     }
 }
 
-fn writer_loop(
-    store: &mut HistoryStore,
-    rx: mpsc::Receiver<WriterMessage>,
+/// What the writer thread owns besides its store and queue.
+struct WriterContext {
     health: Arc<Mutex<HistoryHealthCategory>>,
     dropped_events: Arc<AtomicU64>,
     pending_dropped_events: Arc<AtomicU64>,
@@ -1406,7 +1400,23 @@ fn writer_loop(
     namespace: String,
     quota_bytes: u64,
     retention_days: u64,
+}
+
+fn writer_loop(
+    store: &mut HistoryStore,
+    rx: mpsc::Receiver<WriterMessage>,
+    context: WriterContext,
 ) {
+    let WriterContext {
+        health,
+        dropped_events,
+        pending_dropped_events,
+        app_provider,
+        key_provider,
+        namespace,
+        quota_bytes,
+        retention_days,
+    } = context;
     let mut terminal_error = None;
     let mut last_maintenance = Instant::now();
     loop {

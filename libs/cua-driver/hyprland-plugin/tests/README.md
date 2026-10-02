@@ -245,7 +245,7 @@ build tests different-path refusal, not a different-build upgrade. The required
 Use `--help` for exact argument names.
 
 The host signs `grant-request.json` into `grant.json` with capabilities `10`
-(drag and key probe), with 15–60 seconds remaining. The runner verifies a
+(drag and key probe), with 15-60 seconds remaining. The runner verifies a
 matching application press/release within the 750 ms cancellation bound,
 `plugin_shutdown`, closed old connections, removed sockets, both seat
 capabilities becoming zero, global removal, and unchanged primary input.

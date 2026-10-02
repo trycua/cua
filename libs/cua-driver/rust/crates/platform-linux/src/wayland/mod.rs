@@ -92,6 +92,7 @@ fn bind_foreground_target(pid: u32, window_id: u64) -> ForegroundTargetGuard {
     ForegroundTargetGuard(previous)
 }
 
+#[cfg(feature = "portal-input")]
 fn current_foreground_target() -> Option<(u32, u64)> {
     CURRENT_FOREGROUND_TARGET.with(std::cell::Cell::get)
 }
@@ -581,10 +582,10 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for State {
                 state.capture.height = height;
                 state.capture.stride = stride;
             }
-            scrcopy_frame::Event::Flags { flags } => {
-                if let WEnum::Value(f) = flags {
-                    state.capture.y_invert = f.contains(scrcopy_frame::Flags::YInvert);
-                }
+            scrcopy_frame::Event::Flags {
+                flags: WEnum::Value(f),
+            } => {
+                state.capture.y_invert = f.contains(scrcopy_frame::Flags::YInvert);
             }
             scrcopy_frame::Event::Ready { .. } => {
                 state.capture.ready = true;
@@ -792,10 +793,10 @@ fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
             break;
         }
         // Once we know the buffer params, allocate + send copy exactly once.
-        if buffer.is_none()
-            && state.capture.format.is_some()
-            && state.capture.stride > 0
-            && state.capture.height > 0
+        if let Some(fmt_raw) = state
+            .capture
+            .format
+            .filter(|_| buffer.is_none() && state.capture.stride > 0 && state.capture.height > 0)
         {
             let size = (state.capture.stride as usize)
                 .checked_mul(state.capture.height as usize)
@@ -807,7 +808,6 @@ fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
             use std::os::fd::AsFd as _;
             let pool_fd = unsafe { borrowed_fd(fd) };
             let p = shm.create_pool(pool_fd.as_fd(), size as i32, &qh, ());
-            let fmt_raw = state.capture.format.unwrap();
             let fmt: wl_shm::Format = match wl_shm::Format::try_from(fmt_raw) {
                 Ok(f) => f,
                 Err(_) => {
@@ -1260,6 +1260,35 @@ pub struct VptrSession {
     pub output_h: u32,
 }
 
+impl VptrSession {
+    /// Puts the pointer at output pixel `(px, py)` so the compositor picks
+    /// the surface under it. A `motion_absolute` to where the pointer already
+    /// is carries no motion, and Hyprland re-picks pointer focus only on
+    /// motion: a window mapped under a stationary pointer (a terminal opened
+    /// from the keyboard) never got the wheel or the button that followed.
+    /// Approaching from the next pixel always moves the pointer.
+    fn point_at(&mut self, px: u32, py: u32) -> anyhow::Result<()> {
+        let (w, h) = (self.output_w, self.output_h);
+        self.vptr
+            .motion_absolute(event_time_ms(), approach_pixel(px, w), py, w, h);
+        self.vptr.frame();
+        self.queue.roundtrip(&mut self.state)?;
+        self.vptr.motion_absolute(event_time_ms(), px, py, w, h);
+        self.vptr.frame();
+        self.queue.roundtrip(&mut self.state)?;
+        Ok(())
+    }
+}
+
+/// A pixel next to `px` on an output `extent` pixels wide.
+fn approach_pixel(px: u32, extent: u32) -> u32 {
+    if px > 0 {
+        px - 1
+    } else {
+        (px + 1).min(extent.saturating_sub(1))
+    }
+}
+
 /// Logical desktop frame published by a compositor adapter whose geometry is
 /// in logical pixels, or `None` when callers keep the protocol-native frame
 /// (for example the full-output screencopy buffer on Sway). Desktop capture
@@ -1629,9 +1658,13 @@ fn click_vptr(
         if i > 0 {
             std::thread::sleep(std::time::Duration::from_millis(80));
         }
-        sess.vptr.motion_absolute(event_time_ms(), px, py, w, h);
-        sess.vptr.frame();
-        sess.queue.roundtrip(&mut sess.state)?;
+        if i == 0 {
+            sess.point_at(px, py)?;
+        } else {
+            sess.vptr.motion_absolute(event_time_ms(), px, py, w, h);
+            sess.vptr.frame();
+            sess.queue.roundtrip(&mut sess.state)?;
+        }
         std::thread::sleep(std::time::Duration::from_millis(15));
         sess.vptr.button(event_time_ms(), btn, ButtonState::Pressed);
         sess.vptr.frame();
@@ -1787,10 +1820,7 @@ fn scroll_vptr(
     if let Some((x, y)) = point {
         let px = x.clamp(0, (sess.output_w as i32).saturating_sub(1)) as u32;
         let py = y.clamp(0, (sess.output_h as i32).saturating_sub(1)) as u32;
-        sess.vptr
-            .motion_absolute(event_time_ms(), px, py, sess.output_w, sess.output_h);
-        sess.vptr.frame();
-        sess.queue.roundtrip(&mut sess.state)?;
+        sess.point_at(px, py)?;
         record_synth_cursor(px as i32, py as i32);
         std::thread::sleep(std::time::Duration::from_millis(15));
     }
@@ -1881,14 +1911,13 @@ fn move_cursor_absolute_vptr(window_id: Option<u64>, x: i32, y: i32) -> anyhow::
 /// injection socket (`CUA_INJECT_SOCKET`).
 pub fn drag(
     window_id: u64,
-    from_x: i32,
-    from_y: i32,
-    to_x: i32,
-    to_y: i32,
+    from: (i32, i32),
+    to: (i32, i32),
     steps: u32,
     duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
+    let ((from_x, from_y), (to_x, to_y)) = (from, to);
     with_libei_fallback(
         || drag_vptr(Some(window_id), from_x, from_y, to_x, to_y, steps, button),
         || {
@@ -3329,7 +3358,7 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
         let seen: std::collections::HashSet<u32> = ws.iter().filter_map(|w| w.pid).collect();
         // A specific pid already resolved via X11 needs no AT-SPI walk (a full
         // D-Bus enumeration of every registered app): it can only add duplicates.
-        let already_covered = filter_pid.map_or(false, |p| seen.contains(&p));
+        let already_covered = filter_pid.is_some_and(|p| seen.contains(&p));
         if !already_covered {
             merge_atspi_windows(&mut ws, &seen, wayland_atspi_windows(filter_pid));
         }
@@ -3529,6 +3558,20 @@ const _BTN_LEFT_ALIAS: u32 = BTN_LEFT;
 
 #[cfg(test)]
 mod tests {
+    /// The pointer always moves before a desktop click or scroll, even when
+    /// it already sits on the target pixel (corners and 1-pixel outputs too).
+    #[test]
+    fn approach_pixel_is_a_different_pixel_on_the_output() {
+        assert_eq!(super::approach_pixel(640, 1280), 639);
+        assert_eq!(super::approach_pixel(0, 1280), 1);
+        assert_eq!(super::approach_pixel(1279, 1280), 1278);
+        assert_eq!(
+            super::approach_pixel(0, 1),
+            0,
+            "a 1-pixel output has nowhere else"
+        );
+    }
+
     use super::*;
 
     fn window(xid: u64, pid: Option<u32>, title: &str) -> WindowInfo {
@@ -3742,7 +3785,7 @@ mod tests {
     #[test]
     fn listed_wayland_identity_remains_valid_when_current_enumeration_hides_it() {
         let pid = std::process::id();
-        let window_id = 0xf2962_0001;
+        let window_id = 0x000f_2962_0001;
         assert!(!window_was_listed_for_pid(pid, window_id));
 
         remember_listed_windows(&[WindowInfo {

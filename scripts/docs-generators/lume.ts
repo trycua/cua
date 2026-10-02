@@ -1,63 +1,221 @@
 #!/usr/bin/env npx tsx
 
 /**
- * Lume Documentation Generator
+ * Lume reference generator.
  *
- * Generates MDX documentation files from Lume's dump-docs command output.
- * This ensures documentation stays synchronized with the source code.
+ * Builds Lume (`swift build -c release` in libs/lume), runs
+ * `lume dump-docs --type all --pretty` (the CLI, HTTP API and MCP tool
+ * definitions) and writes, through the shared renderers in lib/:
+ *
+ * - docs/content/docs/lume/reference/index.mdx (the Reference index)
+ * - docs/content/docs/lume/reference/cli/ (one page per command group)
+ * - docs/content/docs/lume/reference/http-api.mdx
+ * - docs/content/docs/lume/reference/mcp-tools.mdx
+ * - scripts/docs-generators/cli-specs/lume.json (the CLI-shape lane's oracle)
  *
  * Usage:
- *   npx tsx scripts/docs-generators/lume.ts          # Generate docs
- *   npx tsx scripts/docs-generators/lume.ts --check  # Check for drift (CI mode)
+ *   pnpm --dir docs docs:generate:lume
+ *   pnpm --dir docs docs:check:lume        # drift check (CI)
+ *
+ * LUME_BINARY=<path> skips the build and uses that binary.
  */
 
-import { execSync } from 'child_process';
-import * as fs from 'fs';
+import { execFileSync } from 'child_process';
 import * as path from 'path';
+import {
+  type CLIDocumentation,
+  type CliGroup,
+  type CliReference,
+  cliIndexRows,
+  renderCliReference,
+  renderReferenceIndex,
+  sentence,
+} from './lib/cli-mdx';
+import { readHeader } from './lib/headers';
+import {
+  type JsonSchema,
+  type McpCategory,
+  type McpReference,
+  mcpIndexRows,
+  renderMcpReference,
+} from './lib/mcp-mdx';
+import { DOCS_CONTENT, REPO_ROOT, codeCell, codeFence, escapeMdxText, escapeTableCell, finish, isCheckMode, metaJson, stableJson, syncFiles } from './lib/mdx';
+import { normalizeEmDashes } from './prose-style';
+
+export type { CLIDocumentation };
+
+const LUME_DIR = path.join(REPO_ROOT, 'libs', 'lume');
+const OUT_DIR = path.join(DOCS_CONTENT, 'lume', 'reference');
+export const LUME_CLI_SPEC = path.join(__dirname, 'cli-specs', 'lume.json');
+const REGENERATE = 'pnpm --dir docs docs:generate:lume';
+
+export interface LumeMcpTool {
+  name: string;
+  description: string;
+  input_schema: JsonSchema;
+  annotations?: { read_only?: boolean; destructive?: boolean; idempotent?: boolean };
+}
+
+export interface LumeDumpDocs {
+  cli: CLIDocumentation;
+  api: HTTPAPIDocumentation;
+  mcp?: { version?: string; tools: LumeMcpTool[] };
+}
+
+// ---------------------------------------------------------------- CLI
+
+export const CLI_GROUPS: CliGroup[] = [
+  {
+    slug: 'vms',
+    title: 'VMs',
+    summary: 'Create, run, inspect, change, clone and delete virtual machines',
+    commands: ['create', 'run', 'attach', 'stop', 'shutdown', 'restart', 'ls', 'get', 'set', 'clone', 'delete'],
+  },
+  {
+    slug: 'images',
+    title: 'Images',
+    summary: 'Pull, push and convert VM images, find restore images, and prune the cache',
+    commands: ['images', 'pull', 'push', 'convert', 'ipsw', 'prune'],
+  },
+  {
+    slug: 'guest',
+    title: 'Guest access',
+    summary: 'Prepare unattended setup, open SSH sessions and change SIP in a guest',
+    commands: ['setup', 'ssh', 'sip'],
+  },
+  {
+    slug: 'server',
+    title: 'Server',
+    summary: 'Run the HTTP API and MCP server, read its logs, and dump the CLI and API definitions',
+    commands: ['serve', 'logs', 'dump-docs'],
+  },
+  {
+    slug: 'config',
+    title: 'Configuration',
+    summary: 'Storage locations, the image cache and telemetry settings',
+    commands: ['config'],
+  },
+  {
+    slug: 'updates',
+    title: 'Updates',
+    summary: 'Check for, apply and choose the channel of Lume updates',
+    commands: ['check-update', 'update', 'channel'],
+  },
+];
+
+export function cliReference(cli: CLIDocumentation): CliReference {
+  return {
+    product: 'lume',
+    cli,
+    groups: CLI_GROUPS,
+    generator: REGENERATE,
+    source: 'lume dump-docs --type cli',
+    intro: readHeader('lume', 'cli'),
+  };
+}
+
+// ---------------------------------------------------------------- MCP
+
+const MCP_CATEGORIES: McpCategory[] = [
+  { slug: 'vms', title: 'VM tools', summary: 'Create, list, run, stop, clone, resize and delete VMs' },
+  { slug: 'guest', title: 'Guest tools', summary: 'Run commands inside a running VM' },
+  { slug: 'maintenance', title: 'Maintenance tools', summary: 'Check for Lume updates' },
+];
+
+function mcpCategory(name: string): string {
+  if (name === 'lume_exec') return 'guest';
+  if (name.startsWith('lume_')) return 'vms';
+  return 'maintenance';
+}
+
+export function mcpReference(mcp: NonNullable<LumeDumpDocs['mcp']>, version: string): McpReference {
+  return {
+    product: 'lume',
+    server: 'lume serve --mcp',
+    generator: REGENERATE,
+    source: 'lume dump-docs --type mcp',
+    version,
+    description: "Every tool Lume's MCP server exposes, with its parameters.",
+    categories: MCP_CATEGORIES,
+    tools: mcp.tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      category: mcpCategory(t.name),
+      input_schema: t.input_schema,
+      annotations: t.annotations,
+    })),
+    header: readHeader('lume', 'mcp-tools'),
+    singlePage: true,
+  };
+}
+
+// ---------------------------------------------------------------- main
+
+export function renderAll(docs: LumeDumpDocs): Map<string, string> {
+  const cli = cliReference(docs.cli);
+  const rel = new Map<string, string>(renderCliReference(cli));
+  rel.set('http-api.mdx', normalizeEmDashes(generateHTTPAPIMDX(docs.api)));
+  const sections = [
+    { title: 'Commands', column: 'Command group', rows: cliIndexRows(cli) },
+    {
+      title: 'HTTP API',
+      column: 'API',
+      rows: [{ name: 'HTTP API', href: '/lume/reference/http-api', description: 'Every endpoint `lume serve` exposes, with parameters and examples.' }],
+    },
+  ];
+  const pages = ['index', 'cli', 'http-api'];
+  if (docs.mcp) {
+    const mcp = mcpReference(docs.mcp, docs.cli.version);
+    for (const [p, content] of renderMcpReference(mcp)) rel.set(p, content);
+    sections.push({ title: 'MCP tools', column: 'Tools', rows: mcpIndexRows(mcp) });
+    pages.push('mcp-tools');
+  }
+  rel.set(
+    'index.mdx',
+    renderReferenceIndex({
+      productName: 'Lume',
+      description: 'Every lume command, HTTP endpoint and MCP tool, generated from the Lume binary.',
+      generator: REGENERATE,
+      source: 'lume dump-docs --type all',
+      version: docs.cli.version,
+      sections,
+    })
+  );
+  rel.set('meta.json', metaJson('Reference', pages));
+  const files = new Map<string, string>();
+  for (const [p, content] of rel) files.set(path.join(OUT_DIR, p), content);
+  files.set(LUME_CLI_SPEC, stableJson(docs.cli));
+  return files;
+}
+
+function lumeBinary(): string {
+  if (process.env.LUME_BINARY) return path.resolve(process.env.LUME_BINARY);
+  execFileSync('swift', ['build', '-c', 'release'], { cwd: LUME_DIR, stdio: 'inherit' });
+  return path.join(LUME_DIR, '.build', 'release', 'lume');
+}
+
+export function dumpDocs(binary: string): LumeDumpDocs {
+  const json = execFileSync(binary, ['dump-docs', '--type', 'all', '--pretty'], {
+    cwd: LUME_DIR,
+    encoding: 'utf-8',
+    maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env, LUME_TELEMETRY_ENABLED: 'false' },
+  });
+  return JSON.parse(json);
+}
+
+function main(): void {
+  const checkOnly = isCheckMode();
+  const docs = dumpDocs(lumeBinary());
+  const owned = [OUT_DIR, path.join(OUT_DIR, 'cli')];
+  finish('Lume', syncFiles(renderAll(docs), checkOnly, owned), checkOnly, REGENERATE);
+}
+
+if (require.main === module) main();
 
 // ============================================================================
-// Types
+// HTTP API types
 // ============================================================================
-
-export interface CLIDocumentation {
-  name: string;
-  version: string;
-  abstract: string;
-  commands: CommandDoc[];
-}
-
-export interface CommandDoc {
-  name: string;
-  abstract: string;
-  discussion?: string;
-  arguments: ArgumentDoc[];
-  options: OptionDoc[];
-  flags: FlagDoc[];
-  subcommands: CommandDoc[];
-}
-
-export interface ArgumentDoc {
-  name: string;
-  help: string;
-  type: string;
-  is_optional: boolean;
-}
-
-export interface OptionDoc {
-  name: string;
-  short_name?: string;
-  help: string;
-  type: string;
-  default_value?: string;
-  is_optional: boolean;
-}
-
-export interface FlagDoc {
-  name: string;
-  short_name?: string;
-  help: string;
-  default_value: boolean;
-}
 
 export interface HTTPAPIDocumentation {
   base_path: string;
@@ -111,392 +269,23 @@ export interface APIStatusCodeDoc {
 }
 
 // ============================================================================
-// Configuration
-// ============================================================================
-
-const ROOT_DIR = path.resolve(__dirname, '../..');
-const LUME_DIR = path.join(ROOT_DIR, 'libs', 'lume');
-const DOCS_OUTPUT_DIR = path.join(ROOT_DIR, 'docs', 'content', 'docs', 'reference', 'lume');
-const TAG_PREFIX = 'lume-v';
-
-// ============================================================================
-// Version Discovery
-// ============================================================================
-
-interface VersionInfo {
-  version: string;
-  href: string;
-  isCurrent: boolean;
-}
-
-/**
- * Get the latest released version from git tags.
- */
-export function getLatestReleasedVersion(): string {
-  try {
-    const output = execSync(`git tag | grep "^${TAG_PREFIX}" | sort -V | tail -1`, {
-      encoding: 'utf-8',
-      cwd: ROOT_DIR,
-    }).trim();
-    if (output) {
-      return output.replace(TAG_PREFIX, '');
-    }
-  } catch {
-    // Fall through
-  }
-  return '0.0.0';
-}
-
-/**
- * Discover available versioned doc folders and build version list.
- */
-export function discoverVersions(currentVersion: string): VersionInfo[] {
-  const versions: VersionInfo[] = [];
-  const currentMajorMinor = currentVersion.split('.').slice(0, 2).join('.');
-
-  // Add current version (latest)
-  versions.push({
-    version: currentMajorMinor,
-    href: '/reference/lume/cli-reference',
-    isCurrent: true,
-  });
-
-  // Discover versioned folders (v0.2, v0.1, etc.)
-  if (fs.existsSync(DOCS_OUTPUT_DIR)) {
-    const entries = fs.readdirSync(DOCS_OUTPUT_DIR, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory() && entry.name.startsWith('v')) {
-        const version = entry.name.substring(1);
-        if (version === currentMajorMinor) continue;
-        versions.push({
-          version,
-          href: `/reference/lume/${entry.name}/cli-reference`,
-          isCurrent: false,
-        });
-      }
-    }
-  }
-
-  // Sort descending
-  versions.sort((a, b) => {
-    const partsA = a.version.split('.').map((x) => parseInt(x, 10) || 0);
-    const partsB = b.version.split('.').map((x) => parseInt(x, 10) || 0);
-    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
-      const partA = partsA[i] || 0;
-      const partB = partsB[i] || 0;
-      if (partA !== partB) return partB - partA;
-    }
-    return 0;
-  });
-
-  return versions;
-}
-
-// ============================================================================
-// Main
-// ============================================================================
-
-async function main() {
-  const args = process.argv.slice(2);
-  const checkOnly = args.includes('--check') || args.includes('--check-only');
-
-  console.log('🔧 Lume Documentation Generator');
-  console.log('================================\n');
-
-  // Step 1: Build Lume if needed
-  console.log('📦 Building Lume...');
-  try {
-    execSync('swift build -c release', {
-      cwd: LUME_DIR,
-      stdio: 'inherit',
-    });
-  } catch (error) {
-    console.error('❌ Failed to build Lume');
-    process.exit(1);
-  }
-
-  // Step 2: Get CLI documentation
-  console.log('\n📖 Extracting CLI documentation...');
-  const documentationEnv = {
-    ...process.env,
-    LUME_TELEMETRY_ENABLED: 'false',
-  };
-  const cliDocsJson = execSync('.build/release/lume dump-docs --type cli', {
-    cwd: LUME_DIR,
-    encoding: 'utf-8',
-    env: documentationEnv,
-  });
-  const cliDocs: CLIDocumentation = JSON.parse(cliDocsJson);
-  console.log(`   Found ${cliDocs.commands.length} commands`);
-
-  // Step 3: Get API documentation
-  console.log('📖 Extracting API documentation...');
-  const apiDocsJson = execSync('.build/release/lume dump-docs --type api', {
-    cwd: LUME_DIR,
-    encoding: 'utf-8',
-    env: documentationEnv,
-  });
-  const apiDocs: HTTPAPIDocumentation = JSON.parse(apiDocsJson);
-  console.log(`   Found ${apiDocs.endpoints.length} endpoints`);
-
-  // Step 4: Generate MDX files
-  console.log('\n📝 Generating documentation files...');
-
-  const cliMdx = generateCLIReferenceMDX(cliDocs);
-  const apiMdx = generateHTTPAPIMDX(apiDocs);
-
-  const cliPath = path.join(DOCS_OUTPUT_DIR, 'cli-reference.mdx');
-  const apiPath = path.join(DOCS_OUTPUT_DIR, 'http-api.mdx');
-
-  if (checkOnly) {
-    // Check mode: compare with existing files
-    console.log('\n🔍 Checking for documentation drift...');
-
-    let hasDrift = false;
-
-    if (fs.existsSync(cliPath)) {
-      const existingCli = fs.readFileSync(cliPath, 'utf-8');
-      if (existingCli !== cliMdx) {
-        console.error('❌ cli-reference.mdx is out of sync with source code');
-        hasDrift = true;
-      } else {
-        console.log('✅ cli-reference.mdx is up to date');
-      }
-    } else {
-      console.error('❌ cli-reference.mdx does not exist');
-      hasDrift = true;
-    }
-
-    if (fs.existsSync(apiPath)) {
-      const existingApi = fs.readFileSync(apiPath, 'utf-8');
-      if (existingApi !== apiMdx) {
-        console.error('❌ http-api.mdx is out of sync with source code');
-        hasDrift = true;
-      } else {
-        console.log('✅ http-api.mdx is up to date');
-      }
-    } else {
-      console.error('❌ http-api.mdx does not exist');
-      hasDrift = true;
-    }
-
-    if (hasDrift) {
-      console.error("\n💡 Run 'npx tsx scripts/docs-generators/lume.ts' to update documentation");
-      process.exit(1);
-    }
-
-    console.log('\n✅ All Lume documentation is up to date!');
-  } else {
-    // Generate mode: write files
-    fs.writeFileSync(cliPath, cliMdx);
-    console.log(`   ✅ Generated ${path.relative(ROOT_DIR, cliPath)}`);
-
-    fs.writeFileSync(apiPath, apiMdx);
-    console.log(`   ✅ Generated ${path.relative(ROOT_DIR, apiPath)}`);
-
-    console.log('\n✅ Lume documentation generated successfully!');
-  }
-}
-
-// ============================================================================
-// CLI Reference Generator
-// ============================================================================
-
-export function generateCLIReferenceMDX(docs: CLIDocumentation): string {
-  const lines: string[] = [];
-
-  const documentedVersion = docs.version || getLatestReleasedVersion();
-
-  // Header - frontmatter MUST be at the very beginning of the file
-  lines.push('---');
-  lines.push('title: CLI Reference');
-  lines.push('description: Command Line Interface reference for Lume');
-  lines.push('---');
-  lines.push('');
-  lines.push(`{/*
-  AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY
-  Generated by: npx tsx scripts/docs-generators/lume.ts
-  Source: lume dump-docs --type cli
-  Version: ${documentedVersion}
-*/}`);
-  lines.push('');
-  lines.push(`${docs.abstract}`);
-  lines.push('');
-  lines.push(
-    `Documented against Lume **${documentedVersion}**. Run \`lume --version\` for your installed version.`
-  );
-  lines.push('');
-  lines.push('For installation steps, see [Install Lume](/how-to-guides/lume/install-lume).');
-  lines.push('');
-
-  const groups = [
-    {
-      title: 'VM Management',
-      commands: ['create', 'run', 'attach', 'shutdown', 'restart', 'stop', 'delete', 'clone'],
-    },
-    { title: 'VM Information and Configuration', commands: ['ls', 'get', 'set'] },
-    {
-      title: 'Image Management',
-      commands: ['images', 'pull', 'push', 'convert', 'ipsw', 'prune'],
-    },
-    { title: 'Guest Access and Security', commands: ['ssh', 'setup', 'sip'] },
-    {
-      title: 'Configuration and Server',
-      commands: ['config', 'serve', 'logs', 'check-update', 'update', 'channel'],
-    },
-    { title: 'Developer Tools', commands: ['dump-docs'] },
-  ];
-
-  const assignedCommands = groups.flatMap((group) => group.commands);
-  const duplicateAssignments = assignedCommands.filter(
-    (name, index) => assignedCommands.indexOf(name) !== index
-  );
-  const ungroupedCommands = docs.commands
-    .map((command) => command.name)
-    .filter((name) => !assignedCommands.includes(name));
-
-  if (duplicateAssignments.length > 0 || ungroupedCommands.length > 0) {
-    throw new Error(
-      `CLI command grouping mismatch. Ungrouped: ${[...new Set(ungroupedCommands)].sort().join(', ') || 'none'}; duplicated: ${[...new Set(duplicateAssignments)].sort().join(', ') || 'none'}`
-    );
-  }
-
-  for (const group of groups) {
-    lines.push(`## ${group.title}`);
-    lines.push('');
-    for (const commandName of group.commands) {
-      const command = docs.commands.find((candidate) => candidate.name === commandName);
-      if (command) {
-        lines.push(...generateCommandDoc(command, '###'));
-      }
-    }
-  }
-
-  // Global options
-  lines.push('## Global Options');
-  lines.push('');
-  lines.push('These options are available for all commands:');
-  lines.push('');
-  lines.push('- `--help` - Show help information');
-  lines.push('- `--version` - Show version number');
-  lines.push('');
-
-  return lines.join('\n');
-}
-
-export function generateCommandDoc(cmd: CommandDoc, heading: string): string[] {
-  const lines: string[] = [];
-
-  lines.push(`${heading} lume ${cmd.name}`);
-  lines.push('');
-  lines.push(cmd.abstract);
-  lines.push('');
-
-  // Arguments
-  if (cmd.arguments.length > 0) {
-    lines.push('**Arguments:**');
-    lines.push('');
-    lines.push('| Name | Type | Required | Description |');
-    lines.push('| ---- | ---- | -------- | ----------- |');
-    for (const arg of cmd.arguments) {
-      const required = arg.is_optional ? 'No' : 'Yes';
-      lines.push(
-        `| \`<${arg.name}>\` | ${escapeTableCell(arg.type)} | ${required} | ${escapeTableCell(arg.help)} |`
-      );
-    }
-    lines.push('');
-  }
-
-  // Options
-  if (cmd.options.length > 0) {
-    lines.push('**Options:**');
-    lines.push('');
-    lines.push('| Name | Type | Default | Description |');
-    lines.push('| ---- | ---- | ------- | ----------- |');
-    for (const opt of cmd.options) {
-      const shortFlag = opt.short_name ? `-${opt.short_name}, ` : '';
-      const defaultVal = opt.default_value ? escapeTableCell(opt.default_value) : '-';
-      lines.push(
-        `| \`${shortFlag}--${opt.name}\` | ${escapeTableCell(opt.type)} | ${defaultVal} | ${escapeTableCell(opt.help)} |`
-      );
-    }
-    lines.push('');
-  }
-
-  // Flags
-  if (cmd.flags.length > 0) {
-    lines.push('**Flags:**');
-    lines.push('');
-    lines.push('| Name | Default | Description |');
-    lines.push('| ---- | ------- | ----------- |');
-    for (const flag of cmd.flags) {
-      const shortFlag = flag.short_name ? `-${flag.short_name}, ` : '';
-      lines.push(
-        `| \`${shortFlag}--${flag.name}\` | ${flag.default_value} | ${escapeTableCell(flag.help)} |`
-      );
-    }
-    lines.push('');
-  }
-
-  // Subcommands
-  if (cmd.subcommands.length > 0) {
-    lines.push('**Subcommands:**');
-    lines.push('');
-    for (const sub of cmd.subcommands) {
-      lines.push(`- \`lume ${cmd.name} ${sub.name}\` - ${sub.abstract}`);
-
-      // Show subcommand details
-      if (sub.arguments.length > 0 || sub.options.length > 0) {
-        for (const arg of sub.arguments) {
-          lines.push(`  - \`<${arg.name}>\` - ${arg.help}`);
-        }
-        for (const opt of sub.options) {
-          const shortFlag = opt.short_name ? `-${opt.short_name}, ` : '';
-          lines.push(`  - \`${shortFlag}--${opt.name}\` - ${opt.help}`);
-        }
-      }
-
-      // Nested subcommands
-      if (sub.subcommands.length > 0) {
-        for (const nested of sub.subcommands) {
-          lines.push(`  - \`lume ${cmd.name} ${sub.name} ${nested.name}\` - ${nested.abstract}`);
-        }
-      }
-    }
-    lines.push('');
-  }
-
-  return lines;
-}
-
-function escapeTableCell(value: string): string {
-  return value
-    .replace(/\n/g, ' ')
-    .replace(/\{/g, '&#123;')
-    .replace(/\}/g, '&#125;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\|/g, '\\|');
-}
-
-// ============================================================================
 // HTTP API Reference Generator
 // ============================================================================
 
 export function generateHTTPAPIMDX(docs: HTTPAPIDocumentation): string {
   const lines: string[] = [];
 
-  const documentedVersion = docs.version || getLatestReleasedVersion();
+  const documentedVersion = docs.version;
 
   // Header - frontmatter MUST be at the very beginning of the file
   lines.push('---');
-  lines.push('title: API Reference');
-  lines.push('description: HTTP API reference for Lume server');
+  lines.push('title: "HTTP API"');
+  lines.push('description: "Every endpoint of the Lume HTTP API server (lume serve)."');
   lines.push('---');
   lines.push('');
   lines.push(`{/*
   AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY
-  Generated by: npx tsx scripts/docs-generators/lume.ts
+  Generated by: ${REGENERATE}
   Source: lume dump-docs --type api
   Version: ${documentedVersion}
 */}`);
@@ -542,11 +331,9 @@ export function generateHTTPAPIMDX(docs: HTTPAPIDocumentation): string {
 export function generateEndpointDoc(endpoint: APIEndpointDoc): string[] {
   const lines: string[] = [];
 
-  lines.push(`### ${endpoint.description}`);
+  lines.push(`### ${escapeMdxText(endpoint.description)}`);
   lines.push('');
-  lines.push(endpoint.description);
-  lines.push('');
-  lines.push(`\`${endpoint.method}: ${endpoint.path}\``);
+  lines.push(codeFence('http', `${endpoint.method} ${endpoint.path}`, 'output'));
   lines.push('');
 
   // Parameters table (path + query)
@@ -556,35 +343,36 @@ export function generateEndpointDoc(endpoint: APIEndpointDoc): string[] {
   ];
 
   if (allParams.length > 0) {
-    lines.push('#### Parameters');
+    lines.push('**Parameters**');
     lines.push('');
-    lines.push('| Name | Type | Required | Description |');
-    lines.push('| ---- | ---- | -------- | ----------- |');
+    lines.push('| Parameter | In | Type | Default | Description |');
+    lines.push('| --- | --- | --- | --- | --- |');
     for (const param of allParams) {
-      const required = param.required ? 'Yes' : 'No';
-      lines.push(`| ${param.name} | ${param.type} | ${required} | ${param.description} |`);
+      const def = param.required ? 'required' : '';
+      lines.push(
+        `| ${codeCell(param.name)} | ${param.location} | ${codeCell(param.type)} | ${def} | ${escapeTableCell(sentence(param.description))} |`
+      );
     }
     lines.push('');
   }
 
   // Request body
   if (endpoint.request_body) {
-    lines.push('#### Request Body');
+    lines.push('**Request body**');
     lines.push('');
-    lines.push('| Name | Type | Required | Description |');
-    lines.push('| ---- | ---- | -------- | ----------- |');
+    lines.push('| Field | Type | Default | Description |');
+    lines.push('| --- | --- | --- | --- |');
     for (const field of endpoint.request_body.fields) {
-      const required = field.required ? 'Yes' : 'No';
-      const defaultStr = field.default_value ? ` (default: ${field.default_value})` : '';
+      const def = field.required ? 'required' : field.default_value ? codeCell(field.default_value) : '';
       lines.push(
-        `| ${field.name} | ${field.type} | ${required} | ${field.description}${defaultStr} |`
+        `| ${codeCell(field.name)} | ${codeCell(field.type)} | ${def} | ${escapeTableCell(sentence(field.description))} |`
       );
     }
     lines.push('');
   }
 
   // Example request
-  lines.push('#### Example Request');
+  lines.push('**Example request**');
   lines.push('');
   lines.push("<Tabs groupId=\"language\" persist items={['Curl', 'Python', 'TypeScript']}>");
 
@@ -613,14 +401,11 @@ export function generateEndpointDoc(endpoint: APIEndpointDoc): string[] {
   lines.push('');
 
   // Status codes
-  lines.push('#### Response');
+  lines.push('**Response**');
   lines.push('');
   for (const status of endpoint.status_codes) {
-    lines.push(`- **${status.code}**: ${status.description}`);
+    lines.push(`- \`${status.code}\`: ${escapeMdxText(sentence(status.description))}`);
   }
-  lines.push('');
-
-  lines.push('---');
   lines.push('');
 
   return lines;
@@ -764,15 +549,4 @@ function getExamplePathValue(name: string): string {
   if (name === 'name') return 'my-vm';
   if (name === 'id') return 'example-id';
   return `example-${name}`;
-}
-
-// ============================================================================
-// Run
-// ============================================================================
-
-if (require.main === module) {
-  main().catch((error) => {
-    console.error('Error:', error);
-    process.exit(1);
-  });
 }

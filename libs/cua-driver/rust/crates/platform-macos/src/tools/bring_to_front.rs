@@ -52,8 +52,8 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["pid"],
             "properties": {
-                "pid": { "type": "integer" },
-                "window_id": { "type": "integer" }
+                "pid": { "type": "integer", "description": "Process ID of the app to activate." },
+                "window_id": { "type": "integer", "description": "CGWindowID to verify as the focused, frontmost window. Omit to activate the app only." }
             },
             "additionalProperties": false,
         }),

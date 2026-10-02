@@ -21,6 +21,7 @@ import { getDefaultAgent, getTelemetryEnabled } from './settings.js';
 import {
   CuabotTelemetry,
   initTelemetry,
+  sanitizeRelayedEvent,
   startHistoryPolling,
   stopHistoryPolling,
   TelemetryEvent,
@@ -881,8 +882,10 @@ const handlers: Record<string, Handler> = {
   },
 
   async telemetry(body: TelemetryEvent) {
-    if (telemetryClient) {
-      telemetryClient.recordEvent(body);
+    // Relay only allowlisted event types with allowlisted properties.
+    const event = sanitizeRelayedEvent(body);
+    if (telemetryClient && event) {
+      telemetryClient.recordEvent(event);
     }
     return { ok: true };
   },

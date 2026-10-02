@@ -4,8 +4,8 @@
 //! publish that limitation explicitly instead of substituting misleading
 //! behavior."
 //!
-//! Only the macOS adapter emits cursor events; the Windows and Linux adapters
-//! have no cursor write path wired to the hook. But `set_cursor_hook_fn`
+//! The macOS and Linux adapters emit cursor events; the Windows adapter has no
+//! cursor write path wired to the hook. But `set_cursor_hook_fn`
 //! succeeds everywhere, so an embedder that trusted `cursor_hook_enabled()`
 //! would conclude on Windows that tracking was live and then wait forever for a
 //! first event. The viewer would show a pointer frozen at the origin — a

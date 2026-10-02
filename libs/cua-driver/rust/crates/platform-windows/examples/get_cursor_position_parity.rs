@@ -7,7 +7,9 @@
 //!
 //! Hard 4-second timeout on every round-trip.
 
+#[cfg(target_os = "windows")]
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]

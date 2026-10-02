@@ -48,7 +48,7 @@ jobs:
               "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
               --jq '.[].filename')
             if ! grep -Eq \
-              '^(\.github/release-state/cua-driver-rs-(published-version|withdrawn-versions)|\.github/scripts/verify_cua_driver_release_archives\.py|\.github/scripts/tests/test_verify_cua_driver_release_archives\.py|\.github/workflows/(cd-rust-cua-driver|ci-cua-driver-installer-compat)\.yml|libs/cua-driver/scripts/(_install-common|_install-rust|install)\.sh|libs/cua-driver/scripts/install\.ps1|release-please-config\.json)$' \
+              '^(\.github/release-state/cua-driver-rs-(published-version|withdrawn-versions)|\.github/scripts/verify_cua_driver_release_archives\.py|\.github/scripts/tests/test_verify_cua_driver_release_archives\.py|\.github/workflows/(cd-rust-cua-driver|ci-cua-driver-installer-compat)\.yml|libs/cua-driver/scripts/(_install-common|_install-rust|install)\.sh|libs/cua-driver/scripts/(_install-common\.psm1|install\.ps1)|release-please-config\.json)$' \
               <<< "$CHANGED_FILES"; then
               SHOULD_RUN=false
             fi
@@ -69,6 +69,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSIONS: ${{ inputs.versions }}
+          # The installers download from trycua/cua releases, so the versions
+          # under test come from there too, on this repository and on forks
+          # such as cua-staging whose own releases are unrelated.
+          RELEASE_REPOSITORY: trycua/cua
         run: |
           if [[ -n "$INPUT_VERSIONS" ]]; then
             VERSIONS=$(tr ', ' '\n' <<< "$INPUT_VERSIONS" |
@@ -79,7 +83,7 @@ jobs:
               .github/release-state/cua-driver-rs-withdrawn-versions |
               jq -Rsc 'split("\n") | map(select(length > 0))')
             VERSIONS=$(gh api --paginate --slurp \
-              "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+              "repos/$RELEASE_REPOSITORY/releases?per_page=100" |
               jq -c --argjson withdrawn "$WITHDRAWN" '[
                 .[][]
                 | select(.draft == false)

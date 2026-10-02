@@ -1,0 +1,246 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+import "cua/env/v1/system.proto";
+
+// Spaces a host provides: a machine set up with `cua host setup
+// --provide-spaces` creates Spaces (macOS VMs with Lume on a Mac, Linux
+// containers with Docker, whatever else runs locally) for the owner's
+// enrolled devices and the accounts it is shared with, through the relay.
+//
+// The host's cua-spacesd serves this service only in `join` mode with a host
+// policy, and only to relay-asserted editors (the owner, or an account on
+// the machine's allowlist) and the local token holder: a view-only share is
+// refused. It forwards each call to the host's cua daemon, which creates and
+// deletes the Spaces with its own runtimes, attaches each new Space to the
+// relay as its own machine, and records every create and delete in the
+// host's hash-chained audit log (`~/.cua/host/spaces-audit.jsonl`).
+//
+// Providing Spaces never exposes the host's own desktop or files: with the
+// host setting `share_desktop` off, a relayed caller reaches only this
+// service and `SystemService` `GetCapabilities` / `Health`.
+//
+// A host set up with `cua host setup --direct <ip:port> --provide-spaces`
+// serves this service on its direct listener too, without the relay: the
+// caller is the holder of the host's env token (the owner), and by default
+// only loopback, Tailscale (100.64.0.0/10, fd7a:115c:a1e0::/48) and private
+// LAN addresses may call it. A Space created with `direct` set is not
+// attached to the relay: the host forwards a TCP port on its own address
+// (`HostSpace.direct_port`) to the Space's cua-spacesd.
+service HostSpacesService {
+  // This host's settings, capacity, the Spaces it provides to the caller
+  // (every one for the owner) and, for the owner, its recent audit.
+  rpc GetHostSpaces(GetHostSpacesRequest) returns (GetHostSpacesResponse);
+  // Creates one Space on this host and attaches it to the relay as the
+  // machine the caller registered for it (`attach`). Fails with
+  // `RESOURCE_EXHAUSTED` when the host is at capacity (two macOS VMs per
+  // Mac, by Apple's license, or the host's `max_spaces`).
+  rpc CreateHostSpace(CreateHostSpaceRequest) returns (CreateHostSpaceResponse);
+  // Deletes a Space this host provides (its sandbox and its relay machine).
+  // The owner deletes any; another account only the ones it created.
+  rpc DeleteHostSpace(DeleteHostSpaceRequest) returns (DeleteHostSpaceResponse);
+  // Cancels a `CreateHostSpace` the caller started, by the relay machine
+  // it registered for it (`attach.machine_id`): the create stops (an image
+  // download, a boot) and what it made is removed; one that already
+  // finished is deleted, since the caller gave up on it. Idempotent.
+  rpc CancelHostSpace(CancelHostSpaceRequest) returns (CancelHostSpaceResponse);
+  // Turns a Space this host provides off or on. Off stops it with its disk
+  // kept, freeing the host's memory (a runtime that cannot start it again,
+  // QEMU, suspends it instead); on boots it again and re-attaches it to its
+  // relay machine. The owner powers any; another account only the ones it
+  // created.
+  rpc SetHostSpacePower(SetHostSpacePowerRequest) returns (SetHostSpacePowerResponse);
+  // Deletes a Space in the owner's own cloud that this machine created (an
+  // AWS, Google Cloud or Modal sandbox, by the relay machine it joined as):
+  // its cloud resources, through this machine's ownership records, and its
+  // relay machine. Only the owner. Lets another of the owner's devices
+  // delete it permanently without the cloud's credentials. Works whether or
+  // not this machine provides Spaces.
+  rpc DeleteCloudSpace(DeleteCloudSpaceRequest) returns (DeleteCloudSpaceResponse);
+}
+
+// The host's two independent settings and its limits.
+message HostSpacesSettings {
+  // The host's own desktop is a Space too (screen, input, shell, files).
+  bool share_desktop = 1;
+  // The host accepts Space create, list and delete requests.
+  bool provide_spaces = 2;
+  // At most this many provided Spaces at once (0: no limit besides the
+  // runtimes' own).
+  uint32 max_spaces = 3;
+  // At most this many macOS VMs at once on this Mac (Apple's license allows
+  // two; 0 on a host that cannot run macOS VMs).
+  uint32 max_macos_vms = 4;
+}
+
+// How much of one limit is in use.
+message HostSpacesCapacity {
+  // `spaces` (every provided Space) or `macos_vms` (macOS VMs on this Mac,
+  // provided or not).
+  string resource = 1;
+  // In use now.
+  uint32 used = 2;
+  // The limit (0: none).
+  uint32 limit = 3;
+  // Why the limit exists, for people ("Apple's macOS license allows two
+  // macOS VMs per Mac").
+  string reason = 4;
+}
+
+// A Space this host provides.
+message HostSpace {
+  // The relay machine the Space is reached as (`relay:<machine>`).
+  string relay_machine = 1;
+  // The Space on the host (`local:<name>`).
+  string local_space = 2;
+  // Display name.
+  string name = 3;
+  // The image it runs, as requested.
+  string image = 4;
+  // Guest OS family: `linux`, `macos` or `windows` (empty when unknown).
+  string os = 5;
+  // `container` or `vm` (empty when unknown).
+  string kind = 6;
+  // Engine: `lume`, `runc`, `gvisor`, `qemu` (empty when unknown).
+  string runtime = 7;
+  // The account that created it (id, or email when the relay shares it).
+  string created_by = 8;
+  // When it was created (Unix milliseconds).
+  int64 created_at_ms = 9;
+  // A Space created with `CreateHostSpaceRequest.direct`: the TCP port on
+  // the host's own address that the host forwards to the Space's
+  // cua-spacesd (`direct:<host address>:<direct_port>`). 0 for a Space
+  // reached through the relay.
+  uint32 direct_port = 10;
+  // The Space's cua-spacesd token, set only in the `CreateHostSpace`
+  // response of a direct Space (the caller stores it like any direct
+  // Space's token). Empty otherwise.
+  string direct_token = 11;
+}
+
+// One line of the host's Spaces audit log.
+message HostSpacesAuditEvent {
+  // Unix milliseconds.
+  int64 ts_ms = 1;
+  // `create`, `delete`, `refused`, or `config`.
+  string action = 2;
+  // Who: an account (`name <email> (id)`), or `local` for this machine.
+  string who = 3;
+  // The relay machine or Space the event is about.
+  string space = 4;
+  // Detail for people.
+  string detail = 5;
+}
+
+// Request for `HostSpacesService.GetHostSpaces`.
+message GetHostSpacesRequest {}
+
+// Response for `HostSpacesService.GetHostSpaces`.
+message GetHostSpacesResponse {
+  // This host's display name.
+  string name = 1;
+  // The host's operating system (`macos`, `linux`, `windows`).
+  string os = 2;
+  // Settings and limits.
+  HostSpacesSettings settings = 3;
+  // Current use of each limit.
+  repeated HostSpacesCapacity capacity = 4;
+  // Spaces this host provides: every one for the owner, the caller's own
+  // otherwise.
+  repeated HostSpace spaces = 5;
+  // The most recent audit events, newest first (the owner only).
+  repeated HostSpacesAuditEvent audit = 6;
+  // Image aliases this host resolves (`macos`, `linux`, ...), for clients
+  // to offer.
+  repeated string images = 7;
+}
+
+// Request for `HostSpacesService.CreateHostSpace`.
+message CreateHostSpaceRequest {
+  // Image: a registry reference or an alias (`macos`, `macos:26`, `linux`).
+  // Empty uses the canonical Linux image.
+  string image = 1;
+  // "auto" (empty), "container" or "vm".
+  string kind = 2;
+  // "auto" (empty) or a runtime this host offers ("lume", "runc", ...).
+  string runtime = 3;
+  // Name on the host. Empty generates `space-<hex>`.
+  string name = 4;
+  // vCPUs (0: the default).
+  uint32 cpus = 5;
+  // Memory in MiB (0: the default).
+  uint64 memory_mb = 6;
+  // Disk in GiB for a VM (0: the image's).
+  uint32 disk_gb = 7;
+  // The relay machine the caller registered for this Space: the host
+  // attaches the new Space's driver to it
+  // (`SystemService.AttachRelay`), so the Space is reached as
+  // `relay:<machine_id>` and the host never holds an account credential.
+  // Empty when `direct` is set.
+  AttachRelayRequest attach = 8;
+  // Create the Space without the relay (a host set up with `--direct`): it
+  // is reached at the host's address on `HostSpace.direct_port`, with
+  // `HostSpace.direct_token`. `attach` must be empty.
+  bool direct = 9;
+}
+
+// Response for `HostSpacesService.CreateHostSpace`.
+message CreateHostSpaceResponse {
+  // The new Space.
+  HostSpace space = 1;
+}
+
+// Request for `HostSpacesService.DeleteHostSpace`.
+message DeleteHostSpaceRequest {
+  // The relay machine of the Space (or its `local:<name>` on the host).
+  string space = 1;
+}
+
+// Response for `HostSpacesService.DeleteHostSpace`.
+message DeleteHostSpaceResponse {
+  // What happened, for people.
+  string message = 1;
+}
+
+// Request for `HostSpacesService.DeleteCloudSpace`.
+message DeleteCloudSpaceRequest {
+  // The relay machine the cloud Space joined as.
+  string space = 1;
+}
+
+// Response for `HostSpacesService.DeleteCloudSpace`.
+message DeleteCloudSpaceResponse {
+  // What was deleted, for people.
+  string message = 1;
+}
+
+// Request for `HostSpacesService.CancelHostSpace`.
+message CancelHostSpaceRequest {
+  // The relay machine the caller registered for the Space.
+  string space = 1;
+}
+
+// Response for `HostSpacesService.CancelHostSpace`.
+message CancelHostSpaceResponse {
+  // What happened, for people: what was removed and what stays.
+  string message = 1;
+}
+
+// Request for `HostSpacesService.SetHostSpacePower`.
+message SetHostSpacePowerRequest {
+  // The relay machine of the Space (or its `local:<name>` on the host).
+  string space = 1;
+  // True turns it on, false off.
+  bool on = 2;
+}
+
+// Response for `HostSpacesService.SetHostSpacePower`.
+message SetHostSpacePowerResponse {
+  // "running", "suspended" or "stopped": the state it is in now.
+  string state = 1;
+  // How it turns off: "stop" or "suspend".
+  string power = 2;
+  // What happened, for people.
+  string message = 3;
+}

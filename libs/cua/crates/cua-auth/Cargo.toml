@@ -1,0 +1,37 @@
+[package]
+name = "cua-auth"
+description = "Sign in to Cua: browser authorization code + PKCE with a loopback redirect, device code fallback, refresh, and the one credential store shared by the cua CLI, the SDK, the daemon and the Spaces app."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+cua-home.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+base64.workspace = true
+rand.workspace = true
+sha2.workspace = true
+url.workspace = true
+rustls.workspace = true
+tokio = { workspace = true, features = ["net", "time", "sync", "io-util", "macros"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+keyring = { version = "3", default-features = false, features = ["apple-native", "windows-native"] }
+
+# Checks this process's own code signature: only Cua-signed builds use the
+# macOS keychain (an ad-hoc build is a new app to macOS on every rebuild).
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { version = "3", features = ["OSX_10_15"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+url.workspace = true
+tokio = { workspace = true, features = ["full"] }

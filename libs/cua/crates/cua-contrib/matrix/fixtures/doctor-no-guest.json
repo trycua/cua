@@ -1,0 +1,98 @@
+{
+ "schema_version": 1,
+ "producer": "cua doctor + cua doctor",
+ "started_at": "2026-09-24T07:38:49.362585+00:00",
+ "summary": {
+  "status": "fail",
+  "pass": 7,
+  "warn": 0,
+  "fail": 1,
+  "skip": 2,
+  "duration_ms": 2373,
+  "strict": true
+ },
+ "environment": {
+  "runtime": "",
+  "runtime_detail": "",
+  "arch": "",
+  "init": "",
+  "display_server": "",
+  "os": ""
+ },
+ "checks": [
+  {
+   "id": "guest.available",
+   "group": "guest",
+   "status": "skip",
+   "severity": "info",
+   "message": "no guest report: env: not initialized: awaiting token: the driver has no access token yet (it is read from the claim's token file, never accepted over the network) (FailedPrecondition)"
+  },
+  {
+   "id": "image.resolve",
+   "group": "image",
+   "status": "pass",
+   "severity": "required",
+   "message": "ghcr.io/trycua/linux:24.04 -> ghcr.io/trycua/linux@sha256:50c472ed336a77e8895910ba1cf5066b75def0d7bb86907e476e7ca9ea0972a7 (linux containerdisk, arm64)"
+  },
+  {
+   "id": "cross.guestd",
+   "group": "cross",
+   "status": "fail",
+   "severity": "required",
+   "message": "registry says ai.cua.guestd=true; a cua-guestd does not answer"
+  },
+  {
+   "id": "host.runtime.lume",
+   "group": "host",
+   "status": "pass",
+   "severity": "info",
+   "message": "lume serve answering at http://127.0.0.1:7777 (0.5.3)"
+  },
+  {
+   "id": "host.runtime.qemu",
+   "group": "host",
+   "status": "pass",
+   "severity": "required",
+   "message": "QEMU emulator version 11.1.1 (QEMU emulator version 11.1.1)"
+  },
+  {
+   "id": "host.runtime.container",
+   "group": "host",
+   "status": "pass",
+   "severity": "info",
+   "message": "unix://~/.colima/default/docker.sock with gVisor (runsc) (Colima { profile: \"default\" })"
+  },
+  {
+   "id": "host.runtime.managed",
+   "group": "host",
+   "status": "skip",
+   "severity": "info",
+   "message": "managed cua-runtime VM (containerd + runsc) not implemented yet; install Colima/Docker for containers"
+  },
+  {
+   "id": "host.gvisor",
+   "group": "host",
+   "status": "pass",
+   "severity": "info",
+   "message": "runsc is registered with the container engine"
+  },
+  {
+   "id": "host.accel",
+   "group": "host",
+   "status": "pass",
+   "severity": "required",
+   "message": "QEMU would use hvf for arm64 guests"
+  },
+  {
+   "id": "host.disk",
+   "group": "host",
+   "status": "pass",
+   "severity": "info",
+   "message": "1135.6 GiB free under ~/.cua (images and disks live there)"
+  }
+ ],
+ "_recorded": {
+  "source": "republish/doctor2/sdk-local-vm.json",
+  "note": "recorded from a real run; trimmed to id, group, status, severity and message; redacted: the home path and the public egress IP"
+ }
+}

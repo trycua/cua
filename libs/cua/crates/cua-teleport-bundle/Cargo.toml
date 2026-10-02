@@ -1,0 +1,28 @@
+[package]
+name = "cua-teleport-bundle"
+description = "Effect-free teleport contract shared by the sender (cua-teleport) and the receiver (cua-spacesd-teleport): the SessionBundle format, shared types and per-app layout data."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tar = "0.4"
+# Chromium "Safe Storage" value crypto (`chromium_crypto`), shared by the
+# sender (decrypt on the source) and the receiver (re-encrypt on the
+# destination): PBKDF2-HMAC-SHA1 + AES-128-CBC, RustCrypto crates. Pure: no
+# file or Keychain I/O in this crate, so it is usable on every platform.
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+sha1 = "0.10"
+zeroize = "1"
+
+[dev-dependencies]
+hex = { workspace = true }

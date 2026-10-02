@@ -1,0 +1,244 @@
+name: "CD: Image omarchy"
+
+# Builds the Omarchy (edge channel) sandbox image, libs/images/omarchy, gates
+# it and publishes it with one command, `cua images release` over
+# libs/images/omarchy/release.json (the same command runs locally):
+#
+#   build     cua images build (guest tree + VM disk)
+#   gates     cua-spacesd doctor --strict under QEMU+KVM (local token, claim
+#             share); tests/e2e/omarchy/omarchy_e2e.py (click, type, Hyprland
+#             window action, both cua-driver MCPs, overlay screenshots)
+#   stage     the content digest; the doctored disk saved
+#   push      the doctored disk as ghcr.io/trycua/omarchy:<ci tag>-amd64
+#   attest    reports become referrers and image-doctor ledger entries
+#   publish   immutable pins, refusing any that exist:
+#               ghcr.io/trycua/omarchy:edge-disk-<yyyymmdd>-<sha7>
+#               ghcr.io/trycua/omarchy:edge-<yyyymmdd>-<sha7>
+#   verify    the pins hold the doctored bytes
+#   promote   only then: edge-disk and edge move to the pins
+#
+# Omarchy is x86_64 only, and Hyprland needs a DRM device, so there is one
+# arch and no container variant: `edge` is a VM image whose index carries
+# ai.cua.image.variants = {"containerdisk": <edge-disk digest>} (like
+# ghcr.io/trycua/windows:2022).
+#
+# Publishing runs on omarchy-image-v* tags, on workflow_dispatch with
+# publish=true, and on the daily schedule. Pull requests build and gate only.
+#
+# Daily schedule: Omarchy edge (pkgs.omarchy.org/edge) moves almost every day
+# (its package database showed builds on 20 of the 45 days before
+# 2026-09-25, in bursts, with omarchy-dev itself bumped every few days), so a
+# daily build keeps `edge` within a day of upstream. A scheduled run builds
+# and runs every gate (doctor and e2e), and publishes a new dated pin and
+# moves edge/edge-disk only when the content changed: the digest of the
+# image's `pacman -Q` list plus the git trees baked in
+# (scripts/images/content-digest.sh) differs from the
+# ai.cua.image.content-digest annotation of the promoted edge. Unchanged days
+# publish nothing. A failed scheduled run opens or updates one tracking issue
+# (scripts/images/report-schedule-failure.sh).
+
+on:
+  push:
+    tags: ["omarchy-image-v*"]
+  pull_request:
+    paths:
+      - "libs/images/omarchy/**"
+      - "libs/images/common/**"
+      - "libs/images/linux/files/**"
+      - "libs/images/linux/fixtures/**"
+      - "libs/cua/crates/cua-cli/src/image_build.rs"
+      - "libs/cua/crates/cua-cli/src/image_release.rs"
+      - "libs/cua/crates/cua-image/src/publish.rs"
+      - "tests/e2e/omarchy/**"
+      - ".github/workflows/cd-image-omarchy.yml"
+  schedule:
+    # Daily 05:23 UTC: tracks the Omarchy edge channel (see above).
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Push, pin and promote ghcr.io/trycua/omarchy:edge"
+        type: boolean
+        default: false
+      series:
+        description: "Channel tag to publish"
+        type: choice
+        options: [edge]
+        default: edge
+
+concurrency:
+  group: cd-image-omarchy-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  REPO: ghcr.io/trycua/omarchy
+  IMAGE_DIR: libs/images/omarchy
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      stamp: ${{ steps.meta.outputs.stamp }}
+      series: ${{ steps.meta.outputs.series }}
+      publish: ${{ steps.meta.outputs.publish }}
+    steps:
+      - id: meta
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          INPUT_SERIES: ${{ inputs.series }}
+        run: |
+          set -euo pipefail
+          publish=false
+          case "$EVENT" in
+            push) [[ "$REF" == refs/tags/omarchy-image-v* ]] && publish=true ;;
+            workflow_dispatch) [ "$INPUT_PUBLISH" = true ] && publish=true ;;
+            # Publishes only when the content changed (the build job decides).
+            schedule) publish=true ;;
+          esac
+          # Registry names belong to trycua/cua: any other repository
+          # (trycua/cua-staging) builds and gates but never pushes.
+          if [ "$publish" = true ] && [ "$GITHUB_REPOSITORY" != trycua/cua ]; then
+            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: build and gate only, no registry push"
+            publish=false
+          fi
+          {
+            # A new tag per run: per-arch build outputs never overwrite anything.
+            echo "tag=ci-${SHA:0:8}-${RUN_ID}-${RUN_ATTEMPT}"
+            echo "stamp=$(date -u +%Y%m%d)-${SHA:0:7}"
+            echo "series=${INPUT_SERIES:-edge}"
+            echo "publish=$publish"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  spacesd:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Build cua-spacesd for linux/amd64
+        run: libs/images/linux/build-spacesd-linux.sh amd64
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-spacesd-linux-amd64
+          path: libs/images/linux/dist/amd64/cua-spacesd
+          if-no-files-found: error
+          retention-days: 7
+
+  cli:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+      - name: Build the cua CLI
+        working-directory: libs/cua
+        run: cargo build --release --locked -p cua-cli
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-cli-linux-amd64
+          path: libs/cua/target/release/cua
+          if-no-files-found: error
+          retention-days: 7
+
+  # One job, one command: `cua images release` over libs/images/omarchy/release.json
+  # (build, the doctor lanes and the Hyprland e2e as gates, the content
+  # digest, the doctored disk saved); when publishing and the content
+  # changed, the same command resumes to push, attest, publish the pins,
+  # verify and promote. Reproduce locally:
+  #   cua images release libs/images/omarchy --stamp STAMP [--publish --promote]
+  release:
+    needs: [meta, spacesd, cli]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: write
+      packages: write
+    env:
+      TAG: ${{ needs.meta.outputs.tag }}
+      STAMP: ${{ needs.meta.outputs.stamp }}
+      SERIES: ${{ needs.meta.outputs.series }}
+      PUBLISH: ${{ needs.meta.outputs.publish }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cua-spacesd-linux-amd64
+          path: libs/images/linux/dist/amd64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cua-cli-linux-amd64
+          path: ${{ runner.temp }}/bin
+      - name: Host tools (QEMU, firmware, virtiofsd, crane, oras)
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP/bin/cua"
+          echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
+          [ -e /dev/kvm ] || { echo "::error::no /dev/kvm; the Omarchy doctor and e2e need KVM"; exit 1; }
+          scripts/images/install-release-tools.sh --free-disk
+      - name: cua images release (build, gates, stage)
+        run: |
+          cua images release "$IMAGE_DIR" --stamp "$STAMP" --var "tag=$TAG" --work release \
+            --steps prepare,build,gate,stage
+      - name: Content changed since the promoted edge?
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          digest="$(cat release/evidence/content-digest-amd64)"
+          promoted="$(scripts/images/content-digest.sh --promoted "$REPO:$SERIES")"
+          publish="$PUBLISH"
+          if [ "$EVENT" = schedule ] && [ "$promoted" = "$digest" ]; then
+            publish=false
+            echo "::notice::$REPO:$SERIES is unchanged ($digest); not publishing"
+          fi
+          echo "- content $digest (promoted ${promoted:-none}); publish=$publish" >>"$GITHUB_STEP_SUMMARY"
+          echo "PUBLISH=$publish" >>"$GITHUB_ENV"
+      - name: Log in to ghcr.io
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: cua images release (push, attest, publish, verify, promote)
+        if: env.PUBLISH == 'true'
+        run: |
+          cua images release "$IMAGE_DIR" --stamp "$STAMP" --var "tag=$TAG" --work release \
+            --resume --publish --promote --var record_ledger=true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: omarchy-release
+          path: release/evidence
+          if-no-files-found: warn
+          retention-days: 90
+
+  # A failed scheduled run opens (or comments on) one tracking issue.
+  report-schedule-failure:
+    needs: [meta, spacesd, cli, release]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW: ${{ github.workflow }}
+        run: scripts/images/report-schedule-failure.sh "$WORKFLOW" "$RUN_URL"

@@ -1,0 +1,618 @@
+{
+  "name": "keyvault-approve-deny",
+  "about": "Keyvault: the vault list grouped by app and site (search, multi-select, locks), the unlock prompt and delete confirm, categories, an approval grouped by site with nothing selected, narrowing to one site, an all-or-nothing import request, deny, and the kill switch blocking approval.",
+  "now": 1800000000000,
+  "overview": {
+    "availability": "ready",
+    "serverVerified": true,
+    "status": {
+      "version": "0.1.0",
+      "initialized": true,
+      "unlocked": true,
+      "disabled": false,
+      "caller_first_party": true,
+      "caller_display": "Cua (team YCK386LBJ7, signed id \"com.trycua.spaces.macos\")",
+      "items": 8,
+      "pending": 2,
+      "unlock_policy": "auto",
+      "skip_unlock_prompt": false
+    },
+    "items": [
+      {
+        "id": "gh-ada",
+        "kind": "cookie",
+        "provider_id": "chrome",
+        "app_display": "Chrome",
+        "source": "Default",
+        "bytes": 64,
+        "identity_provider": false,
+        "policy": {
+          "allowed_targets": [],
+          "ttl_secs": 3600,
+          "unattended": true
+        },
+        "created_ms": 1799913600000,
+        "updated_ms": 1799999700000,
+        "rev": 1,
+        "record_digest": "00",
+        "key": "user_session",
+        "domain": ".github.example.test",
+        "path": "/",
+        "session": false
+      },
+      {
+        "id": "gh-bob",
+        "kind": "cookie",
+        "provider_id": "chrome",
+        "app_display": "Chrome",
+        "source": "Default",
+        "bytes": 64,
+        "identity_provider": false,
+        "policy": {
+          "allowed_targets": [],
+          "ttl_secs": 3600,
+          "unattended": false
+        },
+        "created_ms": 1799913600000,
+        "updated_ms": 1799999700000,
+        "rev": 1,
+        "record_digest": "00",
+        "key": "_gh_sess",
+        "domain": ".github.example.test",
+        "path": "/",
+        "session": false
+      },
+      {
+        "id": "gh-pw",
+        "kind": "password",
+        "provider_id": "chrome",
+        "app_display": "Chrome",
+        "source": "Default",
+        "bytes": 64,
+        "identity_provider": false,
+        "policy": {
+          "allowed_targets": [],
+          "ttl_secs": 3600,
+          "unattended": false
+        },
+        "created_ms": 1799913600000,
+        "updated_ms": 1799913600000,
+        "rev": 1,
+        "record_digest": "00",
+        "key": "ada@example.test",
+        "domain": "https://github.example.test"
+      },
+      {
+        "id": "gh-ls",
+        "kind": "local_storage",
+        "provider_id": "chrome",
+        "app_display": "Chrome",
+        "source": "Default",
+        "bytes": 64,
+        "identity_provider": false,
+        "policy": {
+          "allowed_targets": [],
+          "ttl_secs": 3600,
+          "unattended": false
+        },
+        "created_ms": 1799913600000,
+        "updated_ms": 1799913600000,
+        "rev": 1,
+        "record_digest": "00",
+        "key": "theme",
+        "domain": "https://github.example.test"
+      },
+      {
+        "id": "idp",
+        "kind": "cookie",
+        "provider_id": "chrome",
+        "app_display": "Chrome",
+        "source": "Default",
+        "bytes": 64,
+        "identity_provider": true,
+        "policy": {
+          "allowed_targets": [],
+          "ttl_secs": 3600,
+          "unattended": false
+        },
+        "created_ms": 1799913600000,
+        "updated_ms": 1799913600000,
+        "rev": 1,
+        "record_digest": "00",
+        "key": "SID",
+        "domain": ".accounts.example-idp.test",
+        "path": "/",
+        "session": false
+      },
+      {
+        "id": "chrome-bm",
+        "kind": "file",
+        "provider_id": "chrome",
+        "app_display": "Chrome",
+        "source": "Default",
+        "bytes": 64,
+        "identity_provider": false,
+        "policy": {
+          "allowed_targets": [],
+          "ttl_secs": 3600,
+          "unattended": false
+        },
+        "created_ms": 1799913600000,
+        "updated_ms": 1799913600000,
+        "rev": 1,
+        "record_digest": "00",
+        "key": "Default/Bookmarks"
+      },
+      {
+        "id": "slack",
+        "kind": "file",
+        "provider_id": "slack",
+        "app_display": "Slack",
+        "source": "Default",
+        "bytes": 64,
+        "identity_provider": false,
+        "policy": {
+          "allowed_targets": [],
+          "ttl_secs": 3600,
+          "unattended": false
+        },
+        "created_ms": 1799913600000,
+        "updated_ms": 1799990000000,
+        "rev": 1,
+        "record_digest": "00",
+        "key": "storage/root-state.json"
+      },
+      {
+        "id": "slack-d",
+        "kind": "cookie",
+        "provider_id": "slack",
+        "app_display": "Slack",
+        "source": "Default",
+        "bytes": 64,
+        "identity_provider": false,
+        "policy": {
+          "allowed_targets": [],
+          "ttl_secs": 3600,
+          "unattended": false
+        },
+        "created_ms": 1799913600000,
+        "updated_ms": 1799913600000,
+        "rev": 1,
+        "record_digest": "00",
+        "key": "d",
+        "domain": ".slack.example.test",
+        "path": "/",
+        "session": false
+      }
+    ],
+    "pending": [
+      {
+        "id": "req-1",
+        "caller": {
+          "pid": 4242,
+          "uid": 501,
+          "path": "/Applications/OpenKoalaBots.app/Contents/MacOS/OpenKoalaBots",
+          "signing": {
+            "kind": "ad_hoc",
+            "identifier": "com.example.koalabot",
+            "cdhash": "ab"
+          },
+          "first_party": false,
+          "os_verified": true
+        },
+        "caller_fp": "fp-koala",
+        "caller_display": "com.example.koalabot (ad hoc, signed id \"com.example.koalabot\")",
+        "request": {
+          "selectors": [
+            {
+              "kind": "item",
+              "id": "gh-ada"
+            },
+            {
+              "kind": "item",
+              "id": "gh-bob"
+            }
+          ],
+          "targets": [
+            "aurora"
+          ],
+          "actions": [
+            "teleport"
+          ],
+          "duration_secs": 900,
+          "reason": "open the pull request",
+          "claimed_name": "OpenKoalaBots"
+        },
+        "items": [
+          {
+            "id": "gh-ada",
+            "kind": "cookie",
+            "provider_id": "chrome",
+            "app_display": "Chrome",
+            "source": "Default",
+            "bytes": 64,
+            "identity_provider": false,
+            "policy": {
+              "allowed_targets": [],
+              "ttl_secs": 3600,
+              "unattended": true
+            },
+            "created_ms": 1799913600000,
+            "updated_ms": 1799999700000,
+            "rev": 1,
+            "record_digest": "00",
+            "key": "user_session",
+            "domain": ".github.example.test",
+            "path": "/",
+            "session": false
+          },
+          {
+            "id": "gh-bob",
+            "kind": "cookie",
+            "provider_id": "chrome",
+            "app_display": "Chrome",
+            "source": "Default",
+            "bytes": 64,
+            "identity_provider": false,
+            "policy": {
+              "allowed_targets": [],
+              "ttl_secs": 3600,
+              "unattended": false
+            },
+            "created_ms": 1799913600000,
+            "updated_ms": 1799999700000,
+            "rev": 1,
+            "record_digest": "00",
+            "key": "_gh_sess",
+            "domain": ".github.example.test",
+            "path": "/",
+            "session": false
+          }
+        ],
+        "needs_import": [],
+        "created_ms": 1799999970000
+      },
+      {
+        "id": "req-2",
+        "caller": {
+          "pid": 4242,
+          "uid": 501,
+          "path": "/Applications/OpenKoalaBots.app/Contents/MacOS/OpenKoalaBots",
+          "signing": {
+            "kind": "ad_hoc",
+            "identifier": "com.example.koalabot",
+            "cdhash": "ab"
+          },
+          "first_party": false,
+          "os_verified": true
+        },
+        "caller_fp": "fp-koala",
+        "caller_display": "com.example.koalabot (ad hoc, signed id \"com.example.koalabot\")",
+        "request": {
+          "selectors": [
+            {
+              "kind": "item",
+              "id": "gh-ada"
+            },
+            {
+              "kind": "site",
+              "app": "chrome",
+              "site": "linear.example.test"
+            }
+          ],
+          "targets": [
+            "aurora"
+          ],
+          "actions": [
+            "teleport"
+          ],
+          "duration_secs": null,
+          "reason": "check the build",
+          "claimed_name": null
+        },
+        "items": [
+          {
+            "id": "gh-ada",
+            "kind": "cookie",
+            "provider_id": "chrome",
+            "app_display": "Chrome",
+            "source": "Default",
+            "bytes": 64,
+            "identity_provider": false,
+            "policy": {
+              "allowed_targets": [],
+              "ttl_secs": 3600,
+              "unattended": true
+            },
+            "created_ms": 1799913600000,
+            "updated_ms": 1799999700000,
+            "rev": 1,
+            "record_digest": "00",
+            "key": "user_session",
+            "domain": ".github.example.test",
+            "path": "/",
+            "session": false
+          }
+        ],
+        "needs_import": [
+          {
+            "kind": "site",
+            "app": "chrome",
+            "site": "linear.example.test"
+          }
+        ],
+        "created_ms": 1799999980000
+      }
+    ],
+    "grants": [
+      {
+        "id": "grant-1",
+        "request_id": "req-0",
+        "caller_fp": "fp-koala",
+        "caller_display": "com.example.koalabot (ad hoc, signed id \"com.example.koalabot\")",
+        "items": [
+          "slack"
+        ],
+        "targets": [
+          "dev-2"
+        ],
+        "actions": [
+          "teleport"
+        ],
+        "created_ms": 1799999940000,
+        "not_after_ms": 1800000600000,
+        "uses_left": 1,
+        "revoked": false
+      },
+      {
+        "id": "grant-0",
+        "request_id": "req-x",
+        "caller_fp": "fp-koala",
+        "caller_display": "com.example.koalabot (ad hoc, signed id \"com.example.koalabot\")",
+        "items": [
+          "gh-bob"
+        ],
+        "targets": [
+          "dev-9"
+        ],
+        "actions": [
+          "teleport"
+        ],
+        "created_ms": 1799992800000,
+        "not_after_ms": 1799996400000,
+        "uses_left": null,
+        "revoked": false
+      }
+    ],
+    "rules": [
+      {
+        "id": "rule-1",
+        "items": [
+          "slack"
+        ],
+        "targets": [
+          "*"
+        ],
+        "callers": [
+          {
+            "fp": "fp-koala",
+            "display": "com.example.koalabot (ad hoc, signed id \"com.example.koalabot\")"
+          }
+        ],
+        "created_ms": 1799999900000,
+        "not_after_ms": 1800259200000,
+        "enabled": true,
+        "note": ""
+      }
+    ],
+    "deliveries": [
+      {
+        "import_id": "imp-1",
+        "target": "dev-2",
+        "provider_id": "slack",
+        "items": [
+          "slack"
+        ],
+        "caller_fp": "fp-koala",
+        "delivered_ms": 1799999950000,
+        "expires_ms": 1800001800000,
+        "wiped": false
+      }
+    ],
+    "audit": [
+      {
+        "seq": 1,
+        "ts_ms": 1799913600000,
+        "kind": "vault.create",
+        "actor": "Cua",
+        "caller_fp": "cua",
+        "decision": "ok"
+      },
+      {
+        "seq": 2,
+        "ts_ms": 1799999880000,
+        "kind": "consent.request",
+        "actor": "com.example.koalabot (ad hoc, signed id \"com.example.koalabot\")",
+        "caller_fp": "fp-koala",
+        "item": "slack",
+        "decision": "ok"
+      },
+      {
+        "seq": 3,
+        "ts_ms": 1799999940000,
+        "kind": "consent.allow",
+        "actor": "Cua",
+        "caller_fp": "cua",
+        "item": "slack",
+        "target": "dev-2",
+        "decision": "allow"
+      },
+      {
+        "seq": 4,
+        "ts_ms": 1799999955000,
+        "kind": "teleport.deny",
+        "actor": "com.example.koalabot (ad hoc, signed id \"com.example.koalabot\")",
+        "caller_fp": "fp-koala",
+        "item": "gh-bob",
+        "target": "dev-9",
+        "decision": "deny"
+      },
+      {
+        "seq": 5,
+        "ts_ms": 1799999990000,
+        "kind": "vault.disable",
+        "actor": "Cua",
+        "caller_fp": "cua",
+        "decision": "ok"
+      }
+    ],
+    "auditVerification": {
+      "ok": true,
+      "entries": 5,
+      "unauthenticated": 0
+    },
+    "partialErrors": [],
+    "namesVisible": true,
+    "itemsTotal": 8
+  },
+  "selections": [
+    {
+      "kind": "category",
+      "category": "all"
+    },
+    {
+      "kind": "category",
+      "category": "waiting"
+    },
+    {
+      "kind": "category",
+      "category": "access"
+    },
+    {
+      "kind": "category",
+      "category": "recent"
+    },
+    {
+      "kind": "app",
+      "key": "slack"
+    }
+  ],
+  "approvals": [
+    {
+      "request": "req-1",
+      "actions": [
+        {
+          "type": "toggle",
+          "key": "chrome|example.test"
+        },
+        {
+          "type": "toggle",
+          "key": "nope"
+        },
+        {
+          "type": "select-all"
+        },
+        {
+          "type": "toggle",
+          "key": "chrome|example.test"
+        },
+        {
+          "type": "toggle",
+          "key": "chrome|example.test"
+        }
+      ]
+    },
+    {
+      "request": "req-2",
+      "actions": [
+        {
+          "type": "toggle",
+          "key": "chrome|example.test"
+        },
+        {
+          "type": "toggle",
+          "key": "import:0"
+        },
+        {
+          "type": "clear"
+        }
+      ]
+    }
+  ],
+  "deny": "req-2",
+  "disabled": {
+    "request": "req-1",
+    "actions": [
+      {
+        "type": "select-all"
+      }
+    ]
+  },
+  "vault": {
+    "state": {
+      "query": "",
+      "selected": [],
+      "expanded": []
+    },
+    "actions": [
+      {
+        "type": "toggle-open",
+        "key": "chrome|example.test"
+      },
+      {
+        "type": "toggle",
+        "id": "gh-bob"
+      },
+      {
+        "type": "toggle-group",
+        "key": "chrome|example.test"
+      },
+      {
+        "type": "toggle-group",
+        "key": "chrome"
+      },
+      {
+        "type": "clear"
+      },
+      {
+        "type": "query",
+        "text": "cookie"
+      },
+      {
+        "type": "select-all"
+      },
+      {
+        "type": "query",
+        "text": "slack"
+      },
+      {
+        "type": "select-all"
+      },
+      {
+        "type": "query",
+        "text": "nothing-like-this"
+      }
+    ],
+    "unlock": [
+      {
+        "count": 1,
+        "name": "user_session"
+      },
+      {
+        "count": 3,
+        "name": null
+      }
+    ],
+    "delete": [
+      {
+        "count": 1,
+        "liveCopies": 0
+      },
+      {
+        "count": 3,
+        "liveCopies": 1
+      }
+    ],
+    "app": "slack"
+  }
+}

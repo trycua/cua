@@ -1,0 +1,859 @@
+name: "CD: Cua Spaces"
+
+# Cua Spaces desktop releases, published to a GitHub Release.
+#
+# MACOS ONLY FOR NOW: a release builds and publishes only the macOS SwiftUI
+# app (build-macos). The Linux and Windows Tauri app (build-linux-windows) is
+# kept below but disabled by its `if:`; installer-manifest runs without it,
+# and the Tauri updater feed (latest.json) is skipped while no Linux/Windows
+# updater artifact is on the release. install.sh / install.ps1 skip the Cua
+# Spaces app on Linux and Windows with a note. To bring Linux and Windows
+# back, drop build-linux-windows's `if:` (latest.json is then built and
+# required again for every Tauri platform) and re-enable the app in the
+# installers (spaces_supported in install.sh, $script:SpacesSupported in
+# install.ps1).
+#
+# macOS: the SwiftUI app (apps/cua-spaces-macos), universal (arm64 + x86_64),
+# built by apps/cua-spaces-macos/scripts/build-release.sh: the Cua Spaces app
+# export (cua-spaces-ffi, bundled as libcua_sdk.dylib) and the Cua Spaces
+# build of the `cua` CLI (cua-spaces-cli, bundled as Contents/MacOS/cua),
+# each lipo'd from both architectures, then the Swift app, all Developer ID
+# signed from the inside out with the hardened runtime
+# (apps/cua-spaces-macos/Support/*.entitlements). The app is notarized and
+# stapled, packed into a DMG (scripts/package-dmg.sh) that is signed,
+# notarized and stapled too, and into a .pkg for MDM.
+#
+# macOS updates: the app embeds Sparkle (Settings, About). Its feed is
+# cua-spaces-appcast.xml on this repository's rolling `cua-spaces-latest`
+# release (the URL is baked in with build-release.sh --feed-url), and each
+# item is the notarized DMG of a release, EdDSA-signed by Sparkle's
+# generate_appcast (apps/cua-spaces-macos/scripts/make-appcast.sh, checked
+# by verify-appcast.sh). X.Y.Z-suffix versions go to the `beta` channel
+# (apps set to "Update to: Beta"). Only with the CUA_SPACES_SPARKLE_ED_PRIVATE_KEY
+# secret and a Developer ID build: without it no appcast is made or
+# published and every other step is unchanged. The macOS job writes the
+# appcast (merged into the published one) as a workflow artifact; the last
+# job publishes it once the release itself is published, so the feed never
+# names a draft's asset. Prereleases on trycua/cua update it too (their
+# items are Beta only). Two releases publishing at once could drop one
+# item; the next release adds it back.
+#
+# Linux and Windows (disabled for now, see above): the Tauri app
+# (apps/cua-spaces), with Tauri auto-updater
+# artifacts (.sig) and a `latest.json` update feed that lists only those
+# platforms. Every Tauri bundle carries the Cua Spaces build of the `cua` CLI
+# as its `cua` sidecar (scripts/prepare-cli-sidecar.sh,
+# tauri.sidecar.conf.json).
+#
+# Installer assets (scripts/install/README.md) are added to the same release
+# under stable names: cua-spaces-<v>-darwin-universal.dmg / .pkg (MDM),
+# cua-spaces-<v>-linux-<arch>.AppImage / .deb, cua-spaces-<v>-windows-x64.msi /
+# -setup.exe, plus checksums.txt and release-artifacts.json (merged into the
+# rolling `cua-install-latest` manifest that install.sh reads).
+#
+# .pkg signing: INSTALLER_CERT_BASE64, with INSTALLER_CERT_PASSWORD (falls back
+# to CERT_PASSWORD) and INSTALLER_SIGNING_IDENTITY (defaults to
+# "Developer ID Installer: DEVELOPER_NAME (TEAM_ID)").
+#
+# Windows Authenticode: Azure Artifact Signing through the
+# `cua-driver-release-signing` environment (vars AZURE_CLIENT_ID,
+# AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID, AZURE_ARTIFACT_SIGNING_ENDPOINT,
+# AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME,
+# AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME), the same identity as the Cua
+# Driver release. The app and sidecar are signed before bundling and the
+# installers after; the updater signatures are then regenerated so they match
+# the signed installers.
+#
+# On trycua/cua a tag push refuses to publish anything unsigned: every signing
+# secret must be present. On any other repository (trycua/cua-staging) a
+# missing Apple or Azure secret gives an unsigned (macOS: ad-hoc signed, not
+# notarized) build instead, published as a prerelease whose title and notes
+# say so. workflow_dispatch builds may run unsigned for testing.
+#
+# Repository-derived: the release URLs, the Tauri updater endpoint baked into
+# the Linux and Windows apps (scripts/release-config.py), the installers'
+# default repository (scripts/install/stamp_installers.py) and the Sigstore
+# identity they verify all come from github.repository, so a cua-staging build
+# installs and updates from cua-staging and a trycua/cua build from
+# trycua/cua. A prerelease version (X.Y.Z-suffix, e.g.
+# cua-spaces-v0.2.0-staging.1) is published as a GitHub prerelease, never
+# marked latest; on trycua/cua it does not move the rolling feeds.
+#
+# The Tauri updater feed (`latest.json` on this release and on the rolling
+# `cua-spaces-latest` release) is written once every platform has finished
+# (scripts/install/updater_feed.py), and only when the release carries Linux
+# or Windows updater artifacts. Installer assets and the feed carry keyless
+# Sigstore (cosign) bundles, which install.sh / install.ps1 verify.
+#
+# Release Please owns the version (component `cua-spaces`, driven by the macOS
+# app: apps/cua-spaces-macos/VERSION and CHANGELOG.md; the Tauri app in
+# apps/cua-spaces shares it as extra files but never triggers a release) and
+# creates a draft release plus the `cua-spaces-v<version>` tag; this
+# workflow fills that release and publishes it. It can also run manually with
+# an explicit version. The macOS app takes the tag's version:
+# CFBundleShortVersionString X.Y.Z, CFBundleVersion X.Y.Z.<run number>, and
+# the full version (with any -suffix) as CuaVersion.
+#
+# Required repository secrets (macOS Developer ID signing + notarization reuse
+# the same identities as the Cua Driver release):
+#   APPLICATION_CERT_BASE64  - base64 Developer ID Application .p12
+#   CERT_PASSWORD            - .p12 password
+#   DEVELOPER_NAME           - certificate common name (for the signing identity)
+#   TEAM_ID                  - Apple Developer Team ID
+#   APPLE_ID                 - Apple ID email (notarization)
+#   APP_SPECIFIC_PASSWORD    - app-specific password (notarization)
+#   INSTALLER_CERT_BASE64    - base64 Developer ID Installer .p12 (the .pkg)
+# Sparkle (macOS updates; optional, see above; the PUBLIC key is
+# apps/cua-spaces-macos/Support/Info.plist SUPublicEDKey):
+#   CUA_SPACES_SPARKLE_ED_PRIVATE_KEY   - the base64 Ed25519 private key (seed)
+# Tauri updater signing, Linux and Windows (generate once with `pnpm tauri
+# signer generate`; the PUBLIC key lives in tauri.conf.json under
+# plugins.updater.pubkey):
+#   TAURI_SIGNING_PRIVATE_KEY           - the generated private key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  - its password ("" if none)
+
+on:
+  push:
+    tags:
+      - "cua-spaces-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (without the v prefix, e.g. 0.1.0)"
+        required: true
+        default: "0.1.0"
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: apps/cua-spaces
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  # The CLI sidecar downloads cua-spacesd from this repository's releases.
+  CUA_RELEASE_REPOSITORY: ${{ github.repository }}
+  # Fail closed on the canonical repository only (see the header).
+  REQUIRE_SIGNING: ${{ github.repository == 'trycua/cua' && startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build-macos:
+    name: darwin-universal (SwiftUI)
+    runs-on: macos-26
+    timeout-minutes: 180
+    defaults:
+      run:
+        working-directory: .
+    env:
+      CARGO_BUILD_JOBS: 4
+      CARGO_TARGET_DIR: ${{ github.workspace }}/libs/cua/target
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      appcast: ${{ steps.appcast.outputs.made }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#cua-spaces-v}"
+          fi
+          # A semver prerelease, or any build off the canonical repository,
+          # becomes a GitHub prerelease (never "latest").
+          PRERELEASE=false
+          if [[ "$VERSION" == *-* || "$GITHUB_REPOSITORY" != trycua/cua ]]; then PRERELEASE=true; fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
+          echo "Building Cua Spaces v${VERSION} from ${GITHUB_REPOSITORY} (prerelease=${PRERELEASE})"
+
+      - name: Signing configuration
+        id: signing
+        env:
+          APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+          DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          INSTALLER_CERT_BASE64: ${{ secrets.INSTALLER_CERT_BASE64 }}
+        run: |
+          missing=()
+          for name in APPLICATION_CERT_BASE64 CERT_PASSWORD DEVELOPER_NAME TEAM_ID APPLE_ID \
+            APP_SPECIFIC_PASSWORD INSTALLER_CERT_BASE64; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ ${#missing[@]} -eq 0 ]; then
+            # The Keyvault trusts only the team it pins (CUA_TEAM_ID in
+            # cua-keyvault and cua-auth); an app signed by any other team is
+            # refused as "not signed by Cua". Compared here, never printed.
+            for pin in libs/cua/crates/cua-keyvault/src/caller.rs libs/cua/crates/cua-auth/src/lib.rs; do
+              pinned="$(sed -n 's/^pub const CUA_TEAM_ID: &str = "\([A-Z0-9]*\)";/\1/p' "$pin")"
+              if [ -z "$pinned" ] || [ "$pinned" != "$TEAM_ID" ]; then
+                echo "::error::the TEAM_ID secret is not the team $pin pins (CUA_TEAM_ID); the Keyvault would refuse this build"
+                exit 1
+              fi
+            done
+            echo "apple=true" >> "$GITHUB_OUTPUT"
+          elif [ "$REQUIRE_SIGNING" = true ]; then
+            echo "::error::refusing to publish an unsigned Cua Spaces release; missing secrets: ${missing[*]}"
+            exit 1
+          else
+            echo "apple=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::macOS build is UNSIGNED (ad-hoc signed, not notarized); missing secrets: ${missing[*]}"
+          fi
+
+      # The Sparkle appcast needs its own key; without it nothing about it
+      # runs (the release is otherwise the same).
+      - name: Sparkle configuration
+        id: sparkle
+        env:
+          CUA_SPACES_SPARKLE_ED_PRIVATE_KEY: ${{ secrets.CUA_SPACES_SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          if [ -n "$CUA_SPACES_SPARKLE_ED_PRIVATE_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::no CUA_SPACES_SPARKLE_ED_PRIVATE_KEY: no Sparkle appcast for this release"
+          fi
+
+      # Release Please creates a draft with the tag; a hand-pushed tag (a
+      # staging prerelease, a recovery) gets one here. Every job uploads to it
+      # and the final job publishes it.
+      - name: Find or create the draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          tag="cua-spaces-v${VERSION}"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            flags=(--draft --verify-tag --title "Cua Spaces v${VERSION}"
+              --notes "Automated Cua Spaces release.")
+            [ "$PRERELEASE" = true ] && flags+=(--prerelease)
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" "${flags[@]}"
+          fi
+
+      # The version rust-toolchain.toml pins (libs/cua): targets added to
+      # another toolchain leave the x86_64 half without `core`.
+      - name: Install Rust (both macOS targets)
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            libs/cua/target
+          key: cua-spaces-macos-cargo-${{ hashFiles('libs/cua/Cargo.lock', 'libs/cua/rust-toolchain.toml') }}
+          restore-keys: cua-spaces-macos-cargo-
+
+      # A throwaway keychain holds the Developer ID Application identity for
+      # this job only (deleted in the last step).
+      - name: Import the Developer ID Application certificate
+        if: steps.signing.outputs.apple == 'true'
+        env:
+          APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          kc="$RUNNER_TEMP/spaces-signing.keychain-db"
+          kc_password="$(uuidgen)"
+          security create-keychain -p "$kc_password" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kc_password" "$kc"
+          printf '%s' "$APPLICATION_CERT_BASE64" | base64 --decode > "$RUNNER_TEMP/application.p12"
+          security import "$RUNNER_TEMP/application.p12" -k "$kc" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign >/dev/null
+          rm -f "$RUNNER_TEMP/application.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$kc_password" "$kc" >/dev/null
+          existing=()
+          while IFS= read -r keychain; do existing+=("$keychain"); done \
+            < <(security list-keychains -d user | tr -d '"' | sed 's/^ *//')
+          security list-keychains -d user -s "$kc" "${existing[@]}"
+          test "$(security find-identity -v -p codesigning "$kc" | grep -c 'Developer ID Application')" -ge 1
+
+      - name: Build and sign Cua Spaces.app (universal)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SIGNED: ${{ steps.signing.outputs.apple }}
+          DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          identity="-"
+          [ "$SIGNED" = true ] && identity="Developer ID Application: $DEVELOPER_NAME ($TEAM_ID)"
+          # The updater's feed is this repository's (staging updates from
+          # staging).
+          apps/cua-spaces-macos/scripts/build-release.sh --version "$VERSION" \
+            --build-number "$GITHUB_RUN_NUMBER" --arch universal \
+            --sign "$identity" --out "$RUNNER_TEMP/spaces-app" \
+            --feed-url "https://github.com/$GITHUB_REPOSITORY/releases/download/cua-spaces-latest/cua-spaces-appcast.xml"
+
+      - name: Notarize and staple the app
+        if: steps.signing.outputs.apple == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/spaces-app/Cua Spaces.app"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/spaces-app.zip"
+          apps/cua-spaces-macos/scripts/notarize.sh "$RUNNER_TEMP/spaces-app.zip"
+          xcrun stapler staple "$app"
+          xcrun stapler validate "$app"
+          spctl -a -vv "$app"
+
+      - name: Installer assets (DMG, .pkg for MDM)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SIGNED: ${{ steps.signing.outputs.apple }}
+          DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          INSTALLER_CERT_BASE64: ${{ secrets.INSTALLER_CERT_BASE64 }}
+          INSTALLER_CERT_PASSWORD: ${{ secrets.INSTALLER_CERT_PASSWORD || secrets.CERT_PASSWORD }}
+          INSTALLER_SIGNING_IDENTITY: ${{ secrets.INSTALLER_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/spaces-app/Cua Spaces.app"
+          test -x "$app/Contents/MacOS/cua" || { echo "the app bundle is missing the cua CLI" >&2; exit 1; }
+          mkdir -p installer-assets
+          dmg="installer-assets/cua-spaces-$VERSION-darwin-universal.dmg"
+          pkg="installer-assets/cua-spaces-$VERSION-darwin-universal.pkg"
+          # macOS bash 3.2 under `set -u` rejects "${sign[@]}" when empty.
+          dmg_sign=()
+          [ "$SIGNED" = true ] && dmg_sign=(--sign "Developer ID Application: $DEVELOPER_NAME ($TEAM_ID)")
+          apps/cua-spaces-macos/scripts/package-dmg.sh --app "$app" --out "$dmg" ${dmg_sign[@]+"${dmg_sign[@]}"}
+          if [ "$SIGNED" = true ]; then
+            apps/cua-spaces-macos/scripts/notarize.sh "$dmg"
+            xcrun stapler staple "$dmg"
+          fi
+          if [ -z "$INSTALLER_SIGNING_IDENTITY" ] && [ -n "$DEVELOPER_NAME" ] && [ -n "$TEAM_ID" ]; then
+            INSTALLER_SIGNING_IDENTITY="Developer ID Installer: $DEVELOPER_NAME ($TEAM_ID)"
+          fi
+          sign=()
+          if [ -n "$INSTALLER_CERT_BASE64" ] && [ -n "$INSTALLER_SIGNING_IDENTITY" ]; then
+            kc="$RUNNER_TEMP/installer.keychain-db"
+            kc_password="$(uuidgen)"
+            security create-keychain -p "$kc_password" "$kc"
+            security set-keychain-settings -lut 3600 "$kc"
+            security unlock-keychain -p "$kc_password" "$kc"
+            printf '%s' "$INSTALLER_CERT_BASE64" | base64 --decode > "$RUNNER_TEMP/installer.p12"
+            security import "$RUNNER_TEMP/installer.p12" -k "$kc" -P "$INSTALLER_CERT_PASSWORD" -T /usr/bin/productbuild >/dev/null
+            rm -f "$RUNNER_TEMP/installer.p12"
+            existing=()
+            while IFS= read -r keychain; do existing+=("$keychain"); done \
+              < <(security list-keychains -d user | tr -d '"' | sed 's/^ *//')
+            security list-keychains -d user -s "$kc" "${existing[@]}"
+            sign=(--sign "$INSTALLER_SIGNING_IDENTITY")
+          fi
+          # The SwiftUI app needs macOS 26.
+          apps/cua-spaces/scripts/build-pkg.sh --app "$app" --version "$VERSION" --min-os 26.0 \
+            --out "$pkg" ${sign[@]+"${sign[@]}"}
+          if [ ${#sign[@]} -gt 0 ] && [ -n "$APPLE_ID" ]; then
+            apps/cua-spaces-macos/scripts/notarize.sh "$pkg"
+            xcrun stapler staple "$pkg"
+          elif [ "$REQUIRE_SIGNING" = true ]; then
+            echo "::error::the .pkg would ship unsigned or unnotarized" >&2
+            exit 1
+          fi
+          if [ "$SIGNED" = true ]; then
+            codesign --verify --deep --strict "$app"
+            xcrun stapler validate "$app"
+            spctl -a -vv "$app"
+            xcrun stapler validate "$dmg"
+            spctl -a -vv -t open --context context:primary-signature "$dmg"
+            pkgutil --check-signature "$pkg"
+            xcrun stapler validate "$pkg"
+            echo "darwin-universal: Developer ID signed and notarized (SwiftUI app, DMG, PKG)" > signing-darwin-universal.txt
+          else
+            codesign --verify --deep --strict "$app"
+            echo "darwin-universal: UNSIGNED (ad-hoc signed app, unsigned DMG and PKG, not notarized)" > signing-darwin-universal.txt
+          fi
+          shasum -a 256 installer-assets/*
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            gh release upload "cua-spaces-v${VERSION}" installer-assets/* --clobber --repo "${GITHUB_REPOSITORY}"
+          fi
+
+      # This release's item, signed and merged into the published appcast.
+      # Only notarized builds go in the feed. A manual run from a branch
+      # makes it too (a dry run: kept as an artifact, never published).
+      - name: Sparkle appcast
+        id: appcast
+        if: steps.sparkle.outputs.enabled == 'true' && steps.signing.outputs.apple == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          CUA_SPACES_SPARKLE_ED_PRIVATE_KEY: ${{ secrets.CUA_SPACES_SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/appcast/previous" appcast
+          gh release download cua-spaces-latest --pattern cua-spaces-appcast.xml \
+            --dir "$RUNNER_TEMP/appcast/previous" --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          # Release notes: the release's own (Release Please writes the
+          # changelog there), else this version's CHANGELOG.md section.
+          notes="$RUNNER_TEMP/appcast/notes.md"
+          gh release view "cua-spaces-v$VERSION" --repo "$GITHUB_REPOSITORY" --json body --jq .body \
+            > "$notes" 2>/dev/null || : > "$notes"
+          if ! grep -q '[^[:space:]]' "$notes" || grep -qx 'Automated Cua Spaces release.' "$notes"; then
+            python3 apps/cua-spaces-macos/scripts/changelog-notes.py "$VERSION" apps/cua-spaces-macos/CHANGELOG.md > "$notes"
+          fi
+          apps/cua-spaces-macos/scripts/make-appcast.sh \
+            --dmg "installer-assets/cua-spaces-$VERSION-darwin-universal.dmg" --version "$VERSION" \
+            --download-base "https://github.com/$GITHUB_REPOSITORY/releases/download/cua-spaces-v$VERSION/" \
+            --previous "$RUNNER_TEMP/appcast/previous/cua-spaces-appcast.xml" --notes "$notes" \
+            --out appcast/cua-spaces-appcast.xml
+          echo "made=true" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the Sparkle appcast (published by the last job)
+        if: steps.appcast.outputs.made == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sparkle-appcast
+          path: appcast/cua-spaces-appcast.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      # A manual run from a branch publishes nothing; keep its build.
+      - name: Keep the macOS build (manual runs)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-spaces-darwin-universal
+          path: installer-assets/
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signing-darwin-universal
+          path: signing-darwin-universal.txt
+          if-no-files-found: error
+
+      - name: Remove the signing keychains
+        if: always()
+        run: |
+          for kc in "$RUNNER_TEMP/spaces-signing.keychain-db" "$RUNNER_TEMP/installer.keychain-db"; do
+            [ -f "$kc" ] && security delete-keychain "$kc" || true
+          done
+          rm -f "$RUNNER_TEMP/application.p12" "$RUNNER_TEMP/installer.p12"
+
+  # Disabled: Cua Spaces ships for macOS only for now (see the header). It
+  # runs only when the repository variable CUA_SPACES_LINUX_WINDOWS is 'true'
+  # (unset everywhere today); drop the `if:` to build and publish the Linux
+  # and Windows Tauri app on every release again.
+  build-linux-windows:
+    name: ${{ matrix.name }}
+    needs: build-macos
+    if: vars.CUA_SPACES_LINUX_WINDOWS == 'true'
+    # Holds the Azure Artifact Signing identity (Windows Authenticode).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x64, os: ubuntu-22.04, bundles: "deb,appimage" }
+          - { name: linux-arm64, os: ubuntu-22.04-arm, bundles: "deb,appimage" }
+          - { name: windows-x64, os: windows-latest, bundles: "nsis,msi" }
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_BUILD_JOBS: 4
+      TAGGED: ${{ startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: apps/cua-spaces/pnpm-lock.yaml
+      - name: Install Rust (toolchain from rust-toolchain.toml), wasm32 and wasm-bindgen
+        shell: bash
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          # `pnpm build` (Tauri's beforeBuildCommand) builds the app core to wasm.
+          rustup target add wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --version 0.2.126 --locked
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config libssl-dev file \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev \
+            libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
+      - run: pnpm install --frozen-lockfile
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#cua-spaces-v}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Tauri release config (version, updater feed on this repository)
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          py=python3; [ "$RUNNER_OS" = Windows ] && py=python
+          "$py" scripts/release-config.py --version "$VERSION" --repo "$GITHUB_REPOSITORY"
+      - name: Signing configuration
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          PLATFORM: ${{ matrix.name }}
+        run: |
+          if [ "$TAGGED" = true ] && [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is missing"; exit 1
+          fi
+          status="$PLATFORM: updater-signed (no OS code signing on Linux)"
+          case "$PLATFORM" in
+            windows-*)
+              if [ -n "$AZURE_CLIENT_ID" ] && [ -n "$AZURE_ARTIFACT_SIGNING_ENDPOINT" ]; then
+                status="$PLATFORM: Authenticode signed (Azure Artifact Signing)"
+              elif [ "$REQUIRE_SIGNING" = true ]; then
+                echo "::error::Azure Artifact Signing vars are missing (environment cua-driver-release-signing)"; exit 1
+              else
+                status="$PLATFORM: UNSIGNED (no Authenticode; Azure Artifact Signing vars are not set)"
+                echo "::warning::$status"
+              fi
+              ;;
+          esac
+          echo "$status" > "signing-$PLATFORM.txt"
+      - name: Stage the cua CLI sidecar
+        shell: bash
+        env:
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
+        run: scripts/prepare-cli-sidecar.sh
+      - name: Build bundles
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
+
+      # Windows: compile, Authenticode-sign the app and the cua sidecar, bundle
+      # the signed binaries, sign the installers, then regenerate the updater
+      # signatures so they cover the signed installers.
+      - name: Build the Windows app (no bundle yet)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: pnpm tauri build --no-bundle --config src-tauri/tauri.release.conf.json
+      - name: Azure login for Artifact Signing
+        if: runner.os == 'Windows' && vars.AZURE_CLIENT_ID != ''
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign the app and the cua sidecar
+        if: runner.os == 'Windows' && vars.AZURE_CLIENT_ID != ''
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\apps\cua-spaces\src-tauri\binaries
+          files-folder-filter: exe
+          files: |
+            ${{ github.workspace }}\apps\cua-spaces\src-tauri\target\release\cua-spaces.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: Cua Spaces
+          description-url: https://cua.ai
+      - name: Bundle the Windows installers
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri bundle --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json
+      - name: Sign the Windows installers
+        if: runner.os == 'Windows' && vars.AZURE_CLIENT_ID != ''
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}\apps\cua-spaces\src-tauri\target\release\bundle
+          files-folder-filter: exe,msi
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: Cua Spaces
+          description-url: https://cua.ai
+      - name: Verify Authenticode and re-sign the updater artifacts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $files = @(Get-Item src-tauri/target/release/cua-spaces.exe) +
+            @(Get-ChildItem src-tauri/binaries -Filter *.exe) +
+            @(Get-ChildItem src-tauri/target/release/bundle/msi -Filter *.msi) +
+            @(Get-ChildItem src-tauri/target/release/bundle/nsis -Filter *-setup.exe)
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature -FilePath $file.FullName
+            Write-Host "$($file.Name): $($signature.Status)"
+            if ($env:REQUIRE_SIGNING -eq 'true' -and $signature.Status -ne 'Valid') {
+              throw "$($file.Name) is not Authenticode-signed"
+            }
+          }
+          if ($env:TAURI_SIGNING_PRIVATE_KEY) {
+            $installers = @(Get-ChildItem src-tauri/target/release/bundle/msi -Filter *.msi) +
+              @(Get-ChildItem src-tauri/target/release/bundle/nsis -Filter *-setup.exe)
+            foreach ($installer in $installers) {
+              Remove-Item "$($installer.FullName).sig" -ErrorAction SilentlyContinue
+              pnpm tauri signer sign $installer.FullName
+              if ($LASTEXITCODE -ne 0) { throw "updater signing failed for $($installer.Name)" }
+              if (-not (Test-Path "$($installer.FullName).sig")) { throw "no updater signature for $($installer.Name)" }
+            }
+          }
+      - name: Upload installer and updater assets (stable names)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PLATFORM: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          b=src-tauri/target/release/bundle
+          mkdir -p installer-assets
+          # copy SRC DEST: the installer plus its updater signature when present.
+          copy() {
+            cp "$1" "installer-assets/$2"
+            if [ -f "$1.sig" ]; then
+              cp "$1.sig" "installer-assets/$2.sig"
+            elif [ "$TAGGED" = true ] && [ "$3" = updater ]; then
+              echo "::error::$1 has no updater signature" >&2
+              exit 1
+            fi
+          }
+          case "$PLATFORM" in
+            linux-*)
+              copy "$(ls "$b"/appimage/*.AppImage)" "cua-spaces-$VERSION-$PLATFORM.AppImage" updater
+              copy "$(ls "$b"/deb/*.deb)" "cua-spaces-$VERSION-$PLATFORM.deb" plain
+              # Tauri writes the data tar without a ./ prefix (usr/bin/cua).
+              listing="$(dpkg-deb -c "installer-assets/cua-spaces-$VERSION-$PLATFORM.deb")"
+              if ! grep -Eq '(^|[[:space:]]|\./)usr/bin/cua$' <<<"$listing"; then
+                echo "::error::the .deb does not install /usr/bin/cua" >&2
+                printf '%s\n' "$listing" >&2
+                exit 1
+              fi
+              ;;
+            windows-*)
+              copy "$(ls "$b"/msi/*.msi)" "cua-spaces-$VERSION-$PLATFORM.msi" updater
+              copy "$(ls "$b"/nsis/*-setup.exe)" "cua-spaces-$VERSION-$PLATFORM-setup.exe" updater
+              ;;
+          esac
+          gh release upload "cua-spaces-v${VERSION}" installer-assets/* --clobber --repo "${GITHUB_REPOSITORY}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signing-${{ matrix.name }}
+          path: apps/cua-spaces/signing-${{ matrix.name }}.txt
+          if-no-files-found: error
+
+  installer-manifest:
+    name: release-artifacts.json, latest.json, publish
+    needs: [build-macos, build-linux-windows]
+    # Only a release tag publishes: the Sigstore identity the installers and
+    # the updater feed trust is cd-cua-spaces.yml at refs/tags/cua-spaces-v*.
+    # A manual run from a tag re-publishes; from a branch it only builds.
+    # build-linux-windows may be skipped (disabled: macOS only), never failed.
+    if: >-
+      !cancelled() && startsWith(github.ref, 'refs/tags/cua-spaces-v')
+      && needs.build-macos.result == 'success'
+      && (needs.build-linux-windows.result == 'success' || needs.build-linux-windows.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Keyless Sigstore signing of the installer assets.
+      id-token: write
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+      - name: Resolve version
+        id: version
+        env:
+          VERSION: ${{ needs.build-macos.outputs.version }}
+        run: |
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=cua-spaces-v$VERSION" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: signing-*
+          path: signing
+          merge-multiple: true
+      - name: Sign, checksum and build release-artifacts.json (and latest.json)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          mkdir -p assets previous
+          gh release download "$TAG" --pattern "cua-spaces-$VERSION-*" --dir assets --repo "$GITHUB_REPOSITORY"
+          # Keyless Sigstore bundles next to each installer (install.sh and
+          # install.ps1 verify them with cosign when it is installed).
+          for f in assets/cua-spaces-*; do
+            case "$f" in *.sig|*.sigstore.json) continue ;; esac
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f" >/dev/null
+          done
+          (cd assets && sha256sum cua-spaces-* | sort > checksums.txt)
+          gh release download cua-install-latest --pattern release-artifacts.json \
+            --dir previous --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          python3 scripts/install/release_manifest.py --component app --version "$VERSION" \
+            --dir assets --base-url "$BASE" \
+            --repo "$GITHUB_REPOSITORY" --merge previous/release-artifacts.json --out assets/release-artifacts.json
+          # The Tauri updater feed: Linux and Windows only (the macOS app is
+          # the SwiftUI app, which updates through the Sparkle appcast). With
+          # any Linux/Windows artifact on the release it fails when one of
+          # those platforms is missing or unsigned; with none (macOS only for
+          # now) there is no feed.
+          upload=(assets/*.sigstore.json assets/checksums.txt assets/release-artifacts.json)
+          if compgen -G "assets/cua-spaces-$VERSION-linux-*" >/dev/null \
+            || compgen -G "assets/cua-spaces-$VERSION-windows-*" >/dev/null; then
+            python3 scripts/install/updater_feed.py --version "$VERSION" --dir assets \
+              --base-url "$BASE" --out assets/latest.json
+            upload+=(assets/latest.json)
+          else
+            echo "::notice::macOS-only release: no Linux/Windows Tauri app, so no latest.json"
+          fi
+          gh release upload "$TAG" "${upload[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ needs.build-macos.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          flags=(--draft=false)
+          # Staging builds and X.Y.Z-suffix versions are prereleases, never latest.
+          [ "$PRERELEASE" = true ] && flags+=(--prerelease --latest=false)
+          if [ "$GITHUB_REPOSITORY" != trycua/cua ] || grep -q UNSIGNED signing/*.txt; then
+            label="staging"; [ "$GITHUB_REPOSITORY" = trycua/cua ] && label="test"
+            # Name the unsigned platforms: "UNSIGNED: windows-x64".
+            unsigned="$(grep -h UNSIGNED signing/*.txt | cut -d: -f1 | sort | paste -sd, - | sed 's/,/, /g')"
+            [ -n "$unsigned" ] && label="$label, UNSIGNED: $unsigned"
+            {
+              echo "**$GITHUB_REPOSITORY prerelease ($label).** Built by cd-cua-spaces.yml at $GITHUB_REF ($GITHUB_SHA)."
+              echo "Installs and updates from $GITHUB_REPOSITORY, not trycua/cua."
+              echo
+              echo "Signing:"
+              sed 's/^/- /' signing/*.txt
+              echo
+              echo "Every asset has a keyless Sigstore bundle (identity: https://github.com/$GITHUB_REPOSITORY/.github/workflows/cd-cua-spaces.yml@$GITHUB_REF)."
+            } > notes.md
+            flags+=(--title "Cua Spaces v$VERSION ($label)" --notes-file notes.md)
+          fi
+          gh release edit "$TAG" "${flags[@]}" --repo "$GITHUB_REPOSITORY"
+      # The macOS updater's feed, once the release it names is published.
+      # Beta items come from prereleases, so this runs for them too (apps on
+      # Stable never see them).
+      - name: Publish the Sparkle appcast (macOS updates)
+        if: needs.build-macos.outputs.appcast == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: sparkle-appcast
+          path: sparkle
+      - name: Upload the Sparkle appcast to cua-spaces-latest
+        if: needs.build-macos.outputs.appcast == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! gh release view cua-spaces-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create cua-spaces-latest --repo "$GITHUB_REPOSITORY" --prerelease --verify-tag \
+              --title "Cua Spaces (rolling updater feed)" \
+              --notes "Auto-updater feed. Always points at the newest Cua Spaces release." || {
+              echo "::error::could not create the rolling cua-spaces-latest release; push the cua-spaces-latest tag once by hand (any commit), then re-run this job"
+              exit 1
+            }
+          fi
+          gh release upload cua-spaces-latest sparkle/cua-spaces-appcast.xml --clobber --repo "$GITHUB_REPOSITORY"
+      # Only a published release feeds installs and updates. A prerelease on
+      # trycua/cua stays off the rolling feeds; on any other repository the
+      # feeds are that repository's own, so they follow every release.
+      - name: Update the rolling feeds (cua-spaces-latest, cua-install-latest)
+        if: needs.build-macos.outputs.prerelease != 'true' || github.repository != 'trycua/cua'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The installers default to this repository (download base and the
+          # Sigstore identity they verify).
+          python3 scripts/install/stamp_installers.py --repo "$GITHUB_REPOSITORY" --out stamped
+          if ! gh release view cua-spaces-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # The Actions token may create a release only for an existing tag
+            # (with --target, or for a new tag, the API answers 403). Push the tag
+            # once by hand: git push origin <any commit>:refs/tags/cua-spaces-latest
+            gh release create cua-spaces-latest --repo "$GITHUB_REPOSITORY" --prerelease --verify-tag \
+              --title "Cua Spaces (rolling updater feed)" \
+              --notes "Auto-updater feed. Always points at the newest Cua Spaces release." || {
+              echo "::error::could not create the rolling cua-spaces-latest release; push the cua-spaces-latest tag once by hand (any commit), then re-run this job"
+              exit 1
+            }
+          fi
+          # The Tauri feed only when this release has one (macOS only for
+          # now: Linux/Windows installs keep their current feed).
+          if [ -f assets/latest.json ]; then
+            gh release upload cua-spaces-latest assets/latest.json --clobber --repo "$GITHUB_REPOSITORY"
+          fi
+          if ! gh release view cua-install-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # The Actions token may create a release only for an existing tag
+            # (with --target, or for a new tag, the API answers 403). Push the tag
+            # once by hand: git push origin <any commit>:refs/tags/cua-install-latest
+            gh release create cua-install-latest --repo "$GITHUB_REPOSITORY" --prerelease --verify-tag \
+              --title "Cua installer feed (rolling)" \
+              --notes "release-artifacts.json for install.sh / install.ps1. Always the newest cua CLI and Cua Spaces." || {
+              echo "::error::could not create the rolling cua-install-latest release; push the cua-install-latest tag once by hand (any commit), then re-run this job"
+              exit 1
+            }
+          fi
+          gh release upload cua-install-latest assets/release-artifacts.json \
+            stamped/install.sh stamped/install.ps1 --clobber --repo "$GITHUB_REPOSITORY"

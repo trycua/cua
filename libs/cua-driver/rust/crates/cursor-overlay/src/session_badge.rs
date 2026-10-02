@@ -314,9 +314,7 @@ fn paint_diffuse_glow(
 }
 
 pub fn session_badge_layout(input: SessionBadgeInput<'_>) -> Option<SessionBadgeLayout> {
-    let Some(font) = font() else {
-        return None;
-    };
+    let font = font()?;
     let scale = input.backing_scale.max(1.0);
     let label_alpha = input.label_alpha.clamp(0.0, 1.0);
     let chip_alpha = input.chip_alpha.clamp(0.0, 1.0);

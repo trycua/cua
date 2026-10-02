@@ -1,0 +1,112 @@
+---
+title: Quickstart
+description: 'Install the Cua Spaces app and the cua CLI, run a local Space in Docker, and register it from code.'
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Install Cua, run a Linux desktop locally, and register it as your first Space.
+
+## Prerequisites
+
+- macOS, Linux or Windows. The Cua Spaces app for macOS needs macOS 26 or
+  later.
+- Docker, for the local Space.
+
+## Run
+
+<Tabs items={['macOS and Linux', 'Windows']}>
+  <Tab value="macOS and Linux">
+    ```bash skip="host-install"
+    curl -fsSL https://cua.ai/install.sh | sh
+    ```
+  </Tab>
+  <Tab value="Windows">
+    ```powershell skip="host-install"
+    irm https://cua.ai/install.ps1 | iex
+    ```
+  </Tab>
+</Tabs>
+
+In a terminal it first shows a checklist: the `cua` CLI, the Cua Spaces app
+(on by default on macOS; pass `--select spaces` on Linux, `-Select spaces` on
+Windows), the cua-driver MCP and skill for your agents, and hosting this
+machine. Then it signs you in and offers to set up your AI coding agents.
+Flags: `--select ITEMS`, `--only ITEMS`, `--cli-only`, `--app-only`,
+`--mode host|client`, `--version X`, `--no-onboarding`, `--dry-run`, `--yes`
+(`-Select`, `-CliOnly`, ... on Windows). GUI installers are on
+[GitHub releases](https://github.com/trycua/cua/releases).
+
+Start the canonical Linux image with a token:
+
+```bash skip="no-runner"
+TOKEN=$(openssl rand -hex 24)
+docker run -d --name my-space -e CUA_ENV_TOKEN=$TOKEN -p 127.0.0.1:3211:3211 \
+  ghcr.io/trycua/linux:24.04
+```
+
+Register it and run a command in it (use `http://127.0.0.1:3211` and your
+`$TOKEN`):
+
+<Tabs items={['Python', 'TypeScript', 'Swift']}>
+  <Tab value="Python">
+    ```python test="docs" id="add-direct" session="add-direct" prelude="space-url"
+    import asyncio
+    import cua
+
+    async def main():
+        spaces = cua.embedded().spaces()      # or cua.connect().spaces()
+        info = await spaces.add("http://10.0.0.5:3211", "TOKEN", "lab")
+        space = await spaces.space(info.id)
+        out = await space.bash("uname -a", None)
+        print(info.id, out.stdout)
+
+    asyncio.run(main())
+    ```
+  </Tab>
+  <Tab value="TypeScript">
+    ```ts test="docs" id="add-direct-ts" prelude="space-url"
+    import { embedded } from "@trycua/cua"
+
+    const spaces = embedded().spaces()        // or connect().spaces()
+    const info = await spaces.add("http://10.0.0.5:3211", "TOKEN", "lab")
+    const space = await spaces.space(info.id)
+    console.log(info.id, (await space.bash("uname -a", undefined)).stdout)
+    ```
+  </Tab>
+  <Tab value="Swift">
+    ```swift test="swift" id="add-direct-space"
+    import Cua
+
+    let spaces = try Cua.embedded().spaces()  // or Cua.connect(address: nil, token: nil)
+    let info = try await spaces.add(url: "http://10.0.0.5:3211", token: "TOKEN", name: "lab")
+    let space = try await spaces.space(space: info.id)
+    print(try await space.bash(command: "uname -a", timeoutMs: nil).stdout)
+    ```
+  </Tab>
+</Tabs>
+
+## Result
+
+The program prints the Space id (`direct:127.0.0.1:3211`) and the guest's
+`uname -a`. The Space is now in the shared registry, so the app and the CLI see
+it too:
+
+```bash test="cli-shape" id="cua"
+cua --version
+cua auth status
+cua spaces ls
+```
+
+## Clean up
+
+```bash skip="no-runner"
+docker rm -f my-space
+```
+
+## Next
+
+- [Add a Space](/spaces/guides/add-a-space): create one locally or in the cloud, from any image.
+- [Stream a desktop](/spaces/guides/stream-a-desktop).
+- [Use Spaces from an agent](/spaces/guides/use-from-an-agent).
+- [Cua Bots](/spaces/examples/cua-bots): an example app of persistent bots, each with its own Space.

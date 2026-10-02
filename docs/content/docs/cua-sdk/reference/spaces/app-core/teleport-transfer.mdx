@@ -1,6 +1,6 @@
 ---
-title: "Teleport overlays"
-description: "The overlays that show a teleport in progress: the transfer ring and the drag-and-drop overlay."
+title: "Teleport transfer and drag"
+description: "The overlays that show a teleport in progress: the transfer overlay and drag-and-drop onto a Space."
 ---
 
 {/*
@@ -17,7 +17,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 These APIs are part of the Cua Spaces app export for building Spaces UIs. They are source-available under FSL-1.1-MIT and ship for Swift only (`import CuaSpacesFFI`); the Rust tab shows the `cua-spaces-ffi` crate they come from. The open source SDK packages for Python, TypeScript and Kotlin do not include them.
 </Callout>
 
-`app_transfer_reduce` follows a transfer for its overlay and `app_transfer_title` names it. `AppDragOverlayState` and its transitions drive the overlay a window drag shows.
+The transfer overlay follows a running teleport step by step; the drag overlay shows a file or app dragged onto a Space.
 
 ## `AppDragOverlayState` record
 

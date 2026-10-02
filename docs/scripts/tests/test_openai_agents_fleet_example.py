@@ -36,7 +36,7 @@ def test_disposable_pool_name_ignores_existing_pool_override() -> None:
 
 def test_controller_uses_the_spacesd_image_and_default_services() -> None:
     source = SCRIPT.read_text()
-    assert '"cua-sandbox==0.8.0"' in source
+    assert '"cua-sandbox==0.9.0"' in source
     assert "else Image.linux()" in source
     assert "cua-desktop-linux" not in source
     assert "services={" not in source

@@ -545,8 +545,8 @@ mod tests {
         assert_eq!(cookies_store(p), p.join("Network/Cookies"));
     }
 
-    #[test]
     #[cfg(target_os = "macos")]
+    #[test]
     fn macos_cookies_use_the_named_browsers_safe_storage_item() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().to_path_buf();

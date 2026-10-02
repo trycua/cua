@@ -7,7 +7,7 @@
     "new-space",
     "images",
     "teleport",
-    "teleport-overlays",
+    "teleport-transfer",
     "teleport-grid",
     "cloud",
     "drag-trigger",

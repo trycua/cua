@@ -39,7 +39,6 @@ For free-form text entry into web inputs, prefer `type_text_chars` which synthes
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="set_value--macos--element_token"></span>`element_token` | `string` |  | Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
 | <span id="set_value--macos--value"></span>`value` | `string` | required | New value. AX will coerce to the element's native type. |
 | <span id="set_value--macos--window_id"></span>`window_id` | `integer` |  | CGWindowID. Omit when element_token is supplied (the token carries it). |
 
@@ -52,11 +51,9 @@ Set value of an AT-SPI element via SetValue action.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="set_value--linux--element_index"></span>`element_index` | `integer` |  | Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values. |
-| <span id="set_value--linux--element_token"></span>`element_token` | `string` |  | Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it. |
-| <span id="set_value--linux--snapshot_id"></span>`snapshot_id` | `string` |  | Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed. |
+| <span id="set_value--linux--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` | `"background"` | Input delivery mode. 'background' (default) never activates or raises the target window. On X11 it injects via XTEST / the XInput2 master pointer (no focus steal). On Wayland it goes through libei + xdg-desktop-portal, which injects to the compositor's input focus: Wayland's security model has no per-window background targeting, so a specific non-focused window cannot be aimed at; when no libei backend is available the tool returns a structured background_unavailable error. 'foreground' is the explicit escalation: activate the target (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then restore the prior active window; a brief focus swap unless the target was already active. Matches the macOS / Windows delivery_mode surface. |
 | <span id="set_value--linux--value"></span>`value` | `string \| number` | required | New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back. |
-| <span id="set_value--linux--window_id"></span>`window_id` | `integer` |  | Required when element_index is used; optional when element_token is supplied (the token carries it). |
+| <span id="set_value--linux--window_id"></span>`window_id` | `integer` |  | Omit when element_token is supplied (the token carries it). |
 
 </Tab>
 <Tab value="Windows">
@@ -73,11 +70,9 @@ For free-form text entry that the target accepts via keystrokes only, prefer `ty
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="set_value--windows--element_index"></span>`element_index` | `integer` |  | Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values. |
-| <span id="set_value--windows--element_token"></span>`element_token` | `string` |  | Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it. |
-| <span id="set_value--windows--snapshot_id"></span>`snapshot_id` | `string` |  | Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed. |
+| <span id="set_value--windows--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Input delivery mode. 'background' (default) never swaps foreground: it routes through UIA Invoke / PostMessage and the window is never raised. For targets whose input stack silently drops posted events (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) the tool returns a structured background_unavailable error rather than fronting. 'foreground' is the explicit escalation: a brief SetForegroundWindow swap + SendInput, restoring the prior foreground afterward. IMPORTANT: 'background' is not a hint to weigh; it is the mandatory first attempt. Do NOT pass 'foreground' preemptively because a target 'looks like' GTK/Chromium/Electron; the DRIVER decides when background is impossible and tells you so via a background_unavailable error (or a verified no-op). Only THEN re-issue the same action with 'foreground'. The lists above are the driver's detectors, not a checklist for you to front on a guess: fronting up-front needlessly steals the user's focus and is a bug, not a shortcut. Matches the macOS delivery_mode surface. |
 | <span id="set_value--windows--value"></span>`value` | `string` | required | New value. UIA will coerce to the element's native type. |
-| <span id="set_value--windows--window_id"></span>`window_id` | `integer` |  | HWND of the window. Required when element_index is used; optional when element_token is supplied (the token carries it). |
+| <span id="set_value--windows--window_id"></span>`window_id` | `integer` |  | HWND of the window. Omit when element_token is supplied (the token carries it). |
 
 </Tab>
 </Tabs>
@@ -86,6 +81,7 @@ For free-form text entry that the target accepts via keystrokes only, prefer `ty
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
+| <span id="set_value--element_token"></span>`element_token` | `string` |  | Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
 | <span id="set_value--pid"></span>`pid` | `integer` | required | Target process ID. |
 | <span id="set_value--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 

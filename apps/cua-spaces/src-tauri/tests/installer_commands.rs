@@ -31,7 +31,18 @@ fn fake_cua(dir: &Path, body: &str) -> PathBuf {
     let app = dir.join("Cua Spaces.app/Contents/MacOS");
     std::fs::create_dir_all(&app).unwrap();
     let path = app.join("cua");
-    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    // Write a staging copy and let a child process create the executable:
+    // a file this (multithreaded) process opened for writing can be held
+    // open by a sibling test's fork until its exec, so exec'ing it races
+    // into ETXTBSY ("Text file busy"). The child's fds never leak here.
+    let staging = dir.join("cua.src");
+    std::fs::write(&staging, format!("#!/bin/sh\n{body}\n")).unwrap();
+    let status = std::process::Command::new("cp")
+        .arg(&staging)
+        .arg(&path)
+        .status()
+        .unwrap();
+    assert!(status.success(), "cp {staging:?} {path:?}");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     path
 }

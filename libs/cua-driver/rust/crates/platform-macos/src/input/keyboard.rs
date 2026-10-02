@@ -14,25 +14,15 @@ use foreign_types::ForeignType;
 const SCREEN_SHARING_BUNDLE_ID: &str = "com.apple.ScreenSharing";
 const SHIFT_KEY_CODE: u16 = 56;
 
-/// Key down→up gap and inter-key pacing, previously a hardcoded 8ms at
-/// every sleep site. The 8ms default is unchanged; latency-sensitive
-/// deployments can lower it via `CUA_DRIVER_RS_KEY_GAP_MS` (measured on
-/// macOS against Safari/WebKit, a 136-character probe delivered every
-/// character with zero drops at 2ms). Read once — pacing is a
-/// deploy-time knob, not a per-call one.
+/// Default key down→up gap and inter-key pacing.
+const DEFAULT_KEY_GAP: std::time::Duration = std::time::Duration::from_millis(8);
+
+/// Key down→up gap and inter-key pacing: `DEFAULT_KEY_GAP`, or the
+/// host's `CUA_DRIVER_KEY_GAP_MS` clamped by `cua_driver_core::key_pacing`.
+/// Read once: pacing is a launch-time knob, not a per-call one.
 fn key_gap() -> std::time::Duration {
     static GAP: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
-    *GAP.get_or_init(|| key_gap_from(std::env::var("CUA_DRIVER_RS_KEY_GAP_MS").ok().as_deref()))
-}
-
-/// The gap for `env_value`, falling back to the 8ms default when unset
-/// or unparseable. Pure so the fallback contract is unit-testable
-/// without process-global env mutation.
-fn key_gap_from(env_value: Option<&str>) -> std::time::Duration {
-    env_value
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(std::time::Duration::from_millis)
-        .unwrap_or(std::time::Duration::from_millis(8))
+    *GAP.get_or_init(|| cua_driver_core::key_pacing::key_gap_from_env(DEFAULT_KEY_GAP))
 }
 
 fn key_gap_sleep() {
@@ -104,7 +94,7 @@ pub fn type_text(pid: i32, text: &str) -> anyhow::Result<()> {
 }
 
 /// Type a string character-by-character with an extra `inter_char_delay_ms`
-/// pause after each character (on top of the internal 8 ms down/up gap).
+/// pause after each character (on top of the internal down/up key gap).
 pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
@@ -124,7 +114,7 @@ pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> a
         up.set_flags(CGEventFlags::CGEventFlagNull);
         post_keyboard_event(pid, &up);
 
-        // Additional inter-character delay on top of the 8 ms internal gap.
+        // Additional inter-character delay on top of the internal key gap.
         if inter_char_delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(inter_char_delay_ms));
         } else {
@@ -432,8 +422,9 @@ pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow
             cg_event.post(CGEventTapLocation::HID);
             key_gap_sleep();
         }
-        if inter_char_delay_ms > 8 {
-            std::thread::sleep(std::time::Duration::from_millis(inter_char_delay_ms - 8));
+        let extra = std::time::Duration::from_millis(inter_char_delay_ms).saturating_sub(key_gap());
+        if !extra.is_zero() {
+            std::thread::sleep(extra);
         }
     }
     Ok(())
@@ -961,17 +952,5 @@ mod tests {
         assert!(is_screen_sharing_bundle_id("com.apple.ScreenSharing"));
         assert!(!is_screen_sharing_bundle_id("com.apple.screensharing"));
         assert!(!is_screen_sharing_bundle_id("com.microsoft.rdc.macos"));
-    }
-
-    /// The key gap honors `CUA_DRIVER_RS_KEY_GAP_MS` and falls back to
-    /// the 8ms default on unset or unparseable values.
-    #[test]
-    fn key_gap_parses_and_falls_back() {
-        use std::time::Duration;
-        assert_eq!(key_gap_from(Some("2")), Duration::from_millis(2));
-        assert_eq!(key_gap_from(Some("0")), Duration::from_millis(0));
-        assert_eq!(key_gap_from(Some("junk")), Duration::from_millis(8));
-        assert_eq!(key_gap_from(Some("")), Duration::from_millis(8));
-        assert_eq!(key_gap_from(None), Duration::from_millis(8));
     }
 }

@@ -68,6 +68,7 @@ pub mod ffmpeg_install;
 pub mod health_report;
 pub mod history;
 pub mod image_utils;
+pub mod key_pacing;
 pub mod launch_guard;
 pub mod mcp_result;
 pub mod page;

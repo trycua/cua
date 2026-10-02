@@ -161,6 +161,24 @@ Windows ignores both variables because it does not run this wait. See
 [`EMBEDDING.md`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/Skills/cua-driver/EMBEDDING.md#bounding-the-post-action-window-observation)
 for the full tradeoffs.
 
+## Keystroke pacing (macOS)
+
+The macOS keyboard adapter waits 8 ms between each synthesized key event, which
+is most of the latency of `type_text`, `press_key`, and `hotkey`. A host can
+shorten it with `CUA_DRIVER_KEY_GAP_MS` in the daemon's launch environment.
+`EmbeddedCuaDriverHost` admits it in its `environment` option. Tool arguments
+cannot change it.
+
+| Variable                | Meaning                                  | Accepted values                                       |
+| ----------------------- | ---------------------------------------- | ----------------------------------------------------- |
+| `CUA_DRIVER_KEY_GAP_MS` | Gap between synthesized key events.      | 2 to 100 ms. Unset or unparsable keeps the default 8. |
+
+Only macOS reads it. Linux and Windows keep their own fixed pacing. Some targets
+drop key events that arrive too close together, so read the field back before
+relying on a low value. See
+[`EMBEDDING.md`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/Skills/cua-driver/EMBEDDING.md#pacing-synthesized-keystrokes-macos)
+for details.
+
 ## Host requirements
 
 - Spawn `cua-driver serve --embedded` directly from your app, for example with `Process` / `NSTask`, `posix_spawn`, or `fork` / `exec`.

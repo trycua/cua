@@ -564,6 +564,20 @@ pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
     focused_window_of_pid(pid).and_then(|focused| focused.window_id)
 }
 
+/// The application's own `AXFrontmost`: true once it has processed its
+/// activation, which a WindowServer front-process change precedes.
+pub fn application_reports_frontmost(pid: i32) -> Option<bool> {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        let frontmost = copy_bool_attr(app, "AXFrontmost");
+        CFRelease(app as CFTypeRef);
+        frontmost
+    }
+}
+
 /// Get the children of an AX element.
 ///
 /// # Safety

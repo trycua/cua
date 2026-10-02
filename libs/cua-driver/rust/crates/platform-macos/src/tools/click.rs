@@ -1396,6 +1396,29 @@ impl KeyWindowState {
     }
 }
 
+/// Bound on the foreground rung's wait for the application to report
+/// `window_id` key before a disabled control is re-read.
+const FOREGROUND_KEY_WINDOW_WAIT: std::time::Duration = std::time::Duration::from_millis(400);
+const FOREGROUND_KEY_WINDOW_POLL: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// Wait until the application itself reports it is frontmost with
+/// `window_id` focused, so AppKit has run its key-window updates; returns
+/// whether that state was observed within the bound.
+fn await_application_key_window(pid: i32, window_id: u32) -> bool {
+    let deadline = std::time::Instant::now() + FOREGROUND_KEY_WINDOW_WAIT;
+    loop {
+        if crate::ax::bindings::application_reports_frontmost(pid) == Some(true)
+            && crate::ax::bindings::focused_window_id_of_pid(pid) == Some(window_id)
+        {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(FOREGROUND_KEY_WINDOW_POLL);
+    }
+}
+
 /// The application reports the addressed control disabled, with the window
 /// order and key-window state that decide which route, if any, is open.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1554,7 +1577,11 @@ fn perform_ax_click(
     // enable menu items that were disabled in the cached snapshot, while a
     // background transition can disable them after that snapshot. macOS may
     // otherwise return success for a disabled action that did nothing.
-    if crate::input::ax_actions::ax_element_enabled(element_ptr) == Some(false) {
+    let mut enabled = crate::input::ax_actions::ax_element_enabled(element_ptr);
+    if foreground && enabled == Some(false) && await_application_key_window(pid, window_id) {
+        enabled = crate::input::ax_actions::ax_element_enabled(element_ptr);
+    }
+    if enabled == Some(false) {
         let front = super::bring_to_front::process_front_window_on_display(pid, window_id);
         return Err(anyhow::Error::new(ElementDisabled {
             action: ax_action.to_owned(),

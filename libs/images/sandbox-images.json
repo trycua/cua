@@ -169,11 +169,11 @@
       "variant": "vm",
       "summary": "macOS VM on Apple silicon through Lume, with cua-spacesd at login: screenshots, desktop and window streams, input, files and exec, plus the Command Line Tools, Homebrew and dev tools. Local only.",
       "spacesd": true,
-      "digest": "sha256:d2f72d51c62cfbc19f4472f1be813ddb87698f62aa07e780275e55edef75bc4b",
+      "digest": "sha256:7ee07d515ccd7114fff6319205ee367683f25247a0234beea956b1e0c86dffe1",
       "sizes": {
-        "digest": "sha256:d2f72d51c62cfbc19f4472f1be813ddb87698f62aa07e780275e55edef75bc4b",
+        "digest": "sha256:7ee07d515ccd7114fff6319205ee367683f25247a0234beea956b1e0c86dffe1",
         "platforms": [
-          { "arch": "arm64", "manifest": "sha256:d2f72d51c62cfbc19f4472f1be813ddb87698f62aa07e780275e55edef75bc4b", "download": 23931122941, "unpacked": 34930188444, "disk": 161061273600 }
+          { "arch": "arm64", "manifest": "sha256:7ee07d515ccd7114fff6319205ee367683f25247a0234beea956b1e0c86dffe1", "download": 23941655053, "unpacked": 34930188444, "disk": 161061273600 }
         ]
       },
       "browsers": ["safari", "chrome"],
@@ -194,11 +194,11 @@
       "variant": "vm",
       "summary": "The minimal macOS VM: cua-spacesd at login, Safari and Google Chrome, no dev tooling. What CI and benchmarks run. Local only.",
       "spacesd": true,
-      "digest": "sha256:09f888e1494428a0a32f780a8486fdb5eeaeed11981896f025006c3103e72d0b",
+      "digest": "sha256:5d348440b03074cba9fe3f2a82cf627181e4a21c18694e9803784077844e10ba",
       "sizes": {
-        "digest": "sha256:09f888e1494428a0a32f780a8486fdb5eeaeed11981896f025006c3103e72d0b",
+        "digest": "sha256:5d348440b03074cba9fe3f2a82cf627181e4a21c18694e9803784077844e10ba",
         "platforms": [
-          { "arch": "arm64", "manifest": "sha256:09f888e1494428a0a32f780a8486fdb5eeaeed11981896f025006c3103e72d0b", "download": 23549019912, "unpacked": 33856446620, "disk": 161061273600 }
+          { "arch": "arm64", "manifest": "sha256:5d348440b03074cba9fe3f2a82cf627181e4a21c18694e9803784077844e10ba", "download": 23518071597, "unpacked": 33856446620, "disk": 161061273600 }
         ]
       },
       "browsers": ["safari", "chrome"],

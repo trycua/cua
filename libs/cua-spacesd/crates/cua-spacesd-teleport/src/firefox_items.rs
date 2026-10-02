@@ -357,6 +357,8 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(version, 16);
+        // Windows cannot delete a file a live connection still holds open.
+        drop(conn);
         // Wipe deletes exactly those rows (the file was ours, so it goes too).
         let ledger = crate::ledger::Ledger::new("i", "firefox", &record, 0, 1);
         let report = crate::ledger::wipe(&ledger, home.path(), &crate::host::FakeHost::new());

@@ -54,7 +54,7 @@ fn fixture_key() -> [u8; 16] {
 fn fixture_windows_key(local_state: &std::path::Path) -> [u8; 32] {
     use cua_chromium_storage::dpapi::{SystemDpapi, ensure_local_state_key};
     let mut random = [0u8; 32];
-    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut random);
+    rand::RngCore::fill_bytes(&mut rand::rng(), &mut random);
     let (key, _) = ensure_local_state_key(local_state, &SystemDpapi, random).unwrap();
     *key
 }

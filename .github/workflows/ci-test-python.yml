@@ -130,8 +130,10 @@ jobs:
         working-directory: libs/cua
         run: |
           cargo build --locked -p cua-sdk
-          scripts/build-test-fixtures.sh
+          # Staged before the fixture build, which rebuilds cua-sdk with
+          # other features into the same target directory.
           node scripts/stage-uniffi-library.mjs --only=python --profile=debug
+          scripts/build-test-fixtures.sh
 
       - name: Install cua-sandbox
         working-directory: libs/python/cua-sandbox

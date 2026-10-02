@@ -280,24 +280,29 @@ jobs:
       # Cua Spaces build (cua-spaces-cli), a Unix-socket test skipped on Windows.
       # All debug, like the fixtures and CLIs: one profile, so they share the
       # dependency builds (a release library compiled every crate twice).
+      # The library is copied aside before anything else builds: the CLIs and
+      # the fixture depend on cua-sdk with other features, and cargo rewrites
+      # target/debug's cua-sdk cdylib with each of those feature sets.
       - name: Build the SDK, fixtures and CLIs
         working-directory: libs/cua
-        run: |
-          cargo build --locked -p cua-sdk
-          scripts/build-test-fixtures.sh
-          cargo build --locked -p cua-cli
-          if [ "$RUNNER_OS" != Windows ]; then cargo build --locked -p cua-spaces-cli; fi
-          node scripts/stage-uniffi-library.mjs --only=python --profile=debug
-      - name: Build the platform wheel
-        working-directory: libs/cua/python
         run: |
           case "$RUNNER_OS" in
             Linux) library=libcua_sdk.so ;;
             macOS) library=libcua_sdk.dylib ;;
             Windows) library=cua_sdk.dll ;;
           esac
-          uv run --no-project --python 3.12 --with build python build_wheel.py \
-            --library "../target/debug/$library" --cli ../target/debug/cua --out-dir dist
+          cargo build --locked -p cua-sdk
+          mkdir -p "$RUNNER_TEMP/cua-sdk"
+          cp "target/debug/$library" "$RUNNER_TEMP/cua-sdk/$library"
+          echo "CUA_SDK_LIBRARY=$RUNNER_TEMP/cua-sdk/$library" >>"$GITHUB_ENV"
+          scripts/build-test-fixtures.sh
+          cargo build --locked -p cua-cli
+          if [ "$RUNNER_OS" != Windows ]; then cargo build --locked -p cua-spaces-cli; fi
+      - name: Build the platform wheel
+        working-directory: libs/cua/python
+        run: >
+          uv run --no-project --python 3.12 --with build python build_wheel.py
+          --library "$CUA_SDK_LIBRARY" --cli ../target/debug/cua --out-dir dist
       - name: Smoke-test the installed wheel
         working-directory: libs/cua/python
         run: |
@@ -338,14 +343,15 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: libs/cua/typescript/package-lock.json
-      # All debug, as in python smoke: one profile for every crate.
+      # All debug, as in python smoke: one profile for every crate. Staged
+      # before the CLIs and fixture rebuild cua-sdk with other features.
       - name: Build and stage
         run: |
           npm --prefix typescript ci --ignore-scripts
           cargo build --locked -p cua-sdk
+          node scripts/stage-uniffi-library.mjs --only=node --profile=debug
           scripts/build-test-fixtures.sh
           cargo build --locked -p cua-cli -p cua-spaces-cli
-          node scripts/stage-uniffi-library.mjs --only=node --profile=debug
       - name: Test
         run: npm --prefix typescript test
 

@@ -2502,6 +2502,7 @@ dependencies = [
  "cua-spacesd-client",
  "cua-spacesd-server",
  "cua-spacesd-teleport",
+ "cua-teleport",
  "futures-util",
  "hex",
  "prost",

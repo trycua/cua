@@ -223,7 +223,18 @@ pub fn write_firefox_profile(home: &Path) -> PathBuf {
             "user_pref(\"cua.test.marker\", \"teleported\");\n",
         )
         .unwrap();
-        std::fs::write(profile.join("cookies.sqlite"), b"not-a-real-db").unwrap();
+        // A real (Firefox schema 16) cookie store: Firefox is sent as items.
+        cua_teleport::firefox_store::testing::write_cookies(
+            &profile,
+            &[(
+                ".example.test",
+                "session",
+                "fixture",
+                "/",
+                1_900_000_000_000,
+                "",
+            )],
+        );
         std::fs::write(profile.join("places.sqlite"), b"history").unwrap();
     }
     profile

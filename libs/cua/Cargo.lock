@@ -2942,6 +2942,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "toml_edit",
  "tracing",
  "vnc-rs",
  "windows-sys 0.61.2",

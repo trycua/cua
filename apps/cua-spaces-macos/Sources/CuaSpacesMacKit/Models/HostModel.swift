@@ -28,6 +28,8 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
     public private(set) var current: HostStatus
     public private(set) var calls: [String] = []
     public var failSetup: String?
+    /// The next `configure` fails with this (once).
+    public var failConfigure: String?
 
     public init(status: HostStatus? = nil) {
         current = status ?? FixtureHost.unconfigured
@@ -68,6 +70,10 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
 
     public func configure(change: HostSettingsChange) async throws -> HostStatus {
         calls.append("configure:\(change.shareDesktop.map { "\($0)" } ?? "-"):\(change.provideSpaces.map { "\($0)" } ?? "-")")
+        if let failConfigure {
+            self.failConfigure = nil
+            throw CuaError.Runtime(message: failConfigure)
+        }
         if let d = change.shareDesktop { current.shareDesktop = d }
         if let p = change.provideSpaces { current.provideSpaces = p }
         return current
@@ -104,6 +110,11 @@ public final class HostModel {
     public private(set) var form: AppHostFormState?
     public private(set) var busy = false
     public private(set) var error: String?
+    /// The last page button that failed (a setting, Stop sharing, ...), in
+    /// plain words with Retry; cleared when any button succeeds.
+    public private(set) var actionFailure: HostSetupFailure?
+    /// What Retry runs again.
+    private var failedAction: AppHostActionId?
     /// The last "Set up for access" failure, in plain words with the raw
     /// error as details. It stays while a retry runs (so Retry can show
     /// progress) and clears when setup succeeds or the form closes.
@@ -188,22 +199,39 @@ public final class HostModel {
         error = nil
         defer { busy = false }
         do {
-            // The two settings: the core says what each switch changes.
-            if let change = appHostSettingChange(id: id) {
-                apply(try await host.configure(change: HostSettingsChange(
-                    shareDesktop: change.shareDesktop, provideSpaces: change.provideSpaces)))
-                return
-            }
-            switch id {
-            case .stopSharing: apply(try await host.stopSharing())
-            case .resumeSharing: apply(try await host.startSharing())
-            case .remove:
-                try await host.remove()
-                apply(try await host.status())
-            case .setUp, .shareDesktop, .hideDesktop, .provideSpaces, .stopProvidingSpaces: break
-            }
+            try await perform(id, on: host)
+            actionFailure = nil
+            failedAction = nil
         } catch {
-            self.error = LiveSpacesBackend.words(error)
+            let raw = LiveSpacesBackend.words(error)
+            actionFailure = HostSetupFailure.presenting(raw)
+            failedAction = id
+            // The page shows what the failure left behind (a stopped
+            // service is offline), not the state before the button.
+            await refresh()
+        }
+    }
+
+    /// Runs the failed button again.
+    public func retryFailedAction() async {
+        guard let id = failedAction else { return }
+        await run(id)
+    }
+
+    private func perform(_ id: AppHostActionId, on host: HostRunning) async throws {
+        // The two settings: the core says what each switch changes.
+        if let change = appHostSettingChange(id: id) {
+            apply(try await host.configure(change: HostSettingsChange(
+                shareDesktop: change.shareDesktop, provideSpaces: change.provideSpaces)))
+            return
+        }
+        switch id {
+        case .stopSharing: apply(try await host.stopSharing())
+        case .resumeSharing: apply(try await host.startSharing())
+        case .remove:
+            try await host.remove()
+            apply(try await host.status())
+        case .setUp, .shareDesktop, .hideDesktop, .provideSpaces, .stopProvidingSpaces: break
         }
     }
 }

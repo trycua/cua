@@ -271,6 +271,10 @@ pub struct SettingsInput {
     /// "Connect to the desktop automatically" (none: no row; a shell
     /// without the preview cover leaves it out).
     pub auto_connect: Option<bool>,
+    /// Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
+    /// `system`); none: no Runtimes section.
+    #[serde(default)]
+    pub lume_source: Option<String>,
 }
 
 impl Default for SettingsInput {
@@ -295,6 +299,7 @@ impl Default for SettingsInput {
             keyvault_site_icons: true,
             keyvault_protection: vec![],
             auto_connect: None,
+            lume_source: None,
         }
     }
 }
@@ -659,6 +664,10 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         },
     ];
 
+    if let Some(source) = input.lume_source.as_deref() {
+        sections.push(runtimes_section(source));
+    }
+
     if let Some(t) = &input.telemetry {
         let mut share = row("telemetry", Choice, "Share anonymous usage data");
         share.options = vec![opt("on", "On", t.enabled), opt("off", "Off", !t.enabled)];
@@ -737,6 +746,37 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     }
 }
 
+/// The help under Settings, Runtimes, macOS VMs.
+pub const MACOS_RUNTIME_HELP: &str =
+    "Built-in is Cua\u{2019}s signed Lume, downloaded the first time you need it (6 MB).";
+
+/// Settings, Runtimes: one row per local runtime Cua can provide itself.
+/// macOS VMs: Automatic, Built-in (Cua's signed Lume, set up on first use)
+/// or System (this Mac's own Lume only). The row's id is `macos-runtime`;
+/// its options are `runtime.lume`'s values.
+pub fn runtimes_section(lume_source: &str) -> SettingsSection {
+    use SettingsRowKind::*;
+    let source = match lume_source {
+        "builtin" | "system" => lume_source,
+        _ => "auto",
+    };
+    let mut macos = row("macos-runtime", Choice, "macOS VMs");
+    macos.options = vec![
+        opt("auto", "Automatic", source == "auto"),
+        opt("builtin", "Built-in", source == "builtin"),
+        opt("system", "System", source == "system"),
+    ];
+    let note = row("macos-runtime-note", Note, MACOS_RUNTIME_HELP);
+    SettingsSection {
+        id: "runtimes".into(),
+        title: "Runtimes".into(),
+        button: None,
+        button_enabled: false,
+        button_help: None,
+        rows: vec![macos, note],
+    }
+}
+
 /// The Settings page with Settings, Storage (the Cua Volume's store,
 /// Finder volume and cache, [`crate::drive_settings::storage_section`])
 /// after General, while the Cua Volume experiment is on. Off, Storage is
@@ -767,6 +807,35 @@ pub fn with_storage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_runtimes_section_shows_the_lume_choice() {
+        let p = page(&SettingsInput::default());
+        assert!(
+            !p.sections.iter().any(|s| s.id == "runtimes"),
+            "not until read"
+        );
+        let page = page(&SettingsInput {
+            lume_source: Some("system".into()),
+            ..Default::default()
+        });
+        let r = &page
+            .sections
+            .iter()
+            .find(|s| s.id == "runtimes")
+            .unwrap()
+            .rows[0];
+        assert_eq!(r.id, "macos-runtime");
+        let active: Vec<_> = r
+            .options
+            .iter()
+            .filter(|o| o.active)
+            .map(|o| o.id.as_str())
+            .collect();
+        assert_eq!(active, ["system"]);
+        let ids: Vec<_> = r.options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(ids, ["Automatic", "Built-in", "System"]);
+    }
 
     #[test]
     fn hotkeys_need_a_modifier() {

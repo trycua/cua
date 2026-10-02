@@ -24614,6 +24614,92 @@ public func FfiConverterTypeAppRoutineInput_lower(_ value: AppRoutineInput) -> R
 }
 
 
+public struct AppRuntimeSwitch: Equatable, Hashable {
+    /**
+     * The `cua config` setting: `runtime.lume`.
+     */
+    public var setting: String
+    /**
+     * The value to set: `builtin`.
+     */
+    public var value: String
+    /**
+     * The button: "Use built-in Lume".
+     */
+    public var label: String
+    /**
+     * One line on what that does.
+     */
+    public var detail: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The `cua config` setting: `runtime.lume`.
+         */setting: String,
+        /**
+         * The value to set: `builtin`.
+         */value: String,
+        /**
+         * The button: "Use built-in Lume".
+         */label: String,
+        /**
+         * One line on what that does.
+         */detail: String) {
+        self.setting = setting
+        self.value = value
+        self.label = label
+        self.detail = detail
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppRuntimeSwitch: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppRuntimeSwitch: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppRuntimeSwitch {
+        return
+            try AppRuntimeSwitch(
+                setting: FfiConverterString.read(from: &buf),
+                value: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppRuntimeSwitch, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.setting, into: &buf)
+        FfiConverterString.write(value.value, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRuntimeSwitch_lift(_ buf: RustBuffer) throws -> AppRuntimeSwitch {
+    return try FfiConverterTypeAppRuntimeSwitch.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRuntimeSwitch_lower(_ value: AppRuntimeSwitch) -> RustBuffer {
+    return FfiConverterTypeAppRuntimeSwitch.lower(value)
+}
+
+
 public struct AppSandboxImage: Equatable, Hashable {
     /**
      * OCI ref.
@@ -25349,6 +25435,11 @@ public struct AppSettingsInput: Equatable, Hashable {
      * without the preview cover leaves it out).
      */
     public var autoConnect: Bool?
+    /**
+     * Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
+     * `system`); none: no Runtimes section.
+     */
+    public var lumeSource: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -25415,7 +25506,11 @@ public struct AppSettingsInput: Equatable, Hashable {
         /**
          * "Connect to the desktop automatically" (none: no row; a shell
          * without the preview cover leaves it out).
-         */autoConnect: Bool?) {
+         */autoConnect: Bool?,
+        /**
+         * Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
+         * `system`); none: no Runtimes section.
+         */lumeSource: String?) {
         self.identity = identity
         self.apiKeyClient = apiKeyClient
         self.signIn = signIn
@@ -25435,6 +25530,7 @@ public struct AppSettingsInput: Equatable, Hashable {
         self.keyvaultSiteIcons = keyvaultSiteIcons
         self.keyvaultProtection = keyvaultProtection
         self.autoConnect = autoConnect
+        self.lumeSource = lumeSource
     }
 
 
@@ -25471,7 +25567,8 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
                 keyvaultUnlockPrompt: FfiConverterOptionBool.read(from: &buf),
                 keyvaultSiteIcons: FfiConverterBool.read(from: &buf),
                 keyvaultProtection: FfiConverterSequenceTypeAppFact.read(from: &buf),
-                autoConnect: FfiConverterOptionBool.read(from: &buf)
+                autoConnect: FfiConverterOptionBool.read(from: &buf),
+                lumeSource: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -25495,6 +25592,7 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
         FfiConverterBool.write(value.keyvaultSiteIcons, into: &buf)
         FfiConverterSequenceTypeAppFact.write(value.keyvaultProtection, into: &buf)
         FfiConverterOptionBool.write(value.autoConnect, into: &buf)
+        FfiConverterOptionString.write(value.lumeSource, into: &buf)
     }
 }
 
@@ -30804,6 +30902,11 @@ public struct AppWizardEnv: Equatable, Hashable {
      */
     public var hostArch: String?
     /**
+     * Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
+     * `system`), when known.
+     */
+    public var lumeSource: String?
+    /**
      * Free space and pulled images here (the SDK's `Local.storage()`),
      * when known.
      */
@@ -30862,6 +30965,10 @@ public struct AppWizardEnv: Equatable, Hashable {
          * This machine's architecture (`arm64`, `amd64`), when known.
          */hostArch: String?,
         /**
+         * Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
+         * `system`), when known.
+         */lumeSource: String?,
+        /**
          * Free space and pulled images here (the SDK's `Local.storage()`),
          * when known.
          */storage: AppLocalStorage?,
@@ -30891,6 +30998,7 @@ public struct AppWizardEnv: Equatable, Hashable {
         self.localDetails = localDetails
         self.maxCpus = maxCpus
         self.hostArch = hostArch
+        self.lumeSource = lumeSource
         self.storage = storage
         self.cloudPricing = cloudPricing
         self.clouds = clouds
@@ -30923,6 +31031,7 @@ public struct FfiConverterTypeAppWizardEnv: FfiConverterRustBuffer {
                 localDetails: FfiConverterOptionDictionaryStringString.read(from: &buf),
                 maxCpus: FfiConverterUInt32.read(from: &buf),
                 hostArch: FfiConverterOptionString.read(from: &buf),
+                lumeSource: FfiConverterOptionString.read(from: &buf),
                 storage: FfiConverterOptionTypeAppLocalStorage.read(from: &buf),
                 cloudPricing: FfiConverterOptionTypeAppCloudPricing.read(from: &buf),
                 clouds: FfiConverterSequenceTypeAppConnectedCloud.read(from: &buf),
@@ -30941,6 +31050,7 @@ public struct FfiConverterTypeAppWizardEnv: FfiConverterRustBuffer {
         FfiConverterOptionDictionaryStringString.write(value.localDetails, into: &buf)
         FfiConverterUInt32.write(value.maxCpus, into: &buf)
         FfiConverterOptionString.write(value.hostArch, into: &buf)
+        FfiConverterOptionString.write(value.lumeSource, into: &buf)
         FfiConverterOptionTypeAppLocalStorage.write(value.storage, into: &buf)
         FfiConverterOptionTypeAppCloudPricing.write(value.cloudPricing, into: &buf)
         FfiConverterSequenceTypeAppConnectedCloud.write(value.clouds, into: &buf)
@@ -31541,6 +31651,16 @@ public struct AppWizardView: Equatable, Hashable {
      */
     public var placementError: String?
     /**
+     * One line under "Run on" when This Mac cannot run the Space and no
+     * machine of yours is listed: how another Mac joins.
+     */
+    public var placementHint: String?
+    /**
+     * Switches This Mac to the built-in runtime the Space needs, when it
+     * is set to use its own and that is missing.
+     */
+    public var runtimeSwitch: AppRuntimeSwitch?
+    /**
      * Advanced shown.
      */
     public var advanced: Bool
@@ -31740,6 +31860,14 @@ public struct AppWizardView: Equatable, Hashable {
          * Why the chosen placement cannot be used.
          */placementError: String?,
         /**
+         * One line under "Run on" when This Mac cannot run the Space and no
+         * machine of yours is listed: how another Mac joins.
+         */placementHint: String?,
+        /**
+         * Switches This Mac to the built-in runtime the Space needs, when it
+         * is set to use its own and that is missing.
+         */runtimeSwitch: AppRuntimeSwitch?,
+        /**
          * Advanced shown.
          */advanced: Bool,
         /**
@@ -31871,6 +31999,8 @@ public struct AppWizardView: Equatable, Hashable {
         self.cloud = cloud
         self.host = host
         self.placementError = placementError
+        self.placementHint = placementHint
+        self.runtimeSwitch = runtimeSwitch
         self.advanced = advanced
         self.kindTiles = kindTiles
         self.runtimes = runtimes
@@ -31939,6 +32069,8 @@ public struct FfiConverterTypeAppWizardView: FfiConverterRustBuffer {
                 cloud: FfiConverterOptionString.read(from: &buf),
                 host: FfiConverterOptionString.read(from: &buf),
                 placementError: FfiConverterOptionString.read(from: &buf),
+                placementHint: FfiConverterOptionString.read(from: &buf),
+                runtimeSwitch: FfiConverterOptionTypeAppRuntimeSwitch.read(from: &buf),
                 advanced: FfiConverterBool.read(from: &buf),
                 kindTiles: FfiConverterSequenceTypeAppTile.read(from: &buf),
                 runtimes: FfiConverterSequenceTypeAppMenuOption.read(from: &buf),
@@ -31993,6 +32125,8 @@ public struct FfiConverterTypeAppWizardView: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.cloud, into: &buf)
         FfiConverterOptionString.write(value.host, into: &buf)
         FfiConverterOptionString.write(value.placementError, into: &buf)
+        FfiConverterOptionString.write(value.placementHint, into: &buf)
+        FfiConverterOptionTypeAppRuntimeSwitch.write(value.runtimeSwitch, into: &buf)
         FfiConverterBool.write(value.advanced, into: &buf)
         FfiConverterSequenceTypeAppTile.write(value.kindTiles, into: &buf)
         FfiConverterSequenceTypeAppMenuOption.write(value.runtimes, into: &buf)
@@ -54203,6 +54337,30 @@ fileprivate struct FfiConverterOptionTypeAppReviewView: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppReviewView.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppRuntimeSwitch: FfiConverterRustBuffer {
+    typealias SwiftType = AppRuntimeSwitch?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppRuntimeSwitch.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppRuntimeSwitch.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

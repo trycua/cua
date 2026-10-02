@@ -66,12 +66,27 @@ struct HostSetupFailureTests {
         #expect(f.message.contains("Sign in"))
     }
 
+    /// The first post-launch user's error (raw), and the words the host
+    /// now reports for it: a service that did not start, never the raw
+    /// launchctl command line.
+    @Test(arguments: [
+        "local runtime: service: \"launchctl\" \"bootstrap\" \"gui/501\" \"/Users/u/Library/LaunchAgents/com.trycua.spacesd.host.plist\" failed: Bootstrap failed: 5: Input/output error",
+        "local runtime: service: macOS did not start the Cua host service (launchd: Bootstrap failed: 5: Input/output error); try again",
+    ])
+    func serviceFailures(_ raw: String) {
+        let f = HostSetupFailure.presenting(raw)
+        #expect(f.kind == .service)
+        #expect(f.title == "Couldn\u{2019}t start the Cua host service")
+        #expect(!f.message.contains("launchctl"))
+        #expect(f.details == raw)
+    }
+
     @Test func anythingElseIsGeneric() {
-        let f = HostSetupFailure.presenting("launchctl bootstrap failed\nmore")
+        let f = HostSetupFailure.presenting("something odd failed\nmore")
         #expect(f.kind == .other)
         #expect(f.title == "Couldn\u{2019}t set up this Mac for access")
         #expect(f.message == "Something went wrong. Try again, or open Details to see what happened.")
-        #expect(f.details == "launchctl bootstrap failed\nmore")
+        #expect(f.details == "something odd failed\nmore")
     }
 
     @Test func aPortNumberIsNotAStatusCode() {
@@ -97,6 +112,26 @@ struct HostSetupFailureTests {
         #expect(model.host.formView?.canSubmit == true, "Retry can run")
         #expect(!model.host.settingUp)
         #expect(model.showingHostForm)
+    }
+
+    /// A page button that fails (the first post-launch user turned a
+    /// setting on and the service did not start) shows in words with
+    /// Retry, and Retry runs the same button again.
+    @MainActor @Test func aFailedPageButtonShowsWordsAndRetries() async {
+        let host = FixtureHost()
+        let model = HostModel(host: host)
+        _ = try? await host.setupRequest(
+            request: AppHostSetupRequest(
+                mode: "relay", relayUrl: nil, direct: nil, name: "Studio", allow: nil, profile: "desktop",
+                shareDesktop: nil, provideSpaces: nil),
+            accountToken: "t")
+        host.failConfigure = "local runtime: service: \"launchctl\" \"bootstrap\" \"gui/501\" \"/x.plist\" failed: Bootstrap failed: 5: Input/output error"
+        await model.run(.provideSpaces)
+        #expect(model.actionFailure?.kind == .service)
+        #expect(model.actionFailure?.details.contains("launchctl") == true)
+        await model.retryFailedAction()
+        #expect(model.actionFailure == nil)
+        #expect(host.calls.filter { $0.hasPrefix("configure:") }.count == 2, "Retry ran the same change")
     }
 
     @MainActor @Test func retryRunsTheSameChoiceAndClearsOnSuccess() async {

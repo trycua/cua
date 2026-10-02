@@ -11,9 +11,10 @@
 //!   same NoCloud seed as the QEMU backend provisions SSH access.
 //!
 //! [`LumeRuntime::ensure_serving`] makes the backend zero-setup: if the API is
-//! not reachable it starts `lume serve`, and when the binary is missing it runs
-//! the official installer only if [`LumeConfig::allow_install`] is set.
+//! not reachable it starts `lume serve`, and when the binary is missing it sets
+//! up the built-in Lume ([`builtin`]) unless `runtime.lume` is `system`.
 
+pub mod builtin;
 pub mod client;
 pub mod gpu;
 pub mod lease;
@@ -108,9 +109,10 @@ pub fn base_vm_name(reference: &str) -> String {
     format!("cua-base-{}", &hex[..12])
 }
 
-/// Locate the `lume` binary.
+/// Locate the `lume` binary for the `runtime.lume` setting: this Mac's
+/// own, or the built-in one ([`builtin`]) when installed.
 pub fn lume_bin() -> Option<PathBuf> {
-    host::which("lume")
+    builtin::resolve(builtin::LumeSource::current())
 }
 
 /// Deletes a clone whose create was cut off (dropped) before its first
@@ -251,8 +253,18 @@ impl LumeRuntime {
                 "start it with `lume serve`",
             ));
         }
+        let source = builtin::LumeSource::current();
         let bin = match lume_bin() {
             Some(b) => b,
+            // Nothing to ask: the pinned, signed Lume, into cua's own dir.
+            None if source.allows_builtin() => builtin::ensure().await?,
+            None if source == builtin::LumeSource::System && !self.cfg.allow_install => {
+                return Err(VmmError::missing(
+                    "Lume",
+                    "macOS Spaces are set to use this Mac's own Lume, and it is not installed. \
+                     Choose Built-in for macOS VMs in Settings (or `cua config set runtime.lume builtin`)",
+                ));
+            }
             None if self.cfg.allow_install => {
                 install_lume().await?;
                 if self.client.reachable().await {

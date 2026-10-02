@@ -139,7 +139,7 @@ public final class AppModel {
             defaultLocation: settings.defaultLocation, cloudAvailable: false,
             localAvailable: true, localReason: nil, localBackends: nil, localDetails: nil,
             maxCpus: UInt32(max(2, min(16, ProcessInfo.processInfo.activeProcessorCount))),
-            hostArch: Self.hostArch, storage: nil, cloudPricing: nil, clouds: [], hosts: [],
+            hostArch: Self.hostArch, lumeSource: nil, storage: nil, cloudPricing: nil, clouds: [], hosts: [],
             experiments: settings.experiments, gpus: nil))
         self.notch = NotchModel()
         // The notch tiles and the preview cover read one thumbnail store,
@@ -374,6 +374,7 @@ public final class AppModel {
         async let gpusProbe = backend.gpuChoices()
         async let hostsProbe = backend.hosts()
         let cloud = await backend.cloudAvailable()
+        lumeSource = await backend.lumeSource()
         await self.cloud.refresh()
         let (runtimes, storage, pricing, gpus) = await (runtimesProbe, storageProbe, pricingProbe, gpusProbe)
         hosts = await hostsProbe
@@ -393,6 +394,30 @@ public final class AppModel {
     /// Your machines that provide Spaces, as New Space last read them.
     var hosts: [AppSpaceHost] = []
 
+    /// Which Lume macOS Spaces run on (`runtime.lume`), once read.
+    public private(set) var lumeSource: String?
+
+    /// New Space's "Use built-in Lume": switches `runtime.lume`, then the
+    /// open wizard reads the runtimes again (This Mac can run it now).
+    public func applyRuntimeSwitch(_ change: AppRuntimeSwitch) async {
+        do {
+            try await backend.setLumeSource(change.value)
+        } catch {
+            show(error: LiveSpacesBackend.words(error))
+            return
+        }
+        lumeSource = await backend.lumeSource() ?? change.value
+        let runtimes = await backend.localRuntimes()
+        var e = wizard.env
+        let backends = runtimes?.ready
+        e.localAvailable = backends.map { !$0.isEmpty } ?? true
+        e.localReason = backends?.isEmpty == true ? "No local runtime found (Docker or Lume)." : nil
+        e.localBackends = backends
+        e.localDetails = runtimes?.details
+        e.lumeSource = lumeSource
+        wizard.update(env: e)
+    }
+
     private func wizardEnv(from e: AppWizardEnv) -> AppWizardEnv {
         var e = e
         e.clouds = cloud.clouds
@@ -411,7 +436,7 @@ public final class AppModel {
             localAvailable: backends.map { !$0.isEmpty } ?? true,
             localReason: backends?.isEmpty == true ? "No local runtime found (Docker or Lume)." : nil,
             localBackends: backends, localDetails: runtimes?.details, maxCpus: wizard.env.maxCpus,
-            hostArch: Self.hostArch, storage: storage.map(Self.wizardStorage),
+            hostArch: Self.hostArch, lumeSource: lumeSource, storage: storage.map(Self.wizardStorage),
             cloudPricing: available ? pricing : nil, clouds: [], hosts: [],
             experiments: settings.experiments, gpus: gpus))
     }
@@ -648,7 +673,7 @@ public final class AppModel {
             experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe,
             keyvaultUnlockPrompt: keyvault.unlockPromptShows,
             keyvaultSiteIcons: settings.keyvaultSiteIcons, keyvaultProtection: keyvault.page.protection,
-            autoConnect: settings.autoConnect))
+            autoConnect: settings.autoConnect, lumeSource: lumeSource))
     }
 
     /// Settings, General with Settings, Storage after General while the Cua
@@ -740,6 +765,7 @@ public final class AppModel {
 
     /// Reads what Settings shows (telemetry, the coding agents).
     public func loadSettings() async {
+        lumeSource = await backend.lumeSource()
         telemetryInput = telemetry?.status()
         readLoginItem()
         await storage.load()
@@ -783,6 +809,13 @@ public final class AppModel {
         case "notch":
             settings.menuBar = option == "hide"
             saveSettings()
+        case "macos-runtime":
+            do {
+                try await backend.setLumeSource(option)
+                lumeSource = await backend.lumeSource() ?? option
+            } catch {
+                show(error: LiveSpacesBackend.words(error))
+            }
         case "default-location":
             settings.defaultLocation = option == "cloud" ? .cloud : .local
             saveSettings()

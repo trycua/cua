@@ -570,7 +570,16 @@ impl Host {
     /// Unregister, uninstall the service and delete the host state.
     pub async fn remove(&self) -> Result<()> {
         let home = self.home.clone();
-        run(async move { Ok(cua_host::Host::new(home).remove().await?) }).await
+        run(async move {
+            cua_host::Host::new(home).remove().await?;
+            // Then the runtimes cua set up itself (the built-in Lume, set up
+            // again on the next create that needs it); the user's own stay.
+            if let Err(e) = cua_sandbox_core::remove_builtin_runtimes() {
+                tracing::warn!("could not remove the built-in runtimes: {e}");
+            }
+            Ok(())
+        })
+        .await
     }
 }
 

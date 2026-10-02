@@ -51,8 +51,28 @@ RUN mkdir -p $HOME && chown -R 1000:0 $HOME
 # Install UV package manager
 RUN python3.12 -m pip install uv
 
-# Install cua-computer-server and cua-agent
-RUN uv pip install --system cua-computer-server "cua-agent[all]"
+# Install cua-spacesd, the in-sandbox daemon (gRPC + gRPC-Web on :3211).
+# Same artifact as libs/cua-spacesd/packaging/install.sh installs.
+ARG CUA_SPACESD_VERSION=0.1.0
+# release (default) installs the published cua-spacesd; none leaves it out
+# (pull-request builds before that version is published).
+ARG CUA_SPACESD_SOURCE=release
+ARG TARGETARCH
+RUN set -eux; \
+    if [ "$CUA_SPACESD_SOURCE" = none ]; then \
+      echo "CUA_SPACESD_SOURCE=none: cua-spacesd not installed"; exit 0; \
+    fi; \
+    [ "$CUA_SPACESD_SOURCE" = release ] || { echo "CUA_SPACESD_SOURCE must be release or none" >&2; exit 1; }; \
+    case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
+      amd64|x86_64) arch=x86_64 ;; \
+      arm64|aarch64) arch=aarch64 ;; \
+      *) echo "unsupported arch" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/trycua/cua/releases/download/cua-spacesd-v${CUA_SPACESD_VERSION}/cua-spacesd-${arch}-unknown-linux-gnu.tar.gz"; \
+    curl -fsSL "$url" | tar -xz -C /usr/local/bin cua-spacesd; \
+    chmod 0755 /usr/local/bin/cua-spacesd; \
+    ln -s cua-spacesd /usr/local/bin/cua-guestd; \
+    ln -s cua-spacesd /usr/local/bin/cua-env-driver  # older names, one release
 
 # Install playwright and Firefox dependencies
 RUN uv pip install --system playwright && \
@@ -64,8 +84,11 @@ RUN rm -rf /home/kasm-user/.cache/uv /root/.cache/uv
 # Fix ownership of remaining cache files
 RUN chown -R 1000:0 /home/kasm-user/.cache 2>/dev/null || true
 
-# Running the python script on startup
-RUN echo -e "#!/bin/bash\nsudo uv pip install --upgrade --system cua-computer-server \"cua-agent[all]\"\n/usr/bin/python3 -m computer_server" > $STARTUPDIR/custom_startup.sh \
-    && chmod +x $STARTUPDIR/custom_startup.sh
+# Start cua-spacesd on 0.0.0.0:3211 at session start. The token comes from
+# CUA_ENV_TOKEN or /run/cua/env-token; one is generated there when absent.
+COPY ./start-spacesd.sh $STARTUPDIR/custom_startup.sh
+RUN chmod +x $STARTUPDIR/custom_startup.sh
+
+EXPOSE 3211
 
 USER 1000

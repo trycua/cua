@@ -32,6 +32,16 @@ protocol_media_test::zoom_from_zoom_click_round_trip | Sends real input to a liv
 protocol_media_test::recording_screenshot_capture | Sends real input to a live desktop window; kept off plain cargo test by #4100 for manual disposable-desktop runs
 protocol_media_test::click_debug_image_out | Sends real input to a live desktop window; kept off plain cargo test by #4100 for manual disposable-desktop runs
 protocol_tools_call_test::type_text_chars_tool | Sends real input to a live desktop window; kept off plain cargo test by #4100 for manual disposable-desktop runs
+protocol_tools_call_test::get_accessibility_tree | Reads the real running apps and windows through a source-built daemon; manual disposable-desktop run only
+protocol_tools_call_test::list_windows_structured_content | Lists every real window through a source-built daemon; manual disposable-desktop run only
+protocol_tools_call_test::get_screen_size_and_cursor_position | Reads the real display and cursor through a source-built daemon; manual disposable-desktop run only
+protocol_tools_call_test::get_window_state_returns_both_with_opt_out | Walks and captures a real window, which needs Accessibility and Screen Recording for the ad-hoc source build; manual disposable-desktop run only
+protocol_media_test::zoom_tool_returns_jpeg | Captures real windows, which needs Screen Recording for the ad-hoc source build; manual disposable-desktop run only
+protocol_media_test::recording_session | Captures the whole display with screencapture, which needs Screen Recording for the ad-hoc source build; manual disposable-desktop run only
+protocol_session_test::concurrent_multi_driver_isolation | Draws the agent-cursor overlay window on the real display; manual disposable-desktop run only
+protocol_session_test::session_owned_cursor_state_is_independent | Draws the agent-cursor overlay window on the real display; manual disposable-desktop run only
+protocol_session_test::overlay_move_cursor_stays_alive | Draws the agent-cursor overlay window on the real display; manual disposable-desktop run only
+protocol_schema_test::cursor_motion_knobs_are_applied | Ignored on macOS only, where the knobs need the overlay window on the real display; ci-rust-linux runs it unignored
 transport_config_persistence_test::cli_set_config_visible_across_daemon_backed_invocations | Mutates the real per-user driver config through a daemon-backed CLI; manual only
 private_worker_test::service_untrusted_child_probe | Subprocess probe that the routed private_worker_test parent spawns itself; never a standalone row
 authorized_live_jev_use_demo_test::authorized_live_jev_no_matching_action_control | Needs the reviewed live Jev chooser and a protected credential; Actions deliberately runs only the mock chooser

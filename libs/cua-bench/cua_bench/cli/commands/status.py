@@ -1,35 +1,18 @@
 """System status dashboard.
 
-Shows an overview of images and runs.
+Shows where sandboxes can run, the canonical images and recent runs.
 
 Usage:
     cb status                           # Show system overview
 """
 
+from ._help import examples
 import asyncio
+import os
 import platform as sys_platform
-import subprocess
+import shutil
 
-from .image import get_image_path, load_image_registry
-from .platform import PLATFORMS, check_docker, check_image_exists, check_kvm, check_lume
-
-
-def list_running_shells() -> list:
-    """List all running cua-shell containers."""
-    try:
-        result = subprocess.run(
-            ["docker", "ps", "--format", "{{.Names}}", "-f", "name=cua-shell-"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0:
-            containers = [c.strip() for c in result.stdout.strip().split("\n") if c.strip()]
-            return [c.replace("cua-shell-", "") for c in containers]
-        return []
-    except Exception:
-        return []
-
+from ._canonical import canonical_images
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -45,97 +28,51 @@ def execute(args) -> int:
     return asyncio.run(_execute_async(args))
 
 
+def _check(label: str, ok: bool, good: str, bad: str) -> None:
+    mark = f"{GREEN}✓ {good}{RESET}" if ok else f"{YELLOW}○ {bad}{RESET}"
+    print(f"  {label:<9}{mark}")
+
+
+def _cloud_auth() -> str:
+    """The credential source, without reading the OS credential vault: a
+    dashboard is not an explicit sign-in check (``cb run --on cloud`` is)."""
+    try:
+        from cua_sandbox import fleet_auth_source
+
+        return fleet_auth_source(read_session=False) or ""
+    except Exception:  # noqa: BLE001 - SDK not loadable
+        return ""
+
+
 async def _execute_async(args) -> int:
     """Execute status command asynchronously."""
     print("\ncua-bench Status")
     print("=" * 70)
 
-    # System capabilities
-    docker_ok = check_docker()
-    kvm_ok = check_kvm()
-    lume_ok = check_lume() if sys_platform.system() == "Darwin" else False
-    is_macos = sys_platform.system() == "Darwin"
-    is_linux = sys_platform.system() == "Linux"
-
-    print(f"\n{BOLD}System{RESET}")
+    system = sys_platform.system()
+    print(f"\n{BOLD}Local sandboxes{RESET} (the default, --on local)")
     print("-" * 70)
-    print(
-        f"  Docker:  {GREEN}✓ Running{RESET}"
-        if docker_ok
-        else f"  Docker:  {RED}✗ Not running{RESET}"
-    )
+    _check("Docker:", shutil.which("docker") is not None, "installed", "not found (containers)")
+    if system == "Linux":
+        _check("KVM:", os.path.exists("/dev/kvm"), "available", "not available (VMs)")
+    if system == "Darwin":
+        _check("Lume:", shutil.which("lume") is not None, "installed", "not installed (macOS VMs)")
 
-    if is_linux:
-        print(
-            f"  KVM:     {GREEN}✓ Available{RESET}"
-            if kvm_ok
-            else f"  KVM:     {YELLOW}○ Not available{RESET}"
-        )
-
-    if is_macos:
-        print(
-            f"  Lume:    {GREEN}✓ Installed{RESET}"
-            if lume_ok
-            else f"  Lume:    {GREY}○ Not installed{RESET}"
-        )
-
-    # Images
-    image_registry = load_image_registry()
-    print(f"\n{BOLD}Images{RESET} ({len(image_registry)} registered)")
+    print(f"\n{BOLD}Cloud{RESET} (--on cloud)")
     print("-" * 70)
+    source = _cloud_auth()
+    _check("Auth:", bool(source), source, "not signed in (cua auth login)")
 
-    if image_registry:
-        ready_count = 0
-        for name, info in image_registry.items():
-            platform = info.get("platform", "unknown")
-            config = PLATFORMS.get(platform, {})
-            marker = config.get("image_marker")
-            path = get_image_path(name) if info.get("path") else None
-
-            if marker and path:
-                marker_path = path / marker
-                is_ready = marker_path.exists()
-            elif platform == "linux-docker":
-                docker_img = info.get("docker_image", "")
-                is_ready = docker_img and check_image_exists(docker_img)
-            else:
-                is_ready = True
-
-            if is_ready:
-                ready_count += 1
-                status_icon = f"{GREEN}✓{RESET}"
-            else:
-                status_icon = f"{RED}✗{RESET}"
-
-            print(f"  {status_icon} {name:<20} ({platform})")
-
-        print(f"\n  {ready_count}/{len(image_registry)} images ready")
-    else:
-        print(f"  {GREY}No images registered.{RESET}")
-        print("\n  Create one with:")
-        print("    cb image create linux-docker")
-        print("    cb image create windows-qemu --download-iso")
-
-    # Interactive shells
-    running_shells = list_running_shells()
-    print(f"\n{BOLD}Interactive Shells{RESET} ({len(running_shells)} running)")
+    print(f"\n{BOLD}Images{RESET} (canonical; any registry image works with --image)")
     print("-" * 70)
-
-    if running_shells:
-        for name in running_shells:
-            print(f"  {GREEN}●{RESET} {name:<20}")
-    else:
-        print(f"  {GREY}No shells running.{RESET}")
-        print("\n  Start one with:")
-        print("    cb image shell <image>")
+    for row in canonical_images():
+        print(f"  {row['name']:<9} {row['image']:<34} {'/'.join(row['kinds'])}")
 
     # Runs (sessions)
     try:
-        from cua_bench.sessions import list_sessions
-        from cua_bench.sessions.providers.docker import DockerProvider
+        from cua_bench.sessions import list_sessions, session_status
 
         sessions = list_sessions()
-        docker_provider = DockerProvider()
 
         # Group by run_id
         from collections import defaultdict
@@ -157,19 +94,13 @@ async def _execute_async(args) -> int:
                 failed = 0
 
                 for session in run_sessions:
-                    session_id = session.get("session_id")
-                    if session_id:
-                        try:
-                            status_info = await docker_provider.get_session_status(session_id)
-                            status = status_info.get("status", "unknown")
-                            if status == "running":
-                                running += 1
-                            elif status == "completed":
-                                completed += 1
-                            elif status in ("failed", "error"):
-                                failed += 1
-                        except Exception:
-                            pass
+                    status = session_status(session)["status"]
+                    if status in ("running", "starting"):
+                        running += 1
+                    elif status == "completed":
+                        completed += 1
+                    elif status in ("failed", "cancelled"):
+                        failed += 1
 
                 total = len(run_sessions)
                 agent = run_sessions[0].get("agent", "-") if run_sessions else "-"
@@ -201,9 +132,9 @@ async def _execute_async(args) -> int:
     print("\n" + "=" * 70)
     print(f"\n{BOLD}Quick Commands{RESET}")
     print("-" * 70)
-    print("  cb platform list              # Show available platforms")
-    print("  cb image list                 # Show registered images")
-    print("  cb image shell <name>         # Interactive shell into image")
+    print("  cb run <task> --dry-run       # What a run would start")
+    print("  cb image list                 # Canonical images")
+    print("  cb env ls                     # Managed cloud pools")
     print("  cb run list                   # Show active runs")
     print()
 
@@ -212,4 +143,8 @@ async def _execute_async(args) -> int:
 
 def register_parser(subparsers):
     """Register the status command with the main CLI parser."""
-    subparsers.add_parser("status", help="Show system status dashboard")
+    subparsers.add_parser(
+        "status",
+        help="Show system status dashboard",
+        **examples(("Show runs, sandboxes and credentials at a glance", "cb status")),
+    )

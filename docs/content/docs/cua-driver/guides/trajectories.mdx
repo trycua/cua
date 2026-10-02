@@ -1,0 +1,134 @@
+---
+title: Record trajectories and history
+description: Record an agent's actions, render them as a zoom-on-click video, and keep an encrypted local Computer History.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+## Record a trajectory
+
+A recording saves every action with its arguments and before-and-after
+screenshots, plus an optional display video. Rendering needs `ffmpeg` on every
+platform; capture also needs it on Windows and Linux (macOS 15+ uses
+ScreenCaptureKit).
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/9eafceca-1738-4e34-949a-2fb0dbe1832e"
+  poster="https://github.com/user-attachments/assets/d896dd2f-3f0a-4978-93a3-c9a5c562c3e8"
+  title="Turn an agent trajectory into a zoom-on-click demo"
+  sourceUrl="https://x.com/trycua/status/2047383207612645426"
+>
+  The agent clicks cells in a numbered grid, then Cua Driver renders the recorded actions.
+</VideoDemo>
+
+Have your agent call `start_recording` before the task:
+
+```json test="config" id="json-config"
+{
+  "output_dir": "~/cua-trajectories/calendar-demo",
+  "record_video": true
+}
+```
+
+Actions such as `click`, `type_text`, `press_key`, and `scroll` are added
+automatically, one `turn-NNNNN` folder each. Call `stop_recording` with `{}`
+and wait for it: it finalizes `recording.mp4`. Then render:
+
+```bash test="cli-shape" id="cua-driver-recording-render"
+cua-driver recording render \
+  ~/cua-trajectories/calendar-demo \
+  ~/cua-trajectories/calendar-demo.mp4 \
+  --scale 2.5
+```
+
+The renderer zooms around each recorded action; `--scale` sets the strength
+and `--no-zoom` gives a plain render. All options:
+[`cua-driver recording`](/cua-driver/reference/cli) and the
+[recording tools](/cua-driver/reference/mcp-tools).
+
+## Computer History
+
+Computer History keeps an encrypted local record of actions performed through
+Cua Driver, so an agent can pick up where a previous run stopped. It is an
+opt-in preview in nightly builds on macOS, Windows, and Linux, and records
+nothing outside Cua-mediated actions.
+
+```bash test="cli-shape" id="cua-driver-history-enable"
+cua-driver channel set nightly
+cua-driver update --apply
+cua-driver history enable
+cua-driver history status
+```
+
+`enable` creates a key in the macOS Keychain, Windows Credential Manager, or
+Linux Secret Service (which must be unlocked; there is no plaintext fallback)
+and starts capture. Defaults: 7-day retention, 100 MiB quota, no network I/O.
+
+| Command | Effect |
+| --- | --- |
+| `cua-driver history list 50` | Newest 50 events. Add `--json` for scripts. |
+| `cua-driver history show 42` | One event by sequence number. |
+| `cua-driver history pause` / `resume` / `disable` | Stop or restart capture; existing history is kept. |
+| `cua-driver history delete --yes` | Destroy the key and the encrypted store. |
+
+```bash test="cli-shape" id="cua-driver-history-list"
+cua-driver history list 50
+cua-driver history show 42
+cua-driver history pause
+cua-driver history resume
+cua-driver history delete --yes
+```
+
+History stores timestamps, opaque IDs, capability names, app identity, and
+fixed outcome categories. It never stores screenshots, typed text,
+keystrokes, clipboard, tool arguments or results, accessibility trees, file
+paths, window titles, or URLs. Deleting destroys the key; it cannot erase
+backups or snapshots of the ciphertext.
+
+### Let an agent read history
+
+A runtime that admits the preview exposes two read-only tools:
+`history_status` (capability `history.status`) and `history_query`
+(`history.query`, at most 200 events, filters `limit`, `session_id`,
+`since_sequence`, `until_sequence`). Every call passes the normal
+[permission stack](/cua-driver/guides/permissions); a bounded manifest must
+name both:
+
+```yaml test="config" id="yaml-config"
+version: 3
+expires_after: 1h
+idle_timeout: 10m
+resources:
+  computer_history:
+    operations:
+      - status
+      - query
+allow:
+  tools:
+    - history_status
+    - history_query
+```
+
+Having the tools does not make a model use them. For "continue" or "what did I
+do" requests, give the agent a trusted instruction (or run the
+status-then-query preflight in your host) to check history first, treat events
+as metadata, and verify current state before acting. A query that returns
+events appends an encrypted access record. Agents cannot enable, pause,
+delete, or export history.
+
+| Error | Fix |
+| --- | --- |
+| `history_preview_not_admitted` | Restart a development daemon with `cua-driver serve --experimental-history`. |
+| `history_key_locked`, `history_key_unavailable` | Unlock the login keychain or start a Secret Service. |
+| `history_quota_reached` | Delete history; the action that hit the limit still ran. |
+| `history_storage_corrupt` | `cua-driver history delete --yes`, then enable again. |
+
+The event schema (CloudEvents 1.0, `urn:cua-driver:schema:history-event:v0`)
+and storage profile are specified in the
+[agent integration RFC](https://github.com/trycua/cua/blob/main/libs/cua-driver/docs/computer-history-agent-integration-rfc.md).
+
+<Callout type="info">
+  To return to stable: `cua-driver history disable`, `cua-driver channel set stable`,
+  `cua-driver update --apply`. History is kept unless you delete it.
+</Callout>

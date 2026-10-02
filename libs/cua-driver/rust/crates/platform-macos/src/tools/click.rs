@@ -104,10 +104,7 @@ fn nearest_selectable_container_center(element_ptr: usize) -> Option<(f64, f64)>
         if owns_current {
             unsafe { CFRelease(current as CFTypeRef) };
         }
-        let Some(parent) = parent else {
-            return None;
-        };
-        current = parent;
+        current = parent?;
         owns_current = true;
     }
 
@@ -680,10 +677,8 @@ impl Tool for ClickTool {
                             let has_modifiers = !selection_modifiers.is_empty();
                             let action = || {
                                 outcome = Some(perform_ax_click(
-                                    element_ptr,
-                                    idx,
-                                    pid,
-                                    wid,
+                                    (element_ptr, idx),
+                                    (pid, wid),
                                     &action_clone,
                                     &ck,
                                     selection_pixel,
@@ -713,10 +708,8 @@ impl Tool for ClickTool {
                             Ok((outcome, fronted))
                         } else {
                             perform_ax_click(
-                                element_ptr,
-                                idx,
-                                pid,
-                                wid,
+                                (element_ptr, idx),
+                                (pid, wid),
                                 &action_clone,
                                 &ck,
                                 selection_pixel,
@@ -987,14 +980,13 @@ impl Tool for ClickTool {
             // backend after resolving the requested screen point. This keeps
             // targeting (PX) orthogonal to delivery (AX) and avoids making a
             // Chromium/AppKit window key merely to satisfy first-mouse rules.
-            if !delivery_mode.is_foreground()
-                && window_id.is_some()
-                && button_str == "left"
-                && count == 1
-                && modifiers.is_empty()
-            {
+            if let Some(hit_test_wid) = window_id.filter(|_| {
+                !delivery_mode.is_foreground()
+                    && button_str == "left"
+                    && count == 1
+                    && modifiers.is_empty()
+            }) {
                 let focus_only = action == "focus";
-                let hit_test_wid = window_id.expect("guarded by window_id.is_some() above");
                 let ax_result = tokio::task::spawn_blocking(move || unsafe {
                     let Some(element) = element_at_screen_position(pid, screen_x, screen_y) else {
                         return Ok::<bool, anyhow::Error>(false);
@@ -1300,17 +1292,20 @@ impl Tool for ClickTool {
 /// the driver's only signal that the press likely did nothing. The caller turns
 /// it into `effect: "suspected_noop"` + an escalation hint so the agent crosses
 /// to the vision/pixel path instead of trusting a hollow success.
+///
+/// `element` is the cached AX element pointer and its snapshot index; `window`
+/// is the target (pid, window_id).
 fn perform_ax_click(
-    element_ptr: usize,
-    idx: usize,
-    pid: i32,
-    window_id: u32,
+    element: (usize, usize),
+    window: (i32, u32),
     action_str: &str,
     cursor_key: &str,
     selection_pixel: Option<SelectionPixelTarget>,
     modifiers: &[String],
     foreground: bool,
 ) -> anyhow::Result<(String, bool, bool, bool, bool)> {
+    let (element_ptr, idx) = element;
+    let (pid, window_id) = window;
     let ax_action = map_action(action_str);
     let element = element_ptr as AXUIElementRef;
 

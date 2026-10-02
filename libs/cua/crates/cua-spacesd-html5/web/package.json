@@ -1,0 +1,28 @@
+{
+  "name": "@trycua/spacesd-html5",
+  "private": true,
+  "version": "0.1.0",
+  "description": "The cua-spacesd HTML5 viewer: a browser client for a sandbox desktop over rcdp wire v2 (WebCodecs video, Opus audio, input through cua-driver, clipboard, file drop and two-way folder sharing)",
+  "license": "FSL-1.1-MIT",
+  "type": "module",
+  "scripts": {
+    "generate": "rm -rf src/gen && buf generate ../../../proto --template buf.gen.yaml --path ../../../proto/cua/env/v1",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "check": "node scripts/check-drift.mjs",
+    "test": "vitest run",
+    "dev": "vite"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.15.0",
+    "@connectrpc/connect": "2.2.0",
+    "@connectrpc/connect-web": "2.2.0"
+  },
+  "devDependencies": {
+    "@bufbuild/protoc-gen-es": "2.15.0",
+    "esbuild": "0.25",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.1.3"
+  }
+}

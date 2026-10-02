@@ -1,0 +1,87 @@
+{
+  "schema": "cua.transcript.jsonui/2",
+  "cast": "claude-basic-turn",
+  "instant": "thinking",
+  "source": {
+    "cli": "claude",
+    "cliVersion": "2.1.278 (Claude Code)",
+    "layoutProfile": "claude-code/2.x",
+    "frameTimeMs": 8139,
+    "alternateScreen": true,
+    "unsupportedSequences": 0
+  },
+  "elements": [
+    {
+      "type": "rawText",
+      "provenance": "unrecognised",
+      "region": {
+        "firstRow": 0,
+        "lastRow": 5
+      },
+      "lines": [
+        "",
+        "▗ ▗   ▖ ▖  Claude Code v2.1.278",
+        "           Opus 5 (1M context) with low effort · Claude Max",
+        "  ▘▘ ▝▝    /private/tmp/cua-cast-sandbox",
+        "",
+        ""
+      ]
+    },
+    {
+      "type": "userMessage",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 6,
+        "lastRow": 6
+      },
+      "text": "Read calc.py and add a multiply function to it. Keep it short."
+    },
+    {
+      "type": "agentRunning",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 28,
+        "lastRow": 28
+      },
+      "spinner": "·",
+      "verb": "Hashing",
+      "elapsedSeconds": null,
+      "tokens": null,
+      "hint": null,
+      "rawLine": "· Hashing…"
+    },
+    {
+      "type": "rawText",
+      "provenance": "unrecognised",
+      "region": {
+        "firstRow": 29,
+        "lastRow": 29
+      },
+      "lines": [
+        "                                                                                   ○ low · /effort"
+      ]
+    },
+    {
+      "type": "composer",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 30,
+        "lastRow": 32
+      },
+      "content": "",
+      "placeholder": null,
+      "cursorIsInside": true
+    },
+    {
+      "type": "modeIndicator",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 33,
+        "lastRow": 33
+      },
+      "mode": "accept_edits",
+      "rawText": "⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt · ← for agents",
+      "hint": "shift+tab to cycle"
+    }
+  ]
+}

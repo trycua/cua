@@ -6,6 +6,7 @@ Usage:
 """
 
 from __future__ import annotations
+from ._help import examples
 
 import html as _html
 import re
@@ -24,14 +25,36 @@ GREY = "\033[90m"
 
 def register_parser(subparsers):
     """Register the dataset command parser."""
-    dataset_parser = subparsers.add_parser("dataset", help="Manage datasets and build from outputs")
+    dataset_parser = subparsers.add_parser(
+        "dataset",
+        help="Manage datasets and build from outputs",
+        **examples(
+            ("List registry datasets", "cb dataset list"),
+            ("Build a training dataset from run outputs", "cb dataset build ./outputs"),
+        ),
+    )
     dataset_subparsers = dataset_parser.add_subparsers(dest="dataset_command")
 
     # cb dataset list
-    dataset_subparsers.add_parser("list", help="List available datasets from registry")
+    dataset_subparsers.add_parser(
+        "list",
+        help="List available datasets from registry",
+        **examples(("List registry datasets", "cb dataset list")),
+    )
 
     # cb dataset build <outputs>
-    build_parser = dataset_subparsers.add_parser("build", help="Build a dataset from batch outputs")
+    build_parser = dataset_subparsers.add_parser(
+        "build",
+        help="Build a dataset from batch outputs",
+        **examples(
+            ("Build an aguvis-stage-1 dataset from run outputs", "cb dataset build ./outputs"),
+            ("Build 100 gui-r1 samples", "cb dataset build ./outputs 100 --mode gui-r1"),
+            (
+                "Push a private dataset to the Hugging Face Hub",
+                "cb dataset build ./outputs --push-to-hub --repo-id me/cua-clicks --private",
+            ),
+        ),
+    )
     build_parser.add_argument(
         "outputs_path",
         help="Path to outputs folder from batch dump (e.g., ./outputs or /tmp/td_output)",
@@ -45,7 +68,7 @@ def register_parser(subparsers):
     build_parser.add_argument(
         "--mode",
         default="aguvis-stage-1",
-        help="Processing mode: 'aguvis-stage-1' (action augmentation) or 'gui-r1' (low-level click). Default: 'aguvis-stage-1'",
+        help="Processing mode: aguvis-stage-1 (action augmentation) or gui-r1 (low-level click)",
     )
     build_parser.add_argument(
         "--dataset-name", help="Dataset name when saving to disk (default: td_<mode>_dataset)"
@@ -89,39 +112,26 @@ def execute(args):
 
 
 def cmd_list(args) -> int:
-    """List available datasets from the registry."""
-    from .registry import ensure_registry
+    """List the datasets in the registry (name@version)."""
+    from cua_bench.registry import REGISTRY_URL, RegistryError, list_entries
 
     try:
-        registry_path = ensure_registry(update=True, verbose=True)
-    except RuntimeError as e:
-        print(f"{RED}Error: {e}{RESET}")
+        entries = list_entries()
+    except RegistryError as error:
+        print(f"{RED}Error: {error}{RESET}")
         return 1
-
-    datasets_path = registry_path / "datasets"
-    if not datasets_path.exists():
-        print(f"{RED}Error: Datasets directory not found in registry{RESET}")
-        return 1
-
-    datasets = [
-        d.name for d in datasets_path.iterdir() if d.is_dir() and not d.name.startswith(".")
-    ]
-
-    if not datasets:
+    if not entries:
         print(f"{YELLOW}No datasets found in registry{RESET}")
         return 0
 
-    datasets.sort()
+    print(f"\n{BOLD}Available Datasets:{RESET}\n")
+    for entry in sorted(entries, key=lambda e: (e["name"], e["version"])):
+        kind = "" if entry["format"] == "cua-bench" else f" {GREY}[{entry['format']}]{RESET}"
+        print(f"  • {CYAN}{entry['ref']}{RESET}{kind}  {GREY}{entry['description']}{RESET}")
 
-    print(f"\n{BOLD}Available Datasets:{RESET}")
-    print(f"{GREY}Registry: {registry_path}{RESET}\n")
-
-    for dataset in datasets:
-        print(f"  • {CYAN}{dataset}{RESET}")
-
-    print(f"\n{GREY}Use with: {RESET}cb run dataset <dataset-name>")
-    print(f"{GREY}       or: {RESET}cb interact <task-name> --dataset <dataset-name>")
-
+    print(f"\n{GREY}Use with: {RESET}cb run dataset <name>[@version]")
+    print(f"{GREY}       or: {RESET}cb interact <task-name> --dataset <name>[@version]")
+    print(f"{GREY}  Browse: {RESET}{REGISTRY_URL}")
     return 0
 
 
@@ -309,7 +319,7 @@ def _write_previews(
         for idx, x, y, user, assistant, cls in markers:
             cls_attr = f" cross {cls}" if cls else " cross"
             parts.append(
-                f'<div class="{cls_attr}" style="left:{x*100:.2f}%; top:{y*100:.2f}%;"><div class="num">{idx}</div></div>'
+                f'<div class="{cls_attr}" style="left:{x * 100:.2f}%; top:{y * 100:.2f}%;"><div class="num">{idx}</div></div>'
             )
         parts.append("</div>")
         parts.append("<pre>")
@@ -323,12 +333,12 @@ def _write_previews(
                 if idx != len(markers):
                     parts.append("")
         elif "gt_bbox" in r:
-            parts.append(f'instruction: {_html.escape(r.get("instruction", ""))}')
-            parts.append(f'gt_bbox: {r.get("gt_bbox", [])}')
-            parts.append(f'gt_action: {_html.escape(r.get("gt_action", ""))}')
-            parts.append(f'task_type: {_html.escape(r.get("task_type", ""))}')
-            parts.append(f'os_type: {_html.escape(r.get("os_type", ""))}')
-            parts.append(f'resolution: {_html.escape(r.get("resolution", ""))}')
+            parts.append(f"instruction: {_html.escape(r.get('instruction', ''))}")
+            parts.append(f"gt_bbox: {r.get('gt_bbox', [])}")
+            parts.append(f"gt_action: {_html.escape(r.get('gt_action', ''))}")
+            parts.append(f"task_type: {_html.escape(r.get('task_type', ''))}")
+            parts.append(f"os_type: {_html.escape(r.get('os_type', ''))}")
+            parts.append(f"resolution: {_html.escape(r.get('resolution', ''))}")
 
         parts.append("</pre>")
         parts.append("</div>")
@@ -479,7 +489,7 @@ def _write_preview_gif(
         tx = sidebar_x0 + pad
         ty = pad
         if font:
-            draw.text((tx, ty), f"Task {i+1}", fill=(0, 0, 0), font=font)
+            draw.text((tx, ty), f"Task {i + 1}", fill=(0, 0, 0), font=font)
         ty += 18
 
         listed = set()

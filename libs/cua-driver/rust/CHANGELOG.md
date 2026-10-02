@@ -6,6 +6,22 @@
 
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.
 
+## [0.32.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.31.0...cua-driver-rs-v0.32.0) (2026-10-01)
+
+
+### Features
+
+* merge updated sdk from cua-staging ([#4397](https://github.com/trycua/cua/issues/4397)) ([9166817](https://github.com/trycua/cua/commit/9166817485ae53f3966935c13878a8196d79a399))
+
+
+### Bug Fixes
+
+* **cua-driver:** list #4418 and #4421 in the 0.32.0 changelog ([#4425](https://github.com/trycua/cua/issues/4425))
+* **cua-driver:** list every windowed instance of a bundle in macOS list_apps ([#4421](https://github.com/trycua/cua/issues/4421)) ([29c5465](https://github.com/trycua/cua/commit/29c54656ccf6bf8490461768a0fac3096eb91e5c))
+* **installers:** hash downloads with .NET and load Windows PowerShell's own modules, so update --apply works from pwsh 7 ([#4418](https://github.com/trycua/cua/issues/4418)) ([a22426a](https://github.com/trycua/cua/commit/a22426adac1980dae7a44dde2f6446a8da39b99c))
+* **cua-driver:** keep Windows update --apply from killing its own installer ([#4398](https://github.com/trycua/cua/issues/4398)) ([93d0f7a](https://github.com/trycua/cua/commit/93d0f7af24b1561f98f6a85cd20ca2b35f37db35))
+* **cua-driver:** run the cursor event loop when PiP is enabled ([#4304](https://github.com/trycua/cua/issues/4304)) ([5933507](https://github.com/trycua/cua/commit/5933507e73be299f0d7d7e4d7a600950da7b09e3))
+
 ## [0.31.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.30.4...cua-driver-rs-v0.31.0) (2026-09-29)
 
 

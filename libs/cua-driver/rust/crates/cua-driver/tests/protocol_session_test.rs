@@ -23,6 +23,7 @@ fn spawn_unrestricted_with_overlay() -> Option<RawDriver> {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "host desktop: draws the agent-cursor overlay window on the real display; see libs/cua-driver/tests/manual-e2e-allowlist.txt"]
 fn concurrent_multi_driver_isolation() {
     //! Two cua-driver processes running simultaneously with different declared
     //! sessions. Each process must retain its own session-owned cursor state.
@@ -146,6 +147,7 @@ fn concurrent_multi_driver_isolation() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "host desktop: draws the agent-cursor overlay window on the real display; see libs/cua-driver/tests/manual-e2e-allowlist.txt"]
 fn session_owned_cursor_state_is_independent() {
     let Some(mut driver) = spawn_unrestricted_with_overlay() else {
         return;
@@ -205,6 +207,7 @@ fn session_owned_cursor_state_is_independent() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "host desktop: draws the agent-cursor overlay window on the real display; see libs/cua-driver/tests/manual-e2e-allowlist.txt"]
 fn overlay_move_cursor_stays_alive() {
     //! Verify that calling move_cursor with the overlay enabled does not crash the process.
     //! The overlay renders to a transparent NSWindow on the main thread; the MCP server

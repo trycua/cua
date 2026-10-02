@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import posthog
 from cua_core import __version__
+from cua_core.telemetry._config import telemetry_enabled_from_env
 
 logger = logging.getLogger("core.telemetry")
 
@@ -22,190 +22,146 @@ PUBLIC_POSTHOG_HOST = "https://eu.i.posthog.com"
 
 
 class PostHogTelemetryClient:
-    """Collects and reports telemetry data via PostHog."""
+    """Collects and reports anonymous telemetry data via PostHog.
+
+    Privacy rules enforced here:
+
+    * enablement follows :func:`cua_core.telemetry._config.telemetry_enabled_from_env`
+      (``DO_NOT_TRACK``, ``CUA_TELEMETRY``, legacy switches, CI default off)
+    * a dedicated ``posthog.Posthog`` client is used with GeoIP disabled; the
+      global ``posthog`` module configuration is never touched
+    * every event carries ``$process_person_profile: False``; no ``$identify``
+    * the installation id file is only created while telemetry is enabled
+    * the installation id, API key and event properties are only logged at DEBUG
+    """
 
     # Global singleton (class-managed)
     _singleton: Optional["PostHogTelemetryClient"] = None
 
     def __init__(self):
         """Initialize PostHog telemetry client."""
-        self.installation_id = self._get_or_create_installation_id()
+        self.installation_id: Optional[str] = None
         self.initialized = False
         self.queued_events: List[Dict[str, Any]] = []
+        self._client: Optional[Any] = None
 
-        # Log telemetry status on startup
         if self.is_telemetry_enabled():
-            logger.info("Telemetry enabled")
-            # Initialize PostHog client if config is available
+            logger.debug("Telemetry enabled")
+            self.installation_id = self._get_or_create_installation_id()
             self._initialize_posthog()
         else:
-            logger.info("Telemetry disabled")
+            logger.debug("Telemetry disabled")
 
     @classmethod
     def is_telemetry_enabled(cls) -> bool:
-        """True if telemetry is currently active for this process.
-
-        Canonical opt-out: ``CUA_TELEMETRY_ENABLED=false``.
-        ``CUA_TELEMETRY_DISABLED`` is deprecated — a warning is emitted on
-        first use and the value is honoured for backwards compatibility.
-        """
-        # Deprecated env var: CUA_TELEMETRY_DISABLED
-        disabled_val = os.environ.get("CUA_TELEMETRY_DISABLED", "")
-        if disabled_val:
-            import warnings
-
-            warnings.warn(
-                "CUA_TELEMETRY_DISABLED is deprecated. " "Use CUA_TELEMETRY_ENABLED=false instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if disabled_val.lower() in {"1", "true", "yes", "on"}:
-                return False
-
-        return os.environ.get("CUA_TELEMETRY_ENABLED", "true").lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+        """True if telemetry is currently active for this process."""
+        return telemetry_enabled_from_env()
 
     def _get_or_create_installation_id(self) -> str:
-        """Get or create a unique installation ID that persists across runs.
+        """Get or create a random installation id that persists across runs.
 
-        Stored in ``~/.config/cua/installation_id`` (XDG-compliant) so that
-        the ID survives package upgrades and is shared across venvs.
-
-        This ID is not tied to any personal information.
+        Stored in ``~/.config/cua/installation_id`` so that the id survives
+        package upgrades and is shared across venvs. It is a random UUID and is
+        not derived from any personal information. Only called while telemetry
+        is enabled.
         """
         try:
             config_dir = Path.home() / ".config" / "cua"
-            config_dir.mkdir(parents=True, exist_ok=True)
             id_file = config_dir / "installation_id"
 
-            # Try to read existing ID
             if id_file.exists():
                 try:
                     stored_id = id_file.read_text().strip()
-                    if stored_id:  # Make sure it's not empty
-                        logger.debug(f"Using existing installation ID: {stored_id}")
+                    if stored_id:
                         return stored_id
                 except Exception as e:
-                    logger.debug(f"Error reading installation ID file: {e}")
+                    logger.debug(f"Error reading installation id file: {type(e).__name__}")
 
-            # Create new ID
             new_id = str(uuid.uuid4())
             try:
+                config_dir.mkdir(parents=True, exist_ok=True)
                 id_file.write_text(new_id)
-                logger.debug(f"Created new installation ID: {new_id}")
                 return new_id
             except Exception as e:
-                logger.warning(f"Could not write installation ID: {e}")
+                logger.debug(f"Could not write installation id: {type(e).__name__}")
         except Exception as e:
-            logger.warning(f"Error accessing core module directory: {e}")
+            logger.debug(f"Error accessing cua config directory: {type(e).__name__}")
 
-        # Last resort: Create a new in-memory ID
-        logger.warning("Using random installation ID (will not persist across runs)")
+        # Last resort: in-memory id (does not persist across runs)
         return str(uuid.uuid4())
 
+    def _create_client(self) -> Any:
+        """Create a dedicated PostHog client (never the global module client)."""
+        return posthog.Posthog(
+            PUBLIC_POSTHOG_API_KEY,
+            host=PUBLIC_POSTHOG_HOST,
+            disable_geoip=True,
+            debug=os.environ.get("CUA_TELEMETRY_DEBUG", "").lower() == "on",
+        )
+
+    def _capture(self, event_name: str, properties: Dict[str, Any]) -> None:
+        assert self._client is not None
+        self._client.capture(
+            distinct_id=self.installation_id,
+            event=event_name,
+            properties=properties,
+            disable_geoip=True,
+        )
+
     def _initialize_posthog(self) -> bool:
-        """Initialize the PostHog client with configuration.
+        """Initialize the PostHog client.
 
         Returns:
             bool: True if initialized successfully, False otherwise
         """
         if self.initialized:
             return True
+        if not self.is_telemetry_enabled():
+            return False
 
         try:
-            # Allow overrides from environment for testing/region control
-            posthog.api_key = PUBLIC_POSTHOG_API_KEY
-            posthog.host = PUBLIC_POSTHOG_HOST
+            if self.installation_id is None:
+                self.installation_id = self._get_or_create_installation_id()
+            self._client = self._create_client()
 
-            # Configure the client
-            posthog.debug = os.environ.get("CUA_TELEMETRY_DEBUG", "").lower() == "on"
-
-            # Log telemetry status
-            logger.info(
-                f"Initializing PostHog telemetry with installation ID: {self.installation_id}"
-            )
-            if posthog.debug:
-                logger.debug(f"PostHog API Key: {posthog.api_key}")
-                logger.debug(f"PostHog Host: {posthog.host}")
-
-            # Identify this installation
-            self._identify()
-
-            # Process any queued events
             for event in self.queued_events:
-                posthog.capture(
-                    distinct_id=self.installation_id,
-                    event=event["event"],
-                    properties=event["properties"],
-                )
+                self._capture(event["event"], event["properties"])
             self.queued_events = []
 
             self.initialized = True
             return True
         except Exception as e:
-            logger.warning(f"Failed to initialize PostHog: {e}")
+            logger.debug(f"Failed to initialize PostHog: {type(e).__name__}")
             return False
-
-    def _identify(self) -> None:
-        """Set up user properties for the current installation with PostHog."""
-        try:
-            properties = {
-                "version": __version__,
-                "is_ci": "CI" in os.environ,
-                "os": os.name,
-                "python_version": sys.version.split()[0],
-            }
-
-            logger.debug(
-                f"Setting up PostHog user properties for: {self.installation_id} with properties: {properties}"
-            )
-
-            # In the Python SDK, we capture an identification event instead of calling identify()
-            posthog.capture(
-                distinct_id=self.installation_id, event="$identify", properties={"$set": properties}
-            )
-
-            logger.info(f"Set up PostHog user properties for installation: {self.installation_id}")
-        except Exception as e:
-            logger.warning(f"Failed to set up PostHog user properties: {e}")
 
     def record_event(self, event_name: str, properties: Optional[Dict[str, Any]] = None) -> None:
         """Record an event with optional properties.
 
         Args:
             event_name: Name of the event
-            properties: Event properties (must not contain sensitive data)
+            properties: Event properties (must not contain personal data)
         """
-        # Respect runtime telemetry opt-out.
         if not self.is_telemetry_enabled():
-            logger.debug("Telemetry disabled; event not recorded.")
             return
 
-        event_properties = {"version": __version__, **(properties or {})}
-
-        logger.info(f"Recording event: {event_name} with properties: {event_properties}")
+        event_properties = {
+            "version": __version__,
+            **(properties or {}),
+            "$process_person_profile": False,
+            "$geoip_disable": True,
+        }
+        logger.debug(f"Recording telemetry event: {event_name}")
 
         if self.initialized:
             try:
-                posthog.capture(
-                    distinct_id=self.installation_id, event=event_name, properties=event_properties
-                )
-                logger.info(f"Sent event to PostHog: {event_name}")
-                # Flush immediately to ensure delivery
-                posthog.flush()
+                self._capture(event_name, event_properties)
+                # Flush immediately to ensure delivery for short-lived processes
+                self._client.flush()
             except Exception as e:
-                logger.warning(f"Failed to send event to PostHog: {e}")
+                logger.debug(f"Failed to send telemetry event: {type(e).__name__}")
         else:
-            # Queue the event for later
-            logger.info(f"PostHog not initialized, queuing event for later: {event_name}")
             self.queued_events.append({"event": event_name, "properties": event_properties})
-            # Try to initialize now if not already
-            initialize_result = self._initialize_posthog()
-            logger.info(f"Attempted to initialize PostHog: {initialize_result}")
+            self._initialize_posthog()
 
     def flush(self) -> bool:
         """Flush any pending events to PostHog.
@@ -217,10 +173,10 @@ class PostHogTelemetryClient:
             return False
 
         try:
-            posthog.flush()
+            self._client.flush()
             return True
         except Exception as e:
-            logger.debug(f"Failed to flush PostHog events: {e}")
+            logger.debug(f"Failed to flush PostHog events: {type(e).__name__}")
             return False
 
     @classmethod
@@ -233,7 +189,13 @@ class PostHogTelemetryClient:
     @classmethod
     def destroy_client(cls) -> None:
         """Destroy the global PostHogTelemetryClient instance."""
+        inst = cls._singleton
         cls._singleton = None
+        if inst is not None and inst._client is not None:
+            try:
+                inst._client.shutdown()
+            except Exception:
+                pass
 
 
 def destroy_telemetry_client() -> None:

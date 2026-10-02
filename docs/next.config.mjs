@@ -1,5 +1,25 @@
 import { createMDX } from 'fumadocs-mdx/next';
+import { readFileSync } from 'node:fs';
 import { hostname, networkInterfaces } from 'node:os';
+
+// Old slug -> current slug, owned by the content tree (also read by docs.cua.ai).
+const MOVED = JSON.parse(
+  readFileSync(new URL('./content/docs/redirects.json', import.meta.url), 'utf8')
+).redirects;
+
+function current(path) {
+  let slug = path.replace(/^\/+|\/+$/g, '');
+  for (let hops = 0; hops < 8 && Object.hasOwn(MOVED, slug); hops++) {
+    slug = MOVED[slug];
+  }
+  return `/${slug}`;
+}
+
+import { generateDocModules } from './scripts/gen-doc-modules.mjs';
+
+// One lazy import per page (see scripts/gen-doc-modules.mjs); regenerated on
+// every dev/build start. Restart the dev server after adding a page.
+generateDocModules();
 
 const withMDX = createMDX();
 
@@ -22,13 +42,19 @@ const localDevOrigins = [
 
 /** @type {import('next').NextConfig} */
 const config = {
+  // Static generation workers: pinned to what a 4-vCPU CI runner uses, so
+  // the build's memory (`pnpm build:budget`, 6 GiB) does not depend on the
+  // machine's core count. DOCS_BUILD_CPUS overrides it.
+  experimental: {
+    cpus: Number(process.env.DOCS_BUILD_CPUS) || 3,
+  },
   reactStrictMode: true,
   trailingSlash: false,
   basePath: '/docs',
   assetPrefix: '/docs',
   allowedDevOrigins: [...new Set(localDevOrigins)],
   async redirects() {
-    return [
+    const legacy = [
       {
         source: '/',
         destination: '/docs',
@@ -38,6 +64,11 @@ const config = {
       {
         source: '/cuabench',
         destination: '/concepts/what-is-cua-bench',
+        permanent: true,
+      },
+      {
+        source: '/reference/cua-env-driver',
+        destination: '/reference/cua-spacesd',
         permanent: true,
       },
       {
@@ -57,12 +88,12 @@ const config = {
       },
       {
         source: '/tutorials/your-first-cloud-sandbox',
-        destination: '/tutorials/your-first-cloud-fleet',
+        destination: '/start-here/create-a-space-with-the-sdk',
         permanent: true,
       },
       {
         source: '/tutorials/your-first-local-sandbox',
-        destination: '/tutorials/your-first-cloud-fleet',
+        destination: '/start-here/create-a-space-with-the-sdk',
         permanent: true,
       },
       {
@@ -100,7 +131,14 @@ const config = {
         destination: '/how-to-guides',
         permanent: true,
       },
-    ];
+    ].map((r) => (r.basePath === false ? r : { ...r, destination: current(r.destination) }));
+    const moved = Object.keys(MOVED).map((slug) => ({
+      source: `/${slug}`,
+      destination: current(slug),
+      permanent: true,
+    }));
+    const seen = new Set(legacy.map((r) => r.source));
+    return [...legacy, ...moved.filter((r) => !seen.has(r.source) && r.source !== r.destination)];
   },
   images: {
     dangerouslyAllowSVG: true,

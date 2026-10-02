@@ -1,0 +1,96 @@
+{
+  "elements" : [
+    {
+      "lines" : [
+        "",
+        "▗ ▗   ▖ ▖  Claude Code v2.1.278",
+        "           Opus 5 (1M context) with low effort · Claude Max",
+        "  ▘▘ ▝▝    /private/tmp/cua-cast-sandbox",
+        "",
+        ""
+      ],
+      "provenance" : "unrecognised",
+      "region" : {
+        "firstRow" : 0,
+        "lastRow" : 5
+      },
+      "type" : "rawText"
+    },
+    {
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 6,
+        "lastRow" : 6
+      },
+      "text" : "Read the file ./definitely-not-here.txt and tell me exactly what happened.",
+      "type" : "userMessage"
+    },
+    {
+      "argumentSummary" : "1 file",
+      "collapsed" : false,
+      "name" : "Read",
+      "provenance" : "inferred",
+      "region" : {
+        "firstRow" : 8,
+        "lastRow" : 8
+      },
+      "resultLines" : [
+
+      ],
+      "status" : "unknown",
+      "statusProvenance" : "inferred",
+      "type" : "toolCall"
+    },
+    {
+      "markdown" : "I tried to read /private/tmp/cua-cast-sandbox/definitely-not-here.txt and the read failed: \"File\ndoes not exist.\" Nothing was created or changed. If you meant a file elsewhere or under a\ndifferent name, tell me and I'll look.",
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 10,
+        "lastRow" : 12
+      },
+      "text" : "I tried to read /private/tmp/cua-cast-sandbox/definitely-not-here.txt and the read failed: \"File\ndoes not exist.\" Nothing was created or changed. If you meant a file elsewhere or under a\ndifferent name, tell me and I'll look.",
+      "type" : "agentMessage"
+    },
+    {
+      "kind" : "completed",
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 14,
+        "lastRow" : 14
+      },
+      "text" : "✻ Cooked for 3s · done 6:00 PM",
+      "type" : "turnBoundary"
+    },
+    {
+      "content" : "list the files in this directory",
+      "cursorIsInside" : true,
+      "placeholder" : null,
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 30,
+        "lastRow" : 32
+      },
+      "type" : "composer"
+    },
+    {
+      "hint" : "shift+tab to cycle",
+      "mode" : "accept_edits",
+      "provenance" : "observed",
+      "rawText" : "⏵⏵ accept edits on (shift+tab to cycle) · ← for agents",
+      "region" : {
+        "firstRow" : 33,
+        "lastRow" : 33
+      },
+      "type" : "modeIndicator"
+    }
+  ],
+  "schema" : "cua.transcript.jsonui/1",
+  "source" : {
+    "alternateScreen" : true,
+    "cli" : "claude",
+    "cliVersion" : "2.1.278 (Claude Code)",
+    "frameTime" : 12.483000000000001,
+    "layoutProfile" : "claude-code/2.x",
+    "unsupportedSequences" : 0
+  }
+}

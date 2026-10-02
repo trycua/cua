@@ -14,9 +14,9 @@ SCRIPT = (
 )
 GUIDE = (
     DOCS_ROOT
-    / "content/docs/how-to-guides/sandbox/run-openai-agents-api-on-cloud-fleet.mdx"
+    / "content/docs/cua-sdk/guides/agent-frameworks.mdx"
 )
-META = DOCS_ROOT / "content/docs/how-to-guides/sandbox/meta.json"
+META = DOCS_ROOT / "content/docs/cua-sdk/guides/meta.json"
 
 
 def test_disposable_pool_name_ignores_existing_pool_override() -> None:
@@ -32,6 +32,16 @@ def test_disposable_pool_name_ignores_existing_pool_override() -> None:
     assert first.startswith("cua-openai-agents-")
     assert len(first.removeprefix("cua-openai-agents-")) == 24
     assert len(f"{first}-a84951d4-server".encode()) <= 63
+
+
+def test_controller_uses_the_spacesd_image_and_default_services() -> None:
+    source = SCRIPT.read_text()
+    assert '"cua-sandbox==0.9.0"' in source
+    assert "else Image.linux()" in source
+    assert "cua-desktop-linux" not in source
+    assert "services={" not in source
+    assert 'service="server"' not in source
+    assert "/root/" not in source
 
 
 def test_controller_is_valid_python() -> None:
@@ -74,7 +84,8 @@ def test_controller_registers_cua_driver_as_required_stdio_mcp() -> None:
     assert '"server_label": "cua_driver"' in source
     assert '"type": "stdio"' in source
     assert '"command": "/usr/bin/python3"' in source
-    assert '"/root/.local/bin/cua-driver"' in source
+    assert '$HOME/.local/bin/cua-driver' in source
+    assert "session = await agents.create_session(driver_path)" in source
     assert '"cwd": "/workspace"' in source
     assert '"CUA_DRIVER_PERMISSION_MODE"' in source
     assert '"CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS"' in source
@@ -96,4 +107,5 @@ def test_guide_links_the_download_and_navigation_entry() -> None:
     meta = META.read_text()
     assert "https://cua.ai/docs-assets/scripts/openai-agents-fleet/run_openai_agents_fleet.py" in guide
     assert "https://cua.ai/scripts/openai-agents-fleet/" not in guide
-    assert '"run-openai-agents-api-on-cloud-fleet"' in meta
+    assert '"agent-frameworks"' in meta
+    assert "## OpenAI Agents API" in guide

@@ -691,12 +691,7 @@ pub(super) fn screenshot_scale(
 ) -> Result<f64, cua_driver_core::protocol::ToolResult> {
     state
         .snapshots
-        .screenshot_context(
-            pid,
-            window_id.map(u64::from),
-            args.get("_session_id").and_then(serde_json::Value::as_str),
-        )
-        .map(|context| context.scale)
+        .screenshot_scale(pid, window_id.map(u64::from), args)
 }
 
 pub(super) fn zoom_context(

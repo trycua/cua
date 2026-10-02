@@ -53,7 +53,8 @@ fn isolated_driver_host(
             })
             .collect(),
         inherit_stderr: true,
-        no_overlay: false,
+        // No overlay window on the developer's display.
+        no_overlay: true,
     })
     .expect("construct host");
     (host, state)

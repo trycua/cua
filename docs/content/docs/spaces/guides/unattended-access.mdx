@@ -1,0 +1,141 @@
+---
+title: Set up unattended access
+description: 'Make this machine a Space you reach from your other devices: cua host setup installs cua-spacesd as a service that joins the cua.ai relay, or serves on ip:port.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`cua host setup` installs cua-spacesd as a service. By default it joins the
+cua.ai relay over outbound WSS as your account: no port forwarding, no token to
+copy. Your other devices, once [enrolled](#reach-it-from-your-devices), then see
+this machine as `relay:<machine-id>` in `cua spaces ls` and the app. The app's
+**Set up for access** button runs the same setup.
+
+```bash test="cli-shape" id="cua-auth-login"
+cua host setup          # signs in to cua.ai for this command if needed
+```
+
+The host keeps only its own machine token. When the machine is not signed in,
+setup signs you in for that one command and stores no session, so a dedicated
+host holds no account credentials. The machine token lets the host serve itself
+and stop sharing; it cannot list or reach your other machines, change who the
+machine is shared with, or enroll devices.
+
+| Option | Effect |
+|--------|--------|
+| `--direct ip:port` | Serve on your LAN (or a forwarded port) with a local env token instead of the relay. No account needed. |
+| `--relay URL` | Another relay (`CUA_RELAY_URL`, default `https://relay.cua.ai`); any self-hosted `cua-relay` works. |
+| `--name NAME` | Display name (default: host name). |
+| `--allow ACCOUNT` | Also allow this account (id or email). Repeatable. |
+| `--runner KIND` | `auto`, `systemd`, `launchd`, `windows-task` or `process`. |
+| `--profile spare` | A spare machine: do not share its desktop, create Spaces for your devices (`--no-desktop --provide-spaces`). See [Host Spaces on your spare Mac](/start-here/host-spaces-on-your-spare-mac). |
+| `--no-desktop` / `--provide-spaces` | Each of the two settings on its own. `cua host config` changes them later. |
+
+Running `setup` again updates the configuration and rotates the machine token.
+The host checks the relay's signed identity assertion against the owner and the
+allowlist; the env token never leaves the machine.
+
+| OS | Service |
+|----|---------|
+| macOS | LaunchAgent `com.trycua.spacesd.host` in your GUI session. Grant cua-spacesd **Screen Recording** and **Accessibility**, and [Cua Driver](/cua-driver/quickstart) its own permissions. |
+| Linux | systemd unit `cua-spacesd-host.service` (user unit; system unit as root). |
+| Windows | Scheduled task `Cua\SpacesdHost` at logon, in your interactive session. |
+
+## Check, pause, remove
+
+```bash test="cli-shape" id="cua-host-status"
+cua host status     # setup, service, who is connected; missing permissions
+cua host stop       # disconnect everyone and refuse new connections
+cua host start      # share again
+cua host remove     # unregister, uninstall the service, delete ~/.cua/host
+```
+
+`cua host stop` turns sharing off locally first, so it holds even when the
+relay is unreachable. In direct mode `cua host status` prints the URL and the
+env token's path; add the machine elsewhere with
+[`spaces.add(url, token)`](/spaces/quickstart#run).
+
+<Callout type="warn">
+  Everyone on the allowlist gets full control of this desktop. Keep the list
+  short and run `cua host stop` when you do not need it. To let someone only
+  watch, [share it as a viewer](/spaces/guides/share-a-space).
+</Callout>
+
+## Share with other accounts
+
+`--allow` at setup, or later from an enrolled device, shares the machine with
+another account (id or verified email). Sharing asks for confirmation;
+unsharing cuts that account's open connections.
+
+```bash test="cli-shape" id="cua-host-share"
+cua host share friend@example.com
+cua host unshare friend@example.com
+```
+
+## Reach it from your devices
+
+A device that lists or opens your machines through the relay is enrolled once
+with a second factor. A stolen account session alone is not enough. Hosting
+never enrolls a machine as a client.
+
+- **Sign in:** `cua devices enroll` right after `cua auth login` enrolls the
+  device at once. A device that enrolled before re-enrolls on its own when you
+  sign in again (in the CLI or the app), so an expired or replaced key never
+  needs another device.
+- **Approve:** on a long-lived session, `cua devices enroll` shows a one-time
+  code instead. Approve it on an enrolled device with
+  `cua devices approve <code>` or by its id (`cua devices approve dev_...`),
+  or in the app, which asks for Touch ID.
+
+Each device reports a hash of its machine's identity. When a new key of the
+same machine enrolls (another build of the app, a lost key), it replaces the
+old record, so one machine is one device. Builds of cua that store the key
+differently (the OS keychain for signed builds, a `0600` file otherwise) share
+one key: the signed build moves the file's key into the keychain.
+
+```bash test="cli-shape" id="cua-devices"
+cua devices enroll
+cua devices approve K7QX-M2RP
+cua devices approve dev_0123456789abcdef01234567
+cua devices ls
+cua devices audit      # who opened which machine, from which device, and when
+cua devices revoke dev_0123456789abcdef01234567
+```
+
+The device key stays in the OS keychain (or a `0600` file where there is none).
+Enrollment lasts 30 days. After that, a fresh sign-in or one approval
+re-verifies the device. Until then, unattended agents on an enrolled device
+keep working without prompts.
+
+**Re-signing in is enough only for your own machine**: the same machine
+enrolling again with a new key (another build, a lost key), or your account's
+first device. A brand-new device on an account that already has an enrolled
+device needs either an approval from an enrolled device, or a sign-in whose
+token itself proves a second factor (MFA) with your identity provider --
+a verified email alone no longer enrolls it silently. Either way, every
+enrolled device is notified (the app's notification feed and
+`cua devices audit`), so a device you do not recognize does not slip in
+unnoticed.
+
+Relays can run a **migration grace period** right after enrollment is turned
+on, during which a signed-in session alone is let through (flagged and
+audited) while apps catch up. It is off by default and, on `relay.cua.ai`,
+only ever runs for a short, announced window right after a rollout; check
+`cua devices ls` (it reports `enforce_after`) or `cua host status` if you are
+unsure whether it is currently open.
+
+In the Cua Spaces app, **Settings > Devices** shows the same: this device's
+enrollment (enrolled until a date, or when a grace period ends), your devices
+with Rename and Revoke, and Recent Access (which device opened which machine,
+and when). **Enroll** offers a fresh sign-in or a one-time code to approve
+elsewhere. When another device asks to join and needs an approval, the app
+shows a notification and an approval sheet; Approve asks for Touch ID or your
+login password first, and Deny revokes that device. A device enrolled by a
+sign-in that proved MFA shows up already enrolled, with no approval step, the
+same as your own machine re-signing in.
+
+A machine registered without an enrolled device's signature or a sign-in that
+proved MFA is recorded as unconfirmed on the relay (`GET /v1/machines`'
+`confirmed` field) and can be confirmed from an enrolled device
+(`POST /v1/machines/{id}/confirm`); surfacing this as a "New machine" badge
+in the apps is tracked separately.

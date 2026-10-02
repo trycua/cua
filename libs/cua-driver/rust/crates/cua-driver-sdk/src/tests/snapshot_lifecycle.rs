@@ -189,7 +189,7 @@ async fn wait_for_closed_admission(driver: &CuaDriver) {
 
 #[tokio::test]
 async fn sdk_shutdown_drains_snapshot_publication_and_retires_the_result() {
-    let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+    let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
     let (driver, probe, release) = capture_driver();
     let caller = driver.clone();
     let action =
@@ -237,7 +237,7 @@ async fn sdk_shutdown_drains_snapshot_publication_and_retires_the_result() {
 
 #[tokio::test]
 async fn sdk_cancelled_capture_does_not_publish_after_shutdown() {
-    let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+    let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
     let (driver, probe, release) = capture_driver();
     let caller = driver.clone();
     let action =
@@ -369,7 +369,7 @@ mod native {
 
     #[tokio::test]
     async fn sdk_shutdown_releases_native_snapshot_while_closed_handle_is_retained() {
-        let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let value = CFString::new("sdk-snapshot-shutdown-native-retain-accounting");
         let ptr = value.as_concrete_TypeRef() as usize;
         let base = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
@@ -394,7 +394,7 @@ mod native {
 
     #[tokio::test]
     async fn sdk_destroying_one_runtime_preserves_other_native_snapshot() {
-        let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let first = CFString::new("sdk-first-runtime-native-snapshot-isolation");
         let second = CFString::new("sdk-second-runtime-native-snapshot-isolation");
         let first_ptr = first.as_concrete_TypeRef() as usize;
@@ -423,7 +423,7 @@ mod native {
 
     #[tokio::test]
     async fn sdk_token_eviction_releases_the_corresponding_native_snapshot() {
-        let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
         let value = CFString::new("sdk-snapshot-eviction-native-retain-accounting");
         let ptr = value.as_concrete_TypeRef() as usize;
         let base = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
@@ -447,7 +447,7 @@ mod native {
 
 #[tokio::test]
 async fn cancelled_started_native_work_keeps_shutdown_waiting() {
-    let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+    let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().await;
     let (driver, probe, release) = capture_driver_with_completion(true);
     let caller = driver.clone();
     let action =

@@ -132,8 +132,8 @@ export interface InferenceAdapter {
  * Used when running the playground locally with user-provided resources.
  */
 export interface LocalAdapterConfig {
-  /** URL of the computer server (e.g., http://localhost:8443) */
-  computerServerUrl?: string;
+  /** URL of an agent endpoint exposing POST /responses (e.g., http://localhost:8080) */
+  agentUrl?: string;
 
   /** API keys for different providers */
   providerApiKeys?: {

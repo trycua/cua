@@ -55,12 +55,10 @@ pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
         if owned {
             CFRelease(current as CFTypeRef);
         }
-        match parent {
-            Some(parent) => {
-                current = parent;
-                owned = true;
-            }
-            None => return None,
+        {
+            let parent = parent?;
+            current = parent;
+            owned = true;
         }
     }
     if owned {

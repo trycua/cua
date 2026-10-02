@@ -1,0 +1,2164 @@
+{
+ "abstract": "Cross-platform computer-use automation driver.",
+ "commands": [
+  {
+   "abstract": "Run the stdio MCP server.",
+   "arguments": [],
+   "discussion": "On Windows and Linux, bare cua-driver mcp owns its runtime directly and shuts it down on stdin EOF. On macOS it proxies to CuaDriver.app so desktop permissions retain the app identity. Pass --direct to make the macOS MCP process own the runtime and TCC attribution, or --socket to select an explicit daemon endpoint.",
+   "examples": [
+    {
+     "command": "cua-driver mcp",
+     "description": "Run the stdio MCP server (what MCP clients launch)"
+    },
+    {
+     "command": "cua-driver mcp --socket /tmp/cua-driver.sock",
+     "description": "Connect to a daemon on an explicit socket"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Own the runtime in this MCP process; mutually exclusive with --socket.",
+     "name": "direct",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Accepted for older Claude Code setup snippets; there is no standalone screenshot tool; use get_window_state for window screenshots.",
+     "name": "claude-code-computer-use-compat",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Declare embedding-host mode. Without --direct, require the host's private service through --socket instead of auto-launching the standalone app.",
+     "name": "embedded",
+     "short_name": null
+    }
+   ],
+   "name": "mcp",
+   "options": [
+    {
+     "default_value": null,
+     "help": "Select an explicit daemon socket or named-pipe endpoint.",
+     "is_optional": true,
+     "name": "socket",
+     "short_name": null,
+     "type": "String"
+    },
+    {
+     "default_value": null,
+     "help": "Advisory host bundle id label echoed in check_permissions output (embedded mode).",
+     "is_optional": true,
+     "name": "host-bundle-id",
+     "short_name": null,
+     "type": "String"
+    },
+    {
+     "default_value": "cua.default",
+     "help": "Select an installed cursor theme id.",
+     "is_optional": true,
+     "name": "cursor-theme",
+     "short_name": null,
+     "type": "String"
+    },
+    {
+     "default_value": "auto",
+     "help": "Follow the OS setting, force still frames, or allow animation: auto, on, or off.",
+     "is_optional": true,
+     "name": "cursor-reduced-motion",
+     "short_name": null,
+     "type": "String"
+    },
+    {
+     "default_value": null,
+     "help": "Pre-authorize a residual standard-mode boundary for a newly launched runtime. Repeatable; supported value: existing-profile.",
+     "is_optional": true,
+     "is_repeatable": true,
+     "name": "grant",
+     "short_name": null,
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "List every registered MCP tool with a one-line description.",
+   "arguments": [],
+   "discussion": "",
+   "examples": [
+    {
+     "command": "cua-driver list-tools",
+     "description": "List every tool with a one-line description"
+    }
+   ],
+   "flags": [],
+   "name": "list-tools",
+   "options": [],
+   "subcommands": []
+  },
+  {
+   "abstract": "Print a tool's full description and JSON input schema.",
+   "arguments": [
+    {
+     "help": "Name of the MCP tool to describe.",
+     "is_optional": false,
+     "name": "tool-name",
+     "type": "String"
+    }
+   ],
+   "discussion": "",
+   "examples": [
+    {
+     "command": "cua-driver describe click",
+     "description": "Print a tool's description and input schema"
+    }
+   ],
+   "flags": [],
+   "name": "describe",
+   "options": [],
+   "subcommands": []
+  },
+  {
+   "abstract": "Invoke an MCP tool through the running daemon.",
+   "arguments": [
+    {
+     "help": "Name of the MCP tool to invoke.",
+     "is_optional": false,
+     "name": "tool-name",
+     "type": "String"
+    },
+    {
+     "help": "JSON object for the tool input schema. If omitted, stdin is read when piped.",
+     "is_optional": true,
+     "name": "json-args",
+     "type": "String"
+    }
+   ],
+   "discussion": "Requires a Cua Driver daemon. JSON arguments may be passed as a positional JSON object or through stdin.",
+   "examples": [
+    {
+     "command": "cua-driver call list_apps",
+     "description": "Call a tool with no arguments"
+    },
+    {
+     "command": "cua-driver call click '{\"pid\":844,\"x\":100,\"y\":200}'",
+     "description": "Click at window coordinates"
+    },
+    {
+     "command": "cua-driver call get_window_state '{\"pid\":844,\"window_id\":10725}' --screenshot-out-file state.png",
+     "description": "Save the screenshot from a tool response"
+    }
+   ],
+   "flags": [],
+   "name": "call",
+   "options": [
+    {
+     "default_value": null,
+     "help": "Write the first image content block from the response to this path.",
+     "is_optional": true,
+     "name": "screenshot-out-file",
+     "short_name": null,
+     "type": "Path"
+    },
+    {
+     "default_value": null,
+     "help": "Override the daemon socket or named-pipe path.",
+     "is_optional": true,
+     "name": "socket",
+     "short_name": null,
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Run Cua Driver as a long-running daemon.",
+   "arguments": [],
+   "discussion": "The daemon owns per-process state such as accessibility snapshots, recording state, and cursor overlay state.",
+   "examples": [
+    {
+     "command": "cua-driver serve",
+     "description": "Run the daemon in the foreground"
+    },
+    {
+     "command": "cua-driver serve --permission-mode bounded --capability-manifest manifest.yaml --approve-capability-manifest",
+     "description": "Start a bounded daemon with a reviewed capability manifest"
+    },
+    {
+     "command": "cua-driver serve --no-overlay",
+     "description": "Run without the agent cursor overlay"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Select the Claude Code computer-use compatibility surface (forwarded by `mcp` when it launches the daemon).",
+     "name": "claude-code-computer-use-compat",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Show a small always-on-top window with the latest post-action screenshot and a one-line label (macOS only).",
+     "name": "experimental-pip",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Select unrestricted mode and acknowledge its risk.",
+     "name": "dangerously-bypass-approvals",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Trusted-launcher confirmation that the exact capability manifest was reviewed.",
+     "name": "approve-capability-manifest",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Deprecated alias for approve-capability-manifest.",
+     "name": "approve-session-policy",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Skip the macOS first-launch permissions gate.",
+     "name": "no-permissions-gate",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1.",
+     "name": "embedded",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Disable the agent cursor overlay for this daemon.",
+     "name": "no-overlay",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Admit the encrypted local Computer History early preview for this daemon launch.",
+     "name": "experimental-history",
+     "short_name": null
+    }
+   ],
+   "name": "serve",
+   "options": [
+    {
+     "default_value": null,
+     "help": "Override the daemon socket or named-pipe path.",
+     "is_optional": true,
+     "name": "socket",
+     "short_name": null,
+     "type": "String"
+    },
+    {
+     "default_value": null,
+     "help": "Override the pid-file path on Unix targets.",
+     "is_optional": true,
+     "name": "pid-file",
+     "short_name": null,
+     "type": "Path"
+    },
+    {
+     "default_value": "standard",
+     "help": "Immutable agent authorization mode: standard, bounded, or unrestricted.",
+     "is_optional": true,
+     "name": "permission-mode",
+     "short_name": null,
+     "type": "String"
+    },
+    {
+     "default_value": null,
+     "help": "Pre-authorize a residual standard-mode boundary. Repeatable; supported value: existing-profile.",
+     "is_optional": true,
+     "is_repeatable": true,
+     "name": "grant",
+     "short_name": null,
+     "type": "String"
+    },
+    {
+     "default_value": null,
+     "help": "Optional narrow-only tool/resource ceiling; required in bounded mode.",
+     "is_optional": true,
+     "name": "capability-manifest",
+     "short_name": null,
+     "type": "Path"
+    },
+    {
+     "default_value": null,
+     "help": "Deprecated alias for capability-manifest.",
+     "is_optional": true,
+     "name": "session-policy",
+     "short_name": null,
+     "type": "Path"
+    },
+    {
+     "default_value": null,
+     "help": "Advisory host bundle id label echoed in check_permissions output (embedded mode).",
+     "is_optional": true,
+     "name": "host-bundle-id",
+     "short_name": null,
+     "type": "String"
+    },
+    {
+     "default_value": "cua.default",
+     "help": "Installed cursor theme id for the agent cursor overlay.",
+     "is_optional": true,
+     "name": "cursor-theme",
+     "short_name": null,
+     "type": "String"
+    },
+    {
+     "default_value": "auto",
+     "help": "Agent cursor motion: auto follows the OS setting, on forces still frames, off allows animation.",
+     "is_optional": true,
+     "name": "cursor-reduced-motion",
+     "short_name": null,
+     "type": "String"
+    },
+    {
+     "default_value": null,
+     "help": "Override the agent cursor glide duration, in milliseconds.",
+     "is_optional": true,
+     "name": "glide-ms",
+     "short_name": null,
+     "type": "Number"
+    },
+    {
+     "default_value": null,
+     "help": "Override how long the agent cursor dwells after a click, in milliseconds.",
+     "is_optional": true,
+     "name": "dwell-ms",
+     "short_name": null,
+     "type": "Number"
+    },
+    {
+     "default_value": null,
+     "help": "Override how long an idle agent cursor stays visible, in milliseconds.",
+     "is_optional": true,
+     "name": "idle-hide-ms",
+     "short_name": null,
+     "type": "Number"
+    },
+    {
+     "default_value": null,
+     "help": "Size and optional top-left origin of the experimental preview window: WxH or WxH+X+Y (default 480x360, top-right of the main display).",
+     "is_optional": true,
+     "name": "experimental-pip-geometry",
+     "short_name": null,
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Ask the running daemon to exit gracefully.",
+   "arguments": [],
+   "discussion": "",
+   "examples": [
+    {
+     "command": "cua-driver stop",
+     "description": "Ask the running daemon to exit"
+    }
+   ],
+   "flags": [],
+   "name": "stop",
+   "options": [
+    {
+     "default_value": null,
+     "help": "Override the daemon socket or named-pipe path.",
+     "is_optional": true,
+     "name": "socket",
+     "short_name": null,
+     "type": "String"
+    },
+    {
+     "default_value": null,
+     "help": "Stop only if the daemon's process id is this one (a positive integer).",
+     "is_optional": true,
+     "name": "expected-pid",
+     "short_name": null,
+     "type": "Number"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Revoke one or all live authorization/session scopes.",
+   "arguments": [],
+   "discussion": "Revocation is deny-only and never accepts an approval token.",
+   "examples": [
+    {
+     "command": "cua-driver revoke --session 3f9c2a",
+     "description": "Stop and revoke one session"
+    },
+    {
+     "command": "cua-driver revoke --all",
+     "description": "Stop and revoke every live session"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Stop and revoke every live session.",
+     "name": "all",
+     "short_name": null
+    }
+   ],
+   "name": "revoke",
+   "options": [
+    {
+     "default_value": null,
+     "help": "Exact session id to stop and revoke.",
+     "is_optional": true,
+     "name": "session",
+     "short_name": null,
+     "type": "String"
+    },
+    {
+     "default_value": null,
+     "help": "Override the daemon socket or named-pipe path.",
+     "is_optional": true,
+     "name": "socket",
+     "short_name": null,
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Report whether a Cua Driver daemon is running.",
+   "arguments": [],
+   "discussion": "",
+   "examples": [
+    {
+     "command": "cua-driver status",
+     "description": "Check whether the daemon is running"
+    }
+   ],
+   "flags": [],
+   "name": "status",
+   "options": [
+    {
+     "default_value": null,
+     "help": "Override the daemon socket or named-pipe path.",
+     "is_optional": true,
+     "name": "socket",
+     "short_name": null,
+     "type": "String"
+    },
+    {
+     "default_value": null,
+     "help": "Override the pid-file path on Unix targets.",
+     "is_optional": true,
+     "name": "pid-file",
+     "short_name": null,
+     "type": "Path"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "List content-free lifecycle summaries for sessions owned by the daemon runtime.",
+   "arguments": [],
+   "default_subcommand": "list",
+   "discussion": "",
+   "examples": [
+    {
+     "command": "cua-driver sessions --json",
+     "description": "List live sessions as JSON"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Emit the machine-readable session summary.",
+     "name": "json",
+     "short_name": null
+    }
+   ],
+   "name": "sessions",
+   "options": [
+    {
+     "default_value": null,
+     "help": "Override the daemon socket or named-pipe path.",
+     "is_optional": true,
+     "name": "socket",
+     "short_name": null,
+     "type": "String"
+    }
+   ],
+   "subcommands": [
+    {
+     "abstract": "List live sessions. The default subcommand.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver sessions list",
+       "description": "List live sessions"
+      }
+     ],
+     "flags": [],
+     "name": "list",
+     "options": [],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Encrypted, metadata-only Computer History early preview: lifecycle and local inspection.",
+   "arguments": [],
+   "default_subcommand": "status",
+   "discussion": "The daemon must be admitted for the preview (`cua-driver serve --experimental-history`); `enable` restarts a local daemon with it when needed.",
+   "examples": [
+    {
+     "command": "cua-driver history",
+     "description": "Print the Computer History state"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Emit machine-readable output.",
+     "name": "json",
+     "short_name": null
+    }
+   ],
+   "name": "history",
+   "options": [
+    {
+     "default_value": null,
+     "help": "Override the daemon socket or named-pipe path.",
+     "is_optional": true,
+     "name": "socket",
+     "short_name": null,
+     "type": "String"
+    }
+   ],
+   "subcommands": [
+    {
+     "abstract": "Turn on the Computer History preview (admits it on a local daemon if needed).",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver history enable",
+       "description": "Turn on the Computer History preview"
+      }
+     ],
+     "flags": [],
+     "name": "enable",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Turn Computer History off; recorded chunks stay until deleted.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver history disable",
+       "description": "Turn Computer History off"
+      }
+     ],
+     "flags": [],
+     "name": "disable",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Pause recording without turning the preview off.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver history pause",
+       "description": "Pause recording"
+      }
+     ],
+     "flags": [],
+     "name": "pause",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Resume recording after pause.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver history resume",
+       "description": "Resume recording"
+      }
+     ],
+     "flags": [],
+     "name": "resume",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Print the Computer History state. The default subcommand.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver history status --json",
+       "description": "Print the state as JSON"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Emit machine-readable output.",
+       "name": "json",
+       "short_name": null
+      }
+     ],
+     "name": "status",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Seal the current chunk to disk now.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver history flush",
+       "description": "Seal the current chunk now"
+      }
+     ],
+     "flags": [],
+     "name": "flush",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "List recent metadata-only events.",
+     "arguments": [
+      {
+       "help": "Most events to print.",
+       "is_optional": true,
+       "name": "limit",
+       "type": "Number"
+      }
+     ],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver history list 20",
+       "description": "List the 20 most recent events"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Emit machine-readable output.",
+       "name": "json",
+       "short_name": null
+      }
+     ],
+     "name": "list",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Print one event by its sequence number.",
+     "arguments": [
+      {
+       "help": "Event sequence number.",
+       "is_optional": false,
+       "name": "sequence",
+       "type": "Number"
+      }
+     ],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver history show 42 --json",
+       "description": "Print event 42 as JSON"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Emit machine-readable output.",
+       "name": "json",
+       "short_name": null
+      }
+     ],
+     "name": "show",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Delete the encrypted chunks and their native credential-store key. Needs --yes.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver history delete --yes",
+       "description": "Delete every recorded chunk and its key"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Confirm irreversible deletion of encrypted chunks and their native credential-store key.",
+       "name": "yes",
+       "short_name": null
+      }
+     ],
+     "name": "delete",
+     "options": [],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Inspect or raise macOS TCC permission grants (macOS only).",
+   "arguments": [],
+   "default_subcommand": "status",
+   "discussion": "macOS only: Accessibility and Screen Recording are macOS TCC grants. See the macOS permissions reference.",
+   "examples": [
+    {
+     "command": "cua-driver permissions",
+     "description": "Report Accessibility and Screen Recording status"
+    }
+   ],
+   "flags": [],
+   "name": "permissions",
+   "options": [],
+   "subcommands": [
+    {
+     "abstract": "Report Accessibility and Screen Recording status through a running daemon (read-only, no prompt). The default subcommand.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver permissions status --json",
+       "description": "Report the grants as JSON"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Emit machine-readable output.",
+       "name": "json",
+       "short_name": null
+      }
+     ],
+     "name": "status",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Launch CuaDriver through LaunchServices so the permission prompts are attributed to the app.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver permissions grant",
+       "description": "Request the grants for CuaDriver.app"
+      }
+     ],
+     "flags": [],
+     "name": "grant",
+     "options": [],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Print client-specific connection guidance (MCP config where supported).",
+   "arguments": [],
+   "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, and zcode.",
+   "examples": [
+    {
+     "command": "cua-driver mcp-config",
+     "description": "Print a generic mcpServers entry"
+    },
+    {
+     "command": "cua-driver mcp-config --client codex",
+     "description": "Print setup for Codex"
+    }
+   ],
+   "flags": [],
+   "name": "mcp-config",
+   "options": [
+    {
+     "default_value": null,
+     "help": "Client name to print configuration for.",
+     "is_optional": true,
+     "name": "client",
+     "short_name": null,
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Control trajectory recording on a running daemon.",
+   "arguments": [],
+   "default_subcommand": "status",
+   "discussion": "Recording state lives in the required daemon and survives client reconnects.",
+   "examples": [
+    {
+     "command": "cua-driver recording",
+     "description": "Print the current recording state"
+    }
+   ],
+   "flags": [],
+   "name": "recording",
+   "options": [
+    {
+     "default_value": null,
+     "help": "Override the daemon socket or named-pipe path.",
+     "is_optional": true,
+     "name": "socket",
+     "short_name": null,
+     "type": "String"
+    }
+   ],
+   "subcommands": [
+    {
+     "abstract": "Start trajectory recording to a directory.",
+     "arguments": [
+      {
+       "help": "Directory to write turn folders into.",
+       "is_optional": false,
+       "name": "output-dir",
+       "type": "Path"
+      }
+     ],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver recording start ~/cua-trajectories/demo1",
+       "description": "Record turns into a directory"
+      }
+     ],
+     "flags": [],
+     "name": "start",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Stop trajectory recording.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver recording stop",
+       "description": "Stop recording"
+      }
+     ],
+     "flags": [],
+     "name": "stop",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Print the current recording state.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver recording status",
+       "description": "Print the recording state"
+      }
+     ],
+     "flags": [],
+     "name": "status",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Render a recorded trajectory directory to an MP4.",
+     "arguments": [
+      {
+       "help": "Trajectory directory containing recorded turn folders.",
+       "is_optional": false,
+       "name": "input-dir",
+       "type": "Path"
+      },
+      {
+       "help": "Output MP4 path.",
+       "is_optional": false,
+       "name": "out-mp4",
+       "type": "Path"
+      }
+     ],
+     "discussion": "This pure file-to-file path does not require a running daemon.",
+     "examples": [
+      {
+       "command": "cua-driver recording render ~/cua-trajectories/demo1 demo1.mp4",
+       "description": "Render a recorded trajectory to MP4"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Disable cursor/action zoom effects in the rendered video.",
+       "name": "no-zoom",
+       "short_name": null
+      }
+     ],
+     "name": "render",
+     "options": [
+      {
+       "default_value": null,
+       "help": "Scale factor for rendered frames.",
+       "is_optional": true,
+       "name": "scale",
+       "short_name": null,
+       "type": "Number"
+      }
+     ],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Read or mutate persistent driver configuration.",
+   "arguments": [],
+   "default_subcommand": "show",
+   "discussion": "Without a subcommand, prints the full config.",
+   "examples": [
+    {
+     "command": "cua-driver config",
+     "description": "Print the full config"
+    }
+   ],
+   "flags": [],
+   "name": "config",
+   "options": [
+    {
+     "default_value": null,
+     "help": "Override the daemon socket or named-pipe path.",
+     "is_optional": true,
+     "name": "socket",
+     "short_name": null,
+     "type": "String"
+    }
+   ],
+   "subcommands": [
+    {
+     "abstract": "Print the full config.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver config show",
+       "description": "Print the full config"
+      }
+     ],
+     "flags": [],
+     "name": "show",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Print one config key.",
+     "arguments": [
+      {
+       "help": "Config key to read.",
+       "is_optional": false,
+       "name": "key",
+       "type": "String"
+      }
+     ],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver config get max_image_dimension",
+       "description": "Print one key"
+      }
+     ],
+     "flags": [],
+     "name": "get",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Set one config key.",
+     "arguments": [
+      {
+       "help": "Config key to write.",
+       "is_optional": false,
+       "name": "key",
+       "type": "String"
+      },
+      {
+       "help": "Value to store.",
+       "is_optional": false,
+       "name": "value",
+       "type": "String"
+      }
+     ],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver config set max_image_dimension 1568",
+       "description": "Downscale screenshots to at most 1568 px"
+      }
+     ],
+     "flags": [],
+     "name": "set",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Reset config to defaults.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver config reset",
+       "description": "Restore the defaults"
+      }
+     ],
+     "flags": [],
+     "name": "reset",
+     "options": [],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Inspect or change content-free product telemetry.",
+   "arguments": [],
+   "discussion": "Telemetry is default-on. Disable retains the pseudonymous installation ID; reset-id erases the ID and event markers while preserving the preference.",
+   "examples": [
+    {
+     "command": "cua-driver telemetry status",
+     "description": "Show the effective telemetry setting"
+    }
+   ],
+   "flags": [],
+   "name": "telemetry",
+   "options": [],
+   "subcommands": [
+    {
+     "abstract": "Persistently enable telemetry.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver telemetry enable",
+       "description": "Enable telemetry"
+      }
+     ],
+     "flags": [],
+     "name": "enable",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Persistently disable every telemetry request.",
+     "arguments": [],
+     "discussion": "Retains the local installation ID.",
+     "examples": [
+      {
+       "command": "cua-driver telemetry disable",
+       "description": "Disable every telemetry request"
+      }
+     ],
+     "flags": [],
+     "name": "disable",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Show the effective setting and redacted identity state.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver telemetry status --json",
+       "description": "Show the setting as JSON"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Emit JSON.",
+       "name": "json",
+       "short_name": null
+      }
+     ],
+     "name": "status",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Erase the installation ID and event markers.",
+     "arguments": [],
+     "discussion": "The persisted enabled/disabled preference is retained.",
+     "examples": [
+      {
+       "command": "cua-driver telemetry reset-id",
+       "description": "Erase the installation ID"
+      }
+     ],
+     "flags": [],
+     "name": "reset-id",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Build a fixed event payload without sending it.",
+     "arguments": [
+      {
+       "help": "Fixed telemetry event name.",
+       "is_optional": false,
+       "name": "event",
+       "type": "String"
+      }
+     ],
+     "discussion": "The distinct ID is replaced with a redacted placeholder.",
+     "examples": [
+      {
+       "command": "cua-driver telemetry inspect cua_driver_cli_completed --json",
+       "description": "Show the payload of one event without sending it"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Emit JSON (the only output format; pass it for forward compatibility).",
+       "name": "json",
+       "short_name": null
+      }
+     ],
+     "name": "inspect",
+     "options": [],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Check whether a newer cua-driver release is available.",
+   "arguments": [],
+   "discussion": "Read-only. Uses the same update-state payload as the check_for_update MCP tool.",
+   "examples": [
+    {
+     "command": "cua-driver check-update",
+     "description": "Check for a newer release"
+    },
+    {
+     "command": "cua-driver check-update --json --no-cache",
+     "description": "Check now, as JSON"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Emit a machine-readable JSON payload.",
+     "name": "json",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Skip the 20-hour on-disk cache and force a GitHub request.",
+     "name": "no-cache",
+     "short_name": null
+    }
+   ],
+   "name": "check-update",
+   "options": [],
+   "subcommands": []
+  },
+  {
+   "abstract": "Check for an update and optionally apply it.",
+   "arguments": [],
+   "discussion": "The apply path delegates to the canonical platform installer scripts.",
+   "examples": [
+    {
+     "command": "cua-driver update",
+     "description": "Check and print the install command"
+    },
+    {
+     "command": "cua-driver update --apply",
+     "description": "Install the latest release"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Download and install the latest release when one is available.",
+     "name": "apply",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Emit the structured update-state payload.",
+     "name": "json",
+     "short_name": null
+    }
+   ],
+   "name": "update",
+   "options": [],
+   "subcommands": []
+  },
+  {
+   "abstract": "Inspect or change the stable/nightly update channel.",
+   "arguments": [],
+   "default_subcommand": "status",
+   "discussion": "Selection is persistent but never installs by itself; use cua-driver update --apply after changing it.",
+   "examples": [
+    {
+     "command": "cua-driver channel",
+     "description": "Show the selected release channel"
+    }
+   ],
+   "flags": [],
+   "name": "channel",
+   "options": [],
+   "subcommands": [
+    {
+     "abstract": "Show selected and current release channels.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver channel status --json",
+       "description": "Show the channels as JSON"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Emit machine-readable channel state.",
+       "name": "json",
+       "short_name": null
+      }
+     ],
+     "name": "status",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Save stable or nightly as the update channel.",
+     "arguments": [
+      {
+       "help": "Release channel: stable or nightly.",
+       "is_optional": false,
+       "name": "channel",
+       "type": "String"
+      }
+     ],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver channel set nightly",
+       "description": "Follow nightly builds (then run update --apply)"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Emit machine-readable channel state.",
+       "name": "json",
+       "short_name": null
+      }
+     ],
+     "name": "set",
+     "options": [],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Run platform-aware diagnostic probes.",
+   "arguments": [],
+   "discussion": "Exit code is non-zero when any probe is an error.",
+   "examples": [
+    {
+     "command": "cua-driver doctor",
+     "description": "Run the diagnostic probes"
+    },
+    {
+     "command": "cua-driver doctor --json",
+     "description": "Emit the probe report as JSON"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Emit the probe report as JSON.",
+     "name": "json",
+     "short_name": null
+    }
+   ],
+   "name": "doctor",
+   "options": [],
+   "subcommands": []
+  },
+  {
+   "abstract": "Print a pasteable install-layout and permission-attribution report.",
+   "arguments": [],
+   "discussion": "",
+   "examples": [
+    {
+     "command": "cua-driver diagnose",
+     "description": "Print an install and permission report to paste into an issue"
+    }
+   ],
+   "flags": [],
+   "name": "diagnose",
+   "options": [],
+   "subcommands": []
+  },
+  {
+   "abstract": "Manage platform-native daemon autostart.",
+   "arguments": [],
+   "discussion": "Windows registers a logon Scheduled Task. macOS and Linux currently print manual-recipe guidance.",
+   "examples": [
+    {
+     "command": "cua-driver autostart status",
+     "description": "Check the autostart entry"
+    }
+   ],
+   "flags": [],
+   "name": "autostart",
+   "options": [],
+   "subcommands": [
+    {
+     "abstract": "Register the autostart entry.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver autostart enable",
+       "description": "Start the daemon at every logon"
+      }
+     ],
+     "flags": [],
+     "name": "enable",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Remove the autostart entry.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver autostart disable",
+       "description": "Remove the autostart entry"
+      }
+     ],
+     "flags": [],
+     "name": "disable",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Print whether autostart is registered and running.",
+     "arguments": [],
+     "discussion": "`not-registered` is emitted only when Task Scheduler explicitly reports that the named task does not exist. If the task cannot be inspected, the command exits non-zero and reports `permission-denied` or `unknown` together with the original diagnostic.",
+     "examples": [
+      {
+       "command": "cua-driver autostart status",
+       "description": "Check the autostart entry"
+      }
+     ],
+     "flags": [],
+     "name": "status",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Start the autostart entry now without re-logging.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver autostart kick",
+       "description": "Start the entry now"
+      }
+     ],
+     "flags": [],
+     "name": "kick",
+     "options": [],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Install, update, inspect, or remove the optional agent skill pack.",
+   "arguments": [],
+   "default_subcommand": "status",
+   "discussion": "The install script never touches agent skill directories automatically.",
+   "examples": [
+    {
+     "command": "cua-driver skills",
+     "description": "Report skill-pack state"
+    }
+   ],
+   "flags": [],
+   "name": "skills",
+   "options": [],
+   "subcommands": [
+    {
+     "abstract": "Fetch the versioned skill pack and link detected agents.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver skills install",
+       "description": "Install the skill pack and link detected agents"
+      },
+      {
+       "command": "cua-driver skills install --from=main",
+       "description": "Install the latest skill pack from main"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Keep platform-specific skill files for every platform.",
+       "name": "all-platforms",
+       "short_name": null
+      },
+      {
+       "default_value": false,
+       "help": "Re-fetch the skill pack even when the local copy is current.",
+       "name": "force",
+       "short_name": null
+      }
+     ],
+     "name": "install",
+     "options": [
+      {
+       "default_value": null,
+       "help": "Fetch from the main branch instead of the tagged release. Only `main` is accepted; write it as `--from=main`.",
+       "is_optional": true,
+       "name": "from",
+       "short_name": null,
+       "type": "String"
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "Refresh the local skill pack and links.",
+     "arguments": [],
+     "discussion": "Always re-fetches; takes the same options as install.",
+     "examples": [
+      {
+       "command": "cua-driver skills update",
+       "description": "Refresh the skill pack and links"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Keep platform-specific skill files for every platform.",
+       "name": "all-platforms",
+       "short_name": null
+      }
+     ],
+     "name": "update",
+     "options": [
+      {
+       "default_value": null,
+       "help": "Fetch from the main branch instead of the tagged release. Only `main` is accepted; write it as `--from=main`.",
+       "is_optional": true,
+       "name": "from",
+       "short_name": null,
+       "type": "String"
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "Remove agent skill links.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver skills uninstall --all",
+       "description": "Remove the links and the local copy"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Also delete the local skill-pack copy.",
+       "name": "all",
+       "short_name": null
+      }
+     ],
+     "name": "uninstall",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Report local skill-pack and per-agent link state.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver skills status",
+       "description": "Report skill-pack and link state"
+      }
+     ],
+     "flags": [],
+     "name": "status",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Print the local skill-pack path.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver skills path",
+       "description": "Print the skill-pack path"
+      }
+     ],
+     "flags": [],
+     "name": "path",
+     "options": [],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Inspect and manage signed, target-specific optional extensions.",
+   "arguments": [],
+   "default_subcommand": "list",
+   "discussion": "Verified installs bind a pinned publisher identity and Ed25519 key validity/rotation state to exact catalog, archive, manifest, file, original-model, and converted-model hashes plus component licenses/notices and corresponding-source revisions. Inspect previews license, source, and provenance before mutation. Explicit developer-only unsigned installs remain visibly unverified. Install, update, and remove use platform-specific ownership and link/reparse-point checks on macOS, Linux, and Windows.",
+   "examples": [
+    {
+     "command": "cua-driver extension list",
+     "description": "List known extensions"
+    }
+   ],
+   "flags": [],
+   "name": "extension",
+   "options": [],
+   "subcommands": [
+    {
+     "abstract": "List registry-known extensions and local state.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver extension list --json",
+       "description": "List extensions as JSON"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Emit machine-readable output.",
+       "name": "json",
+       "short_name": null
+      }
+     ],
+     "name": "list",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Compatibility alias for installed extension status.",
+     "arguments": [
+      {
+       "help": "Registry extension name.",
+       "is_optional": false,
+       "name": "name",
+       "type": "String"
+      }
+     ],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver extension info cua-perception",
+       "description": "Show an installed extension"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Emit machine-readable output.",
+       "name": "json",
+       "short_name": null
+      }
+     ],
+     "name": "info",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Verify and preview license, source, provenance, and hashes without mutation.",
+     "arguments": [
+      {
+       "help": "Registry extension name.",
+       "is_optional": false,
+       "name": "name",
+       "type": "String"
+      }
+     ],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver extension inspect cua-perception --catalog catalog.json",
+       "description": "Preview license, source and provenance"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Explicitly select developer-only unverified mode.",
+       "name": "allow-unsigned-local",
+       "short_name": null
+      },
+      {
+       "default_value": false,
+       "help": "Emit machine-readable output.",
+       "name": "json",
+       "short_name": null
+      }
+     ],
+     "name": "inspect",
+     "options": [
+      {
+       "default_value": null,
+       "help": "Signed local catalog.",
+       "is_optional": true,
+       "name": "catalog",
+       "short_name": null,
+       "type": "Path"
+      },
+      {
+       "default_value": null,
+       "help": "Developer-only unsigned local archive.",
+       "is_optional": true,
+       "name": "archive",
+       "short_name": null,
+       "type": "Path"
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "Verify installed integrity and optionally run the self-test hook.",
+     "arguments": [
+      {
+       "help": "Optional registry extension name.",
+       "is_optional": true,
+       "name": "name",
+       "type": "String"
+      }
+     ],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver extension status cua-perception --self-test",
+       "description": "Verify an extension and run its self-test"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Run the extension self-test hook.",
+       "name": "self-test",
+       "short_name": null
+      },
+      {
+       "default_value": false,
+       "help": "Emit machine-readable output.",
+       "name": "json",
+       "short_name": null
+      }
+     ],
+     "name": "status",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Verify, stage, and durably activate an extension.",
+     "arguments": [
+      {
+       "help": "Registry extension name.",
+       "is_optional": false,
+       "name": "name",
+       "type": "String"
+      }
+     ],
+     "discussion": "Supported on macOS, Linux, and Windows with platform ownership and link/reparse-point checks.",
+     "examples": [
+      {
+       "command": "cua-driver extension install cua-perception --catalog catalog.json",
+       "description": "Install from a signed catalog"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Explicitly select developer-only unverified mode.",
+       "name": "allow-unsigned-local",
+       "short_name": null
+      }
+     ],
+     "name": "install",
+     "options": [
+      {
+       "default_value": null,
+       "help": "Signed local catalog.",
+       "is_optional": true,
+       "name": "catalog",
+       "short_name": null,
+       "type": "Path"
+      },
+      {
+       "default_value": null,
+       "help": "Developer-only unsigned local archive.",
+       "is_optional": true,
+       "name": "archive",
+       "short_name": null,
+       "type": "Path"
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "Verify and atomically activate a newer extension version.",
+     "arguments": [
+      {
+       "help": "Registry extension name.",
+       "is_optional": false,
+       "name": "name",
+       "type": "String"
+      }
+     ],
+     "discussion": "Supported on macOS, Linux, and Windows with platform ownership and link/reparse-point checks.",
+     "examples": [
+      {
+       "command": "cua-driver extension update cua-perception --catalog catalog.json",
+       "description": "Activate a newer version"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Explicitly select developer-only unverified mode.",
+       "name": "allow-unsigned-local",
+       "short_name": null
+      }
+     ],
+     "name": "update",
+     "options": [
+      {
+       "default_value": null,
+       "help": "Signed local catalog.",
+       "is_optional": true,
+       "name": "catalog",
+       "short_name": null,
+       "type": "Path"
+      },
+      {
+       "default_value": null,
+       "help": "Developer-only unsigned local archive.",
+       "is_optional": true,
+       "name": "archive",
+       "short_name": null,
+       "type": "Path"
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "Remove only a fully validated, manager-owned extension tree.",
+     "arguments": [
+      {
+       "help": "Registry extension name.",
+       "is_optional": false,
+       "name": "name",
+       "type": "String"
+      }
+     ],
+     "discussion": "Supported on macOS, Linux, and Windows with platform ownership and link/reparse-point checks.",
+     "examples": [
+      {
+       "command": "cua-driver extension remove cua-perception",
+       "description": "Remove an extension"
+      }
+     ],
+     "flags": [],
+     "name": "remove",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Compatibility command that prints the exact active version directory.",
+     "arguments": [
+      {
+       "help": "Registry extension name.",
+       "is_optional": false,
+       "name": "name",
+       "type": "String"
+      }
+     ],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver extension path cua-perception",
+       "description": "Print the active version directory"
+      }
+     ],
+     "flags": [],
+     "name": "path",
+     "options": [],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Parse a local PNG with the installed optional perception extension.",
+   "arguments": [],
+   "discussion": "This read-only local-input mode does not create a Driver capture. Its visual-regions JSON marks the result ineligible for Driver action authority.",
+   "examples": [
+    {
+     "command": "cua-driver perception parse --image screen.png --capture capture.json --json",
+     "description": "Parse a PNG into visual regions"
+    }
+   ],
+   "flags": [],
+   "name": "perception",
+   "options": [],
+   "subcommands": [
+    {
+     "abstract": "Parse one local PNG into canonical visual regions.",
+     "arguments": [],
+     "discussion": "Requires --json. The capture file supplies source metadata only.",
+     "examples": [
+      {
+       "command": "cua-driver perception parse --image screen.png --capture capture.json --json",
+       "description": "Parse a PNG into visual regions"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Emit canonical visual-regions JSON with local-input provenance.",
+       "name": "json",
+       "short_name": null
+      }
+     ],
+     "name": "parse",
+     "options": [
+      {
+       "default_value": null,
+       "help": "Local PNG path.",
+       "is_optional": false,
+       "name": "image",
+       "short_name": null,
+       "type": "Path"
+      },
+      {
+       "default_value": null,
+       "help": "Local capture source metadata JSON path.",
+       "is_optional": false,
+       "name": "capture",
+       "short_name": null,
+       "type": "Path"
+      }
+     ],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Emit a stable JSON description of the CLI surface.",
+   "arguments": [],
+   "discussion": "Consumers can use this instead of hardcoding launch arguments such as the MCP invocation.",
+   "examples": [
+    {
+     "command": "cua-driver manifest --pretty",
+     "description": "Print the CLI surface as JSON"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Pretty-print JSON.",
+     "name": "pretty",
+     "short_name": "p"
+    }
+   ],
+   "name": "manifest",
+   "options": [],
+   "subcommands": []
+  },
+  {
+   "abstract": "Validate, compile, inspect, preview, install, or remove a local cursor theme.",
+   "arguments": [],
+   "discussion": "This is a trusted local authoring workflow. Agent-facing tools may select an installed theme id, but cannot install source or compiled theme data.",
+   "examples": [
+    {
+     "command": "cua-driver cursor-theme list",
+     "description": "List cursor themes"
+    }
+   ],
+   "flags": [],
+   "name": "cursor-theme",
+   "options": [],
+   "subcommands": [
+    {
+     "abstract": "Validate a bounded dotLottie source archive.",
+     "arguments": [
+      {
+       "help": "Path to the source .lottie archive.",
+       "is_optional": false,
+       "name": "source",
+       "type": "Path"
+      }
+     ],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver cursor-theme validate my-cursor.lottie",
+       "description": "Validate a source archive"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Allow the reserved com.example development namespace.",
+       "name": "development",
+       "short_name": null
+      }
+     ],
+     "name": "validate",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Compile a validated dotLottie archive into a bounded .cua-theme artifact.",
+     "arguments": [
+      {
+       "help": "Path to the source .lottie archive.",
+       "is_optional": false,
+       "name": "source",
+       "type": "Path"
+      }
+     ],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver cursor-theme build my-cursor.lottie --output my-cursor.cua-theme",
+       "description": "Compile a theme"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Allow the reserved com.example development namespace.",
+       "name": "development",
+       "short_name": null
+      }
+     ],
+     "name": "build",
+     "options": [
+      {
+       "default_value": null,
+       "help": "Output .cua-theme path.",
+       "is_optional": false,
+       "name": "output",
+       "short_name": null,
+       "type": "Path"
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "Inspect metadata in a compiled .cua-theme artifact.",
+     "arguments": [
+      {
+       "help": "Path to the compiled .cua-theme artifact.",
+       "is_optional": false,
+       "name": "theme",
+       "type": "Path"
+      }
+     ],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver cursor-theme inspect my-cursor.cua-theme --json",
+       "description": "Print a theme's metadata"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Emit machine-readable JSON.",
+       "name": "json",
+       "short_name": null
+      }
+     ],
+     "name": "inspect",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Render a compiled theme's representative still frames to a directory.",
+     "arguments": [
+      {
+       "help": "Path to the compiled .cua-theme artifact.",
+       "is_optional": false,
+       "name": "theme",
+       "type": "Path"
+      }
+     ],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver cursor-theme preview my-cursor.cua-theme --output preview",
+       "description": "Render still frames"
+      }
+     ],
+     "flags": [],
+     "name": "preview",
+     "options": [
+      {
+       "default_value": null,
+       "help": "Preview output directory.",
+       "is_optional": false,
+       "name": "output",
+       "short_name": null,
+       "type": "Path"
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "Install a compiled theme into the current user's theme store.",
+     "arguments": [
+      {
+       "help": "Path to the compiled .cua-theme artifact.",
+       "is_optional": false,
+       "name": "theme",
+       "type": "Path"
+      }
+     ],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver cursor-theme install my-cursor.cua-theme",
+       "description": "Install a theme"
+      }
+     ],
+     "flags": [],
+     "name": "install",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "List the built-in and installed cursor themes.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver cursor-theme list --json",
+       "description": "List themes as JSON"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Emit machine-readable JSON.",
+       "name": "json",
+       "short_name": null
+      }
+     ],
+     "name": "list",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Remove a custom theme from the current user's theme store.",
+     "arguments": [
+      {
+       "help": "Installed custom theme id.",
+       "is_optional": false,
+       "name": "theme-id",
+       "type": "String"
+      }
+     ],
+     "discussion": "The built-in cua.default theme cannot be removed.",
+     "examples": [
+      {
+       "command": "cua-driver cursor-theme uninstall com.example.my-cursor",
+       "description": "Remove an installed theme"
+      }
+     ],
+     "flags": [],
+     "name": "uninstall",
+     "options": [],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Output machine-readable CLI and MCP documentation JSON.",
+   "arguments": [],
+   "discussion": "Used by the docs generator to keep reference pages in sync with the live binary.",
+   "examples": [
+    {
+     "command": "cua-driver dump-docs --type cli --pretty",
+     "description": "Print the CLI documentation JSON"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Pretty-print JSON.",
+     "name": "pretty",
+     "short_name": "p"
+    }
+   ],
+   "name": "dump-docs",
+   "options": [
+    {
+     "default_value": "all",
+     "help": "Which docs to emit: all, cli, or mcp.",
+     "is_optional": true,
+     "name": "type",
+     "short_name": null,
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  }
+ ],
+ "exit_codes": [
+  {
+   "code": 0,
+   "meaning": "Success."
+  },
+  {
+   "code": 1,
+   "meaning": "Failure: the daemon is not running or is incompatible, a tool call returned an error, or the operation failed. `call` and direct tool invocations exit with the daemon's result code (1 on a tool error); `update --apply` passes through the installer's status."
+  },
+  {
+   "code": 2,
+   "meaning": "Invalid input: tool arguments that are not valid JSON, an unknown `mcp-config` client, or an `update --apply` refused on a local development install."
+  },
+  {
+   "code": 64,
+   "meaning": "Usage error: an unknown or missing subcommand or argument, or conflicting flags (for example `revoke` without exactly one of `--session` or `--all`, or an authorization flag passed to `mcp`)."
+  }
+ ],
+ "name": "cua-driver",
+ "version": "0.32.0"
+}

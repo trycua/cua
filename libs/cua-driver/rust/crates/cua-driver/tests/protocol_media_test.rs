@@ -24,6 +24,7 @@ fn spawn_unrestricted() -> Option<RawDriver> {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "host desktop: captures real windows (Screen Recording); see libs/cua-driver/tests/manual-e2e-allowlist.txt"]
 fn zoom_tool_returns_jpeg() {
     //! Snapshot a visible window, zoom into it, and verify the result contains
     //! a JPEG image. `zoom` crops the screenshot this session last captured, so
@@ -256,6 +257,7 @@ fn zoom_from_zoom_click_round_trip() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "host desktop: captures the whole display with screencapture (Screen Recording); see libs/cua-driver/tests/manual-e2e-allowlist.txt"]
 fn recording_session() {
     //! Enable recording, invoke a non-read-only tool (recorded), disable, verify action.json written.
     let Some(mut d) = spawn_unrestricted() else {

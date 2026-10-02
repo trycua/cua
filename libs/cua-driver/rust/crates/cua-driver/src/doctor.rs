@@ -23,7 +23,7 @@
 //!   script), plus a hint to run `cua-driver diagnose` for a full
 //!   TCC / cdhash / install layout dump.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Probe outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,6 +152,9 @@ impl Report {
         serde_json::json!({
             "ok": !self.has_errors(),
             "probes": probes,
+            // The running binary's identity (source revision, sha256 of the
+            // executable): what `cua doctor --expect cua-driver=...` checks.
+            "build": cua_driver_core::build_info::current(),
         })
     }
 }
@@ -163,7 +166,20 @@ impl Report {
 fn probe_version() -> Probe {
     let version = env!("CARGO_PKG_VERSION");
     let target = build_target_triple();
-    Probe::ok("binary", format!("cua-driver {version} ({target})"))
+    let build = cua_driver_core::build_info::current();
+    let git = if build.git_sha.is_empty() {
+        "unknown".to_owned()
+    } else {
+        build.git_sha.chars().take(12).collect()
+    };
+    Probe::ok("binary", format!("cua-driver {version} ({target})")).with_detail(format!(
+        "git: {git}\nsha256: {}",
+        if build.exe_sha256.is_empty() {
+            "unreadable"
+        } else {
+            &build.exe_sha256
+        }
+    ))
 }
 
 /// Build-time target triple. We don't have a `built` crate dependency, so
@@ -198,10 +214,9 @@ fn probe_install_layout() -> Probe {
 /// release dirs so the user can sanity-check
 /// `CUA_DRIVER_RS_KEEP_VERSIONS` is doing the right thing. Renamed from
 /// `.cua-driver-rs/` in v0.2.16 to match the install-path rename (PR #1644).
-fn probe_home_dir() -> Probe {
-    let home = match home_dir() {
-        Some(h) => h,
-        None => return Probe::warn("home dir", "neither HOME nor USERPROFILE set"),
+fn probe_home_dir(home: Option<&Path>) -> Probe {
+    let Some(home) = home else {
+        return Probe::warn("home dir", "neither HOME nor USERPROFILE set");
     };
     let cua_home = home.join(crate::bundle::user_home_subdirectory());
     if !cua_home.exists() {
@@ -236,8 +251,7 @@ fn probe_home_dir() -> Probe {
 }
 
 /// Probe the same effective persisted/environment state as `telemetry status`.
-fn probe_telemetry() -> Probe {
-    let status = crate::telemetry::status();
+fn probe_telemetry(status: &crate::telemetry::TelemetryStatus) -> Probe {
     if status.enabled {
         let identity = if status.installation_id_present {
             "install-id present"
@@ -526,14 +540,28 @@ fn append_platform_probes(report: &mut Report) {
     // existing users on stale installs still get the cleanup, but the
     // output is now structured.
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    let legacy_plist = format!("{home}/Library/LaunchAgents/com.trycua.cua_driver_updater.plist");
-    let legacy_script = "/usr/local/bin/cua-driver-update";
+    let legacy_plist = PathBuf::from(format!(
+        "{home}/Library/LaunchAgents/com.trycua.cua_driver_updater.plist"
+    ));
+    append_legacy_cleanup_probes(
+        report,
+        &legacy_plist,
+        Path::new("/usr/local/bin/cua-driver-update"),
+    );
+}
+
+/// Remove a stale legacy updater LaunchAgent and script, reporting each.
+#[cfg(target_os = "macos")]
+fn append_legacy_cleanup_probes(report: &mut Report, legacy_plist: &Path, legacy_script: &Path) {
+    let legacy_plist_text = legacy_plist.display().to_string();
+    let legacy_plist = legacy_plist_text.as_str();
+    let legacy_script_text = legacy_script.display().to_string();
 
     if std::path::Path::new(&legacy_plist).exists() {
         let _ = std::process::Command::new("launchctl")
-            .args(["unload", &legacy_plist])
+            .args(["unload", legacy_plist])
             .status();
-        match std::fs::remove_file(&legacy_plist) {
+        match std::fs::remove_file(legacy_plist) {
             Ok(()) => report.push(Probe::ok(
                 "legacy LaunchAgent",
                 format!("removed stale {legacy_plist}"),
@@ -547,6 +575,7 @@ fn append_platform_probes(report: &mut Report) {
         report.push(Probe::ok("legacy LaunchAgent", "not present"));
     }
 
+    let legacy_script = legacy_script_text.as_str();
     if std::path::Path::new(legacy_script).exists() {
         match std::fs::remove_file(legacy_script) {
             Ok(()) => report.push(Probe::ok(
@@ -585,12 +614,25 @@ fn append_platform_probes(report: &mut Report) {
 
 /// Run every probe and return the aggregated report.
 pub fn run() -> Report {
+    assemble(
+        home_dir().as_deref(),
+        &crate::telemetry::status(),
+        append_platform_probes,
+    )
+}
+
+/// The cross-platform probes over explicit host inputs, then `platform`'s.
+fn assemble(
+    home: Option<&Path>,
+    telemetry: &crate::telemetry::TelemetryStatus,
+    platform: impl FnOnce(&mut Report),
+) -> Report {
     let mut report = Report::default();
     report.push(probe_version());
     report.push(probe_install_layout());
-    report.push(probe_home_dir());
-    report.push(probe_telemetry());
-    append_platform_probes(&mut report);
+    report.push(probe_home_dir(home));
+    report.push(probe_telemetry(telemetry));
+    platform(&mut report);
     report
 }
 
@@ -656,24 +698,66 @@ mod tests {
         child.wait().unwrap();
     }
 
+    fn telemetry_status() -> crate::telemetry::TelemetryStatus {
+        crate::telemetry::TelemetryStatus {
+            enabled: false,
+            source: "test",
+            installation_id_present: false,
+            installation_id: None,
+            registration_recorded: false,
+            current_release_recorded: false,
+        }
+    }
+
+    // Every probe runs over explicit inputs: a test must never read the real
+    // home, run the telemetry home migration, or remove a real LaunchAgent.
     #[test]
     fn cross_platform_probes_always_emit_something() {
         // Smoke test: run the cross-platform probes and confirm they all
         // produced a probe (no silent dropouts).
+        let home = tempfile::tempdir().unwrap();
         let v = probe_version();
         assert_eq!(v.label, "binary");
         let i = probe_install_layout();
         assert_eq!(i.label, "install dir");
-        let h = probe_home_dir();
+        let h = probe_home_dir(Some(home.path()));
         assert_eq!(h.label, "home dir");
-        let t = probe_telemetry();
+        assert_eq!(probe_home_dir(None).status, Status::Warn);
+        let t = probe_telemetry(&telemetry_status());
         assert_eq!(t.label, "telemetry");
     }
 
     #[test]
     fn run_emits_at_least_cross_platform_probes() {
-        let report = run();
-        // 4 cross-platform + at least 1 platform-specific.
-        assert!(report.probes.len() >= 5, "got {}", report.probes.len());
+        let home = tempfile::tempdir().unwrap();
+        let report = assemble(Some(home.path()), &telemetry_status(), |report| {
+            report.push(Probe::ok("platform", "probed"))
+        });
+        // 4 cross-platform + the platform-specific ones.
+        assert_eq!(report.probes.len(), 5);
+        assert_eq!(report.probes[4].label, "platform");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn legacy_cleanup_removes_only_the_given_script() {
+        let dir = tempfile::tempdir().unwrap();
+        let plist = dir.path().join("absent.plist");
+        let script = dir.path().join("cua-driver-update");
+        std::fs::write(&script, "#!/bin/sh\n").unwrap();
+        let mut report = Report::default();
+        append_legacy_cleanup_probes(&mut report, &plist, &script);
+        assert!(!script.exists(), "the stale script is removed");
+        let labels: Vec<_> = report.probes.iter().map(|p| p.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "legacy LaunchAgent",
+                "legacy update script",
+                "TCC + cdhash report"
+            ]
+        );
+        assert_eq!(report.probes[0].message, "not present");
+        assert!(report.probes[1].message.starts_with("removed stale "));
     }
 }

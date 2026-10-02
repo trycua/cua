@@ -724,9 +724,7 @@ fn filter_tree(markdown: &str, query: &str) -> String {
             ancestors.push("");
             last_emitted.push(None);
         }
-        for d in (depth + 1)..ancestors.len() {
-            last_emitted[d] = None;
-        }
+        last_emitted[depth + 1..ancestors.len()].fill(None);
         ancestors[depth] = line;
         if line.to_lowercase().contains(&needle) {
             for d in 0..depth {

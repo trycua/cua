@@ -223,6 +223,11 @@ pub struct Report {
     pub driver_version: String,
     pub overall: Overall,
     pub checks: Vec<CheckEntry>,
+    /// Build identity of the running process (source revision and the
+    /// sha256 of the executable actually running). Additive under
+    /// `schema_version="1"`; absent from older drivers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<crate::build_info::BuildInfo>,
 }
 
 // ── Provider trait ───────────────────────────────────────────────────────────
@@ -466,6 +471,7 @@ impl Tool for HealthReportTool {
             driver_version: env!("CARGO_PKG_VERSION").to_owned(),
             overall: compute_overall(&checks),
             checks,
+            build: Some(crate::build_info::current()),
         };
 
         let text = text_summary(&report);

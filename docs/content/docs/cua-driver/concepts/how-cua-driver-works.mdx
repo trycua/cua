@@ -1,0 +1,135 @@
+---
+title: How Cua Driver works
+description: Observation, targets, the background-first action ladder, verification, and who owns the runtime.
+---
+
+Cua Driver is the UI layer of a computer-use agent. The harness runs the model
+and the loop; Cua Driver turns each proposed step into an observation or an
+action on a real desktop, and reports what happened.
+
+```text output
+model -> agent harness -> Cua Driver (MCP, CLI, or SDK) -> OS accessibility + input -> apps
+```
+
+## Observe: tree and pixels together
+
+`get_window_state(pid, window_id)` returns the window's accessibility tree and
+a screenshot in one call. The tree says what is actionable (roles, labels, an
+`element_token` per element); the screenshot says which
+one, and shows what the tree omits or gets wrong. Pass
+`include_screenshot: false` to skip the image when you only need to re-index.
+`get_desktop_state` captures the whole primary display.
+
+When neither the tree nor typed browser state exposes the target, the optional
+[perception extension](/cua-driver/concepts/perception-extension) can parse
+that same screenshot into labelled regions.
+
+## Act: one exact target per call
+
+Every input tool (`click`, `type_text`, `press_key`, `hotkey`, `scroll`,
+`drag`, `move_cursor`) names its target:
+
+| Target | Coordinates | Delivery |
+| --- | --- | --- |
+| `{kind: "window", pid, window_id}` | Elements from that window's snapshot, or pixels in its screenshot | `background` (default) or `foreground` |
+| `{kind: "desktop", display_id: "primary"}` | Screen pixels from `get_desktop_state` | Foreground only |
+
+The target is chosen per call; nothing is locked into a session. A malformed or
+ambiguous target fails before anything is sent.
+
+## The action ladder
+
+Background delivery means the driver does not raise the window, move the real
+pointer, or switch the frontmost app. The agent gets its own cursor overlay.
+
+1. **Element, background.** Act by `element_token`: UI
+   Automation Invoke on Windows, `AXPerformAction` on macOS, AT-SPI actions on
+   Linux. This is the only rung the driver can verify itself.
+2. **Pixel, background.** Act by `x, y` read from the same screenshot. For
+   keyboard tools, `x, y` first clicks to give the field renderer focus, which
+   is how to type into Chromium and Electron inputs.
+3. **Page.** For browser tabs, switch to the [browser tools](/cua-driver/guides/browsers),
+   which act on the DOM over CDP without focus.
+4. **Foreground.** Retry only that action with `delivery_mode: "foreground"`:
+   the window is raised, the input lands, and the previous app is restored.
+   Needed for games, canvas apps such as Blender, and focus-polling apps.
+
+Each response says whether to climb:
+
+| Field | Values |
+| --- | --- |
+| `effect` | `confirmed` (read back through accessibility), `unverifiable`, `suspected_noop`, `partial`, `refused` |
+| `escalation` | `{recommended: "px" \| "page" \| "foreground", reason}` when a next rung exists |
+| `verified` | `true` only for accessibility read-back |
+
+A delivered event is not an applied change: Electron, Catalyst, and web
+content can echo a write they did not apply, so the driver reports those as
+`unverifiable` and recommends the next rung. After anything short of
+`confirmed`, observe again and check. Refusals carry a `code` and a recovery
+hint; `stale_element_token` means snapshot again, not that the element route is
+broken.
+
+## Platform mechanisms
+
+| | Semantic route | Background input and capture | Main limit |
+| --- | --- | --- | --- |
+| macOS | Accessibility API | Scoped CoreGraphics and SkyLight events; ScreenCaptureKit per window | Off-Space SwiftUI windows lose their tree; needs TCC grants |
+| Windows | UI Automation | Window messages to the target HWND | The daemon must run in the interactive session, not Session 0 |
+| Linux X11 | AT-SPI | Window-addressed X11 input and capture | Some toolkits reject synthetic background events |
+| Linux Wayland | AT-SPI | Compositor-specific; no general raw input to other windows | Raw background keys refuse; use AT-SPI, XWayland, or foreground |
+
+On Wayland, knowing where a window is does not change which window the
+compositor's seat sends input to, so the driver refuses rather than risk typing
+into the wrong app. A structured `background_unavailable` is part of the
+contract, not a failure to hide.
+
+## Processes and sessions
+
+The runtime owns permissions, sessions, element caches, recordings, and browser
+connections. Where it lives depends on how you connect:
+
+| Entry point | Runtime |
+| --- | --- |
+| `CuaDriver.create()` | Inside your process |
+| `create_private_worker()` | A supervised child over inherited pipes |
+| `cua-driver mcp` on Windows and Linux | The MCP process itself (exits on stdin EOF) |
+| `cua-driver mcp` on macOS | Proxies to the `CuaDriver.app` daemon (`--direct` to own it instead) |
+| `cua-driver serve` + `mcp --socket` / `call` / `connect()` | A long-lived daemon |
+
+The daemon exists for identity. On macOS, Accessibility and Screen Recording
+grants belong to `CuaDriver.app` (`com.trycua.driver`), not to whatever
+terminal spawned a `cua-driver` process. On Windows, an SSH process in Session
+0 cannot see the desktop, so a daemon in the user's session does the work.
+
+Each MCP connection or SDK runtime gets one implicit session, reused by
+unnamed calls and cleaned up when the connection closes, on `end_session`, or
+after five idle minutes. After idle expiry, the next unnamed call starts a new
+implicit session, and element tokens and snapshots from the ended one stay
+invalid, so observe again before acting. An ended named session refuses calls
+with `session_ended` until `start_session` restarts it. Pass a `session` label on each call for a readable
+name and a cursor badge; the label is not a credential. One-shot
+`cua-driver call` commands each get a disposable session. All sessions still
+share one screen, keyboard, and focus, and native input is admitted one action
+at a time.
+
+The optional HTTP MCP listener is off unless `CUA_DRIVER_RS_MCP_HTTP_PORT` is
+set, and then requires `CUA_DRIVER_RS_MCP_HTTP_TOKEN` (32 to 4096 characters,
+sent as a bearer token). Windows named pipes accept only the daemon owner's
+user.
+
+## Permissions sit below every transport
+
+CLI, MCP, SDK, and daemon calls all pass the same authorization check inside
+the runtime. The launcher fixes the mode, manifest, and grants at startup; an
+agent cannot widen them. See [Set permissions](/cua-driver/guides/permissions).
+
+## How it is validated
+
+A tool returning `ok` is not evidence. Each supported behavior is a cell in one
+Rust catalog (action × element/pixel × background/foreground × window/desktop
+× surface), run against source-built fixture apps in a real desktop session.
+A cell passes only when state the app or desktop owns changed, and, for
+background cells, when focus, z-order, the real cursor, and the foreground app
+stayed untouched. An exact refusal also passes; a silent success does not.
+Runs keep per-cell video and logs tied to the source commit. Current results
+are in [Platform support](/cua-driver/concepts/platform-support).

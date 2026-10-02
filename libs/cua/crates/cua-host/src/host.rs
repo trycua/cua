@@ -869,8 +869,12 @@ impl Host {
             }
         }
         let source = driver::locate(opts.driver_bin.as_deref())?;
-        if let DriverSource::Download(url) = &source {
-            tracing::info!(%url, "downloading cua-spacesd");
+        match &source {
+            DriverSource::Download(url) => tracing::info!(%url, "downloading cua-spacesd"),
+            DriverSource::Release { version, url, .. } => {
+                tracing::info!(%version, %url, "downloading cua-spacesd")
+            }
+            DriverSource::Local(_) => {}
         }
         driver::install_to(&source, &config.driver_bin).await?;
         write_json(&self.paths.config(), &config)?;

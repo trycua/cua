@@ -17,6 +17,9 @@ def test_sync_driver_release_docs_updates_generated_markers(tmp_path: Path):
     (tmp_path / config).parent.mkdir(parents=True)
     shutil.copy(REPO_ROOT / config, tmp_path / config)
     shutil.copytree(REPO_ROOT / DOCS, tmp_path / DOCS)
+    spec = "scripts/docs-generators/cli-specs/cua-driver.json"
+    (tmp_path / spec).parent.mkdir(parents=True)
+    shutil.copy(REPO_ROOT / spec, tmp_path / spec)
 
     docs = tmp_path / DOCS
     notes = docs / "mcp-tools" / "notes.mdx"
@@ -30,3 +33,4 @@ def test_sync_driver_release_docs_updates_generated_markers(tmp_path: Path):
     for relative in paths:
         assert "Version: 9.9.9" in (tmp_path / relative).read_text()
     assert notes.read_text() == "Shared guidance without a release marker.\n"
+    assert '\n "version": "9.9.9"\n' in (tmp_path / spec).read_text()

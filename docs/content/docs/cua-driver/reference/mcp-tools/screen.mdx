@@ -100,12 +100,11 @@ Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixel 
 
 After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates back to full-window space. Coordinate actions return `screenshot_context_missing` when no current snapshot contains a screenshot owned by this session. `from_zoom` actions return `zoom_context_missing` when the zoom was never created or was replaced; call `get_window_state`, then `zoom`, again on the same connection.
 
-**Parameters**
+**macOS parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="zoom--macos--pid"></span>`pid` | `integer` |  | Optional target pid. When omitted, the driver resolves the unique current snapshot for this session and window. |
-| <span id="zoom--macos--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="zoom--macos--window_id"></span>`window_id` | `integer` | required | CGWindowID from list_windows. |
 | <span id="zoom--macos--x1"></span>`x1` | `number` | required | Left edge of region in screenshot pixels. |
 | <span id="zoom--macos--x2"></span>`x2` | `number` | required | Right edge of region in screenshot pixels. |
@@ -117,9 +116,9 @@ After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordin
 
 Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixels, with 20% padding. Output is at most 500 px wide.
 
-After a zoom, pass from_zoom=true to click/type_text to auto-translate coordinates back to full-window space. Coordinate actions return `screenshot_context_missing` when the latest snapshot does not contain a screenshot owned by this session. `from_zoom` actions return `zoom_context_missing` when the zoom was never created or was replaced; call `get_window_state`, then `zoom`, again on the same connection.
+After a zoom, pass from_zoom=true to click/type_text to auto-translate coordinates back to full-window space. Coordinate actions return `screenshot_context_missing` when no current snapshot contains a screenshot owned by this session. `from_zoom` actions return `zoom_context_missing` when the zoom was never created or was replaced; call `get_window_state`, then `zoom`, again on the same connection.
 
-**Parameters**
+**Linux parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -139,11 +138,11 @@ Coordinates `x1, y1, x2, y2` are in the same pixel space as the screenshot retur
 
 A 20% padding is automatically added on every side of the requested region so the target remains visible even if the caller's coordinates are slightly off.
 
-After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates back to full-window space. Coordinate actions return `screenshot_context_missing` when the latest snapshot does not contain a screenshot owned by this session. `from_zoom` actions return `zoom_context_missing` when the zoom was never created or was replaced; call `get_window_state`, then `zoom`, again on the same connection.
+After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates back to full-window space. Coordinate actions return `screenshot_context_missing` when no current snapshot contains a screenshot owned by this session. `from_zoom` actions return `zoom_context_missing` when the zoom was never created or was replaced; call `get_window_state`, then `zoom`, again on the same connection.
 
 Windows-specific: `window_id` is the canonical addressing field (HWND). `pid` is preferred when available; otherwise the driver resolves the unique current snapshot owned by this session and window.
 
-**Parameters**
+**Windows parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -156,6 +155,12 @@ Windows-specific: `window_id` is the canonical addressing field (HWND). `pid` is
 
 </Tab>
 </Tabs>
+
+**Parameters on every platform**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="zoom--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 
 **Example arguments**
 

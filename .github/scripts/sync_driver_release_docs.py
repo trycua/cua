@@ -11,6 +11,11 @@ from typing import Sequence
 from release_reference_docs import reference_paths
 
 
+# The CLI-shape oracle the generator writes next to the pages; it records
+# the documented version too.
+CLI_SPEC = "scripts/docs-generators/cli-specs/cua-driver.json"
+
+
 def driver_reference_paths(root: Path) -> tuple[str, ...]:
     return reference_paths(root, "cua-driver")
 
@@ -29,6 +34,10 @@ def sync_driver_release_docs(root: Path) -> None:
         content = path.read_text()
         content = replace_once(content, r"^  Version: \S+$", f"  Version: {version}", path)
         path.write_text(content)
+    spec = root / CLI_SPEC
+    if spec.exists():
+        content = replace_once(spec.read_text(), r'^ "version": "[^"]*"$', f' "version": "{version}"', spec)
+        spec.write_text(content)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -351,7 +351,7 @@ Returned by [`kv_credential_form`](#kv_credential_form).
 | `items` | `Vec<String>` |  | Items. |
 | `caller_fp` / `callerFp` | `String` |  | Caller fingerprint. |
 | `delivered_ms` / `deliveredMs` | `u64` |  | Delivered. |
-| `expires_ms` / `expiresMs` | `u64` |  | Wiped at. |
+| `expires_ms` / `expiresMs` | `u64` |  | Wiped at (`KV_NO_EXPIRY`: only when wiped). |
 | `wiped` | `bool` |  | Already wiped. |
 
 ## `KvGrant` record
@@ -485,6 +485,7 @@ Returned by [`kv_passphrase_check`](#kv_passphrase_check).
 | `items` | `u32` |  | Items. |
 | `pending` | `u32` |  | Pending requests. |
 | `unlock_policy` / `unlockPolicy` | `Option<String>` |  | `auto` or `presence`. |
+| `auto_wipe` / `autoWipe` | `Option<bool>` |  | Delivered copies wipe themselves after their TTL (off by default; none: not told, a broker before the setting or a third party). |
 | `os_protector_available` / `osProtectorAvailable` | `bool` |  | The daemon can create the OS key store protector (setup offers Touch ID); false for a development daemon, which is passphrase-only. |
 | `passphrase_available` / `passphraseAvailable` | `bool` |  | A passphrase can always be chosen. |
 | `unlock_protectors` / `unlockProtectors` | `Vec<String>` |  | Protector kinds that can unlock this vault now (`macos-keychain`, `windows-credential`, `passphrase`, `recovery`). |
@@ -511,6 +512,7 @@ Returned by [`kv_passphrase_check`](#kv_passphrase_check).
 .setUnattended(itemIds: [String], unattended: Bool)
 .revokeGrant(id: String)
 .removeRule(id: String)
+.setAutoWipe(on: Bool)
 .release(target: String)
 .approve(requestId: String, items: [String]?)
 .deny(requestId: String)
@@ -526,6 +528,7 @@ KvCommand::SetDisabled { disabled: bool }
 KvCommand::SetUnattended { item_ids: Vec<String>, unattended: bool }
 KvCommand::RevokeGrant { id: String }
 KvCommand::RemoveRule { id: String }
+KvCommand::SetAutoWipe { on: bool }
 KvCommand::Release { target: String }
 KvCommand::Approve { request_id: String, items: Option<Vec<String>> }
 KvCommand::Deny { request_id: String }
@@ -542,6 +545,7 @@ KvCommand::Deny { request_id: String }
 | `SetUnattended` | Per-item unattended (turning on asks for Touch ID). Fields: `item_ids: Vec<String>`, `unattended: bool` |
 | `RevokeGrant` | Revoke a grant (`*`: all). Fields: `id: String` |
 | `RemoveRule` | Remove a rule. Fields: `id: String` |
+| `SetAutoWipe` | Auto-wipe of delivered copies (turning it off asks for Touch ID). Fields: `on: bool` |
 | `Release` | Wipe a Space's copies. Fields: `target: String` |
 | `Approve` | Approve a request for exactly these items (the daemon asks for presence). `None` keeps everything the request asked for, which the approval sheet only sends when the user ticked every row. Fields: `request_id: String`, `items: Option<Vec<String>>` |
 | `Deny` | Deny a request. Fields: `request_id: String` |
@@ -865,6 +869,35 @@ pub fn kv_passphrase_check(mode: KvFormMode, passphrase: String, confirm: String
 
 **Returns** [`KvPassphraseCheck`](#kvpassphrasecheck-record)
 
+## `kv_prune_dismissed`
+
+The dismissed copies still live.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func kvPruneDismissed(overview: KeyvaultOverview, nowMs: Int64, dismissed: [String]) -> [String]
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn kv_prune_dismissed(overview: KeyvaultOverview, now_ms: i64, dismissed: Vec<String>) -> Vec<String>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `overview` | [`KeyvaultOverview`](#keyvaultoverview-record) | required |
+| `now_ms` | `i64` | required |
+| `dismissed` | `Vec<String>` | required |
+
+**Returns** `Vec<String>`
+
 ## `kv_recovery_key_text`
 
 The banner after setup: the recovery key, shown once.
@@ -918,5 +951,96 @@ pub fn kv_sharing_label(overview: KeyvaultOverview, now_ms: i64) -> Option<Strin
 | --- | --- | --- |
 | `overview` | [`KeyvaultOverview`](#keyvaultoverview-record) | required |
 | `now_ms` | `i64` | required |
+
+**Returns** `Option<String>`
+
+## `kv_signed_in_spaces`
+
+The ids of `spaces` signed in through the Keyvault (a live copy is in
+them), less the `dismissed` copies: "Signed in" in the Spaces list
+(nothing dismissed), the key on notch tiles.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func kvSignedInSpaces(overview: KeyvaultOverview, nowMs: Int64, dismissed: [String], spaces: [AppSpace]) -> [String]
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn kv_signed_in_spaces(overview: KeyvaultOverview, now_ms: i64, dismissed: Vec<String>, spaces: Vec<AppSpace>) -> Vec<String>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `overview` | [`KeyvaultOverview`](#keyvaultoverview-record) | required |
+| `now_ms` | `i64` | required |
+| `dismissed` | `Vec<String>` | required |
+| `spaces` | [`Vec<AppSpace>`](/cua-sdk/reference/spaces/app-core/spaces#appspace-record) | required |
+
+**Returns** `Vec<String>`
+
+## `kv_space_access_key`
+
+The Access row of `space`'s copies, to focus from its "Signed in" badge.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func kvSpaceAccessKey(overview: KeyvaultOverview, nowMs: Int64, space: AppSpace) -> String?
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn kv_space_access_key(overview: KeyvaultOverview, now_ms: i64, space: AppSpace) -> Option<String>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `overview` | [`KeyvaultOverview`](#keyvaultoverview-record) | required |
+| `now_ms` | `i64` | required |
+| `space` | [`AppSpace`](/cua-sdk/reference/spaces/app-core/spaces#appspace-record) | required |
+
+**Returns** `Option<String>`
+
+## `kv_visible_sharing_label`
+
+`kv_sharing_label` without the copies the user dismissed (import ids):
+the notch indicator.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func kvVisibleSharingLabel(overview: KeyvaultOverview, nowMs: Int64, dismissed: [String]) -> String?
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn kv_visible_sharing_label(overview: KeyvaultOverview, now_ms: i64, dismissed: Vec<String>) -> Option<String>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `overview` | [`KeyvaultOverview`](#keyvaultoverview-record) | required |
+| `now_ms` | `i64` | required |
+| `dismissed` | `Vec<String>` | required |
 
 **Returns** `Option<String>`

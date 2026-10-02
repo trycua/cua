@@ -29,6 +29,7 @@ The `kv_*` functions derive each Keyvault screen from a `KeyvaultOverview`. `kv_
 | `detail` | `String` |  | Muted detail. |
 | `action_label` / `actionLabel` | `String` |  | "Revoke", "Remove", "Wipe". |
 | `command` | [`KvCommand`](/cua-sdk/reference/spaces/app-core/keyvault#kvcommand-enum) |  | What the button sends. |
+| `imports` | `Vec<String>` |  | A Space's copies: their import ids, which Dismiss hides from the notch (empty for grants and rules). |
 
 ## `KvAccessKind` enum
 

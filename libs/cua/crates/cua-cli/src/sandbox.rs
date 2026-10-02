@@ -432,6 +432,20 @@ pub enum SandboxCmd {
     },
     /// Delete a sandbox (Fleet: release the claim; managed pools are kept
     /// for reuse).
+    /// Delete what our own crashed or abandoned creates left behind, and
+    /// only that: ephemeral sandboxes whose process exited, interrupted
+    /// build instances, and local Space creates abandoned for over 24 hours.
+    /// Each must have an ownership record of ours; a finished Space or a VM
+    /// without a record is never touched. `--dry-run` lists what would go.
+    #[command(after_help = "Examples:
+  cua sb gc --dry-run
+  cua sb gc")]
+    Gc {
+        /// List what would be deleted, and what is kept and why; delete
+        /// nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     #[command(
         visible_alias = "delete",
         after_help = "Examples:
@@ -1712,6 +1726,66 @@ async fn create(
     Ok(0)
 }
 
+/// `cua sb gc`: the daemon's orphan reaper (ephemeral leases, build
+/// leftovers) and the abandoned-create pass of the Spaces registry, run
+/// here, reporting every deletion and every skip.
+async fn gc(dry_run: bool, json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
+    let local = cua_daemon::local::VmmLocal::default();
+    let state = cua_sandbox_core::StateStore::default();
+    let report =
+        cua_daemon::maintenance::run(&local, &state, cua_disk::Layout::default(), None, dry_run)
+            .await;
+    let embedded = Cua::embedded(cua_sdk::CuaConfig::default())?;
+    let creates = match embedded.embedded_runtime() {
+        Some(rt) => {
+            rt.spaces()
+                .gc_interrupted_creates(
+                    std::time::Duration::from_secs(30),
+                    cua_spaces::ABANDONED_CREATE_GRACE,
+                    dry_run,
+                )
+                .await
+        }
+        None => vec![],
+    };
+    if json {
+        let creates: Vec<_> = creates
+            .iter()
+            .map(|c| serde_json::json!({"id": c.id, "outcome": format!("{:?}", c.outcome)}))
+            .collect();
+        util::json_line(
+            out,
+            &serde_json::json!({"dry_run": dry_run, "reaped": report.reaped, "creates": creates}),
+        );
+        return Ok(0);
+    }
+    let verb = if dry_run { "would delete" } else { "deleted" };
+    for r in &report.reaped {
+        match &r.error {
+            None => line(out, format!("{verb} {} ({})", r.name, r.reason)),
+            Some(e) => line(out, format!("could not delete {}: {e}", r.name)),
+        }
+    }
+    use cua_spaces::RecoveryOutcome as O;
+    for c in &creates {
+        let what = match &c.outcome {
+            O::Deleted(why) => format!("deleted {} (abandoned create: {why})", c.id),
+            O::WouldDelete(why) => format!("would delete {} (abandoned create: {why})", c.id),
+            O::Kept(why) => format!("kept {}: {why}", c.id),
+            O::Registered => format!("registered {} (its create had been cut off)", c.id),
+            O::WouldRegister => format!("would register {} if it answers", c.id),
+            O::AlreadyRegistered => format!("kept {}: a finished Space", c.id),
+            O::NothingLeft => format!("nothing left of {}", c.id),
+            O::Failed(e) => format!("could not clean up {}: {e}", c.id),
+        };
+        line(out, what);
+    }
+    if report.reaped.is_empty() && creates.is_empty() {
+        line(out, "Nothing to clean up.");
+    }
+    Ok(0)
+}
+
 /// Runs a sandbox subcommand.
 pub async fn run(
     cua: &Arc<Cua>,
@@ -1722,6 +1796,7 @@ pub async fn run(
     let sbx = cua.sandboxes();
     match cmd {
         SandboxCmd::Create(a) => return create(cua, *a, false, json_global, out).await,
+        SandboxCmd::Gc { dry_run } => return gc(dry_run, json_global, out).await,
         SandboxCmd::Launch(a) => {
             return create(cua, a.into_create()?, true, json_global, out).await;
         }

@@ -37,6 +37,11 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Ownership records for the local VMs this action makes (with their on-disk
+# identity and this job as owner), so crashed or cancelled jobs' VMs are
+# reaped by record, never by name.
+vm_owner="$here/../../../libs/images/common/tools/cua-vm-owner"
+has_vm_owner() { [ -f "$vm_owner" ] && command -v lume >/dev/null 2>&1; }
 repo_root="$(cd "$here/../../.." && pwd)"
 phase="${1:-all}"
 
@@ -219,6 +224,11 @@ create() {
         args+=(${items[@]+"${items[@]}"})
     fi
     log "cua ${args[*]}"
+    # What crashed or cancelled jobs left on this runner: only VMs their
+    # records prove an earlier job made, whose job is gone, after 2 h.
+    if has_vm_owner; then
+        python3 "$vm_owner" reap --kind ci --grace "${CUA_SB_REAP_GRACE:-2h}" --cua "$cua" || true
+    fi
     # Never adopt a sandbox that was already there: the cleanup would
     # delete something this run did not make.
     if "$cua" sb info "$ref" --json >/dev/null 2>&1; then
@@ -229,6 +239,10 @@ create() {
     local created
     created="$(cat "$state/create.json")"
     printf '%s\n' "$created" >"$state/artifacts/sandbox.json"
+    if has_vm_owner && lume get "$name" --format json >/dev/null 2>&1; then
+        python3 "$vm_owner" mark "$name" --kind ci --ref "$ref" \
+            --run "${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}" || true
+    fi
     # Overlay expectations: exactly the builds that were injected.
     printf '%s' "$created" | python3 -c '
 import json, sys
@@ -334,6 +348,7 @@ cleanup() {
     local i
     for i in 1 2 3; do
         if "$cua" sb rm "$ref" --force >/dev/null 2>>"$state/artifacts/collect.log"; then
+            if has_vm_owner; then python3 "$vm_owner" forget "$name" 2>/dev/null || true; fi
             log "deleted $ref"
             return 0
         fi

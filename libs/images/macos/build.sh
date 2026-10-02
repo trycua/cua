@@ -219,19 +219,31 @@ cleanup() {
     # detached `lume run` this script started (matched by its unique VM name).
     local pid
     for pid in $(pgrep -f "lume run $VM --display none" || true); do kill "$pid" 2>/dev/null || true; done
-    [ "$KEEP" = 1 ] || lume delete "$VM" --force >/dev/null 2>&1 || true
+    [ "$KEEP" = 1 ] && return 0
+    lume delete "$VM" --force >/dev/null 2>&1 && python3 "$VM_OWNER" forget "$VM" 2>/dev/null || true
 }
 trap cleanup EXIT
 
 # --- VM ----------------------------------------------------------------------
+# Ownership records (common/tools/cua-vm-owner): every VM a build makes is
+# recorded with its on-disk identity and this run's owner process. First
+# reap what crashed or abandoned builds left (their owner gone for 2 h);
+# never a VM without a matching record.
+VM_OWNER="$REPO/libs/images/common/tools/cua-vm-owner"
+python3 "$VM_OWNER" reap --kind image-build --grace "${CUA_VM_REAP_GRACE:-2h}" || true
 if lume get "$VM" --format json >/dev/null 2>&1; then
-    echo "$VM already exists: delete it yourself or pick another --name (this build only deletes VMs it made)" >&2
-    exit 1
+    # An earlier run of ours that is gone left it: take it back. Anything
+    # else (no matching record, or a run still going) is refused.
+    python3 "$VM_OWNER" reclaim "$VM" || {
+        echo "$VM already exists: delete it yourself or pick another --name (this build only deletes VMs it made)" >&2
+        exit 1
+    }
 fi
 if [ -n "$BASE_VM" ]; then
     log "cloning $BASE_VM -> $VM"
     lume clone "$BASE_VM" "$VM"
     CREATED=1
+    python3 "$VM_OWNER" mark "$VM" --kind image-build --run "${CUA_VM_OWNER_RUN:-$VM}" || true
 else
     if [ "$BASE_IMAGE" = "$MACOS_BASE_IMAGE" ]; then
         [ "$(crane digest "$BASE_IMAGE")" = "$MACOS_BASE_DIGEST" ] ||
@@ -243,6 +255,7 @@ else
     # exist above), so the cleanup may delete it.
     CREATED=1
     lume pull "${ref#*/}" "$VM" --registry ghcr.io --organization "${ref%%/*}"
+    python3 "$VM_OWNER" mark "$VM" --kind image-build --run "${CUA_VM_OWNER_RUN:-$VM}" || true
 fi
 base_memory="$(lume get "$VM" --format json | python3 -c 'import json,sys;d=json.load(sys.stdin);d=d[0] if isinstance(d,list) else d;print(d["memorySize"])')"
 lume set "$VM" --memory "$MEMORY"

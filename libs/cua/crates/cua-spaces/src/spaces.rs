@@ -2182,15 +2182,32 @@ impl Spaces {
     /// Local creates a process that died left half done (its daemon
     /// crashed or was killed between starting the sandbox and registering
     /// the Space): each such sandbox is registered when its cua-spacesd
-    /// answers within `budget`, else deleted, so nothing keeps running
-    /// that no Space lists. Creates of live processes are left alone. The
-    /// daemon runs this when it starts.
+    /// answers within `budget`. One that does not answer is deleted only
+    /// once the create has been abandoned for [`ABANDONED_CREATE_GRACE`]
+    /// (a slow first boot after a reboot is not a dead create); until then
+    /// its journal stays and a later pass looks again. Creates of live
+    /// processes are left alone. The daemon runs this when it starts.
     ///
     /// A create someone cancelled (its `.cancel` marker), a cloud or host
     /// create, and one under a name that was in use before are not
     /// registered: what they made is removed ([`Spaces::cancel_create`]'s
-    /// undo), and a sandbox that existed before is left as it was.
+    /// undo), and a sandbox that existed before is left as it was. A Space
+    /// that finished creating has no journal: it is the user's and never
+    /// considered here.
     pub async fn recover_interrupted_creates(&self, budget: Duration) -> Vec<RecoveredCreate> {
+        self.gc_interrupted_creates(budget, ABANDONED_CREATE_GRACE, false)
+            .await
+    }
+
+    /// [`Spaces::recover_interrupted_creates`] with an explicit grace
+    /// period; `dry_run` says what it would do and changes nothing
+    /// (`cua sb gc --dry-run`).
+    pub async fn gc_interrupted_creates(
+        &self,
+        budget: Duration,
+        grace: Duration,
+        dry_run: bool,
+    ) -> Vec<RecoveredCreate> {
         use crate::creating::Made;
         let mut out = Vec::new();
         let home = self.home_dir().to_path_buf();
@@ -2203,21 +2220,37 @@ impl Spaces {
                 _ => None,
             });
             if crate::creating::cancel_marked(&home, &stem) || j.kind != "local" {
-                let message = self.undo(&j).await;
-                tracing::info!(create = %stem, message, "interrupted create undone");
-                crate::creating::remove(&home, &stem);
+                let outcome = if dry_run {
+                    RecoveryOutcome::WouldDelete(
+                        "a cancelled or remote create: what it made".into(),
+                    )
+                } else {
+                    let message = self.undo(&j).await;
+                    tracing::info!(create = %stem, message, "interrupted create undone");
+                    crate::creating::remove(&home, &stem);
+                    RecoveryOutcome::Deleted(message)
+                };
                 out.push(RecoveredCreate {
                     id: if j.id.is_empty() {
                         j.name.clone()
                     } else {
                         j.id.clone()
                     },
-                    outcome: RecoveryOutcome::Deleted(message),
+                    outcome,
                 });
                 continue;
             }
             let id = SpaceId::Local {
                 name: j.name.clone(),
+            };
+            let age = Duration::from_secs(crate::creating::now_secs().saturating_sub(j.started));
+            let young = age < grace;
+            let wait = || {
+                RecoveryOutcome::Kept(format!(
+                    "abandoned {} ago; deleted once abandoned for {}",
+                    humantime::format_duration(Duration::from_secs(age.as_secs())),
+                    humantime::format_duration(grace),
+                ))
             };
             // Nothing made yet (cut off while resolving the image), or a
             // name that was someone else's: nothing of this create's to
@@ -2237,14 +2270,25 @@ impl Spaces {
                 RecoveryOutcome::NothingLeft
             } else if self.inner.sandboxes.connect(&j.name).await.is_err() {
                 // Cut off before the sandbox was recorded: an instance the
-                // runtime started is deleted, never left running unlisted.
-                match self.inner.sandboxes.delete_local_instance(&j.name).await {
-                    Ok(true) => RecoveryOutcome::Deleted(
+                // runtime started is deleted (after the grace period),
+                // never left running unlisted for good.
+                if young {
+                    wait()
+                } else if dry_run {
+                    RecoveryOutcome::WouldDelete(
                         "the create was cut off before the sandbox was recorded".into(),
-                    ),
-                    Ok(false) => RecoveryOutcome::NothingLeft,
-                    Err(e) => RecoveryOutcome::Failed(format!("delete: {e}")),
+                    )
+                } else {
+                    match self.inner.sandboxes.delete_local_instance(&j.name).await {
+                        Ok(true) => RecoveryOutcome::Deleted(
+                            "the create was cut off before the sandbox was recorded".into(),
+                        ),
+                        Ok(false) => RecoveryOutcome::NothingLeft,
+                        Err(e) => RecoveryOutcome::Failed(format!("delete: {e}")),
+                    }
                 }
+            } else if dry_run {
+                RecoveryOutcome::WouldRegister
             } else {
                 let credential = Credential {
                     token: Some(j.token.clone()),
@@ -2266,14 +2310,20 @@ impl Spaces {
                             RecoveryOutcome::Registered
                         }
                         Err(e) if untouchable => RecoveryOutcome::Failed(e.to_string()),
+                        Err(_) if young => wait(),
                         Err(e) => self.discard_interrupted(&j.name, e.to_string()).await,
                     },
                     Err(e) if untouchable => RecoveryOutcome::Failed(e.to_string()),
+                    Err(_) if young => wait(),
                     Err(e) => self.discard_interrupted(&j.name, e.to_string()).await,
                 }
             };
-            tracing::info!(space = %id, ?outcome, "interrupted create");
-            crate::creating::remove(&home, &stem);
+            tracing::info!(space = %id, ?outcome, dry_run, "interrupted create");
+            // A create kept for later keeps its journal (its ownership
+            // record); a dry run changes nothing.
+            if !dry_run && !matches!(outcome, RecoveryOutcome::Kept(_)) {
+                crate::creating::remove(&home, &stem);
+            }
             out.push(RecoveredCreate {
                 id: id.to_string(),
                 outcome,
@@ -2681,7 +2731,18 @@ pub enum RecoveryOutcome {
     AlreadyRegistered,
     /// No sandbox was started before the process died.
     NothingLeft,
+    /// Abandoned for less than the grace period (why): left as it is and
+    /// looked at again later.
+    Kept(String),
+    /// A dry run: it would be deleted (why).
+    WouldDelete(String),
+    /// A dry run: it would be registered if its cua-spacesd answers.
+    WouldRegister,
 }
+
+/// How long a create must have been abandoned (its process gone) before
+/// what it made is deleted when it never became a Space.
+pub const ABANDONED_CREATE_GRACE: Duration = Duration::from_secs(24 * 3600);
 
 /// Undoes a create whose future was dropped before it returned (a closed
 /// request, a Ctrl-C the caller did not handle): the same clean-up as a

@@ -106,8 +106,12 @@ PY
         echo "reusing $vm: built from ${STAMP#*-} and gated (its report is in $OUT/doctor)" >&2
         exit 0
     fi
-    # A rerun rebuilds from the base (a failed build left the VM behind).
-    if exists "$vm"; then echo "deleting the earlier $vm" >&2; lume delete "$vm" --force >/dev/null; fi
+    # A rerun rebuilds from the base (a failed build left the VM behind):
+    # only a VM an earlier run of ours recorded, whose run is gone.
+    if exists "$vm"; then
+        python3 "$HERE/../common/tools/cua-vm-owner" reclaim "$vm" ||
+            { echo "$vm exists and is not a leftover of ours: delete it yourself or use another --prefix" >&2; exit 2; }
+    fi
     mkdir -p "$OUT"
     "$HERE/build.sh" --tier "$TIER" --name "$vm" --keep --out "$OUT" ${base[@]+"${base[@]}"}
     lume get "$vm" --format json | python3 -c '

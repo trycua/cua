@@ -1739,6 +1739,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         && match &cli.command {
             Command::Sandbox(cmd) => match cmd.as_ref() {
                 sandbox::SandboxCmd::Ls { cloud, .. } => *cloud || cua_auth::may_have_session(),
+                sandbox::SandboxCmd::Gc { .. } => false,
                 _ => true,
             },
             _ => true,
@@ -1747,7 +1748,10 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         let _ = sandbox::STATE_DIR.set(PathBuf::from(d));
     }
     // Ephemeral sandboxes of a process that died go before new ones come.
-    if matches!(cli.command, Command::Sandbox(_)) {
+    // (`cua sb gc` reaps, or with --dry-run only reports, itself.)
+    if let Command::Sandbox(cmd) = &cli.command
+        && !matches!(cmd.as_ref(), sandbox::SandboxCmd::Gc { .. })
+    {
         cache::quick_reap(cli.state_dir.as_deref()).await;
     }
     // Fleet sandboxes are held by the daemon so their claim heartbeat

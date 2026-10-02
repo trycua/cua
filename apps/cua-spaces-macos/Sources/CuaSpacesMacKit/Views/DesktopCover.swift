@@ -28,7 +28,15 @@ struct DesktopCoverView: View {
     /// and colors only, no text).
     static let blurShare: CGFloat = 0.035
     static let dim = 0.28
-    private static let blurs = NSCache<NSImage, NSImage>()
+    /// Blurred images by source image. Bounded: the key retains its source
+    /// image, so an unbounded cache kept every thumbnail ever shown (one
+    /// per Space every 90 s) alive with its blur until memory pressure.
+    static let blurs: NSCache<NSImage, NSImage> = {
+        let cache = NSCache<NSImage, NSImage>()
+        cache.countLimit = 16
+        cache.totalCostLimit = 32 << 20
+        return cache
+    }()
     private static let context = CIContext()
 
     /// The image blurred once (Core Image, edges clamped so they stay
@@ -43,7 +51,7 @@ struct DesktopCoverView: View {
             .cropped(to: input.extent) as CIImage?,
             let out = context.createCGImage(output, from: input.extent) else { return image }
         let result = NSImage(cgImage: out, size: image.size)
-        blurs.setObject(result, forKey: image)
+        blurs.setObject(result, forKey: image, cost: out.width * out.height * 4)
         return result
     }
 

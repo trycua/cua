@@ -178,7 +178,7 @@
       "required": [
         "amd64"
       ],
-      "description": "(arm64: hosted runners have no KVM; publish.sh --promote still needs native evidence, committed under evidence/)"
+      "description": "(arm64: hosted runners have no KVM; cd-bench-images.yml then doctors the staged disk under TCG with scripts/bench-images/doctor-disk.sh)"
     },
     {
       "id": "attest",

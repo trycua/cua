@@ -1,7 +1,10 @@
 name: "CI: Image API"
 
 on:
+  # Main only: a branch push with a pull request already runs the
+  # pull_request trigger (every PR push ran this workflow twice).
   push:
+    branches: [main]
     paths:
       - "clusters/base/cua-images/**"
       - "libs/python/cua-sandbox/cua_sandbox/image.py"

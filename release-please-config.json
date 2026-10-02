@@ -75,6 +75,126 @@
         {
           "type": "generic",
           "path": "rust/Skills/cua-driver/SKILL.md"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-driver-contract')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-driver-core')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-driver-sdk')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cursor-overlay')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='pip-preview')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='platform-linux')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='platform-macos')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='platform-windows')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-driver-contract')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-driver-core')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-driver-sdk')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cursor-overlay')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='pip-preview')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='platform-linux')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='platform-macos')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='platform-windows')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-driver-contract')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-driver-core')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-driver-sdk')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cursor-overlay')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='pip-preview')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='platform-linux')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='platform-macos')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='platform-windows')].version"
         }
       ]
     },
@@ -174,6 +294,96 @@
           "type": "toml",
           "path": "Cargo.toml",
           "jsonpath": "$.workspace.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-relay')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spacesd')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spacesd-desktop')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spacesd-doctor')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spacesd-provider-api')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spacesd-server')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spacesd-session')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spacesd-socks')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spacesd-teleport')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spacesd-test-apps')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-relay')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spacesd-server')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spacesd-socks')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spacesd-teleport')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-relay')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spacesd-server')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spacesd-socks')].version"
+        },
+        {
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spacesd-teleport')].version"
         }
       ]
     },

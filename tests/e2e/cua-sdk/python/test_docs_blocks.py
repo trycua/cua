@@ -320,10 +320,15 @@ except SyntaxError as e:
 
 
 def _run_python(block, blocks, sandbox_python, request, tmp_path):
+    # Only a named session is cumulative; blocks without one stand alone
+    # (otherwise every earlier block on the page, and its sandbox, reruns).
     session = [
         b
         for b in blocks
-        if b.guide == block.guide and b.session == block.session and b.index < block.index
+        if block.session
+        and b.guide == block.guide
+        and b.session == block.session
+        and b.index < block.index
     ]
     extra = _hermetic_env(block, request, tmp_path / "home")
     program = "\n".join(

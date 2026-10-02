@@ -197,7 +197,12 @@ impl FsBackend {
         }
         // One full barrier for the whole batch.
         if !out.is_empty() {
-            File::open(self.root.join(".lock"))?.sync_all()?;
+            // Opened for writing: Windows refuses FlushFileBuffers on a
+            // read-only handle (Access is denied).
+            OpenOptions::new()
+                .write(true)
+                .open(self.root.join(".lock"))?
+                .sync_all()?;
         }
         Ok(out)
     }

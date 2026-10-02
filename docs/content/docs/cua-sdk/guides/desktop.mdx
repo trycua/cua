@@ -28,7 +28,12 @@ the interfaces below raise `SpacesdNotAvailable`.
 from pathlib import Path
 from cua_sandbox import Image, Sandbox
 
+FOCUS_TERMINAL = ("export DISPLAY=:1; nohup xfce4-terminal -T demo >/dev/null 2>&1 & "
+                  "xdotool search --sync --name demo windowactivate --sync")
+
 async with Sandbox.ephemeral(Image.linux()) as sb:
+    # Keys go to the focused window, so open one.
+    await sb.shell.run(FOCUS_TERMINAL)
     width, height = await sb.get_dimensions()
     await sb.mouse.click(width // 2, height // 2)
     await sb.keyboard.type("hello")
@@ -41,7 +46,11 @@ async with Sandbox.ephemeral(Image.linux()) as sb:
 
 ```ts test="container" id="desktop-typescript"
 import { writeFile } from 'node:fs/promises';
-import { embedded, SandboxCreateOptions } from '@trycua/cua';
+import { embedded, SandboxCreateOptions, SpacesdCommand } from '@trycua/cua';
+
+const FOCUS_TERMINAL =
+  'export DISPLAY=:1; nohup xfce4-terminal -T demo >/dev/null 2>&1 & ' +
+  'xdotool search --sync --name demo windowactivate --sync';
 
 const sb = await embedded().sandboxes().create(
   SandboxCreateOptions.create({
@@ -50,6 +59,8 @@ const sb = await embedded().sandboxes().create(
 );
 try {
   const env = await sb.spacesd(undefined);
+  // Keys go to the focused window, so open one.
+  await env.run(SpacesdCommand.create({ program: 'sh', args: ['-c', FOCUS_TERMINAL] }));
   const shot = await env.screenshot(undefined);
   await env.click(Math.floor(shot.width / 2), Math.floor(shot.height / 2));
   await env.typeText('hello');
@@ -148,17 +159,13 @@ Kotlin) returns `{url, expires_at_unix}`; options are `ttl_seconds`,
 `view_only`, `clipboard`, `files_root` and `microphone`. The MCP tool is
 `sandbox_view`.
 
-The link carries a viewer ticket in its fragment (`/viewer/#ticket=...`).
-The ticket authorizes only the viewer's calls (streaming, plus clipboard and
-files when granted; never processes or tokens), expires (default 1 hour, at
-most 24 hours) and is revoked when the root token rotates. The page moves it
-out of the address bar. In the cloud the link is a signed `env` service URL;
-no Fleet credential reaches the browser.
+The link's fragment carries a viewer ticket that authorizes only the viewer's
+calls (never processes or tokens), expires (default 1 hour, at most 24) and is
+revoked when the root token rotates. In the cloud it is a signed `env` service
+URL.
 
-The toolbar has full screen, fit or 1:1 scaling, a keys menu
-(Ctrl+Alt+Del, Alt+Tab, ...), two-way clipboard, file upload (drop files or
-click Upload; they land in `~/Downloads`), folder sharing, microphone and
-stats.
+The toolbar has full screen, scaling, a keys menu, two-way clipboard, file
+upload (to `~/Downloads`), folder sharing, microphone and stats.
 
 | Feature | Chrome, Edge | Firefox | Safari |
 | --- | --- | --- | --- |
@@ -171,8 +178,8 @@ stats.
 | Full screen | yes, with keyboard lock | yes | yes |
 
 **Folder sharing** picks a local folder and keeps it in sync with
-`~/Shared/<name>` both ways. When a file changes on both sides, both are kept:
-the sandbox version is saved as `name (sandbox copy YYYY-MM-DD HHMMSS).ext`.
+`~/Shared/<name>` both ways. On a conflict both are kept (the sandbox one as
+`name (sandbox copy YYYY-MM-DD HHMMSS).ext`).
 Sharing stops when you close the page or click Stop.
 
 ![The folder sharing prompt of the viewer](/img/cua-sdk/viewer-share-folder.png)

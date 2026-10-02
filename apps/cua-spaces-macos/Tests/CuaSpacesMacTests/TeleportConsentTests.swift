@@ -17,12 +17,27 @@ struct TeleportConsentTests {
             saveToKeyvault: true, acknowledgeRelayPlaintext: true,
             cookieDomains: nil, exclude: [], fromVault: nil))
         #expect(c == TeleportConsent(approved: true, acknowledgeSensitive: true,
-                                     saveToKeyvault: true, acknowledgeRelayPlaintext: true,
-            cookieDomains: nil, exclude: [], fromVault: nil))
+                                     saveToKeyvault: true, acknowledgeRelayPlaintext: true))
         let off = sdkConsent(AppTeleportConsent(
             approved: true, acknowledgeSensitive: true,
             saveToKeyvault: false, acknowledgeRelayPlaintext: false,
             cookieDomains: nil, exclude: [], fromVault: nil))
         #expect(!off.saveToKeyvault)
+    }
+
+    /// The review's choices must reach the SDK consent, or the review would
+    /// show a selection the teleport then ignores: the sites, the lines
+    /// turned off, and the Keyvault as the source.
+    @Test func theReviewsChoicesReachTheSdkConsent() {
+        let c = sdkConsent(AppTeleportConsent(
+            approved: true, acknowledgeSensitive: true, saveToKeyvault: false, acknowledgeRelayPlaintext: false,
+            cookieDomains: ["github.com", "notion.so"], exclude: ["Default/Bookmarks"], fromVault: nil))
+        #expect(c.cookieDomains == ["github.com", "notion.so"])
+        #expect(c.exclude == ["Default/Bookmarks"])
+        #expect(c.fromVault == nil)
+        let v = sdkConsent(AppTeleportConsent(
+            approved: true, acknowledgeSensitive: true, saveToKeyvault: false, acknowledgeRelayPlaintext: false,
+            cookieDomains: nil, exclude: [], fromVault: ["a", "b"]))
+        #expect(v.fromVault == ["a", "b"] && v.cookieDomains == nil)
     }
 }

@@ -232,7 +232,7 @@ public enum AppEnvironment {
     /// `approval`, `onboarding`, `onboarding-mode`, `this-machine`, `host-setup`,
     /// `host-configured`, `settings`, `settings-devices` (Settings on its
     /// Devices tab), `settings-about` (on its About tab), `settings-experiments`
-    /// (on its Experiments tab), `settings-agent-approvals` (Agent approvals on a throwaway
+    /// (on its Experiments tab), `settings-permissions` (Permissions on a throwaway
     /// policy; `CUA_SPACES_APPROVALS_OFF=cloud,display` starts those rows off), `device-approval` (the approval sheet for the first
     /// device asking; `CUA_SPACES_APPROVE_CODE` types its code),
     /// `device-enroll` (the enroll sheet), `device-enroll-code` (it, having
@@ -364,9 +364,9 @@ public enum AppEnvironment {
                 model.onboarding.send(.presentationDone)
                 model.onboarding.send(.driveContinue)
                 model.onboarding.send(.modeChosen(mode: .client))
-            case "settings", "settings-devices", "settings-storage", "settings-about", "settings-experiments", "settings-agent-approvals":
+            case "settings", "settings-devices", "settings-storage", "settings-about", "settings-experiments", "settings-permissions":
                 if env["CUA_SPACES_START_VIEW"] == "settings-devices" { model.settingsTab = .devices }
-                if env["CUA_SPACES_START_VIEW"] == "settings-agent-approvals" {
+                if env["CUA_SPACES_START_VIEW"] == "settings-permissions" {
                     // A throwaway policy whose approval always accepts; a
                     // row can start off (`CUA_SPACES_APPROVALS_OFF=cloud`).
                     let home = FileManager.default.temporaryDirectory
@@ -378,7 +378,7 @@ public enum AppEnvironment {
                             await model.approvals.set(row, to: false)
                         }
                     }
-                    model.settingsTab = .approvals
+                    model.settingsTab = .permissions
                 }
                 if env["CUA_SPACES_START_VIEW"] == "settings-about" { model.settingsTab = .about }
                 if env["CUA_SPACES_START_VIEW"] == "settings-experiments" { model.settingsTab = .experiments }

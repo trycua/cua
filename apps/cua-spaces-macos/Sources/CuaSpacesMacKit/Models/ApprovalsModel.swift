@@ -6,7 +6,7 @@ import CuaSpacesFFI
 import Foundation
 import Observation
 
-/// Settings → Agent approvals. The words, the rows and the decision to change
+/// Settings → Permissions. The words, the rows and the decision to change
 /// one are the core's (`ApprovalsPane`: it reads and writes
 /// `<cua home>/approvals.json`, the file the MCP server enforces, and asks for
 /// Touch ID or the login password before it writes). This only shows the

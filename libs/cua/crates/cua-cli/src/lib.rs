@@ -2282,7 +2282,31 @@ async fn daemon_start(
         ),
     };
     let health_runtime = runtime.clone();
-    let h = cua_daemon::server::start(runtime, cfg).await;
+    // Callers that are not the user's own Cua code are held to the approval
+    // policy here, where the capabilities run; `/mcp` serves the same
+    // server `cua mcp` does.
+    let gating = {
+        let ext = extension::get();
+        let approver = ext.and_then(|e| e.approver()).unwrap_or_else(|| {
+            Arc::new(cua_spaces::approvals::NeverApprove)
+                as Arc<dyn cua_spaces::approvals::Approver>
+        });
+        cua_daemon::server::GateOptions {
+            peer_verifier: ext.and_then(|e| e.peer_verifier()),
+            guard: Some(cua_spaces::mcp::gate::Guard::new(
+                util::cua_home(),
+                approver,
+            )),
+            mcp: Some(mcp::server_with(
+                Cua::from_runtime(runtime.clone()),
+                mcp::parse_permissions(""),
+                String::new(),
+                mcp::Approvals::Ask,
+            )),
+            ..Default::default()
+        }
+    };
+    let h = cua_daemon::server::start_with(runtime, cfg, gating).await;
     drop(starting);
     {
         use cua_telemetry::events::{self, Outcome};

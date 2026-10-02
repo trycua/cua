@@ -835,7 +835,7 @@ public func FfiConverterTypeAppCliInstaller_lower(_ value: AppCliInstaller) -> U
 
 
 /**
- * The Agent approvals pane's model.
+ * The Permissions pane's model.
  */
 public protocol ApprovalsPaneProtocol: AnyObject, Sendable {
 
@@ -853,7 +853,7 @@ public protocol ApprovalsPaneProtocol: AnyObject, Sendable {
 
 }
 /**
- * The Agent approvals pane's model.
+ * The Permissions pane's model.
  */
 open class ApprovalsPane: ApprovalsPaneProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -32410,6 +32410,11 @@ public struct ApprovalsView: Equatable, Hashable {
      * The gates that cannot be turned off (no toggle).
      */
     public var locked: [ApprovalLocked]
+    /**
+     * Set when the stored settings were changed outside Cua or could not be
+     * verified: every row then asks until the user changes one here.
+     */
+    public var notice: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -32425,11 +32430,16 @@ public struct ApprovalsView: Equatable, Hashable {
          */lockedTitle: String,
         /**
          * The gates that cannot be turned off (no toggle).
-         */locked: [ApprovalLocked]) {
+         */locked: [ApprovalLocked],
+        /**
+         * Set when the stored settings were changed outside Cua or could not be
+         * verified: every row then asks until the user changes one here.
+         */notice: String?) {
         self.intro = intro
         self.rows = rows
         self.lockedTitle = lockedTitle
         self.locked = locked
+        self.notice = notice
     }
 
 
@@ -32451,7 +32461,8 @@ public struct FfiConverterTypeApprovalsView: FfiConverterRustBuffer {
                 intro: FfiConverterString.read(from: &buf),
                 rows: FfiConverterSequenceTypeApprovalRow.read(from: &buf),
                 lockedTitle: FfiConverterString.read(from: &buf),
-                locked: FfiConverterSequenceTypeApprovalLocked.read(from: &buf)
+                locked: FfiConverterSequenceTypeApprovalLocked.read(from: &buf),
+                notice: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -32460,6 +32471,7 @@ public struct FfiConverterTypeApprovalsView: FfiConverterRustBuffer {
         FfiConverterSequenceTypeApprovalRow.write(value.rows, into: &buf)
         FfiConverterString.write(value.lockedTitle, into: &buf)
         FfiConverterSequenceTypeApprovalLocked.write(value.locked, into: &buf)
+        FfiConverterOptionString.write(value.notice, into: &buf)
     }
 }
 

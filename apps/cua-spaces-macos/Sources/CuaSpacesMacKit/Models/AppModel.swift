@@ -18,7 +18,7 @@ public struct PendingTeleport: Equatable {
 public enum SettingsTab: Hashable, Sendable {
     case general
     case devices
-    case approvals
+    case permissions
     case experiments
     case about
 }
@@ -61,7 +61,7 @@ public final class AppModel {
     public let host: HostModel
     /// This Mac's enrollment on the relay, the account's devices, approvals.
     public let devices: DevicesModel
-    /// What an agent must ask for (Settings → Agent approvals). A throwaway
+    /// What an agent must ask for (Settings → Permissions). A throwaway
     /// policy until the app sets the live one (fixtures and tests never read
     /// the real Cua home).
     public var approvals: ApprovalsModel = .fixture(

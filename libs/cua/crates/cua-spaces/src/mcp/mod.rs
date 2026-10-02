@@ -246,6 +246,11 @@ impl McpServer {
         self
     }
 
+    /// Whether this server serves the agent surface (and so the gate).
+    pub fn has_agent_surface(&self) -> bool {
+        self.agent.is_some()
+    }
+
     /// The Space an agent-surface call acts on when it names none.
     pub fn with_default_space(mut self, space: impl Into<String>) -> Self {
         if let Some(a) = self.agent.as_mut() {
@@ -400,8 +405,10 @@ impl McpServer {
         let client = agent.client.lock().unwrap().clone();
         match name {
             "approvals" => {
-                let p = agent.guard.policy();
+                let loaded = agent.guard.loaded();
+                let p = loaded.policy;
                 return ToolOutcome::json(&json!({
+                    "notice": loaded.notice,
                     "ask_for_approval": p.rows().iter().map(|r| json!({"id": r.id, "title": r.title, "needs_approval": r.require})).collect::<Vec<_>>(),
                     "always_asks": crate::approvals::always().iter().map(|a| a.title).collect::<Vec<_>>(),
                 }));
@@ -428,31 +435,8 @@ impl McpServer {
         {
             args[key] = json!(id);
         }
-        for need in gate::classify(&tool, &args) {
-            let (cap, what) = match need {
-                gate::Need::Forbidden(why) => return ToolOutcome::error_message("forbidden", why),
-                gate::Need::Cap(cap, what) => (cap, what),
-                gate::Need::OnMachine { space, what } => {
-                    let space = if space.is_empty() {
-                        agent.default_space.clone()
-                    } else {
-                        space
-                    };
-                    if !self.is_machine(&space).await {
-                        continue;
-                    }
-                    (crate::approvals::Cap::RemoteExec, what)
-                }
-            };
-            if let Err(why) = agent.guard.require(&client, cap, &what).await {
-                return ToolOutcome::error_message(
-                    "approval_denied",
-                    format!(
-                        "{why}. \"{}\" needs your approval (Cua Settings > Agent approvals). Tell the user; do not retry another way.",
-                        cap.title()
-                    ),
-                );
-            }
+        if let Err((kind, message)) = self.enforce(agent, &client, &tool, &args).await {
+            return ToolOutcome::error_message(kind, message);
         }
         if surface::is_volume_data_tool(&tool)
             && let Some(o) = args.as_object_mut()
@@ -463,6 +447,54 @@ impl McpServer {
             o.remove("in_space");
         }
         self.call_any(&tool, args).await
+    }
+
+    /// The gate for one call of `tool` by the agent `client`: `Err` is the
+    /// tool error to return (`forbidden` or `approval_denied`).
+    async fn enforce(
+        &self,
+        agent: &AgentSurface,
+        client: &str,
+        tool: &str,
+        args: &Value,
+    ) -> Result<(), (&'static str, String)> {
+        agent
+            .guard
+            .enforce(
+                client,
+                gate::classify(tool, args),
+                &agent.default_space,
+                |space| async move { self.is_machine(&space).await },
+            )
+            .await
+    }
+
+    /// Checks the gate for a call without running it (the daemon asks this
+    /// before the operations it serves to callers it does not trust). `Ok`:
+    /// the call may run. Needs the agent surface; without one nothing is
+    /// gated and this is `Ok`.
+    pub async fn check(&self, client: &str, tool: &str, args: &Value) -> Result<(), ToolOutcome> {
+        let Some(agent) = &self.agent else {
+            return Ok(());
+        };
+        let tool = cua_spaces_contract::canonical(tool);
+        self.enforce(agent, client, tool, args)
+            .await
+            .map_err(|(kind, message)| ToolOutcome::error_message(kind, message))
+    }
+
+    /// Runs `name` on the agent surface as the agent `client`, gate and
+    /// Volume identity included: what a call from a caller the daemon does
+    /// not trust goes through.
+    pub async fn call_as_agent(&self, client: &str, name: &str, args: Value) -> ToolOutcome {
+        let Some(agent) = &self.agent else {
+            return ToolOutcome::error_message(
+                "forbidden",
+                "this server has no agent surface to run the call on",
+            );
+        };
+        *agent.client.lock().unwrap() = surface::client_identity(client);
+        self.invoke_agent(agent, name, args).await
     }
 
     /// `more`: list the rarely used tools, describe one, or call one.

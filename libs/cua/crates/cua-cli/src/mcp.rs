@@ -1453,6 +1453,7 @@ fn error_kind(e: &CuaError) -> &'static str {
         CuaError::Cloud(_) => "cloud",
         CuaError::InsufficientDisk(_) => "insufficient_disk",
         CuaError::Cancelled(_) => "cancelled",
+        CuaError::PermissionDenied(_) => "approval_denied",
         _ => "env",
     }
 }

@@ -20,6 +20,7 @@ path = "src/main.rs"
 
 [dependencies]
 cua-cli = { path = "../cua-cli" }
+cua-daemon = { workspace = true, features = ["server"] }
 cua-spaces = { path = "../cua-spaces", default-features = false, features = ["mcp"] }
 cua-spaces-ext = { workspace = true, features = ["s3", "mount"] }
 cua-spaces-ffi = { path = "../cua-spaces-ffi" }

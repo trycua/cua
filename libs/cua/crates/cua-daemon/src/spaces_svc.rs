@@ -174,6 +174,12 @@ mod imp {
             &self,
             req: tonic::Request<pb::AddSpaceRequest>,
         ) -> R<pb::AddSpaceResponse> {
+            self.gate(
+                &req,
+                "add_space",
+                serde_json::json!({"url": req.get_ref().url}),
+            )
+            .await?;
             let r = req.into_inner();
             let info = self
                 .spaces()
@@ -232,6 +238,9 @@ mod imp {
             &self,
             req: tonic::Request<pb::ClaimFleetSpaceRequest>,
         ) -> R<pb::ClaimFleetSpaceResponse> {
+            // A Fleet Space is the Cua cloud's (it costs money).
+            self.gate(&req, "create_space", serde_json::json!({"on": "cloud"}))
+                .await?;
             let r = req.into_inner();
             let runtime = match opt(r.runtime) {
                 Some(v) => {
@@ -321,6 +330,12 @@ mod imp {
             &self,
             req: tonic::Request<pb::CreateSpaceRequest>,
         ) -> R<pb::CreateSpaceResponse> {
+            self.gate(
+                &req,
+                "create_space",
+                serde_json::json!({"on": req.get_ref().location}),
+            )
+            .await?;
             let create = create_args(req.into_inner())?;
             let created = self
                 .spaces()
@@ -343,6 +358,14 @@ mod imp {
             req: tonic::Request<pb::CreateSpaceStreamRequest>,
         ) -> R<Self::CreateSpaceStreamStream> {
             use pb::create_space_stream_response::Event;
+            let on = req
+                .get_ref()
+                .create
+                .as_ref()
+                .map(|c| c.location.clone())
+                .unwrap_or_default();
+            self.gate(&req, "create_space", serde_json::json!({"on": on}))
+                .await?;
             let mut r = req.into_inner().create.unwrap_or_default();
             // The stream runs until the Space is ready.
             r.wait = Some(true);
@@ -431,16 +454,15 @@ mod imp {
             &self,
             req: tonic::Request<pb::ConnectSpaceRequest>,
         ) -> R<pb::ConnectSpaceResponse> {
+            let caller = crate::gate::caller_of(&req);
             let space = self
                 .spaces()
                 .space(&req.into_inner().space)
                 .await
                 .map_err(|e| st(e.into()))?;
             let id = space.id().to_string();
-            let (base, token) = {
-                let info = self.0.info.lock().unwrap();
-                (info.loopback_url.clone(), info.loopback_token.clone())
-            };
+            let base = self.0.info.lock().unwrap().loopback_url.clone();
+            let token = self.token_for(&caller);
             if base.is_empty() {
                 return Err(st(Error::Unsupported(
                     "the Space env passthrough needs the daemon's loopback listener".into(),
@@ -486,17 +508,40 @@ mod imp {
             &self,
             req: tonic::Request<pb::CallSpaceToolRequest>,
         ) -> R<pb::CallSpaceToolResponse> {
+            let caller = crate::gate::caller_of(&req);
             let r = req.into_inner();
             if cua_spaces::contract::tool(&r.name).is_none() {
                 return Err(st(Error::NotFound(format!("Spaces tool {}", r.name))));
             }
-            let args: serde_json::Value = if r.arguments_json.trim().is_empty() {
+            let mut args: serde_json::Value = if r.arguments_json.trim().is_empty() {
                 serde_json::json!({})
             } else {
                 serde_json::from_str(&r.arguments_json)
                     .map_err(|e| st(Error::InvalidArgument(format!("arguments_json: {e}"))))?
             };
             let server = self.mcp();
+            // A caller that is not the user is held to the user's policy,
+            // and its Volume calls run as itself, not as the user.
+            if let crate::caller::Caller::Agent(name) = &caller
+                && self.0.gate.enforce
+            {
+                use cua_spaces::mcp::surface;
+                let canonical = cua_spaces::contract::canonical(&r.name);
+                self.0
+                    .gate
+                    .check(&caller, canonical, args.clone())
+                    .await
+                    .map_err(st)?;
+                if surface::is_volume_data_tool(canonical)
+                    && let Some(o) = args.as_object_mut()
+                {
+                    o.insert(
+                        "as_agent".into(),
+                        serde_json::json!(surface::client_identity(name)),
+                    );
+                    o.remove("in_space");
+                }
+            }
             let out = server.call(&r.name, args).await;
             ok(pb::CallSpaceToolResponse {
                 content_json: serde_json::Value::Array(out.content).to_string(),

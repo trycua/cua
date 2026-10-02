@@ -25,6 +25,7 @@ use cua_spaces::{Error, Result, SpacesBuilder};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
+pub mod approvals_seal;
 pub mod daemon;
 pub mod drive_runtime;
 pub mod drive_tools;

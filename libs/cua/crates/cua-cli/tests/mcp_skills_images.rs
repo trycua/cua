@@ -76,14 +76,6 @@ fn text(r: &Value) -> Value {
 async fn mcp_serves_sandbox_computer_and_skills_tools() {
     let env = fixtures::start_env(Some("t"), None).await;
     let h = Home::new();
-    // The sandbox is a machine at an address: controlling it is gated unless
-    // the user turned that setting off.
-    std::fs::create_dir_all(h.cua_home()).unwrap();
-    std::fs::write(
-        h.cua_home().join("approvals.json"),
-        r#"{"require":{"remote_exec":false}}"#,
-    )
-    .unwrap();
     h.run(&[
         "--embedded",
         "sb",
@@ -317,8 +309,12 @@ async fn daemon_mcp_starts_the_daemon_and_serves_its_spaces_runtime() {
     let mut h = Home::new();
     // Teleport and agents never read the real home.
     let host = h.dir.path().join("host-home").display().to_string();
+    // The daemon this test starts is the `cua` under test, never an
+    // installed one.
     h.set("CUA_SPACES_TELEPORT_HOME", host)
-        .set("CUA_SPACES_AGENT_CREDENTIALS_HOME", "none");
+        .set("CUA_SPACES_AGENT_CREDENTIALS_HOME", "none")
+        .set("CUA_BIN", env!("CARGO_BIN_EXE_cua"))
+        .set("CUA_SPACES_CLI", env!("CARGO_BIN_EXE_cua"));
     let _guard = DaemonGuard(&h);
     let mut m = Mcp::start(&h, &["daemon", "mcp"]);
     let init = m.call("initialize", json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}})).await;
@@ -346,24 +342,73 @@ async fn daemon_mcp_starts_the_daemon_and_serves_its_spaces_runtime() {
         assert!(names.contains(&want), "{want} missing: {names:?}");
     }
 
-    // Adding a machine is gated: this build cannot ask the user, so it is
-    // refused until the user turns the setting off (Cua Settings).
-    let r = m
-        .tool(
-            "space",
-            json!({"action": "add", "url": d.url(), "token": TOKEN, "name": "stdio"}),
-        )
-        .await;
+    // The daemon's own `/mcp` is the same server: the same tool list, and
+    // the same gate. An agent that reads the discovery file and talks HTTP
+    // gets nothing more than one that talks stdio.
+    {
+        let loopback = discovery["loopback_url"].as_str().unwrap();
+        let token = discovery["token"].as_str().unwrap();
+        let http = reqwest::Client::new();
+        let post = |body: Value| {
+            let http = http.clone();
+            let url = format!("{loopback}/mcp");
+            let token = token.to_string();
+            async move {
+                http.post(url)
+                    .bearer_auth(token)
+                    .json(&body)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap()
+            }
+        };
+        let listed = post(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})).await;
+        let http_names: Vec<&str> = listed["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(http_names, names, "/mcp lists what `cua mcp` lists");
+        for call in [
+            json!({"name": "cloud_connect", "arguments": {"provider": "aws"}}),
+            json!({"name": "more", "arguments": {"name": "cloud_connect", "arguments": {"provider": "aws"}}}),
+        ] {
+            let r =
+                post(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": call}))
+                    .await;
+            assert_eq!(
+                r["result"]["structuredContent"]["error"]["kind"], "approval_denied",
+                "{r}"
+            );
+        }
+    }
+
+    // Connecting a cloud account is gated by default: this build cannot ask
+    // the user, so it is refused.
+    let r = m.tool("cloud_connect", json!({"provider": "aws"})).await;
     assert_eq!(r["isError"], true, "{r}");
     assert_eq!(
         r["structuredContent"]["error"]["kind"], "approval_denied",
         "{r}"
     );
+    // A process of the same user writing the settings file by hand changes
+    // nothing: only a file sealed by the Cua Spaces app counts, and this
+    // build has no seal, so every setting is its default.
     std::fs::write(
         h.cua_home().join("approvals.json"),
-        r#"{"require":{"machines":false,"remote_exec":false}}"#,
+        r#"{"require":{"cloud":false,"host_files":false,"api_keys":false}}"#,
     )
     .unwrap();
+    let r = m.tool("cloud_connect", json!({"provider": "aws"})).await;
+    assert_eq!(
+        r["structuredContent"]["error"]["kind"], "approval_denied",
+        "a hand-written settings file loosens nothing: {r}"
+    );
+    // Adding a machine is the user's own business by default.
     let r = m
         .tool(
             "space",

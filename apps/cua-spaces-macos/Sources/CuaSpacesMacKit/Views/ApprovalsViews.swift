@@ -4,15 +4,22 @@
 import CuaSpacesFFI
 import SwiftUI
 
-/// Settings → Agent approvals: one switch per thing an agent can do, on to
+/// Settings → Permissions: one switch per thing an agent can do, on to
 /// make it ask for a fingerprint first; the gates that always ask are listed
 /// without a switch. Every word is the core's.
-struct ApprovalsSettingsView: View {
+struct PermissionsSettingsView: View {
     @Bindable var model: ApprovalsModel
 
     var body: some View {
         let view = model.view
         Form {
+            if let notice = view.notice {
+                Section {
+                    Label(notice, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("permissions-notice")
+                }
+            }
             Section {
                 ForEach(view.rows, id: \.id) { row in
                     Toggle(isOn: Binding(
@@ -22,13 +29,13 @@ struct ApprovalsSettingsView: View {
                         Text(row.detail)
                     }
                     .disabled(model.pending[row.id] != nil)
-                    .accessibilityIdentifier("approval-\(row.id)")
+                    .accessibilityIdentifier("permission-\(row.id)")
                 }
             } header: {
                 Text(view.intro).font(.body).foregroundStyle(.secondary).textCase(nil)
             } footer: {
                 if let error = model.error {
-                    Text(error).foregroundStyle(.red).accessibilityIdentifier("approvals-error")
+                    Text(error).foregroundStyle(.red).accessibilityIdentifier("permissions-error")
                 }
             }
             Section(view.lockedTitle) {
@@ -38,11 +45,11 @@ struct ApprovalsSettingsView: View {
                     } label: {
                         Label(gate.title, systemImage: "lock")
                     }
-                    .accessibilityIdentifier("approval-locked")
+                    .accessibilityIdentifier("permission-locked")
                 }
             }
         }
         .formStyle(.grouped)
-        .frame(width: 520, height: 790)
+        .frame(width: 520, height: view.notice == nil ? 790 : 860)
     }
 }

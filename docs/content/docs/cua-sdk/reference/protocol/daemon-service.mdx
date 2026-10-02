@@ -144,3 +144,4 @@ Why a daemon call failed. Packed as `DaemonErrorInfo` in the
 | `DAEMON_ERROR_REASON_CLOUD_CREDIT_EXHAUSTED` | 22 | The account is out of Cua Cloud credit (no credit left, and no card or plan): new cloud sandboxes are refused, running ones keep running. The message ends with the website billing page's URL. |
 | `DAEMON_ERROR_REASON_CANCELLED` | 23 | The create was cancelled (`CancelCreateSpace`, or its caller went away); what it made is gone. The message says what was removed and what stays (finished image downloads stay cached). |
 | `DAEMON_ERROR_REASON_CLOUD` | 24 | Your own cloud account (AWS, Google Cloud, Modal) refused or failed a call Cua made there: a missing permission, a quota, a region without the machine type. The message names the cloud's own error. |
+| `DAEMON_ERROR_REASON_APPROVAL_DENIED` | 25 | The caller is not the user and the approval policy (Settings, Permissions) gates this action: the daemon refused it. The message says which setting. |

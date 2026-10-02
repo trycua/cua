@@ -24,6 +24,8 @@ use cua_proto::daemon::v1::{DaemonErrorInfo, DaemonErrorReason};
 use prost::Message;
 use std::path::PathBuf;
 
+#[cfg(feature = "server")]
+pub mod caller;
 #[cfg(feature = "client")]
 pub mod client;
 mod convert;
@@ -34,6 +36,8 @@ pub mod doctor;
 pub mod extension;
 #[cfg(feature = "test-fixtures")]
 pub mod fixtures;
+#[cfg(feature = "server")]
+mod gate;
 #[cfg(all(feature = "server", feature = "spaces"))]
 mod host_svc;
 pub mod identity;
@@ -167,6 +171,9 @@ pub enum Error {
     /// The create was cancelled; what it made is gone.
     #[error("cancelled: {0}")]
     Cancelled(String),
+    /// The caller is not the user and the approval policy gates the action.
+    #[error("approval denied: {0}")]
+    ApprovalDenied(String),
     /// Bug or I/O failure.
     #[error("internal: {0}")]
     Internal(String),
@@ -203,6 +210,7 @@ impl Error {
             Error::ClaimSecretsNotDelivered(_) => R::ClaimSecretsNotDelivered,
             Error::InsufficientDisk(_) => R::InsufficientDisk,
             Error::Cancelled(_) => R::Cancelled,
+            Error::ApprovalDenied(_) => R::ApprovalDenied,
             Error::Transport(_) | Error::DaemonNotRunning(_) | Error::Internal(_) => R::Internal,
         }
     }
@@ -233,6 +241,7 @@ impl Error {
             | Error::ClaimSecretsNotDelivered(m)
             | Error::InsufficientDisk(m)
             | Error::Cancelled(m)
+            | Error::ApprovalDenied(m)
             | Error::Internal(m)
             | Error::AmbiguousSandbox { message: m, .. }
             | Error::InvalidPlacement { message: m, .. } => m,
@@ -303,6 +312,7 @@ impl Error {
             R::ClaimSecretsNotDelivered => Error::ClaimSecretsNotDelivered(m),
             R::InsufficientDisk => Error::InsufficientDisk(m),
             R::Cancelled => Error::Cancelled(m),
+            R::ApprovalDenied => Error::ApprovalDenied(m),
             R::Internal | R::Unspecified => Error::Internal(m),
         }
     }
@@ -322,7 +332,9 @@ impl Error {
             Error::CapabilityMissing(_) | Error::HostCapabilityMissing(_) => {
                 Code::FailedPrecondition
             }
-            Error::TeleportRefused(_) | Error::FleetAdmissionDenied(_) => Code::PermissionDenied,
+            Error::TeleportRefused(_)
+            | Error::FleetAdmissionDenied(_)
+            | Error::ApprovalDenied(_) => Code::PermissionDenied,
             Error::PoolSpecMismatch(_) => Code::FailedPrecondition,
             Error::ClaimSecretsNotDelivered(_) => Code::DeadlineExceeded,
             Error::InsufficientDisk(_) | Error::CloudCreditExhausted(_) => Code::ResourceExhausted,
@@ -380,6 +392,7 @@ impl Error {
             tonic::Code::DeadlineExceeded => Error::Timeout(m),
             tonic::Code::Unavailable => Error::Transport(m),
             tonic::Code::Cancelled => Error::Cancelled(m),
+            tonic::Code::PermissionDenied => Error::ApprovalDenied(m),
             _ => Error::Internal(m),
         }
     }

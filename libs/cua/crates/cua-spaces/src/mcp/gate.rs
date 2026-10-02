@@ -5,7 +5,7 @@
 //! when the [`Policy`] in the cua home says that capability needs it. The
 //! policy is read on every call, so a change in Settings applies at once.
 
-use crate::approvals::{Approver, Cap, Policy};
+use crate::approvals::{Approver, Cap, Loaded, Policy, PolicySeal};
 use serde_json::Value;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -203,6 +203,16 @@ pub fn classify_with(tool: &str, a: &Value, default_on: &dyn Fn() -> String) -> 
     out
 }
 
+/// What an agent is told when `cap` was not approved: which Settings row
+/// the user can use, and not to find another way.
+pub fn denied_message(why: &str, cap: Cap) -> String {
+    format!(
+        "{why}. \"{}\" needs your approval (Settings \u{2192} Permissions \u{2192} {}). Tell the user; do not retry another way.",
+        cap.title(),
+        cap.title()
+    )
+}
+
 /// `home` and the cua home, as the path checks need them.
 pub struct Homes {
     /// The user's home directory.
@@ -360,6 +370,9 @@ pub fn protected_dest(dest: &str, h: &Homes) -> bool {
 pub struct Guard {
     home: PathBuf,
     approver: Arc<dyn Approver>,
+    /// The seal that vouches for the policy file; `None` uses the one the
+    /// process registered ([`crate::approvals::register_seal`]).
+    seal: Option<Arc<dyn PolicySeal>>,
 }
 
 impl std::fmt::Debug for Guard {
@@ -371,7 +384,17 @@ impl std::fmt::Debug for Guard {
 impl Guard {
     /// A guard reading `<home>/approvals.json` and asking `approver`.
     pub fn new(home: PathBuf, approver: Arc<dyn Approver>) -> Self {
-        Guard { home, approver }
+        Guard {
+            home,
+            approver,
+            seal: None,
+        }
+    }
+
+    /// The same, with an explicit seal (fixtures and tests).
+    pub fn with_seal(mut self, seal: Arc<dyn PolicySeal>) -> Self {
+        self.seal = Some(seal);
+        self
     }
 
     /// The cua home the policy lives in.
@@ -379,9 +402,23 @@ impl Guard {
         &self.home
     }
 
+    /// The current policy, and why it is the strict one when the stored
+    /// settings could not be trusted.
+    pub fn loaded(&self) -> Loaded {
+        let registered;
+        let seal = match &self.seal {
+            Some(s) => Some(s.as_ref()),
+            None => {
+                registered = crate::approvals::registered_seal();
+                registered.as_deref()
+            }
+        };
+        Policy::load_with(&self.home, seal)
+    }
+
     /// The current policy.
     pub fn policy(&self) -> Policy {
-        Policy::load(&self.home)
+        self.loaded().policy
     }
 
     /// Confirms `cap` for `what`, or says why not.
@@ -395,6 +432,45 @@ impl Guard {
             .await
             .map_err(|e| format!("approval task: {e}"))?
             .map_err(|e| format!("not approved: {e}"))
+    }
+
+    /// Runs `needs` for the calling agent `who`: refuses what is forbidden,
+    /// and asks for each capability the policy gates. `Err((kind, message))`
+    /// is the tool error to return. `is_machine` says whether a Space is one
+    /// of the user's own machines; `default_space` stands in for a call that
+    /// names none.
+    pub async fn enforce<F, Fut>(
+        &self,
+        who: &str,
+        needs: Vec<Need>,
+        default_space: &str,
+        is_machine: F,
+    ) -> Result<(), (&'static str, String)>
+    where
+        F: Fn(String) -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
+        for need in needs {
+            let (cap, what) = match need {
+                Need::Forbidden(why) => return Err(("forbidden", why)),
+                Need::Cap(cap, what) => (cap, what),
+                Need::OnMachine { space, what } => {
+                    let space = if space.is_empty() {
+                        default_space.to_string()
+                    } else {
+                        space
+                    };
+                    if !is_machine(space).await {
+                        continue;
+                    }
+                    (Cap::RemoteExec, what)
+                }
+            };
+            if let Err(why) = self.require(who, cap, &what).await {
+                return Err(("approval_denied", denied_message(&why, cap)));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -555,14 +631,20 @@ mod tests {
     #[tokio::test]
     async fn the_policy_decides_whether_the_user_is_asked() {
         let d = tempfile::tempdir().unwrap();
-        let g = Guard::new(d.path().to_path_buf(), Arc::new(Deny));
+        let seal = Arc::new(crate::approvals::MemorySeal::default());
+        let g = Guard::new(d.path().to_path_buf(), Arc::new(Deny)).with_seal(seal.clone());
         assert!(
             g.require("agent", Cap::Cloud, "x").await.is_err(),
             "default: asks"
         );
-        std::fs::write(
-            crate::approvals::path_in(d.path()),
-            r#"{"require":{"cloud":false}}"#,
+        assert!(
+            g.require("agent", Cap::Machines, "x").await.is_ok(),
+            "default: free"
+        );
+        Policy::store_unprompted(
+            d.path(),
+            &[(Cap::Cloud, false), (Cap::Machines, true)],
+            &*seal,
         )
         .unwrap();
         assert!(
@@ -570,5 +652,16 @@ mod tests {
             "turned off: free"
         );
         assert!(g.require("agent", Cap::Machines, "x").await.is_err());
+        // A hand edit loosens nothing: everything asks.
+        let path = crate::approvals::path_in(d.path());
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(
+            &path,
+            text.replace("\"cloud\": false", "\"cloud\": true")
+                .replace("\"machines\": true", "\"machines\": false"),
+        )
+        .unwrap();
+        assert!(g.require("agent", Cap::Display, "x").await.is_err());
+        assert!(g.loaded().notice.is_some());
     }
 }

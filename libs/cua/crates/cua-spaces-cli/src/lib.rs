@@ -28,6 +28,7 @@ use cua_sdk::{Cua, CuaError, MediaEvent, MediaOpenOptions, MediaSession, Spacesd
 
 pub mod drive_config;
 pub mod keyvault_cmd;
+pub mod peers;
 pub mod teleport;
 pub mod teleport_session;
 pub mod viewer;
@@ -77,6 +78,10 @@ impl CliExtension for CuaSpacesCli {
 
     fn approver(&self) -> Option<Arc<dyn cua_spaces::approvals::Approver>> {
         Some(Arc::new(TouchIdApprover))
+    }
+
+    fn peer_verifier(&self) -> Option<Arc<dyn cua_daemon::caller::PeerVerifier>> {
+        Some(Arc::new(peers::CuaPeers::new()))
     }
 
     fn session_broker(&self) -> Option<Arc<dyn Broker>> {
@@ -140,6 +145,9 @@ impl cua_spaces_ffi::media_decode::DecodedFrameSink for Decoded {
 
 /// Registers the Cua Spaces extensions (the daemon's and the commands).
 pub fn register() {
+    // The settings the approval gate reads are sealed with a Keychain secret
+    // only the Cua apps read (see `cua_spaces_ext::approvals_seal`).
+    cua_spaces_ext::approvals_seal::register_platform_seal();
     cua_spaces_ext::daemon::register();
     cua_cli::extension::register(Arc::new(CuaSpacesCli));
 }

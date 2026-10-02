@@ -87,6 +87,10 @@ enum DaemonErrorReason {
   // call Cua made there: a missing permission, a quota, a region without
   // the machine type. The message names the cloud's own error.
   DAEMON_ERROR_REASON_CLOUD = 24;
+  // The caller is not the user and the user's approval policy (Settings,
+  // Permissions) gates this action: the daemon refused it. The message says
+  // which setting.
+  DAEMON_ERROR_REASON_APPROVAL_DENIED = 25;
 }
 
 // Structured error detail of daemon RPCs.

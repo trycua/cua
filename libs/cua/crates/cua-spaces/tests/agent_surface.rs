@@ -4,7 +4,7 @@
 //! user's home (the approval policy lives in a temp dir).
 
 use async_trait::async_trait;
-use cua_spaces::approvals::{Approver, Cap};
+use cua_spaces::approvals::{Approver, Cap, MemorySeal, Policy};
 use cua_spaces::mcp::gate::Guard;
 use cua_spaces::mcp::{McpServer, ToolBackend, ToolExtension, ToolOutcome};
 use serde_json::{Value, json};
@@ -68,6 +68,7 @@ struct Rig {
     backend: Arc<Recorder>,
     approver: Arc<Approvals>,
     home: tempfile::TempDir,
+    seal: Arc<MemorySeal>,
 }
 
 fn rig(yes: bool) -> Rig {
@@ -77,7 +78,12 @@ fn rig(yes: bool) -> Rig {
         yes,
     });
     let home = tempfile::tempdir().unwrap();
-    let guard = Guard::new(home.path().to_path_buf(), approver.clone());
+    let seal = Arc::new(MemorySeal::default());
+    let guard = Guard::new(home.path().to_path_buf(), approver.clone()).with_seal(seal.clone());
+    // These tests are about enforcement, so every capability starts gated
+    // (the fresh-install defaults are tested in `approvals`).
+    let all: Vec<(Cap, bool)> = Cap::ALL.iter().map(|c| (*c, true)).collect();
+    Policy::store_unprompted(home.path(), &all, &*seal).unwrap();
     let server = McpServer::remote(backend.clone())
         .with_extension(Arc::new(Ext))
         .with_agent_surface(guard);
@@ -86,6 +92,7 @@ fn rig(yes: bool) -> Rig {
         backend,
         approver,
         home,
+        seal,
     }
 }
 
@@ -129,9 +136,7 @@ fn calls(r: &Rig) -> Vec<String> {
 }
 
 fn set_policy(r: &Rig, cap: Cap, require: bool) {
-    let path = cua_spaces::approvals::path_in(r.home.path());
-    let body = json!({"require": {cap.id(): require}});
-    std::fs::write(path, body.to_string()).unwrap();
+    Policy::store_unprompted(r.home.path(), &[(cap, require)], &*r.seal).unwrap();
 }
 
 #[tokio::test]
@@ -422,8 +427,10 @@ async fn approvals_shows_the_settings_and_has_no_way_to_change_them() {
         .clone();
     assert!(schema["properties"].as_object().unwrap().is_empty());
     // Asking to change it through any other tool is not a thing.
+    let before = std::fs::read_to_string(cua_spaces::approvals::path_in(r.home.path())).unwrap();
     let v = call(&r, "approvals", json!({"cloud": false})).await;
-    assert!(!r.home.path().join("approvals.json").exists(), "{v}");
+    let after = std::fs::read_to_string(cua_spaces::approvals::path_in(r.home.path())).unwrap();
+    assert_eq!(before, after, "{v}");
 }
 
 #[tokio::test]

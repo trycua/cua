@@ -66,6 +66,13 @@ pub trait CliExtension: Send + Sync {
         None
     }
 
+    /// Who may use the daemon's socket as the user: this build's check that a
+    /// peer is the signed Cua app or CLI (`None`: the peer must run the
+    /// daemon's own program). Everything else is held to the approval policy.
+    fn peer_verifier(&self) -> Option<Arc<dyn cua_daemon::caller::PeerVerifier>> {
+        None
+    }
+
     /// `cua viewer`: the standalone HTML5 viewer server.
     async fn viewer(
         &self,

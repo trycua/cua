@@ -529,7 +529,7 @@ pub fn tools() -> Vec<Value> {
         ),
         tool(
             "approvals",
-            "Read which actions need the user's approval. Only the user changes this, in Cua Settings.",
+            "Read which actions need the user's approval. Only the user changes this, in Settings \u{2192} Permissions.",
             obj(vec![], &[]),
             true,
         ),

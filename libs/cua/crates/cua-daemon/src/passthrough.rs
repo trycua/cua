@@ -69,6 +69,7 @@ fn error_response(e: Error, grpc: bool) -> Response {
         let code = match e {
             Error::NotFound(_) => StatusCode::NOT_FOUND,
             Error::Unauthenticated(_) => StatusCode::UNAUTHORIZED,
+            Error::ApprovalDenied(_) => StatusCode::FORBIDDEN,
             Error::SpacesdNotAvailable(_) => StatusCode::BAD_GATEWAY,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
@@ -90,6 +91,35 @@ fn space_from_key(key: &str) -> Result<String, Error> {
         .ok()
         .and_then(|b| String::from_utf8(b).ok())
         .ok_or_else(|| Error::InvalidArgument(format!("bad Space key {key:?}")))
+}
+
+/// Refuses a caller that is not the user when `space` is one of the user's
+/// own machines and the policy gates controlling those. The passthroughs
+/// are how a client drives a Space's own spacesd (the computer, files,
+/// processes), so this is where "control your machines" is enforced for the
+/// raw socket and loopback.
+fn gate_machine<'a>(
+    shared: &'a Shared,
+    req: &Request<AxumBody>,
+    space: &'a str,
+    what: &'a str,
+) -> impl std::future::Future<Output = Option<Response>> + Send + 'a {
+    // Read off the request now: its body is not `Sync`, so the future must
+    // not hold it.
+    let caller = crate::gate::caller_of_http(req);
+    let grpc = is_grpc(req);
+    async move {
+        shared
+            .gate
+            .check(
+                &caller,
+                what,
+                serde_json::json!({"space": space, "sandbox": space}),
+            )
+            .await
+            .err()
+            .map(|e| error_response(e, grpc))
+    }
 }
 
 /// WebSocket routes of the spacesd a passthrough relays.
@@ -177,6 +207,9 @@ pub(crate) async fn env_passthrough(
     Path((name, rest)): Path<(String, String)>,
     req: Request<AxumBody>,
 ) -> Response {
+    if let Some(denied) = gate_machine(&shared, &req, &name, "computer_screenshot").await {
+        return denied;
+    }
     let (req, ws) = match split_upgrade(req).await {
         Ok(v) => v,
         Err(r) => return *r,
@@ -203,6 +236,11 @@ pub(crate) async fn space_env_passthrough(
     Path((key, rest)): Path<(String, String)>,
     req: Request<AxumBody>,
 ) -> Response {
+    if let Ok(id) = space_from_key(&key)
+        && let Some(denied) = gate_machine(&shared, &req, &id, "space_bash").await
+    {
+        return denied;
+    }
     let (req, ws) = match split_upgrade(req).await {
         Ok(v) => v,
         Err(r) => return *r,
@@ -249,18 +287,22 @@ pub(crate) async fn space_env_passthrough(
 /// for the response head is bounded.
 async fn proxy(
     endpoint: cua_sandbox_core::ServiceEndpoint,
-    daemon_token: &str,
+    daemon_tokens: &[&str],
     rest: &str,
     req: Request<AxumBody>,
 ) -> Response {
     use http_body_util::BodyExt;
     let (parts, body) = req.into_parts();
-    let daemon_bearer = format!("Bearer {daemon_token}");
+    let daemon_bearers: Vec<String> = daemon_tokens
+        .iter()
+        .map(|t| format!("Bearer {t}"))
+        .collect();
     let headers: Vec<(String, String)> = parts
         .headers
         .iter()
         .filter(|(k, v)| {
-            !(*k == http::header::AUTHORIZATION && v.as_bytes() == daemon_bearer.as_bytes())
+            !(*k == http::header::AUTHORIZATION
+                && daemon_bearers.iter().any(|b| v.as_bytes() == b.as_bytes()))
         })
         .filter_map(|(k, v)| Some((k.to_string(), v.to_str().ok()?.to_string())))
         .collect();
@@ -306,11 +348,14 @@ pub(crate) async fn service_passthrough(
     Path((name, service, rest)): Path<(String, String, String)>,
     req: Request<AxumBody>,
 ) -> Response {
+    if let Some(denied) = gate_machine(&shared, &req, &name, "call_tool").await {
+        return denied;
+    }
     let endpoint = match shared.runtime.service_endpoint(&name, &service).await {
         Ok(e) => e,
         Err(e) => return error_response(e, false),
     };
-    proxy(endpoint, &shared.token, &rest, req).await
+    proxy(endpoint, &[&shared.token, &shared.user_token], &rest, req).await
 }
 
 /// `/v1/spaces/<key>/svc/<service>/<rest>`: the same for a declared service
@@ -322,6 +367,11 @@ pub(crate) async fn space_service_passthrough(
 ) -> Response {
     #[cfg(feature = "spaces")]
     {
+        if let Ok(id) = space_from_key(&key)
+            && let Some(denied) = gate_machine(&shared, &req, &id, "call_tool").await
+        {
+            return denied;
+        }
         let space = match space_from_key(&key) {
             Ok(id) => match shared.runtime.spaces().space(&id).await {
                 Ok(s) => s,
@@ -339,7 +389,7 @@ pub(crate) async fn space_service_passthrough(
             Ok(e) => e,
             Err(e) => return error_response(e.into(), false),
         };
-        proxy(endpoint, &shared.token, &rest, req).await
+        proxy(endpoint, &[&shared.token, &shared.user_token], &rest, req).await
     }
     #[cfg(not(feature = "spaces"))]
     {

@@ -739,7 +739,7 @@ impl Tool for ClickTool {
                     fronted,
                 ))) => {
                     // For text inputs, wait for WebKit DOM focus to settle
-                    // (default 800ms; CUA_DRIVER_RS_WEBKIT_SETTLE_MS overrides)
+                    // (default 800ms; CUA_DRIVER_WEBKIT_SETTLE_MS overrides)
                     // before returning — matches the Swift reference behaviour.
                     if needs_webkit_delay {
                         tokio::time::sleep(crate::input::pacing::webkit_settle()).await;

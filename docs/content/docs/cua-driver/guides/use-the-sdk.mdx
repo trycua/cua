@@ -297,6 +297,15 @@ Python exposes the same objects:
   `environment` option. On macOS the wait also holds the focus-restore
   lease, so a shorter wait shortens that protection. Windows ignores both.
 
+- **Shorten macOS pointer pacing.** The macOS adapter waits fixed intervals
+  around each synthesized click. Set `CUA_DRIVER_MOUSE_PRIMER_MS` (2 to 100,
+  default 12), `CUA_DRIVER_CLICK_GAP_MS` (2 to 200, default 28),
+  `CUA_DRIVER_MULTI_CLICK_GAP_MS` (20 to 300, default 80),
+  `CUA_DRIVER_WEBKIT_SETTLE_MS` (0 to 2000, default 800), or
+  `CUA_DRIVER_TYPE_TEXT_DELAY_MS` (0 to 200, default 30) in the same launch
+  environment; `EmbeddedCuaDriverHost` admits all five. Only macOS reads them.
+  See `EMBEDDING.md` for what shorter values cost.
+
 Without the SDK, the equivalent low-level launch is:
 
 ```sh test="cli-shape" id="cua-driver-serve"

@@ -838,6 +838,9 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
     upper.starts_with("LC_")
         || upper == WINDOW_CHANGE_TIMEOUT_ENV
         || upper == WINDOW_CHANGE_POLL_ENV
+        || cua_driver_core::input_pacing::ALL
+            .iter()
+            .any(|k| upper == k.env)
         || matches!(
             upper.as_str(),
             "PATH"
@@ -865,11 +868,6 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
                 | "CUA_LOG"
                 | "CUA_DRIVER_RS_TELEMETRY_ENABLED"
                 | "CUA_TELEMETRY_ENABLED"
-                | "CUA_DRIVER_RS_MOUSE_PRIMER_MS"
-                | "CUA_DRIVER_RS_CLICK_GAP_MS"
-                | "CUA_DRIVER_RS_MULTI_CLICK_GAP_MS"
-                | "CUA_DRIVER_RS_WEBKIT_SETTLE_MS"
-                | "CUA_DRIVER_RS_TYPE_TEXT_DELAY_MS"
         )
 }
 
@@ -1443,13 +1441,7 @@ mod tests {
     /// deployment's pacing configuration in embedded/worker modes.
     #[test]
     fn pacing_knobs_propagate_inherited_and_explicit() {
-        let names = [
-            "CUA_DRIVER_RS_MOUSE_PRIMER_MS",
-            "CUA_DRIVER_RS_CLICK_GAP_MS",
-            "CUA_DRIVER_RS_MULTI_CLICK_GAP_MS",
-            "CUA_DRIVER_RS_WEBKIT_SETTLE_MS",
-            "CUA_DRIVER_RS_TYPE_TEXT_DELAY_MS",
-        ];
+        let names = cua_driver_core::input_pacing::ALL.map(|k| k.env);
         for name in names {
             assert!(allowed_environment_name(name), "{name} not allowlisted");
         }

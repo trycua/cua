@@ -7,7 +7,6 @@
 //! access, and the page's unavailable and protection states.
 
 use super::wire::*;
-use crate::util::collate;
 use serde::{Deserialize, Serialize};
 
 /// A live grant: not revoked, not expired, uses left.
@@ -218,47 +217,6 @@ pub fn signing_badge(c: &KvCaller) -> SigningBadge {
     }
 }
 
-/// What a consent chip says.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ConsentChipKind {
-    /// A request waits.
-    Pending,
-    /// A copy is in a Space.
-    Delivered,
-    /// A live grant.
-    Granted,
-    /// An unattended rule.
-    Rule,
-    /// Nothing: asks every time.
-    Asks,
-}
-
-/// One consent state of an item.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConsentChip {
-    /// Kind.
-    pub kind: ConsentChipKind,
-    /// Text.
-    pub text: String,
-}
-
-/// One account of a site.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ItemRow {
-    /// The item.
-    pub item: KvItem,
-    /// "ada@example.com", "Whole app session", or the profile.
-    pub account: String,
-    /// Strongest first; `asks` when nothing else applies.
-    pub consent: Vec<ConsentChip>,
-    /// The unattended switch can be changed (not an identity provider).
-    pub toggle_enabled: bool,
-    /// The switch's tooltip.
-    pub toggle_help: String,
-}
-
 /// Mixed on/off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -271,90 +229,6 @@ pub enum Tri {
     Mixed,
 }
 
-/// A site (browsers) or app (whole-app sessions) with its accounts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SiteGroup {
-    /// Stable key.
-    pub key: String,
-    /// "github.com" or "Slack".
-    pub title: String,
-    /// "Chrome", "Slack".
-    pub app: String,
-    /// Accounts.
-    pub rows: Vec<ItemRow>,
-    /// Unattended across rows.
-    pub unattended: Tri,
-    /// Every row is an identity provider.
-    pub locked: bool,
-}
-
-const IDP_HELP: &str = "Identity providers always ask";
-const UNATTENDED_HELP: &str = "Unattended rules may use it; turning on asks for Touch ID";
-
-fn consent_for(item: &KvItem, o: &KeyvaultOverview, now: i64) -> Vec<ConsentChip> {
-    let mut chips = Vec::new();
-    for p in o
-        .pending
-        .iter()
-        .filter(|p| p.items.iter().any(|i| i.id == item.id))
-    {
-        chips.push(ConsentChip {
-            kind: ConsentChipKind::Pending,
-            text: format!("Waiting: {}", short_caller(&p.caller_display)),
-        });
-    }
-    for d in o
-        .deliveries
-        .iter()
-        .filter(|d| live_delivery(d, now) && d.items.contains(&item.id))
-    {
-        chips.push(ConsentChip {
-            kind: ConsentChipKind::Delivered,
-            text: format!("In {}, {}", d.target, delivery_lifetime(d.expires_ms, now)),
-        });
-    }
-    for g in o
-        .grants
-        .iter()
-        .filter(|g| live_grant(g, now) && g.items.contains(&item.id))
-    {
-        chips.push(ConsentChip {
-            kind: ConsentChipKind::Granted,
-            text: format!(
-                "{} \u{2192} {}, {}",
-                short_caller(&g.caller_display),
-                g.targets.join(", "),
-                duration(g.not_after_ms as i64 - now)
-            ),
-        });
-    }
-    for r in o
-        .rules
-        .iter()
-        .filter(|r| live_rule(r, now) && r.items.contains(&item.id))
-    {
-        chips.push(ConsentChip {
-            kind: ConsentChipKind::Rule,
-            text: format!(
-                "Rule: {} \u{2192} {}",
-                r.callers
-                    .iter()
-                    .map(|c| short_caller(&c.display))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                rule_targets(r)
-            ),
-        });
-    }
-    if chips.is_empty() {
-        chips.push(ConsentChip {
-            kind: ConsentChipKind::Asks,
-            text: "Asks every time".into(),
-        });
-    }
-    chips
-}
-
 fn rule_targets(r: &KvRule) -> String {
     if r.targets.iter().any(|t| t == "*") {
         "any Space".into()
@@ -363,101 +237,8 @@ fn rule_targets(r: &KvRule) -> String {
     }
 }
 
-/// The account line of an item.
-pub fn account_of(item: &KvItem) -> String {
-    if let Some(a) = item.account.as_deref().filter(|a| !a.is_empty()) {
-        return a.to_string();
-    }
-    match item.kind.as_str() {
-        "app_session" => "Whole app session".into(),
-        "site_passwords" => "Saved passwords".into(),
-        _ if !item.source.is_empty() => format!("{} profile", item.source),
-        _ => "Default profile".into(),
-    }
-}
-
-/// Items grouped per site (browsers) or per app, filtered by `query`.
-pub fn group_items(o: &KeyvaultOverview, now: i64, query: &str) -> Vec<SiteGroup> {
-    let needle = query.trim().to_lowercase();
-    let mut groups: Vec<SiteGroup> = Vec::new();
-    for item in &o.items {
-        if !needle.is_empty()
-            && ![
-                item.label.as_str(),
-                item.site.as_deref().unwrap_or(""),
-                item.account.as_deref().unwrap_or(""),
-                item.app_display.as_str(),
-            ]
-            .iter()
-            .any(|f| f.to_lowercase().contains(&needle))
-        {
-            continue;
-        }
-        let key = format!(
-            "{}:{}",
-            item.provider_id,
-            item.site.as_deref().unwrap_or("*")
-        );
-        let row = ItemRow {
-            account: account_of(item),
-            consent: consent_for(item, o, now),
-            toggle_enabled: !item.identity_provider,
-            toggle_help: if item.identity_provider {
-                IDP_HELP
-            } else {
-                UNATTENDED_HELP
-            }
-            .into(),
-            item: item.clone(),
-        };
-        match groups.iter_mut().find(|g| g.key == key) {
-            Some(g) => g.rows.push(row),
-            None => groups.push(SiteGroup {
-                title: item
-                    .site
-                    .clone()
-                    .unwrap_or_else(|| item.app_display.clone()),
-                app: item.app_display.clone(),
-                key,
-                rows: vec![row],
-                unattended: Tri::Off,
-                locked: false,
-            }),
-        }
-    }
-    for g in &mut groups {
-        g.rows.sort_by(|a, b| collate(&a.account, &b.account));
-        let on = g.rows.iter().filter(|r| r.item.policy.unattended).count();
-        g.unattended = if on == 0 {
-            Tri::Off
-        } else if on == g.rows.len() {
-            Tri::On
-        } else {
-            Tri::Mixed
-        };
-        g.locked = g.rows.iter().all(|r| r.item.identity_provider);
-    }
-    groups.sort_by(|a, b| collate(&a.title, &b.title).then_with(|| collate(&a.app, &b.app)));
-    groups
-}
-
-/// The site-level switch: on widens only the eligible accounts; off
-/// narrows every account.
-pub fn site_toggle(group: &SiteGroup, on: bool) -> KvCommand {
-    let item_ids = group
-        .rows
-        .iter()
-        .filter(|r| !on || !r.item.identity_provider)
-        .map(|r| r.item.id.clone())
-        .collect();
-    KvCommand::SetUnattended {
-        item_ids,
-        unattended: on,
-    }
-}
-
 /// The audit kinds the Recent list shows, with their verbs.
-pub const DECISION_KINDS: [(&str, &str); 13] = [
+pub const DECISION_KINDS: [(&str, &str); 16] = [
     ("consent.request", "Asked"),
     ("consent.allow", "Approved"),
     ("consent.deny", "Denied"),
@@ -468,6 +249,9 @@ pub const DECISION_KINDS: [(&str, &str); 13] = [
     ("rule.add", "Rule added"),
     ("rule.remove", "Rule removed"),
     ("item.policy", "Policy changed"),
+    ("item.unlock", "Unlocked"),
+    ("item.lock", "Locked"),
+    ("item.delete", "Deleted"),
     ("vault.disable", "Keyvault turned off"),
     ("vault.enable", "Keyvault turned on"),
     ("caller.reject", "Caller refused"),
@@ -504,8 +288,12 @@ pub fn recent_decisions(o: &KeyvaultOverview, limit: usize) -> Vec<Decision> {
         o.items
             .iter()
             .find(|i| i.id == id)
-            .map(|i| i.label.clone())
-            .unwrap_or_else(|| id.to_string())
+            .filter(|i| !i.key.is_empty())
+            .map(|i| match &i.domain {
+                Some(d) => format!("{} / {}", super::vault::site_of(d), i.key),
+                None => i.key.clone(),
+            })
+            .unwrap_or_else(|| "an item".to_string())
     };
     let mut entries: Vec<&KvAuditEntry> = o
         .audit
@@ -556,11 +344,16 @@ pub fn recent_decisions(o: &KeyvaultOverview, limit: usize) -> Vec<Decision> {
         .collect()
 }
 
-/// What a pending request would move, as one line.
+/// What a pending request would move, as one line: sites with their item
+/// counts, files, and what the approval would import.
 pub fn pending_summary(p: &KvPending) -> String {
     let mut counts: Vec<(String, usize)> = Vec::new();
     for i in &p.items {
-        let key = i.site.clone().unwrap_or_else(|| i.app_display.clone());
+        let key = match i.domain.as_deref().filter(|d| !d.is_empty()) {
+            Some(d) => super::vault::site_of(d),
+            None if i.kind == "file" => format!("{} files", i.app_display),
+            None => i.app_display.clone(),
+        };
         match counts.iter_mut().find(|(k, _)| *k == key) {
             Some((_, n)) => *n += 1,
             None => counts.push((key, 1)),
@@ -568,17 +361,11 @@ pub fn pending_summary(p: &KvPending) -> String {
     }
     let mut what: Vec<String> = counts
         .into_iter()
-        .map(|(k, n)| {
-            if n > 1 {
-                format!("{k} ({n} accounts)")
-            } else {
-                k
-            }
-        })
+        .map(|(k, n)| if n > 1 { format!("{k} ({n} items)") } else { k })
         .collect();
     what.extend(p.needs_import.iter().map(|s| match s {
-        KvSelector::Site { site, .. } => format!("{site} (not imported)"),
-        KvSelector::App { app } => format!("{app} (not imported)"),
+        KvSelector::Site { site, .. } => format!("{site} (not saved)"),
+        KvSelector::App { app } => format!("{app} (not saved)"),
         KvSelector::Item { id } => id.clone(),
         KvSelector::Login { site } => format!("the saved password for {site}"),
     }));
@@ -695,16 +482,27 @@ pub struct AccessRow {
 /// Live grants, rules and delivery targets, with their undo.
 pub fn access_rows(o: &KeyvaultOverview, now: i64) -> Vec<AccessRow> {
     let names = |ids: &[String]| {
-        ids.iter()
-            .map(|id| {
-                o.items
-                    .iter()
-                    .find(|i| &i.id == id)
-                    .map(|i| i.label.clone())
-                    .unwrap_or_else(|| id.clone())
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
+        let named = |id: &String| {
+            o.items
+                .iter()
+                .find(|i| &i.id == id)
+                .filter(|i| !i.key.is_empty())
+                .map(|i| match &i.domain {
+                    Some(d) => format!("{} / {}", super::vault::site_of(d), i.key),
+                    None => i.key.clone(),
+                })
+        };
+        let shown: Vec<String> = ids
+            .iter()
+            .take(3)
+            .map(|id| named(id).unwrap_or_else(|| "an item".into()))
+            .collect();
+        let more = ids.len().saturating_sub(3);
+        let mut text = shown.join(", ");
+        if more > 0 {
+            text.push_str(&format!(" and {more} more"));
+        }
+        text
     };
     let mut rows = Vec::new();
     for g in o.grants.iter().filter(|g| live_grant(g, now)) {
@@ -813,8 +611,12 @@ pub struct KeyvaultPage {
     pub revoke_all: bool,
     /// Items exist.
     pub has_items: bool,
-    /// Search shows (more than six items).
+    /// Search shows (any item exists).
     pub search_visible: bool,
+    /// "Never ask again" on the unlock prompt is on (Settings turns it off).
+    pub skip_unlock_prompt: bool,
+    /// An earlier preview's vault was set aside: one line to show.
+    pub reset_notice: Option<String>,
     /// Pending requests (the sidebar badge).
     pub pending_count: u32,
     /// The switch's tooltip (it reads "on" while the Keyvault works).
@@ -845,12 +647,6 @@ pub struct KvLabels {
     pub confirm_note: String,
     /// "Protection".
     pub protection_title: String,
-    /// A site's accounts section.
-    pub accounts_title: String,
-    /// A site's app fact.
-    pub app_label: String,
-    /// A site's switch.
-    pub every_account: String,
 }
 
 /// The Keyvault's fixed words.
@@ -864,9 +660,6 @@ pub fn labels() -> KvLabels {
         revoke_all: "Revoke all".into(),
         confirm_note: "Touch ID confirms in the Cua daemon.".into(),
         protection_title: "Protection".into(),
-        accounts_title: "Accounts".into(),
-        app_label: "App".into(),
-        every_account: "Every account unattended".into(),
     }
 }
 
@@ -967,7 +760,9 @@ pub fn page(o: &KeyvaultOverview, now: i64) -> KeyvaultPage {
         protection,
         revoke_all: live_grants > 1,
         has_items: !o.items.is_empty(),
-        search_visible: o.items.len() > 6,
+        search_visible: !o.items.is_empty(),
+        skip_unlock_prompt: s.and_then(|s| s.skip_unlock_prompt).unwrap_or(false),
+        reset_notice: s.and_then(|s| s.reset_notice.clone()),
         pending_count: o.pending.len() as u32,
         kill_switch_help: if disabled {
             "Turning it back on asks for Touch ID"

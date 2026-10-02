@@ -30,6 +30,7 @@ pub mod host;
 pub mod importers;
 pub mod keychain;
 pub mod ledger;
+pub mod logins;
 mod receiver;
 
 pub use cua_teleport_bundle::{

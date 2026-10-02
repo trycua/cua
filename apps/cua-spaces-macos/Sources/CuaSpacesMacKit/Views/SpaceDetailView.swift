@@ -339,6 +339,14 @@ struct SpaceDetailView: View {
         do {
             let context = try await model.backend.teleportContext(id: space.id)
             let t = TeleportModel(spaceName: space.name, teleport: context?.0, space: context?.1)
+            // The review reads saved Keyvault items and a browser's sites
+            // from the Keyvault, and starts from what was sent last time.
+            t.keyvault = model.keyvault
+            t.rememberedChoices = model.settings.teleportChoices
+            t.onRemember = { [weak model] choices in
+                model?.settings.teleportChoices = choices
+                model?.saveSettings()
+            }
             // From <Space>: the window's own stream, here, in a floating panel.
             t.onStreamWindow = { [weak t] id in
                 if let w = streams?.window(id: id) ?? session?.windows.first(where: { $0.id == id }) {

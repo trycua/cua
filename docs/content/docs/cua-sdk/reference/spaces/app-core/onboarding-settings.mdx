@@ -329,6 +329,8 @@ Returned by [`app_settings_load`](#app_settings_load).
 | `launch_at_login` / `launchAtLogin` | `Option<bool>` |  | Launch at login, as the user chose it (the first run's Done page or Settings); `None`: never chosen (`crate.login_item.launch_plan`). |
 | `experiments` | [`AppExperiments`](/cua-sdk/reference/spaces/app-core/experiments#appexperiments-record) |  | Settings, Experiments: every switch off unless turned on (`crate.experiments`). |
 | `dismissed_access` / `dismissedAccess` | `Vec<String>` |  | Keyvault copies (import ids) the user dismissed from the notch: it no longer shows them, nothing is revoked or wiped (`crate.keyvault.view.prune_dismissed` forgets the gone ones). |
+| `keyvault_site_icons` / `keyvaultSiteIcons` | `bool` |  | Keyvault rows may load a site's icon from Google's favicon service when the source browser had none (Settings, Keyvault; on by default). Off, only icons read locally are shown. |
+| `teleport_choices` / `teleportChoices` | [`Vec<AppRememberedChoice>`](/cua-sdk/reference/spaces/app-core/teleport-review#apprememberedchoice-record) |  | The sites the user sent to each Space last time, per app (`crate.teleport.review.remember`): the review starts from them. |
 | `auto_connect` / `autoConnect` | `bool` |  | Settings, General: a running Space's desktop streams as soon as it is opened (on by default); off, it waits for Connect (`crate.spaces.cover`). |
 
 ## `AppOnboardingAction` enum

@@ -16,6 +16,8 @@ use cua_teleport_bundle::cookies::COOKIES_ENTRY;
 use cua_teleport_bundle::layout::chrome::{
     launch_program_for, remap_to_platform, user_data_dir_for, DISPLAY, ID, TABS_JSON,
 };
+use cua_teleport_bundle::local_storage::LOCAL_STORAGE_ENTRY;
+use cua_teleport_bundle::logins::LOGINS_ENTRY;
 use cua_teleport_bundle::{LaunchSpec, Platform, WindowRestore};
 
 use super::write_entry;
@@ -76,6 +78,8 @@ impl ImportProvider for ChromeImporter {
         let mut reader = BundleReader::open_with_limit(bundle, self.max_total_bytes)?;
         let mut tab_urls: Vec<String> = Vec::new();
         let mut cookies_entry: Option<Vec<u8>> = None;
+        let mut local_storage_entry: Option<Vec<u8>> = None;
+        let mut logins_entry: Option<Vec<u8>> = None;
 
         while let Some(entry) = reader.next_entry()? {
             if entry.rel_path == TABS_JSON {
@@ -89,6 +93,19 @@ impl ImportProvider for ChromeImporter {
             // undecryptable here anyway.
             if entry.rel_path == COOKIES_ENTRY {
                 cookies_entry = Some(entry.bytes);
+                continue;
+            }
+            // localStorage values: written into the destination's own
+            // `Local Storage` LevelDB below (a raw copy of the sender's
+            // LevelDB files would replace whatever the destination has).
+            // Saved passwords the user ticked: re-encrypted under this
+            // destination's own key below, like the cookies.
+            if entry.rel_path == LOGINS_ENTRY {
+                logins_entry = Some(entry.bytes);
+                continue;
+            }
+            if entry.rel_path == LOCAL_STORAGE_ENTRY {
+                local_storage_entry = Some(entry.bytes);
                 continue;
             }
             let dest = dest_home.join(remap_to_platform(&entry.rel_path, platform));
@@ -115,6 +132,47 @@ impl ImportProvider for ChromeImporter {
                     &items,
                     record,
                 )?;
+            }
+        }
+        if let Some(bytes) = logins_entry {
+            let items = cua_teleport_bundle::logins::parse(&bytes);
+            if !items.is_empty() {
+                let service = chromium_crypto::macos_safe_storage_service(ID)
+                    .unwrap_or("Chrome Safe Storage");
+                crate::logins::install_logins(
+                    &*self.host,
+                    &user_data_dir.join("Default"),
+                    service,
+                    platform,
+                    &items,
+                    record,
+                )?;
+            }
+        }
+        if let Some(bytes) = local_storage_entry {
+            let items = cua_teleport_bundle::local_storage::parse(&bytes);
+            if !items.is_empty() {
+                // Same single-profile scope as the cookies above. The
+                // destination Chrome is not running yet (this import
+                // launches it afterwards), so LevelDB's lock is free.
+                let store = cua_chromium_storage::store_dir(&user_data_dir.join("Default"));
+                let existed = store.is_dir();
+                if !existed {
+                    record.create_dir_all(&store)?;
+                }
+                let written =
+                    cua_chromium_storage::write(&store, &items, crate::cookies::chrome_now_utc())
+                        .map_err(|e| crate::TeleportError::Provider(e.to_string()))?;
+                record.local_storage_written(&store, &written);
+                // The database files themselves are new when it did not
+                // exist: ledger them so a wipe removes them with the keys.
+                if !existed {
+                    if let Ok(entries) = std::fs::read_dir(&store) {
+                        for e in entries.flatten() {
+                            record.file_written(&e.path());
+                        }
+                    }
+                }
             }
         }
         // Suppress the first-run/onboarding flow: on a freshly-imported profile it
@@ -322,6 +380,7 @@ mod tests {
             is_secure: true,
             is_httponly: true,
             samesite: 1,
+            extra: Default::default(),
         }]);
         let bundle_bytes = bundle(
             "chrome",
@@ -355,5 +414,122 @@ mod tests {
             .unwrap()
             .1;
         assert_eq!(&*plain, b"gh-session-value");
+    }
+
+    /// localStorage from the Keyvault lands in the destination's own
+    /// `Local Storage` LevelDB, beside what that browser already held, and a
+    /// wipe takes out exactly the keys the import wrote.
+    #[test]
+    fn local_storage_is_written_into_the_destinations_leveldb_and_wiped_by_key() {
+        use cua_teleport_bundle::local_storage::{serialize, LocalStorageItem};
+        let dest = tempfile::tempdir().unwrap();
+        let store = dest
+            .path()
+            .join("Library/Application Support/Google/Chrome/Default/Local Storage/leveldb");
+        // The destination already has a value of its own.
+        let own = LocalStorageItem {
+            origin: "https://mine.example".into(),
+            key: "keep".into(),
+            value: "me".into(),
+            key_raw: None,
+            value_raw: None,
+        };
+        cua_chromium_storage::write(&store, &[own], 1).unwrap();
+        let item = |origin: &str, key: &str, value: &str| LocalStorageItem {
+            origin: origin.into(),
+            key: key.into(),
+            value: value.into(),
+            key_raw: None,
+            value_raw: None,
+        };
+        let json = serialize(&[
+            item("https://github.com", "color_mode", "dark"),
+            item("https://github.com", "名前", "値"),
+        ]);
+        let bundle_bytes = bundle(
+            "chrome",
+            &[
+                ("tabs.json", 0o644, b"[]"),
+                (LOCAL_STORAGE_ENTRY, 0o600, &json),
+            ],
+        );
+        let mut record = ImportRecord::default();
+        ChromeImporter::new()
+            .import_recorded(
+                &mut Cursor::new(bundle_bytes),
+                dest.path(),
+                Platform::MacOS,
+                &mut record,
+            )
+            .unwrap();
+        // Not written as a file, and the sender's names are the destination's.
+        assert!(!dest.path().join(LOCAL_STORAGE_ENTRY).exists());
+        let mut got = cua_chromium_storage::read(&store).unwrap();
+        got.sort_by(|a, b| (&a.origin, &a.key).cmp(&(&b.origin, &b.key)));
+        let names: Vec<(&str, &str, &str)> = got
+            .iter()
+            .map(|i| (i.origin.as_str(), i.key.as_str(), i.value.as_str()))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("https://github.com", "color_mode", "dark"),
+                ("https://github.com", "名前", "値"),
+                ("https://mine.example", "keep", "me"),
+            ]
+        );
+        // Wipe removes the import's keys and leaves the browser's own.
+        let ledger = crate::ledger::Ledger::new("i1", "chrome", &record, 0, 1);
+        let report = crate::ledger::wipe(&ledger, dest.path(), &crate::host::FakeHost::new());
+        assert!(report.complete(), "{:?}", report.errors);
+        assert_eq!(
+            report.local_storage_keys_removed, 3,
+            "two values and the new origin META"
+        );
+        let left = cua_chromium_storage::read(&store).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].origin, "https://mine.example");
+        // A second wipe finds nothing to remove.
+        let again = crate::ledger::wipe(&ledger, dest.path(), &crate::host::FakeHost::new());
+        assert_eq!(again.local_storage_keys_removed, 0);
+    }
+
+    /// A fresh destination (Chrome never launched) gets a new store, and a
+    /// wipe removes the files the import created with it.
+    #[test]
+    fn local_storage_creates_the_store_for_a_never_launched_browser() {
+        use cua_teleport_bundle::local_storage::{serialize, LocalStorageItem};
+        let dest = tempfile::tempdir().unwrap();
+        let json = serialize(&[LocalStorageItem {
+            origin: "https://github.com".into(),
+            key: "k".into(),
+            value: "v".into(),
+            key_raw: None,
+            value_raw: None,
+        }]);
+        let bundle_bytes = bundle(
+            "chrome",
+            &[
+                ("tabs.json", 0o644, b"[]"),
+                (LOCAL_STORAGE_ENTRY, 0o600, &json),
+            ],
+        );
+        let mut record = ImportRecord::default();
+        ChromeImporter::new()
+            .import_recorded(
+                &mut Cursor::new(bundle_bytes),
+                dest.path(),
+                Platform::Linux,
+                &mut record,
+            )
+            .unwrap();
+        let store = dest
+            .path()
+            .join(".config/google-chrome/Default/Local Storage/leveldb");
+        assert_eq!(cua_chromium_storage::read(&store).unwrap().len(), 1);
+        let ledger = crate::ledger::Ledger::new("i2", "chrome", &record, 0, 1);
+        let report = crate::ledger::wipe(&ledger, dest.path(), &crate::host::FakeHost::new());
+        assert!(report.complete(), "{:?}", report.errors);
+        assert!(!store.exists(), "the store the import created is gone");
     }
 }

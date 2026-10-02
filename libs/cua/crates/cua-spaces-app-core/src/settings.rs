@@ -61,6 +61,13 @@ pub struct AppSettings {
     /// longer shows them, nothing is revoked or wiped
     /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
     pub dismissed_access: Vec<String>,
+    /// Keyvault rows may load a site's icon from Google's favicon service
+    /// when the source browser had none (Settings, Keyvault; on by default).
+    /// Off, only icons read locally are shown.
+    pub keyvault_site_icons: bool,
+    /// The sites the user sent to each Space last time, per app
+    /// ([`crate::teleport::review::remember`]): the review starts from them.
+    pub teleport_choices: Vec<crate::teleport::review::RememberedChoice>,
     /// Settings, General: a running Space's desktop streams as soon as it
     /// is opened (on by default); off, it waits for Connect
     /// ([`crate::spaces::cover`]).
@@ -81,6 +88,8 @@ impl Default for AppSettings {
             launch_at_login: None,
             experiments: Experiments::default(),
             dismissed_access: vec![],
+            keyvault_site_icons: true,
+            teleport_choices: vec![],
             auto_connect: true,
         }
     }
@@ -248,6 +257,17 @@ pub struct SettingsInput {
     /// The Keyvault's auto-wipe, once the broker told it (none: no
     /// Keyvault section).
     pub keyvault_auto_wipe: Option<bool>,
+    /// The unlock prompt shows (false once the user chose "Never ask
+    /// again"); none until the broker told it.
+    pub keyvault_unlock_prompt: Option<bool>,
+    /// Load site icons from Google when the browser had none
+    /// ([`AppSettings::keyvault_site_icons`]).
+    #[serde(default = "default_true")]
+    pub keyvault_site_icons: bool,
+    /// The Keyvault's protection facts (Touch ID, the daemon's signature),
+    /// shown in the section.
+    #[serde(default)]
+    pub keyvault_protection: Vec<crate::spaces::sidebar::Fact>,
     /// "Connect to the desktop automatically" (none: no row; a shell
     /// without the preview cover leaves it out).
     pub auto_connect: Option<bool>,
@@ -271,10 +291,24 @@ impl Default for SettingsInput {
             login_item: None,
             experiments: Experiments::default(),
             keyvault_auto_wipe: None,
+            keyvault_unlock_prompt: None,
+            keyvault_site_icons: true,
+            keyvault_protection: vec![],
             auto_connect: None,
         }
     }
 }
+
+fn default_true() -> bool {
+    true
+}
+
+/// The site icons switch's label.
+pub const SITE_ICONS_LABEL: &str = "Load site icons from Google";
+
+/// The line under it.
+pub const SITE_ICONS_NOTE: &str =
+    "Sends only the site's domain. Off uses your browser's own icons.";
 
 /// The auto-connect switch's label.
 pub const AUTO_CONNECT_LABEL: &str = "Connect to the desktop automatically";
@@ -297,9 +331,23 @@ pub const AUTO_WIPE_LABEL: &str = "Wipe access from Spaces automatically";
 /// The line under it.
 pub const AUTO_WIPE_NOTE: &str = "When off, sign-ins stay in a Space until you wipe them.";
 
+/// The unlock prompt switch's label.
+pub const UNLOCK_PROMPT_LABEL: &str = "Explain unattended access before allowing it";
+
+/// The line under it.
+pub const UNLOCK_PROMPT_NOTE: &str = "Unlocking an item always asks for Touch ID. Turn this on to see the explanation again after choosing Never ask again.";
+
 /// The Keyvault section: the auto-wipe switch (off by default) and its
-/// line. Row id `keyvault-auto-wipe`; its options are `on` and `off`.
-pub fn keyvault_section(auto_wipe: bool) -> SettingsSection {
+/// line, the unlock prompt switch (on by default; "Never ask again" turns it
+/// off and this turns it back on), and the protection facts. Row ids
+/// `keyvault-auto-wipe`, `keyvault-unlock-prompt` and `keyvault-protection:<label>`;
+/// the switches' options are `on` and `off`.
+pub fn keyvault_section(
+    auto_wipe: bool,
+    unlock_prompt: Option<bool>,
+    site_icons: bool,
+    protection: &[crate::spaces::sidebar::Fact],
+) -> SettingsSection {
     let mut toggle = row(
         "keyvault-auto-wipe",
         SettingsRowKind::Toggle,
@@ -311,20 +359,61 @@ pub fn keyvault_section(auto_wipe: bool) -> SettingsSection {
     } else {
         "Wipes sign-ins after an hour (15 minutes for identity providers)".into()
     });
+    let mut rows = vec![
+        toggle,
+        row(
+            "keyvault-auto-wipe-note",
+            SettingsRowKind::Note,
+            AUTO_WIPE_NOTE,
+        ),
+    ];
+    if let Some(shows) = unlock_prompt {
+        let mut t = row(
+            "keyvault-unlock-prompt",
+            SettingsRowKind::Toggle,
+            UNLOCK_PROMPT_LABEL,
+        );
+        t.options = vec![opt("on", "On", shows), opt("off", "Off", !shows)];
+        t.help = Some(if shows {
+            "Choosing Never ask again on the prompt turns this off".into()
+        } else {
+            "You chose Never ask again. Turn this on to see the prompt again".into()
+        });
+        rows.push(t);
+        rows.push(row(
+            "keyvault-unlock-prompt-note",
+            SettingsRowKind::Note,
+            UNLOCK_PROMPT_NOTE,
+        ));
+    }
+    let mut icons = row(
+        "keyvault-site-icons",
+        SettingsRowKind::Toggle,
+        SITE_ICONS_LABEL,
+    );
+    icons.options = vec![opt("on", "On", site_icons), opt("off", "Off", !site_icons)];
+    rows.push(icons);
+    rows.push(row(
+        "keyvault-site-icons-note",
+        SettingsRowKind::Note,
+        SITE_ICONS_NOTE,
+    ));
+    for f in protection {
+        let mut r = row(
+            &format!("keyvault-protection:{}", f.label),
+            SettingsRowKind::Text,
+            &f.label,
+        );
+        r.value = Some(f.value.clone());
+        rows.push(r);
+    }
     SettingsSection {
         id: "keyvault".into(),
         title: "Keyvault".into(),
         button: None,
         button_enabled: false,
         button_help: None,
-        rows: vec![
-            toggle,
-            row(
-                "keyvault-auto-wipe-note",
-                SettingsRowKind::Note,
-                AUTO_WIPE_NOTE,
-            ),
-        ],
+        rows,
     }
 }
 
@@ -595,7 +684,12 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     }
 
     if let Some(on) = input.keyvault_auto_wipe {
-        sections.push(keyvault_section(on));
+        sections.push(keyvault_section(
+            on,
+            input.keyvault_unlock_prompt,
+            input.keyvault_site_icons,
+            &input.keyvault_protection,
+        ));
     }
 
     let agents = input.agents.clone().unwrap_or_default();
@@ -771,9 +865,55 @@ mod tests {
         );
         let on = |r: &SettingsRow| r.options.iter().find(|o| o.id == "on").unwrap().active;
         assert!(!on(toggle), "off by default");
-        assert!(on(&keyvault_section(true).rows[0]));
+        assert!(on(&keyvault_section(true, None, true, &[]).rows[0]));
         assert_eq!(kv.rows[1].kind, SettingsRowKind::Note);
         assert!(!AUTO_WIPE_NOTE.contains('\u{2014}'), "no em dashes in copy");
+        assert!(
+            !UNLOCK_PROMPT_NOTE.contains('\u{2014}') && !UNLOCK_PROMPT_LABEL.contains('\u{2014}')
+        );
+        // Without the setting told, no prompt row; told, it is a switch that
+        // is on until "Never ask again" turns it off, with the protection
+        // facts under it.
+        assert!(!kv.rows.iter().any(|r| r.id == "keyvault-unlock-prompt"));
+        let fact = |l: &str, v: &str| crate::spaces::sidebar::Fact {
+            label: l.into(),
+            value: v.into(),
+            copy: None,
+            help: None,
+            warning: None,
+        };
+        let with = keyvault_section(
+            false,
+            Some(false),
+            true,
+            &[fact("Touch ID", "Asked by the Cua daemon")],
+        );
+        let prompt = with
+            .rows
+            .iter()
+            .find(|r| r.id == "keyvault-unlock-prompt")
+            .unwrap();
+        assert!(!on(prompt), "Never ask again turned it off");
+        assert!(on(&keyvault_section(false, Some(true), true, &[]).rows[2]));
+        let last = with.rows.last().unwrap();
+        assert_eq!(last.id, "keyvault-protection:Touch ID");
+        assert_eq!(last.value.as_deref(), Some("Asked by the Cua daemon"));
+        // The site icons switch is on by default and named for Google.
+        let icons = with
+            .rows
+            .iter()
+            .find(|r| r.id == "keyvault-site-icons")
+            .unwrap();
+        assert!(on(icons));
+        assert_eq!(icons.label, "Load site icons from Google");
+        assert!(!on(keyvault_section(false, None, false, &[])
+            .rows
+            .iter()
+            .find(|r| r.id == "keyvault-site-icons")
+            .unwrap()));
+        assert!(AppSettings::default().keyvault_site_icons);
+        let old: AppSettings = serde_json::from_str(r#"{"menuBar":true}"#).unwrap();
+        assert!(old.keyvault_site_icons, "a missing field is on");
         // A settings file from before dismissals: none dismissed.
         let old: AppSettings = serde_json::from_str(r#"{"menuBar":true}"#).unwrap();
         assert!(old.dismissed_access.is_empty());

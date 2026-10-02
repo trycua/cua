@@ -167,7 +167,7 @@ async fn rig() -> Rig {
     }
 }
 
-/// Third party requests the `github.com` chrome site into the target; the user
+/// Third party requests the chrome app into the target; the user
 /// approves; the returned token authorizes exactly one delivery.
 async fn grant(r: &Rig, target: &str) -> (String, Vec<String>) {
     let pending = r
@@ -175,10 +175,8 @@ async fn grant(r: &Rig, target: &str) -> (String, Vec<String>) {
         .request_access(
             &r.koala,
             AccessRequest {
-                selectors: vec![Selector::Site {
+                selectors: vec![Selector::App {
                     app: "chrome".into(),
-                    site: "github.com".into(),
-                    account: None,
                 }],
                 targets: vec![target.into()],
                 uses: Some(0),
@@ -220,6 +218,8 @@ async fn broker_delivers_a_granted_capability_and_wipes_on_release() {
                 token: Some(token.clone()),
                 items: items.clone(),
                 target: r.target.clone(),
+                include_passwords: false,
+                launch: false,
             },
         )
         .await
@@ -292,6 +292,8 @@ async fn a_capability_for_a_different_target_is_refused() {
                 token: Some(token),
                 items,
                 target: other,
+                include_passwords: false,
+                launch: false,
             },
         )
         .await
@@ -317,6 +319,8 @@ async fn a_tripped_kill_switch_denies_delivery() {
                 token: Some(token),
                 items,
                 target: r.target.clone(),
+                include_passwords: false,
+                launch: false,
             },
         )
         .await

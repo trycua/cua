@@ -12,6 +12,9 @@ publish = false
 # The effect-free contract shared with the sender (cua-teleport in the cua
 # SDK). The driver never depends on the sender.
 cua-teleport-bundle = { path = "../../../cua/crates/cua-teleport-bundle" }
+# Writing the destination browser's localStorage (a LevelDB) back, while it is
+# not running (`importers/chrome.rs`).
+cua-chromium-storage = { path = "../../../cua/crates/cua-chromium-storage" }
 hex.workspace = true
 ignore = "0.4"
 serde.workspace = true

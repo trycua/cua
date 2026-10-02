@@ -42,10 +42,18 @@ impl Broker for KeyvaultBroker {
         // will not match any requested site).
         let site_of = match &decision {
             cua_keyvault::broker::Decision::Granted { .. } => {
-                let metas = client.list_items().await.map_err(kv_error)?;
-                metas
+                // Names (domains) are only listed inside the browse window,
+                // which the daemon opens with Touch ID.
+                client.browse().await.map_err(kv_error)?;
+                let page = client.list_items().await.map_err(kv_error)?;
+                page.items
                     .into_iter()
-                    .filter_map(|m| m.site.map(|s| (m.id, s)))
+                    .filter_map(|m| {
+                        m.domain
+                            .as_deref()
+                            .map(cua_keyvault::record::site_of)
+                            .map(|s| (m.id, s))
+                    })
                     .collect()
             }
             _ => std::collections::HashMap::new(),
@@ -60,6 +68,8 @@ impl Broker for KeyvaultBroker {
                 token: Some(token.to_string()),
                 items: vec![item.to_string()],
                 target: target.to_string(),
+                include_passwords: false,
+                launch: false,
             })
             .await
             .map_err(kv_error)?;
@@ -85,7 +95,6 @@ fn to_kv_access_request(request: &AccessRequest) -> cua_keyvault::broker::Access
             .map(|s| cua_keyvault::broker::Selector::Site {
                 app: s.app.clone(),
                 site: s.site.clone(),
-                account: None,
             })
             .collect(),
         targets: request.targets.clone(),
@@ -286,12 +295,10 @@ mod tests {
                 cua_keyvault::broker::Selector::Site {
                     app: "chrome".into(),
                     site: "github.com".into(),
-                    account: None,
                 },
                 cua_keyvault::broker::Selector::Site {
                     app: "chrome".into(),
                     site: "news.ycombinator.com".into(),
-                    account: None,
                 },
             ]
         );

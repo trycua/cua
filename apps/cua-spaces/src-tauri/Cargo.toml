@@ -1,7 +1,7 @@
 [package]
 # Not `cua-spaces`: that is the SDK crate this app links (libs/cua).
 name = "cua-spaces-app"
-version = "0.2.0"
+version = "0.3.0"
 description = "Cua Spaces desktop app: notch portal, viewers and teleport over the cua SDK"
 authors = ["Cua"]
 edition = "2021"

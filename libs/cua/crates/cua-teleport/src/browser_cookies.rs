@@ -61,9 +61,103 @@ pub struct DecryptedCookie {
     pub is_httponly: bool,
     /// Chrome's `samesite` enum (-1 unspecified, 0 none, 1 lax, 2 strict).
     pub samesite: i64,
+    /// Every other column of Chrome's current schema, kept when the store
+    /// has it (`None`: an older Chrome without that column). They travel so
+    /// the destination's row is the source's row, not a reconstruction.
+    pub extra: CookieExtras,
     /// The registrable-domain site [`host_key_in_site`] grouped this row
     /// under, for a caller that filtered by site.
     pub site: String,
+}
+
+/// The cookie columns beyond the core ones, as Chrome's `cookies` table has
+/// them (names as in the schema). A partitioned (CHIPS) cookie is the one
+/// with a non-empty `top_frame_site_key`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CookieExtras {
+    /// `creation_utc`.
+    pub creation_utc: Option<i64>,
+    /// `last_access_utc`.
+    pub last_access_utc: Option<i64>,
+    /// `last_update_utc`.
+    pub last_update_utc: Option<i64>,
+    /// `priority` (0 low, 1 medium, 2 high).
+    pub priority: Option<i64>,
+    /// `source_scheme` (0 unset, 1 non-secure, 2 secure).
+    pub source_scheme: Option<i64>,
+    /// `source_port` (-1 unspecified).
+    pub source_port: Option<i64>,
+    /// `source_type` (0 unknown, 1 http, 2 script, 3 other).
+    pub source_type: Option<i64>,
+    /// `has_cross_site_ancestor`.
+    pub has_cross_site_ancestor: Option<i64>,
+    /// `top_frame_site_key`: the top-level site a partitioned cookie is
+    /// keyed to; empty for an unpartitioned cookie.
+    pub top_frame_site_key: Option<String>,
+}
+
+impl CookieExtras {
+    /// The partition (`top_frame_site_key`) when the cookie is partitioned.
+    pub fn partition(&self) -> Option<&str> {
+        self.top_frame_site_key.as_deref().filter(|k| !k.is_empty())
+    }
+}
+
+/// A cookie that cannot be read, and why, so a review can grey it out
+/// instead of the whole read failing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnavailableCookie {
+    /// The `host_key` column.
+    pub host_key: String,
+    /// The cookie name.
+    pub name: String,
+    /// The registrable-domain site.
+    pub site: String,
+    /// Why, in a sentence.
+    pub reason: String,
+}
+
+/// The reason shown for a Chromium app-bound (`v20`) value.
+pub const APP_BOUND_REASON: &str =
+    "Chrome protects it with app-bound encryption, which only Chrome itself can unlock on this PC";
+
+/// What one read produced: the cookies that decrypted and the ones that
+/// cannot (and why).
+#[derive(Debug, Default)]
+pub struct CookieRead {
+    /// Decrypted cookies.
+    pub cookies: Vec<DecryptedCookie>,
+    /// Cookies this build cannot read.
+    pub unavailable: Vec<UnavailableCookie>,
+}
+
+impl DecryptedCookie {
+    /// The bundle's cookie row for this cookie: every column the source had,
+    /// the partition kept as `partition_key`.
+    pub fn into_item(self) -> cua_teleport_bundle::cookies::CookieItem {
+        let e = &self.extra;
+        cua_teleport_bundle::cookies::CookieItem {
+            host_key: self.host_key.clone(),
+            name: self.name.clone(),
+            value: self.value.as_bytes().to_vec(),
+            path: self.path.clone(),
+            expires_utc: self.expires_utc,
+            is_secure: self.is_secure,
+            is_httponly: self.is_httponly,
+            samesite: self.samesite,
+            extra: cua_teleport_bundle::cookies::CookieExtra {
+                creation_utc: e.creation_utc,
+                last_access_utc: e.last_access_utc,
+                last_update_utc: e.last_update_utc,
+                priority: e.priority,
+                source_scheme: e.source_scheme,
+                source_port: e.source_port,
+                source_type: e.source_type,
+                has_cross_site_ancestor: e.has_cross_site_ancestor,
+                partition_key: e.partition().map(str::to_string),
+            },
+        }
+    }
 }
 
 impl std::fmt::Debug for DecryptedCookie {
@@ -184,6 +278,12 @@ impl ChromeCookies {
     /// decrypt fails the whole read: a partial import would silently drop a
     /// cookie the destination needs and still report success.
     pub fn read(&self, sites: &[String]) -> Result<Vec<DecryptedCookie>, TeleportError> {
+        self.read_report(sites).map(|r| r.cookies)
+    }
+
+    /// [`Self::read`], also reporting the cookies that cannot be read (a
+    /// Chromium app-bound `v20` value) instead of failing the whole read.
+    pub fn read_report(&self, sites: &[String]) -> Result<CookieRead, TeleportError> {
         let dir = self.profile_dir()?;
         // `Default/Cookies` or `Default/Network/Cookies`, whichever is newer.
         let db = cua_teleport_bundle::layout::chrome::cookies_store(&dir);
@@ -212,14 +312,23 @@ impl ChromeCookies {
             .map(|s| s.trim().to_ascii_lowercase())
             .collect();
         let mut keys = SafeStorageKeys::new(self.host.as_ref(), self.platform, service);
-        let mut out = Vec::new();
+        let mut out = CookieRead::default();
         for r in rows {
             let site = crate::passwords::site_for_host(&r.host_key);
             if !wanted.is_empty() && !wanted.iter().any(|w| host_key_in_site(&r.host_key, w)) {
                 continue;
             }
+            if is_app_bound(&r.encrypted_value) {
+                out.unavailable.push(UnavailableCookie {
+                    host_key: r.host_key,
+                    name: r.name,
+                    site,
+                    reason: APP_BOUND_REASON.into(),
+                });
+                continue;
+            }
             let value = decrypt_cookie_value(&mut keys, &r.host_key, &r.encrypted_value, &r.value)?;
-            out.push(DecryptedCookie {
+            out.cookies.push(DecryptedCookie {
                 host_key: r.host_key,
                 name: r.name,
                 value: Zeroizing::new(value),
@@ -228,10 +337,57 @@ impl ChromeCookies {
                 is_secure: r.is_secure,
                 is_httponly: r.is_httponly,
                 samesite: r.samesite,
+                extra: r.extra,
                 site,
             });
         }
         Ok(out)
+    }
+}
+
+/// Whether a stored value is Chromium's app-bound (`v20`) encryption: the key
+/// lives in Chrome's elevation service, so nobody else can unwrap it.
+pub fn is_app_bound(encrypted_value: &[u8]) -> bool {
+    encrypted_value.starts_with(b"v20")
+}
+
+/// One cookie as its store lists it, without its value: what a review
+/// shows (a domain's count and whether it keeps a sign-in) before anything
+/// is decrypted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CookieHostRow {
+    /// The `host_key` column.
+    pub host_key: String,
+    /// The cookie name.
+    pub name: String,
+    /// Chrome's expiry (`0`: a session cookie).
+    pub expires_utc: i64,
+    /// The value is app-bound (`v20`) and cannot be read by anyone but
+    /// Chrome.
+    pub app_bound: bool,
+}
+
+impl ChromeCookies {
+    /// Every cookie's host, name and expiry (plaintext columns): nothing is
+    /// decrypted, so the Keychain is never asked.
+    pub fn host_rows(&self) -> Result<Vec<CookieHostRow>, TeleportError> {
+        let dir = self.profile_dir()?;
+        let db = cua_teleport_bundle::layout::chrome::cookies_store(&dir);
+        if !db.is_file() {
+            return Err(TeleportError::Provider(format!(
+                "no cookies: {} has no Cookies database",
+                dir.display()
+            )));
+        }
+        Ok(read_rows(&db)?
+            .into_iter()
+            .map(|r| CookieHostRow {
+                host_key: r.host_key,
+                name: r.name,
+                expires_utc: r.expires_utc,
+                app_bound: is_app_bound(&r.encrypted_value),
+            })
+            .collect())
     }
 }
 
@@ -245,11 +401,13 @@ struct Row {
     is_secure: bool,
     is_httponly: bool,
     samesite: i64,
+    extra: CookieExtras,
 }
 
 /// Reads every row of `db`'s `cookies` table. Selects columns by name (not
-/// `SELECT *`), so it tolerates extra columns a newer Chrome added; it
-/// assumes `samesite` exists, which every Chrome since ~2020 (M80) has had.
+/// `SELECT *`): the core ones must exist (`samesite` has since Chrome M80),
+/// and every other column of Chrome's current schema is read when this
+/// Chrome's table has it, so an older Chrome still reads.
 fn read_rows(db: &Path) -> Result<Vec<Row>, TeleportError> {
     // Chrome holds `Cookies` open; read a private copy so a running browser's
     // lock never blocks the import and the original is untouched.
@@ -259,11 +417,59 @@ fn read_rows(db: &Path) -> Result<Vec<Row>, TeleportError> {
             tmp.path(),
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
         )?;
-        let mut stmt = conn.prepare(
-            "SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, \
-             is_httponly, samesite FROM cookies",
-        )?;
+        let have: std::collections::HashSet<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(cookies)")?;
+            let names = stmt
+                .query_map([], |r| r.get::<_, String>(1))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            names.into_iter().map(|n| n.to_ascii_lowercase()).collect()
+        };
+        // Optional columns, in the order the row reads them after the core 9.
+        const OPTIONAL: [&str; 9] = [
+            "creation_utc",
+            "last_access_utc",
+            "last_update_utc",
+            "priority",
+            "source_scheme",
+            "source_port",
+            "source_type",
+            "has_cross_site_ancestor",
+            "top_frame_site_key",
+        ];
+        let optional: Vec<&str> = OPTIONAL
+            .iter()
+            .copied()
+            .filter(|c| have.contains(*c))
+            .collect();
+        let mut cols = String::from(
+            "host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite",
+        );
+        for c in &optional {
+            cols.push_str(", ");
+            cols.push_str(c);
+        }
+        let mut stmt = conn.prepare(&format!("SELECT {cols} FROM cookies"))?;
         let rows = stmt.query_map([], |r| {
+            let mut extra = CookieExtras::default();
+            for (i, c) in optional.iter().enumerate() {
+                let idx = 9 + i;
+                match *c {
+                    "top_frame_site_key" => extra.top_frame_site_key = r.get(idx)?,
+                    other => {
+                        let v: Option<i64> = r.get(idx)?;
+                        match other {
+                            "creation_utc" => extra.creation_utc = v,
+                            "last_access_utc" => extra.last_access_utc = v,
+                            "last_update_utc" => extra.last_update_utc = v,
+                            "priority" => extra.priority = v,
+                            "source_scheme" => extra.source_scheme = v,
+                            "source_port" => extra.source_port = v,
+                            "source_type" => extra.source_type = v,
+                            _ => extra.has_cross_site_ancestor = v,
+                        }
+                    }
+                }
+            }
             Ok(Row {
                 host_key: r.get(0)?,
                 name: r.get(1)?,
@@ -274,6 +480,7 @@ fn read_rows(db: &Path) -> Result<Vec<Row>, TeleportError> {
                 is_secure: r.get::<_, i64>(6)? != 0,
                 is_httponly: r.get::<_, i64>(7)? != 0,
                 samesite: r.get(8)?,
+                extra,
             })
         })?;
         rows.collect()
@@ -363,6 +570,75 @@ pub fn write_network_cookies_db_for_tests(
         &profile_dir.join("Network").join("Cookies"),
         rows,
     )
+}
+
+/// One row of Chrome's current (meta version 24) `cookies` schema, every
+/// column, for [`write_modern_cookies_db_for_tests`].
+pub struct ModernTestRow<'a> {
+    pub core: TestCookieRow<'a>,
+    pub extra: CookieExtras,
+}
+
+/// Writes `Network/Cookies` in Chrome's current schema with every column
+/// (tests and e2e fixtures), so a read proves each attribute travels.
+pub fn write_modern_cookies_db_for_tests(
+    profile_dir: &Path,
+    rows: &[ModernTestRow<'_>],
+) -> Result<(), TeleportError> {
+    let db = profile_dir.join("Network").join("Cookies");
+    std::fs::create_dir_all(db.parent().unwrap_or(profile_dir))
+        .map_err(|e| TeleportError::Provider(format!("profile dir: {e}")))?;
+    let run = || -> rusqlite::Result<()> {
+        let conn = rusqlite::Connection::open(&db)?;
+        conn.execute_batch(
+            "CREATE TABLE meta (key LONGVARCHAR NOT NULL UNIQUE PRIMARY KEY, value LONGVARCHAR);
+             INSERT INTO meta VALUES ('version', '24'), ('last_compatible_version', '24');
+             CREATE TABLE cookies (
+                creation_utc INTEGER NOT NULL, host_key TEXT NOT NULL,
+                top_frame_site_key TEXT NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL,
+                encrypted_value BLOB NOT NULL, path TEXT NOT NULL, expires_utc INTEGER NOT NULL,
+                is_secure INTEGER NOT NULL, is_httponly INTEGER NOT NULL,
+                last_access_utc INTEGER NOT NULL, has_expires INTEGER NOT NULL,
+                is_persistent INTEGER NOT NULL, priority INTEGER NOT NULL,
+                samesite INTEGER NOT NULL, source_scheme INTEGER NOT NULL,
+                source_port INTEGER NOT NULL, last_update_utc INTEGER NOT NULL,
+                source_type INTEGER NOT NULL, has_cross_site_ancestor INTEGER NOT NULL,
+                UNIQUE (host_key, top_frame_site_key, has_cross_site_ancestor, name, path,
+                        source_scheme, source_port));",
+        )?;
+        for r in rows {
+            let e = &r.extra;
+            conn.execute(
+                "INSERT INTO cookies (creation_utc, host_key, top_frame_site_key, name, value, \
+                 encrypted_value, path, expires_utc, is_secure, is_httponly, last_access_utc, \
+                 has_expires, is_persistent, priority, samesite, source_scheme, source_port, \
+                 last_update_utc, source_type, has_cross_site_ancestor) VALUES (?1, ?2, ?3, ?4, \
+                 '', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                rusqlite::params![
+                    e.creation_utc.unwrap_or(1),
+                    r.core.host_key,
+                    e.top_frame_site_key.clone().unwrap_or_default(),
+                    r.core.name,
+                    r.core.encrypted_value,
+                    r.core.path,
+                    r.core.expires_utc,
+                    r.core.is_secure as i64,
+                    r.core.is_httponly as i64,
+                    e.last_access_utc.unwrap_or(0),
+                    (r.core.expires_utc != 0) as i64,
+                    e.priority.unwrap_or(1),
+                    r.core.samesite,
+                    e.source_scheme.unwrap_or(0),
+                    e.source_port.unwrap_or(-1),
+                    e.last_update_utc.unwrap_or(0),
+                    e.source_type.unwrap_or(0),
+                    e.has_cross_site_ancestor.unwrap_or(0),
+                ],
+            )?;
+        }
+        Ok(())
+    };
+    run().map_err(|e| TeleportError::Provider(format!("writing the fixture Cookies: {e}")))
 }
 
 fn write_cookies_db_at(
@@ -517,6 +793,97 @@ mod tests {
             .read(&[])
     }
 
+    fn modern_row<'a>(
+        host: &'a str,
+        name: &'a str,
+        encrypted: Vec<u8>,
+        extra: CookieExtras,
+    ) -> ModernTestRow<'a> {
+        ModernTestRow {
+            core: TestCookieRow {
+                host_key: host,
+                name,
+                encrypted_value: encrypted,
+                path: "/",
+                expires_utc: 13_400_000_000_000_000,
+                is_secure: true,
+                is_httponly: true,
+                samesite: 1,
+            },
+            extra,
+        }
+    }
+
+    /// Every column of Chrome's current schema is read, a partitioned cookie
+    /// keeps its partition, and a Windows app-bound (`v20`) value is reported
+    /// per cookie instead of failing the whole read.
+    #[test]
+    fn every_column_is_read_and_app_bound_values_are_reported_not_fatal() {
+        let dir = tempfile::tempdir().unwrap();
+        let ok = v10_row(chromium_crypto::LINUX_V10_PASSWORD, 1, "sess-value");
+        let full = CookieExtras {
+            creation_utc: Some(13_300_000_000_000_001),
+            last_access_utc: Some(13_300_000_000_000_002),
+            last_update_utc: Some(13_300_000_000_000_003),
+            priority: Some(2),
+            source_scheme: Some(2),
+            source_port: Some(443),
+            source_type: Some(1),
+            has_cross_site_ancestor: Some(1),
+            top_frame_site_key: Some("https://top.example".into()),
+        };
+        let mut v20 = b"v20".to_vec();
+        v20.extend_from_slice(&[7u8; 40]);
+        write_modern_cookies_db_for_tests(
+            dir.path(),
+            &[
+                modern_row(".example.com", "sid", ok.clone(), full.clone()),
+                modern_row(".example.com", "sid", ok, CookieExtras::default()),
+                modern_row(".bank.test", "app_bound", v20, CookieExtras::default()),
+            ],
+        )
+        .unwrap();
+        let read = ChromeCookies::new(Arc::new(FakeHost::new()))
+            .with_platform(Platform::Linux)
+            .with_profile_dir(dir.path())
+            .read_report(&[])
+            .unwrap();
+        assert_eq!(read.cookies.len(), 2);
+        let partitioned = read
+            .cookies
+            .iter()
+            .find(|c| c.extra.partition().is_some())
+            .unwrap();
+        assert_eq!(partitioned.extra, full);
+        assert_eq!(partitioned.value.as_str(), "sess-value");
+        let plain = read
+            .cookies
+            .iter()
+            .find(|c| c.extra.partition().is_none())
+            .unwrap();
+        assert_eq!(plain.extra.priority, Some(1));
+        assert_eq!(plain.extra.source_port, Some(-1));
+        // The v20 value is named, with why, and nothing else fails.
+        assert_eq!(read.unavailable.len(), 1);
+        assert_eq!(read.unavailable[0].host_key, ".bank.test");
+        assert_eq!(read.unavailable[0].site, "bank.test");
+        assert!(read.unavailable[0].reason.contains("app-bound"));
+        // The bundle row keeps the partition and every attribute.
+        let item = partitioned.clone().into_item();
+        assert_eq!(
+            item.extra.partition_key.as_deref(),
+            Some("https://top.example")
+        );
+        assert_eq!(item.extra.has_cross_site_ancestor, Some(1));
+        // The plaintext-column listing flags it too, so a review can grey it.
+        let rows = ChromeCookies::new(Arc::new(FakeHost::new()))
+            .with_platform(Platform::Linux)
+            .with_profile_dir(dir.path())
+            .host_rows()
+            .unwrap();
+        assert_eq!(rows.iter().filter(|r| r.app_bound).count(), 1);
+    }
+
     /// Modern Chrome (96+): only `Network/Cookies` exists.
     #[test]
     fn reads_a_modern_network_cookies_only_profile() {
@@ -630,6 +997,7 @@ mod tests {
         assert_eq!(cookies_store(p), p.join("Network/Cookies"));
     }
 
+    // Reads the macOS login Keychain through `security`: only meaningful there.
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_cookies_use_the_named_browsers_safe_storage_item() {

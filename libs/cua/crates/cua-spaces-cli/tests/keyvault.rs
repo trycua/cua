@@ -19,7 +19,8 @@ use common::{Home, Out};
 use cua_keyvault::broker::{
     Backend, BrokerConfig, Captured, DeliveryOutcome, FakePresence, ImportSpec, Inventory,
 };
-use cua_keyvault::model::{ItemKind, ItemMeta, ItemPayload, ItemPolicy, ItemSummary, PayloadEntry};
+use cua_keyvault::model::PayloadEntry;
+use cua_keyvault::record::{self, CookieRecord};
 use cua_keyvault::{Broker, TrustPolicy};
 use tokio::io::AsyncWriteExt;
 
@@ -37,7 +38,8 @@ impl Backend for NoBackend {
         &self,
         _: &str,
         _: &str,
-        _: Vec<ItemPayload>,
+        _: &str,
+        _: Vec<PayloadEntry>,
         _: u64,
     ) -> cua_keyvault::Result<DeliveryOutcome> {
         Err(cua_keyvault::Error::Unsupported("test".into()))
@@ -55,43 +57,32 @@ struct FakeImportBackend {
 }
 
 fn fake_captured(app: &str, site: Option<&str>) -> Captured {
-    let label = match site {
-        Some(s) => format!("{s} ({app})"),
-        None => format!("{app} session"),
-    };
-    Captured {
-        meta: ItemMeta {
-            id: String::new(),
-            kind: if site.is_some() {
-                ItemKind::BrowserSite
-            } else {
-                ItemKind::AppSession
-            },
-            label,
-            provider_id: app.into(),
-            app_display: app.into(),
-            site: site.map(str::to_string),
-            account: None,
-            source: "Default".into(),
-            summary: ItemSummary::default(),
-            warnings: vec![],
-            identity_provider: false,
-            policy: ItemPolicy::default(),
-            created_ms: 0,
-            updated_ms: 0,
-            rev: 0,
-            record_digest: String::new(),
-        },
-        payload: ItemPayload {
-            provider_id: app.into(),
-            scope: "full".into(),
-            entries: vec![PayloadEntry {
-                rel_path: format!("session/{}", site.unwrap_or("app")),
-                mode: 0o600,
-                data: "RklYVFVSRS1TRUNSRVQ=".into(),
-            }],
-        },
+    let n = match site {
+        // A site is one cookie; the whole app is one file.
+        Some(s) => record::cookie_record(&CookieRecord {
+            creation_utc: None,
+            expires_utc: 0,
+            host_key: format!(".{s}"),
+            http_only: true,
+            last_update_utc: None,
+            name: "session".into(),
+            partition_key: None,
+            last_access_utc: None,
+            source_type: None,
+            has_cross_site_ancestor: None,
+            path: "/".into(),
+            priority: None,
+            same_site: 1,
+            secure: true,
+            source_port: None,
+            source_scheme: None,
+            value: b"FIXTURE-SECRET".to_vec(),
+        }),
+        None => record::file_record("session/app", 0o600, b"FIXTURE-SECRET"),
     }
+    .unwrap();
+    let (meta, payload) = n.into_item(app, app, "Default", "full");
+    Captured { meta, payload }
 }
 
 #[async_trait::async_trait]
@@ -115,7 +106,8 @@ impl Backend for FakeImportBackend {
         &self,
         _: &str,
         _: &str,
-        _: Vec<ItemPayload>,
+        _: &str,
+        _: Vec<PayloadEntry>,
         _: u64,
     ) -> cua_keyvault::Result<DeliveryOutcome> {
         Err(cua_keyvault::Error::Unsupported("test".into()))
@@ -363,9 +355,8 @@ async fn import_session_whole_app_or_named_sites() {
         .run(&["keyvault", "import-session", "--app", "chrome", "--json"])
         .await;
     let v = o.ok().json();
-    let imported = v["imported"].as_array().unwrap();
-    assert_eq!(imported.len(), 1, "{v}");
-    assert_eq!(imported[0]["site"], serde_json::Value::Null);
+    assert_eq!(v["imported"]["saved"], 1, "{v}");
+    assert_eq!(v["imported"]["created"], 1, "{v}");
     {
         let specs = backend.specs.lock().unwrap();
         let last = specs.last().unwrap();
@@ -388,9 +379,7 @@ async fn import_session_whole_app_or_named_sites() {
         ])
         .await;
     let v = o.ok().json();
-    let imported = v["imported"].as_array().unwrap();
-    assert_eq!(imported.len(), 1, "{v}");
-    assert_eq!(imported[0]["site"], "github.com");
+    assert_eq!(v["imported"]["saved"], 1, "{v}");
     {
         let specs = backend.specs.lock().unwrap();
         let last = specs.last().unwrap();
@@ -408,5 +397,6 @@ async fn import_session_whole_app_or_named_sites() {
         .await;
     let o = o.ok();
     assert!(o.stdout.contains("Sealed in the Keyvault"), "{}", o.stdout);
+    assert!(o.stdout.contains("Saved 1 item: 1 new"), "{}", o.stdout);
     assert!(!o.stdout.contains("teleported") && !o.stdout.contains("delivered to"));
 }

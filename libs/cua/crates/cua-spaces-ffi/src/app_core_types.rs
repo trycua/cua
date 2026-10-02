@@ -2134,6 +2134,112 @@ pub struct AppPickerGridPrimary {
     pub enabled: bool,
 }
 
+/// Where the review sends from.
+pub type AppSendSource = core::teleport::review::SendSource;
+#[uniffi::remote(Enum)]
+pub enum AppSendSource {
+    /// Read the live app now (a browser's cookies are decrypted, so macOS asks
+    /// for Keychain access).
+    Live,
+    /// Send the items saved in the Keyvault for this app. Nothing is read from
+    /// the host.
+    Vault,
+}
+
+/// What the user picked last time for one app and Space.
+pub type AppRememberedChoice = core::teleport::review::RememberedChoice;
+#[uniffi::remote(Record)]
+pub struct AppRememberedChoice {
+    /// `<app>|<space>`.
+    pub key: String,
+    /// The sites (registrable domains) that were sent.
+    pub domains: Vec<String>,
+}
+
+/// One site of a browser, with its counts.
+pub type AppReviewDomain = core::teleport::review::ReviewDomain;
+#[uniffi::remote(Record)]
+pub struct AppReviewDomain {
+    /// The site (`github.com`).
+    pub domain: String,
+    /// "12 cookies, 2 storage values".
+    pub counts: String,
+    /// Items the site holds.
+    pub count: u32,
+    /// It looks like it keeps a sign-in.
+    pub signin: bool,
+    /// An identity provider: its session unlocks other apps.
+    pub identity_provider: bool,
+    /// Chosen to send.
+    pub selected: bool,
+    /// Can be chosen: it holds something that can be sent. A site whose
+    /// cookies are all unreadable is greyed out.
+    pub selectable: bool,
+    /// Cookies that cannot be read, shown greyed with `unavailable_note`.
+    pub unavailable: u32,
+    /// "3 cookies cannot be sent: Chrome protects them with ...", or empty.
+    pub unavailable_note: String,
+}
+
+/// A non-cookie consent line the user can turn off.
+pub type AppReviewToggle = core::teleport::review::ReviewToggle;
+#[uniffi::remote(Record)]
+pub struct AppReviewToggle {
+    /// The consent item's key.
+    pub key: String,
+    /// Label.
+    pub label: String,
+    /// Detail.
+    pub detail: String,
+    /// Bytes that leave.
+    pub bytes: u64,
+    /// A secret.
+    pub sensitive: bool,
+    /// Sent (not turned off).
+    pub selected: bool,
+}
+
+/// The saved Keyvault items of the app being teleported.
+pub type AppVaultSource = core::teleport::review::VaultSource;
+#[uniffi::remote(Record)]
+pub struct AppVaultSource {
+    /// The app has saved items that can be sent (passwords never are).
+    pub available: bool,
+    /// How many.
+    pub items: u32,
+    /// "saved 2 days ago".
+    pub saved: String,
+    /// The items chosen to send (ids).
+    pub selected: Vec<String>,
+    /// The app's saved passwords (ids), sent only when ticked.
+    pub password_ids: Vec<String>,
+}
+
+/// The review's choices.
+pub type AppReviewChoice = core::teleport::review::ReviewChoice;
+#[uniffi::remote(Record)]
+pub struct AppReviewChoice {
+    /// Where to send from.
+    pub source: AppSendSource,
+    /// The browser's sites with counts (none until read, or for an app that
+    /// is not a browser).
+    pub domains: Vec<KvDomainCount>,
+    /// The sites chosen.
+    pub selected_domains: Vec<String>,
+    /// The sites list's search text.
+    pub query: String,
+    /// Consent items (keys) turned off.
+    pub excluded: Vec<String>,
+    /// The saved items.
+    pub vault: AppVaultSource,
+    /// The sites were asked for (a failure counts: the review then sends
+    /// what the plan lists).
+    pub loaded: bool,
+    /// The saved passwords are ticked to send (off unless the user ticks
+    /// them; never remembered).
+    pub include_passwords: bool,
+}
+
 /// What teleport can do with an app.
 pub type AppTeleportCapability = core::teleport::flow::Capability;
 #[uniffi::remote(Enum)]
@@ -2364,6 +2470,15 @@ pub struct AppTeleportConsent {
     pub save_to_keyvault: bool,
     /// [`Plan::relay_unsealed`]'s warning acknowledged (S1).
     pub acknowledge_relay_plaintext: bool,
+    /// The sites whose cookies to send (the review's per-site choice);
+    /// `None` when the review did not list sites.
+    pub cookie_domains: Option<Vec<String>>,
+    /// Consent items (keys) the user turned off.
+    pub exclude: Vec<String>,
+    /// Send these saved Keyvault items instead of reading the live app.
+    pub from_vault: Option<Vec<String>>,
+    /// Also send the saved passwords (ticked in the review).
+    pub include_passwords: bool,
 }
 
 /// The "needs the Cua app" prompt for a Keyvault refusal.
@@ -2438,6 +2553,8 @@ pub struct AppPickerState {
     pub save_to_keyvault: bool,
     /// [`Plan::relay_unsealed`]'s warning acknowledged (S1).
     pub acknowledged_relay_plaintext: bool,
+    /// What the review sends: which sites, which items, from where.
+    pub choice: AppReviewChoice,
     /// Run events (last [`MAX_EVENTS`]).
     pub events: Vec<AppTeleportRunEvent>,
     /// The run's report.
@@ -2534,6 +2651,65 @@ pub enum AppPickerEvent {
         /// Checked.
         value: bool,
     },
+    /// The browser's sites with counts arrived (and what was picked last time
+    /// for this app and Space, if anything).
+    DomainsLoaded {
+        /// The inventory.
+        inventory: KvInventory,
+        /// The sites sent last time.
+        remembered: Option<Vec<String>>,
+    },
+    /// The inventory could not be read (the review then sends what the plan
+    /// lists, as before).
+    DomainsFailed,
+    /// Pick or drop one site.
+    ToggleDomain {
+        /// The site.
+        domain: String,
+    },
+    /// Pick or drop every site the search shows.
+    SelectShownDomains {
+        /// Pick (true) or drop.
+        value: bool,
+    },
+    /// The sites list's search text.
+    DomainQuery {
+        /// Text.
+        text: String,
+    },
+    /// Turn a consent line on or off.
+    ToggleItem {
+        /// The consent item's key.
+        key: String,
+    },
+    /// Where to send from.
+    SendFrom {
+        /// The source.
+        source: AppSendSource,
+    },
+    /// The app's saved Keyvault items (what the Keyvault holds for it).
+    VaultItems {
+        /// How many can be sent.
+        count: u32,
+        /// When the newest was saved, Unix ms.
+        newest_ms: i64,
+        /// Now, Unix ms.
+        now_ms: i64,
+        /// The ones chosen to send (ids).
+        selected: Vec<String>,
+        /// The app's saved passwords (ids): sent only when ticked.
+        password_ids: Vec<String>,
+    },
+    /// Tick or untick "Also send saved passwords".
+    TogglePasswords {
+        /// Ticked.
+        value: bool,
+    },
+    /// The chosen saved items changed.
+    VaultSelection {
+        /// The ids.
+        selected: Vec<String>,
+    },
     /// Confirm the review.
     Confirm,
     /// A run event.
@@ -2591,6 +2767,41 @@ pub struct AppReviewView {
     pub leaves_text: Option<String>,
     /// Caveats.
     pub warnings: Vec<String>,
+    /// Lines the user can turn off (files, folders, state, secrets), each
+    /// with whether it is sent. The cookie store is the site list below.
+    pub toggles: Vec<AppReviewToggle>,
+    /// The plan sends a browser's cookies, so the sites can be chosen.
+    pub offers_domains: bool,
+    /// The sites have not been read yet (the shell asks the Keyvault for
+    /// them, which may ask for Touch ID).
+    pub needs_domains: bool,
+    /// The sites with counts, filtered by the search.
+    pub domains: Vec<AppReviewDomain>,
+    /// "3 of 12 sites".
+    pub domain_summary: String,
+    /// The sites search text.
+    pub domain_query: String,
+    /// The sites chosen (what is remembered for next time).
+    pub selected_domains: Vec<String>,
+    /// Where it sends from.
+    pub source: AppSendSource,
+    /// The app has saved Keyvault items to send instead of reading the live
+    /// app.
+    pub offers_vault: bool,
+    /// The saved items.
+    pub vault: AppVaultSource,
+    /// "Send from the Keyvault (212 items, saved 2 days ago)".
+    pub vault_label: String,
+    /// "Read Chrome now (macOS asks for Keychain access)".
+    pub live_label: String,
+    /// "Also send saved passwords" shows (there are some to send).
+    pub offers_passwords: bool,
+    /// Ticked.
+    pub include_passwords: bool,
+    /// "Also send 14 saved passwords".
+    pub passwords_label: String,
+    /// What the Keychain will do for this source, in a line.
+    pub source_note: String,
 }
 
 /// The image list's local engine.
@@ -3483,38 +3694,6 @@ pub struct AppWizardView {
     pub labels: AppWizardLabels,
 }
 
-/// A cookie's metadata (never its value).
-pub type KvCookieInfo = core::keyvault::wire::KvCookieInfo;
-#[uniffi::remote(Record)]
-pub struct KvCookieInfo {
-    /// Name.
-    pub name: String,
-    /// Domain.
-    pub domain: String,
-    /// Session cookie.
-    pub session: bool,
-    /// Expiry.
-    pub expires_ms: Option<i64>,
-}
-
-/// What an item holds, as counts and names.
-pub type KvItemSummary = core::keyvault::wire::KvItemSummary;
-#[uniffi::remote(Record)]
-pub struct KvItemSummary {
-    /// Cookies.
-    pub cookies: Vec<KvCookieInfo>,
-    /// Storage origins.
-    pub storage_origins: Vec<String>,
-    /// Saved passwords.
-    pub passwords: u32,
-    /// Files.
-    pub files: Vec<String>,
-    /// Keychain services.
-    pub keychain_services: Vec<String>,
-    /// Bytes.
-    pub bytes: u64,
-}
-
 /// An item's policy.
 pub type KvItemPolicy = core::keyvault::wire::KvItemPolicy;
 #[uniffi::remote(Record)]
@@ -3527,42 +3706,99 @@ pub struct KvItemPolicy {
     pub unattended: bool,
 }
 
-/// One saved item (redacted).
+/// One secret item of the vault: a cookie, a localStorage value, a password
+/// or a file, in the app it came from (`cua_keyvault::ItemMeta`). Domains and
+/// keys are present only inside the browse window; a value never is.
 pub type KvItem = core::keyvault::wire::KvItem;
 #[uniffi::remote(Record)]
 pub struct KvItem {
     /// Id.
     pub id: String,
-    /// `browser_site`, `site_passwords`, `app_session`.
+    /// `cookie`, `local_storage`, `password` or `file`.
     pub kind: String,
-    /// Label.
-    pub label: String,
-    /// Provider.
+    /// The source app (`chrome`, `slack`).
     pub provider_id: String,
-    /// App.
+    /// The app's name.
     pub app_display: String,
-    /// Site.
-    pub site: Option<String>,
-    /// Account.
-    pub account: Option<String>,
+    /// A cookie's host, a storage value's or password's origin; none for a
+    /// file or when the names are hidden.
+    pub domain: Option<String>,
+    /// A cookie name, storage key, username or file path; empty when the
+    /// names are hidden.
+    pub key: String,
+    /// A cookie's path.
+    pub path: Option<String>,
     /// Profile.
     pub source: String,
-    /// Summary.
-    pub summary: KvItemSummary,
-    /// Warnings.
-    pub warnings: Vec<String>,
-    /// Identity providers always ask.
+    /// A cookie without an expiry.
+    pub session: bool,
+    /// A cookie's expiry, Unix ms.
+    pub expires_ms: Option<i64>,
+    /// Bytes.
+    pub bytes: u64,
+    /// The blob a big file's bytes live in.
+    pub blob: Option<String>,
+    /// Identity providers always ask: they cannot be unlocked.
     pub identity_provider: bool,
-    /// Policy.
+    /// Policy: `unattended` is the unlock.
     pub policy: KvItemPolicy,
     /// Created.
     pub created_ms: u64,
-    /// Updated.
+    /// Last saved.
     pub updated_ms: u64,
     /// Revision.
     pub rev: u64,
     /// Digest.
     pub record_digest: String,
+}
+
+/// A site's icon, read from the source browser's own local store when its
+/// items were saved. Not secret. `png` is base64.
+pub type KvFavicon = core::keyvault::wire::KvFavicon;
+#[uniffi::remote(Record)]
+pub struct KvFavicon {
+    /// The site (registrable domain).
+    pub site: String,
+    /// PNG, base64.
+    pub png: String,
+}
+
+/// One domain a browser holds secrets for, with counts (never values).
+pub type KvDomainCount = core::keyvault::wire::KvDomainCount;
+#[uniffi::remote(Record)]
+pub struct KvDomainCount {
+    /// Registrable domain.
+    pub domain: String,
+    /// Cookies.
+    pub cookies: u32,
+    /// Cookies without an expiry.
+    pub session_cookies: u32,
+    /// localStorage values.
+    pub local_storage: u32,
+    /// Saved passwords.
+    pub passwords: u32,
+    /// Looks like it keeps a sign-in.
+    pub signin: bool,
+    /// An identity provider.
+    pub identity_provider: bool,
+    /// Cookies that cannot be read (Chrome's app-bound encryption).
+    pub unavailable: u32,
+    /// Why they cannot be read.
+    pub unavailable_reason: String,
+}
+
+/// What a host app offers, per domain (`cua_keyvault::broker::Inventory`).
+pub type KvInventory = core::keyvault::wire::KvInventory;
+#[uniffi::remote(Record)]
+pub struct KvInventory {
+    /// Provider id.
+    pub provider_id: String,
+    /// App name.
+    pub app_display: String,
+    /// Domains with counts.
+    pub domains: Vec<KvDomainCount>,
+    /// Notes.
+    pub notes: Vec<String>,
 }
 
 /// How a caller is signed (`cua_keyvault::caller::Signing`: tagged by
@@ -3629,8 +3865,6 @@ pub enum KvSelector {
         app: String,
         /// Site.
         site: String,
-        /// Account.
-        account: Option<String>,
     },
     /// A whole app.
     App {
@@ -3831,6 +4065,13 @@ pub struct KvStatus {
     /// Protector kinds that can unlock this vault now (`macos-keychain`,
     /// `windows-credential`, `passphrase`, `recovery`).
     pub unlock_protectors: Vec<String>,
+    /// The browse window is open until this time, Unix ms: item names are
+    /// visible until then.
+    pub browse_until_ms: Option<u64>,
+    /// "Never ask again" on the unlock prompt is on.
+    pub skip_unlock_prompt: Option<bool>,
+    /// An earlier preview's vault was found and set aside.
+    pub reset_notice: Option<String>,
 }
 
 /// The audit chain check.
@@ -3862,8 +4103,12 @@ pub struct KeyvaultOverview {
     pub status: Option<KvStatus>,
     /// The daemon was checked against Cua's signature.
     pub server_verified: bool,
-    /// Items.
+    /// The vault's secret items, in order (app, domain, key).
     pub items: Vec<KvItem>,
+    /// Domains and keys are present in `items` (the browse window is open).
+    pub names_visible: bool,
+    /// Items in the vault.
+    pub items_total: u32,
     /// Pending requests.
     pub pending: Vec<KvPending>,
     /// Grants.
@@ -3896,13 +4141,36 @@ pub enum KvCommand {
         /// On.
         disabled: bool,
     },
-    /// Per-item unattended (turning on asks for Touch ID).
+    /// Per-item unattended (turning on asks for Touch ID): the same as
+    /// [`KvCommand::SetLocked`] with `locked` the other way round.
     SetUnattended {
         /// Items.
         item_ids: Vec<String>,
         /// On.
         unattended: bool,
     },
+    /// Lock or unlock items together. Unlocking allows unattended access and
+    /// asks for Touch ID once for the whole batch; locking does not.
+    SetLocked {
+        /// Items.
+        item_ids: Vec<String>,
+        /// Lock (true) or unlock.
+        locked: bool,
+    },
+    /// Delete items, wiping every live copy of them in Spaces.
+    DeleteItems {
+        /// Items.
+        item_ids: Vec<String>,
+    },
+    /// "Never ask again" on the unlock prompt (Settings turns it back on).
+    SetSkipUnlockPrompt {
+        /// On.
+        on: bool,
+    },
+    /// Show item names for a few minutes (the daemon asks for Touch ID).
+    Browse,
+    /// Hide item names again.
+    EndBrowse,
     /// Revoke a grant (`*`: all).
     RevokeGrant {
         /// Id.
@@ -3961,48 +4229,6 @@ pub struct KvSigningBadge {
     pub tone: KvTone,
 }
 
-/// What a consent chip says.
-pub type KvConsentChipKind = core::keyvault::view::ConsentChipKind;
-#[uniffi::remote(Enum)]
-pub enum KvConsentChipKind {
-    /// A request waits.
-    Pending,
-    /// A copy is in a Space.
-    Delivered,
-    /// A live grant.
-    Granted,
-    /// An unattended rule.
-    Rule,
-    /// Nothing: asks every time.
-    Asks,
-}
-
-/// One consent state of an item.
-pub type KvConsentChip = core::keyvault::view::ConsentChip;
-#[uniffi::remote(Record)]
-pub struct KvConsentChip {
-    /// Kind.
-    pub kind: KvConsentChipKind,
-    /// Text.
-    pub text: String,
-}
-
-/// One account of a site.
-pub type KvItemRow = core::keyvault::view::ItemRow;
-#[uniffi::remote(Record)]
-pub struct KvItemRow {
-    /// The item.
-    pub item: KvItem,
-    /// "ada@example.com", "Whole app session", or the profile.
-    pub account: String,
-    /// Strongest first; `asks` when nothing else applies.
-    pub consent: Vec<KvConsentChip>,
-    /// The unattended switch can be changed (not an identity provider).
-    pub toggle_enabled: bool,
-    /// The switch's tooltip.
-    pub toggle_help: String,
-}
-
 /// Mixed on/off.
 pub type KvTri = core::keyvault::view::Tri;
 #[uniffi::remote(Enum)]
@@ -4013,24 +4239,6 @@ pub enum KvTri {
     Off,
     /// Some.
     Mixed,
-}
-
-/// A site (browsers) or app (whole-app sessions) with its accounts.
-pub type KvSiteGroup = core::keyvault::view::SiteGroup;
-#[uniffi::remote(Record)]
-pub struct KvSiteGroup {
-    /// Stable key.
-    pub key: String,
-    /// "github.com" or "Slack".
-    pub title: String,
-    /// "Chrome", "Slack".
-    pub app: String,
-    /// Accounts.
-    pub rows: Vec<KvItemRow>,
-    /// Unattended across rows.
-    pub unattended: KvTri,
-    /// Every row is an identity provider.
-    pub locked: bool,
 }
 
 /// A decision's tone.
@@ -4130,12 +4338,6 @@ pub struct KvLabels {
     pub confirm_note: String,
     /// "Protection".
     pub protection_title: String,
-    /// A site's accounts section.
-    pub accounts_title: String,
-    /// A site's app fact.
-    pub app_label: String,
-    /// A site's switch.
-    pub every_account: String,
 }
 
 /// The page chrome: availability, the kill switch, banners, protection.
@@ -4172,8 +4374,12 @@ pub struct KvPage {
     pub revoke_all: bool,
     /// Items exist.
     pub has_items: bool,
-    /// Search shows (more than six items).
+    /// Search shows (any item exists).
     pub search_visible: bool,
+    /// "Never ask again" on the unlock prompt is on (Settings turns it off).
+    pub skip_unlock_prompt: bool,
+    /// An earlier preview's vault was set aside: one line to show.
+    pub reset_notice: Option<String>,
     /// Pending requests (the sidebar badge).
     pub pending_count: u32,
     /// The switch's tooltip (it reads "on" while the Keyvault works).
@@ -4184,11 +4390,291 @@ pub struct KvPage {
     pub form: Option<KvCredentialForm>,
 }
 
+/// The type of a secret, as the list draws it.
+pub type KvKind = core::keyvault::vault::KvKind;
+#[uniffi::remote(Enum)]
+pub enum KvKind {
+    /// A cookie.
+    Cookie,
+    /// A localStorage value.
+    LocalStorage,
+    /// A saved password.
+    Password,
+    /// A file.
+    File,
+}
+
+/// The lock of a row or a group.
+pub type KvLock = core::keyvault::vault::KvLock;
+#[uniffi::remote(Enum)]
+pub enum KvLock {
+    /// Every item needs approval for each use.
+    Locked,
+    /// Every item allows unattended access.
+    Unlocked,
+    /// Some of each.
+    Mixed,
+}
+
+/// The list's own state.
+pub type KvVaultState = core::keyvault::vault::VaultState;
+#[uniffi::remote(Record)]
+pub struct KvVaultState {
+    /// The search text.
+    pub query: String,
+    /// Selected item ids.
+    pub selected: Vec<String>,
+    /// Open groups (their keys); the rest are closed.
+    pub expanded: Vec<String>,
+    /// Narrowed to one app (its provider id), as the sidebar picks it.
+    pub app: Option<String>,
+}
+
+/// An input to the list.
+pub type KvVaultAction = core::keyvault::vault::VaultAction;
+#[uniffi::remote(Enum)]
+pub enum KvVaultAction {
+    /// The search text changed.
+    Query {
+        /// Text.
+        text: String,
+    },
+    /// Select or deselect one item.
+    Toggle {
+        /// Item id.
+        id: String,
+    },
+    /// Select or deselect every shown item of an app, a site or the files
+    /// of an app (all of them when any is unselected, none when all are).
+    ToggleGroup {
+        /// Group key.
+        key: String,
+    },
+    /// Select every shown item.
+    SelectAll,
+    /// Deselect everything.
+    Clear,
+    /// Open or close a group.
+    ToggleOpen {
+        /// Group key.
+        key: String,
+    },
+}
+
+/// What the list shows for an item row.
+pub type KvVaultRow = core::keyvault::vault::VaultRow;
+#[uniffi::remote(Record)]
+pub struct KvVaultRow {
+    /// Item id.
+    pub id: String,
+    /// Type.
+    pub kind: KvKind,
+    /// "Cookie".
+    pub kind_label: String,
+    /// The type's SF Symbol.
+    pub symbol: String,
+    /// The key: a cookie name, storage key, username or file name.
+    pub title: String,
+    /// Grey line: the domain, or the file's folder.
+    pub subtitle: String,
+    /// Grey time: "2 min ago".
+    pub updated: String,
+    /// Locked (needs approval for every use).
+    pub locked: bool,
+    /// The lock icon: `lock.fill` or `lock.open`.
+    pub lock_symbol: String,
+    /// The lock's tooltip and accessibility label.
+    pub lock_help: String,
+    /// Identity provider: always asks, cannot be unlocked.
+    pub identity_provider: bool,
+    /// Selected.
+    pub selected: bool,
+}
+
+/// A site inside an app: its items.
+pub type KvVaultSite = core::keyvault::vault::VaultSite;
+#[uniffi::remote(Record)]
+pub struct KvVaultSite {
+    /// Group key.
+    pub key: String,
+    /// "github.com".
+    pub site: String,
+    /// Items (all of them, even while closed).
+    pub count: u32,
+    /// "12 cookies, 2 storage values".
+    pub counts: String,
+    /// Grey time of the newest save.
+    pub updated: String,
+    /// Selection of its items.
+    pub selected: KvTri,
+    /// Lock of its items.
+    pub lock: KvLock,
+    /// Items a click on the lock unlocks (locked, not identity providers).
+    pub unlock_ids: Vec<String>,
+    /// Items a click on the lock locks (unlocked).
+    pub lock_ids: Vec<String>,
+    /// Open.
+    pub open: bool,
+    /// Its rows (empty while closed, unless searching).
+    pub rows: Vec<KvVaultRow>,
+}
+
+/// The files of an app.
+pub type KvVaultFiles = core::keyvault::vault::VaultFiles;
+#[uniffi::remote(Record)]
+pub struct KvVaultFiles {
+    /// Group key.
+    pub key: String,
+    /// Files.
+    pub count: u32,
+    /// Selection of its items.
+    pub selected: KvTri,
+    /// Lock of its items.
+    pub lock: KvLock,
+    /// Items a click on the lock unlocks (locked, not identity providers).
+    pub unlock_ids: Vec<String>,
+    /// Items a click on the lock locks (unlocked).
+    pub lock_ids: Vec<String>,
+    /// Open.
+    pub open: bool,
+    /// Its rows (empty while closed, unless searching).
+    pub rows: Vec<KvVaultRow>,
+}
+
+/// An app and everything saved from it.
+pub type KvVaultApp = core::keyvault::vault::VaultApp;
+#[uniffi::remote(Record)]
+pub struct KvVaultApp {
+    /// Group key: the provider id (`chrome`).
+    pub key: String,
+    /// The provider id, for the app's icon.
+    pub provider_id: String,
+    /// "Google Chrome".
+    pub name: String,
+    /// Items.
+    pub count: u32,
+    /// "212 items, 14 unlocked".
+    pub summary: String,
+    /// Grey time of the newest save.
+    pub updated: String,
+    /// Selection of its items.
+    pub selected: KvTri,
+    /// Lock of its items.
+    pub lock: KvLock,
+    /// Items a click on the lock unlocks (locked, not identity providers).
+    pub unlock_ids: Vec<String>,
+    /// Items a click on the lock locks (unlocked).
+    pub lock_ids: Vec<String>,
+    /// Open.
+    pub open: bool,
+    /// Sites with their items, by name.
+    pub sites: Vec<KvVaultSite>,
+    /// Files, when it has any.
+    pub files: Option<KvVaultFiles>,
+}
+
+/// What the batch bar offers for the current selection.
+pub type KvVaultSelection = core::keyvault::vault::VaultSelection;
+#[uniffi::remote(Record)]
+pub struct KvVaultSelection {
+    /// Selected items.
+    pub count: u32,
+    /// Their ids, in list order.
+    pub ids: Vec<String>,
+    /// "3 selected".
+    pub title: String,
+    /// Some selected item is locked and may be unlocked.
+    pub can_unlock: bool,
+    /// Some selected item is unlocked.
+    pub can_lock: bool,
+    /// Selected items that always ask (identity providers).
+    pub always_ask: u32,
+    /// The ids to send when unlocking (locked, not identity providers).
+    pub unlock_ids: Vec<String>,
+    /// The ids to send when locking (unlocked).
+    pub lock_ids: Vec<String>,
+}
+
+/// The list as drawn.
+pub type KvVaultView = core::keyvault::vault::VaultView;
+#[uniffi::remote(Record)]
+pub struct KvVaultView {
+    /// Apps, by name.
+    pub apps: Vec<KvVaultApp>,
+    /// Items shown (after search).
+    pub shown: u32,
+    /// Items in the vault.
+    pub total: u32,
+    /// "No items yet." and friends.
+    pub empty_text: Option<String>,
+    /// Domains and keys are hidden until the user confirms with Touch ID.
+    pub names_hidden: bool,
+    /// What to say about it.
+    pub hidden_note: Option<String>,
+    /// The button that opens the names.
+    pub show_names_label: String,
+    /// The search field's prompt.
+    pub search_prompt: String,
+    /// The selection.
+    pub selection: KvVaultSelection,
+    /// Select all is offered.
+    pub can_select_all: bool,
+}
+
+/// The unlock prompt: what the user is agreeing to before the daemon asks
+/// for Touch ID.
+pub type KvUnlockPrompt = core::keyvault::vault::UnlockPrompt;
+#[uniffi::remote(Record)]
+pub struct KvUnlockPrompt {
+    /// "Allow unattended access?"
+    pub title: String,
+    /// What it allows.
+    pub message: String,
+    /// "3 items" (a batch), or the one item's name.
+    pub subject: String,
+    /// "Deny".
+    pub deny: String,
+    /// "Allow".
+    pub allow: String,
+    /// "Never ask again".
+    pub never_ask: String,
+}
+
+/// The delete confirmation.
+pub type KvDeleteConfirm = core::keyvault::vault::KvDeleteConfirm;
+#[uniffi::remote(Record)]
+pub struct KvDeleteConfirm {
+    /// "Delete 3 items?"
+    pub title: String,
+    /// What deleting does.
+    pub message: String,
+    /// "Delete".
+    pub confirm: String,
+    /// "Cancel".
+    pub cancel: String,
+}
+
+/// What the Keyvault holds for one app that a teleport can send (passwords
+/// never are): how many, when the newest was saved, and their ids.
+pub type KvVaultSource = core::keyvault::vault::KvVaultSource;
+#[uniffi::remote(Record)]
+pub struct KvVaultSource {
+    /// Items that can be sent.
+    pub count: u32,
+    /// When the newest was saved, Unix ms (0: none).
+    pub newest_ms: i64,
+    /// Their ids, in list order.
+    pub ids: Vec<String>,
+    /// The app's saved passwords (ids), never part of `ids`: they are sent
+    /// only when ticked in the review.
+    pub password_ids: Vec<String>,
+}
+
 /// A sidebar category.
 pub type KvCategory = core::keyvault::browse::KvCategory;
 #[uniffi::remote(Enum)]
 pub enum KvCategory {
-    /// Every site.
+    /// Every item, grouped by app.
     All,
     /// Requests waiting for approval.
     Waiting,
@@ -4214,17 +4700,17 @@ pub struct KvCategoryRow {
     pub badge: Option<u32>,
 }
 
-/// A site row.
-pub type KvSiteRow = core::keyvault::browse::SiteRow;
+/// An app row: everything saved from one app.
+pub type KvAppRow = core::keyvault::browse::AppRow;
 #[uniffi::remote(Record)]
-pub struct KvSiteRow {
-    /// Group key.
+pub struct KvAppRow {
+    /// The provider id (`chrome`): the key, and what the icon is looked up by.
     pub key: String,
-    /// "github.com" or "Slack".
+    /// "Google Chrome".
     pub title: String,
-    /// Accounts.
-    pub accounts: u32,
-    /// Something waits for this site.
+    /// Items.
+    pub items: u32,
+    /// Something waits for this app.
     pub waiting: bool,
 }
 
@@ -4232,10 +4718,10 @@ pub struct KvSiteRow {
 pub type KvSidebar = core::keyvault::browse::KvSidebar;
 #[uniffi::remote(Record)]
 pub struct KvSidebar {
-    /// All, Waiting, Access, Recent.
+    /// All Items, Waiting, Access, Recent.
     pub categories: Vec<KvCategoryRow>,
-    /// One row per site or app.
-    pub sites: Vec<KvSiteRow>,
+    /// One row per app, by name.
+    pub apps: Vec<KvAppRow>,
 }
 
 /// What the sidebar selected.
@@ -4247,9 +4733,9 @@ pub enum KvSelection {
         /// Which.
         category: KvCategory,
     },
-    /// A site.
-    Site {
-        /// Group key.
+    /// One app's items.
+    App {
+        /// Its provider id.
         key: String,
     },
 }
@@ -4264,38 +4750,22 @@ pub struct KvRecentRow {
     pub age: String,
 }
 
-/// The list pane for a selection.
+/// The pane for a selection other than the vault list.
 pub type KvListView = core::keyvault::browse::KvListView;
 #[uniffi::remote(Record)]
 pub struct KvListView {
     /// Title.
     pub title: String,
-    /// Sites (All, or the one site).
-    pub sites: Vec<KvSiteGroup>,
+    /// The vault list shows (All Items, or one app).
+    pub vault: bool,
     /// Waiting.
     pub pending: Vec<KvPendingRow>,
     /// Access.
     pub access: Vec<KvAccessRow>,
     /// Recent.
     pub recent: Vec<KvRecentRow>,
-    /// "No items yet." and friends.
+    /// "Nothing is waiting." and friends.
     pub empty_text: Option<String>,
-}
-
-/// The detail pane of one site: the site switch and each account.
-pub type KvSiteDetail = core::keyvault::browse::SiteDetail;
-#[uniffi::remote(Record)]
-pub struct KvSiteDetail {
-    /// The group.
-    pub group: KvSiteGroup,
-    /// The site switch shows (more than one account).
-    pub site_switch: bool,
-    /// The site switch's state.
-    pub site_state: KvTri,
-    /// The site switch can be flipped.
-    pub site_switch_enabled: bool,
-    /// Its tooltip.
-    pub site_switch_help: String,
 }
 
 /// The sheet's state: which rows are ticked.
@@ -4304,7 +4774,7 @@ pub type KvApprovalState = core::keyvault::approval::ApprovalState;
 pub struct KvApprovalState {
     /// The request.
     pub request_id: String,
-    /// Ticked row keys (item ids, or `import:<n>` for new items).
+    /// Ticked row keys (`<app>|<site>`, or `import:<n>` for new items).
     pub selected: Vec<String>,
 }
 
@@ -4323,16 +4793,23 @@ pub enum KvApprovalAction {
     Clear,
 }
 
-/// One row of the sheet.
+/// One row of the sheet: a site (or an app's files) with how many items
+/// it carries, or an app the approval would save.
 pub type KvApprovalRow = core::keyvault::approval::ApprovalRow;
 #[uniffi::remote(Record)]
 pub struct KvApprovalRow {
-    /// Row key.
+    /// Row key: `<app>|<site>`, `<app>|files`, or `import:<n>`.
     pub key: String,
-    /// Site or app.
+    /// The site, or the app for files and imports.
     pub title: String,
-    /// Account, or "Not imported yet".
+    /// "3 cookies, 1 password", or "Not saved yet".
     pub account: String,
+    /// The app's provider id (its icon), when known.
+    pub provider_id: String,
+    /// Items the row stands for.
+    pub items: u32,
+    /// The items' ids.
+    pub item_ids: Vec<String>,
     /// Ticked.
     pub selected: bool,
     /// A new item the approval imports.
@@ -4445,10 +4922,25 @@ pub enum KvOutcome {
         /// Key.
         key: Option<String>,
     },
-    /// Items after a policy change.
-    Items {
-        /// Items.
-        items: Vec<KvItem>,
+    /// Items locked or unlocked. Identity providers always ask: they are in
+    /// `skipped`, never changed.
+    Locked {
+        /// Items whose lock changed.
+        changed: Vec<String>,
+        /// Items left locked (identity providers).
+        skipped: Vec<String>,
+    },
+    /// Items deleted.
+    Deleted {
+        /// Items deleted.
+        count: u32,
+        /// Copies wiped in Spaces.
+        wiped: Vec<String>,
+    },
+    /// The browse window is open until then, Unix ms.
+    Browsing {
+        /// When it closes.
+        until_ms: u64,
     },
     /// Grants revoked.
     Revoked {
@@ -5681,6 +6173,13 @@ pub struct AppSettings {
     /// longer shows them, nothing is revoked or wiped
     /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
     pub dismissed_access: Vec<String>,
+    /// Keyvault rows may load a site's icon from Google's favicon service
+    /// when the source browser had none (Settings, Keyvault; on by default).
+    /// Off, only icons read locally are shown.
+    pub keyvault_site_icons: bool,
+    /// The sites the user sent to each Space last time, per app
+    /// ([`crate::teleport::review::remember`]): the review starts from them.
+    pub teleport_choices: Vec<AppRememberedChoice>,
     /// Settings, General: a running Space's desktop streams as soon as it
     /// is opened (on by default); off, it waits for Connect
     /// ([`crate::spaces::cover`]).
@@ -5769,6 +6268,15 @@ pub struct AppSettingsInput {
     /// The Keyvault's auto-wipe, once the broker told it (none: no
     /// Keyvault section).
     pub keyvault_auto_wipe: Option<bool>,
+    /// The unlock prompt shows (false once the user chose "Never ask
+    /// again"); none until the broker told it.
+    pub keyvault_unlock_prompt: Option<bool>,
+    /// Load site icons from Google when the browser had none
+    /// ([`AppSettings::keyvault_site_icons`]).
+    pub keyvault_site_icons: bool,
+    /// The Keyvault's protection facts (Touch ID, the daemon's signature),
+    /// shown in the section.
+    pub keyvault_protection: Vec<AppFact>,
     /// "Connect to the desktop automatically" (none: no row; a shell
     /// without the preview cover leaves it out).
     pub auto_connect: Option<bool>,

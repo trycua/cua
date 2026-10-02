@@ -131,13 +131,24 @@ const KNOWN_COLUMNS: &[&str] = &[
     "creation_utc",
     "has_expires",
     "is_persistent",
+    // The rest of Chrome's current schema: written from the source's row when
+    // it had them, else at Chrome's own defaults, so the destination's row
+    // is the source's row (a partitioned cookie stays partitioned).
+    "last_access_utc",
+    "last_update_utc",
+    "priority",
+    "source_scheme",
+    "source_port",
+    "source_type",
+    "has_cross_site_ancestor",
+    "top_frame_site_key",
 ];
 
 /// Microseconds since the Windows/Chrome epoch (1601-01-01 UTC) for the
 /// current time -- the unit every Chrome `*_utc` cookie column uses,
 /// including `creation_utc`, which is `NOT NULL` with no default in Chrome's
 /// real schema and therefore always needs an explicit value.
-fn chrome_now_utc() -> i64 {
+pub(crate) fn chrome_now_utc() -> i64 {
     const UNIX_TO_CHROME_EPOCH_MICROS: i64 = 11_644_473_600_000_000;
     let unix_micros = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -280,10 +291,17 @@ fn install_into_db(
                 // Chrome's own invariant: a persistent cookie has an expiry,
                 // a session cookie (`expires_utc == 0`) does not.
                 "has_expires" | "is_persistent" => ((item.expires_utc != 0) as i64).into(),
-                // Chrome stamps this at insert time; this import IS the
-                // creation event on this machine, so "now" is correct, not a
-                // placeholder.
-                "creation_utc" => now.into(),
+                // The source's creation time when it had one; else this
+                // import is the creation event on this machine.
+                "creation_utc" => item.extra.creation_utc.unwrap_or(now).into(),
+                "last_access_utc" => item.extra.last_access_utc.unwrap_or(0).into(),
+                "last_update_utc" => item.extra.last_update_utc.unwrap_or(now).into(),
+                "priority" => item.extra.priority.unwrap_or(1).into(),
+                "source_scheme" => item.extra.source_scheme.unwrap_or(0).into(),
+                "source_port" => item.extra.source_port.unwrap_or(-1).into(),
+                "source_type" => item.extra.source_type.unwrap_or(0).into(),
+                "has_cross_site_ancestor" => item.extra.has_cross_site_ancestor.unwrap_or(0).into(),
+                "top_frame_site_key" => item.extra.partition_key.clone().unwrap_or_default().into(),
                 other => unreachable!("column {other} was filtered out of KNOWN_COLUMNS above"),
             });
         }
@@ -468,6 +486,7 @@ mod tests {
             is_secure: true,
             is_httponly: true,
             samesite: 1,
+            extra: Default::default(),
         }
     }
 
@@ -683,6 +702,93 @@ mod tests {
         assert_eq!(&plain[32..], b"gh-session-abc");
         // Nothing was installed in a keychain on Linux.
         assert!(host.calls().is_empty());
+    }
+
+    /// Every attribute the source row had lands in the destination row, and a
+    /// partitioned cookie stays partitioned next to the same name unpartitioned.
+    #[test]
+    fn every_attribute_is_written_and_a_partitioned_cookie_stays_partitioned() {
+        use cua_teleport_bundle::cookies::CookieExtra;
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("Default");
+        let host = Arc::new(FakeHost::new());
+        let mut record = ImportRecord::default();
+        let mut full = item(".example.com", "__Host-sid", "partitioned-value");
+        full.expires_utc = 13_400_000_000_000_000;
+        full.extra = CookieExtra {
+            creation_utc: Some(13_300_000_000_000_001),
+            last_access_utc: Some(13_300_000_000_000_002),
+            last_update_utc: Some(13_300_000_000_000_003),
+            priority: Some(2),
+            source_scheme: Some(2),
+            source_port: Some(443),
+            source_type: Some(1),
+            has_cross_site_ancestor: Some(1),
+            partition_key: Some("https://top.example".into()),
+        };
+        let plain = item(".example.com", "__Host-sid", "plain-value");
+        install_cookies(
+            host.as_ref(),
+            &profile,
+            "Chrome Safe Storage",
+            Platform::Linux,
+            &[full, plain],
+            &mut record,
+        )
+        .unwrap();
+        let conn = rusqlite::Connection::open(profile.join("Network/Cookies")).unwrap();
+        let rows: i64 = conn
+            .query_row("SELECT count(*) FROM cookies", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 2, "partitioned and unpartitioned are two cookies");
+        #[allow(clippy::type_complexity)]
+        let got: (i64, i64, i64, i64, i64, i64, i64, i64, i64, String) = conn
+            .query_row(
+                "SELECT creation_utc, last_access_utc, last_update_utc, priority, source_scheme, \
+                 source_port, source_type, has_cross_site_ancestor, expires_utc, top_frame_site_key \
+                 FROM cookies WHERE top_frame_site_key != ''",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                        r.get(7)?,
+                        r.get(8)?,
+                        r.get(9)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            got,
+            (
+                13_300_000_000_000_001,
+                13_300_000_000_000_002,
+                13_300_000_000_000_003,
+                2,
+                2,
+                443,
+                1,
+                1,
+                13_400_000_000_000_000,
+                "https://top.example".to_string()
+            )
+        );
+        // The unpartitioned one got Chrome's defaults, with no partition.
+        let (prio, scheme, port, key): (i64, i64, i64, String) = conn
+            .query_row(
+                "SELECT priority, source_scheme, source_port, top_frame_site_key FROM cookies \
+                 WHERE top_frame_site_key = ''",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!((prio, scheme, port, key.as_str()), (1, 0, -1, ""));
     }
 
     #[test]

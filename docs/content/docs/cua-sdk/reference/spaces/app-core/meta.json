@@ -8,6 +8,8 @@
     "images",
     "teleport",
     "teleport-transfer",
+    "teleport-run",
+    "teleport-review",
     "teleport-grid",
     "cloud",
     "drag-trigger",

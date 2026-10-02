@@ -396,7 +396,9 @@ struct ViewModelTests {
         #expect(!model.showingNewSpace)
         for _ in 0..<50 where backend.created.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
         #expect(backend.created.first?.name == "demo")
-        #expect(backend.created.first?.cpus == 4)
+        // The wizard caps CPUs at this Mac's cores (a 3-core CI runner).
+        let cores = UInt32(max(2, min(16, ProcessInfo.processInfo.activeProcessorCount)))
+        #expect(backend.created.first?.cpus == min(4, cores))
         #expect(backend.created.first?.memoryMb == 4096)
     }
 

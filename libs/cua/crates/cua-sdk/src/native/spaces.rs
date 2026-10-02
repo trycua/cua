@@ -3060,7 +3060,7 @@ impl Space {
                 Host::Embedded(s) => {
                     let t = s.thumbnail(&id, max_age).await?;
                     crate::types::SpaceThumbnail {
-                        format: crate::types::ImageFormat::from_word(&t.format),
+                        format: thumbnail_format(&t.format),
                         width: t.width,
                         height: t.height,
                         captured_at_ms: t
@@ -3092,7 +3092,7 @@ impl Space {
                         .unwrap_or(0);
                     crate::types::SpaceThumbnail {
                         image: r.image,
-                        format: crate::types::ImageFormat::from_word(&r.format),
+                        format: thumbnail_format(&r.format),
                         width: r.width,
                         height: r.height,
                         captured_at_ms,
@@ -5176,5 +5176,14 @@ impl Spaces {
     #[deprecated(note = "renamed to `volume_audit` (Cua Volume); removed after this release")]
     pub async fn drive_audit(&self, limit: Option<u32>) -> Result<DriveAudit> {
         self.volume_audit(limit).await
+    }
+}
+
+/// The thumbnail cache's format word (`jpeg`, `png`, `webp`).
+fn thumbnail_format(word: &str) -> crate::types::ImageFormat {
+    match word {
+        "png" => crate::types::ImageFormat::Png,
+        "webp" => crate::types::ImageFormat::Webp,
+        _ => crate::types::ImageFormat::Jpeg,
     }
 }

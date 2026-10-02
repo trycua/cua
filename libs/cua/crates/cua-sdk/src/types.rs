@@ -258,17 +258,6 @@ pub struct SpaceThumbnail {
     pub captured_at_ms: u64,
 }
 
-impl ImageFormat {
-    /// The cache's format word (`jpeg`, `png`, `webp`).
-    pub(crate) fn from_word(word: &str) -> Self {
-        match word {
-            "png" => ImageFormat::Png,
-            "webp" => ImageFormat::Webp,
-            _ => ImageFormat::Jpeg,
-        }
-    }
-}
-
 /// A point.
 #[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
 pub struct Point {

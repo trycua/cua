@@ -30,18 +30,29 @@
 # creates or deletes are $PREFIX-slim, $PREFIX-full and their keychain clones
 # $PREFIX-kc-{slim,full} (cua-e2e-macos-rel-*).
 #
+# Disk: a tier needs its VM (~30 GB) plus lume's push cache (~23 GB, inside
+# the VM directory), so the run refuses to start below MIN_FREE_GB + 60 GB
+# free, deletes each tier's push cache once its pin is verified, and stops if
+# free space drops under MIN_FREE_GB (default 200) between steps.
+#
+# Registry: crane and oras log in to ghcr.io under an isolated DOCKER_CONFIG
+# ($WORK/docker), never your ~/.docker. With RECORD_LEDGER=false the doctor
+# verdicts are recorded in a local ledger, $WORK/ledger, which
+# scripts/images/check-docs-image-refs.py --ledger can read.
+#
 # Needs: lume (`lume serve`), the cua CLI ($CUA, default `cua` on PATH, or
 # build it: cargo build --release -p cua-cli in libs/cua), crane, oras, jq,
 # uv, gh (logged in with write:packages, for ghcr.io and the dispatch).
 # Knobs: STAMP, PREFIX, WORK, RECORD_LEDGER (default false: trycua/cua has
-# no image-doctor-ledger branch yet), CUA.
+# no image-doctor-ledger branch yet), CUA, MIN_FREE_GB, LUME_HOME (default
+# ~/.lume, where the push caches live).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VERSION="" DRY=0
 for a in "$@"; do
     case "$a" in
         --dry-run) DRY=1 ;;
-        -h|--help) sed -n '2,37p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
         -*) echo "unknown option $a" >&2; exit 2 ;;
         *) VERSION="${a#cua-spacesd-v}"; VERSION="${VERSION#v}" ;;
     esac
@@ -56,6 +67,8 @@ STAMP="${STAMP:-$(date -u +%Y%m%d)-$(git -C "$ROOT" rev-parse --short=7 HEAD)}"
 PREFIX="${PREFIX:-cua-e2e-macos-rel-${STAMP%%-*}}"
 WORK="${WORK:-${CUA_IMAGES_OUT:-$HOME/.cache/cua-images}/macos-release/$VERSION}"
 RECORD_LEDGER="${RECORD_LEDGER:-false}"
+MIN_FREE_GB="${MIN_FREE_GB:-200}"
+LUME_HOME="${LUME_HOME:-$HOME/.lume}"
 log() { echo "[release-macos $(date +%T)] $*" >&2; }
 run() { log "+ $*"; [ "$DRY" = 1 ] || "$@"; }
 
@@ -66,7 +79,19 @@ for tool in lume "$CUA" crane oras jq uv gh; do
     command -v "$tool" >/dev/null || [ "$DRY" = 1 ] || { echo "missing $tool" >&2; exit 2; }
 done
 
-mkdir -p "$WORK/app" "$WORK/state" "$WORK/cuahome"
+free_gb() { df -g "$LUME_HOME" | awk 'NR==2 {print $4}'; }
+need_free() {  # GB: stop (resumable) rather than fill the disk
+    [ "$DRY" = 1 ] && return 0
+    local f; f="$(free_gb)"
+    [ "$f" -ge "$1" ] || { echo "only ${f} GB free under $LUME_HOME (need ${1} GB); free some space and rerun (it resumes)" >&2; exit 1; }
+}
+# A tier's push cache (lume's compressed chunks, ~23 GB) inside its VM
+# directory: not needed once the pin is verified, and the full tier would
+# clone slim's.
+drop_push_cache() { run rm -rf "$LUME_HOME/$PREFIX-$1/.lume_oci_push_cache"; }
+need_free $((MIN_FREE_GB + 60))
+
+mkdir -p "$WORK/app" "$WORK/state" "$WORK/cuahome" "$WORK/docker"
 if [ "$DRY" = 1 ]; then
     log "would download $TAG $ASSET into $WORK/app"
 elif [ ! -d "$WORK/app/Cua Spacesd.app" ]; then
@@ -83,6 +108,13 @@ export CUA_MACOS_APP="$WORK/app/Cua Spacesd.app" CUA_MACOS_SPACESD_SOURCE=releas
 if [ "$DRY" = 0 ]; then
     export GITHUB_USERNAME="${GITHUB_USERNAME:-$(gh api user -q .login)}"
     export GITHUB_TOKEN="${GITHUB_TOKEN:-$(gh auth token)}"
+fi
+# annotate.sh, the doctor attach and verify push and read with crane/oras:
+# log them in under the run's own DOCKER_CONFIG, never ~/.docker.
+export DOCKER_CONFIG="$WORK/docker"
+if [ "$DRY" = 0 ]; then
+    printf '%s' "$GITHUB_TOKEN" | crane auth login ghcr.io -u "$GITHUB_USERNAME" --password-stdin >/dev/null
+    printf '%s' "$GITHUB_TOKEN" | oras login ghcr.io -u "$GITHUB_USERNAME" --password-stdin >/dev/null
 fi
 common=(--stamp "$STAMP" --var "prefix=$PREFIX" --var "record_ledger=$RECORD_LEDGER" --embedded --state-dir "$WORK/state")
 log "cua-spacesd $VERSION, stamp $STAMP, VMs $PREFIX-{slim,full}, work $WORK"
@@ -117,15 +149,32 @@ keychain_check() (
     log "keychain check: $vm unlocks with lume, no login_renamed keychains"
 )
 
+# RECORD_LEDGER=false: the pin's doctor verdict still goes into a local
+# ledger ($WORK/ledger) for check-docs-image-refs.py --ledger.
+record_local_ledger() {
+    [ "$RECORD_LEDGER" = true ] && return 0
+    local e="$WORK/$1/evidence"
+    if [ "$DRY" = 1 ]; then log "+ record $1 in $WORK/ledger"; return 0; fi
+    python3 "$ROOT/scripts/images/doctor_ledger.py" record --ledger "$WORK/ledger" --repo ghcr.io/trycua/macos \
+        --digest "$(jq -r .lume "$e/pushed.json")" --report "$e/doctor/arm64-lume/report.json" \
+        --lane "$e/doctor/arm64-lume/lane.json" --report-ref "$(jq -r '.[0].report_ref' "$e/attested.json")" \
+        --run "local:$STAMP (release-macos.sh $VERSION)" >/dev/null
+    log "$1: doctor verdict recorded in $WORK/ledger"
+}
+
 cd "$ROOT"
 for tier in slim full; do
+    need_free $((MIN_FREE_GB + 35))
     log "$tier: build and gates (evidence: $WORK/$tier/evidence)"
     run "$CUA" images release libs/images/macos --tier "$tier" "${common[@]}" --work "$WORK/$tier" --resume
     log "$tier: keychain check on a throwaway clone"
     mkdir -p "$WORK/$tier"
     keychain_check "$PREFIX-$tier" "$WORK/$tier/keychain.txt"
     log "$tier: push, attach the doctor report, verify"
+    need_free $((MIN_FREE_GB + 25))
     run "$CUA" images release libs/images/macos --tier "$tier" "${common[@]}" --work "$WORK/$tier" --resume --publish
+    drop_push_cache "$tier"
+    record_local_ledger "$tier"
     # The full tier is built; the slim VM it cloned is no longer needed.
     [ "$tier" = slim ] || run lume delete "$PREFIX-slim" --force
 done

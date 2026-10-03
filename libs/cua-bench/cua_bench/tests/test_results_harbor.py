@@ -315,6 +315,45 @@ def test_registry_reads_harbor_entries(local_registry):
     assert entries["mini@1.1"]["format"] == "cua-bench"
 
 
+@pytest.mark.parametrize("cache", ["cache", "nested directory/cache"])
+def test_harbor_relative_cache_links_and_offline_reuse(
+    local_registry, tmp_path, monkeypatch, cache
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CUA_BENCH_REGISTRY_CACHE", cache)
+    tasks = registry.resolve("harbor-mini@2.0")
+    main = tasks / "hello" / "main.py"
+    assert main.read_text() == (HELLO / "main.py").read_text()
+    assert (tasks / "hello").is_symlink()
+
+    def no_git(*args, **kwargs):
+        pytest.fail("a complete cached dataset should not need git")
+
+    monkeypatch.setattr(registry, "_git", no_git)
+    assert registry.resolve("harbor-mini@2.0") == tasks
+    assert main.is_file()
+
+
+def test_harbor_explicit_relative_cache_root(local_registry, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    entry = registry.find_entry("harbor-mini@2.0", registry.load_index())
+    tasks = registry.materialize(entry, root=Path("explicit-cache"))
+    assert (tasks / "hello" / "main.py").read_text() == (HELLO / "main.py").read_text()
+
+
+def test_harbor_repairs_a_broken_link_from_a_relative_cache(local_registry, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CUA_BENCH_REGISTRY_CACHE", "cache")
+    tasks = registry.resolve("harbor-mini@2.0")
+    link = tasks / "hello"
+    link.unlink()
+    # Reproduce the target written by cua-bench before paths were based at the link.
+    link.symlink_to(tasks.parent / "repo0" / "datasets" / "mini" / "hello")
+    assert link.is_symlink() and not link.exists()
+    assert registry.resolve("harbor-mini@2.0") == tasks
+    assert (link / "main.py").read_text() == (HELLO / "main.py").read_text()
+
+
 def test_cb_run_dataset_by_name_at_version(cli_env, local_registry, tmp_path, capsys):  # noqa: F811
     out = tmp_path / "out"
     assert run_cb(["run", "mini@1.0", "--output-dir", str(out)]) == 0

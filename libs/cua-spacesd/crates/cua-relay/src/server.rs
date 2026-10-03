@@ -187,6 +187,11 @@ pub(crate) struct Machine {
 }
 
 impl Machine {
+    /// Time since the machine's last heartbeat.
+    pub(crate) fn heartbeat_age(&self) -> Duration {
+        self.last_heartbeat.lock().expect("heartbeat").elapsed()
+    }
+
     /// Cuts every client stream and forgets presence.
     pub(crate) fn cut_clients(&self) {
         let old = std::mem::take(&mut *self.clients_cut.lock().expect("cut"));

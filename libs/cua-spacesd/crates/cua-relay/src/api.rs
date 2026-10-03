@@ -149,6 +149,14 @@ fn directory_error(e: DirectoryError) -> Response {
     error(status, e.to_string())
 }
 
+/// A connected machine that heartbeated within this many seconds is live
+/// (machines heartbeat every 15 s): re-registering it needs its machine token
+/// or an enrolled device. Past it, the owner's account token is enough.
+pub const LIVE_HEARTBEAT_SECS: u64 = 45;
+
+/// `tracing` target of the re-register decision lines.
+pub const REGISTER_LOG_TARGET: &str = "cua_relay::register";
+
 /// Header a host re-running setup sends its current machine token in, so
 /// rotating an existing machine's token needs the machine (or an enrolled
 /// device), not just an account session.
@@ -354,14 +362,41 @@ async fn register(
     let existed = existing.is_some();
     // Registering a new machine needs only the account (hosting never
     // enrolls the host as a client). Re-registering an existing one rotates
-    // its token and can change its allowlist, so it also needs the current
-    // machine token (the host re-running setup) or an enrolled device.
+    // its token, which cuts the running host off, so while that host is
+    // live it also needs the current machine token (the host re-running
+    // setup) or an enrolled device: a stray account session cannot knock a
+    // live host offline or take it over. A record whose host is gone (a
+    // setup that registered and then died, a reinstall that lost the
+    // machine token) has nothing to protect, and its owner's account token
+    // re-registers it, the way it registered it in the first place.
     if let Some(record) = &existing {
-        let by_machine = bearer(&headers, MACHINE_AUTHORIZATION_HEADER)
-            .and_then(|t| relay.directory.machine_for_token(t))
-            .is_some_and(|m| m.id == record.id);
-        if !by_machine && record.owner.id == who.account {
-            if let Err(m) = &device {
+        if record.owner.id == who.account {
+            let by_machine = bearer(&headers, MACHINE_AUTHORIZATION_HEADER)
+                .and_then(|t| relay.directory.machine_for_token(t))
+                .is_some_and(|m| m.id == record.id);
+            let live = relay.machine(&record.id).filter(|m| {
+                matches!(&m.registrant, Registrant::Account(owner) if owner == &record.owner.id)
+            });
+            let heartbeat_age = live.as_ref().map(|m| m.heartbeat_age().as_secs());
+            let online = heartbeat_age.is_some_and(|age| age <= LIVE_HEARTBEAT_SECS);
+            let path = if by_machine {
+                "machine_token"
+            } else if device.is_ok() {
+                "enrolled_device"
+            } else if !online {
+                "stale_record"
+            } else {
+                "refused_live_machine"
+            };
+            tracing::info!(
+                target: REGISTER_LOG_TARGET,
+                path,
+                connected = live.is_some(),
+                heartbeat_age_secs = heartbeat_age,
+                "machine re-register"
+            );
+            if path == "refused_live_machine" {
+                let m = device.as_ref().err().cloned().unwrap_or_default();
                 return error(
                     StatusCode::FORBIDDEN,
                     format!("re-registering this machine needs its machine token or an enrolled device ({m})"),

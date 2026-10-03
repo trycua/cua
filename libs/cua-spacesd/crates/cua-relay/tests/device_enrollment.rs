@@ -379,15 +379,21 @@ async fn clients_need_an_enrolled_device_after_the_grace_period() {
     );
     let r = get(&base, "/m/machine-aaaa/v1/anything", &ada, None).await;
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
-    // Re-registering (token rotation) needs the machine token or a device.
+    // The machine is not connected (its setup died, or a reinstall lost
+    // its token): the owner's account token re-registers it and rotates
+    // its token (tests/reregister.rs covers a live machine).
     let r = http()
         .post(format!("{base}/v1/machines"))
         .bearer_auth(&ada)
-        .json(&json!({"id": "machine-aaaa", "allow": ["mallory@example.com"]}))
+        .json(&json!({"id": "machine-aaaa"}))
         .send()
         .await
         .unwrap();
-    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    assert!(r.status().is_success(), "{}", r.status());
+    let v: Value = r.json().await.unwrap();
+    let rotated = v["machine_token"].as_str().unwrap().to_owned();
+    assert_ne!(rotated, machine_token);
+    let machine_token = rotated;
     let r = http()
         .post(format!("{base}/v1/machines"))
         .bearer_auth(&ada)

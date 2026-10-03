@@ -97,6 +97,31 @@ permissions:
   contents: read
 
 jobs:
+  macos-uninstall:
+    name: macOS uninstall regressions
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependency
+        run: python -m pip install pytest
+      # Discover every uninstall module, including ownership, failure ordering,
+      # daemon/autostart, local-install, and Windows guidance contracts. Other
+      # script tooling (such as Lume runner tests) remains in the Ubuntu suite.
+      - name: Test uninstall contracts, system Bash syntax, and script encoding
+        run: |
+          python -m pytest -v -p no:cacheprovider \
+            libs/cua-driver/scripts/tests/test_uninstall_*.py \
+            libs/cua-driver/scripts/tests/test_installer_bash32_syntax.py \
+            .github/scripts/tests/test_driver_script_encoding.py
+      - name: Test Computer History purge during uninstall
+        run: /bin/bash libs/cua-driver/scripts/tests/uninstall-history-purge-test.sh
+
   windows-uninstall:
     runs-on: windows-latest
     timeout-minutes: 5

@@ -78,6 +78,9 @@ def _run(
     claude_json.write_text(json.dumps(expanded), encoding="utf-8")
 
     env = os.environ.copy()
+    for key in list(env):
+        if key.startswith("CUA_DRIVER_"):
+            env.pop(key)
     env.update({"HOME": str(home), "PATH": f"{fake_bin}:/usr/bin:/bin"})
     result = subprocess.run(
         ["/bin/bash", str(UNINSTALL)],
@@ -100,7 +103,8 @@ def _project_servers(config: dict, project: str = "/work/repo") -> set[str]:
 
 
 def _claude_removals(tmp_path: Path) -> set[str]:
-    calls = (tmp_path / "claude-calls").read_text(encoding="utf-8").splitlines()
+    path = tmp_path / "claude-calls"
+    calls = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     return {
         parts[2]
         for parts in (call.split() for call in calls)
@@ -177,7 +181,7 @@ def test_shared_name_without_command_is_preserved(tmp_path: Path) -> None:
     assert _user_servers(config) == {"cua-computer-use"}
 
 
-def test_legacy_name_is_removed_without_a_marker(tmp_path: Path) -> None:
+def test_legacy_name_without_live_target_is_preserved(tmp_path: Path) -> None:
     config, _ = _run(
         tmp_path,
         {
@@ -191,7 +195,8 @@ def test_legacy_name_is_removed_without_a_marker(tmp_path: Path) -> None:
         rust_marker=False,
     )
 
-    assert _user_servers(config) == set()
+    # A historical name is not current filesystem ownership evidence.
+    assert _user_servers(config) == {"cua-driver-rs"}
 
 
 def test_shared_release_name_is_kept_without_rust_marker(tmp_path: Path) -> None:
@@ -271,7 +276,7 @@ def test_custom_bin_launcher_is_removed_when_it_resolves_into_release(tmp_path: 
     assert _user_servers(config) == set()
 
 
-def test_missing_canonical_launcher_is_safe_fallback(tmp_path: Path) -> None:
+def test_missing_canonical_launcher_is_preserved_as_unproven(tmp_path: Path) -> None:
     config, _ = _run(
         tmp_path,
         {
@@ -286,7 +291,8 @@ def test_missing_canonical_launcher_is_safe_fallback(tmp_path: Path) -> None:
         create_canonical_launcher=False,
     )
 
-    assert _user_servers(config) == set()
+    # Deliberately narrower than the contributor fallback: no live target.
+    assert _user_servers(config) == {"cua-computer-use"}
 
 
 def test_foreign_dangling_canonical_launcher_is_preserved(tmp_path: Path) -> None:
@@ -371,10 +377,10 @@ def test_scope_ownership_does_not_leak_to_same_name_in_project(tmp_path: Path) -
 
     assert _user_servers(config) == set()
     assert _project_servers(config) == {"cua-computer-use"}
-    assert _claude_removals(tmp_path) == {"cua-driver-rs"}
+    assert _claude_removals(tmp_path) == set()
 
 
-def test_cli_fallback_only_uses_unambiguous_legacy_name(tmp_path: Path) -> None:
+def test_no_name_only_cli_fallback(tmp_path: Path) -> None:
     _run(
         tmp_path,
         {"mcpServers": {}},
@@ -382,7 +388,7 @@ def test_cli_fallback_only_uses_unambiguous_legacy_name(tmp_path: Path) -> None:
         with_claude_cli=True,
     )
 
-    assert _claude_removals(tmp_path) == {"cua-driver-rs"}
+    assert _claude_removals(tmp_path) == set()
 
 
 def test_shared_name_never_enters_cli_fallback_after_json_scrub(tmp_path: Path) -> None:
@@ -400,7 +406,7 @@ def test_shared_name_never_enters_cli_fallback_after_json_scrub(tmp_path: Path) 
         with_claude_cli=True,
     )
 
-    assert _claude_removals(tmp_path) == {"cua-driver-rs"}
+    assert _claude_removals(tmp_path) == set()
 
 
 def test_windows_guidance_uses_registered_user_scope() -> None:

@@ -199,7 +199,7 @@ pub async fn doctor() -> DoctorReport {
     // Lume.
     let mut lume = LumeReport {
         supported_host: host_os == HostOs::Macos && host_arch == Arch::Aarch64,
-        binary: host::which("lume"),
+        binary: lume_binary(),
         url: std::env::var("LUME_API").unwrap_or_else(|_| "http://127.0.0.1:7777".into()),
         ..Default::default()
     };
@@ -214,20 +214,28 @@ pub async fn doctor() -> DoctorReport {
                 .map(|s| s.trim().to_string());
         }
     }
+    // Without any Lume, the built-in one is set up on first use unless the
+    // setting says to use only this Mac's own.
+    let builtin_ok = lume_builtin_allowed();
     let lume_status = BackendStatus {
         backend: BackendKind::Lume,
         ready: lume.supported_host && lume.serving,
-        provisionable: lume.supported_host && !lume.serving,
+        provisionable: lume.supported_host
+            && !lume.serving
+            && (lume.binary.is_some() || builtin_ok),
         detail: if !lume.supported_host {
             "Lume needs a macOS Apple Silicon host".into()
         } else if lume.serving {
             format!("lume serve answering at {}", lume.url)
         } else if lume.binary.is_some() {
             "lume installed but not serving".into()
+        } else if builtin_ok {
+            "built-in Lume, set up on first use".into()
         } else {
-            "lume not installed".into()
+            "Lume is not installed on this Mac (macOS VMs are set to use this Mac's own Lume)"
+                .into()
         },
-        missing: if lume.supported_host && lume.binary.is_none() {
+        missing: if lume.supported_host && lume.binary.is_none() && !builtin_ok {
             vec!["lume".into()]
         } else {
             vec![]
@@ -236,11 +244,13 @@ pub async fn doctor() -> DoctorReport {
             vec![]
         } else if lume.binary.is_some() {
             vec!["start `lume serve`".into()]
-        } else {
+        } else if builtin_ok {
             vec![
-                "run the Lume installer (allow_install)".into(),
+                "download the built-in Lume (about 6 MB, signed)".into(),
                 "start `lume serve`".into(),
             ]
+        } else {
+            vec![]
         },
     };
 
@@ -409,6 +419,30 @@ pub fn select(req: &SelectRequest, report: &DoctorReport) -> Result<Selection> {
                 Err(VmmError::missing("QEMU", q.missing.join(", ")))
             }
         },
+    }
+}
+
+/// The Lume binary the setting picks (see [`crate::lume::builtin`]).
+fn lume_binary() -> Option<PathBuf> {
+    #[cfg(feature = "lume")]
+    {
+        crate::lume::lume_bin()
+    }
+    #[cfg(not(feature = "lume"))]
+    {
+        host::which("lume")
+    }
+}
+
+/// Whether `runtime.lume` lets the built-in Lume be set up.
+fn lume_builtin_allowed() -> bool {
+    #[cfg(feature = "lume")]
+    {
+        crate::lume::builtin::LumeSource::current().allows_builtin()
+    }
+    #[cfg(not(feature = "lume"))]
+    {
+        false
     }
 }
 

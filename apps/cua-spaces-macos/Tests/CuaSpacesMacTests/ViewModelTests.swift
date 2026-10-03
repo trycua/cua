@@ -362,7 +362,15 @@ struct ViewModelTests {
         let model = makeModel(account: account, agents: agents)
         await model.loadSettings()
         let page = model.settingsPage
-        #expect(page.sections.map(\.id) == ["account", "general", "privacy", "agents"])
+        #expect(page.sections.map(\.id) == ["account", "general", "runtimes", "privacy", "agents"])
+        // Settings, Runtimes: macOS VMs picks runtime.lume.
+        let runtime = page.sections.first { $0.id == "runtimes" }!.rows[0]
+        #expect(runtime.options.map(\.id) == ["auto", "builtin", "system"])
+        #expect(runtime.options.first(where: \.active)?.id == "auto")
+        await model.choose(row: "macos-runtime", option: "builtin")
+        #expect(model.lumeSource == "builtin")
+        #expect(model.settingsPage.sections.first { $0.id == "runtimes" }!.rows[0]
+            .options.first(where: \.active)?.id == "builtin")
         #expect(model.chrome.signInLabel == "Sign in")
         await model.press(row: "sign-in")
         #expect(model.identity == "you@example.com")

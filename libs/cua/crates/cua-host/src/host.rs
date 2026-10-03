@@ -327,6 +327,20 @@ pub fn permission_hints(os: &str, driver: &Path) -> Vec<PermissionHint> {
     ]
 }
 
+/// The relay machine meta key saying whether this machine provides Spaces
+/// (`on` / `off`), as of its last setup. Your other devices list a machine
+/// that provides Spaces in their "Run on" menu even while it is offline
+/// (with why), instead of leaving it out.
+pub const META_PROVIDES_SPACES: &str = "cua.host.spaces";
+
+/// The meta a host registers with.
+fn host_meta(provide_spaces: bool) -> std::collections::BTreeMap<String, String> {
+    std::collections::BTreeMap::from([(
+        META_PROVIDES_SPACES.to_string(),
+        if provide_spaces { "on" } else { "off" }.to_string(),
+    )])
+}
+
 /// What `status` reports (camelCase for the app).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -869,7 +883,7 @@ impl Host {
                             name: name.clone(),
                             allow: opts.allow.clone(),
                             host: None,
-                            meta: Default::default(),
+                            meta: host_meta(opts.provide_spaces),
                         },
                     )
                     .await?;
@@ -1066,8 +1080,11 @@ impl Host {
         }
         // The driver's flags change with the desktop, and in direct mode
         // with Spaces (it serves HostSpacesService only then).
+        // A service that should run but is down (a start that failed
+        // before) starts again too, so trying the change again repairs it.
+        let down = config.sharing && !self.manager_for_config(&config).state().running;
         let restart =
-            desktop != config.share_desktop || (!relay && provide != config.provide_spaces);
+            down || desktop != config.share_desktop || (!relay && provide != config.provide_spaces);
         config.share_desktop = desktop;
         config.provide_spaces = provide;
         if let Some(mut p) = policy {
@@ -1132,7 +1149,7 @@ impl Host {
                 .collect(),
             service: manager.state(),
             allow: policy.as_ref().map(|p| p.allow.clone()).unwrap_or_default(),
-            permissions: permission_hints(std::env::consts::OS, &config.driver_bin),
+            permissions: self.missing_permissions(&config),
             ..Default::default()
         };
         if config.mode == "direct" {
@@ -1156,6 +1173,27 @@ impl Host {
         status.spaces_audit = audit.recent;
         status.spaces_audit_error = audit.error;
         Ok(status)
+    }
+
+    /// The permissions left to grant: every one macOS needs, less the ones
+    /// the driver reports granted (asked afresh on each status, so a grant
+    /// shows without restarting anything). All of them when it cannot say.
+    fn missing_permissions(&self, config: &HostConfig) -> Vec<PermissionHint> {
+        let hints = permission_hints(std::env::consts::OS, &config.driver_bin);
+        if hints.is_empty() {
+            return hints;
+        }
+        match self.preflight_probe().permission_status(&config.driver_bin) {
+            Some((screen, ax)) => hints
+                .into_iter()
+                .filter(|h| match h.id.as_str() {
+                    "screen-recording" => !screen,
+                    "accessibility" => !ax,
+                    _ => true,
+                })
+                .collect(),
+            None => hints,
+        }
     }
 
     /// Fills the recent accesses from the driver's log and adds the callers
@@ -1231,6 +1269,13 @@ impl Host {
                 let token = read_secret(&self.paths.machine_token())?;
                 RelayClient::new(url)?.start_sharing(&token, id).await?;
                 self.set_policy_sharing(true)?;
+                // The service stays up while sharing is stopped; one that
+                // went down (a failed start) is started again here.
+                let manager = self.manager_for_config(&config);
+                if !manager.state().running {
+                    manager.install(&self.service_spec(&config))?;
+                    manager.start()?;
+                }
             }
             _ => {
                 self.manager_for_config(&config).start()?;

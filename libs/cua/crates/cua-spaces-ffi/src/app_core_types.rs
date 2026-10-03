@@ -3049,6 +3049,21 @@ pub struct AppSpaceHost {
     pub limits: Vec<AppHostLimit>,
 }
 
+/// A setting that makes This Mac able to run the Space: shown when the
+/// person chose to use only this Mac's own runtime and it is missing.
+pub type AppRuntimeSwitch = core::wizard::RuntimeSwitch;
+#[uniffi::remote(Record)]
+pub struct AppRuntimeSwitch {
+    /// The `cua config` setting: `runtime.lume`.
+    pub setting: String,
+    /// The value to set: `builtin`.
+    pub value: String,
+    /// The button: "Use built-in Lume".
+    pub label: String,
+    /// One line on what that does.
+    pub detail: String,
+}
+
 /// One entry of the "Run on" menu: a machine that can host the Space.
 pub type AppPlacementOption = core::wizard::PlacementOption;
 #[uniffi::remote(Record)]
@@ -3112,6 +3127,9 @@ pub struct AppWizardEnv {
     pub max_cpus: u32,
     /// This machine's architecture (`arm64`, `amd64`), when known.
     pub host_arch: Option<String>,
+    /// Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
+    /// `system`), when known.
+    pub lume_source: Option<String>,
     /// Free space and pulled images here (the SDK's `Local.storage()`),
     /// when known.
     pub storage: Option<AppLocalStorage>,
@@ -3610,6 +3628,12 @@ pub struct AppWizardView {
     pub host: Option<String>,
     /// Why the chosen placement cannot be used.
     pub placement_error: Option<String>,
+    /// One line under "Run on" when This Mac cannot run the Space and no
+    /// machine of yours is listed: how another Mac joins.
+    pub placement_hint: Option<String>,
+    /// Switches This Mac to the built-in runtime the Space needs, when it
+    /// is set to use its own and that is missing.
+    pub runtime_switch: Option<AppRuntimeSwitch>,
     /// Advanced shown.
     pub advanced: bool,
     /// Kind tiles.
@@ -6280,6 +6304,9 @@ pub struct AppSettingsInput {
     /// "Connect to the desktop automatically" (none: no row; a shell
     /// without the preview cover leaves it out).
     pub auto_connect: Option<bool>,
+    /// Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
+    /// `system`); none: no Runtimes section.
+    pub lume_source: Option<String>,
 }
 
 /// How a Settings row draws.

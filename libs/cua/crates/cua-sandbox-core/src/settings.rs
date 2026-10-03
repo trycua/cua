@@ -36,7 +36,7 @@ pub struct Key {
 }
 
 /// Every setting, in display order.
-pub const KEYS: [Key; 7] = [
+pub const KEYS: [Key; 8] = [
     Key {
         name: "default.on",
         env: "CUA_DEFAULT_ON",
@@ -78,6 +78,12 @@ pub const KEYS: [Key; 7] = [
         env: "CUA_TELEMETRY",
         default: "on",
         description: "anonymous usage telemetry (on, off; alias `telemetry`); DO_NOT_TRACK=1 also turns it off. See `cua telemetry status`",
+    },
+    Key {
+        name: "runtime.lume",
+        env: "CUA_RUNTIME_LUME",
+        default: "auto",
+        description: "the Lume macOS Spaces run on: auto (this Mac's own, else built-in), builtin (cua's pinned, signed Lume, set up on first use) or system (only this Mac's own; nothing is downloaded)",
     },
 ];
 
@@ -414,6 +420,14 @@ pub fn normalize(key: Key, value: &str) -> Result<String, SettingsError> {
             }
             v.to_string()
         }
+        "runtime.lume" => cua_vmm::lume::builtin::LumeSource::parse(v)
+            .ok_or_else(|| {
+                SettingsError(format!(
+                    "runtime.lume: expected auto, builtin or system, got {v:?}"
+                ))
+            })?
+            .as_str()
+            .to_string(),
         "telemetry.enabled" => match v.to_ascii_lowercase().as_str() {
             "1" | "true" | "yes" | "on" => "on".into(),
             "0" | "false" | "no" | "off" => "off".into(),

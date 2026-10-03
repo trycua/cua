@@ -124,7 +124,13 @@ struct ThisMachineView: View {
                             PermissionRows(rows: panel.permissions, openLabel: panel.openSettingsLabel)
                         }
                     }
-                    if let error = host.error {
+                    if let failure = host.actionFailure {
+                        // A button that failed: what happened in plain
+                        // words, Retry, and the raw error under Details.
+                        HostSetupFailureView(failure: failure, retrying: host.busy) {
+                            Task { await host.retryFailedAction() }
+                        }
+                    } else if let error = host.error {
                         Text(error).foregroundStyle(.red).lineLimit(1).help(error)
                     }
                     if panel.setupChoices.isEmpty {
@@ -154,7 +160,14 @@ struct ThisMachineView: View {
             }
         }
         .navigationTitle(host.form == nil ? panel.title : (host.formView?.title ?? panel.title))
-        .task { await host.refresh() }
+        .task {
+            // Followed while it shows: who is connected now, and a
+            // permission granted in System Settings (no restart needed).
+            while !Task.isCancelled {
+                if host.form == nil { await host.refresh() }
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
         .alert(confirming?.confirm?.title ?? "", isPresented: Binding(
             get: { confirming?.confirm != nil },
             set: { if !$0 { confirming = nil } })) {

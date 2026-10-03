@@ -885,6 +885,12 @@ pub fn deleting_space(space: &Space) -> Space {
     s
 }
 
+/// Bytes move while the create is still preparing: the SDK is setting up
+/// the local runtime it needs (downloaded once, on first use).
+fn setting_up_runtime(p: &PendingCreate) -> bool {
+    p.phase == "preparing" && p.bytes_total.is_some_and(|t| t > 0)
+}
+
 /// A pending create as a Space row.
 pub fn pending_space(p: &PendingCreate) -> Space {
     let failed = p.error.is_some();
@@ -896,6 +902,14 @@ pub fn pending_space(p: &PendingCreate) -> Space {
         "Failed".to_string()
     } else if p.cancelling {
         "Cancelling\u{2026}".to_string()
+    } else if setting_up_runtime(p) {
+        // Bytes before the image: the runtime cua sets up on first use
+        // (the built-in Lume for a macOS Space).
+        if p.os == SpaceOs::Macos {
+            "Setting up Lume\u{2026}".to_string()
+        } else {
+            "Setting up the runtime\u{2026}".to_string()
+        }
     } else {
         phase_label(&p.phase).to_string()
     };
@@ -929,7 +943,7 @@ pub fn pending_space(p: &PendingCreate) -> Space {
             label,
             error: p.error.clone(),
             credit_url: p.credit_url.clone(),
-            transfer: (!failed && !p.cancelling && p.phase == "pulling")
+            transfer: (!failed && !p.cancelling && (p.phase == "pulling" || setting_up_runtime(p)))
                 .then(|| transfer_text(p.bytes_done, p.bytes_total, p.bytes_per_second))
                 .flatten(),
             cancellable: !failed && !p.cancelling && p.space_id.is_none(),
@@ -1037,6 +1051,39 @@ mod tests {
             bytes_total: Some(total),
             bytes_per_second: Some(rate),
         }
+    }
+
+    /// The first macOS create on a Mac without Lume: the built-in Lume's
+    /// download shows on the Space's own row, in words, with its bytes.
+    #[test]
+    fn the_runtime_set_up_on_first_use_shows_on_the_create() {
+        let s = reduce(
+            &CreatesState::default(),
+            &start("pending:m", "", SpaceOs::Macos),
+        );
+        let s = reduce(
+            &s,
+            &CreateAction::Progress {
+                id: "pending:m".into(),
+                phase: "preparing".into(),
+                fraction: Some(0.5),
+                now: Some(2_000),
+                bytes_done: Some(3 << 20),
+                bytes_total: Some(6 << 20),
+                bytes_per_second: Some((1 << 20) as f64),
+            },
+        );
+        let row = pending_space(&s.pending[0]);
+        let p = row.progress.unwrap();
+        assert_eq!(p.label, "Setting up Lume\u{2026}");
+        assert!(p.transfer.unwrap().contains("MB"));
+        assert_eq!(row.detail, "This Mac \u{b7} Setting up Lume\u{2026}");
+        // Then the image, as before.
+        let s = reduce(&s, &bytes_at("pending:m", 1 << 30, 20 << 30, 5e7, 3_000));
+        assert_eq!(
+            pending_space(&s.pending[0]).progress.unwrap().label,
+            "Downloading image\u{2026}"
+        );
     }
 
     #[test]

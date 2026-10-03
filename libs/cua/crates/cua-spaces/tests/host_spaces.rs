@@ -885,3 +885,41 @@ async fn a_local_space_suspends_and_resumes_and_others_refuse() {
         (String::new(), String::new())
     );
 }
+
+/// Your other Mac must not vanish from "Run on" while its service is down
+/// (a failed setup, a restart): a machine of yours set up to provide
+/// Spaces is listed offline, by name; one set up only to share its desktop
+/// is not.
+#[tokio::test]
+async fn an_offline_machine_set_up_for_spaces_is_listed_by_name() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("ada-token", "ada", Some("ada@example.com"));
+    let dir = tempfile::tempdir().unwrap();
+    for (name, profile) in [
+        ("Studio", HostProfile::Spare),
+        ("Laptop", HostProfile::Desktop),
+    ] {
+        let home = dir.path().join(name);
+        let driver = dir.path().join(format!("{name}-cua-spacesd"));
+        std::fs::write(&driver, b"#!/bin/sh\n").unwrap();
+        let mut opts = SetupOptions::relay(&relay.url).profile(profile);
+        opts.name = Some(name.into());
+        opts.driver_bin = Some(driver);
+        Host::new(&home)
+            .with_service_manager(Arc::new(FakeServiceManager::default()))
+            .setup(opts, &StaticToken("ada-token".into()))
+            .await
+            .unwrap();
+    }
+    let other = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder()
+        .home(other.path())
+        .relay(cua_spaces::RelayAccount::new(
+            &relay.url,
+            Arc::new(StaticToken("ada-token".into())),
+        ))
+        .build();
+    let hosts = spaces.hosts().await.unwrap();
+    let names: Vec<(&str, bool)> = hosts.iter().map(|h| (h.name.as_str(), h.online)).collect();
+    assert_eq!(names, [("Studio", false)]);
+}

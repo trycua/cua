@@ -5,15 +5,12 @@
 import Foundation
 import Testing
 
-/// Cleaning up after a drag install, on fake disk images: these tests never
-/// read, eject or trash anything on the Mac.
 @Suite("Installer cleanup")
 struct InstallerCleanupTests {
     static let id = "com.trycua.spaces.macos"
     static let home = "/Users/ada"
     static let dmg = "/Users/ada/Downloads/cua-spaces-0.6.1-darwin-universal.dmg"
 
-    /// `hdiutil info -plist` for these images and their mount points.
     static func hdiutil(_ images: [(path: String, mounts: [String])]) -> Data {
         let list: [[String: Any]] = images.map { image in
             ["image-path": image.path,
@@ -103,7 +100,6 @@ struct InstallerCleanupTests {
     }
 }
 
-/// The Trash question waits for the first run, so it never covers onboarding.
 @MainActor
 @Suite("Installer cleanup after onboarding")
 struct InstallerCleanupOnboardingTests {

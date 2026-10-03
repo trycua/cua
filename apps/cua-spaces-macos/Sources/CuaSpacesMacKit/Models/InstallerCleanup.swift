@@ -4,27 +4,13 @@
 import AppKit
 import Foundation
 
-/// The disk image side of a drag install. Finder copies the app out of the
-/// image and leaves the image mounted and its .dmg in Downloads; macOS never
-/// tidies up either, so the app does on launch: it ejects every mounted image
-/// that holds Cua Spaces itself, then offers to move a .dmg in Downloads to
-/// the Trash. Ejecting needs no permission. Touching Downloads makes macOS
-/// ask for access to the folder, so the Trash waits for the user's yes and
-/// that prompt follows a choice they made. Everything that reads the
-/// system, ejects or trashes goes through this protocol, so tests run on
-/// `FixtureInstallerVolumes` and never touch the Mac's disks.
 public protocol InstallerVolumes: AnyObject, Sendable {
-    /// `hdiutil info -plist`: the attached disk images.
     func attachedImages() -> Data?
-    /// The bundle identifiers of the apps at the top of a mounted volume.
     func appBundleIdentifiers(in mountPoint: String) -> [String]
-    /// Ejects a mounted volume.
     func eject(_ mountPoint: String) throws
-    /// Moves a file to the Trash.
     func trash(_ path: String) throws
 }
 
-/// An attached disk image: its file and where its volumes are mounted.
 public struct InstallerImage: Equatable, Sendable {
     public let path: String
     public let mountPoints: [String]
@@ -39,7 +25,6 @@ public struct InstallerCleanup: @unchecked Sendable {
     let home: String
     let defaults: UserDefaults
 
-    /// The .dmg paths the user chose to keep; they are not offered again.
     static let keptKey = "InstallerCleanup.kept"
 
     public init(volumes: InstallerVolumes, bundleIdentifier: String, bundlePath: String,
@@ -51,10 +36,6 @@ public struct InstallerCleanup: @unchecked Sendable {
         self.defaults = defaults
     }
 
-    /// This running app on the real system; nil for a development build
-    /// (no bundle identifier) or when it runs from anywhere but an
-    /// Applications folder: from the image itself or a translocated copy of
-    /// it, which must stay mounted.
     public static func forThisApp(_ bundle: Bundle = .main) -> InstallerCleanup? {
         guard bundle.bundleURL.pathExtension == "app", let id = bundle.bundleIdentifier,
               installed(bundle.bundlePath, home: NSHomeDirectory()) else { return nil }
@@ -62,14 +43,10 @@ public struct InstallerCleanup: @unchecked Sendable {
                                 bundlePath: bundle.bundlePath)
     }
 
-    /// Whether the app runs from a place that outlives its installer: an
-    /// Applications folder (as `stable_app_location` in cua-spaces-app-core),
-    /// never a mounted image or App Translocation's copy of one.
     static func installed(_ bundlePath: String, home: String) -> Bool {
         bundlePath.hasPrefix("/Applications/") || bundlePath.hasPrefix(home + "/Applications/")
     }
 
-    /// The attached images in `hdiutil info -plist`, with their mount points.
     static func images(_ plist: Data) -> [InstallerImage] {
         guard let root = try? PropertyListSerialization.propertyList(from: plist, format: nil) as? [String: Any],
               let images = root["images"] as? [[String: Any]] else { return [] }
@@ -80,9 +57,6 @@ public struct InstallerCleanup: @unchecked Sendable {
         }
     }
 
-    /// The images this app was installed from: mounted and holding an app
-    /// with this bundle identifier. None unless this copy is installed, so
-    /// the image it runs from is never among them.
     func leftovers() -> [InstallerImage] {
         guard Self.installed(bundlePath, home: home), let plist = volumes.attachedImages() else { return [] }
         return Self.images(plist).filter { image in
@@ -90,9 +64,6 @@ public struct InstallerCleanup: @unchecked Sendable {
         }
     }
 
-    /// Ejects every image this app was installed from. Returns the ejected
-    /// ones whose .dmg is in Downloads and that the user has not kept: the
-    /// ones to offer for the Trash.
     public func ejectLeftovers() -> [InstallerImage] {
         let kept = Set(defaults.stringArray(forKey: Self.keptKey) ?? [])
         let downloads = home + "/Downloads"
@@ -110,12 +81,10 @@ public struct InstallerCleanup: @unchecked Sendable {
         }
     }
 
-    /// Moves an ejected image's .dmg to the Trash.
     public func trash(_ image: InstallerImage) throws {
         try volumes.trash(image.path)
     }
 
-    /// Remembers that the user keeps this .dmg, so it is not offered again.
     public func keep(_ image: InstallerImage) {
         let kept = defaults.stringArray(forKey: Self.keptKey) ?? []
         guard !kept.contains(image.path) else { return }
@@ -123,8 +92,6 @@ public struct InstallerCleanup: @unchecked Sendable {
     }
 }
 
-/// The real system: `hdiutil`, the volumes' Info.plists, NSWorkspace and
-/// the Trash.
 public final class SystemInstallerVolumes: InstallerVolumes, @unchecked Sendable {
     public init() {}
 
@@ -158,14 +125,10 @@ public final class SystemInstallerVolumes: InstallerVolumes, @unchecked Sendable
     }
 }
 
-/// In-memory disk images (tests, fixtures). `images` is what `hdiutil info
-/// -plist` would print; `apps` maps mount points to the bundle identifiers
-/// on them.
 public final class FixtureInstallerVolumes: InstallerVolumes, @unchecked Sendable {
     public var images: Data?
     public var apps: [String: [String]]
     public var ejectFailure: String?
-    /// `eject <mount point>` and `trash <path>`, in order.
     public private(set) var calls: [String] = []
 
     public init(images: Data?, apps: [String: [String]] = [:]) {

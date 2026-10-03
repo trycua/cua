@@ -55,6 +55,8 @@ class Qwen3VLAgent(BaseAgent):
 
     def _create_custom_computer(self, session: "DesktopSession") -> Dict[str, Any]:
         """Build a computer-handler dict from a DesktopSession."""
+        from cua_agent.types import ToolError
+
         from ..types import (
             ClickAction,
             DoubleClickAction,
@@ -69,6 +71,25 @@ class Qwen3VLAgent(BaseAgent):
             WaitAction,
         )
 
+        async def act(action):
+            # A rejected action (e.g. an unknown key name) goes back to the model
+            # as a tool error instead of ending the task.
+            try:
+                await session.execute_action(action)
+            except Exception as e:
+                raise ToolError(f"{type(e).__name__}: {e}") from e
+
+        async def hold_keys(keys, down: bool):
+            sb = getattr(session, "sandbox", None)
+            if sb is None:
+                raise ToolError("key_down/key_up are not supported by this session")
+            names = [keys] if isinstance(keys, str) else list(keys)
+            try:
+                for name in names if down else reversed(names):
+                    await (sb.keyboard.key_down if down else sb.keyboard.key_up)(name)
+            except Exception as e:
+                raise ToolError(f"{type(e).__name__}: {e}") from e
+
         async def screenshot():
             raw = await session.screenshot()
             return base64.b64encode(raw).decode("utf-8")
@@ -81,38 +102,44 @@ class Qwen3VLAgent(BaseAgent):
             elif button == "middle":
                 action = MiddleClickAction(x=x, y=y)
             else:
-                raise ValueError(f"Unknown button type: {button}")
-            await session.execute_action(action)
+                raise ToolError(f"Unknown button type: {button}")
+            await act(action)
 
         async def double_click(x: int, y: int):
-            await session.execute_action(DoubleClickAction(x=x, y=y))
+            await act(DoubleClickAction(x=x, y=y))
 
         async def type_text(text: str):
-            await session.execute_action(TypeAction(text=text))
+            await act(TypeAction(text=text))
 
         async def keypress(keys):
             if isinstance(keys, str):
-                await session.execute_action(KeyAction(key=keys))
+                await act(KeyAction(key=keys))
             else:
-                await session.execute_action(HotkeyAction(keys=list(keys)))
+                await act(HotkeyAction(keys=list(keys)))
+
+        async def key_down(keys):
+            await hold_keys(keys, down=True)
+
+        async def key_up(keys):
+            await hold_keys(keys, down=False)
 
         async def move(x: int, y: int):
-            await session.execute_action(MoveToAction(x=x, y=y))
+            await act(MoveToAction(x=x, y=y))
 
         async def scroll(x: int, y: int, scroll_x: int, scroll_y: int):
             direction = "up" if scroll_y < 0 else "down"
-            await session.execute_action(ScrollAction(direction=direction, amount=abs(scroll_y)))
+            await act(ScrollAction(direction=direction, amount=abs(scroll_y)))
 
         async def drag(path: List[Dict[str, int]]):
             if len(path) < 2:
-                raise ValueError("Path must have at least 2 points")
+                raise ToolError("Path must have at least 2 points")
             start, end = path[0], path[-1]
-            await session.execute_action(
+            await act(
                 DragAction(from_x=start["x"], from_y=start["y"], to_x=end["x"], to_y=end["y"])
             )
 
         async def wait(ms: int = 1000):
-            await session.execute_action(WaitAction(seconds=ms / 1000.0))
+            await act(WaitAction(seconds=ms / 1000.0))
 
         async def get_dimensions():
             return (1280, 800)
@@ -128,6 +155,8 @@ class Qwen3VLAgent(BaseAgent):
             "double_click": double_click,
             "type": type_text,
             "keypress": keypress,
+            "key_down": key_down,
+            "key_up": key_up,
             "move": move,
             "scroll": scroll,
             "drag": drag,
@@ -196,7 +225,13 @@ class Qwen3VLAgent(BaseAgent):
 
             async for result in agent.run(instruction):
                 sys.stdout.flush()
-                step += 1
+                # agent.run also yields the computer's action results; only
+                # model turns count toward the step budget.
+                if any(
+                    o.get("type") not in ("computer_call_output", "function_call_output")
+                    for o in result.get("output", [])
+                ):
+                    step += 1
 
                 # Debug: print LLM response and actions
                 print(f"\n[DEBUG][Step {step}] usage={result.get('usage')}")
@@ -250,7 +285,11 @@ class Qwen3VLAgent(BaseAgent):
                     except Exception as e:
                         print(f"Warning: Failed to record agent step to tracer: {e}")
 
-                if step >= self.max_steps:
+                # Stop after the last budgeted action has run (on its result
+                # yield), not before it executes.
+                if step >= self.max_steps and not any(
+                    o.get("type") == "computer_call" for o in result.get("output", [])
+                ):
                     print(f"\n[Max steps reached] Stopped at step {step}/{self.max_steps}")
                     break
 

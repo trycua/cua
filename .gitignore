@@ -219,3 +219,7 @@ docs/scripts/check-all-links.py
 docs/scripts/check-mdx-links.py
 # Local Windows RE scratch (downloaded PDBs, disassembly scripts)
 .re-windows/
+
+# Local Cua Driver benchmark inputs and results
+benchmarks/cua-driver-bench/cua-drivers/
+benchmarks/cua-driver-bench/automated-eval/fleet-results/

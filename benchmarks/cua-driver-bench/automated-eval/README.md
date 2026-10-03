@@ -101,6 +101,80 @@ The Linux observer records three diagnostic foreground metrics:
 
 These metrics do not change scores, pass results, or comparison signals.
 
+Reports also show required driver participation and recording coverage. A
+required participation failure does not rewrite the evaluator result, but it
+makes a baseline-versus-candidate signal incomplete. Recording coverage is the
+number of successful input actions captured by Cua Driver recording compared
+with the successful input actions counted from the agent transcript.
+
+The participant prompt forbids direct backing-store, internal API, IPC, or
+shell-based substitutes for state changes that the task requires through a GUI.
+If the required GUI interaction fails, the agent must leave it incomplete and
+report the blocker as a papercut.
+
+## Run on Cua Fleet
+
+Fleet runs the same comparison CLI on one isolated Linux/X11 worker. The controller uploads only the public benchmark source, Cua Bench Runtime, selected driver releases, and selected tasks from the authorized task pack. Task content remains separate from the public source archive.
+
+From the monorepo root, install the Fleet extra:
+
+```bash
+python -m pip install -e 'libs/cua-bench-runtime[fleet]'
+```
+
+Put Fleet and model credentials in `benchmarks/cua-driver-bench/automated-eval/.env`. If `OPENAI_BASE_URL` is reachable only through a tailnet, set `OPENAI_FLEET_BASE_URL` to a provider URL that the worker can reach.
+
+Run the controller from the benchmark directory:
+
+```bash
+cd benchmarks/cua-driver-bench
+python automated-eval/cli.py fleet \
+  --model small \
+  --reasoning-effort high \
+  --tasks-root /absolute/path/to/authorized/tasks \
+  --drivers-root cua-drivers \
+  --baseline 0.28.0 \
+  --candidate 0.26.1 \
+  --task CDB-S01 \
+  --task CDB-S04
+```
+
+Fleet reads the selected task descriptors and provisions supported external applications, including Google Chrome, LibreOffice, and GnuCash. Results are written to `automated-eval/fleet-results/<UTC timestamp>/`. The worker is released after the reports and raw trial artifacts are downloaded.
+
+## Publish a Static Report
+
+Publishing uses the AWS CLI and the standard AWS credential chain. Configure the
+`cua-artifacts` profile locally, then set these non-secret values in
+`automated-eval/.env`:
+
+```env
+AWS_PROFILE=cua-artifacts
+AWS_REGION=us-west-2
+AWS_S3_BUCKET=cua-agent-artifacts
+AWS_S3_REPORT_PREFIX=cua-driver-bench
+```
+
+Publish an existing completed run without rerunning the benchmark:
+
+```bash
+python automated-eval/cli.py publish \
+  --run-dir automated-eval/fleet-results/<run>
+```
+
+Or publish automatically after a local comparison or Fleet run by passing
+`--publish` to the `compare` or `fleet` command.
+
+The publisher uploads only `report/`, `comparison.md`, and `comparison.json`.
+It keeps the local run unchanged and prints one machine-readable line:
+
+```text
+REPORT_URL=https://...
+```
+
+The S3 report prefix must already be publicly readable. The publisher verifies
+the generated HTTP URL and fails if S3 returns `403` or `404`. It does not change
+bucket policy, Block Public Access, ACLs, or CloudFront configuration.
+
 ## Main Options
 
 | Option | Purpose |
@@ -118,6 +192,7 @@ These metrics do not change scores, pass results, or comparison signals.
 | `--codex-home` | Select the source Codex configuration and authentication directory. |
 | `--platform` | Select `auto`, `linux`, `windows`, or `macos`. |
 | `--dry-run` | Print the trial plan without starting the benchmark. |
+| `--publish` | Publish the generated static report bundle after a successful run. |
 
 Run this command for the complete option list:
 

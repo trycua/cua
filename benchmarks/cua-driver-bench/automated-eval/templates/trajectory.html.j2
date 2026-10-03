@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ trial.task }} — {{ trial.version }}</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 32px; line-height: 1.4; }
+    pre { margin: 4px 0 18px; padding: 10px 12px; border: 1px solid #ddd; background: #fafafa; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+    .label { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; font-weight: 700; margin-top: 20px; }
+    img { display: block; max-width: min(100%, 1400px); height: auto; margin: 8px 0 24px; border: 1px solid #ddd; }
+  </style>
+</head>
+<body>
+  <h1>{{ trial.task }} — Cua Driver {{ trial.version }}</h1>
+  <p><a href="../../index.html">Back to comparison</a> · <a href="papercuts.md">Papercuts</a></p>
+  {% for event in events %}
+    <section class="event {{ event.kind }}">
+      <div class="label">{{ event.label }}</div>
+      <pre>{{ event.text }}</pre>
+      {% for image in event.images %}<img src="{{ image }}" loading="lazy" alt="tool result screenshot">{% endfor %}
+    </section>
+  {% endfor %}
+</body>
+</html>

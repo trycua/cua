@@ -307,7 +307,8 @@ pub enum SpacesCmd {
         space: String,
     },
     /// Forget a registered Space and its stored token. The sandbox keeps
-    /// running.
+    /// running. The `relay:<machine>` record of a Space that registered
+    /// itself and is gone (not connected) also leaves your relay directory.
     #[command(
         visible_alias = "remove",
         after_help = "Examples:
@@ -372,11 +373,15 @@ pub enum SpacesCmd {
         /// Space id, address or display name.
         space: String,
     },
-    /// Take a Space off the relay (every share with it ends).
+    /// Take a Space off the relay (every share with it ends). With a
+    /// `relay:<machine>` id, removes that machine's record from your relay
+    /// directory: a Space that registered itself (also after it was
+    /// deleted), or a machine of yours that is gone. Only its owner can.
     #[command(
         name = "relay-unregister",
         after_help = "Examples:
-  cua spaces relay-unregister local:studio"
+  cua spaces relay-unregister local:studio
+  cua spaces relay-unregister relay:space-0123abcd4567ef89"
     )]
     RelayUnregister {
         /// Space id, address or display name.

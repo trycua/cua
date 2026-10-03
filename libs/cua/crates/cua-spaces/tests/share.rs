@@ -411,9 +411,230 @@ async fn relay_register_publishes_a_space_for_the_accounts_devices() {
     assert!(env.state.relay_attached.lock().unwrap().is_none());
     assert!(relay.machine(&r.machine).is_none());
     assert!(!spaces.relay_unregister(&info.id).await.unwrap());
-    let e = spaces
-        .relay_unregister(&format!("relay:{}", "0123abcd4567ef89"))
+    // A machine the relay does not list is not on the relay.
+    assert!(
+        !spaces
+            .relay_unregister(&format!("relay:{}", "0123abcd4567ef89"))
+            .await
+            .unwrap()
+    );
+}
+
+/// The hermetic world of the tests below: a fake relay with two accounts
+/// (`ada` owns, `bob` is someone she shares with) and Spaces for each.
+async fn two_accounts() -> (FakeRelay, Spaces, Spaces, Vec<tempfile::TempDir>) {
+    let relay = FakeRelay::start().await;
+    relay.add_account("ada-token", "ada", Some("ada@example.com"));
+    relay.add_account("bob-token", "bob", Some("bob@example.com"));
+    let homes = vec![tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
+    let spaces = |home: &std::path::Path, token: &str| {
+        Spaces::builder()
+            .home(home)
+            .relay(RelayAccount::new(
+                &relay.url,
+                Arc::new(StaticToken(token.into())),
+            ))
+            .build()
+    };
+    let ada = spaces(homes[0].path(), "ada-token");
+    let bob = spaces(homes[1].path(), "bob-token");
+    (relay, ada, bob, homes)
+}
+
+/// Registers `id` as one of ada's machines, as a Space's relay_register
+/// (no meta) or a host's setup (`host_meta`) does.
+async fn register(relay: &FakeRelay, id: &str, host_meta: bool) {
+    let meta = if host_meta {
+        [(cua_host::META_PROVIDES_SPACES.to_string(), "on".to_string())].into()
+    } else {
+        Default::default()
+    };
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "ada-token",
+            &cua_host::relay::RegisterRequest {
+                id: id.into(),
+                name: "vps-desktop".into(),
+                allow: vec![],
+                host: None,
+                meta,
+            },
+        )
+        .await
+        .unwrap();
+}
+
+/// Deleting a Space that registered itself on the relay takes its machine
+/// out of the relay directory (#4486): deleting the Space by its own id
+/// detaches its driver and removes the machine, and deleting its
+/// `relay:<machine>` after the Space is gone removes the stale record.
+#[tokio::test]
+async fn deleting_a_relay_registered_space_removes_its_machine() {
+    let (relay, ada, _bob, _homes) = two_accounts().await;
+    let env = MockServer::start(MockAuth::default()).await;
+    env.state.advertise(&["relay_attach"]);
+    let info = ada.add(&env.url(), None, Some("bot".into())).await.unwrap();
+    let state = env.state.clone();
+    let handle = relay.clone();
+    tokio::spawn(async move {
+        for _ in 0..400 {
+            if let Some(a) = state.relay_attached.lock().unwrap().clone() {
+                handle.set_online(&a.machine_id, true, "0.1.0");
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    });
+    let r = ada.relay_register(&info.id).await.unwrap();
+    assert!(relay.machine(&r.machine).is_some());
+    // Deleting the Space itself: its driver leaves and its machine goes.
+    let message = ada.delete(&info.id).await.unwrap();
+    assert!(!message.contains("Note"), "{message}");
+    assert!(env.state.relay_attached.lock().unwrap().is_none());
+    assert!(relay.machine(&r.machine).is_none(), "machine removed");
+
+    // The issue's case: the Space is gone (its sandbox deleted elsewhere),
+    // only its record is left, listed as offline, not ready.
+    let stale = "space-00000000000000aa";
+    register(&relay, stale, false).await;
+    let id = format!("relay:{stale}");
+    let row = ada
+        .list_all()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|i| i.id == id)
+        .expect("listed");
+    assert_eq!(row.status, "offline");
+    let listed = cua_spaces::mcp::McpServer::new(ada.clone())
+        .call("list_spaces", serde_json::json!({}))
+        .await;
+    let rows: serde_json::Value = serde_json::from_str(listed.first_text().expect("rows")).unwrap();
+    let phase = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == id)
+        .map(|r| r["phase"].clone());
+    assert_eq!(phase, Some(serde_json::json!("offline")), "{rows}");
+    let message = ada.delete(&id).await.unwrap();
+    assert!(
+        message.contains("from your relay directory")
+            && !message.contains("stays in your relay directory"),
+        "{message}"
+    );
+    assert!(relay.machine(stale).is_none(), "stale record removed");
+    assert!(!ada.list_all().await.unwrap().iter().any(|i| i.id == id));
+}
+
+/// Removing a stale record: `rm` of a gone Space's `relay:<machine>` and
+/// `relay_unregister` of a machine that is no longer connected remove it
+/// from the relay directory; a host that is connected now is refused with
+/// the remedy that works (`cua host remove` on it), and a live Space
+/// registration is untouched by `rm`.
+#[tokio::test]
+async fn stale_relay_records_can_be_removed() {
+    let (relay, ada, _bob, _homes) = two_accounts().await;
+    let gone = "space-00000000000000bb";
+    register(&relay, gone, false).await;
+    ada.relay_machines().await.unwrap();
+    ada.remove(&format!("relay:{gone}")).await.unwrap();
+    assert!(relay.machine(gone).is_none(), "rm removed the stale record");
+
+    // A live Space registration: `rm` only drops it here.
+    let live = "space-00000000000000cc";
+    register(&relay, live, false).await;
+    relay.set_online(live, true, "0.1.0");
+    ada.remove(&format!("relay:{live}")).await.unwrap();
+    assert!(
+        relay.machine(live).is_some(),
+        "a live Space keeps its record"
+    );
+    assert!(
+        ada.relay_unregister(&format!("relay:{live}"))
+            .await
+            .unwrap()
+    );
+    assert!(relay.machine(live).is_none());
+
+    // A host: connected, it is refused with a remedy that can be carried
+    // out; once that machine is gone, its record is removed.
+    let host = "0123abcd4567ef890123abcd4567ef89";
+    register(&relay, host, true).await;
+    relay.set_online(host, true, "0.1.0");
+    let e = ada
+        .relay_unregister(&format!("relay:{host}"))
         .await
         .unwrap_err();
+    assert_eq!(e.tag(), "invalid_argument", "{e}");
     assert!(e.to_string().contains("cua host remove"), "{e}");
+    assert!(relay.machine(host).is_some());
+    // `rm` and `delete` never remove a host's record.
+    ada.remove(&format!("relay:{host}")).await.unwrap();
+    relay.set_online(host, false, "");
+    ada.remove(&format!("relay:{host}")).await.unwrap();
+    let message = ada.delete(&format!("relay:{host}")).await.unwrap();
+    assert!(message.contains("relay-unregister"), "{message}");
+    assert!(relay.machine(host).is_some());
+    assert!(
+        ada.relay_unregister(&format!("relay:{host}"))
+            .await
+            .unwrap()
+    );
+    assert!(
+        relay.machine(host).is_none(),
+        "the gone host's record removed"
+    );
+    let audit = ada.share_audit(None, 10).unwrap();
+    assert!(audit.iter().any(|a| a.action == "forget"), "{audit:?}");
+}
+
+/// Only a machine's owner can remove its record: someone it is shared
+/// with (editor or viewer) is refused by every path, here and by the
+/// relay itself, and the record stays.
+#[tokio::test]
+async fn only_the_owner_removes_a_relay_record() {
+    let (relay, ada, bob, _homes) = two_accounts().await;
+    let gone = "space-00000000000000dd";
+    register(&relay, gone, false).await;
+    let ada_client = cua_host::RelayClient::new(&relay.url).unwrap();
+    for patch in [
+        cua_host::MachinePatch {
+            allow: Some(vec!["bob@example.com".into()]),
+            ..Default::default()
+        },
+        cua_host::MachinePatch {
+            allow: Some(vec![]),
+            viewers: Some(vec!["bob@example.com".into()]),
+            ..Default::default()
+        },
+    ] {
+        ada_client.patch("ada-token", gone, &patch).await.unwrap();
+        let id = format!("relay:{gone}");
+        bob.relay_machines().await.unwrap();
+        let e = bob.relay_unregister(&id).await.unwrap_err();
+        assert_eq!(e.tag(), "permission_denied", "{e}");
+        assert!(e.to_string().contains("only its owner"), "{e}");
+        let message = bob.delete(&id).await.unwrap();
+        assert!(message.contains("only its"), "{message}");
+        bob.relay_machines().await.unwrap();
+        bob.remove(&id).await.unwrap();
+        // The relay refuses anyone but the owner, whatever the client does.
+        let e = cua_host::RelayClient::new(&relay.url)
+            .unwrap()
+            .delete("bob-token", gone)
+            .await
+            .unwrap_err();
+        assert!(matches!(e, cua_host::Error::PermissionDenied(_)), "{e:?}");
+        assert!(relay.machine(gone).is_some(), "the record stays");
+    }
+    // The owner can.
+    ada.relay_machines().await.unwrap();
+    assert!(
+        ada.relay_unregister(&format!("relay:{gone}"))
+            .await
+            .unwrap()
+    );
+    assert!(relay.machine(gone).is_none());
 }

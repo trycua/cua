@@ -252,6 +252,10 @@ jobs:
           uv run --frozen python verify_session_isolation.py \
             --output "$RUNNER_TEMP/jev-use-session-isolation.json"
           uv run --frozen python verify_setup.py --typescript --output-dir "$proof"
+          uv run --frozen python verify_setup.py --typescript --guarded-completion \
+            --output-dir "$proof/guarded-completion"
+          uv run --frozen python verify_setup.py --typescript --guarded-completion \
+            --guarded-completion-decline --output-dir "$proof/guarded-completion-decline"
           # Visual-path fixture: Submit has no DOM button ref. Without the
           # cua-perception extension, both runners must log not_installed on
           # every step that attempts a visual parse, fall back to the
@@ -290,6 +294,27 @@ jobs:
           assert all(item["observed"] == {"submitted": "jev-guide-mock"} for item in summary["checks"])
           assert all(item["acted_path"] == "page_structure" for item in summary["checks"])
           assert all(item["submit_tool"] == "browser_click" for item in summary["checks"])
+          guarded = json.loads((root / "guarded-completion" / "summary.json").read_text())
+          assert guarded["complete"] is True
+          assert guarded["guarded_completion_requested"] is True
+          assert {(item["language"], item["outcome"]) for item in guarded["checks"]} == {
+              ("python", "verified"), ("typescript", "verified")
+          }
+          assert all(
+              item["decision_routes"] == ["provider", "guarded-completion"]
+              for item in guarded["checks"]
+          )
+          assert all(item["observed"] == {"submitted": "jev-guide-mock"}
+                     for item in guarded["checks"])
+          declined = json.loads((root / "guarded-completion-decline" / "summary.json").read_text())
+          assert declined["complete"] is True
+          assert declined["guarded_completion_decline_requested"] is True
+          assert {(item["language"], item["outcome"]) for item in declined["checks"]} == {
+              ("python", "verified"), ("typescript", "verified")
+          }
+          assert all(item["decision_routes"] == ["provider", "provider"]
+                     and item["observed"] == {"submitted": "jev-guide-mock"}
+                     for item in declined["checks"])
           # Page-structure refs exist on every default-fixture step, so the
           # visual parse is skipped rather than paid for and discarded.
           assert all(item["visual_statuses"] and set(item["visual_statuses"]) == {"skipped"}
@@ -311,7 +336,12 @@ jobs:
               assert len(statuses) > 1 and set(statuses[1:]) == {"not_installed"}, statuses
               assert item["escalations"] == []
           forbidden = ("typesafe_api_key", "authorization", "environment", "image_base64", "screenshot")
-          for path in [*root.iterdir(), *(root / "visual-fixture").iterdir()]:
+          for path in [
+              *root.iterdir(),
+              *(root / "guarded-completion").iterdir(),
+              *(root / "guarded-completion-decline").iterdir(),
+              *(root / "visual-fixture").iterdir(),
+          ]:
               if path.name == "summary.json" or path.suffix == ".jsonl":
                   text = path.read_text().lower()
                   assert not any(value in text for value in forbidden), path
@@ -324,7 +354,11 @@ jobs:
           path: |
             ${{ runner.temp }}/jev-use-mock-proof/summary.json
             ${{ runner.temp }}/jev-use-mock-proof/*.jsonl
+            ${{ runner.temp }}/jev-use-mock-proof/guarded-completion/summary.json
+            ${{ runner.temp }}/jev-use-mock-proof/guarded-completion/*.jsonl
             ${{ runner.temp }}/jev-use-session-isolation.json
+            ${{ runner.temp }}/jev-use-mock-proof/guarded-completion-decline/summary.json
+            ${{ runner.temp }}/jev-use-mock-proof/guarded-completion-decline/*.jsonl
             ${{ runner.temp }}/jev-use-mock-proof/visual-fixture/summary.json
             ${{ runner.temp }}/jev-use-mock-proof/visual-fixture/*.jsonl
           if-no-files-found: error

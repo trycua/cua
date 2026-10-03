@@ -13,6 +13,56 @@ use std::sync::Arc;
 /// without cua-spacesd reports it missing.
 pub const SPACESD_FEATURE: &str = "spacesd";
 
+/// The cua-spacesd release to ask for when a driver does not report a
+/// feature the client requires: every published release from this one on
+/// reports it. (Some older builds report it too; one that does not report
+/// it at all predates it.) `None` for a feature without a known floor.
+pub fn spacesd_floor(feature: &str) -> Option<&'static str> {
+    match feature {
+        // `SystemService.AttachRelay`: sharing a Space, `relay_register`,
+        // and every Space a host provides.
+        "relay_attach" => Some("0.2.2"),
+        _ => None,
+    }
+}
+
+/// Whether the cua-spacesd version `version` is older than `floor`
+/// (`x.y.z`, a pre-release suffix ignored). An empty or unparseable
+/// version counts as older: a driver that does not say is not newer.
+pub fn spacesd_older_than(version: &str, floor: &str) -> bool {
+    fn parse(v: &str) -> Option<(u64, u64, u64)> {
+        let v = v.trim().trim_start_matches('v');
+        let core = v.split(['-', '+']).next()?;
+        let mut it = core.split('.').map(|p| p.parse::<u64>().ok());
+        let t = (it.next()??, it.next()??, it.next()??);
+        it.next().is_none().then_some(t)
+    }
+    match (parse(version), parse(floor)) {
+        (Some(v), Some(f)) => v < f,
+        (None, Some(_)) => true,
+        _ => false,
+    }
+}
+
+/// The limitation text for a feature a cua-spacesd of `version` does not
+/// report at all: names the release to update to when the feature has a
+/// floor this version is older than.
+pub fn unreported_feature_limitation(version: &str, feature: &str) -> String {
+    let shown = if version.trim().is_empty() {
+        "of an unknown version"
+    } else {
+        version
+    };
+    match spacesd_floor(feature) {
+        Some(floor) if spacesd_older_than(version, floor) => format!(
+            "its cua-spacesd {shown} is too old: cua-spacesd {floor} and newer report \
+             `{feature}`; update the Space's image (or its cua-spacesd) to one that ships \
+             cua-spacesd {floor} or newer"
+        ),
+        _ => format!("cua-spacesd {shown} does not report this feature"),
+    }
+}
+
 /// How a declared service is reached.
 #[derive(Clone)]
 pub enum ServiceSource {
@@ -361,10 +411,7 @@ impl Space {
             None => Err(Error::CapabilityMissing {
                 space: self.inner.id.to_string(),
                 feature: name.into(),
-                limitation: format!(
-                    "cua-spacesd {} does not report this feature",
-                    self.inner.caps.version
-                ),
+                limitation: unreported_feature_limitation(&self.inner.caps.version, name),
             }),
         }
     }
@@ -587,6 +634,39 @@ fn humantime_rfc3339(at: std::time::SystemTime) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn versions_compare_against_a_floor() {
+        assert!(spacesd_older_than("0.1.0", "0.2.2"));
+        assert!(spacesd_older_than("0.2.1", "0.2.2"));
+        assert!(spacesd_older_than("0.0.0-mock", "0.2.2"));
+        assert!(spacesd_older_than("", "0.2.2"));
+        assert!(spacesd_older_than("garbage", "0.2.2"));
+        assert!(!spacesd_older_than("0.2.2", "0.2.2"));
+        assert!(!spacesd_older_than("v0.3.0", "0.2.2"));
+        assert!(!spacesd_older_than("1.0.0-rc.1", "0.2.2"));
+        assert!(!spacesd_older_than("0.1.0", "not-a-version"));
+    }
+
+    #[test]
+    fn an_unreported_feature_names_the_release_to_update_to() {
+        assert_eq!(spacesd_floor("relay_attach"), Some("0.2.2"));
+        let old = unreported_feature_limitation("0.1.0", "relay_attach");
+        assert!(old.contains("cua-spacesd 0.1.0 is too old"), "{old}");
+        assert!(old.contains("cua-spacesd 0.2.2 or newer"), "{old}");
+        // A current driver that still lacks it, or a feature without a
+        // floor, keeps the plain text.
+        assert_eq!(
+            unreported_feature_limitation("0.3.0", "relay_attach"),
+            "cua-spacesd 0.3.0 does not report this feature"
+        );
+        assert_eq!(
+            unreported_feature_limitation("0.1.0", "pty"),
+            "cua-spacesd 0.1.0 does not report this feature"
+        );
+    }
+
     #[test]
     fn rfc3339_formats_known_instants() {
         let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_758_300_000);

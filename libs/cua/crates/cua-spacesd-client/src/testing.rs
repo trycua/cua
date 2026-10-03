@@ -149,6 +149,8 @@ pub struct MockState {
     /// Extra supported features reported by `GetCapabilities` (for clients
     /// that gate on stream / window features).
     extra_features: Mutex<Vec<String>>,
+    /// `GetCapabilities.version` (default `0.0.0-mock`).
+    version: Mutex<Option<String>>,
     /// `GetCapabilitiesResponse::machine_seal_public_key` (S1); empty (an
     /// older guest) unless a test sets one with
     /// [`MockState::set_machine_seal_public_key`].
@@ -291,6 +293,11 @@ impl MockState {
             .lock()
             .unwrap()
             .retain(|f| !names.contains(&f.as_str()));
+    }
+
+    /// Report `version` as this mock's cua-spacesd version.
+    pub fn set_version(&self, version: &str) {
+        *self.version.lock().unwrap() = Some(version.to_string());
     }
 
     /// Report `key` as this mock guest's sealed-delivery public key (S1).
@@ -584,7 +591,13 @@ impl SystemService for Svc {
             return Err(Status::unimplemented("not a spacesd"));
         }
         Ok(tonic::Response::new(pb::GetCapabilitiesResponse {
-            version: "0.0.0-mock".into(),
+            version: self
+                .0
+                .version
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or_else(|| "0.0.0-mock".into()),
             protocol_version: cua_proto::ENV_PROTOCOL_VERSION,
             protocol_revision: cua_proto::ENV_PROTOCOL_REVISION,
             os: Some(pb::OperatingSystem {

@@ -375,12 +375,16 @@ async fn the_host_creates_attaches_lists_and_deletes_with_an_audit() {
 async fn an_image_too_old_for_the_relay_says_so_and_is_removed() {
     let f = fixture(HostProfile::Spare).await;
     f.env.state.unadvertise(&["relay_attach"]);
+    f.env.state.set_version("0.1.0");
     let attach = f.register("ada-token", "space-ada00001").await;
     let e = f
         .create(&ada(), "linux", attach)
         .await
         .unwrap_err()
         .to_string();
+    // It names the version it found and the release to update to (#4480).
+    assert!(e.contains("cua-spacesd 0.1.0 is too old"), "{e}");
+    assert!(e.contains("cua-spacesd 0.2.2 or newer"), "{e}");
     assert!(
         e.contains("too old to be reached from your other devices"),
         "{e}"

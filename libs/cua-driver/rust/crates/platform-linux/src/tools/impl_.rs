@@ -995,6 +995,16 @@ pub struct GetWindowStateTool {
     state: Arc<ToolState>,
 }
 
+const COLD_START_WALK_TIMEOUT_MS: u64 = 2_000;
+
+fn linux_snapshot_timeout_ms(timeout: Option<&Value>, has_prior_snapshot: bool) -> u64 {
+    cua_driver_core::tool_schema::resolve_timeout_ms_with_first_snapshot_grace(
+        timeout,
+        has_prior_snapshot,
+        COLD_START_WALK_TIMEOUT_MS,
+    )
+}
+
 static GWS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -1043,7 +1053,10 @@ impl Tool for GetWindowStateTool {
                 the markdown and the structured elements are truncated \
                 identically. Omit both for current default behaviour.\n\n\
                 TIME BUDGET: `timeout_ms` (default 1000) bounds the whole AT-SPI \
-                walk. Large apps (LibreOffice, GIMP, file managers) can exceed it; \
+                walk. When omitted, a window's first snapshot gets a 2000 ms \
+                cold-start budget so Chromium/Electron can finish publishing its \
+                initial tree. Explicit values are always honored. Large apps \
+                (LibreOffice, GIMP, file managers) can exceed the budget; \
                 the call then returns the PARTIAL tree with `truncated: true`, \
                 `truncation_reason`, `nodes_visited`/`nodes_pending` and \
                 `elements_complete: false`. Every element listed is real and \
@@ -1197,7 +1210,12 @@ impl Tool for GetWindowStateTool {
             .get("max_depth")
             .and_then(|v| v.as_u64())
             .map(|v| v.max(1) as usize);
-        let timeout_ms = cua_driver_core::tool_schema::resolve_timeout_ms(args.get("timeout_ms"));
+        let timeout_ms = linux_snapshot_timeout_ms(
+            args.get("timeout_ms"),
+            self.state
+                .snapshots
+                .contains_semantic_window(pid as i32, xid),
+        );
         let walk_timeout = std::time::Duration::from_millis(timeout_ms);
 
         let process_is_live = crate::proc_fs::is_process_live(pid);
@@ -1606,7 +1624,7 @@ impl Tool for GetWindowStateTool {
                 }
 
                 if !observation_only && !published_snapshot && screenshot_scale.is_some() {
-                    if let Some((_, replaced)) = state.snapshots.publish_for_session(
+                    if let Some((_, replaced)) = state.snapshots.publish_capture_for_session(
                         pid as i32,
                         xid,
                         crate::atspi::snapshot::AtspiSnapshot::from_nodes(&[]),

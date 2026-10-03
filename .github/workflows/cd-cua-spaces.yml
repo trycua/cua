@@ -140,8 +140,28 @@ env:
   REQUIRE_SIGNING: ${{ github.repository == 'trycua/cua' && startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
+  # The bundled `cua` CLI bakes libs/cua-spacesd/VERSION and "Set up for
+  # access" downloads that release: refuse to build an app whose pinned
+  # cua-spacesd is not published (Cua Spaces 0.3.0 pinned a draft).
+  spacesd-published:
+    name: cua-spacesd pin is published
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: .
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the baked cua-spacesd release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/check_spacesd_published.sh "$CUA_RELEASE_REPOSITORY"
+
   build-macos:
     name: darwin-universal (SwiftUI)
+    needs: spacesd-published
     runs-on: macos-26
     timeout-minutes: 180
     defaults:

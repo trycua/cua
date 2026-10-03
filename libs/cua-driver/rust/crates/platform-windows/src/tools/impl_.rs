@@ -1228,36 +1228,40 @@ impl Tool for GetWindowStateTool {
                  the target app's windows, or read `launch_app`'s `windows` array.",
                 ),
             };
-        // Validate window belongs to pid — Swift's hard error.
-        let windows_for_pid =
-            tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
+        // Validate window belongs to pid — Swift's hard error. The exact HWND is
+        // probed through Win32 first; the desktop-wide UIA union (2 s deadline)
+        // is consulted only on a miss (#4416).
+        use crate::win32::PidWindowLookup;
+        let lookup =
+            tokio::task::spawn_blocking(move || crate::win32::lookup_window_for_pid(pid, hwnd))
                 .await
-                .unwrap_or_default();
-        if !windows_for_pid.iter().any(|w| w.hwnd == hwnd) {
-            // Check if the window exists under a different pid.
-            let all = tokio::task::spawn_blocking(|| crate::win32::list_windows(None))
-                .await
-                .unwrap_or_default();
-            if let Some(w) = all.iter().find(|w| w.hwnd == hwnd) {
+                .unwrap_or(PidWindowLookup::Missing);
+        let window = match lookup {
+            PidWindowLookup::Found(window) => window,
+            PidWindowLookup::OtherPid(owner) => {
                 return ToolResult::error(format!(
-                    "window_id {hwnd} belongs to pid {}, not pid {pid}. Call \
-                     `list_windows({{\"pid\": {pid}}})` to get this pid's own windows.",
-                    w.pid
+                    "window_id {hwnd} belongs to pid {owner}, not pid {pid}. Call \
+                     `list_windows({{\"pid\": {pid}}})` to get this pid's own windows."
                 ));
             }
-            return ToolResult::error(format!(
-                "No window with window_id {hwnd} exists. Call `list_windows({{\"pid\": \
-                 {pid}}})` for candidates."
-            ));
-        }
+            PidWindowLookup::Missing => {
+                return ToolResult::error(format!(
+                    "No window with window_id {hwnd} exists. Call `list_windows({{\"pid\": \
+                     {pid}}})` for candidates."
+                ));
+            }
+        };
         // Window identity metadata (additive): title + on-screen rectangle from
-        // the enumeration we already did, plus the owning process's executable
+        // the lookup we already did, plus the owning process's executable
         // name. Names the surface on the capture-only path, where no UIA tree
         // identifies it.
-        let win_geom = windows_for_pid
-            .iter()
-            .find(|w| w.hwnd == hwnd)
-            .map(|w| (w.title.clone(), w.x, w.y, w.width, w.height));
+        let win_geom = Some((
+            window.title.clone(),
+            window.x,
+            window.y,
+            window.width,
+            window.height,
+        ));
         let app_name = tokio::task::spawn_blocking(move || {
             crate::win32::list_processes()
                 .into_iter()
@@ -2766,9 +2770,10 @@ impl Tool for LaunchAppTool {
             if !windows_json.is_empty() {
                 break;
             }
-            let wins = tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
-                .await
-                .unwrap_or_default();
+            let wins =
+                tokio::task::spawn_blocking(move || crate::win32::list_windows_win32_first(pid))
+                    .await
+                    .unwrap_or_default();
             if !wins.is_empty() {
                 let window_count = wins.len();
                 windows_json = wins.iter().enumerate().map(|(position, w)| json!({
@@ -2826,7 +2831,7 @@ impl Tool for LaunchAppTool {
                     for _ in 0..max_candidate_attempts {
                         total_attempts += 1;
                         let wins = tokio::task::spawn_blocking(move || {
-                            crate::win32::list_windows(Some(candidate_pid))
+                            crate::win32::list_windows_win32_first(candidate_pid)
                         })
                         .await
                         .unwrap_or_default();
@@ -4476,7 +4481,7 @@ impl Tool for TypeTextTool {
                     "pid":{"type":"integer","description":"Target process ID."},
                     "text":{"type":"string","description":"Text to insert at the focused element's cursor."},
                     "window_id":{"type":"integer","description":"HWND of the target window. Omit when element_token is supplied (the token carries it)."},
-                    "element_token":{"type":"string","description":"Opaque element handle from get_window_state. When supplied, type_text writes through UIA ValuePattern and reads that exact element back by handle. The shared ActionResult is confirmed only when the complete expected value is synchronously visible. If SetValue succeeds but read-back is stale or unavailable, the result is unverifiable with no escalation; take a fresh snapshot before retrying because deferred providers may publish only after this call returns."},
+                    "element_token":{"type":"string","pattern":"^s[0-9a-f]{8}:[0-9]+$","description":"Opaque element handle from get_window_state. When supplied, type_text writes through UIA ValuePattern and reads that exact element back by handle. The shared ActionResult is confirmed only when the complete expected value is synchronously visible. If SetValue succeeds but read-back is stale or unavailable, the result is unverifiable with no escalation; take a fresh snapshot before retrying because deferred providers may publish only after this call returns."},
                     "x":{"type":"number","description":"Window-local screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_token) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the UIA/WM_CHAR path can't reach. Read straight off the get_window_state PNG, same convention as click."},
                     "y":{"type":"number","description":"Window-local screenshot-pixel Y of the field (see x)."},
                     "delay_ms":{"type":"integer","minimum":0,"maximum":200,"description":"Milliseconds between characters. Default 30."},

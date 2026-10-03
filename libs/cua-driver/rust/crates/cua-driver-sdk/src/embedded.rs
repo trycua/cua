@@ -7,6 +7,7 @@ use cua_driver_contract::{
     CAPABILITY_VERSION, CONTRACT_VERSION, MCP_PROTOCOL_VERSION, TOOLS_LIST_SCHEMA_VERSION,
 };
 use cua_driver_core::daemon::{request_daemon_metadata, DaemonMetadata};
+use cua_driver_core::key_pacing::KEY_GAP_ENV;
 use cua_driver_core::window_observation::{WINDOW_CHANGE_POLL_ENV, WINDOW_CHANGE_TIMEOUT_ENV};
 use std::collections::BTreeMap;
 use std::process::Stdio;
@@ -838,6 +839,7 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
     upper.starts_with("LC_")
         || upper == WINDOW_CHANGE_TIMEOUT_ENV
         || upper == WINDOW_CHANGE_POLL_ENV
+        || upper == KEY_GAP_ENV
         || matches!(
             upper.as_str(),
             "PATH"
@@ -1430,5 +1432,27 @@ mod tests {
 
         assert_eq!(host.state(), EmbeddedDriverHostState::Stopped);
         assert!(!socket_path.exists());
+    }
+
+    /// `CUA_DRIVER_KEY_GAP_MS` must survive both propagation paths into a child launch —
+    /// inherited from the parent environment and supplied as an explicit
+    /// override. An allowlist miss silently strips the deployment's
+    /// override in embedded/worker modes.
+    #[test]
+    fn key_gap_env_propagates() {
+        assert!(allowed_environment_name("CUA_DRIVER_KEY_GAP_MS"));
+        let merged =
+            merge_safe_environment([("CUA_DRIVER_KEY_GAP_MS".to_owned(), "7".to_owned())], &[]);
+        assert!(merged
+            .iter()
+            .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_KEY_GAP_MS") && v.value == "7"));
+        let overrides = vec![EmbeddedEnvironmentVariable {
+            name: "CUA_DRIVER_KEY_GAP_MS".to_owned(),
+            value: "3".to_owned(),
+        }];
+        let merged = merge_safe_environment(std::iter::empty(), &overrides);
+        assert!(merged
+            .iter()
+            .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_KEY_GAP_MS") && v.value == "3"));
     }
 }

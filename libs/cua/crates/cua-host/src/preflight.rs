@@ -95,18 +95,131 @@ impl SessionProbe for SystemProbe {
         if !driver_bin.is_file() {
             return None;
         }
-        let out = std::process::Command::new(driver_bin)
-            .arg("check-permissions")
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+        let stdout = check_permissions_output(driver_bin)?;
+        let v: serde_json::Value = serde_json::from_slice(&stdout).ok()?;
         Some((
             v.get("screen_recording")?.as_bool()?,
             v.get("accessibility")?.as_bool()?,
         ))
+    }
+}
+
+/// How long `<driver> check-permissions` may take.
+const PERMISSION_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// `<driver_bin> check-permissions`'s stdout, when it exits 0 in time.
+///
+/// On macOS the child disclaims responsibility: TCC answers for the
+/// process macOS holds responsible, which for a plain child is its parent
+/// (the app, or the terminal `cua` runs in), not the driver the
+/// LaunchAgent runs. Disclaimed, the driver answers for itself, and a
+/// fresh process each time sees a grant made a moment ago.
+fn check_permissions_output(driver_bin: &Path) -> Option<Vec<u8>> {
+    #[cfg(target_os = "macos")]
+    {
+        disclaimed::output(driver_bin, "check-permissions", PERMISSION_CHECK_TIMEOUT)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = PERMISSION_CHECK_TIMEOUT;
+        let out = std::process::Command::new(driver_bin)
+            .arg("check-permissions")
+            .output()
+            .ok()?;
+        out.status.success().then_some(out.stdout)
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod disclaimed {
+    use std::ffi::CString;
+    use std::io::Read as _;
+    use std::os::fd::FromRawFd as _;
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::path::Path;
+    use std::time::Duration;
+
+    unsafe extern "C" {
+        // libsystem_secinit; used by Chromium, LLDB and Xcode for the same
+        // reason. Present on every macOS cua supports.
+        fn responsibility_spawnattrs_setdisclaim(
+            attrs: *mut libc::posix_spawnattr_t,
+            disclaim: libc::c_int,
+        ) -> libc::c_int;
+    }
+
+    /// Runs `program arg` responsible for itself; its stdout when it exits
+    /// 0 within `timeout` (killed otherwise).
+    pub(super) fn output(program: &Path, arg: &str, timeout: Duration) -> Option<Vec<u8>> {
+        let path = CString::new(program.as_os_str().as_bytes()).ok()?;
+        let arg = CString::new(arg).ok()?;
+        let devnull = CString::new("/dev/null").ok()?;
+        let argv = [
+            path.as_ptr() as *mut libc::c_char,
+            arg.as_ptr() as *mut libc::c_char,
+            std::ptr::null_mut(),
+        ];
+        let mut fds = [0 as libc::c_int; 2];
+        // SAFETY: plain libc calls on locals; every resource is released
+        // on every path below.
+        unsafe {
+            if libc::pipe(fds.as_mut_ptr()) != 0 {
+                return None;
+            }
+            let (read_fd, write_fd) = (fds[0], fds[1]);
+            let mut actions: libc::posix_spawn_file_actions_t = std::mem::zeroed();
+            let mut attrs: libc::posix_spawnattr_t = std::mem::zeroed();
+            libc::posix_spawn_file_actions_init(&mut actions);
+            libc::posix_spawnattr_init(&mut attrs);
+            libc::posix_spawn_file_actions_addopen(
+                &mut actions,
+                0,
+                devnull.as_ptr(),
+                libc::O_RDONLY,
+                0,
+            );
+            libc::posix_spawn_file_actions_adddup2(&mut actions, write_fd, 1);
+            libc::posix_spawn_file_actions_addopen(
+                &mut actions,
+                2,
+                devnull.as_ptr(),
+                libc::O_WRONLY,
+                0,
+            );
+            libc::posix_spawn_file_actions_addclose(&mut actions, read_fd);
+            libc::posix_spawn_file_actions_addclose(&mut actions, write_fd);
+            responsibility_spawnattrs_setdisclaim(&mut attrs, 1);
+            let mut pid: libc::pid_t = 0;
+            let spawned = libc::posix_spawn(
+                &mut pid,
+                path.as_ptr(),
+                &actions,
+                &attrs,
+                argv.as_ptr(),
+                *libc::_NSGetEnviron(),
+            );
+            libc::posix_spawn_file_actions_destroy(&mut actions);
+            libc::posix_spawnattr_destroy(&mut attrs);
+            libc::close(write_fd);
+            let reader = std::fs::File::from_raw_fd(read_fd);
+            if spawned != 0 {
+                return None;
+            }
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let mut out = Vec::new();
+                let _ = reader.take(64 * 1024).read_to_end(&mut out);
+                let _ = tx.send(out);
+            });
+            let out = rx.recv_timeout(timeout).ok();
+            if out.is_none() {
+                libc::kill(pid, libc::SIGKILL);
+            }
+            let mut status = 0;
+            libc::waitpid(pid, &mut status, 0);
+            let ok = libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0;
+            out.filter(|_| ok)
+        }
     }
 }
 
@@ -226,6 +339,28 @@ mod tests {
         assert_eq!(report.console_user.as_deref(), Some("ada"));
         assert_eq!(report.screen_recording, Some(true));
         assert_eq!(report.accessibility, Some(false));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_disclaimed_child_runs_and_its_stdout_is_read() {
+        let d = std::time::Duration::from_secs(5);
+        let out = super::disclaimed::output(Path::new("/bin/echo"), "hi", d).unwrap();
+        assert_eq!(out, b"hi\n");
+        // A non-zero exit is no answer.
+        assert!(super::disclaimed::output(Path::new("/usr/bin/false"), "x", d).is_none());
+        assert!(super::disclaimed::output(Path::new("/nonexistent/bin"), "x", d).is_none());
+        // A child that does not answer in time is killed.
+        let t = std::time::Instant::now();
+        assert!(
+            super::disclaimed::output(
+                Path::new("/bin/sleep"),
+                "30",
+                std::time::Duration::from_millis(300)
+            )
+            .is_none()
+        );
+        assert!(t.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[test]

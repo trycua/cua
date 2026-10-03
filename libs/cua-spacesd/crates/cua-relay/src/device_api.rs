@@ -27,6 +27,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::assertion::now_secs;
+use crate::auth_log::{self, Reason, Route, TokenFacts};
 use crate::devices::{
     AuditEvent, DeviceError, DeviceRecord, DeviceState, Registration, DEVICE_SESSION_HEADER,
     ENROLLMENT_HEADER,
@@ -58,7 +59,7 @@ impl Gate {
 
 /// The error an unenrolled device gets once the grace period is over.
 pub const NOT_ENROLLED: &str =
-    "this device is not enrolled for your cua.ai account: run `cua devices enroll` (or approve it from the Cua Spaces app on an enrolled device)";
+    "this device is not enrolled for your cua.ai account: sign in again (`cua auth login`) to enroll it, run `cua devices enroll`, or approve it from the Cua Spaces app on an enrolled device";
 
 /// Checks the device behind an account request: an enrolled device's live
 /// session, else (during the grace period) a flagged pass, else an error.
@@ -215,6 +216,27 @@ fn device_error(e: DeviceError) -> Response {
     error(status, code, e.to_string())
 }
 
+/// Logs a device-proof 401 (other device errors are not 401s). `ts` is the
+/// proof's timestamp, for the clock skew of a stale proof.
+fn log_proof_failure(headers: &HeaderMap, e: &DeviceError, ts: u64) {
+    let DeviceError::Proof(message) = e else {
+        return;
+    };
+    let (reason, skew) = match message.as_str() {
+        crate::devices::PROOF_STALE => (
+            Reason::DeviceProofStale,
+            Some(ts as i64 - now_secs() as i64),
+        ),
+        crate::devices::PROOF_REPLAYED => (Reason::DeviceProofReplayed, None),
+        _ => (Reason::DeviceProofBadSignature, None),
+    };
+    let facts = TokenFacts {
+        clock_skew_secs: skew,
+        ..TokenFacts::default()
+    };
+    auth_log::rejected(headers, Route::Devices, reason, Some(&facts));
+}
+
 /// The account behind the request (machine tokens are refused).
 async fn account(relay: &Relay, headers: &HeaderMap) -> Result<Identity, Response> {
     let Some(oidc) = &relay.config.oidc else {
@@ -241,6 +263,7 @@ async fn account(relay: &Relay, headers: &HeaderMap) -> Result<Identity, Respons
         ));
     }
     let Some(token) = account_token(headers) else {
+        auth_log::rejected(headers, Route::Devices, Reason::MissingToken, None);
         return Err(error(
             StatusCode::UNAUTHORIZED,
             "unauthenticated",
@@ -248,6 +271,7 @@ async fn account(relay: &Relay, headers: &HeaderMap) -> Result<Identity, Respons
         ));
     };
     oidc.validate(token).await.map_err(|e| {
+        auth_log::rejected(headers, Route::Devices, e.reason, Some(&e.facts));
         error(
             StatusCode::UNAUTHORIZED,
             "unauthenticated",
@@ -324,7 +348,10 @@ async fn register(
             }))
             .into_response()
         }
-        Err(e) => device_error(e),
+        Err(e) => {
+            log_proof_failure(&headers, &e, body.ts);
+            device_error(e)
+        }
     }
 }
 
@@ -354,7 +381,10 @@ async fn session(
             "device": relay.devices.get(&body.device_id).map(|d| view(&d, Some(&d.id))),
         }))
         .into_response(),
-        Err(e) => device_error(e),
+        Err(e) => {
+            log_proof_failure(&headers, &e, body.ts);
+            device_error(e)
+        }
     }
 }
 

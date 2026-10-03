@@ -11,9 +11,10 @@
 //!   same NoCloud seed as the QEMU backend provisions SSH access.
 //!
 //! [`LumeRuntime::ensure_serving`] makes the backend zero-setup: if the API is
-//! not reachable it starts `lume serve`, and when the binary is missing it runs
-//! the official installer only if [`LumeConfig::allow_install`] is set.
+//! not reachable it starts `lume serve`, and when the binary is missing it sets
+//! up the built-in Lume ([`builtin`]) unless `runtime.lume` is `system`.
 
+pub mod builtin;
 pub mod client;
 pub mod gpu;
 pub mod lease;
@@ -66,7 +67,9 @@ pub struct LumeConfig {
 impl Default for LumeConfig {
     fn default() -> Self {
         Self {
-            url: std::env::var("LUME_API").unwrap_or_else(|_| "http://127.0.0.1:7777".into()),
+            url: serving_url(
+                &std::env::var("LUME_API").unwrap_or_else(|_| "http://127.0.0.1:7777".into()),
+            ),
             spawn_serve: true,
             allow_install: false,
             root: host::cua_home().join("vmm").join("lume"),
@@ -83,6 +86,64 @@ pub struct LumeRuntime {
     client: LumeClient,
     /// The host preference GPU acceleration sets ([`gpu`]).
     gpu_pref: Arc<dyn gpu::GpuPreference>,
+    /// The `lume serve` URL already checked ([`builtin::judge_server`]).
+    accepted: std::sync::Mutex<Option<String>>,
+    /// The version of a too-old Lume `runtime.lume = system` made cua use,
+    /// named in a failed start.
+    old_lume: std::sync::Mutex<Option<String>>,
+}
+
+/// Configured `lume serve` URL -> the one this process moved to because an
+/// old Lume answers at the configured one ([`LumeRuntime::ensure_serving`]).
+static MOVED: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// The `lume serve` URL to use for `configured`: where this process moved
+/// to, if it did.
+pub fn serving_url(configured: &str) -> String {
+    let configured = configured.trim_end_matches('/');
+    MOVED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(from, _)| from == configured)
+        .map_or_else(|| configured.to_string(), |(_, to)| to.clone())
+}
+
+fn remember_move(from: &str, to: &str) {
+    let from = from.trim_end_matches('/').to_string();
+    let mut moved = MOVED.lock().unwrap_or_else(|e| e.into_inner());
+    moved.retain(|(f, _)| *f != from);
+    moved.push((from, to.trim_end_matches('/').to_string()));
+}
+
+/// The version of the `lume serve` at `client`: what it reports, else (on
+/// this Mac) its executable's `--version`.
+async fn server_version(client: &LumeClient) -> Option<String> {
+    if let Some(v) = client.reported_version().await {
+        return Some(v);
+    }
+    let url = client.base();
+    if !builtin::is_loopback(&url) {
+        return None;
+    }
+    let port = url_port(&url)?;
+    tokio::task::spawn_blocking(move || {
+        // Only a `lume` is asked for its version (never, say, a test's
+        // own fake server process).
+        builtin::serving_binary(port)
+            .filter(|b| b.file_name().is_some_and(|n| n == "lume"))
+            .and_then(|b| builtin::binary_version(&b))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+fn url_port(url: &str) -> Option<u16> {
+    url.trim_end_matches('/')
+        .rsplit(':')
+        .next()
+        .and_then(|p| p.parse().ok())
 }
 
 /// The reference `lume pull` takes: `tag-ref@sha256:…` (how the daemon
@@ -108,9 +169,10 @@ pub fn base_vm_name(reference: &str) -> String {
     format!("cua-base-{}", &hex[..12])
 }
 
-/// Locate the `lume` binary.
+/// Locate the `lume` binary for the `runtime.lume` setting: this Mac's
+/// own, or the built-in one ([`builtin`]) when installed.
 pub fn lume_bin() -> Option<PathBuf> {
-    host::which("lume")
+    builtin::resolve(builtin::LumeSource::current())
 }
 
 /// Deletes a clone whose create was cut off (dropped) before its first
@@ -176,11 +238,13 @@ impl Drop for CloneGuard {
 
 impl LumeRuntime {
     pub fn new(cfg: LumeConfig) -> Self {
-        let client = LumeClient::new(cfg.url.clone());
+        let client = LumeClient::new(serving_url(&cfg.url));
         Self {
             cfg,
             client,
             gpu_pref: Arc::new(gpu::Defaults),
+            accepted: Default::default(),
+            old_lume: Default::default(),
         }
     }
 
@@ -224,21 +288,109 @@ impl LumeRuntime {
         &self.client
     }
 
+    /// The port of the `lume serve` in use (moved off the configured one
+    /// when an old Lume holds it).
     fn port(&self) -> u16 {
-        self.cfg
-            .url
-            .rsplit(':')
-            .next()
-            .and_then(|p| p.trim_end_matches('/').parse().ok())
-            .unwrap_or(7777)
+        url_port(&self.client.base()).unwrap_or(7777)
     }
 
-    /// Make sure `lume serve` answers, starting (and, if allowed, installing)
-    /// it as needed. Never restarts or stops a server that is already running.
+    /// Make sure a current `lume serve` answers, starting (and, if allowed,
+    /// installing) it as needed. Never restarts or stops a server that is
+    /// already running: when the one answering is older than
+    /// [`builtin::MIN_VERSION`] (say a user's own LaunchAgent), `auto` and
+    /// `builtin` run a current Lume on the next free port instead and use
+    /// that from then on; `system` uses it and names it in a failed start.
     pub async fn ensure_serving(&self) -> Result<()> {
         if self.client.reachable().await {
+            let url = self.client.base();
+            if self
+                .accepted
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_deref()
+                == Some(url.as_str())
+            {
+                return Ok(());
+            }
+            let source = builtin::LumeSource::current();
+            match builtin::judge_server(source, server_version(&self.client).await.as_deref()) {
+                builtin::ServerVerdict::Use => {}
+                builtin::ServerVerdict::UseOld(v) => {
+                    tracing::warn!(
+                        url = %url,
+                        version = %v,
+                        minimum = builtin::MIN_VERSION,
+                        "lume serve is older than cua needs; using it because runtime.lume is system"
+                    );
+                    *self.old_lume.lock().unwrap_or_else(|e| e.into_inner()) = Some(v);
+                }
+                builtin::ServerVerdict::Avoid(v) => return self.serve_elsewhere(&url, &v).await,
+            }
+            *self.accepted.lock().unwrap_or_else(|e| e.into_inner()) = Some(url);
             return Ok(());
         }
+        self.spawn_serve().await
+    }
+
+    /// The `lume serve` at `old_url` is Lume `old` (too old): use a current
+    /// one on the first of [`builtin::fallback_ports`] that has one or is
+    /// free, starting it there. The old server keeps running untouched.
+    async fn serve_elsewhere(&self, old_url: &str, old: &str) -> Result<()> {
+        let too_old = format!(
+            "lume serve at {old_url} is Lume {old}, and macOS Spaces need Lume {} or newer",
+            builtin::MIN_VERSION
+        );
+        if !self.cfg.spawn_serve {
+            return Err(VmmError::missing(
+                too_old,
+                "update it (or stop it and let cua run its built-in Lume)",
+            ));
+        }
+        let port = url_port(old_url).unwrap_or(7777);
+        for p in builtin::fallback_ports(port) {
+            let url = builtin::with_port(old_url, p);
+            let candidate = LumeClient::new(url.clone());
+            if candidate.reachable().await {
+                // Only a Lume known to be current (cua's own from an earlier
+                // run); anything else on the port is left alone.
+                if server_version(&candidate)
+                    .await
+                    .is_some_and(|v| builtin::new_enough(&v))
+                {
+                    tracing::info!(%url, "using the current lume serve next to an old one");
+                    self.client.set_base(&url);
+                    remember_move(&self.cfg.url, &url);
+                    *self.accepted.lock().unwrap_or_else(|e| e.into_inner()) = Some(url);
+                    return Ok(());
+                }
+                continue;
+            }
+            if std::net::TcpListener::bind(("127.0.0.1", p)).is_err() {
+                continue; // something else holds it
+            }
+            tracing::warn!(
+                old = %old_url,
+                version = %old,
+                %url,
+                "lume serve is older than cua needs; leaving it running and starting a current Lume on another port"
+            );
+            self.client.set_base(&url);
+            remember_move(&self.cfg.url, &url);
+            return self.spawn_serve().await;
+        }
+        Err(VmmError::missing(
+            too_old,
+            format!(
+                "ports {}-{} are taken too; update or stop that Lume",
+                port.saturating_add(1),
+                port.saturating_add(9)
+            ),
+        ))
+    }
+
+    /// Starts `lume serve` on [`Self::port`] (installing Lume as allowed)
+    /// and waits for it to answer.
+    async fn spawn_serve(&self) -> Result<()> {
         if !cfg!(target_os = "macos") {
             return Err(VmmError::missing(
                 "Lume",
@@ -247,12 +399,22 @@ impl LumeRuntime {
         }
         if !self.cfg.spawn_serve {
             return Err(VmmError::missing(
-                format!("lume serve at {}", self.cfg.url),
+                format!("lume serve at {}", self.client.base()),
                 "start it with `lume serve`",
             ));
         }
+        let source = builtin::LumeSource::current();
         let bin = match lume_bin() {
             Some(b) => b,
+            // Nothing to ask: the pinned, signed Lume, into cua's own dir.
+            None if source.allows_builtin() => builtin::ensure().await?,
+            None if source == builtin::LumeSource::System && !self.cfg.allow_install => {
+                return Err(VmmError::missing(
+                    "Lume",
+                    "macOS Spaces are set to use this Mac's own Lume, and it is not installed. \
+                     Choose Built-in for macOS VMs in Settings (or `cua config set runtime.lume builtin`)",
+                ));
+            }
             None if self.cfg.allow_install => {
                 install_lume().await?;
                 if self.client.reachable().await {
@@ -271,6 +433,17 @@ impl LumeRuntime {
                 ));
             }
         };
+        if source == builtin::LumeSource::System
+            && let Some(v) = builtin::binary_version(&bin).filter(|v| !builtin::new_enough(v))
+        {
+            tracing::warn!(
+                bin = %bin.display(),
+                version = %v,
+                minimum = builtin::MIN_VERSION,
+                "this Mac's Lume is older than cua needs; using it because runtime.lume is system"
+            );
+            *self.old_lume.lock().unwrap_or_else(|e| e.into_inner()) = Some(v);
+        }
         std::fs::create_dir_all(&self.cfg.root)?;
         let log = std::fs::File::create(self.cfg.root.join("serve.log"))?;
         let mut cmd = std::process::Command::new(&bin);
@@ -288,13 +461,14 @@ impl LumeRuntime {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
         while tokio::time::Instant::now() < deadline {
             if self.client.reachable().await {
+                *self.accepted.lock().unwrap_or_else(|e| e.into_inner()) = Some(self.client.base());
                 return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
         Err(VmmError::other(format!(
             "started `lume serve` but {} did not answer within 30s (see {})",
-            self.cfg.url,
+            self.client.base(),
             self.cfg.root.join("serve.log").display()
         )))
     }
@@ -968,17 +1142,10 @@ pub fn lume_installed_marker() -> PathBuf {
 /// Logs the Lume installer's LaunchAgent writes (`lume serve` as a daemon).
 pub const LUME_DAEMON_LOGS: [&str; 2] = ["/tmp/lume_daemon.log", "/tmp/lume_daemon.error.log"];
 
-#[async_trait]
-impl Runtime for LumeRuntime {
-    fn kind(&self) -> BackendKind {
-        BackendKind::Lume
-    }
-
-    async fn ensure_base(&self, image: &ImageSource, base_name: &str) -> Result<CheckpointInfo> {
-        self.ensure_base_with(image, base_name, None).await
-    }
-
-    async fn start(&self, spec: &StartSpec) -> Result<Instance> {
+impl LumeRuntime {
+    /// Starts `spec`; sets `created` once a new VM exists in Lume (a clone
+    /// or a Linux VM shell), so a failure after that deletes it.
+    async fn start_vm(&self, spec: &StartSpec, created: &mut bool) -> Result<Instance> {
         validate_name(&spec.name)?;
         crate::types::reject_sidecars(BackendKind::Lume, spec)?;
         crate::types::reject_gpu(
@@ -1067,6 +1234,7 @@ impl Runtime for LumeRuntime {
                     .clone_vm(&base, &spec.name)
                     .await
                     .inspect_err(|_| made.done())?;
+                *created = true;
                 OwnedVms::default().mark(&spec.name, OwnedKind::Instance, Some(&base));
                 OwnedVms::default().touch(&base);
                 // A clone inherits the base's CPU, memory and disk: apply the
@@ -1113,6 +1281,7 @@ impl Runtime for LumeRuntime {
                         storage: None,
                     })
                     .await?;
+                *created = true;
                 OwnedVms::default().mark(&spec.name, OwnedKind::Instance, None);
                 // Creation is asynchronous; wait until the VM shell exists.
                 let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
@@ -1169,13 +1338,79 @@ impl Runtime for LumeRuntime {
         Ok(inst)
     }
 
-    async fn stop(&self, name: &str) -> Result<()> {
+    async fn stop_vm(&self, name: &str) -> Result<()> {
         self.ensure_serving().await?;
         match self.client.get(name).await? {
             None => Err(VmmError::NotFound(name.into())),
             Some(vm) if vm.status == "stopped" => Ok(()),
             Some(_) => self.client.stop(name).await,
         }
+    }
+
+    /// Deletes `name`, which this start created and failed to bring up
+    /// with `why`. Best effort: a failure to delete is logged.
+    async fn discard_failed(&self, name: &str, why: &VmmError) {
+        match Runtime::delete(self, name).await {
+            Ok(()) | Err(VmmError::NotFound(_)) => {
+                tracing::info!(vm = name, error = %why, "deleted a VM whose create failed")
+            }
+            Err(e) => {
+                tracing::warn!(vm = name, error = %e, "could not delete a VM whose create failed")
+            }
+        }
+    }
+
+    /// `e`, naming the too-old Lume `runtime.lume = system` made cua use.
+    fn name_old_lume(&self, e: VmmError) -> VmmError {
+        let old = self
+            .old_lume
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        match (old, e) {
+            (
+                Some(v),
+                e @ (VmmError::Lume { .. } | VmmError::Timeout { .. } | VmmError::Other(_)),
+            ) => VmmError::other(format!(
+                "{e}. This Mac's Lume is {v}, older than the {} macOS Spaces need: update it, \
+                     or choose Built-in for macOS VMs in Settings (`cua config set runtime.lume builtin`)",
+                builtin::MIN_VERSION
+            )),
+            (_, e) => e,
+        }
+    }
+}
+
+#[async_trait]
+impl Runtime for LumeRuntime {
+    fn kind(&self) -> BackendKind {
+        BackendKind::Lume
+    }
+
+    async fn ensure_base(&self, image: &ImageSource, base_name: &str) -> Result<CheckpointInfo> {
+        self.ensure_base_with(image, base_name, None).await
+    }
+
+    async fn start(&self, spec: &StartSpec) -> Result<Instance> {
+        let mut created = false;
+        match self.start_vm(spec, &mut created).await {
+            Ok(inst) => Ok(inst),
+            Err(e) => {
+                // A VM this start made and could not bring up (it stopped
+                // while booting, never got an address, its services never
+                // answered) is deleted again: left behind it holds tens of
+                // GB and its name, so the next create would boot the
+                // broken one instead of a new one.
+                if created {
+                    self.discard_failed(&spec.name, &e).await;
+                }
+                Err(self.name_old_lume(e))
+            }
+        }
+    }
+
+    async fn stop(&self, name: &str) -> Result<()> {
+        self.stop_vm(name).await
     }
 
     /// Lume has no in-memory pause: suspending stops the VM (its disk and

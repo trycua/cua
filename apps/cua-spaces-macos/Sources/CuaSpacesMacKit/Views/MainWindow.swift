@@ -44,7 +44,8 @@ public struct MainWindow: View {
                                    try await model.addByAddress(url: url, token: token, name: name)
                                },
                                onCancel: { model.cancelNewSpace() },
-                               cloud: model.cloud)
+                               cloud: model.cloud,
+                               onRuntimeSwitch: { await model.applyRuntimeSwitch($0) })
         }
         .sheet(item: approvalBinding) { _ in
             ApprovalSheet(keyvault: model.keyvault)

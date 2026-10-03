@@ -1310,13 +1310,14 @@ impl Sandbox {
     pub async fn spacesd(&self, probe_timeout_ms: Option<u32>) -> Result<Arc<SpacesdClient>> {
         let backend = self.backend.clone();
         let name = self.info.id.clone();
+        let location = self.info.location.clone();
         let timeout = probe_timeout_ms.map(super::millis);
         run(async move {
             match &backend {
                 Backend::Embedded(rt) => {
                     let a = rt.env(&name, timeout).await?;
                     let fleet = !a.ws_headers.is_empty();
-                    let client = SpacesdClient::new(a.client, a.ws_headers);
+                    let client = SpacesdClient::new(a.client, a.ws_headers).at(&location);
                     if !fleet {
                         return Ok(Arc::new(client));
                     }
@@ -1337,10 +1338,13 @@ impl Sandbox {
                         .probe(false);
                     o.token = Some(ep.token.clone());
                     let client = cua_spacesd_client::SpacesdClient::connect(o).await?;
-                    Ok(Arc::new(SpacesdClient::new(
-                        client,
-                        vec![("authorization".into(), format!("Bearer {}", ep.token))],
-                    )))
+                    Ok(Arc::new(
+                        SpacesdClient::new(
+                            client,
+                            vec![("authorization".into(), format!("Bearer {}", ep.token))],
+                        )
+                        .at(&location),
+                    ))
                 }
             }
         })
@@ -1410,7 +1414,7 @@ impl Sandbox {
     /// results; runs outlive this handle.
     pub async fn agents(&self) -> Result<Arc<super::Agents>> {
         let guest = self.spacesd(None).await?;
-        super::Agents::over(guest.client.clone()).await
+        super::Agents::over(guest.client.clone(), &self.info.location).await
     }
 
     /// A named service (for example `"server"` or `"env"`).

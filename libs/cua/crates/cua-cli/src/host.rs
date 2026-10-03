@@ -1441,14 +1441,7 @@ pub fn attach_relay_account(
 /// `--relay`, else `CUA_RELAY_URL`, else the relay this machine is set up
 /// with, else the default relay.
 pub fn relay_url(flag: Option<String>, home: &Path) -> String {
-    flag.filter(|u| !u.trim().is_empty())
-        .or_else(|| {
-            std::env::var("CUA_RELAY_URL")
-                .ok()
-                .filter(|u| !u.trim().is_empty())
-        })
-        .or_else(|| Host::new(home).config().ok().flatten()?.relay_url)
-        .unwrap_or_else(cua_host::relay_url_from_env)
+    cua_host::relay_url_for(flag.as_deref(), home)
 }
 
 /// `cua spaces ls` rows: every Space, with the Spaces a machine provides
@@ -1464,9 +1457,11 @@ fn grouped_lines(list: &[cua_spaces::SpaceInfo]) -> Vec<String> {
             s.spacesd_version,
             width = 48usize.saturating_sub(indent.len()),
         );
-        // A Space turned off says so (`cua spaces start` turns it on).
-        match s.power_state.as_str() {
-            "suspended" | "stopped" => format!("{} ({})", line.trim_end(), s.power_state),
+        // A Space turned off says so (`cua spaces start` turns it on), as
+        // does a machine the relay cannot reach now (offline, not sharing).
+        match (s.power_state.as_str(), s.status.as_str()) {
+            ("suspended" | "stopped", _) => format!("{} ({})", line.trim_end(), s.power_state),
+            (_, status) if !status.is_empty() => format!("{} ({status})", line.trim_end()),
             _ => line,
         }
     };
@@ -1784,6 +1779,7 @@ mod tests {
             cloud: String::new(),
             cloud_place: String::new(),
             cloud_delete: String::new(),
+            status: String::new(),
         };
         let lines = grouped_lines(&[
             space("relay:space-1", "mini1234"),
@@ -1814,6 +1810,14 @@ mod tests {
             "{lines:?}"
         );
         assert_eq!(lines.len(), 2, "{lines:?}");
+        // A machine the relay cannot reach now says why.
+        let mut stopped = space("relay:mini1234", "");
+        stopped.status = "not sharing".into();
+        let mut off = space("relay:studio99", "");
+        off.status = "offline".into();
+        let lines = grouped_lines(&[stopped, off]);
+        assert!(lines[0].ends_with("(not sharing)"), "{lines:?}");
+        assert!(lines[1].ends_with("(offline)"), "{lines:?}");
     }
 
     #[test]

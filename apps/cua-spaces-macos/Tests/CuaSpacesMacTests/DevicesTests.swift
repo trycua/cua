@@ -72,6 +72,30 @@ struct DevicesTests {
         #expect(m.approval == nil)
     }
 
+    /// The relay answers an approval with the device still pending: the
+    /// sheet shows an error, never "approved".
+    @Test func anApprovalTheRelayDidNotEnrollIsAnError() async {
+        func relayDevice(_ state: String) -> RelayDevice {
+            RelayDevice(id: "dev_work", name: "Work laptop", state: state, platform: "macos",
+                        createdAt: Self.now, enrolledUntil: nil, lastSeen: nil, current: false)
+        }
+        #expect(throws: Never.self) { try LiveDevices.requireEnrolled(relayDevice("enrolled")) }
+        #expect(throws: CuaError.self) { try LiveDevices.requireEnrolled(relayDevice("pending")) }
+        let relay = RelayAnswering(state: "pending")
+        let live = DevicesModel(devices: relay, presence: FixturePresence())
+        live.pollInterval = .milliseconds(1)
+        live.signedIn = true
+        await live.refresh()
+        #expect(live.approval?.deviceId == "dev_work")
+        live.setCode("k7qxm2rp")
+        await live.approve()
+        #expect(live.approval != nil, "still open: nothing was approved")
+        #expect(live.approvalView?.error?.contains("pending") == true)
+        relay.state = "enrolled"
+        await live.approve()
+        #expect(live.approval == nil)
+    }
+
     @Test func denyRevokesANewDeviceAndNotNowPutsOffReverification() async {
         let fixture = FixtureDevices(snapshot: FixtureDevices.sample(now: Self.now))
         let m = model(fixture)
@@ -163,4 +187,25 @@ struct DevicesTests {
         #expect(fixture.calls == ["rename:dev_studio:Studio Mini", "revoke:dev_old"])
         #expect(m.view.rows.contains { $0.title == "Studio Mini" })
     }
+}
+
+/// FixtureDevices whose approvals answer with the relay's device in `state`,
+/// through LiveDevices' guard.
+final class RelayAnswering: DevicesRunning, @unchecked Sendable {
+    let fixture = FixtureDevices(snapshot: FixtureDevices.sample(now: DevicesTests.now))
+    var state: String
+    init(state: String) { self.state = state }
+
+    func snapshot() async throws -> DevicesSnapshot { try await fixture.snapshot() }
+    func enroll() async throws -> DeviceEnrollment { try await fixture.enroll() }
+    func checkEnrolled() async -> Bool { await fixture.checkEnrolled() }
+    func approve(code: String?, deviceId: String?) async throws {
+        try LiveDevices.requireEnrolled(RelayDevice(
+            id: "dev_work", name: "Work laptop", state: state, platform: "macos",
+            createdAt: DevicesTests.now, enrolledUntil: nil, lastSeen: nil, current: false))
+        try await fixture.approve(code: code, deviceId: deviceId)
+    }
+    func rename(id: String, name: String) async throws { try await fixture.rename(id: id, name: name) }
+    func revoke(id: String) async throws { try await fixture.revoke(id: id) }
+    func confirmMachine(id: String) async throws { try await fixture.confirmMachine(id: id) }
 }

@@ -30,6 +30,7 @@ pub const kAXErrorSuccess: AXError = 0;
 pub const kAXErrorFailure: AXError = -25200;
 pub const kAXErrorInvalidUIElement: AXError = -25202;
 pub const kAXErrorAttributeUnsupported: AXError = -25205;
+pub const kAXErrorActionUnsupported: AXError = -25206;
 pub const kAXErrorNoValue: AXError = -25212;
 pub const kAXErrorAPIDisabled: AXError = -25211;
 
@@ -848,15 +849,30 @@ pub unsafe fn copy_ax_window_by_remote_token(pid: i32, window_id: u32) -> Option
 }
 
 /// Whether to run the remote-token probe for a window `AXWindows` omitted.
-/// Only windows WindowServer reports on another Space qualify; a current-Space
-/// or unknown window that AX cannot map fails fast instead of paying the
-/// probe's deadline on every call (issue #4083). `on_current_space` is only
-/// queried for unlisted windows, so listed windows skip the WindowServer read.
+///
+/// Windows WindowServer reports on another Space qualify. So does a window it
+/// places on the current Space but reports off screen: that combination is a
+/// stale or mid-transition Space view (issue #4437), in which AX drops the
+/// window from `AXWindows` exactly as it does for an off-Space one. An
+/// on-screen current-Space or unknown window that AX cannot map fails fast
+/// instead of paying the probe's deadline on every call (issue #4083). The
+/// WindowServer view is only queried for unlisted windows, so listed windows
+/// skip that read.
 fn should_probe_off_space_window(
     listed_in_ax_windows: bool,
-    on_current_space: impl FnOnce() -> Option<bool>,
+    space_view: impl FnOnce() -> Option<crate::windows::WindowSpaceView>,
 ) -> bool {
-    !listed_in_ax_windows && on_current_space() == Some(false)
+    if listed_in_ax_windows {
+        return false;
+    }
+    match space_view() {
+        Some(view) => match view.on_current_space {
+            Some(false) => true,
+            Some(true) => !view.is_on_screen,
+            None => false,
+        },
+        None => false,
+    }
 }
 
 /// `AXWindows` of `pid`'s application element, plus the requested window when
@@ -877,7 +893,7 @@ pub unsafe fn copy_ax_windows_including(
         .iter()
         .any(|&window| ax_get_window_id(window) == Some(window_id));
     if should_probe_off_space_window(listed, || {
-        crate::windows::window_on_current_space_by_id(window_id)
+        crate::windows::window_space_view_by_id(window_id)
     }) {
         windows.extend(copy_ax_window_by_remote_token(pid, window_id));
     }
@@ -887,6 +903,7 @@ pub unsafe fn copy_ax_windows_including(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::windows::WindowSpaceView;
     use core_foundation::{boolean::CFBoolean, number::CFNumber};
 
     #[test]
@@ -898,14 +915,42 @@ mod tests {
         assert_eq!(&token[12..20], &42u64.to_ne_bytes());
     }
 
+    fn space_view(on_current_space: Option<bool>, is_on_screen: bool) -> WindowSpaceView {
+        WindowSpaceView {
+            on_current_space,
+            is_on_screen,
+        }
+    }
+
     #[test]
     fn off_space_probe_runs_only_for_unlisted_off_space_windows() {
-        assert!(should_probe_off_space_window(false, || Some(false)));
-        assert!(!should_probe_off_space_window(false, || Some(true)));
+        assert!(should_probe_off_space_window(false, || Some(space_view(
+            Some(false),
+            false
+        ))));
+        assert!(!should_probe_off_space_window(false, || Some(space_view(
+            Some(true),
+            true
+        ))));
         assert!(!should_probe_off_space_window(false, || None));
+        assert!(!should_probe_off_space_window(false, || Some(space_view(
+            None, false
+        ))));
         assert!(!should_probe_off_space_window(true, || {
             panic!("listed windows must not query Space membership")
         }));
+    }
+
+    /// Issue #4437: WindowServer placed a visible window on the reported
+    /// current Space yet marked it off screen, and AX omitted it. That stale
+    /// Space view must re-resolve through the exact-id probe rather than
+    /// refuse the window as `ax_unresolved`.
+    #[test]
+    fn off_space_probe_runs_for_a_current_space_window_reported_off_screen() {
+        assert!(should_probe_off_space_window(false, || Some(space_view(
+            Some(true),
+            false
+        ))));
     }
 
     #[test]

@@ -43,6 +43,7 @@ use tokio_util::compat::FuturesAsyncReadCompatExt as _;
 use tokio_util::sync::CancellationToken;
 
 use crate::assertion::{self, AssertionClaims, RelayKey, ASSERTION_HEADER};
+use crate::auth_log::{self, Reason, Route};
 use crate::devices::{DevicePolicy, DeviceStore, DEVICE_SESSION_HEADER};
 use crate::directory::{Directory, MACHINE_TOKEN_PREFIX};
 use crate::mux::{self, Counted, Counters, MuxHandle};
@@ -603,7 +604,15 @@ async fn machine_connect(
                     "machine token belongs to another machine id",
                 )
             }
-            None => return text(StatusCode::UNAUTHORIZED, "invalid relay token"),
+            None => {
+                let reason = match bearer(&headers, header::AUTHORIZATION.as_str()) {
+                    None => Reason::MissingToken,
+                    Some(t) if t.starts_with(MACHINE_TOKEN_PREFIX) => Reason::UnknownMachineToken,
+                    Some(_) => Reason::InvalidRelayToken,
+                };
+                auth_log::rejected(&headers, Route::Connect, reason, None);
+                return text(StatusCode::UNAUTHORIZED, "invalid relay token");
+            }
         }
     };
     let version = headers
@@ -744,6 +753,12 @@ async fn machine_list(State(relay): State<Relay>, headers: HeaderMap) -> Respons
             t.len() == admin.len() && bool::from(t.as_bytes().ct_eq(admin.as_bytes()))
         });
     if !ok {
+        let reason = if headers.contains_key(header::AUTHORIZATION) {
+            Reason::InvalidAdminToken
+        } else {
+            Reason::MissingToken
+        };
+        auth_log::rejected(&headers, Route::Admin, reason, None);
         return text(StatusCode::UNAUTHORIZED, "invalid admin token");
     }
     axum::Json(relay.status()).into_response()
@@ -870,12 +885,13 @@ async fn authorize_account_client(
         (Some(token), Some(oidc)) => match oidc.validate(token).await {
             Ok(identity) => Some(identity),
             Err(e) if !has_forwardable_credential(request.uri(), headers, forwarded) => {
+                auth_log::rejected(headers, Route::Proxy, e.reason, Some(&e.facts));
                 return Err(refuse(
                     headers,
                     StatusCode::UNAUTHORIZED,
                     GrpcCode::Unauthenticated,
                     format!("invalid account token: {e}"),
-                ))
+                ));
             }
             Err(_) => None,
         },
@@ -938,12 +954,13 @@ async fn authorize_account_client(
         // (Credential headers are stripped below, so they do not count.)
         None if has_forwardable_credential(request.uri(), headers, forwarded) => None,
         None => {
+            auth_log::rejected(headers, Route::Proxy, Reason::MissingToken, None);
             return Err(refuse(
                 headers,
                 StatusCode::UNAUTHORIZED,
                 GrpcCode::Unauthenticated,
                 "sign in: this machine accepts cua.ai account tokens",
-            ))
+            ));
         }
     };
     let headers = request.headers_mut();
@@ -998,6 +1015,12 @@ async fn proxy(State(relay): State<Relay>, mut request: Request) -> Response {
     } else if relay.config.require_client_credentials
         && !has_client_credential(request.uri(), request.headers(), &forwarded)
     {
+        auth_log::rejected(
+            request.headers(),
+            Route::Proxy,
+            Reason::SpacesdCredentialMissing,
+            None,
+        );
         return refuse(
             request.headers(),
             StatusCode::UNAUTHORIZED,

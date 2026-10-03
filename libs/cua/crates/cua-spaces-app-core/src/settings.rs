@@ -271,6 +271,14 @@ pub struct SettingsInput {
     /// "Connect to the desktop automatically" (none: no row; a shell
     /// without the preview cover leaves it out).
     pub auto_connect: Option<bool>,
+    /// Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
+    /// `system`); none: no Runtimes section.
+    #[serde(default)]
+    pub lume_source: Option<String>,
+    /// Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
+    /// `builtin`, `system`); none: no Linux row.
+    #[serde(default)]
+    pub linux_source: Option<String>,
 }
 
 impl Default for SettingsInput {
@@ -295,6 +303,8 @@ impl Default for SettingsInput {
             keyvault_site_icons: true,
             keyvault_protection: vec![],
             auto_connect: None,
+            lume_source: None,
+            linux_source: None,
         }
     }
 }
@@ -659,6 +669,13 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         },
     ];
 
+    if input.lume_source.is_some() || input.linux_source.is_some() {
+        sections.push(runtimes_section(
+            input.lume_source.as_deref(),
+            input.linux_source.as_deref(),
+        ));
+    }
+
     if let Some(t) = &input.telemetry {
         let mut share = row("telemetry", Choice, "Share anonymous usage data");
         share.options = vec![opt("on", "On", t.enabled), opt("off", "Off", !t.enabled)];
@@ -737,6 +754,55 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
     }
 }
 
+/// The help under Settings, Runtimes, macOS VMs.
+pub const MACOS_RUNTIME_HELP: &str =
+    "Built-in is Cua\u{2019}s signed Lume, downloaded the first time you need it (6 MB).";
+
+/// The help under Settings, Runtimes, Linux.
+pub const LINUX_RUNTIME_HELP: &str =
+    "Built-in is a gVisor Linux VM, downloaded the first time you need it (480 MB).";
+
+/// Settings, Runtimes: one row per local runtime Cua can provide itself,
+/// each Automatic, Built-in or System.
+/// * macOS VMs (`macos-runtime`, `runtime.lume`'s values): Built-in is
+///   Cua's signed Lume, set up on first use; System this Mac's own Lume.
+/// * Linux (`linux-runtime`, `runtime.linux`'s values): Built-in is Cua's
+///   own VM with Docker and gVisor, set up on first use; System this Mac's
+///   own container engine; Automatic Docker when it runs, else built-in.
+pub fn runtimes_section(lume_source: Option<&str>, linux_source: Option<&str>) -> SettingsSection {
+    use SettingsRowKind::*;
+    let choice = |id: &str, label: &str, source: &str| {
+        let source = match source {
+            "builtin" | "system" => source,
+            _ => "auto",
+        };
+        let mut r = row(id, Choice, label);
+        r.options = vec![
+            opt("auto", "Automatic", source == "auto"),
+            opt("builtin", "Built-in", source == "builtin"),
+            opt("system", "System", source == "system"),
+        ];
+        r
+    };
+    let mut rows = vec![];
+    if let Some(source) = lume_source {
+        rows.push(choice("macos-runtime", "macOS VMs", source));
+        rows.push(row("macos-runtime-note", Note, MACOS_RUNTIME_HELP));
+    }
+    if let Some(source) = linux_source {
+        rows.push(choice("linux-runtime", "Linux", source));
+        rows.push(row("linux-runtime-note", Note, LINUX_RUNTIME_HELP));
+    }
+    SettingsSection {
+        id: "runtimes".into(),
+        title: "Runtimes".into(),
+        button: None,
+        button_enabled: false,
+        button_help: None,
+        rows,
+    }
+}
+
 /// The Settings page with Settings, Storage (the Cua Volume's store,
 /// Finder volume and cache, [`crate::drive_settings::storage_section`])
 /// after General, while the Cua Volume experiment is on. Off, Storage is
@@ -767,6 +833,68 @@ pub fn with_storage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_runtimes_section_shows_the_lume_choice() {
+        let p = page(&SettingsInput::default());
+        assert!(
+            !p.sections.iter().any(|s| s.id == "runtimes"),
+            "not until read"
+        );
+        let page = page(&SettingsInput {
+            lume_source: Some("system".into()),
+            ..Default::default()
+        });
+        let r = &page
+            .sections
+            .iter()
+            .find(|s| s.id == "runtimes")
+            .unwrap()
+            .rows[0];
+        assert_eq!(r.id, "macos-runtime");
+        let active: Vec<_> = r
+            .options
+            .iter()
+            .filter(|o| o.active)
+            .map(|o| o.id.as_str())
+            .collect();
+        assert_eq!(active, ["system"]);
+        let ids: Vec<_> = r.options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(ids, ["Automatic", "Built-in", "System"]);
+    }
+
+    #[test]
+    fn the_runtimes_section_shows_the_linux_choice() {
+        let page = page(&SettingsInput {
+            lume_source: Some("auto".into()),
+            linux_source: Some("builtin".into()),
+            ..Default::default()
+        });
+        let s = page.sections.iter().find(|s| s.id == "runtimes").unwrap();
+        let ids: Vec<_> = s.rows.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "macos-runtime",
+                "macos-runtime-note",
+                "linux-runtime",
+                "linux-runtime-note"
+            ]
+        );
+        let linux = &s.rows[2];
+        assert_eq!(linux.label, "Linux");
+        let active: Vec<_> = linux
+            .options
+            .iter()
+            .filter(|o| o.active)
+            .map(|o| o.id.as_str())
+            .collect();
+        assert_eq!(active, ["builtin"]);
+        // An unknown word reads as Automatic.
+        let r = runtimes_section(None, Some("docker"));
+        assert_eq!(r.rows[0].id, "linux-runtime");
+        assert!(r.rows[0].options[0].active);
+    }
 
     #[test]
     fn hotkeys_need_a_modifier() {

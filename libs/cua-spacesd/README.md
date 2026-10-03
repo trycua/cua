@@ -179,6 +179,15 @@ bumps both. `packaging/release/package.sh` lists the assets and which installer
 uses each. `packaging/release/build-linux-docker.sh` reproduces the Linux job
 locally in debian:11.
 
+The `cua` CLI bakes `VERSION` and `cua host setup` downloads that release, so
+publish cua-spacesd before releasing Cua Spaces or the cua SDK:
+`cd-cua-spaces.yml`, `cd-cua-sdk.yml` and the Release Please PR check
+(`ci-release-spacesd-pin.yml`) fail while the pinned release is missing, a
+draft, or lacks a host-setup asset
+(`.github/scripts/check_spacesd_published.sh`). An already-shipped CLI whose
+pin is unavailable falls back to the newest published release on the same
+major.minor, else the closest newer one on the same major.
+
 ## Crates
 
 This workspace is server-only. Wire formats, codecs and clients live in

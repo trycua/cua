@@ -686,6 +686,13 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 }
                 p.phase = phase.clone();
                 p.fraction = *fraction;
+                // Setting up a runtime: its download done, its boot reports
+                // a fraction only (no bytes left to show).
+                if phase == "preparing" && bytes_done.is_none() && fraction.is_some() {
+                    p.bytes_done = None;
+                    p.bytes_total = None;
+                    p.bytes_per_second = None;
+                }
                 if bytes_done.is_some() {
                     p.bytes_done = *bytes_done;
                     p.bytes_total = bytes_total.or(p.bytes_total);
@@ -885,6 +892,13 @@ pub fn deleting_space(space: &Space) -> Space {
     s
 }
 
+/// The create is still preparing but moves (bytes, or a fraction): the
+/// SDK is setting up the local runtime it needs (downloaded once, on first
+/// use, then booted: the built-in Linux runtime's VM).
+fn setting_up_runtime(p: &PendingCreate) -> bool {
+    p.phase == "preparing" && (p.bytes_total.is_some_and(|t| t > 0) || p.fraction.is_some())
+}
+
 /// A pending create as a Space row.
 pub fn pending_space(p: &PendingCreate) -> Space {
     let failed = p.error.is_some();
@@ -896,6 +910,14 @@ pub fn pending_space(p: &PendingCreate) -> Space {
         "Failed".to_string()
     } else if p.cancelling {
         "Cancelling\u{2026}".to_string()
+    } else if setting_up_runtime(p) {
+        // Bytes before the image: the runtime cua sets up on first use
+        // (the built-in Lume for a macOS Space).
+        match p.os {
+            SpaceOs::Macos => "Setting up Lume\u{2026}".to_string(),
+            SpaceOs::Linux => "Setting up Linux runtime\u{2026}".to_string(),
+            _ => "Setting up the runtime\u{2026}".to_string(),
+        }
     } else {
         phase_label(&p.phase).to_string()
     };
@@ -929,7 +951,7 @@ pub fn pending_space(p: &PendingCreate) -> Space {
             label,
             error: p.error.clone(),
             credit_url: p.credit_url.clone(),
-            transfer: (!failed && !p.cancelling && p.phase == "pulling")
+            transfer: (!failed && !p.cancelling && (p.phase == "pulling" || setting_up_runtime(p)))
                 .then(|| transfer_text(p.bytes_done, p.bytes_total, p.bytes_per_second))
                 .flatten(),
             cancellable: !failed && !p.cancelling && p.space_id.is_none(),
@@ -1037,6 +1059,90 @@ mod tests {
             bytes_total: Some(total),
             bytes_per_second: Some(rate),
         }
+    }
+
+    /// The first macOS create on a Mac without Lume: the built-in Lume's
+    /// download shows on the Space's own row, in words, with its bytes.
+    #[test]
+    fn the_runtime_set_up_on_first_use_shows_on_the_create() {
+        let s = reduce(
+            &CreatesState::default(),
+            &start("pending:m", "", SpaceOs::Macos),
+        );
+        let s = reduce(
+            &s,
+            &CreateAction::Progress {
+                id: "pending:m".into(),
+                phase: "preparing".into(),
+                fraction: Some(0.5),
+                now: Some(2_000),
+                bytes_done: Some(3 << 20),
+                bytes_total: Some(6 << 20),
+                bytes_per_second: Some((1 << 20) as f64),
+            },
+        );
+        let row = pending_space(&s.pending[0]);
+        let p = row.progress.unwrap();
+        assert_eq!(p.label, "Setting up Lume\u{2026}");
+        assert!(p.transfer.unwrap().contains("MB"));
+        assert_eq!(row.detail, "This Mac \u{b7} Setting up Lume\u{2026}");
+        // Then the image, as before.
+        let s = reduce(&s, &bytes_at("pending:m", 1 << 30, 20 << 30, 5e7, 3_000));
+        assert_eq!(
+            pending_space(&s.pending[0]).progress.unwrap().label,
+            "Downloading image\u{2026}"
+        );
+    }
+
+    /// The first Linux create on a Mac with no Docker: the built-in Linux
+    /// runtime's download, then its VM's boot, show on the Space's row.
+    #[test]
+    fn the_linux_runtime_set_up_shows_its_download_then_its_boot() {
+        let s = reduce(
+            &CreatesState::default(),
+            &start("pending:l", "", SpaceOs::Linux),
+        );
+        let prep = |fraction: f64, bytes: Option<(u64, u64)>| CreateAction::Progress {
+            id: "pending:l".into(),
+            phase: "preparing".into(),
+            fraction: Some(fraction),
+            now: Some(2_000),
+            bytes_done: bytes.map(|b| b.0),
+            bytes_total: bytes.map(|b| b.1),
+            bytes_per_second: bytes.map(|_| 5e7),
+        };
+        let s = reduce(&s, &prep(0.5, Some((240 << 20, 480 << 20))));
+        let row = pending_space(&s.pending[0]);
+        assert_eq!(
+            row.detail,
+            "This Mac \u{b7} Setting up Linux runtime\u{2026}"
+        );
+        assert!(row.progress.unwrap().transfer.unwrap().contains("MB"));
+        // The boot: still setting up, no bytes any more.
+        let s = reduce(&s, &prep(0.3, None));
+        let p = pending_space(&s.pending[0]).progress.unwrap();
+        assert_eq!(p.label, "Setting up Linux runtime\u{2026}");
+        assert!(p.transfer.is_none());
+        // Plain preparing (resolving the image) says what it always did.
+        let plain = reduce(
+            &reduce(
+                &CreatesState::default(),
+                &start("pending:p", "", SpaceOs::Linux),
+            ),
+            &CreateAction::Progress {
+                id: "pending:p".into(),
+                phase: "preparing".into(),
+                fraction: None,
+                now: Some(2_000),
+                bytes_done: None,
+                bytes_total: None,
+                bytes_per_second: None,
+            },
+        );
+        assert_ne!(
+            pending_space(&plain.pending[0]).progress.unwrap().label,
+            "Setting up Linux runtime\u{2026}"
+        );
     }
 
     #[test]

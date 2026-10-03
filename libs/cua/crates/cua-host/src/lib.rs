@@ -41,15 +41,18 @@ pub mod preflight;
 pub mod provided;
 pub mod relay;
 pub mod service;
+#[cfg(test)]
+mod setup_tests;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(test)]
 mod tests;
 
-pub use device::{DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot};
+pub use device::{DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot, PendingCode};
+pub use host::SetupStage;
 pub use host::{
     DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,
-    HostStatus, PermissionHint, SetupOptions, SpacesDaemon, permission_hints,
+    HostStatus, META_PROVIDES_SPACES, PermissionHint, SetupOptions, SpacesDaemon, permission_hints,
 };
 pub use machine::machine_id;
 pub use provided::{
@@ -62,9 +65,42 @@ pub use relay::{
 };
 pub use service::{RunnerKind, ServiceManager, ServiceSpec, ServiceState};
 
-/// The default display name of this device (its host name).
+/// The default display name of this device: the macOS Computer Name, else
+/// the host name without a `.local` / `.localdomain` suffix.
 pub fn device_name() -> String {
-    host::hostname()
+    host::friendly_name()
+}
+
+/// The relay this machine talks to: `flag` (e.g. `--relay`), else
+/// `CUA_RELAY_URL`, else the relay this machine is set up with
+/// (`<home>/host/config.json`), else the default relay. The CLI and the
+/// app resolve it the same way, so both enroll and approve devices on one
+/// relay.
+pub fn relay_url_for(flag: Option<&str>, home: &std::path::Path) -> String {
+    flag.map(str::trim)
+        .filter(|u| !u.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var("CUA_RELAY_URL")
+                .ok()
+                .map(|u| u.trim().to_string())
+                .filter(|u| !u.is_empty())
+        })
+        .or_else(|| {
+            Host::new(home)
+                .config()
+                .ok()
+                .flatten()?
+                .relay_url
+                .filter(|u| !u.trim().is_empty())
+        })
+        .unwrap_or_else(relay_url_from_env)
+}
+
+/// Where this device remembers the one-time code it last showed (see
+/// [`device::PendingCode`]).
+pub fn device_pending_file(home: &std::path::Path) -> std::path::PathBuf {
+    home.join("device-pending.json")
 }
 
 /// The operating system a device reports when it registers (`macos`,
@@ -106,6 +142,32 @@ pub enum Error {
     /// Anything else.
     #[error("{0}")]
     Internal(String),
+}
+
+impl Error {
+    /// The HTTP status the relay or the download server answered with,
+    /// when one did. None: the server was not reached (offline, DNS, TLS,
+    /// timeout) or the error is not about HTTP at all.
+    pub fn http_status(&self) -> Option<u16> {
+        match self {
+            // `relay::http_error` maps these statuses to these variants.
+            Error::Unauthenticated(m) if m.starts_with("relay: ") => Some(401),
+            Error::PermissionDenied(m) if m.starts_with("relay: ") => Some(403),
+            Error::NotFound(m) if m.starts_with("relay: ") => Some(404),
+            Error::Conflict(m) if m.starts_with("relay: ") => Some(409),
+            Error::Relay(m) | Error::Download(m) => status_in(m),
+            _ => None,
+        }
+    }
+}
+
+/// The status in an "HTTP 503: ..." / "<url>: HTTP 404 Not Found" message.
+fn status_in(message: &str) -> Option<u16> {
+    message.match_indices("HTTP ").find_map(|(i, _)| {
+        let digits = message.get(i + 5..i + 8)?;
+        let code: u16 = digits.parse().ok()?;
+        (100..600).contains(&code).then_some(code)
+    })
 }
 
 /// Result alias.

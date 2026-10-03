@@ -115,9 +115,26 @@ public enum AppEnvironment {
                              devices: devices,
                              presence: fixtures ? FixturePresence() : LivePresence(),
                              loginItem: fixtures ? fixtureLoginItem(env["CUA_SPACES_LOGIN_ITEM"]) : MainAppLoginItem())
+        if !fixtures, live != nil {
+            // Ask for Local Network access while someone is at this Mac
+            // (the first run's setup, and launch on a Mac that provides
+            // Spaces); one request shared by both.
+            let localNetwork = LiveLocalNetworkPermission()
+            model.host.localNetwork = localNetwork
+            onboarding.host.localNetwork = localNetwork
+        }
         if let live {
             let auth = live.cua.auth()
-            let token: () async -> String? = { try? await auth.accessToken(force: false) }
+            // Signed out is nil (setup signs in first); anything else (no
+            // network, the credential vault) is the error itself, never a
+            // silent nil that reads as "not signed in".
+            let token: (Bool) async throws -> String? = { force in
+                do {
+                    return try await auth.accessToken(force: force)
+                } catch CuaError.Unauthenticated {
+                    return nil
+                }
+            }
             onboarding.accountToken = token
             model.host.accountToken = token
         }

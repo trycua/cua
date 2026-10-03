@@ -221,7 +221,7 @@ let safari = fixtureEntry("com.apple.Safari", "Safari", .unsupported, moves: [],
             roots: [root.path], spaceOs: "linux", spaceArch: "aarch64",
             recentsPath: root.appendingPathComponent("r.json").path))
         #expect(rows.map(\.id) == ["firefox", "vscode", "com.example.notes"])
-        #expect(rows.map(\.capability) == [.full, .installOnly, .unsupported])
+        #expect(rows.map(\.capability) == [.full, .full, .unsupported])
         let drop = t.parseDrop(items: [root.appendingPathComponent("Firefox.app").absoluteString])
         #expect(drop.kind == "app")
         #expect(try t.catalogEntryForPath(path: drop.apps[0], options: nil).id == "firefox")

@@ -356,13 +356,45 @@ struct ViewModelTests {
         #expect(toggled == ["experiment_on cua_volume"])
     }
 
+    /// A sign-in from the main window (the first run done or not showing)
+    /// still counts in the activation funnel, once.
+    @Test func mainWindowSignInRecordsSignedIn() async {
+        let telemetry = FixtureTelemetry()
+        let model = makeModel(account: FixtureAccount(), telemetry: telemetry)
+        #expect(model.onboarding.state.step == .welcome)
+        await model.beginSignIn()
+        #expect(model.identity == "you@example.com")
+        let steps = telemetry.recorded.compactMap { s -> String? in
+            if case let .step(step, ok) = s, ok { return step }
+            return nil
+        }
+        #expect(steps == ["signed_in"])
+    }
+
     @Test func settingsPageAndAccountFromTheCore() async {
         let account = FixtureAccount()
         let agents = FixtureAgentSetup()
         let model = makeModel(account: account, agents: agents)
         await model.loadSettings()
         let page = model.settingsPage
-        #expect(page.sections.map(\.id) == ["account", "general", "privacy", "agents"])
+        #expect(page.sections.map(\.id) == ["account", "general", "runtimes", "privacy", "agents"])
+        // Settings, Runtimes: macOS VMs picks runtime.lume.
+        let runtime = page.sections.first { $0.id == "runtimes" }!.rows[0]
+        #expect(runtime.options.map(\.id) == ["auto", "builtin", "system"])
+        #expect(runtime.options.first(where: \.active)?.id == "auto")
+        await model.choose(row: "macos-runtime", option: "builtin")
+        #expect(model.lumeSource == "builtin")
+        #expect(model.settingsPage.sections.first { $0.id == "runtimes" }!.rows[0]
+            .options.first(where: \.active)?.id == "builtin")
+        // Linux picks runtime.linux (the built-in Linux runtime).
+        let linux = model.settingsPage.sections.first { $0.id == "runtimes" }!.rows
+            .first { $0.id == "linux-runtime" }!
+        #expect(linux.label == "Linux")
+        #expect(linux.options.first(where: \.active)?.id == "auto")
+        await model.choose(row: "linux-runtime", option: "system")
+        #expect(model.linuxSource == "system")
+        #expect(model.settingsPage.sections.first { $0.id == "runtimes" }!.rows
+            .first { $0.id == "linux-runtime" }!.options.first(where: \.active)?.id == "system")
         #expect(model.chrome.signInLabel == "Sign in")
         await model.press(row: "sign-in")
         #expect(model.identity == "you@example.com")

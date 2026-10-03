@@ -139,7 +139,7 @@ public final class AppModel {
             defaultLocation: settings.defaultLocation, cloudAvailable: false,
             localAvailable: true, localReason: nil, localBackends: nil, localDetails: nil,
             maxCpus: UInt32(max(2, min(16, ProcessInfo.processInfo.activeProcessorCount))),
-            hostArch: Self.hostArch, storage: nil, cloudPricing: nil, clouds: [], hosts: [],
+            hostArch: Self.hostArch, lumeSource: nil, linuxSource: nil, storage: nil, cloudPricing: nil, clouds: [], hosts: [],
             experiments: settings.experiments, gpus: nil))
         self.notch = NotchModel()
         // The notch tiles and the preview cover read one thumbnail store,
@@ -194,6 +194,18 @@ public final class AppModel {
             if case .failed = self.signIn { return false }
             return self.identity != nil
         }
+        // "Set up for access" signs in inline when relay setup has no
+        // account, then carries on.
+        self.host.signIn = { [weak self] in
+            guard let self else { return false }
+            await self.beginSignIn()
+            if case .failed = self.signIn { return false }
+            return self.identity != nil
+        }
+        // Onboarding's This machine step has its own HostModel: give it the
+        // same inline sign-in, or a skipped sign-in fails setup with "Not
+        // signed in" instead of opening the browser and carrying on.
+        self.onboarding.host.signIn = self.host.signIn
         // A row takes a window drop by the core's rule (the notch tiles' too).
         dropTargets.isDropTarget = { [weak self] id in
             self?.spaces.first { $0.id == id }.map { appSpaceAcceptsDrop(space: $0) } ?? false
@@ -374,6 +386,8 @@ public final class AppModel {
         async let gpusProbe = backend.gpuChoices()
         async let hostsProbe = backend.hosts()
         let cloud = await backend.cloudAvailable()
+        lumeSource = await backend.lumeSource()
+        linuxSource = await backend.linuxSource()
         await self.cloud.refresh()
         let (runtimes, storage, pricing, gpus) = await (runtimesProbe, storageProbe, pricingProbe, gpusProbe)
         hosts = await hostsProbe
@@ -393,6 +407,43 @@ public final class AppModel {
     /// Your machines that provide Spaces, as New Space last read them.
     var hosts: [AppSpaceHost] = []
 
+    /// Which Lume macOS Spaces run on (`runtime.lume`), once read.
+    public private(set) var lumeSource: String?
+    /// Which engine local Linux Spaces run on (`runtime.linux`), once read.
+    public private(set) var linuxSource: String?
+
+    /// New Space's "Use built-in Lume" / "Use built-in runtime": switches
+    /// `runtime.lume` or `runtime.linux`, then the open wizard reads the
+    /// runtimes again (This Mac can run it now).
+    public func applyRuntimeSwitch(_ change: AppRuntimeSwitch) async {
+        let linux = change.setting == "runtime.linux"
+        do {
+            if linux {
+                try await backend.setLinuxSource(change.value)
+            } else {
+                try await backend.setLumeSource(change.value)
+            }
+        } catch {
+            show(error: LiveSpacesBackend.words(error))
+            return
+        }
+        if linux {
+            linuxSource = await backend.linuxSource() ?? change.value
+        } else {
+            lumeSource = await backend.lumeSource() ?? change.value
+        }
+        let runtimes = await backend.localRuntimes()
+        var e = wizard.env
+        let backends = runtimes?.ready
+        e.localAvailable = backends.map { !$0.isEmpty } ?? true
+        e.localReason = backends?.isEmpty == true ? "No local runtime found (Docker or Lume)." : nil
+        e.localBackends = backends
+        e.localDetails = runtimes?.details
+        e.lumeSource = lumeSource
+        e.linuxSource = linuxSource
+        wizard.update(env: e)
+    }
+
     private func wizardEnv(from e: AppWizardEnv) -> AppWizardEnv {
         var e = e
         e.clouds = cloud.clouds
@@ -411,7 +462,8 @@ public final class AppModel {
             localAvailable: backends.map { !$0.isEmpty } ?? true,
             localReason: backends?.isEmpty == true ? "No local runtime found (Docker or Lume)." : nil,
             localBackends: backends, localDetails: runtimes?.details, maxCpus: wizard.env.maxCpus,
-            hostArch: Self.hostArch, storage: storage.map(Self.wizardStorage),
+            hostArch: Self.hostArch, lumeSource: lumeSource, linuxSource: linuxSource,
+            storage: storage.map(Self.wizardStorage),
             cloudPricing: available ? pricing : nil, clouds: [], hosts: [],
             experiments: settings.experiments, gpus: gpus))
     }
@@ -618,7 +670,15 @@ public final class AppModel {
             guard case .waiting = signIn else { return }
             identity = who ?? account.identity()
             host.identity = identity
+            onboarding.host.identity = identity
             devices.signedIn = identity != nil
+            // Activation funnel: the first run records `signed_in` on its
+            // sign-in page; a sign-in from the main window (first run done or
+            // not showing, so its state is on Welcome) records it here.
+            if onboarding.state.step == .welcome, let who = identity, !who.isEmpty,
+               who != onboarding.state.identity {
+                telemetry?.record([.step(step: "signed_in", ok: true)])
+            }
             onboarding.send(.signedIn(identity: identity ?? ""))
             signIn = .idle
         } catch {
@@ -632,6 +692,7 @@ public final class AppModel {
         try? await account?.signOut()
         identity = nil
         host.identity = nil
+        onboarding.host.identity = nil
         devices.signedIn = false
         await devices.refresh()
         signIn = .idle
@@ -648,7 +709,7 @@ public final class AppModel {
             experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe,
             keyvaultUnlockPrompt: keyvault.unlockPromptShows,
             keyvaultSiteIcons: settings.keyvaultSiteIcons, keyvaultProtection: keyvault.page.protection,
-            autoConnect: settings.autoConnect))
+            autoConnect: settings.autoConnect, lumeSource: lumeSource, linuxSource: linuxSource))
     }
 
     /// Settings, General with Settings, Storage after General while the Cua
@@ -740,6 +801,8 @@ public final class AppModel {
 
     /// Reads what Settings shows (telemetry, the coding agents).
     public func loadSettings() async {
+        lumeSource = await backend.lumeSource()
+        linuxSource = await backend.linuxSource()
         telemetryInput = telemetry?.status()
         readLoginItem()
         await storage.load()
@@ -783,6 +846,20 @@ public final class AppModel {
         case "notch":
             settings.menuBar = option == "hide"
             saveSettings()
+        case "macos-runtime":
+            do {
+                try await backend.setLumeSource(option)
+                lumeSource = await backend.lumeSource() ?? option
+            } catch {
+                show(error: LiveSpacesBackend.words(error))
+            }
+        case "linux-runtime":
+            do {
+                try await backend.setLinuxSource(option)
+                linuxSource = await backend.linuxSource() ?? option
+            } catch {
+                show(error: LiveSpacesBackend.words(error))
+            }
         case "default-location":
             settings.defaultLocation = option == "cloud" ? .cloud : .local
             saveSettings()

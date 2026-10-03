@@ -41,6 +41,7 @@ cua-spacesd-server = { path = "../../crates/cua-spacesd-server" }
 cua-spacesd-teleport = { path = "../../crates/cua-spacesd-teleport" }
 cua-driver-core = { path = "../../../cua-driver/rust/crates/cua-driver-core" }
 cua-keyvault = { path = "../../../cua/crates/cua-keyvault" }
+cua-teleport = { path = "../../../cua/crates/cua-teleport" }
 cua-spaces-ext = { path = "../../../cua/crates/cua-spaces-ext" }
 async-trait = "0.1"
 serde_json = "1"

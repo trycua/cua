@@ -27,10 +27,14 @@ use serde_json::json;
 const REF: &str = "ghcr.io/trycua/macos:26";
 
 async fn fake_runtime(fail_set: bool) -> (LumeRuntime, Arc<Mutex<FakeLume>>) {
-    let mut st = FakeLume {
+    fake_runtime_with(FakeLume {
         fail_set,
         ..Default::default()
-    };
+    })
+    .await
+}
+
+async fn fake_runtime_with(mut st: FakeLume) -> (LumeRuntime, Arc<Mutex<FakeLume>>) {
     let base = base_vm_name(REF);
     st.vms.insert(
         base.clone(),
@@ -99,6 +103,52 @@ async fn a_refused_set_deletes_the_clone_and_never_boots() {
     let st = state.lock().unwrap();
     assert!(!st.vms.contains_key("cua-e2e-refused"));
     assert!(!st.calls.iter().any(|(_, p, _)| p.ends_with("/run")));
+}
+
+/// A clone that stops while booting is deleted again, so a failed create
+/// leaves no tens-of-GB VM behind and the next create with the same name
+/// clones afresh instead of booting the broken one.
+#[tokio::test]
+async fn a_clone_that_fails_to_boot_is_deleted() {
+    let (rt, state) = fake_runtime_with(FakeLume {
+        boot_fails: true,
+        ..Default::default()
+    })
+    .await;
+    let err = rt.start(&spec("cua-e2e-crash", REF)).await.unwrap_err();
+    assert!(err.to_string().contains("stopped while booting"), "{err}");
+    let st = state.lock().unwrap();
+    assert!(
+        !st.vms.contains_key("cua-e2e-crash"),
+        "the failed clone is gone: {:#?}",
+        st.calls
+    );
+    assert!(
+        st.calls
+            .iter()
+            .any(|(m, p, _)| m == "DELETE" && p == "/lume/vms/cua-e2e-crash")
+    );
+    // The base it was cloned from stays.
+    assert!(st.vms.contains_key(&base_vm_name(REF)));
+}
+
+/// A start that boots a VM that already existed never deletes it when the
+/// boot fails (it holds someone's disk).
+#[tokio::test]
+async fn an_existing_vm_that_fails_to_boot_is_kept() {
+    let mut st = FakeLume {
+        boot_fails: true,
+        ..Default::default()
+    };
+    st.vms.insert(
+        "cua-e2e-kept".into(),
+        json!({ "name": "cua-e2e-kept", "os": "macOS", "status": "stopped" }),
+    );
+    let (rt, state) = fake_runtime_with(st).await;
+    rt.start(&spec("cua-e2e-kept", REF)).await.unwrap_err();
+    let st = state.lock().unwrap();
+    assert!(st.vms.contains_key("cua-e2e-kept"));
+    assert!(!st.calls.iter().any(|(m, _, _)| m == "DELETE"));
 }
 
 /// Opt-in live check against the real `lume serve`; see the module docs.

@@ -22,11 +22,10 @@
 
 use std::path::Path;
 
-use cua_teleport_bundle::chromium_crypto;
 use cua_teleport_bundle::logins::LoginItem;
 use cua_teleport_bundle::Platform;
 
-use crate::cookies::{chrome_now_utc, ensure_safe_storage_secret};
+use crate::cookies::chrome_now_utc;
 use crate::host::HostEffects;
 use crate::ledger::ImportRecord;
 use crate::{Result, TeleportError};
@@ -59,14 +58,32 @@ pub fn install_logins(
     items: &[LoginItem],
     record: &mut ImportRecord,
 ) -> Result<usize> {
+    install_logins_with(
+        host,
+        profile_dir,
+        &crate::cookies::default_local_state(profile_dir),
+        service,
+        platform,
+        &cua_chromium_storage::dpapi::SystemDpapi,
+        items,
+        record,
+    )
+}
+
+/// [`install_logins`] with an explicit `Local State` and DPAPI.
+#[allow(clippy::too_many_arguments)]
+pub fn install_logins_with(
+    host: &dyn HostEffects,
+    profile_dir: &Path,
+    local_state: &Path,
+    service: &'static str,
+    platform: Platform,
+    dpapi: &dyn cua_chromium_storage::dpapi::Dpapi,
+    items: &[LoginItem],
+    record: &mut ImportRecord,
+) -> Result<usize> {
     if items.is_empty() {
         return Ok(0);
-    }
-    if platform == Platform::Windows {
-        return Err(TeleportError::Provider(
-            "re-encrypting saved passwords for a Windows destination (DPAPI) is not supported yet"
-                .into(),
-        ));
     }
     let db = profile_dir.join("Login Data");
     if !db.is_file() {
@@ -79,13 +96,8 @@ pub fn install_logins(
         );
         return Ok(0);
     }
-    let secret = ensure_safe_storage_secret(host, platform, service, record)
-        .map_err(|e| TeleportError::Provider(format!("Safe Storage key for {service}: {e}")))?;
-    let rounds = match platform {
-        Platform::Linux => chromium_crypto::LINUX_V10_PBKDF2_ROUNDS,
-        Platform::MacOS | Platform::Windows => chromium_crypto::MACOS_PBKDF2_ROUNDS,
-    };
-    let key = chromium_crypto::derive_key(&secret, rounds);
+    let key =
+        crate::cookies::destination_cipher(host, local_state, service, platform, dpapi, record)?;
     let conn = rusqlite::Connection::open(&db)
         .map_err(|e| TeleportError::Provider(format!("opening Login Data failed: {e}")))?;
     let present = columns(&conn)
@@ -120,7 +132,7 @@ pub fn install_logins(
     let now = chrome_now_utc();
     let mut written = 0;
     for item in items {
-        let encrypted = chromium_crypto::encrypt_v10(&key, &item.password);
+        let encrypted = key.encrypt(&item.password);
         let args: Vec<rusqlite::types::Value> = cols
             .iter()
             .map(|c| match *c {
@@ -159,6 +171,7 @@ fn columns(conn: &rusqlite::Connection) -> rusqlite::Result<std::collections::Ha
 mod tests {
     use super::*;
     use crate::host::FakeHost;
+    use cua_teleport_bundle::chromium_crypto;
 
     fn login(origin: &str, user: &str, pw: &[u8]) -> LoginItem {
         LoginItem {
@@ -268,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_input_and_windows_are_refused_without_touching_anything() {
+    fn empty_input_touches_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let mut rec = ImportRecord::default();
         assert_eq!(
@@ -283,14 +296,50 @@ mod tests {
             .unwrap(),
             0
         );
-        assert!(install_logins(
+        assert!(rec.notices.is_empty() && rec.files.is_empty());
+    }
+
+    /// A Windows destination: AES-256-GCM under the destination's own Local
+    /// State key (created and DPAPI-wrapped when it has none), beside the
+    /// browser's own logins.
+    #[test]
+    fn a_windows_destination_gets_aes_gcm_under_its_own_local_state_key() {
+        use cua_chromium_storage::dpapi::{local_state_key, FakeDpapi};
+        let home = tempfile::tempdir().unwrap();
+        let user_data = home.path().join("User Data");
+        let dir = user_data.join("Default");
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = existing(&dir);
+        let local_state = user_data.join("Local State");
+        let mut record = ImportRecord::default();
+        let n = install_logins_with(
             &FakeHost::new(),
-            dir.path(),
-            "x",
+            &dir,
+            &local_state,
+            "Chrome Safe Storage",
             Platform::Windows,
-            &[login("https://a.test", "u", b"p")],
-            &mut rec
+            &FakeDpapi,
+            &[login("https://github.com", "octo", b"gh-pw-1234")],
+            &mut record,
         )
-        .is_err());
+        .unwrap();
+        assert_eq!(n, 1);
+        let enc: Vec<u8> = rusqlite::Connection::open(&db)
+            .unwrap()
+            .query_row(
+                "SELECT password_value FROM logins WHERE username_value = 'octo'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let key = local_state_key(&local_state, &FakeDpapi).unwrap();
+        assert_eq!(
+            &*chromium_crypto::gcm::decrypt(&key, &enc).unwrap(),
+            b"gh-pw-1234"
+        );
+        assert!(
+            record.files.contains(&local_state),
+            "a Local State we made is ledgered"
+        );
     }
 }

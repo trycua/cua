@@ -5,38 +5,66 @@
 //!
 //! A device that acts as a client of an account (lists its machines,
 //! connects to them) holds a P-256 key pair (the OS keychain on macOS and
-//! Windows, a 0600 file elsewhere) and is enrolled with a second factor:
+//! Windows, a 0600 file elsewhere) and is enrolled one of two ways:
 //!
+//! - a fresh interactive sign-in: the account token's `auth_time` is no
+//!   older than the bootstrap window ([`DevicePolicy::bootstrap_max_auth_age_secs`],
+//!   10 minutes by default), plus proof of the device key. By default this
+//!   enrolls *any* device of the account at once -- its first, a re-key of a
+//!   machine it already has, or a brand-new one -- the way signing in adds a
+//!   device to a tailnet. A brand-new device enrolled so is audited as
+//!   `device_enrolled` by [`BY_FRESH_SIGN_IN`] with a detail naming it a
+//!   new device of the account;
 //! - approval from an already enrolled device of the same account, by the
 //!   one-time code the new device shows or by picking it from the pending
-//!   list;
-//! - a fresh interactive sign-in (`auth_time` of the account token no older
-//!   than the bootstrap window), plus proof of the device key, the way
-//!   signing in adds a device to a tailnet. Three cases need no approval:
-//!   an account's first device (or its only one, after it expired); a
-//!   re-key of a machine that already has a live device on the account
-//!   (same machine id, a new key -- another build, or the old key was
-//!   lost); and, for a verified email, a token whose authentication context
-//!   proves a second factor (`acr`/`amr`; see [`crate::oidc::Identity::mfa`]).
-//!   A brand-new device on an account that already has a strong enrolled
-//!   device, from a sign-in that does not prove a second factor, still
-//!   needs an approval: a verified email alone is not enough (closes the
-//!   "any account compromise silently enrolls a device" gap). During the
-//!   migration grace period (ended by default; see [`DevicePolicy::grace_secs`])
-//!   an account with no enrolled device may also bootstrap without a fresh
-//!   sign-in (audited).
+//!   list. A device on a long-lived (refreshed) session -- no fresh
+//!   `auth_time` -- always needs this.
+//!
+//! Why a fresh sign-in alone is enough by default: whoever can complete an
+//! interactive sign-in to the account already *is* the account to the
+//! identity provider; requiring a second device to approve the first does
+//! not stop an account takeover, it only makes the owner's own second Mac
+//! wait for a code (and an identity provider that does not mark a social
+//! login's email verified, or report `amr`, made that the common case).
+//! Account compromise is sign-in compromise, and the defences belong
+//! there (the IdP's MFA and session policy). The relay narrows what a
+//! stolen credential can do: a refreshed or long-lived token cannot enroll
+//! (fresh `auth_time` only), a stolen token without the device key cannot
+//! open a session (key proof per session), every enrollment is audited
+//! with how it happened, any enrolled device can revoke another (ending its
+//! sessions at once), and a relay may switch to the stricter policy.
+//!
+//! The strict policy ([`DevicePolicy::require_approval`],
+//! `--device-require-approval` / `CUA_RELAY_DEVICE_REQUIRE_APPROVAL`, off by
+//! default) restores approval for brand-new devices: a fresh sign-in then
+//! enrolls only an account's first device (or its only one, after it
+//! expired; while no device enrolled through a real second factor exists),
+//! a re-key of a machine that already has a live device on the account
+//! (same machine id, a new key), and, for a verified email, a token whose
+//! authentication context proves a second factor (`acr`/`amr`; see
+//! [`crate::oidc::Identity::mfa`]). Any other new device waits for an
+//! approval.
+//!
+//! During the migration grace period (ended by default; see
+//! [`DevicePolicy::grace_secs`]) an account with no enrolled device may also
+//! bootstrap without a fresh sign-in (audited).
 //!
 //! A device may report a machine id (a hash of the host's hardware or
 //! install identity, keyed per account here). When a new key of the same
 //! machine enrolls (another build of the app keeps its own key, the key was
 //! lost), it replaces the machine's older records: they are revoked as
 //! superseded, their sessions end, and listings show the machine once. The
-//! machine id is a claim, never a factor for *whom* it replaces; it is,
-//! however, one of the ways a fresh sign-in alone is allowed to enroll
-//! without an approval (a re-key of a machine the account already trusts).
+//! machine id is a claim, never a factor for *whom* it replaces; under the
+//! strict policy it is, however, one of the ways a fresh sign-in alone is
+//! allowed to enroll without an approval (a re-key of a machine the account
+//! already trusts).
 //!
-//! Enrollment lasts `device_ttl` (30 days by default); after that the device
-//! needs one approval or a fresh sign-in again. Per session the device proves its key
+//! Enrollment lasts `device_ttl` (30 days by default) and slides while the
+//! device is in use: each session it opens (a proof of its key) moves the
+//! end to `device_ttl` from then, persisted when that moves it by more than
+//! [`RENEW_STEP_SECS`]. A device unused for `device_ttl` expires and needs
+//! one approval or a fresh sign-in again; a session never revives an
+//! expired device. Per session the device proves its key
 //! (`POST /v1/devices/session`, a signed timestamp) and gets a short-lived
 //! opaque session token it sends as `x-cua-device-session` with its account
 //! token. Hosts are never involved: a hosted-only machine registers with its
@@ -77,6 +105,10 @@ pub const ACCESS_AUDIT_INTERVAL_SECS: u64 = 600;
 pub const MAX_DEVICES_PER_ACCOUNT: usize = 64;
 /// `enrolled_by` of a device enrolled by a fresh interactive sign-in.
 pub const BY_FRESH_SIGN_IN: &str = "bootstrap:fresh-sign-in";
+/// Minimum move of `enrolled_until` that a session's sliding renewal
+/// records (at most half the TTL), so an active device is not rewritten
+/// for every session.
+pub const RENEW_STEP_SECS: u64 = 86_400;
 /// `enrolled_by` of a device enrolled during the migration grace period.
 pub const BY_GRACE: &str = "bootstrap:grace";
 
@@ -457,6 +489,14 @@ struct Session {
     expires: u64,
 }
 
+/// [`DeviceError::Proof`] message: the proof's timestamp is outside the
+/// allowed clock window.
+pub const PROOF_STALE: &str = "the device clock is off or the proof is stale";
+/// [`DeviceError::Proof`] message: the signature does not verify.
+pub const PROOF_BAD_SIGNATURE: &str = "invalid device signature";
+/// [`DeviceError::Proof`] message: the proof was already used.
+pub const PROOF_REPLAYED: &str = "device proof already used";
+
 /// Errors, mapped to HTTP statuses by the API.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeviceError {
@@ -546,6 +586,11 @@ pub struct DevicePolicy {
     pub bootstrap_max_auth_age_secs: u64,
     /// Device session lifetime.
     pub session_ttl_secs: u64,
+    /// Strict policy: a fresh sign-in enrolls only an account's first
+    /// device, a re-key of a machine it already has, or (verified email) a
+    /// sign-in proving MFA; other new devices need an approval. Off by
+    /// default: a fresh sign-in enrolls any device of the account.
+    pub require_approval: bool,
 }
 
 impl Default for DevicePolicy {
@@ -560,6 +605,7 @@ impl Default for DevicePolicy {
             grace_secs: 0,
             bootstrap_max_auth_age_secs: 600,
             session_ttl_secs: 3600,
+            require_approval: false,
         }
     }
 }
@@ -860,12 +906,10 @@ impl DeviceStore {
     ) -> Result<(), DeviceError> {
         let now = now_secs();
         if ts.abs_diff(now) > PROOF_SKEW_SECS {
-            return Err(DeviceError::Proof(
-                "the device clock is off or the proof is stale".into(),
-            ));
+            return Err(DeviceError::Proof(PROOF_STALE.into()));
         }
         if !verify(key, message, sig) {
-            return Err(DeviceError::Proof("invalid device signature".into()));
+            return Err(DeviceError::Proof(PROOF_BAD_SIGNATURE.into()));
         }
         // Keyed by the signature's `r` (the first half): an ECDSA signature
         // has a second valid form with the same `r`, so the whole signature
@@ -876,7 +920,7 @@ impl DeviceStore {
         proofs.retain(|_, exp| *exp > now);
         let fingerprint = hex::encode(ring::digest::digest(&ring::digest::SHA256, r).as_ref());
         if proofs.contains_key(&fingerprint) {
-            return Err(DeviceError::Proof("device proof already used".into()));
+            return Err(DeviceError::Proof(PROOF_REPLAYED.into()));
         }
         proofs.insert(fingerprint, now + 2 * PROOF_SKEW_SECS + 1);
         Ok(())
@@ -938,11 +982,12 @@ impl DeviceStore {
     ///
     /// - A revoked key never comes back.
     /// - `bootstrap` asks to enroll without an approval. A fresh sign-in
-    ///   (`auth_time` within the bootstrap window) grants it: for the
-    ///   account's first device (while no device enrolled through a real
-    ///   second factor exists), and for any other device when the account's
-    ///   email is verified. During the migration grace period an account
-    ///   with no enrolled device bootstraps without one.
+    ///   (`auth_time` within the bootstrap window) grants it for any device
+    ///   of the account; under [`DevicePolicy::require_approval`] only for
+    ///   the account's first device (while no device enrolled through a
+    ///   real second factor exists), a re-key of a known machine, or a
+    ///   verified email with MFA. During the migration grace period an
+    ///   account with no enrolled device bootstraps without one.
     /// - A fresh sign-in newer than an enrolled device's enrollment
     ///   re-verifies it; otherwise an enrolled device stays as it is.
     /// - Else the device is (again) pending with a fresh one-time code.
@@ -1058,21 +1103,31 @@ impl DeviceStore {
                     .values()
                     .any(|d| d.account == account && d.id != id && d.revoked_at.is_none() && d.machine.as_deref() == Some(m))
             });
-            // A fresh sign-in enrolls: the first device (while no device
-            // enrolled through a real second factor exists, so an owner can
-            // recover from devices someone enrolled on the grace period's
-            // word, and revoke them); a re-key of an already-enrolled
-            // machine; and, for a brand-new device on an account that
-            // already has a strong enrolled device, only when the token
-            // also proves a second factor (`Identity::mfa`) -- a verified
-            // email alone is no longer enough for that case (S4). The other
-            // route for a brand-new device is an approval from an enrolled
-            // device ([`Self::approve`]). The grace period bootstraps only
-            // an account's very first device.
+            // A brand-new device of an account that already has an enrolled
+            // device: never enrolled before, not a re-key of a known machine.
+            let new_device = device.enrolled_at.is_none()
+                && !is_rekey
+                && Self::has_enrolled(state, account, now, false);
+            // By default a fresh sign-in (plus the key proof checked above)
+            // enrolls any device of the account, the way signing in adds a
+            // device to a tailnet: account compromise is sign-in
+            // compromise, and a refreshed / long-lived token never counts
+            // as fresh. Under the strict policy (`require_approval`) it
+            // enrolls only: the first device (while no device enrolled
+            // through a real second factor exists, so an owner can recover
+            // from devices someone enrolled on the grace period's word, and
+            // revoke them); a re-key of an already-enrolled machine; and,
+            // for a brand-new device on an account that already has a
+            // strong enrolled device, a token that also proves a second
+            // factor (`Identity::mfa`) with a verified email (S4). The
+            // other route for a brand-new device is an approval from an
+            // enrolled device ([`Self::approve`]). The grace period
+            // bootstraps only an account's very first device.
             let by = if !r.bootstrap {
                 None
             } else if fresh_sign_in.is_some()
-                && (enrolled
+                && (!policy.require_approval
+                    || enrolled
                     || is_rekey
                     || !Self::has_enrolled(state, account, now, true)
                     || (r.email_verified && r.mfa))
@@ -1096,9 +1151,12 @@ impl DeviceStore {
                     AuditEvent::new("device_enrolled")
                         .device(Some(&id))
                         .subject(by)
-                        .detail(match (by, enrolled) {
-                            (BY_FRESH_SIGN_IN, true) => "re-verified by fresh sign-in",
-                            (BY_FRESH_SIGN_IN, false) => "enrolled by fresh sign-in",
+                        .detail(match (by, enrolled, new_device) {
+                            (BY_FRESH_SIGN_IN, true, _) => "re-verified by fresh sign-in",
+                            (BY_FRESH_SIGN_IN, false, true) => {
+                                "enrolled by fresh sign-in (new device of the account)"
+                            }
+                            (BY_FRESH_SIGN_IN, false, false) => "enrolled by fresh sign-in",
                             _ => "enrolled during the grace period",
                         }),
                     &audit_key,
@@ -1223,6 +1281,12 @@ impl DeviceStore {
 
     /// Opens a device session: `sig` over [`session_message`] with the
     /// device key. Returns the session token and its expiry.
+    ///
+    /// The session renews an enrolled device's enrollment (sliding): its
+    /// end moves to `ttl` from now, recorded when that moves it by more
+    /// than [`RENEW_STEP_SECS`] (at most half the TTL), so a device in use
+    /// does not expire. An expired, pending or revoked device gets no
+    /// session and is not renewed.
     pub fn open_session(
         &self,
         account: &str,
@@ -1240,46 +1304,63 @@ impl DeviceStore {
         let until = match record.state(now) {
             DeviceState::Enrolled => record.enrolled_until.unwrap_or(now),
             DeviceState::Pending => {
-                return Err(DeviceError::Forbidden(
-                    "this device is waiting for approval from an enrolled device".into(),
-                ))
+                return Err(DeviceError::Forbidden(if self.policy.require_approval {
+                    "this device is waiting for approval from an enrolled device".into()
+                } else {
+                    "this device is not enrolled yet: sign in again (`cua auth login`) to enroll it, or approve it from an enrolled device".into()
+                }))
             }
             DeviceState::Expired => {
-                return Err(DeviceError::Forbidden(
-                    "this device needs re-verification: approve it from an enrolled device".into(),
-                ))
+                return Err(DeviceError::Forbidden(if self.policy.require_approval {
+                    "this device needs re-verification: approve it from an enrolled device".into()
+                } else {
+                    "this device's enrollment expired after a period without use: sign in again (`cua auth login`) to re-verify it, or approve it from an enrolled device".into()
+                }))
             }
             DeviceState::Revoked => {
                 return Err(DeviceError::Forbidden("this device was revoked".into()))
             }
         };
+        let ttl = self.policy.ttl_secs;
+        let step = RENEW_STEP_SECS.min(ttl / 2);
+        let audit_key = self.audit_key;
+        let until = self
+            .mutate(|state| {
+                let mut until = until;
+                if let Some(d) = state.devices.get_mut(device) {
+                    d.last_seen = Some(now);
+                    // Re-checked under the lock: revoked or expired since
+                    // the read above stays as it is.
+                    if d.state(now) == DeviceState::Enrolled {
+                        let current = d.enrolled_until.unwrap_or(now);
+                        let renewed = now + ttl;
+                        if renewed > current.saturating_add(step) {
+                            d.enrolled_until = Some(renewed);
+                        }
+                        until = d.enrolled_until.unwrap_or(until);
+                    }
+                }
+                Self::push_audit(
+                    state,
+                    account,
+                    AuditEvent::new("device_session").device(Some(device)),
+                    &audit_key,
+                );
+                Ok(until)
+            })
+            .unwrap_or(until);
         let expires = (now + self.policy.session_ttl_secs).min(until);
         let token = new_session_token();
-        {
-            let mut sessions = self.sessions.lock().expect("sessions");
-            sessions.retain(|_, s| s.expires > now);
-            sessions.insert(
-                sha256_hex(&token),
-                Session {
-                    account: account.to_owned(),
-                    device: device.to_owned(),
-                    expires,
-                },
-            );
-        }
-        let audit_key = self.audit_key;
-        let _ = self.mutate(|state| {
-            if let Some(d) = state.devices.get_mut(device) {
-                d.last_seen = Some(now);
-            }
-            Self::push_audit(
-                state,
-                account,
-                AuditEvent::new("device_session").device(Some(device)),
-                &audit_key,
-            );
-            Ok(())
-        });
+        let mut sessions = self.sessions.lock().expect("sessions");
+        sessions.retain(|_, s| s.expires > now);
+        sessions.insert(
+            sha256_hex(&token),
+            Session {
+                account: account.to_owned(),
+                device: device.to_owned(),
+                expires,
+            },
+        );
         Ok((token, expires))
     }
 
@@ -1506,10 +1587,9 @@ pub(crate) mod tests {
         // The session is bound to its account.
         assert!(store.session_device("other", &token).is_none());
 
-        // Without a verified email, a second device cannot bootstrap, even
-        // with a fresh sign-in.
+        // On a long-lived session a second device cannot bootstrap.
         let second = TestKey::new();
-        let pending = register(&store, "acct", &second, true, Some(now_secs())).unwrap();
+        let pending = register(&store, "acct", &second, true, Some(now_secs() - 3600)).unwrap();
         assert_eq!(pending.device.state(now_secs()), DeviceState::Pending);
         let code = pending.code.unwrap();
         // ...until an enrolled device confirms its code.
@@ -1568,8 +1648,13 @@ pub(crate) mod tests {
 
     #[test]
     fn a_fresh_sign_in_recovers_from_devices_enrolled_on_the_grace_periods_word() {
-        // During the grace period someone with a stolen session enrolls first.
-        let store = DeviceStore::in_memory(with_grace());
+        // During the grace period someone with a stolen session enrolls
+        // first. (Strict policy: by default a fresh sign-in enrolls any
+        // device, so the last step below is strict-only.)
+        let store = DeviceStore::in_memory(DevicePolicy {
+            require_approval: true,
+            ..with_grace()
+        });
         let thief = TestKey::new();
         let r = register(&store, "acct", &thief, true, None).unwrap();
         assert_eq!(r.device.enrolled_by.as_deref(), Some("bootstrap:grace"));
@@ -1993,13 +2078,195 @@ pub(crate) mod tests {
         assert_eq!(enrolled.subject.as_deref(), Some(BY_FRESH_SIGN_IN));
         assert_eq!(
             enrolled.detail.as_deref(),
-            Some("enrolled by fresh sign-in")
+            Some("enrolled by fresh sign-in (new device of the account)")
         );
     }
 
+    /// The default policy: a fresh interactive sign-in enrolls another
+    /// device of the account at once, whether or not the issuer marked the
+    /// email verified or the token proves MFA (a social login on Keycloak:
+    /// `acr` "1", no `amr`, `email_verified` false).
     #[test]
-    fn a_brand_new_device_needs_mfa_or_approval_once_the_account_has_a_strong_device() {
+    fn a_fresh_sign_in_enrolls_a_second_device_without_verified_email_or_mfa() {
         let store = DeviceStore::in_memory(enforcing());
+        assert!(!store.policy().require_approval);
+        let first = TestKey::new();
+        register(&store, "acct", &first, true, Some(now_secs())).unwrap();
+        assert!(store.get(&first.id()).unwrap().strong);
+        // Seconds-old sign-in on a second Mac: enrolled, no code.
+        let second = TestKey::new();
+        let r = register(&store, "acct", &second, true, Some(now_secs() - 5)).unwrap();
+        assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
+        assert_eq!(r.device.enrolled_by.as_deref(), Some(BY_FRESH_SIGN_IN));
+        assert!(r.code.is_none());
+        assert!(r.superseded.is_empty());
+        assert!(session(&store, "acct", &second).is_ok());
+        assert!(store.get(&first.id()).unwrap().revoked_at.is_none());
+        let log = store.audit_log("acct", 100);
+        let enrolled = log.iter().rfind(|e| e.kind == "device_enrolled").unwrap();
+        assert_eq!(enrolled.device.as_deref(), Some(second.id().as_str()));
+        assert_eq!(enrolled.subject.as_deref(), Some(BY_FRESH_SIGN_IN));
+        assert_eq!(
+            enrolled.detail.as_deref(),
+            Some("enrolled by fresh sign-in (new device of the account)")
+        );
+        // The account's first device was not a "new device of the account".
+        let first_enrolled = log.iter().find(|e| e.kind == "device_enrolled").unwrap();
+        assert_eq!(
+            first_enrolled.detail.as_deref(),
+            Some("enrolled by fresh sign-in")
+        );
+        // A long-lived (refreshed) session still needs an approval, as does
+        // a token without auth_time or a register that did not ask.
+        let third = TestKey::new();
+        let stale = register(&store, "acct", &third, true, Some(now_secs() - 3600)).unwrap();
+        assert_eq!(stale.device.state(now_secs()), DeviceState::Pending);
+        assert!(stale.code.is_some());
+        assert!(register(&store, "acct", &third, true, None)
+            .unwrap()
+            .code
+            .is_some());
+        assert!(register(&store, "acct", &third, false, Some(now_secs()))
+            .unwrap()
+            .code
+            .is_some());
+        assert!(session(&store, "acct", &third).is_err());
+        // Just past the bootstrap window is stale too.
+        let window = store.policy().bootstrap_max_auth_age_secs;
+        assert!(
+            register(&store, "acct", &third, true, Some(now_secs() - window - 5))
+                .unwrap()
+                .code
+                .is_some()
+        );
+    }
+
+    /// `require_approval` restores the strict rule: a fresh sign-in enrolls
+    /// the first device, but a brand-new second one needs an approval
+    /// unless the token proves MFA with a verified email.
+    #[test]
+    fn the_strict_switch_requires_approval_for_a_brand_new_device() {
+        let store = DeviceStore::in_memory(DevicePolicy {
+            require_approval: true,
+            ..enforcing()
+        });
+        let first = TestKey::new();
+        let r = register(&store, "acct", &first, true, Some(now_secs())).unwrap();
+        assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
+        let second = TestKey::new();
+        let pending = register(&store, "acct", &second, true, Some(now_secs())).unwrap();
+        assert_eq!(pending.device.state(now_secs()), DeviceState::Pending);
+        assert!(pending.code.is_some());
+        let err = session(&store, "acct", &second).unwrap_err();
+        assert!(
+            matches!(&err, DeviceError::Forbidden(m) if m.contains("waiting for approval")),
+            "{err:?}"
+        );
+        // Verified email alone is not enough; with MFA it is.
+        let r = register_on(
+            &store,
+            "acct",
+            &second,
+            true,
+            Some(now_secs()),
+            true,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(r.code.is_some());
+        let r = register_on(
+            &store,
+            "acct",
+            &second,
+            true,
+            Some(now_secs()),
+            true,
+            None,
+            true,
+        )
+        .unwrap();
+        assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
+        // Or an approval from an enrolled device.
+        let third = TestKey::new();
+        let code = register(&store, "acct", &third, true, Some(now_secs()))
+            .unwrap()
+            .code
+            .unwrap();
+        store
+            .approve("acct", &first.id(), Some(&code), None)
+            .unwrap();
+        assert!(session(&store, "acct", &third).is_ok());
+    }
+
+    /// A session renews the enrollment (sliding), persisting only a move
+    /// worth recording, and never revives an expired device.
+    #[test]
+    fn a_session_slides_the_enrollment_but_does_not_revive_an_expired_device() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let ttl = store.policy().ttl_secs;
+        let key = TestKey::new();
+        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        let set_until = |until: u64| {
+            store
+                .state
+                .lock()
+                .unwrap()
+                .devices
+                .get_mut(&key.id())
+                .unwrap()
+                .enrolled_until = Some(until);
+        };
+        let until = || store.get(&key.id()).unwrap().enrolled_until.unwrap();
+        // Three days left: a session moves the end to a full TTL from now,
+        // on disk too.
+        set_until(now_secs() + 3 * 86_400);
+        session(&store, "acct", &key).unwrap();
+        let renewed = until();
+        assert!(renewed + 5 >= now_secs() + ttl, "{renewed}");
+        let reopened = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        assert_eq!(
+            reopened.get(&key.id()).unwrap().enrolled_until,
+            Some(renewed)
+        );
+        drop(reopened);
+        // Within a day of a full TTL: left as it is.
+        let near = now_secs() + ttl - 3600;
+        set_until(near);
+        session(&store, "acct", &key).unwrap();
+        assert_eq!(until(), near);
+        // Expired: no session, no renewal; re-verification is still due.
+        let past = now_secs() - 1;
+        set_until(past);
+        let err = session(&store, "acct", &key).unwrap_err();
+        assert!(
+            matches!(&err, DeviceError::Forbidden(m) if m.contains("sign in again")),
+            "{err:?}"
+        );
+        assert_eq!(until(), past);
+        assert_eq!(
+            store.get(&key.id()).unwrap().state(now_secs()),
+            DeviceState::Expired
+        );
+        // A revoked device is not renewed either.
+        let other = TestKey::new();
+        register(&store, "acct", &other, true, Some(now_secs())).unwrap();
+        set_until(now_secs() + 3 * 86_400);
+        session(&store, "acct", &key).unwrap();
+        store.revoke("acct", &other.id(), &key.id()).unwrap();
+        let revoked_until = until();
+        assert!(session(&store, "acct", &key).is_err());
+        assert_eq!(until(), revoked_until);
+    }
+
+    #[test]
+    fn strict_a_brand_new_device_needs_mfa_or_approval_once_the_account_has_a_strong_device() {
+        let store = DeviceStore::in_memory(DevicePolicy {
+            require_approval: true,
+            ..enforcing()
+        });
         let first = TestKey::new();
         register_on(
             &store,

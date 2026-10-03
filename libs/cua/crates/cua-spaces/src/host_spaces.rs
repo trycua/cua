@@ -104,6 +104,21 @@ impl HostCaller {
         }
     }
 
+    /// The caller in a request's [`CALLER_METADATA`]. cua-spacesd escapes
+    /// non-ASCII as JSON `\uXXXX`, but releases up to 0.3.0
+    /// sent a Unicode display name as raw UTF-8, which is not ASCII text, so
+    /// any valid UTF-8 value is accepted.
+    pub fn from_grpc_metadata(metadata: &tonic::metadata::MetadataMap) -> Result<Self> {
+        let value = metadata
+            .get(CALLER_METADATA)
+            .map(|v| {
+                std::str::from_utf8(v.as_bytes())
+                    .map_err(|_| Error::invalid(format!("{CALLER_METADATA}: not UTF-8")))
+            })
+            .transpose()?;
+        Self::from_metadata(value)
+    }
+
     /// `Name <email> (account)` for the audit and people.
     pub fn label(&self) -> String {
         if self.account == "local" {
@@ -780,6 +795,7 @@ impl HostSpacesServer {
         }
         .await;
         if let Err(e) = attached {
+            let e = too_old_for_the_relay(e, &image);
             let _ = self.spaces.delete(&info.id).await;
             self.audit(
                 "failed",
@@ -1245,6 +1261,51 @@ pub(crate) async fn forget_provided(spaces: &Spaces, space: &str) {
     let _ = provided::audit(&dir, "delete", "local", &record.relay_machine, space);
 }
 
+/// A Space whose cua-spacesd predates `relay_attach` cannot join the relay,
+/// so nothing off this machine can reach it: say that, and that the image
+/// (not the caller) has to change. The catalog and the image labels do not
+/// say which cua-spacesd an image carries, so this is known only once the
+/// Space is up.
+fn too_old_for_the_relay(e: Error, image: &str) -> Error {
+    match e {
+        Error::CapabilityMissing {
+            space,
+            feature,
+            limitation,
+        } if feature == RELAY_ATTACH_FEATURE => {
+            let why = if limitation.is_empty() {
+                String::new()
+            } else {
+                format!(" ({limitation})")
+            };
+            Error::CapabilityMissing {
+                space,
+                feature,
+                limitation: format!(
+                    "this image's cua-spacesd is too old to be reached from your other devices{why}; \
+                     {image} needs republishing with a current cua-spacesd. Update the image (or \
+                     choose another one) and create the Space again"
+                ),
+            }
+        }
+        e => e,
+    }
+}
+
+/// A machine whose owner stopped sharing it ("Stop sharing" in the app,
+/// `cua host stop`): the relay refuses every call to it until they resume.
+pub(crate) fn stopped_sharing(name: &str) -> Error {
+    Error::Relay(cua_host::Error::PermissionDenied(format!(
+        "{name} stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"
+    )))
+}
+
+/// Whether a failed connection is the relay refusing a machine that
+/// stopped sharing.
+pub(crate) fn is_stopped_sharing(reason: &str) -> bool {
+    reason.contains("stopped sharing this machine")
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1480,7 +1541,8 @@ impl Spaces {
     /// (at most [`HOST_PROBE`] each, all at once). One that answers without
     /// providing Spaces is left out; one that does not answer is listed
     /// offline when it provided one of your Spaces before (relay) or was
-    /// added as a host (direct). Without a relay account, or when the relay
+    /// added as a host (direct), or is yours and set up to provide Spaces
+    /// (its relay meta, [`cua_host::META_PROVIDES_SPACES`]). Without a relay account, or when the relay
     /// cannot be asked, only the direct hosts are listed.
     pub async fn hosts(&self) -> Result<Vec<HostOffer>> {
         let relay: Vec<crate::relay::RelayMachine> = if self.relay_account().is_some() {
@@ -1523,7 +1585,16 @@ impl Spaces {
                     } else {
                         None
                     };
-                    host_offer(m.id.clone(), name, "relay", answer, known.contains(&m.id))
+                    // Offline, it is listed (with why) when it provided one
+                    // of your Spaces before, or its setup said it provides
+                    // Spaces (or predates saying so): a Mac whose service
+                    // is down must not just vanish from "Run on".
+                    let offers_spaces = m
+                        .meta
+                        .get(cua_host::META_PROVIDES_SPACES)
+                        .is_none_or(|v| v != "off");
+                    let keep = known.contains(&m.id) || (m.role == "owner" && offers_spaces);
+                    host_offer(m.id.clone(), name, "relay", answer, keep)
                 }),
         )
         .await;
@@ -1711,6 +1782,13 @@ impl Spaces {
                 ),
             ));
         }
+        if !m.sharing {
+            return Err(stopped_sharing(if m.name.is_empty() {
+                &m.id
+            } else {
+                &m.name
+            }));
+        }
         if m.role == "viewer" {
             return Err(Error::Relay(cua_host::Error::PermissionDenied(format!(
                 "{} is shared with you to watch only; ask its owner to share it as an editor",
@@ -1847,8 +1925,15 @@ impl Spaces {
         }
         .await;
         if let Err(e) = created {
-            // Nothing runs for it: take the machine off the relay again.
-            let _ = client.delete(&token, &machine).await;
+            // Nothing runs for it: take the machine off the relay again, or
+            // it lists as a Space forever (with a fresh token and device
+            // session: the host may have taken long to fail).
+            if let Err(gone) = self.remove_relay_machine(&machine).await {
+                tracing::warn!(
+                    machine,
+                    "relay machine of the failed create not removed: {gone}"
+                );
+            }
             return Err(e);
         }
         // Its driver dials out on its own: wait (bounded) until the relay
@@ -2040,15 +2125,23 @@ impl Spaces {
         let relay = self.relay()?;
         let token = relay.tokens.access_token().await?;
         let client = relay.client().await?;
-        let host = client.machine(&token, host_id).await.map_err(|e| match e {
-            cua_host::Error::NotFound(_) => Error::NotFound(format!(
-                "the host of relay:{} (machine {host_id}) is no longer on the relay",
-                machine.id
-            )),
-            other => other.into(),
-        })?;
+        let host = match client.machine(&token, host_id).await {
+            Ok(h) => h,
+            // Its host is gone (removed, or set up again as a new machine):
+            // nothing provides the Space any more, only its relay entry is
+            // left.
+            Err(cua_host::Error::NotFound(_)) => {
+                self.remove_relay_machine(&machine.id).await?;
+                return Ok(format!(
+                    "Removed relay:{}: a stale entry (its host, machine {host_id}, is no longer \
+                     on the relay).",
+                    machine.id
+                ));
+            }
+            Err(e) => return Err(e.into()),
+        };
         let space = self.host_space(&host).await?;
-        let message = space
+        let deleted = space
             .spacesd()?
             .host_spaces()
             .delete_host_space(pb::DeleteHostSpaceRequest {
@@ -2056,12 +2149,44 @@ impl Spaces {
             })
             .await
             .map(|r| r.into_inner().message)
-            .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))?;
+            .map_err(|e| from_host(cua_spacesd_client::Error::from(e)));
+        let message = match deleted {
+            Ok(m) => m,
+            // The host has no such Space (a create that failed before it
+            // existed, or the host was set up again): only the relay entry
+            // is left.
+            Err(Error::NotFound(_)) => {
+                self.remove_relay_machine(&machine.id).await?;
+                return Ok(format!(
+                    "Removed relay:{}: a stale entry ({} no longer has this Space).",
+                    machine.id,
+                    if host.name.is_empty() {
+                        &host.id
+                    } else {
+                        &host.name
+                    }
+                ));
+            }
+            Err(e) => return Err(e),
+        };
         match client.delete(&token, &machine.id).await {
             Ok(()) | Err(cua_host::Error::NotFound(_)) => {}
             Err(e) => tracing::warn!(machine = %machine.id, "relay machine not removed: {e}"),
         }
         Ok(message)
+    }
+
+    /// Removes relay machine `machine` as the signed-in account, with a
+    /// fresh token and device session; one already gone counts as removed.
+    pub(crate) async fn remove_relay_machine(&self, machine: &str) -> Result<()> {
+        let relay = self.relay()?;
+        let token = relay.tokens.access_token().await?;
+        match relay.client().await?.delete(&token, machine).await {
+            Ok(()) | Err(cua_host::Error::NotFound(_)) => {}
+            Err(e) => return Err(e.into()),
+        }
+        let _ = self.relay_machines().await;
+        Ok(())
     }
 
     /// Turns a Space a host provides off or on, on that host
@@ -2165,6 +2290,45 @@ mod tests {
         };
         assert!(!viewer.may_create());
         assert!(HostCaller::from_metadata(Some("nope")).is_err());
+    }
+
+    /// A Unicode display name arrives as ASCII-escaped JSON (current
+    /// cua-spacesd) or as raw UTF-8 bytes (older cua-spacesd); both parse,
+    /// and bytes that are not UTF-8 are refused.
+    #[test]
+    fn callers_from_grpc_metadata() {
+        use tonic::metadata::{MetadataMap, MetadataValue};
+        let with = |v: MetadataValue<tonic::metadata::Ascii>| {
+            let mut m = MetadataMap::new();
+            m.insert(CALLER_METADATA, v);
+            m
+        };
+        let name = "Jos\u{e9} \u{65e5}\u{672c} \u{1f680}";
+
+        let escaped = r#"{"account":"ada","name":"Jos\u00e9 \u65e5\u672c \ud83d\ude80","role":"owner","via":"relay"}"#;
+        assert!(escaped.is_ascii());
+        let c = HostCaller::from_metadata(Some(escaped)).unwrap();
+        assert_eq!(c.name.as_deref(), Some(name));
+        let c = HostCaller::from_grpc_metadata(&with(escaped.parse().unwrap())).unwrap();
+        assert_eq!(c.name.as_deref(), Some(name));
+        assert!(c.is_owner());
+
+        let raw = format!(r#"{{"account":"ada","name":"{name}","role":"owner","via":"relay"}}"#);
+        // What cua-spacesd up to 0.3.0 sent: `str::parse` keeps the bytes.
+        let value: MetadataValue<tonic::metadata::Ascii> = raw.parse().unwrap();
+        assert!(value.to_str().is_err());
+        let c = HostCaller::from_grpc_metadata(&with(value)).unwrap();
+        assert_eq!(c.name.as_deref(), Some(name));
+        assert_eq!(c.account, "ada");
+
+        let not_utf8 = MetadataValue::try_from(&b"{\"account\":\"\xff\"}"[..]).unwrap();
+        let err = HostCaller::from_grpc_metadata(&with(not_utf8)).unwrap_err();
+        assert!(err.to_string().contains("not UTF-8"), "{err}");
+
+        assert_eq!(
+            HostCaller::from_grpc_metadata(&MetadataMap::new()).unwrap(),
+            HostCaller::local()
+        );
     }
 
     /// A host that answered is listed with its limits unless it does not

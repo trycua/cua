@@ -383,6 +383,9 @@ pub struct SpacesdClient {
     /// Fresh headers at use (cloud Spaces); `None` when they never expire.
     #[cfg_attr(not(feature = "media"), allow(dead_code))]
     pub(crate) ws_refresh: Option<WsHeaderRefresh>,
+    /// Where the spacesd runs (`local`, `cloud`, `direct`, `relay`), for
+    /// agent-run telemetry. `direct` (reached by address) unless set.
+    pub(crate) location: String,
 }
 
 impl SpacesdClient {
@@ -394,7 +397,14 @@ impl SpacesdClient {
             client,
             ws_headers,
             ws_refresh: None,
+            location: "direct".into(),
         }
+    }
+
+    /// The same client, recorded as running at `location`.
+    pub(crate) fn at(mut self, location: &str) -> Self {
+        self.location = location.to_string();
+        self
     }
 
     /// A client whose WebSocket headers are re-minted by `refresh` each time

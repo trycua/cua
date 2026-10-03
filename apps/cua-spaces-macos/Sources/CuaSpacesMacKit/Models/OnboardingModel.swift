@@ -30,7 +30,7 @@ public final class OnboardingModel {
     /// This machine's host setup (the same form and host as the main window).
     public let host: HostModel
     /// The signed-in account's token, for relay host setup.
-    public var accountToken: (() async -> String?)? {
+    public var accountToken: ((_ forceRefresh: Bool) async throws -> String?)? {
         get { host.accountToken }
         set { host.accountToken = newValue }
     }
@@ -125,6 +125,14 @@ public final class OnboardingModel {
             if let installed { cliPlan = installed }
         }
         if let installed { send(.cliInstalled(target: installed.target)) }
+    }
+
+    /// Another `cua` that comes first on PATH (an old Python cua-cli, say),
+    /// so typing `cua` runs it rather than the installed path Done shows:
+    /// Done notes it under "cua command".
+    public var cliShadowedBy: String? {
+        guard state.cliTarget != nil, let other = cliPlan?.shadowedBy, !other.isEmpty else { return nil }
+        return other
     }
 
     // MARK: - Where it shows up

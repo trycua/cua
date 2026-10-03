@@ -527,6 +527,13 @@ pub(crate) fn relay_info(m: &crate::relay::RelayMachine) -> SpaceInfo {
             .cloned()
             .unwrap_or_default(),
         cloud_delete: String::new(),
+        status: if !m.online {
+            "offline".into()
+        } else if !m.sharing {
+            "not sharing".into()
+        } else {
+            String::new()
+        },
     }
 }
 
@@ -993,6 +1000,7 @@ impl Spaces {
             cloud: String::new(),
             cloud_place: String::new(),
             cloud_delete: String::new(),
+            status: String::new(),
         }))
     }
 
@@ -1332,6 +1340,24 @@ impl Spaces {
                 Err(cua_spacesd_client::Error::SpacesdNotAvailable { reason, .. }) => {
                     let generic_ok = matches!(id, SpaceId::Local { .. } | SpaceId::Cloud { .. })
                         || !services.is_empty();
+                    if let SpaceId::Relay { machine_id } = &id
+                        && crate::host_spaces::is_stopped_sharing(&reason)
+                    {
+                        // Not a missing driver: its owner stopped sharing it.
+                        let named = name.filter(|n| !n.is_empty()).map(str::to_string);
+                        let label = named.or_else(|| {
+                            self.inner
+                                .relay_cache
+                                .lock()
+                                .expect("relay cache")
+                                .iter()
+                                .find(|m| &m.id == machine_id && !m.name.is_empty())
+                                .map(|m| m.name.clone())
+                        });
+                        return Err(crate::host_spaces::stopped_sharing(
+                            label.as_deref().unwrap_or(&id.to_string()),
+                        ));
+                    }
                     if !generic_ok {
                         return Err(Error::SpacesdNotAvailable {
                             space: id.to_string(),
@@ -2390,7 +2416,7 @@ impl Spaces {
 
     /// The relay directory row of `machine_id` (cached, else refreshed);
     /// `None` without a relay account or when the relay does not list it.
-    async fn relay_row(&self, machine_id: &str) -> Option<crate::relay::RelayMachine> {
+    pub(crate) async fn relay_row(&self, machine_id: &str) -> Option<crate::relay::RelayMachine> {
         self.relay_account()?;
         let cached = self
             .inner

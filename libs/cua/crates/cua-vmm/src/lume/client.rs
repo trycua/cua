@@ -167,7 +167,9 @@ pub fn pull_body(reference: &str, name: &str) -> Value {
 #[derive(Clone)]
 pub struct LumeClient {
     http: reqwest::Client,
-    base: String,
+    /// Shared by every clone, so moving to another `lume serve`
+    /// ([`Self::set_base`]) moves them all.
+    base: std::sync::Arc<std::sync::RwLock<String>>,
 }
 
 impl LumeClient {
@@ -181,16 +183,25 @@ impl LumeClient {
                 .connect_timeout(Duration::from_secs(3))
                 .build()
                 .expect("reqwest client"),
-            base: base.into().trim_end_matches('/').to_string(),
+            base: std::sync::Arc::new(std::sync::RwLock::new(
+                base.into().trim_end_matches('/').to_string(),
+            )),
         }
     }
 
-    pub fn base(&self) -> &str {
-        &self.base
+    pub fn base(&self) -> String {
+        self.base.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Talks to the `lume serve` at `base` from now on (this client and
+    /// every clone of it).
+    pub fn set_base(&self, base: &str) {
+        *self.base.write().unwrap_or_else(|e| e.into_inner()) =
+            base.trim_end_matches('/').to_string();
     }
 
     fn url(&self, path: &str) -> String {
-        format!("{}{}", self.base, path)
+        format!("{}{}", self.base(), path)
     }
 
     async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
@@ -230,7 +241,7 @@ impl LumeClient {
     fn net_err(&self, e: reqwest::Error) -> VmmError {
         if e.is_connect() {
             VmmError::missing(
-                format!("lume serve at {}", self.base),
+                format!("lume serve at {}", self.base()),
                 "not reachable; start it with `lume serve` (cua starts it automatically when the binary is installed)",
             )
         } else {
@@ -246,6 +257,22 @@ impl LumeClient {
             .send()
             .await
             .is_ok()
+    }
+
+    /// The version the server reports in `GET /lume/host/status`, when it
+    /// means something ([`super::builtin::reported_version`]).
+    pub async fn reported_version(&self) -> Option<String> {
+        let status: Value = self
+            .http
+            .get(self.url("/lume/host/status"))
+            .timeout(Duration::from_secs(3))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        super::builtin::reported_version(status.get("version").and_then(Value::as_str))
     }
 
     /// `GET /lume/host/status`.

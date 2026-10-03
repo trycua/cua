@@ -90,6 +90,9 @@ impl Home {
         // Never touch the OS keychain, never open a browser.
         env.insert("CUA_CREDENTIAL_STORE".into(), "file".into());
         env.insert("CUA_NO_BROWSER".into(), "1".into());
+        // `cua auth login` enrolls this device on the relay afterwards:
+        // never the real one (port 9 refuses at once).
+        env.insert("CUA_RELAY_URL".into(), "http://127.0.0.1:9".into());
         env.insert("CUA_LOG".into(), "error".into());
         // Never read a real registry for the Fleet runtime/image rule.
         env.insert("CUA_FLEET_IMAGE_INSPECT".into(), "0".into());

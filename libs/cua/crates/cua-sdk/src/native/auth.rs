@@ -118,10 +118,11 @@ impl LoginAttempt {
     /// Waits for the user, stores the session and returns who signed in.
     /// Only the first call waits; later calls fail.
     ///
-    /// A device that already enrolled (it has a device key) then
-    /// re-registers with the relay (`CUA_RELAY_URL`, else relay.cua.ai), so
-    /// the fresh sign-in enrolls or re-verifies it without an approval.
-    /// That step is best effort and never fails the sign-in.
+    /// This device then registers with the relay (the one `cua` uses:
+    /// `CUA_RELAY_URL`, else this machine's host setup, else relay.cua.ai),
+    /// creating its device key on first use, so the fresh sign-in enrolls
+    /// or re-verifies it without an approval. That step is best effort and
+    /// never fails the sign-in.
     pub async fn wait(self: Arc<Self>) -> Result<AuthIdentity> {
         run(async move {
             let pending = self
@@ -139,18 +140,20 @@ impl LoginAttempt {
     }
 }
 
-/// Re-registers this device after an interactive sign-in (see
+/// Registers this device after an interactive sign-in (see
 /// [`LoginAttempt::wait`]).
 #[cfg(feature = "host")]
 async fn enroll_after_sign_in(session: &Arc<cua_auth::Session>) {
+    let home = cua_daemon::cua_home();
     let Ok(auth) = cua_host::DeviceAuth::new(
-        &cua_host::relay_url_from_env(),
+        &cua_host::relay_url_for(None, &home),
         Arc::new(super::host::SessionTokens(session.clone())),
         Arc::new(session.store().clone()),
         cua_host::device_name(),
     ) else {
         return;
     };
+    let auth = auth.with_pending_file(cua_host::device_pending_file(&home));
     let r = tokio::time::timeout(
         std::time::Duration::from_secs(15),
         auth.enroll_after_sign_in(),
@@ -161,18 +164,14 @@ async fn enroll_after_sign_in(session: &Arc<cua_auth::Session>) {
 
 /// `cua_device_enroll` for a sign-in that enrolled this device: `rekey`
 /// when it replaced this machine's other key, `sign_in` otherwise. A
-/// device that never enrolled (no key) or still waits for an approval
-/// records nothing.
+/// device that still waits for an approval records nothing.
 #[cfg(feature = "host")]
 pub(crate) fn record_sign_in_enrollment<E>(
-    r: &std::result::Result<
-        std::result::Result<Option<cua_host::relay::Enrollment>, cua_host::Error>,
-        E,
-    >,
+    r: &std::result::Result<std::result::Result<cua_host::relay::Enrollment, cua_host::Error>, E>,
 ) {
     use cua_telemetry::Outcome;
     let (method, outcome) = match r {
-        Ok(Ok(Some(e))) if e.device.state == cua_host::relay::DeviceState::Enrolled => (
+        Ok(Ok(e)) if e.device.state == cua_host::relay::DeviceState::Enrolled => (
             if e.superseded.is_empty() {
                 "sign_in"
             } else {

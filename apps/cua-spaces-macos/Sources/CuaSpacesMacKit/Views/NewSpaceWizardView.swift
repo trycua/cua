@@ -15,15 +15,20 @@ public struct NewSpaceWizardView: View {
     let onCancel: () -> Void
     /// "Connect a cloud": the sheet it opens (nil: the link does not show).
     let cloud: CloudModel?
+    /// "Use built-in Lume" (the core's `runtimeSwitch`).
+    let onRuntimeSwitch: ((AppRuntimeSwitch) async -> Void)?
+    @State private var switchingRuntime = false
 
     public init(wizard: WizardModel, onCreate: @escaping (AppCreatePlan) -> Void,
                 onAdd: @escaping (String, String?, String?) async throws -> Void,
-                onCancel: @escaping () -> Void, cloud: CloudModel? = nil) {
+                onCancel: @escaping () -> Void, cloud: CloudModel? = nil,
+                onRuntimeSwitch: ((AppRuntimeSwitch) async -> Void)? = nil) {
         self.wizard = wizard
         self.onCreate = onCreate
         self.onAdd = onAdd
         self.onCancel = onCancel
         self.cloud = cloud
+        self.onRuntimeSwitch = onRuntimeSwitch
     }
 
     public var body: some View {
@@ -116,18 +121,53 @@ public struct NewSpaceWizardView: View {
             Picker(field.label, selection: Binding(
                 get: { v.placementId },
                 set: { wizard.send(.choosePlacement(on: $0)) })) {
-                ForEach(Array(v.placements.enumerated()), id: \.element.id) { index, option in
-                    if index > 0, v.placements[index - 1].group != option.group { Divider() }
-                    Text(option.label)
-                        .tag(option.id)
-                        .selectionDisabled(!option.enabled)
-                        .help(option.detail)
+                // A Section per group draws the separators: a Divider among
+                // the items shifts the menu's indices, so a machine of yours
+                // chosen showed an empty "Run on".
+                ForEach(Self.groups(v.placements), id: \.self) { group in
+                    Section {
+                        ForEach(v.placements.filter { $0.group == group }, id: \.id) { option in
+                            Text(option.label)
+                                .tag(option.id)
+                                .selectionDisabled(!option.enabled)
+                                .help(option.detail)
+                        }
+                    }
                 }
             }
             .pickerStyle(.menu)
             .accessibilityIdentifier("wizard-run-on")
             if let error = field.error {
-                Text(error).foregroundStyle(.red).font(.callout)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(error).foregroundStyle(.red).font(.callout)
+                    Spacer(minLength: 8)
+                    if let change = v.runtimeSwitch, let onRuntimeSwitch {
+                        Button {
+                            switchingRuntime = true
+                            Task {
+                                await onRuntimeSwitch(change)
+                                switchingRuntime = false
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                if switchingRuntime { ProgressView().controlSize(.small) }
+                                Text(change.label)
+                            }
+                        }
+                        .controlSize(.small)
+                        .disabled(switchingRuntime)
+                        .help(change.detail)
+                        .accessibilityIdentifier("wizard-runtime-switch")
+                    }
+                }
+            }
+            if let hint = v.placementHint {
+                // How another Mac of yours shows up here.
+                Text(hint)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("wizard-other-mac-hint")
             }
         case "kind":
             Picker(field.label, selection: Binding(
@@ -157,6 +197,13 @@ public struct NewSpaceWizardView: View {
                 .buttonStyle(.link)
         default:
             EmptyView()
+        }
+    }
+
+    /// The menu's groups, in order.
+    static func groups(_ options: [AppPlacementOption]) -> [String] {
+        options.reduce(into: [String]()) { out, o in
+            if !out.contains(o.group) { out.append(o.group) }
         }
     }
 

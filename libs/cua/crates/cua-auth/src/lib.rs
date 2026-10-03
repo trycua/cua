@@ -77,6 +77,18 @@ pub enum Error {
 /// Result alias.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+#[cfg(target_os = "macos")]
+mod macos_keychain;
+
+/// What to do when the login keychain cannot be used without a prompt this
+/// session cannot show (an SSH session).
+pub const KEYCHAIN_LOCKED_HINT: &str = "the macOS login keychain cannot be used from this session \
+     without a prompt (it is locked, or this cua is not yet allowed to read the Cua sign-in \
+     item, and an SSH session cannot show the dialog). Run `security unlock-keychain` first \
+     (and approve the Cua item once at the console if it still asks), or sign in with \
+     CUA_CREDENTIAL_STORE=file (and keep it set for later commands) to store the session in \
+     ~/.cua/credentials.json";
+
 fn http_err(e: impl std::fmt::Display) -> Error {
     Error::Http(e.to_string())
 }
@@ -374,6 +386,28 @@ impl Store {
         }
     }
 
+    /// Checks, before an interactive sign-in, that the session can be
+    /// saved here without a prompt this process cannot show: on macOS, from
+    /// an SSH session (no window server access) the login keychain must be
+    /// unlocked and an existing Cua item readable. Failing here, before the
+    /// browser or device code is shown, beats failing after the user
+    /// approved the sign-in. Other stores and console sessions always pass.
+    pub fn check_writable(&self) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        if matches!(self, Store::Keyring) && !macos_keychain::has_graphic_access() {
+            if macos_keychain::default_keychain_unlocked() == Some(false) {
+                return Err(Error::Store(KEYCHAIN_LOCKED_HINT.into()));
+            }
+            // No prompt can appear here: a read that needs one fails.
+            if let Err(e) = keyring_entry()?.get_password()
+                && interaction_not_allowed(&e)
+            {
+                return Err(Error::Store(KEYCHAIN_LOCKED_HINT.into()));
+            }
+        }
+        Ok(())
+    }
+
     /// Loads credentials (`None` when there are none).
     pub fn load(&self) -> Result<Option<Credentials>> {
         let raw = match self {
@@ -422,7 +456,7 @@ impl Store {
         match self {
             Store::File(p) => write_private(p, raw.as_bytes()).map_err(store_err)?,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            Store::Keyring => keyring_entry()?.set_password(&raw).map_err(store_err)?,
+            Store::Keyring => vault_set(KEYRING_ACCOUNT, &raw)?,
             Store::TestKeychain(d) => {
                 write_private(&d.join("vault.json"), raw.as_bytes()).map_err(store_err)?
             }
@@ -639,7 +673,7 @@ impl Store {
         let path = self.secret_path(name)?;
         match self {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            Store::Keyring => secret_entry(name)?.set_password(text).map_err(store_err),
+            Store::Keyring => vault_set(&format!("{KEYRING_ACCOUNT}.{name}"), text),
             _ => write_private(&path, text.as_bytes()).map_err(store_err),
         }
     }
@@ -712,6 +746,41 @@ impl Store {
         };
         let _ = std::fs::remove_file(&legacy);
         Ok(migrated)
+    }
+}
+
+/// Writes the OS vault item `account` (service [`KEYRING_SERVICE`]). On
+/// macOS the item trusts every Cua executable of this machine, so the app,
+/// the daemon and the CLI share it without a keychain prompt (see
+/// `macos_keychain`).
+#[cfg(target_os = "macos")]
+fn vault_set(account: &str, text: &str) -> Result<()> {
+    macos_keychain::set_generic_password(KEYRING_SERVICE, account, text.as_bytes()).map_err(|e| {
+        if e.0 == macos_keychain::ERR_SEC_INTERACTION_NOT_ALLOWED {
+            Error::Store(format!("{e}: {KEYCHAIN_LOCKED_HINT}"))
+        } else {
+            store_err(e)
+        }
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn vault_set(account: &str, text: &str) -> Result<()> {
+    keyring::Entry::new(KEYRING_SERVICE, account)
+        .map_err(store_err)?
+        .set_password(text)
+        .map_err(store_err)
+}
+
+/// Whether a keychain error is macOS refusing to show a prompt
+/// (`errSecInteractionNotAllowed`).
+#[cfg(target_os = "macos")]
+fn interaction_not_allowed(e: &keyring::Error) -> bool {
+    match e {
+        keyring::Error::PlatformFailure(inner) | keyring::Error::NoStorageAccess(inner) => inner
+            .downcast_ref::<security_framework::base::Error>()
+            .is_some_and(|e| e.code() == macos_keychain::ERR_SEC_INTERACTION_NOT_ALLOWED),
+        _ => false,
     }
 }
 

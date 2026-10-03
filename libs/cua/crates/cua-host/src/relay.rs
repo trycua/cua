@@ -124,8 +124,9 @@ pub struct Machine {
     /// Connected to the relay now.
     #[serde(default)]
     pub online: bool,
-    /// Accepting clients (false after "Stop sharing").
-    #[serde(default)]
+    /// Accepting clients (false after "Stop sharing"). A relay that does
+    /// not send it predates "Stop sharing", so its machines are sharing.
+    #[serde(default = "sharing_default")]
     pub sharing: bool,
     /// spacesd version reported at connect.
     #[serde(default)]
@@ -377,6 +378,14 @@ pub struct DeviceSession {
     pub expires_at: u64,
 }
 
+/// Times a machine registration is tried again after a transient failure.
+const REGISTER_RETRIES: u32 = 3;
+/// The first wait before trying again (doubling each time).
+#[cfg(not(test))]
+const REGISTER_RETRY_BASE: Duration = Duration::from_secs(1);
+#[cfg(test)]
+const REGISTER_RETRY_BASE: Duration = Duration::from_millis(5);
+
 /// HTTP client for one relay.
 #[derive(Clone, Debug)]
 pub struct RelayClient {
@@ -427,6 +436,17 @@ impl RelayClient {
         req: reqwest::RequestBuilder,
         bearer: &str,
     ) -> Result<T> {
+        self.send_once(req, bearer).await.map_err(|(e, _)| e)
+    }
+
+    /// One request. On failure, also whether the relay certainly did not
+    /// act on it and it may be sent again: the connection never opened, or
+    /// the relay (or the proxy in front of it) answered 429, 502 or 503.
+    async fn send_once<T: serde::de::DeserializeOwned>(
+        &self,
+        req: reqwest::RequestBuilder,
+        bearer: &str,
+    ) -> std::result::Result<T, (Error, bool)> {
         let mut req = req.bearer_auth(bearer);
         if let Some(session) = &self.device_session {
             req = req.header(DEVICE_SESSION_HEADER, session);
@@ -434,18 +454,23 @@ impl RelayClient {
         let resp = req
             .send()
             .await
-            .map_err(|e| Error::Relay(format!("{}: {e}", self.base)))?;
+            .map_err(|e| (Error::Relay(format!("{}: {e}", self.base)), e.is_connect()))?;
         let status = resp.status();
-        let body = resp.text().await.map_err(|e| Error::Relay(e.to_string()))?;
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| (Error::Relay(e.to_string()), false))?;
         if !status.is_success() {
-            return Err(http_error(status.as_u16(), &body));
+            let retry = matches!(status.as_u16(), 429 | 502 | 503);
+            return Err((http_error(status.as_u16(), &body), retry));
         }
         let body = if body.trim().is_empty() {
             "null"
         } else {
             &body
         };
-        serde_json::from_str(body).map_err(|e| Error::Relay(format!("bad relay response: {e}")))
+        serde_json::from_str(body)
+            .map_err(|e| (Error::Relay(format!("bad relay response: {e}")), false))
     }
 
     /// `GET /v1/info` (no auth).
@@ -504,11 +529,28 @@ impl RelayClient {
         machine_token: Option<&str>,
         req: &RegisterRequest,
     ) -> Result<Registration> {
-        let mut builder = self.http.post(self.url("/v1/machines")).json(req);
-        if let Some(t) = machine_token.filter(|t| !t.is_empty()) {
-            builder = builder.header(MACHINE_AUTHORIZATION_HEADER, format!("Bearer {t}"));
+        // A relay that is briefly unreachable or overloaded (a deploy, a
+        // flaky Wi-Fi) is tried again with backoff. Only failures where the
+        // relay certainly did not register the machine are retried: a
+        // second registration of one it did register would need the new
+        // machine token, which the lost answer carried.
+        let mut delay = REGISTER_RETRY_BASE;
+        let mut attempt = 0;
+        loop {
+            let mut builder = self.http.post(self.url("/v1/machines")).json(req);
+            if let Some(t) = machine_token.filter(|t| !t.is_empty()) {
+                builder = builder.header(MACHINE_AUTHORIZATION_HEADER, format!("Bearer {t}"));
+            }
+            match self.send_once(builder, account_token).await {
+                Err((e, true)) if attempt < REGISTER_RETRIES => {
+                    attempt += 1;
+                    tracing::warn!(attempt, "relay registration failed, retrying: {e}");
+                    tokio::time::sleep(delay).await;
+                    delay *= 2;
+                }
+                r => return r.map_err(|(e, _)| e),
+            }
         }
-        self.send(builder, account_token).await
     }
 
     /// Registers the client device with `public_key` (see
@@ -753,6 +795,10 @@ fn is_loopback_host(url: &url::Url) -> bool {
         Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
         None => false,
     }
+}
+
+fn sharing_default() -> bool {
+    true
 }
 
 #[cfg(test)]

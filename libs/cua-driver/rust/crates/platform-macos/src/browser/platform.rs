@@ -277,6 +277,11 @@ fn isolated_browser_candidates() -> Vec<(PathBuf, &'static str, &'static str)> {
             "com.microsoft.edgemac",
             "UBF8T346G9",
         ),
+        (
+            PathBuf::from("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
+            "com.brave.Browser",
+            "KL8N8XSYF4",
+        ),
     ]
 }
 
@@ -355,6 +360,7 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
         BrowserProduct::GoogleChrome => "Library/Application Support/Google/Chrome",
         BrowserProduct::MicrosoftEdge => "Library/Application Support/Microsoft Edge",
         BrowserProduct::Chromium => "Library/Application Support/Chromium",
+        BrowserProduct::Brave => "Library/Application Support/BraveSoftware/Brave-Browser",
         _ => return None,
     };
     Some(home.join(relative))
@@ -1468,7 +1474,7 @@ mod tests {
     #[test]
     fn isolated_browser_candidates_are_vendor_attested_system_installs() {
         let candidates = isolated_browser_candidates();
-        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates.len(), 3);
         assert_eq!(candidates[0].1, "com.google.Chrome");
         assert_eq!(candidates[0].2, "EQHXZ8M8AV");
         assert!(candidates[0]
@@ -1479,6 +1485,11 @@ mod tests {
         assert!(candidates[1]
             .0
             .ends_with("Microsoft Edge.app/Contents/MacOS/Microsoft Edge"));
+        assert_eq!(candidates[2].1, "com.brave.Browser");
+        assert_eq!(candidates[2].2, "KL8N8XSYF4");
+        assert!(candidates[2]
+            .0
+            .ends_with("Brave Browser.app/Contents/MacOS/Brave Browser"));
         assert!(candidates
             .iter()
             .all(|(candidate, _, _)| candidate.is_absolute()));
@@ -1586,6 +1597,35 @@ mod tests {
             state.position.is_none(),
             "an inactive tab must not animate or move its visible cursor"
         );
+    }
+
+    #[test]
+    fn default_user_data_dir_covers_existing_profile_products() {
+        let home = PathBuf::from(std::env::var_os("HOME").expect("HOME is set in tests"));
+        assert_eq!(
+            default_user_data_dir(BrowserProduct::Brave),
+            Some(home.join("Library/Application Support/BraveSoftware/Brave-Browser"))
+        );
+        assert_eq!(
+            default_user_data_dir(BrowserProduct::GoogleChrome),
+            Some(home.join("Library/Application Support/Google/Chrome"))
+        );
+        assert_eq!(
+            browser_product("Brave Browser", "com.brave.Browser"),
+            BrowserProduct::Brave
+        );
+        for product in [
+            BrowserProduct::GoogleChrome,
+            BrowserProduct::Chromium,
+            BrowserProduct::MicrosoftEdge,
+            BrowserProduct::Brave,
+        ] {
+            assert!(
+                existing_profile_setup_descriptor(product).is_some()
+                    == default_user_data_dir(product).is_some(),
+                "{product:?}: setup descriptor and profile root must be supported together"
+            );
+        }
     }
 
     #[test]

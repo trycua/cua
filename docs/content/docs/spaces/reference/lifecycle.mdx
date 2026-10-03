@@ -102,7 +102,7 @@ No parameters.
 
 ### Result
 
-JSON: an array of Spaces (`id`, `name`, `provider`, `spacesd_version`, `features`, `os`, `services`, `added_at`, for a Space one of your machines provides `host` and `host_name`, for a Space that can be turned off and on `power` (`suspend` or `stop`) and `power_state`, and for a Space in your cloud `cloud`, `cloud_place` and `cloud_delete`, and for a relay machine `online`), each with `phase`: `ready`, or `offline` for a relay machine the relay does not reach now (a machine that is off, or a Space that is gone and left its record; `relay_unregister_space` removes it).
+JSON: an array of Spaces (`id`, `name`, `provider`, `spacesd_version`, `features`, `os`, `services`, `added_at`, for a Space one of your machines provides `host` and `host_name`, for a Space that can be turned off and on `power` (`suspend` or `stop`) and `power_state`, and for a Space in your cloud `cloud`, `cloud_place` and `cloud_delete`, and for a relay machine the relay cannot reach now `status` (`offline` or `not sharing`)), each with `phase`: `ready`, or `offline` for a relay machine the relay cannot reach now (a machine that is off or stopped sharing, or a Space that is gone and left its record; `relay_unregister_space` removes it).
 
 ### Errors
 

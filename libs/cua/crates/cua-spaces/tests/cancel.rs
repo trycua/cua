@@ -211,6 +211,16 @@ async fn a_cancelled_local_create_removes_what_it_made_once() {
 async fn a_cancel_never_removes_what_existed_and_a_drop_cleans_up() {
     let e = env();
     e.rt.running.lock().unwrap().insert("theirs".into(), true);
+    e.spaces
+        .registry()
+        .upsert(
+            cua_proto::daemon::v1::Space {
+                id: "local:theirs".into(),
+                ..Default::default()
+            },
+            Default::default(),
+        )
+        .unwrap();
     let spaces = e.spaces.clone();
     let create = tokio::spawn(async move { spaces.create(local(Some("theirs"), "p2")).await });
     until("the create runs", || e.rt.specs.lock().unwrap().len() == 1).await;
@@ -219,6 +229,8 @@ async fn a_cancel_never_removes_what_existed_and_a_drop_cleans_up() {
     assert!(o.message.contains("existed before"), "{}", o.message);
     assert!(create.await.unwrap().is_err());
     assert!(e.rt.running.lock().unwrap().contains_key("theirs"));
+    assert!(e.spaces.registry().get("local:theirs").unwrap().is_some());
+
     assert!(e.rt.deleted.lock().unwrap().is_empty());
 
     // Dropped: the future goes away without a cancel.
@@ -268,7 +280,7 @@ async fn a_cancel_after_a_restart_undoes_the_journal() {
     assert!(!e.rt.running.lock().unwrap().contains_key("orphan"));
     assert!(!dir.join("orphan.json").exists());
     // A cancel marker left for a process that then died: the recovery
-    // removes instead of registering; a name that was in use stays.
+    // preserves both resources and evidence instead of replaying cancellation.
     journal("marked", true);
     std::fs::write(dir.join("marked.cancel"), b"cancel\n").unwrap();
     journal("borrowed", false);
@@ -278,9 +290,17 @@ async fn a_cancel_after_a_restart_undoes_the_journal() {
         .recover_interrupted_creates(Duration::from_secs(1))
         .await;
     assert_eq!(got.len(), 2, "{got:?}");
-    assert!(!e.rt.running.lock().unwrap().contains_key("marked"));
+    assert!(e.rt.running.lock().unwrap().contains_key("marked"));
     assert!(e.rt.running.lock().unwrap().contains_key("borrowed"));
-    assert_eq!(journals(&e.spaces), 0);
+    assert!(
+        got.iter()
+            .all(|r| matches!(r.outcome, cua_spaces::RecoveryOutcome::Failed(_)))
+    );
+    for name in ["marked", "borrowed"] {
+        assert!(dir.join(format!("{name}.json")).exists());
+        assert!(dir.join(format!("{name}.cancel")).exists());
+    }
+    assert_eq!(e.rt.deleted.lock().unwrap().as_slice(), ["orphan"]);
 }
 
 /// A cloud create cancelled while its claim waits to bind releases the
@@ -364,4 +384,94 @@ async fn a_cancel_while_connecting_removes_the_running_instance() {
     assert!(create.await.unwrap().is_err());
     assert!(!e.rt.running.lock().unwrap().contains_key("connecting"));
     assert_eq!(journals(&e.spaces), 0);
+}
+
+/// A create given the name of a Space that already runs (its cua-spacesd
+/// answers another token, so readiness and the handshake fail) never
+/// deletes it: only what a create made is its to remove.
+#[tokio::test]
+async fn a_failed_create_never_deletes_an_existing_space_of_that_name() {
+    let e = env();
+    e.rt.boots.store(true, std::sync::atomic::Ordering::SeqCst);
+    let mute = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    e.rt.port.store(
+        mute.local_addr().unwrap().port(),
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((sock, _)) = mute.accept().await {
+            held.push(sock);
+        }
+    });
+    let name = "space-0123456789";
+    e.rt.running.lock().unwrap().insert(name.into(), true);
+    e.spaces
+        .registry()
+        .upsert(
+            cua_proto::daemon::v1::Space {
+                id: format!("local:{name}"),
+                ..Default::default()
+            },
+            Default::default(),
+        )
+        .unwrap();
+    let mut opts = local(Some(name), "p5");
+    opts.timeout = Some(Duration::from_secs(3));
+    let err = e.spaces.create(opts).await.unwrap_err();
+    assert_eq!(err.tag(), "timeout", "{err}");
+    assert!(
+        e.spaces
+            .registry()
+            .get(&format!("local:{name}"))
+            .unwrap()
+            .is_some()
+    );
+    assert!(e.rt.running.lock().unwrap().contains_key(name));
+    assert!(
+        e.rt.deleted.lock().unwrap().is_empty(),
+        "{:?}",
+        e.rt.deleted.lock().unwrap()
+    );
+}
+
+#[tokio::test]
+async fn interrupted_nonlocal_recovery_still_releases_its_claim() {
+    let reg = tempfile::tempdir().unwrap();
+    let fake = FakeFleet::new();
+    let spaces = Spaces::builder()
+        .home(reg.path())
+        .fleet(fake.client())
+        .build();
+    fake.put_object(
+        "claim",
+        "test-pool",
+        "claim",
+        serde_json::json!({
+            "metadata": {"name": "claim", "namespace": "test-pool"}, "spec": {}
+        }),
+    );
+    let dir = reg.path().join("creating");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let pid = child.id();
+    child.wait().unwrap();
+    std::fs::write(
+        dir.join("claim.json"),
+        serde_json::json!({
+            "kind": "cloud", "name": "claim", "id": "cloud:claim", "pid": pid, "started": 0,
+            "made": [{"type": "fleet_claim", "namespace": "test-pool", "name": "claim"}],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let got = spaces
+        .recover_interrupted_creates(Duration::from_millis(20))
+        .await;
+    assert!(
+        matches!(got.as_slice(), [r] if matches!(r.outcome, cua_spaces::RecoveryOutcome::Deleted(_))),
+        "{got:?}"
+    );
+    assert!(!fake.exists("claim", "test-pool", "claim"));
+    assert!(!dir.join("claim.json").exists());
 }

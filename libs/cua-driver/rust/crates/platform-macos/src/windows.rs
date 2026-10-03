@@ -337,6 +337,27 @@ pub fn window_on_current_space_by_id(window_id: u32) -> Option<bool> {
         .on_current_space
 }
 
+/// WindowServer's Space and on-screen view of one layer-0 window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WindowSpaceView {
+    /// See [`WindowInfo::on_current_space`].
+    pub(crate) on_current_space: Option<bool>,
+    /// `kCGWindowIsOnscreen`.
+    pub(crate) is_on_screen: bool,
+}
+
+/// [`WindowSpaceView`] of `window_id`, or `None` when WindowServer does not
+/// list it as a layer-0 window.
+pub(crate) fn window_space_view_by_id(window_id: u32) -> Option<WindowSpaceView> {
+    all_windows()
+        .into_iter()
+        .find(|w| w.window_id == window_id)
+        .map(|w| WindowSpaceView {
+            on_current_space: w.on_current_space,
+            is_on_screen: w.is_on_screen,
+        })
+}
+
 /// Look up a window's bounds by its CGWindowID.
 ///
 /// Returns `None` if the window is not currently known to WindowServer

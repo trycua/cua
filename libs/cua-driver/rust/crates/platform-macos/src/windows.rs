@@ -322,6 +322,52 @@ fn get_bounds_num(
 ///
 /// Returns `None` only when WindowServer has no record of the id at all —
 /// which is precisely the "closed or fabricated window_id" signal callers need.
+/// Whether `window` has the shape of an AppKit-internal helper window:
+/// WindowServer reports it off screen, untitled, and in no Space. Real
+/// windows that are minimized, hidden, or on another Space keep a Space or
+/// stay listed in `AXWindows`; these helpers have neither, so no AX tool can
+/// read, move, or focus them (issue #4525).
+fn may_be_ax_less_helper(window: &WindowInfo) -> bool {
+    !window.is_on_screen
+        && window.title.trim().is_empty()
+        && window.space_ids.as_ref().is_none_or(Vec::is_empty)
+}
+
+/// Drop helper-shaped windows that `pid`'s `AXWindows` does not list.
+///
+/// `ax_window_ids` is asked once per pid that owns a helper-shaped window.
+/// When it returns `None` (no Accessibility trust, unresponsive app) every
+/// window of that pid is kept: an unreadable AX list proves nothing.
+pub(crate) fn retain_ax_reachable_with(
+    windows: &mut Vec<WindowInfo>,
+    mut ax_window_ids: impl FnMut(i32) -> Option<std::collections::HashSet<u32>>,
+) {
+    let mut by_pid: std::collections::HashMap<i32, Option<std::collections::HashSet<u32>>> =
+        std::collections::HashMap::new();
+    windows.retain(|window| {
+        if !may_be_ax_less_helper(window) {
+            return true;
+        }
+        by_pid
+            .entry(window.pid)
+            .or_insert_with(|| ax_window_ids(window.pid))
+            .as_ref()
+            .is_none_or(|ids| ids.contains(&window.window_id))
+    });
+}
+
+/// [`retain_ax_reachable_with`] against the live `AXWindows` of each app.
+///
+/// Only applies to an enumeration whose Space query worked
+/// (`current_space_id` is known): without it every window lacks Space
+/// membership, and an off-Space window, which `AXWindows` also omits, would be
+/// indistinguishable from a helper.
+pub(crate) fn retain_ax_reachable(windows: &mut Vec<WindowInfo>, current_space_id: Option<u64>) {
+    if current_space_id.is_some() {
+        retain_ax_reachable_with(windows, crate::ax::bindings::ax_window_ids_of_pid);
+    }
+}
+
 pub fn window_info_by_id(window_id: u32) -> Option<WindowInfo> {
     all_windows_any_layer()
         .into_iter()
@@ -539,6 +585,58 @@ mod tests {
             poll_until_no_menu(|| reads.next().flatten(), timeout),
             Some(true)
         );
+    }
+
+    fn helper(window_id: u32, pid: i32) -> WindowInfo {
+        WindowInfo {
+            title: String::new(),
+            is_on_screen: false,
+            space_ids: None,
+            ..window(window_id, pid, "TextEdit")
+        }
+    }
+
+    #[test]
+    fn ax_less_helper_windows_are_dropped() {
+        // #4525: TextEdit's off-screen, untitled, Space-less AppKit helpers.
+        let mut visible = window(58, 3018, "TextEdit");
+        visible.title = "Untitled".into();
+        let mut windows = vec![visible, helper(57, 3018), helper(55, 3018)];
+        let mut asked = Vec::new();
+        retain_ax_reachable_with(&mut windows, |pid| {
+            asked.push(pid);
+            Some([58].into_iter().collect())
+        });
+        assert_eq!(
+            windows.iter().map(|w| w.window_id).collect::<Vec<_>>(),
+            [58]
+        );
+        assert_eq!(asked, [3018], "AXWindows is read once per pid");
+    }
+
+    #[test]
+    fn helper_shaped_windows_listed_in_ax_or_unreadable_are_kept() {
+        let mut windows = vec![helper(57, 1), helper(70, 2)];
+        retain_ax_reachable_with(&mut windows, |pid| match pid {
+            1 => Some([57].into_iter().collect()),
+            _ => None,
+        });
+        assert_eq!(windows.len(), 2);
+    }
+
+    #[test]
+    fn off_space_titled_and_on_screen_windows_never_query_ax() {
+        let mut off_space = helper(1, 9);
+        off_space.space_ids = Some(vec![4]);
+        let mut titled = helper(2, 9);
+        titled.title = "Notes".into();
+        let on_screen = WindowInfo {
+            is_on_screen: true,
+            ..helper(3, 9)
+        };
+        let mut windows = vec![off_space, titled, on_screen];
+        retain_ax_reachable_with(&mut windows, |_| panic!("AX must not be read"));
+        assert_eq!(windows.len(), 3);
     }
 
     #[test]

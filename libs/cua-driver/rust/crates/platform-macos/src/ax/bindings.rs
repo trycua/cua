@@ -789,6 +789,51 @@ pub unsafe fn copy_ax_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
         .collect()
 }
 
+/// CGWindowIDs of `pid`'s `AXWindows`, or `None` when that list cannot be
+/// read: the process is not trusted for Accessibility, the app does not
+/// answer within a short timeout, or AX reports an error. `None` means
+/// "unknown", never "no windows", so callers must not treat it as proof that a
+/// window lacks an AX counterpart.
+pub fn ax_window_ids_of_pid(pid: i32) -> Option<std::collections::HashSet<u32>> {
+    unsafe {
+        if !AXIsProcessTrusted() {
+            return None;
+        }
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        AXUIElementSetMessagingTimeout(app, AX_WINDOW_IDS_TIMEOUT_SECONDS);
+        let attr = CFStr::new("AXWindows");
+        let mut value: CFTypeRef = std::ptr::null();
+        let err = AXUIElementCopyAttributeValue(app, attr.as_concrete_TypeRef(), &mut value);
+        CFRelease(app as CFTypeRef);
+        if err != kAXErrorSuccess || value.is_null() {
+            return None;
+        }
+        if core_foundation::base::CFGetTypeID(value) != CFArray::<CFTypeRef>::type_id() {
+            CFRelease(value);
+            return None;
+        }
+        let arr = CFArray::<CFTypeRef>::wrap_under_create_rule(value as _);
+        let ax_type_id = AXUIElementGetTypeID();
+        Some(
+            (0..arr.len())
+                .filter_map(|i| {
+                    let item = *arr.get(i)?;
+                    (core_foundation::base::CFGetTypeID(item) == ax_type_id)
+                        .then(|| ax_get_window_id(item as AXUIElementRef))
+                        .flatten()
+                })
+                .collect(),
+        )
+    }
+}
+
+/// AX messaging timeout for [`ax_window_ids_of_pid`], in seconds. Window
+/// enumeration calls it once per app, so a hung app must not stall it.
+const AX_WINDOW_IDS_TIMEOUT_SECONDS: f32 = 0.25;
+
 /// Highest AX element id probed when looking for an off-Space window.
 /// Window elements are allocated early in an app's lifetime (Calculator's
 /// main window is id 42); alt-tab-macos probes the same order of magnitude.

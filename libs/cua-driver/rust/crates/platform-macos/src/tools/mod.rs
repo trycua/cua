@@ -74,7 +74,11 @@ fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
     let Ok(pid) = i32::try_from(pid) else {
         return Vec::new();
     };
-    window_target_candidates_for_pid(crate::windows::all_windows(), pid)
+    let enumeration = crate::windows::all_windows_with_space_snapshot();
+    let mut windows = enumeration.windows;
+    windows.retain(|window| window.pid == pid);
+    crate::windows::retain_ax_reachable(&mut windows, enumeration.current_space_id);
+    window_target_candidates_for_pid(windows, pid)
 }
 
 fn window_target_candidates_for_pid(

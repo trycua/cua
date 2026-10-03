@@ -31,6 +31,18 @@ on:
       mem:
         type: string
         default: "4G"
+  # cd-images-spacesd-release.yml (stage=publish) on every cua-spacesd release.
+  workflow_call:
+    inputs:
+      stage:
+        type: string
+        default: build
+      base:
+        type: string
+        default: "ghcr.io/trycua/windows@sha256:a2966dac6c68a60f67addcc2c23db40ca1048a37616b1d6d39abc25dab9ce1f4"
+      mem:
+        type: string
+        default: "4G"
 
 permissions:
   contents: read

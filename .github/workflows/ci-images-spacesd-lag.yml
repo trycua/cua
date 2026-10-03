@@ -1,0 +1,67 @@
+name: "CI: Images on the current cua-spacesd"
+
+# Reports catalog images (libs/images/sandbox-images.json) whose pinned
+# digests do not run the cua-spacesd in libs/cua-spacesd/VERSION, per their
+# attached doctor reports (scripts/images/image_pins.py lag). Runs on PRs that
+# touch the catalog or VERSION, and on Release Please PRs (the manifest), so a
+# Cua Spaces release shows when it would ship pins on an older daemon.
+#
+# It only warns and never fails, on purpose:
+# - Images legitimately lag a cua-spacesd release by a few hours: the CI
+#   images rebuild automatically (cd-images-spacesd-release.yml) and macOS
+#   needs a Mac (scripts/images/release-macos.sh). A blocking check would make
+#   every PR in that window red for nothing.
+# - Blocking an app release (or hotfix) on images would be worse than shipping
+#   one on the previous daemon's images, which keep working.
+# The images/pins PR is the place that closes the gap; this check makes the gap
+# visible (warning annotations and a step summary table) where the decision
+# is made. A registry hiccup cannot fail it either (continue-on-error).
+
+on:
+  pull_request:
+    paths:
+      - "libs/images/sandbox-images.json"
+      - "libs/cua-spacesd/VERSION"
+      - ".release-please-manifest.json"
+      - "scripts/images/image_pins.py"
+      - ".github/workflows/ci-images-spacesd-lag.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-images-spacesd-lag-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lag:
+    name: Catalog images on the current cua-spacesd (warning only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Does this PR release cua-spacesd itself?
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git fetch -q --depth=1 origin "$BASE_SHA"
+          before="$(git show "$BASE_SHA:libs/cua-spacesd/VERSION")"
+          after="$(cat libs/cua-spacesd/VERSION)"
+          if [ "$before" != "$after" ]; then
+            echo "::notice title=Images follow this release::This PR moves cua-spacesd $before -> $after. Once it is released, cd-images-spacesd-release.yml rebuilds the images and opens the images/pins PR."
+            echo "skip=true" >>"$GITHUB_OUTPUT"
+          fi
+      - name: Install crane and oras
+        if: steps.scope.outputs.skip != 'true'
+        run: |
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          go install oras.land/oras/cmd/oras@v1.3.0
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+      - name: Catalog digests vs libs/cua-spacesd/VERSION
+        if: steps.scope.outputs.skip != 'true'
+        continue-on-error: true
+        run: python3 scripts/images/image_pins.py lag

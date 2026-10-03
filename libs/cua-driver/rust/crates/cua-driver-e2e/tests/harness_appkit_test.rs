@@ -81,17 +81,39 @@ impl Harness {
         pointer_oracle: Option<&Path>,
         keep_ordered_front: bool,
     ) -> Self {
-        let harness = Self::spawn(command_oracle, pointer_oracle, keep_ordered_front, None);
+        Self::spawn(
+            command_oracle,
+            pointer_oracle,
+            keep_ordered_front,
+            None,
+            &[],
+        )
+        .presented()
+    }
+
+    /// Launch with the opt-in erroring toggles (`erroring_toggles` scenario).
+    fn launch_with_erroring_toggles() -> Self {
+        Self::spawn(
+            None,
+            None,
+            false,
+            None,
+            &[("CUA_APPKIT_ERRORING_TOGGLES", "1")],
+        )
+        .presented()
+    }
+
+    fn presented(self) -> Self {
         // Settle for window creation + activation.
         std::thread::sleep(Duration::from_millis(800));
-        harness.await_presented();
-        harness
+        self.await_presented();
+        self
     }
 
     /// Launch a harness that holds off entering its run loop for `delay`
     /// after registering its window, without waiting for its launch posture.
     fn launch_slowly(delay: Duration) -> Self {
-        Self::spawn(None, None, false, Some(delay))
+        Self::spawn(None, None, false, Some(delay), &[])
     }
 
     fn spawn(
@@ -99,6 +121,7 @@ impl Harness {
         pointer_oracle: Option<&Path>,
         keep_ordered_front: bool,
         launch_delay: Option<Duration>,
+        env: &[(&str, &str)],
     ) -> Self {
         let exe = harness_exe();
         assert!(
@@ -122,6 +145,7 @@ impl Harness {
         if let Some(delay) = launch_delay {
             command.env("CUA_APPKIT_LAUNCH_DELAY_MS", delay.as_millis().to_string());
         }
+        command.envs(env.iter().copied());
         let app = command
             .spawn()
             .unwrap_or_else(|error| panic!("launch AppKit harness {exe:?}: {error}"));
@@ -1579,6 +1603,99 @@ fn harness_appkit_counter() {
             );
         },
     );
+}
+
+/// AppKit answers an accessibility press whose handler raises with an AX
+/// error, as Finder's toolbar view switcher does after switching (#3835). A
+/// checkbox that toggled before raising is reported as performed and
+/// confirmed; one that changed nothing keeps the error.
+#[test]
+#[ignore]
+fn harness_appkit_erroring_toggle_press_counts_only_when_its_value_moved() {
+    let case = native_background_case(
+        "appkit",
+        "toggle_press_error",
+        Targeting::Ax,
+        DriverRoute::MacosAxAction,
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let harness = Harness::launch_with_erroring_toggles();
+        let pid = harness.pid;
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
+
+        let (_, passed) = run_with_background_oracles(
+            &mut driver,
+            TargetWindow {
+                pid,
+                native_id: wid,
+            },
+            |driver| {
+                let press = |driver: &mut McpDriver, identifier: &str| {
+                    let snapshot = snapshot_elements(driver, pid, wid);
+                    driver.call(
+                        "click",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": wid,
+                            "element_token": element_token_by_id(&snapshot, identifier),
+                            "action": "press",
+                            "delivery_mode": "background"
+                        }),
+                    )
+                };
+                let state = |driver: &mut McpDriver| {
+                    snapshot_elements(driver, pid, wid).tree_text().to_owned()
+                };
+                assert!(
+                    state(driver).contains("acts_then_errors=false errors_only=false"),
+                    "erroring toggles did not start off"
+                );
+
+                let acted = press(driver, "chk-acts-then-errors");
+                assert!(
+                    !acted.is_error(),
+                    "a press whose value moved was reported as failed: {}",
+                    acted.raw
+                );
+                assert_eq!(acted.action_effect(), Some("confirmed"), "{}", acted.raw);
+                assert!(
+                    acted.text().contains("although the app returned AX error"),
+                    "result does not name the AX error: {}",
+                    acted.raw
+                );
+
+                let refused = press(driver, "chk-errors-only");
+                assert!(
+                    refused.is_error(),
+                    "a press that changed nothing was reported as performed: {}",
+                    refused.raw
+                );
+                assert!(
+                    refused
+                        .text()
+                        .contains("AXUIElementPerformAction(AXPress) returned"),
+                    "{}",
+                    refused.raw
+                );
+
+                std::thread::sleep(Duration::from_millis(200));
+                let after = state(driver);
+                assert!(
+                    after.contains("acts_then_errors=true errors_only=false"),
+                    "fixture state after the presses:\n{after}"
+                );
+            },
+        )
+        .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+
+        Observation::delivered_with_fixture_state(passed)
+    });
 }
 
 /// Resolve the native AppKit button from a screenshot-space PX target, then

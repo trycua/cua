@@ -732,7 +732,6 @@ impl AgentRun {
 impl SpacesdClient {
     /// Coding agents in this guest.
     pub async fn agents(&self) -> Result<Arc<Agents>> {
-        // A bare spacesd client: where it runs is not known here.
-        Agents::over(self.client.clone(), "other").await
+        Agents::over(self.client.clone(), &self.location).await
     }
 }

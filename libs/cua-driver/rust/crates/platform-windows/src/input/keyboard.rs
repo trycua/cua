@@ -618,6 +618,7 @@ fn with_confirmed_foreground<T>(
         );
     };
 
+    let mut attachment: Option<InputQueueAttachment> = None;
     let result = (|| {
         focus()?;
         let deadline = Instant::now() + Duration::from_millis(250);
@@ -646,18 +647,112 @@ fn with_confirmed_foreground<T>(
                 actual.0
             );
         }
+        // Attach before inserting anything: attaching resets the shared key
+        // state, which must not race with modifiers the body is about to send.
+        attachment = InputQueueAttachment::attach(actual);
         body()
     })();
 
-    // Give the target message loop a bounded opportunity to consume the
-    // inserted sequence before restoring the user's prior foreground.
-    if result.is_ok() {
-        sleep(Duration::from_millis(40));
+    // Keep the target foreground until its thread has read every inserted
+    // event; restoring earlier hands the unread tail to another window (#4477).
+    match (&result, attachment.as_ref()) {
+        (Ok(_), Some(attachment)) => {
+            attachment.wait_for_drain(Duration::from_secs(2));
+        }
+        (Ok(_), None) => sleep(Duration::from_millis(40)),
+        _ => {}
     }
+    drop(attachment);
     if !previous.0.is_null() && previous != target {
         let _ = unsafe { SetForegroundWindow(previous) };
     }
     result
+}
+
+/// Unassigned virtual key used as a harmless input-drain sentinel (the same
+/// "mask key" convention AutoHotkey uses): applications do not bind it and it
+/// produces no character.
+const DRAIN_SENTINEL_VK: VIRTUAL_KEY = VIRTUAL_KEY(0xE8);
+
+/// The caller's thread attached to the foreground thread's input queue for
+/// the duration of one foreground input transaction; detaches on drop.
+struct InputQueueAttachment {
+    own_thread: u32,
+    target_thread: u32,
+}
+
+impl InputQueueAttachment {
+    fn attach(foreground: HWND) -> Option<Self> {
+        use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+        let target_thread = unsafe { GetWindowThreadProcessId(foreground, None) };
+        let own_thread = unsafe { GetCurrentThreadId() };
+        if target_thread == 0 || target_thread == own_thread {
+            return None;
+        }
+        unsafe { AttachThreadInput(own_thread, target_thread, true) }
+            .as_bool()
+            .then_some(Self {
+                own_thread,
+                target_thread,
+            })
+    }
+
+    /// Block until the foreground thread has retrieved all input inserted so
+    /// far, bounded by `timeout`. A sentinel key press is appended behind the
+    /// caller's events; while attached, `GetKeyState` reflects the shared
+    /// queue's synchronous key state, whose toggle bit flips only when the
+    /// target thread reads the sentinel key-down.
+    fn wait_for_drain(&self, timeout: Duration) -> bool {
+        use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
+        let toggled = || unsafe { GetKeyState(DRAIN_SENTINEL_VK.0 as i32) } & 1;
+        let before = toggled();
+        let sentinel = [sentinel_key_input(false), sentinel_key_input(true)];
+        let sent = unsafe { SendInput(&sentinel, std::mem::size_of::<INPUT>() as i32) };
+        if sent as usize != sentinel.len() {
+            sleep(Duration::from_millis(40));
+            return false;
+        }
+        let deadline = Instant::now() + timeout;
+        loop {
+            if toggled() != before {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                tracing::warn!(
+                    "foreground input drain: target thread did not consume the sentinel within {} ms",
+                    timeout.as_millis()
+                );
+                return false;
+            }
+            sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+impl Drop for InputQueueAttachment {
+    fn drop(&mut self) {
+        use windows::Win32::System::Threading::AttachThreadInput;
+        let _ = unsafe { AttachThreadInput(self.own_thread, self.target_thread, false) };
+    }
+}
+
+fn sentinel_key_input(up: bool) -> INPUT {
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: DRAIN_SENTINEL_VK,
+                wScan: 0,
+                dwFlags: if up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    KEYBD_EVENT_FLAGS(0)
+                },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }
 
 /// Build a single Unicode keyboard INPUT struct for one UTF-16 code unit,

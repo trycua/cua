@@ -5,6 +5,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT_PATH = PROJECT_ROOT / "pyproject.toml"
 LOCK_PATH = PROJECT_ROOT / "uv.lock"
+CUA_SDK_PYPROJECT_PATH = PROJECT_ROOT.parents[1] / "cua" / "python" / "pyproject.toml"
 FLEET_IMPORTS = (
     PROJECT_ROOT / "cua_sandbox" / "transport" / "cyclops_http_client.py",
     PROJECT_ROOT / "cua_sandbox" / "transport" / "fleet.py",
@@ -84,7 +85,10 @@ class FleetSdkPackagingTests(unittest.TestCase):
         }
         self.assertIn("cua", sandbox_dependencies)
         self.assertEqual(packages["cua"]["source"], {"editable": "../../cua/python"})
-        self.assertEqual(packages["cua"]["version"], "0.2.0")
+        # The lock pins whatever version the checkout's SDK declares.
+        with CUA_SDK_PYPROJECT_PATH.open("rb") as sdk_file:
+            sdk_version = tomllib.load(sdk_file)["project"]["version"]
+        self.assertEqual(packages["cua"]["version"], sdk_version)
 
     def test_package_does_not_copy_the_binding_from_the_checkout(self):
         self.assertFalse((PROJECT_ROOT / "hatch_build.py").exists())

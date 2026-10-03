@@ -9,7 +9,11 @@
  *  - Node: a local `@trycua/cua-<triple>` platform package in
  *    `typescript/node_modules`, with the copy-based N-API runtime.
  *
- * Usage: node stage-uniffi-library.mjs [--only=python,swift,node]
+ * Usage: node stage-uniffi-library.mjs [--only=python,swift,node] [--profile=release|debug]
+ *
+ * `--profile` names the cargo profile directory to stage from (default
+ * `release`); CI smoke jobs that already build debug binaries stage a debug
+ * library so the whole job compiles one profile.
  */
 
 import { spawnSync } from "node:child_process"
@@ -22,6 +26,11 @@ const onlyArgument = process.argv.find((a) => a.startsWith("--only="))
 const targets = new Set(
   (onlyArgument ? onlyArgument.slice(7) : "python,swift,node").split(",").filter(Boolean),
 )
+const profileArgument = process.argv.find((a) => a.startsWith("--profile="))
+const profile = profileArgument ? profileArgument.slice(10) : "release"
+if (!["release", "debug"].includes(profile)) {
+  throw new Error(`--profile must be release or debug, not ${profile}`)
+}
 const file =
   process.platform === "darwin"
     ? "libcua_sdk.dylib"
@@ -31,9 +40,10 @@ const file =
 const targetDirectory = process.env.CARGO_TARGET_DIR
   ? resolve(process.env.CARGO_TARGET_DIR)
   : join(cuaRoot, "target")
-const source = join(targetDirectory, "release", file)
+const source = join(targetDirectory, profile, file)
 if (!existsSync(source)) {
-  throw new Error(`missing ${source}; run cargo build --release -p cua-sdk first`)
+  const flag = profile === "release" ? " --release" : ""
+  throw new Error(`missing ${source}; run cargo build${flag} -p cua-sdk first`)
 }
 
 function stage(destination) {

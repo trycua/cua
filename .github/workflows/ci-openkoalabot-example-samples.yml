@@ -13,6 +13,9 @@ on:
       - "samples/openkoalabot-example-ts/**"
       - "samples/openkoalabot-example-swift/**"
       - "libs/cua/**"
+      # Language bindings this build never reads.
+      - "!libs/cua/python/**"
+      - "!libs/cua/kotlin/**"
       - "libs/spaces-sdk-swift/**"
       - "libs/spaces-app-swift/**"
       - "docs/content/docs/spaces/guides/**"

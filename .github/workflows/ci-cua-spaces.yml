@@ -22,6 +22,10 @@ on:
     paths:
       - "apps/cua-spaces/**"
       - "libs/cua/**"
+      # Language bindings this build never reads.
+      - "!libs/cua/python/**"
+      - "!libs/cua/swift/**"
+      - "!libs/cua/kotlin/**"
       - ".github/workflows/ci-cua-spaces.yml"
   workflow_dispatch:
 

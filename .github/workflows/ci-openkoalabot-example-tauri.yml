@@ -12,6 +12,10 @@ on:
     paths:
       - "samples/openkoalabot-example-tauri/**"
       - "libs/cua/**"
+      # Language bindings this build never reads.
+      - "!libs/cua/python/**"
+      - "!libs/cua/swift/**"
+      - "!libs/cua/kotlin/**"
       - "libs/cua-spacesd/**"
       - ".github/workflows/ci-openkoalabot-example-tauri.yml"
   workflow_dispatch:

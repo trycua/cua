@@ -13,6 +13,8 @@ struct ThisMachineView: View {
     @Bindable var host: HostModel
     /// A button waiting for the user's confirmation (the core's `confirm`).
     @State private var confirming: AppHostAction?
+    /// The log open in full ("Show All…").
+    @State private var fullLog: HostLog?
 
     var body: some View {
         let panel = host.panel
@@ -99,14 +101,12 @@ struct ThisMachineView: View {
                     }
                     if let title = panel.recentTitle, !panel.recent.isEmpty {
                         Section(title) {
-                            ForEach(Array(panel.recent.enumerated()), id: \.offset) { _, row in
-                                LabeledContent {
-                                    Text(Date(timeIntervalSince1970: Double(row.atMs) / 1000),
-                                         format: .relative(presentation: .named))
-                                        .foregroundStyle(.secondary)
-                                } label: {
-                                    Text(row.text).lineLimit(1).truncationMode(.middle)
-                                }
+                            // The newest few (repeats collapsed); the rest
+                            // in a sheet, so the page never grows with it.
+                            TimedRows(rows: panel.recent)
+                            if let more = panel.recentMore {
+                                ShowAllButton(label: more) { fullLog = .access }
+                                    .accessibilityIdentifier("host-recent-access-more")
                             }
                         }
                         .accessibilityIdentifier("host-recent-access")
@@ -116,8 +116,14 @@ struct ThisMachineView: View {
                             .accessibilityIdentifier("host-activity-warning")
                     }
                     if let title = panel.activityTitle, !panel.activity.isEmpty {
-                        Section(title) { TimedRows(rows: panel.activity) }
-                            .accessibilityIdentifier("host-activity")
+                        Section(title) {
+                            TimedRows(rows: panel.activity)
+                            if let more = panel.activityMore {
+                                ShowAllButton(label: more) { fullLog = .activity }
+                                    .accessibilityIdentifier("host-activity-more")
+                            }
+                        }
+                        .accessibilityIdentifier("host-activity")
                     }
                     if let title = panel.permissionsTitle {
                         Section(title) {
@@ -133,30 +139,25 @@ struct ThisMachineView: View {
                     } else if let error = host.error {
                         Text(error).foregroundStyle(.red).lineLimit(1).help(error)
                     }
-                    if panel.setupChoices.isEmpty {
-                        Section {
-                            HStack {
-                                ForEach(Array(panel.actions.enumerated()), id: \.offset) { index, action in
-                                    let button = Button(action.label, role: action.destructive ? .destructive : nil) {
-                                        if action.confirm != nil {
-                                            confirming = action
-                                        } else {
-                                            Task { await host.run(action.id) }
-                                        }
-                                    }
-                                    .disabled(host.busy)
-                                    .accessibilityIdentifier("host-action-\(index)")
-                                    if index == 0 {
-                                        button.buttonStyle(.borderedProminent).tint(action.destructive ? .red : .accentColor)
-                                    } else {
-                                        button
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
                 .formStyle(.grouped)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    // Pinned under the page: Stop sharing and Remove stay
+                    // in view however long the logs get.
+                    if panel.setupChoices.isEmpty, !panel.actions.isEmpty {
+                        actionBar(panel.actions)
+                    }
+                }
+            }
+        }
+        .sheet(item: $fullLog) { log in
+            switch log {
+            case .access:
+                HostLogSheet(title: panel.recentTitle ?? "", rows: panel.recentAll,
+                             backgroundRows: panel.recentWithBackground) { fullLog = nil }
+            case .activity:
+                HostLogSheet(title: panel.activityTitle ?? "", rows: panel.activityAll,
+                             backgroundRows: nil) { fullLog = nil }
             }
         }
         .navigationTitle(host.form == nil ? panel.title : (host.formView?.title ?? panel.title))
@@ -181,6 +182,101 @@ struct ThisMachineView: View {
         } message: {
             Text(confirming?.confirm?.message ?? "")
         }
+    }
+
+    /// The page's buttons, primary first, in a bar pinned to the bottom.
+    private func actionBar(_ actions: [AppHostAction]) -> some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack {
+                ForEach(Array(actions.enumerated()), id: \.offset) { index, action in
+                    let button = Button(action.label, role: action.destructive ? .destructive : nil) {
+                        if action.confirm != nil {
+                            confirming = action
+                        } else {
+                            Task { await host.run(action.id) }
+                        }
+                    }
+                    .disabled(host.busy)
+                    .accessibilityIdentifier("host-action-\(index)")
+                    if index == 0 {
+                        button.buttonStyle(.borderedProminent).tint(action.destructive ? .red : .accentColor)
+                    } else {
+                        button
+                    }
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+        }
+        .background(.bar)
+        .accessibilityIdentifier("host-actions")
+    }
+}
+
+/// A "This machine" log shown in full.
+enum HostLog: String, Identifiable {
+    case access, activity
+    var id: String { rawValue }
+}
+
+/// "Show All…" under a log section.
+struct ShowAllButton: View {
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack {
+            Spacer()
+            Button(label, action: action)
+                .buttonStyle(.link)
+                .controlSize(.small)
+        }
+    }
+}
+
+/// A log in full: every row (repeats collapsed), newest first, and for the
+/// access log a switch that adds the background probes.
+struct HostLogSheet: View {
+    let title: String
+    let rows: [AppHostAccessRow]
+    /// Every row with background activity too (`nil`: no switch).
+    let backgroundRows: [AppHostAccessRow]?
+    let done: () -> Void
+    @State private var withBackground = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(title).font(.headline)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            Divider()
+            List {
+                TimedRows(rows: withBackground ? (backgroundRows ?? rows) : rows)
+            }
+            .listStyle(.inset(alternatesRowBackgrounds: true))
+            .accessibilityIdentifier("host-log-rows")
+            Divider()
+            HStack {
+                if backgroundRows != nil {
+                    Toggle("Include background activity", isOn: $withBackground)
+                        .toggleStyle(.checkbox)
+                        .accessibilityIdentifier("host-log-background")
+                }
+                Spacer()
+                Button("Done", action: done)
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("host-log-done")
+            }
+            .padding(12)
+        }
+        .frame(minWidth: 520, idealWidth: 560, minHeight: 360, idealHeight: 460)
+        .navigationTitle(title)
+        .accessibilityIdentifier("host-log-sheet")
     }
 }
 

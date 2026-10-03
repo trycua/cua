@@ -622,8 +622,53 @@ pub struct HostAccessRow {
     pub at_ms: i64,
 }
 
+/// Rows a "This machine" log section shows before "Show All…".
+pub const LOG_PREVIEW_ROWS: usize = 5;
+/// The button under a log section with more rows than it shows.
+pub const SHOW_ALL_LABEL: &str = "Show All\u{2026}";
+
+/// What an access was, as the host classified it when it logged it (the
+/// mirror of `cua-host`'s `access::classify`; keep in sync). Never from
+/// anything the caller said about itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostAccessKind {
+    /// Someone used the machine (a stream, input, a shell, files, an
+    /// agent, teleport, a share, the volume).
+    Connection,
+    /// A read-only probe a client made on its own (capabilities, health,
+    /// status, presence, listings).
+    Background,
+    /// A thumbnail-sized screenshot by the owner (background).
+    OwnerThumbnail,
+    /// A thumbnail-sized screenshot by someone else (shown).
+    Thumbnail,
+    /// Refused.
+    Refused,
+}
+
+/// Classifies an access line ([`HostAccessKind`]).
+pub fn access_kind(who: &str, what: &str) -> HostAccessKind {
+    if who == "refused" || what.starts_with("refused ") {
+        HostAccessKind::Refused
+    } else if what.ends_with(" (background)") {
+        HostAccessKind::Background
+    } else if what.ends_with("(thumbnail, not owner)") {
+        HostAccessKind::Thumbnail
+    } else if what.ends_with("(thumbnail)") {
+        HostAccessKind::OwnerThumbnail
+    } else if matches!(what, "SystemService" | "PresenceService") {
+        // An older driver's bare probe services.
+        HostAccessKind::Background
+    } else {
+        HostAccessKind::Connection
+    }
+}
+
 /// What an access used, in words.
 pub fn access_what(what: &str) -> String {
+    // `Service/Method (tag)` → `Service`.
+    let what = what.split(" (").next().unwrap_or(what);
+    let what = what.split('/').next().unwrap_or(what);
     match what {
         "ProcessService" => "Terminal and processes",
         "FilesystemService" => "Files",
@@ -631,7 +676,10 @@ pub fn access_what(what: &str) -> String {
         "TunnelService" => "Network tunnel",
         "DriverService" | "MCP" => "Automation tools",
         "SystemService" => "Status",
+        "HostSpacesService" => "Spaces",
+        "VolumeService" => "Cua Volume",
         "ComputerService"
+        | "StreamService"
         | "DesktopService"
         | "MediaService"
         | "WindowsService"
@@ -657,19 +705,87 @@ pub fn access_who(via: &str, who: &str) -> String {
     who.to_string()
 }
 
-/// "Recent access" rows, newest first.
+/// One access, in words: "Ada · Files", "Bob viewed thumbnails",
+/// "Mac mini · Screen and input refused (desktop not shared)".
+pub fn access_text(a: &HostAccess) -> String {
+    let who = access_who(&a.via, &a.who);
+    match access_kind(&a.who, &a.what) {
+        HostAccessKind::Refused if a.who == "refused" => {
+            format!("Refused sign-in \u{b7} {}", a.what)
+        }
+        HostAccessKind::Refused => {
+            let rest = a.what.trim_start_matches("refused ");
+            let (service, why) = match rest.split_once(" (") {
+                Some((service, why)) => (service, format!(" ({why}")),
+                None => (rest, String::new()),
+            };
+            format!("{who} \u{b7} {} refused{why}", access_what(service))
+        }
+        HostAccessKind::Thumbnail | HostAccessKind::OwnerThumbnail => {
+            format!("{who} viewed thumbnails")
+        }
+        HostAccessKind::Background => {
+            format!("{who} \u{b7} {} (background)", access_what(&a.what))
+        }
+        HostAccessKind::Connection => format!("{who} \u{b7} {}", access_what(&a.what)),
+    }
+}
+
+/// "Recent access" rows, newest first: connections, refusals and other
+/// people's thumbnails, with consecutive repeats collapsed ("×12").
+/// Background probes and the owner's own thumbnails are left out (see
+/// [`access_rows_with_background`]).
 pub fn access_rows(recent: &[HostAccess]) -> Vec<HostAccessRow> {
-    recent
-        .iter()
-        .map(|a| HostAccessRow {
-            text: format!(
-                "{} \u{b7} {}",
-                access_who(&a.via, &a.who),
-                access_what(&a.what)
-            ),
-            at_ms: a.at_ms,
+    collapse_repeats(
+        recent
+            .iter()
+            .filter(|a| {
+                !matches!(
+                    access_kind(&a.who, &a.what),
+                    HostAccessKind::Background | HostAccessKind::OwnerThumbnail
+                )
+            })
+            .map(|a| HostAccessRow {
+                text: access_text(a),
+                at_ms: a.at_ms,
+            }),
+    )
+}
+
+/// Every access, background included, newest first, repeats collapsed.
+pub fn access_rows_with_background(recent: &[HostAccess]) -> Vec<HostAccessRow> {
+    collapse_repeats(recent.iter().map(|a| HostAccessRow {
+        text: access_text(a),
+        at_ms: a.at_ms,
+    }))
+}
+
+/// Collapses consecutive rows with the same text into one, newest first,
+/// with the count: "Mac mini · Screen and input refused ×12".
+pub fn collapse_repeats(rows: impl IntoIterator<Item = HostAccessRow>) -> Vec<HostAccessRow> {
+    let mut out: Vec<(HostAccessRow, u32)> = vec![];
+    for row in rows {
+        match out.last_mut() {
+            Some((last, n)) if last.text == row.text => *n += 1,
+            _ => out.push((row, 1)),
+        }
+    }
+    out.into_iter()
+        .map(|(mut row, n)| {
+            if n > 1 {
+                row.text.push_str(&format!(" \u{d7}{n}"));
+            }
+            row
         })
         .collect()
+}
+
+/// The first [`LOG_PREVIEW_ROWS`] of `all`, and "Show All…" when there are
+/// more.
+pub fn log_preview(all: &[HostAccessRow]) -> (Vec<HostAccessRow>, Option<String>) {
+    let shown = all.iter().take(LOG_PREVIEW_ROWS).cloned().collect();
+    let more = (all.len() > LOG_PREVIEW_ROWS).then(|| SHOW_ALL_LABEL.to_string());
+    (shown, more)
 }
 
 /// A permission row: the pane's title and "Open Settings".
@@ -707,9 +823,21 @@ pub struct HostPanelView {
     /// "Recent access" (configured, when the log has any).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recent_title: Option<String>,
-    /// Who reached this machine recently, newest first.
+    /// Who reached this machine recently, newest first: the first
+    /// [`LOG_PREVIEW_ROWS`] of [`Self::recent_all`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recent: Vec<HostAccessRow>,
+    /// "Show All…" when `recent_all` has more than `recent` shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recent_more: Option<String>,
+    /// Every recent access (connections, refusals, other people's
+    /// thumbnails), repeats collapsed: the "Show All" sheet.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_all: Vec<HostAccessRow>,
+    /// The same with background probes and the owner's thumbnails too
+    /// (the sheet's "Include background activity").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_with_background: Vec<HostAccessRow>,
     /// Set when the access log does not verify.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access_warning: Option<String>,
@@ -732,9 +860,16 @@ pub struct HostPanelView {
     /// "Spaces activity" (when the audit has any).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity_title: Option<String>,
-    /// Remote creates, deletes and refusals, newest first.
+    /// Remote creates, deletes and refusals, newest first: the first
+    /// [`LOG_PREVIEW_ROWS`] of [`Self::activity_all`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub activity: Vec<HostAccessRow>,
+    /// "Show All…" when `activity_all` has more than `activity` shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_more: Option<String>,
+    /// The whole Spaces activity, repeats collapsed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub activity_all: Vec<HostAccessRow>,
     /// Set when the Spaces audit does not verify.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity_warning: Option<String>,
@@ -819,6 +954,9 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
         clients_empty: None,
         recent_title: None,
         recent: vec![],
+        recent_more: None,
+        recent_all: vec![],
+        recent_with_background: vec![],
         access_warning: None,
         toggles: vec![],
         limits: None,
@@ -827,6 +965,8 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
         provided_empty: None,
         activity_title: None,
         activity: vec![],
+        activity_more: None,
+        activity_all: vec![],
         activity_warning: None,
         permissions_title: None,
         permissions: vec![],
@@ -915,7 +1055,9 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
         })
         .collect();
     v.clients_empty = s.clients.is_empty().then(|| "Nobody".into());
-    v.recent = access_rows(&s.recent_access);
+    v.recent_all = access_rows(&s.recent_access);
+    (v.recent, v.recent_more) = log_preview(&v.recent_all);
+    v.recent_with_background = access_rows_with_background(&s.recent_access);
     v.recent_title = (!v.recent.is_empty()).then(|| "Recent access".into());
     v.access_warning = s
         .access_log_error
@@ -958,7 +1100,8 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
         v.provided = provided_rows(&s.provided_spaces);
         v.provided_empty = s.provided_spaces.is_empty().then(|| "None yet".into());
     }
-    v.activity = activity_rows(&s.spaces_audit);
+    v.activity_all = collapse_repeats(activity_rows(&s.spaces_audit));
+    (v.activity, v.activity_more) = log_preview(&v.activity_all);
     v.activity_title = (!v.activity.is_empty()).then(|| "Spaces activity".into());
     v.activity_warning = s
         .spaces_audit_error
@@ -1675,6 +1818,180 @@ mod tests {
             .recent_title
             .is_none()
         );
+    }
+
+    fn access(at_ms: i64, who: &str, what: &str) -> HostAccess {
+        HostAccess {
+            at_ms,
+            via: "relay".into(),
+            who: who.into(),
+            what: what.into(),
+        }
+    }
+
+    #[test]
+    fn accesses_are_classified_by_the_hosts_tags() {
+        use HostAccessKind::*;
+        for (who, what, want) in [
+            (
+                "Mac mini (a1)",
+                "SystemService/Health (background)",
+                Background,
+            ),
+            (
+                "Mac mini (a1)",
+                "SystemService/GetCapabilities (background)",
+                Background,
+            ),
+            (
+                "Mac mini (a1)",
+                "HostSpacesService/GetHostSpaces (background)",
+                Background,
+            ),
+            (
+                "Mac mini (a1)",
+                "PresenceService/Join (background)",
+                Background,
+            ),
+            (
+                "Mac mini (a1)",
+                "ComputerService/Screenshot (thumbnail)",
+                OwnerThumbnail,
+            ),
+            (
+                "Bob (b1)",
+                "ComputerService/Screenshot (thumbnail, not owner)",
+                Thumbnail,
+            ),
+            (
+                "Mac mini (a1)",
+                "refused ComputerService (desktop not shared)",
+                Refused,
+            ),
+            ("refused", "assertion expired", Refused),
+            // Opening the desktop, files, a shell, agents, teleport, an
+            // auto-connect's session: connections.
+            ("Mac mini (a1)", "StreamService", Connection),
+            ("Mac mini (a1)", "FilesystemService", Connection),
+            ("Mac mini (a1)", "ProcessService", Connection),
+            ("Mac mini (a1)", "DriverService", Connection),
+            ("Mac mini (a1)", "TeleportService", Connection),
+            ("token", "MCP", Connection),
+            (
+                "Mac mini (a1)",
+                "SystemService/CreateViewerTicket",
+                Connection,
+            ),
+            // An older driver's bare probe services.
+            ("token", "SystemService", Background),
+        ] {
+            assert_eq!(access_kind(who, what), want, "{what}");
+        }
+    }
+
+    #[test]
+    fn repeats_collapse_and_the_log_shows_five_then_show_all() {
+        // Twelve refusals in a row, then a mix.
+        let mut log: Vec<HostAccess> = (0..12)
+            .map(|i| {
+                access(
+                    1_000 - i,
+                    "Mac mini (a1)",
+                    "refused ComputerService (desktop not shared)",
+                )
+            })
+            .collect();
+        for (i, what) in [
+            "SystemService/Health (background)",
+            "ComputerService/Screenshot (thumbnail)",
+            "StreamService",
+            "FilesystemService",
+            "ProcessService",
+            "TeleportService",
+            "DriverService",
+            "ComputerService/Screenshot (thumbnail, not owner)",
+        ]
+        .iter()
+        .enumerate()
+        {
+            log.push(access(900 - i as i64, "Mac mini (a1)", what));
+        }
+        let state = HostState {
+            configured: true,
+            sharing: true,
+            recent_access: log,
+            ..Default::default()
+        };
+        let v = panel(Some(&state));
+        let texts: Vec<&str> = v.recent_all.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "Mac mini (a1) \u{b7} Screen and input refused (desktop not shared) \u{d7}12",
+                "Mac mini (a1) \u{b7} Screen and input",
+                "Mac mini (a1) \u{b7} Files",
+                "Mac mini (a1) \u{b7} Terminal and processes",
+                "Mac mini (a1) \u{b7} Teleport",
+                "Mac mini (a1) \u{b7} Automation tools",
+                "Mac mini (a1) viewed thumbnails",
+            ],
+            "background probes and the owner's thumbnails are left out"
+        );
+        // The newest of a collapsed run is its time.
+        assert_eq!(v.recent_all[0].at_ms, 1_000);
+        assert_eq!(v.recent.len(), LOG_PREVIEW_ROWS);
+        assert_eq!(v.recent[..], v.recent_all[..LOG_PREVIEW_ROWS]);
+        assert_eq!(v.recent_more.as_deref(), Some("Show All\u{2026}"));
+        // With background: everything, still collapsed.
+        assert_eq!(v.recent_with_background.len(), 9);
+        assert!(
+            v.recent_with_background[1]
+                .text
+                .ends_with("Status (background)")
+        );
+        // Five or fewer: no "Show All".
+        let few = panel(Some(&HostState {
+            recent_access: state.recent_access[..12].to_vec(),
+            ..state.clone()
+        }));
+        assert_eq!(few.recent.len(), 1);
+        assert!(few.recent_more.is_none());
+        // The buttons are always there, whatever the log's length.
+        assert_eq!(v.actions[0].id, HostActionId::StopSharing);
+        assert_eq!(v.actions[1].id, HostActionId::Remove);
+    }
+
+    #[test]
+    fn spaces_activity_collapses_and_pages_too() {
+        let audit: Vec<HostSpacesAudit> = (0..9)
+            .map(|i| HostSpacesAudit {
+                at_ms: 100 - i,
+                action: "refused".into(),
+                who: "Bob".into(),
+                space: "space-2".into(),
+                detail: "already runs 2 macOS VMs".into(),
+            })
+            .chain((0..6).map(|i| HostSpacesAudit {
+                at_ms: 50 - i,
+                action: "create".into(),
+                who: "Ada".into(),
+                space: format!("space-{i}"),
+                detail: String::new(),
+            }))
+            .collect();
+        let v = panel(Some(&HostState {
+            configured: true,
+            spaces_audit: audit,
+            ..Default::default()
+        }));
+        assert_eq!(v.activity_all.len(), 7);
+        assert!(
+            v.activity_all[0].text.ends_with("\u{d7}9"),
+            "{}",
+            v.activity_all[0].text
+        );
+        assert_eq!(v.activity.len(), LOG_PREVIEW_ROWS);
+        assert_eq!(v.activity_more.as_deref(), Some(SHOW_ALL_LABEL));
     }
 
     #[test]

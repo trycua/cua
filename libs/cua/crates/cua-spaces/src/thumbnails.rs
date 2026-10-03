@@ -36,6 +36,14 @@ pub const MAX_DIMENSION: u32 = 320;
 pub const QUALITY: u32 = 70;
 /// Disk cap for the whole cache.
 pub const DISK_BYTES: u64 = 32 * 1024 * 1024;
+/// After a refused capture (a host that does not share its desktop, a
+/// view-only share) nobody asks that Space again for this long.
+pub const DENIED_BACKOFF: Duration = Duration::from_secs(15 * 60);
+/// After another failed capture: the first wait, doubled per failure up to
+/// [`MAX_FAILURE_BACKOFF`].
+pub const FAILURE_BACKOFF: Duration = Duration::from_secs(30);
+/// The longest wait after failed captures.
+pub const MAX_FAILURE_BACKOFF: Duration = Duration::from_secs(10 * 60);
 
 /// One Space's latest thumbnail.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,11 +91,38 @@ struct Meta {
     captured_at_ms: u64,
 }
 
+/// The last failed capture of a Space (cleared by a good one).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CaptureFailure {
+    /// When it failed.
+    pub at: Instant,
+    /// Failures in a row.
+    pub attempts: u32,
+    /// Refused (permission denied): not retried for [`DENIED_BACKOFF`].
+    pub denied: bool,
+    /// Why.
+    pub message: String,
+}
+
+impl CaptureFailure {
+    /// How long after `at` no capture is tried.
+    pub fn backoff(&self) -> Duration {
+        if self.denied {
+            return DENIED_BACKOFF;
+        }
+        let doublings = self.attempts.saturating_sub(1).min(16);
+        FAILURE_BACKOFF
+            .saturating_mul(1 << doublings)
+            .min(MAX_FAILURE_BACKOFF)
+    }
+}
+
 #[derive(Default)]
 struct State {
     entries: HashMap<String, Thumbnail>,
     loaded: bool,
     interest: Option<Instant>,
+    failures: HashMap<String, CaptureFailure>,
 }
 
 /// The cache. Cheap to share behind the runtime's `Arc`.
@@ -161,13 +196,41 @@ impl ThumbnailCache {
             tracing::debug!(space, error = %e, "thumbnail not written");
         }
         s.entries.insert(space.to_string(), t);
+        s.failures.remove(space);
         self.enforce_cap(&mut s);
+    }
+
+    /// Notes a failed capture of the Space at `now`: it is not tried again
+    /// until its backoff passes ([`Self::backing_off`]), so a host that
+    /// refuses (its desktop is not shared) is not asked every tick.
+    pub fn fail(&self, space: &str, now: Instant, denied: bool, message: String) {
+        let mut s = self.state.lock().expect("thumbnail cache");
+        let attempts = s.failures.get(space).map_or(0, |f| f.attempts) + 1;
+        s.failures.insert(
+            space.to_string(),
+            CaptureFailure {
+                at: now,
+                attempts,
+                denied,
+                message,
+            },
+        );
+    }
+
+    /// The Space's last failure while its backoff runs at `now`.
+    pub fn backing_off(&self, space: &str, now: Instant) -> Option<CaptureFailure> {
+        let s = self.state.lock().expect("thumbnail cache");
+        s.failures
+            .get(space)
+            .filter(|f| now.saturating_duration_since(f.at) < f.backoff())
+            .cloned()
     }
 
     /// Forgets the Space's thumbnail (a deleted or forgotten Space).
     pub fn remove(&self, space: &str) {
         let mut s = self.state();
         s.entries.remove(space);
+        s.failures.remove(space);
         if let Some(dir) = &self.dir {
             unlink(dir, space);
         }
@@ -333,6 +396,57 @@ mod tests {
         cache.put("local:a", t);
         assert!(!cache.due("local:a", now));
         assert!(cache.due("local:a", now + BACKGROUND_INTERVAL));
+    }
+
+    /// A host that refuses captures (its desktop is not shared) is not
+    /// asked again for [`DENIED_BACKOFF`]; other failures back off
+    /// exponentially; a good capture clears it.
+    #[test]
+    fn failed_captures_back_off() {
+        let cache = ThumbnailCache::new(None, DISK_BYTES);
+        let t0 = Instant::now();
+        assert!(cache.backing_off("relay:mac", t0).is_none());
+        cache.fail("relay:mac", t0, true, "desktop not shared".into());
+        let f = cache
+            .backing_off("relay:mac", t0 + Duration::from_secs(60))
+            .unwrap();
+        assert!(f.denied && f.message == "desktop not shared");
+        assert!(
+            cache
+                .backing_off("relay:mac", t0 + DENIED_BACKOFF - Duration::from_secs(1))
+                .is_some()
+        );
+        assert!(
+            cache
+                .backing_off("relay:mac", t0 + DENIED_BACKOFF)
+                .is_none()
+        );
+
+        for (n, want) in [
+            (1, 30),
+            (2, 60),
+            (3, 120),
+            (4, 240),
+            (5, 480),
+            (6, 600),
+            (9, 600),
+        ] {
+            let f = CaptureFailure {
+                at: t0,
+                attempts: n,
+                denied: false,
+                message: String::new(),
+            };
+            assert_eq!(f.backoff(), Duration::from_secs(want), "{n}");
+        }
+        cache.fail("local:a", t0, false, "unreachable".into());
+        cache.fail("local:a", t0, false, "unreachable".into());
+        assert_eq!(cache.backing_off("local:a", t0).unwrap().attempts, 2);
+        cache.put("local:a", shot(10, 1));
+        assert!(
+            cache.backing_off("local:a", t0).is_none(),
+            "a good capture clears it"
+        );
     }
 
     #[test]

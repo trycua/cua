@@ -1127,11 +1127,25 @@ fn render_access(s: &HostStatus, now_ms: u64, out: &mut dyn Write) {
             format!("  access log: does not verify ({e}); it may have been altered"),
         );
     }
-    if s.recent_access.is_empty() {
+    // Background probes and the owner's own thumbnails stay in the log
+    // (and `--json`), not in this list.
+    use cua_host::access::AccessKind;
+    let shown: Vec<_> = s
+        .recent_access
+        .iter()
+        .filter(|r| {
+            !matches!(
+                r.kind(),
+                AccessKind::Background | AccessKind::OwnerThumbnail
+            )
+        })
+        .take(8)
+        .collect();
+    if shown.is_empty() {
         return;
     }
     line(out, "  recent access:");
-    for r in s.recent_access.iter().take(8) {
+    for r in shown {
         line(
             out,
             format!(

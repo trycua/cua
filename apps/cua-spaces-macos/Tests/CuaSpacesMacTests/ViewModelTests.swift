@@ -325,6 +325,33 @@ struct ViewModelTests {
         #expect(panel.accessWarning != nil)
     }
 
+    /// A spammed log: background probes and the owner's thumbnails are
+    /// left out, repeats collapse into one row with a count, the page
+    /// shows five rows and "Show All…", and the buttons stay.
+    @Test func aSpammedAccessLogCollapsesAndShowsFive() {
+        var log = (0..<12).map {
+            HostAccessRecord(atMs: Int64(1_000 - $0), via: "relay", who: "Mac mini (a1)",
+                             what: "refused ComputerService (desktop not shared)")
+        }
+        log += ["SystemService/Health (background)", "ComputerService/Screenshot (thumbnail)", "StreamService",
+                "FilesystemService", "ProcessService", "TeleportService", "MCP"].enumerated().map {
+            HostAccessRecord(atMs: Int64(900 - $0.offset), via: "relay", who: "Mac mini (a1)", what: $0.element)
+        }
+        let status = HostStatus(
+            configured: true, mode: "relay", relayUrl: "https://relay.cua.ai", directUrl: nil, envTokenPath: nil,
+            machineId: nil, name: "Studio", sharing: true, serviceInstalled: true, serviceRunning: true,
+            serviceKind: "launchd", online: true, clients: [], allow: [], permissions: [], error: nil,
+            recentAccess: log, accessLogError: nil)
+        let panel = appHostPanel(state: appHostState(status: status))
+        #expect(panel.recent.count == 5)
+        #expect(panel.recent.first?.text == "Mac mini (a1) \u{b7} Screen and input refused (desktop not shared) \u{d7}12")
+        #expect(panel.recentMore == "Show All\u{2026}")
+        #expect(panel.recentAll.count == 6)
+        #expect(panel.recentWithBackground.count == 8)
+        #expect(!panel.recentAll.contains { $0.text.contains("background") })
+        #expect(panel.actions.map(\.label) == ["Stop sharing", "Remove host setup"])
+    }
+
     @Test func aFailedHostSetupKeepsTheFormWithTheReason() async {
         let host = FixtureHost()
         host.failSetup = "launchctl bootstrap failed\nmore"

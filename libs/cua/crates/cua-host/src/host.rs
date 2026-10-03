@@ -1244,9 +1244,20 @@ impl Host {
     /// active right now to `clients`: every one in direct mode (there is no
     /// relay presence), and in relay mode the ones the relay cannot see
     /// (token and viewer callers) or all of them when the relay did not
-    /// answer.
+    /// answer. Only connections count ([`crate::access::AccessKind`]): a
+    /// relay client whose calls this machine logged as background probes,
+    /// thumbnails or refusals only is not "connected now".
     fn add_access(&self, status: &mut HostStatus, now_ms: u64) {
-        let report = crate::access::read(&self.paths.access_log(), crate::access::RECENT_LIMIT);
+        let report = crate::access::read(&self.paths.access_log(), crate::access::STATUS_LIMIT);
+        status.clients.retain(|c| {
+            crate::access::relay_client_connected(
+                &report.recent,
+                &c.id,
+                c.since.saturating_mul(1000),
+                now_ms,
+            )
+            .unwrap_or(true)
+        });
         let relay_answered = status.online.is_some();
         let active: Vec<ConnectedClient> = crate::access::active(&report.recent, now_ms)
             .into_iter()

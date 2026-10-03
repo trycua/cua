@@ -310,6 +310,33 @@ impl Auth {
         }
     }
 
+    /// Records an authorized gRPC call to `path` ([`call_what`]); a
+    /// screenshot is left to its handler ([`record_screenshot`]), which
+    /// knows whether it is a thumbnail. `owner`: the caller is the
+    /// machine's owner (the token, or the owner's relay account).
+    pub fn record_call(
+        &self,
+        extensions: &mut http::Extensions,
+        via: &str,
+        who: &str,
+        path: &str,
+        owner: bool,
+    ) {
+        if path == SCREENSHOT_METHOD {
+            let log = self.access_log.read().expect("access log lock").clone();
+            if let Some(log) = log {
+                extensions.insert(PendingAccess {
+                    log,
+                    via: via.into(),
+                    who: who.into(),
+                    owner,
+                });
+            }
+            return;
+        }
+        self.record_access(via, who, &call_what(path));
+    }
+
     /// Records the access `headers` were authorized with for `what`: the
     /// relay-asserted identity, else the token (with any client-claimed
     /// name marked as claimed). Nothing without a token (a loopback server
@@ -653,6 +680,104 @@ pub fn grpc_service(path: &str) -> &str {
     service.rsplit('.').next().unwrap_or(service)
 }
 
+/// Read-only, low-impact calls (capability and health probes, status
+/// polls, presence, listings) that clients make on their own. The access
+/// log records them as `<Service>/<Method> (background)` so readers can
+/// leave them out of "connected now"; the classification is the route's,
+/// decided here on the host, never anything the caller says about itself.
+/// Every other call (a stream, input, a shell, files, an agent, teleport,
+/// a share or the volume) is recorded by its service name, as before.
+pub const BACKGROUND_GRPC_METHODS: &[&str] = &[
+    "/cua.env.v1.SystemService/GetCapabilities",
+    "/cua.env.v1.SystemService/Health",
+    "/cua.env.v1.SystemService/Metrics",
+    "/cua.env.v1.PresenceService/Join",
+    "/cua.env.v1.PresenceService/UpdateCursor",
+    "/cua.env.v1.PresenceService/Leave",
+    "/cua.env.v1.StreamService/ListTargets",
+    "/cua.env.v1.ComputerService/ListDisplays",
+    "/cua.env.v1.HostSpacesService/GetHostSpaces",
+    "/cua.env.v1.TunnelService/ListForwards",
+    "/cua.env.v1.TunnelService/GetHotspotStatus",
+    "/cua.env.v1.VolumeService/GetVolumeStatus",
+    "/cua.env.v1.DriverService/ListTools",
+];
+
+/// The suffix of a background call's `what` in the access log.
+pub const BACKGROUND_TAG: &str = " (background)";
+
+/// `ComputerService.Screenshot`: recorded by the handler once it knows the
+/// size asked for ([`record_screenshot`]).
+pub const SCREENSHOT_METHOD: &str = "/cua.env.v1.ComputerService/Screenshot";
+
+/// A screenshot no larger than this (long edge, pixels) is a thumbnail.
+pub const THUMBNAIL_MAX_DIMENSION: u32 = 480;
+
+/// What the access log records for an authorized gRPC call to `path`.
+pub fn call_what(path: &str) -> String {
+    let route = path.trim_start_matches('/');
+    let route = route.rsplit_once('.').map_or(route, |(_, r)| r);
+    if BACKGROUND_GRPC_METHODS.contains(&path) {
+        return format!("{route}{BACKGROUND_TAG}");
+    }
+    let service = grpc_service(path);
+    // Older drivers wrote these services bare, and readers take a bare
+    // one as background; their other calls (a viewer ticket, shutdown)
+    // name the method so they still count.
+    if LEGACY_BACKGROUND_SERVICES.contains(&service) {
+        return route.to_string();
+    }
+    service.to_string()
+}
+
+/// Services older drivers recorded without the method, which readers take
+/// as background when bare ([`call_what`] names the method for the rest).
+pub const LEGACY_BACKGROUND_SERVICES: &[&str] = &["SystemService", "PresenceService"];
+
+/// What the access log records for a screenshot of at most
+/// `max_dimension` pixels (0: full size): a thumbnail (background for the
+/// machine's owner, surfaced for anyone else) or a screen read.
+pub fn screenshot_what(max_dimension: u32, owner: bool) -> String {
+    if (1..=THUMBNAIL_MAX_DIMENSION).contains(&max_dimension) {
+        if owner {
+            "ComputerService/Screenshot (thumbnail)".into()
+        } else {
+            "ComputerService/Screenshot (thumbnail, not owner)".into()
+        }
+    } else {
+        "ComputerService".into()
+    }
+}
+
+/// An authorized screenshot not yet recorded: the handler records it with
+/// the size it was asked for ([`record_screenshot`]).
+#[derive(Clone)]
+pub struct PendingAccess {
+    log: Arc<crate::access_log::AccessLog>,
+    via: String,
+    who: String,
+    owner: bool,
+}
+
+impl std::fmt::Debug for PendingAccess {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingAccess")
+            .field("via", &self.via)
+            .field("who", &self.who)
+            .field("owner", &self.owner)
+            .finish()
+    }
+}
+
+/// Records the screenshot `request` asks for (`ComputerService.Screenshot`
+/// handlers call it first): a thumbnail or a screen read, by its size.
+pub fn record_screenshot<T>(request: &tonic::Request<T>, max_dimension: u32) {
+    if let Some(p) = request.extensions().get::<PendingAccess>() {
+        p.log
+            .record(&p.via, &p.who, &screenshot_what(max_dimension, p.owner));
+    }
+}
+
 /// How the gRPC surface treats callers when no token is configured.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessMode {
@@ -793,7 +918,8 @@ where
                         .into_http::<R>();
                         return Box::pin(async move { Ok(response) });
                     }
-                    self.auth.record_access("relay", &who, grpc_service(&path));
+                    self.auth
+                        .record_call(req.extensions_mut(), "relay", &who, &path, false);
                     let viewer = Arc::new(grant.viewer_grant());
                     req.extensions_mut().insert(CallerIdentity {
                         principal: Some(grant.principal),
@@ -828,10 +954,13 @@ where
                         .into_http::<R>();
                         return Box::pin(async move { Ok(response) });
                     }
-                    self.auth.record_access(
+                    let owner = grant.account.as_ref().is_some_and(|a| a.role == "owner");
+                    self.auth.record_call(
+                        req.extensions_mut(),
                         "relay",
                         &principal_label(&grant.principal),
-                        grpc_service(&path),
+                        &path,
+                        owner,
                     );
                     req.extensions_mut().insert(CallerIdentity {
                         principal: Some(grant.principal),
@@ -865,10 +994,12 @@ where
             let path = req.uri().path().to_owned();
             let refusal = match viewer {
                 Ok(grant) if cua_proto::metadata::VIEWER_GRPC_METHODS.contains(&path.as_str()) => {
-                    self.auth.record_access(
+                    self.auth.record_call(
+                        req.extensions_mut(),
                         "viewer",
                         &principal_label(&grant.principal()),
-                        grpc_service(&path),
+                        &path,
+                        false,
                     );
                     req.extensions_mut().insert(CallerIdentity {
                         principal: Some(grant.principal()),
@@ -938,10 +1069,13 @@ where
             Ok(token_verified) => {
                 let principal = principal_from_headers(req.headers());
                 if token_verified {
-                    self.auth.record_access(
+                    let path = req.uri().path().to_owned();
+                    self.auth.record_call(
+                        req.extensions_mut(),
                         "token",
                         &token_label(principal.clone()),
-                        grpc_service(req.uri().path()),
+                        &path,
+                        true,
                     );
                 }
                 req.extensions_mut().insert(CallerIdentity {
@@ -977,6 +1111,53 @@ pub fn caller<T>(request: &tonic::Request<T>) -> CallerIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screenshots_are_recorded_as_thumbnails_or_screen_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("access.log");
+        let auth = Auth::new(Some("t".into()));
+        auth.set_access_log(Arc::new(crate::access_log::AccessLog::open(&path)));
+        let shot = |who: &str, owner: bool, max_dimension: u32| {
+            let mut ext = http::Extensions::new();
+            auth.record_call(&mut ext, "relay", who, SCREENSHOT_METHOD, owner);
+            let req = tonic::Request::from_parts(tonic::metadata::MetadataMap::new(), ext, ());
+            record_screenshot(&req, max_dimension);
+        };
+        shot("owner", true, 320);
+        shot("guest", false, 320);
+        shot("owner", true, 0);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let what: Vec<String> = text
+            .lines()
+            .map(|l| {
+                serde_json::from_str::<crate::access_log::AccessEntry>(l)
+                    .unwrap()
+                    .body
+                    .what
+            })
+            .collect();
+        assert_eq!(
+            what,
+            [
+                "ComputerService/Screenshot (thumbnail)",
+                "ComputerService/Screenshot (thumbnail, not owner)",
+                "ComputerService",
+            ]
+        );
+        assert_eq!(
+            call_what("/cua.env.v1.SystemService/Health"),
+            "SystemService/Health (background)"
+        );
+        assert_eq!(
+            call_what("/cua.env.v1.SystemService/CreateViewerTicket"),
+            "SystemService/CreateViewerTicket"
+        );
+        assert_eq!(
+            call_what("/cua.env.v1.TeleportService/ImportSession"),
+            "TeleportService"
+        );
+    }
 
     #[test]
     fn claim_token_installs_only_the_first_token() {

@@ -6854,8 +6854,17 @@ pub struct AppHostPanelView {
     pub clients_empty: Option<String>,
     /// "Recent access" (configured, when the log has any).
     pub recent_title: Option<String>,
-    /// Who reached this machine recently, newest first.
+    /// Who reached this machine recently, newest first: the first
+    /// [`LOG_PREVIEW_ROWS`] of [`Self::recent_all`].
     pub recent: Vec<AppHostAccessRow>,
+    /// "Show All…" when `recent_all` has more than `recent` shows.
+    pub recent_more: Option<String>,
+    /// Every recent access (connections, refusals, other people's
+    /// thumbnails), repeats collapsed: the "Show All" sheet.
+    pub recent_all: Vec<AppHostAccessRow>,
+    /// The same with background probes and the owner's thumbnails too
+    /// (the sheet's "Include background activity").
+    pub recent_with_background: Vec<AppHostAccessRow>,
     /// Set when the access log does not verify.
     pub access_warning: Option<String>,
     /// The two settings (configured only).
@@ -6871,8 +6880,13 @@ pub struct AppHostPanelView {
     pub provided_empty: Option<String>,
     /// "Spaces activity" (when the audit has any).
     pub activity_title: Option<String>,
-    /// Remote creates, deletes and refusals, newest first.
+    /// Remote creates, deletes and refusals, newest first: the first
+    /// [`LOG_PREVIEW_ROWS`] of [`Self::activity_all`].
     pub activity: Vec<AppHostAccessRow>,
+    /// "Show All…" when `activity_all` has more than `activity` shows.
+    pub activity_more: Option<String>,
+    /// The whole Spaces activity, repeats collapsed.
+    pub activity_all: Vec<AppHostAccessRow>,
     /// Set when the Spaces audit does not verify.
     pub activity_warning: Option<String>,
     /// Heading over the permission rows, when any is left to grant.

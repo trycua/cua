@@ -14414,9 +14414,24 @@ public struct AppHostPanelView: Equatable, Hashable {
      */
     public var recentTitle: String?
     /**
-     * Who reached this machine recently, newest first.
+     * Who reached this machine recently, newest first: the first
+     * [`LOG_PREVIEW_ROWS`] of [`Self::recent_all`].
      */
     public var recent: [AppHostAccessRow]
+    /**
+     * "Show All…" when `recent_all` has more than `recent` shows.
+     */
+    public var recentMore: String?
+    /**
+     * Every recent access (connections, refusals, other people's
+     * thumbnails), repeats collapsed: the "Show All" sheet.
+     */
+    public var recentAll: [AppHostAccessRow]
+    /**
+     * The same with background probes and the owner's thumbnails too
+     * (the sheet's "Include background activity").
+     */
+    public var recentWithBackground: [AppHostAccessRow]
     /**
      * Set when the access log does not verify.
      */
@@ -14447,9 +14462,18 @@ public struct AppHostPanelView: Equatable, Hashable {
      */
     public var activityTitle: String?
     /**
-     * Remote creates, deletes and refusals, newest first.
+     * Remote creates, deletes and refusals, newest first: the first
+     * [`LOG_PREVIEW_ROWS`] of [`Self::activity_all`].
      */
     public var activity: [AppHostAccessRow]
+    /**
+     * "Show All…" when `activity_all` has more than `activity` shows.
+     */
+    public var activityMore: String?
+    /**
+     * The whole Spaces activity, repeats collapsed.
+     */
+    public var activityAll: [AppHostAccessRow]
     /**
      * Set when the Spaces audit does not verify.
      */
@@ -14507,8 +14531,20 @@ public struct AppHostPanelView: Equatable, Hashable {
          * "Recent access" (configured, when the log has any).
          */recentTitle: String?,
         /**
-         * Who reached this machine recently, newest first.
+         * Who reached this machine recently, newest first: the first
+         * [`LOG_PREVIEW_ROWS`] of [`Self::recent_all`].
          */recent: [AppHostAccessRow],
+        /**
+         * "Show All…" when `recent_all` has more than `recent` shows.
+         */recentMore: String?,
+        /**
+         * Every recent access (connections, refusals, other people's
+         * thumbnails), repeats collapsed: the "Show All" sheet.
+         */recentAll: [AppHostAccessRow],
+        /**
+         * The same with background probes and the owner's thumbnails too
+         * (the sheet's "Include background activity").
+         */recentWithBackground: [AppHostAccessRow],
         /**
          * Set when the access log does not verify.
          */accessWarning: String?,
@@ -14532,8 +14568,15 @@ public struct AppHostPanelView: Equatable, Hashable {
          * "Spaces activity" (when the audit has any).
          */activityTitle: String?,
         /**
-         * Remote creates, deletes and refusals, newest first.
+         * Remote creates, deletes and refusals, newest first: the first
+         * [`LOG_PREVIEW_ROWS`] of [`Self::activity_all`].
          */activity: [AppHostAccessRow],
+        /**
+         * "Show All…" when `activity_all` has more than `activity` shows.
+         */activityMore: String?,
+        /**
+         * The whole Spaces activity, repeats collapsed.
+         */activityAll: [AppHostAccessRow],
         /**
          * Set when the Spaces audit does not verify.
          */activityWarning: String?,
@@ -14564,6 +14607,9 @@ public struct AppHostPanelView: Equatable, Hashable {
         self.clientsEmpty = clientsEmpty
         self.recentTitle = recentTitle
         self.recent = recent
+        self.recentMore = recentMore
+        self.recentAll = recentAll
+        self.recentWithBackground = recentWithBackground
         self.accessWarning = accessWarning
         self.toggles = toggles
         self.limits = limits
@@ -14572,6 +14618,8 @@ public struct AppHostPanelView: Equatable, Hashable {
         self.providedEmpty = providedEmpty
         self.activityTitle = activityTitle
         self.activity = activity
+        self.activityMore = activityMore
+        self.activityAll = activityAll
         self.activityWarning = activityWarning
         self.permissionsTitle = permissionsTitle
         self.permissions = permissions
@@ -14606,6 +14654,9 @@ public struct FfiConverterTypeAppHostPanelView: FfiConverterRustBuffer {
                 clientsEmpty: FfiConverterOptionString.read(from: &buf),
                 recentTitle: FfiConverterOptionString.read(from: &buf),
                 recent: FfiConverterSequenceTypeAppHostAccessRow.read(from: &buf),
+                recentMore: FfiConverterOptionString.read(from: &buf),
+                recentAll: FfiConverterSequenceTypeAppHostAccessRow.read(from: &buf),
+                recentWithBackground: FfiConverterSequenceTypeAppHostAccessRow.read(from: &buf),
                 accessWarning: FfiConverterOptionString.read(from: &buf),
                 toggles: FfiConverterSequenceTypeAppHostToggle.read(from: &buf),
                 limits: FfiConverterOptionString.read(from: &buf),
@@ -14614,6 +14665,8 @@ public struct FfiConverterTypeAppHostPanelView: FfiConverterRustBuffer {
                 providedEmpty: FfiConverterOptionString.read(from: &buf),
                 activityTitle: FfiConverterOptionString.read(from: &buf),
                 activity: FfiConverterSequenceTypeAppHostAccessRow.read(from: &buf),
+                activityMore: FfiConverterOptionString.read(from: &buf),
+                activityAll: FfiConverterSequenceTypeAppHostAccessRow.read(from: &buf),
                 activityWarning: FfiConverterOptionString.read(from: &buf),
                 permissionsTitle: FfiConverterOptionString.read(from: &buf),
                 permissions: FfiConverterSequenceTypeAppPermissionRow.read(from: &buf),
@@ -14634,6 +14687,9 @@ public struct FfiConverterTypeAppHostPanelView: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.clientsEmpty, into: &buf)
         FfiConverterOptionString.write(value.recentTitle, into: &buf)
         FfiConverterSequenceTypeAppHostAccessRow.write(value.recent, into: &buf)
+        FfiConverterOptionString.write(value.recentMore, into: &buf)
+        FfiConverterSequenceTypeAppHostAccessRow.write(value.recentAll, into: &buf)
+        FfiConverterSequenceTypeAppHostAccessRow.write(value.recentWithBackground, into: &buf)
         FfiConverterOptionString.write(value.accessWarning, into: &buf)
         FfiConverterSequenceTypeAppHostToggle.write(value.toggles, into: &buf)
         FfiConverterOptionString.write(value.limits, into: &buf)
@@ -14642,6 +14698,8 @@ public struct FfiConverterTypeAppHostPanelView: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.providedEmpty, into: &buf)
         FfiConverterOptionString.write(value.activityTitle, into: &buf)
         FfiConverterSequenceTypeAppHostAccessRow.write(value.activity, into: &buf)
+        FfiConverterOptionString.write(value.activityMore, into: &buf)
+        FfiConverterSequenceTypeAppHostAccessRow.write(value.activityAll, into: &buf)
         FfiConverterOptionString.write(value.activityWarning, into: &buf)
         FfiConverterOptionString.write(value.permissionsTitle, into: &buf)
         FfiConverterSequenceTypeAppPermissionRow.write(value.permissions, into: &buf)

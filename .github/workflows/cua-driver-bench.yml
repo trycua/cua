@@ -73,6 +73,7 @@ jobs:
           test -n "$TASK_PACK_REF"
           test ! -e "$source_dir"
 
+          gh auth setup-git
           gh repo clone "$TASK_PACK_REPOSITORY" "$source_dir" -- \
             --filter=blob:none \
             --no-checkout

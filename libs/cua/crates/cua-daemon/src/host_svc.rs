@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use cua_proto::env::v1::{self as pb, host_spaces_service_server::HostSpacesService};
-use cua_spaces::host_spaces::{CALLER_METADATA, HostCaller, to_status};
+use cua_spaces::host_spaces::{HostCaller, to_status};
 
 use crate::server::Shared;
 
@@ -16,13 +16,7 @@ use crate::server::Shared;
 pub(crate) struct HostSvc(pub(crate) Arc<Shared>);
 
 fn caller<T>(req: &tonic::Request<T>) -> Result<HostCaller, tonic::Status> {
-    let value = req
-        .metadata()
-        .get(CALLER_METADATA)
-        .map(|v| v.to_str())
-        .transpose()
-        .map_err(|_| tonic::Status::invalid_argument(format!("{CALLER_METADATA}: not text")))?;
-    HostCaller::from_metadata(value).map_err(|e| to_status(&e))
+    HostCaller::from_grpc_metadata(req.metadata()).map_err(|e| to_status(&e))
 }
 
 #[tonic::async_trait]

@@ -721,7 +721,7 @@
    "read_only": false
   },
   {
-   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels — the same space get_window_state returns. Top-left origin of the target's window.\n\nUse for: marquee/lasso selection, drag-and-drop, resizing via a handle, scrubbing a slider, repositioning a panel.\n\n`duration_ms` (default 500) is the wall-clock budget for the path between mouse-down and mouse-up; `steps` (default 20) is the number of intermediate mouseDragged events linearly interpolated along the path. Increase both for slower, more human drags; decrease for snap gestures.\n\n`modifier` keys (cmd/shift/option/ctrl) are held across the entire gesture.\n\nWhen `from_zoom` is true, coordinates are in the last zoom image for this pid; the driver maps them back to window coordinates before dispatching.",
+   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels — the same space get_window_state returns. Top-left origin of the target's window.\n\nUse for: marquee/lasso selection, drag-and-drop, resizing via a handle, scrubbing a slider, repositioning a panel.\n\n`duration_ms` (default 500) is the wall-clock budget for the path between mouse-down and mouse-up; `steps` (default 20) is the number of intermediate mouseDragged events linearly interpolated along the path. Increase both for slower, more human drags; decrease for snap gestures.\n\n`modifier` keys (cmd/shift/option/ctrl) are held across the entire gesture.\n\nWhen `from_zoom` is true, coordinates are in the last zoom image for this pid; the driver maps them back to window coordinates before dispatching.\n\nmacOS has no background drag: a window-scoped drag needs delivery_mode:\"foreground\" and window_id. It briefly fronts the exact window, moves the physical pointer along the path, then restores the prior frontmost app. Without delivery_mode:\"foreground\" the call is refused with background_unavailable and nothing is sent.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
@@ -737,7 +737,7 @@
       "type": "string"
      },
      "delivery_mode": {
-      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": inject without fronting or raising the target — no focus steal. \"foreground\": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with \"foreground\" only for the action that needs it.",
+      "description": "Window-scoped drag on macOS supports only \"foreground\": briefly front the exact window (window_id required), drive the physical pointer through the gesture, then restore the prior frontmost app. The default \"background\" is refused with background_unavailable because macOS has no background drag route. Desktop scope ignores this field.",
       "enum": [
        "background",
        "foreground"

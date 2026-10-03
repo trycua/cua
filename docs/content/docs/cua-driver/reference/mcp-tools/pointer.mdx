@@ -41,12 +41,14 @@ Use for: marquee/lasso selection, drag-and-drop, resizing via a handle, scrubbin
 
 When `from_zoom` is true, coordinates are in the last zoom image for this pid; the driver maps them back to window coordinates before dispatching.
 
+macOS has no background drag: a window-scoped drag needs delivery_mode:"foreground" and window_id. It briefly fronts the exact window, moves the physical pointer along the path, then restores the prior frontmost app. Without delivery_mode:"foreground" the call is refused with background_unavailable and nothing is sent.
+
 **macOS parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="drag--macos--button"></span>`button` | `"left" \| "right" \| "middle"` |  | Mouse button used for the drag. Default: left. |
-| <span id="drag--macos--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target; no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost; the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it. |
+| <span id="drag--macos--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Window-scoped drag on macOS supports only "foreground": briefly front the exact window (window_id required), drive the physical pointer through the gesture, then restore the prior frontmost app. The default "background" is refused with background_unavailable because macOS has no background drag route. Desktop scope ignores this field. |
 | <span id="drag--macos--duration_ms"></span>`duration_ms` | `integer` |  | Wall-clock duration of the drag path between mouseDown and mouseUp. Default: 500. Range: 0 to 10000. |
 | <span id="drag--macos--from_x"></span>`from_x` | `number` | required | Drag-start X in window-local screenshot pixels. Top-left origin. |
 | <span id="drag--macos--from_y"></span>`from_y` | `number` | required | Drag-start Y in window-local screenshot pixels. Top-left origin. |

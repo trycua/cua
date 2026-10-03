@@ -109,7 +109,7 @@ is safe even for apps that normally foreground on media-load
 | Enumerate an app's windows            | `list_windows({pid})`: or read the `windows` array `launch_app` already returns       | `osascript 'every window of app …'`                         |
 | Move or resize one exact window       | `set_window_frame({pid, window_id, x, y, width, height})`                              | `osascript` position/size writes or title-bar dragging      |
 | Click / type / scroll / keys          | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                  | `osascript`, `cliclick`, raw `CGEvent`, `open <url>`        |
-| Drag / drag-and-drop / marquee select | `drag({pid, from_x, from_y, to_x, to_y})` (pixel-only: macOS AX has no semantic drag) | `cliclick dd:`, `osascript drag`                            |
+| Drag / drag-and-drop / marquee select | `drag({pid, window_id, from_x, from_y, to_x, to_y, delivery_mode:"foreground"})` (pixel-only and foreground-only: macOS AX has no semantic drag, and there is no background drag) | `cliclick dd:`, `osascript drag`                            |
 | Screenshot                            | `get_window_state` (window) or authorized `get_desktop_state` (desktop)                | `screencapture`                                             |
 | Quit an app                           | ask the user first, then `hotkey({pid, keys:["cmd","q"]})`                             | `kill`, `killall`, `pkill`                                  |
 | Hand a file/URL to an app             | `launch_app({bundle_id, urls:[<path>]})`                                               | `open -a <App> <path>`, `open <url>`                        |
@@ -299,6 +299,13 @@ acts, then restores the prior frontmost: the explicit last resort for a
 surface that only accepts events while frontmost (the canvas/viewport/game
 case below). Unmodified `element_token` (AX) actions remain background-capable
 and hold the no-foreground contract without the flag.
+
+`drag` is the exception: macOS has no background drag. A window-scoped
+`drag` needs `delivery_mode:"foreground"` and `window_id`; without them it
+refuses with `background_unavailable` and sends nothing. The foreground drag
+fronts the exact window, moves the physical pointer along the path, and then
+restores the prior frontmost app. Use it only when a drag is the task, and
+expect the hardware pointer to move.
 
 A foreground window-scoped **pixel** `click`, `double_click`, or
 `right_click` (`x`/`y` with `window_id`) is delivered like a desktop-scope click, not through the per-pid path: Cua Driver

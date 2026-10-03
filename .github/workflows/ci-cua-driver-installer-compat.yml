@@ -21,11 +21,13 @@ permissions:
   contents: read
   pull-requests: read
 
-# In a reusable call, github.workflow names the caller, so each caller keeps
-# its own group.
-concurrency:
-  group: cua-driver-installer-compat-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: true
+# No concurrency group. In a reusable call the group would belong to the
+# caller's run, and "CI: Release metadata" starts several runs for one pull
+# request at once (opened, labeled, edited, synchronize). Cancelling the older
+# ones made each superseded run's `validate` see `cancelled` and fail, and that
+# failed `validate` check on the head commit blocked the merge even after the
+# newest run passed. Every run now finishes. For most pull requests the scope
+# job skips the installer matrix, so duplicates cost little.
 
 jobs:
   scope:

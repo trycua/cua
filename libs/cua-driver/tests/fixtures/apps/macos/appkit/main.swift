@@ -43,6 +43,8 @@ let kWindowAID = "wnd-main"
 let kIncrementButtonAID = "btn-increment"
 let kCounterLabelAID = "lbl-counter"
 let kResetButtonAID = "btn-reset"
+let kKeyOnlyButtonAID = "btn-key-only"
+let kKeyOnlyLabelAID = "lbl-key-only"
 let kTextBodyAID = "txt-body"
 let kTextBodyMarker = "HARNESS_TEXT_MARKER_v1"
 let kTextInputAID = "txt-input"
@@ -125,6 +127,9 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let window: NSWindow
     let counterLabel = NSTextField(labelWithString: "counter=0")
     var counterValue = 0
+    let keyOnlyButton = NSButton(title: "Key only", target: nil, action: nil)
+    let keyOnlyLabel = NSTextField(labelWithString: "key_only_pressed=0")
+    var keyOnlyPresses = 0
     let textInput = NSTextField(string: "")
     let textInputMirror = NSTextField(labelWithString: "")
     let textInputCommit = NSTextField(labelWithString: "committed=none")
@@ -220,6 +225,21 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         counterRow.addArrangedSubview(inc)
         counterRow.addArrangedSubview(reset)
         counterRow.addArrangedSubview(counterLabel)
+        // key_window_control — enabled only while the window is key, like a
+        // toolbar search field, so AXEnabled reads false once another app is
+        // frontmost.
+        keyOnlyButton.target = self
+        keyOnlyButton.action = #selector(onKeyOnly)
+        keyOnlyButton.setAccessibilityIdentifier(kKeyOnlyButtonAID)
+        keyOnlyButton.isEnabled = window.isKeyWindow
+        keyOnlyLabel.setAccessibilityIdentifier(kKeyOnlyLabelAID)
+        keyOnlyLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(onKeyStateChange), name: name, object: window)
+        }
+        counterRow.addArrangedSubview(keyOnlyButton)
+        counterRow.addArrangedSubview(keyOnlyLabel)
         content.addArrangedSubview(counterRow)
 
         // text_body
@@ -632,6 +652,15 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         counterValue = 0
         counterLabel.stringValue = "counter=0"
         writeTaskState()
+    }
+
+    @objc private func onKeyOnly() {
+        keyOnlyPresses += 1
+        keyOnlyLabel.stringValue = "key_only_pressed=\(keyOnlyPresses)"
+    }
+
+    @objc private func onKeyStateChange(_ note: Notification) {
+        keyOnlyButton.isEnabled = window.isKeyWindow
     }
 
     @objc private func onExit() {

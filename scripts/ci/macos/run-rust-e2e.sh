@@ -365,6 +365,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_scroll_foreground \
     harness_appkit_scroll_background \
     harness_appkit_counter \
+    harness_appkit_key_window_control_refusal_names_the_foreground_rung \
     harness_appkit_counter_px_background \
     harness_appkit_erroring_toggle_press_counts_only_when_its_value_moved \
     harness_appkit_px_background_press_key_reports_honest_delivery_truth \

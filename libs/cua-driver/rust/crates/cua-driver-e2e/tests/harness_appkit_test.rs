@@ -8,6 +8,7 @@
 //! Scenarios (see `libs/cua-driver/tests/fixtures/shared/scenarios.json`
 //! `appkit` section):
 //!   - counter        : NSButton AXPress invocation increments counter
+//!   - key_window_control : a key-window-only NSButton refuses as element_disabled
 //!   - text_body      : get_window_state extracts known marker text
 //!   - text_input     : type_text into NSTextField updates mirror label
 //!   - click_target   : right_click / double_click recognised by NSView
@@ -1696,6 +1697,78 @@ fn harness_appkit_erroring_toggle_press_counts_only_when_its_value_moved() {
 
         Observation::delivered_with_fixture_state(passed)
     });
+}
+
+/// A control AppKit enables only while its window is key reads disabled once
+/// another application is frontmost. The background press is refused as
+/// `element_disabled` with the foreground escalation, and the foreground press
+/// that escalation names lands.
+#[test]
+#[ignore]
+fn harness_appkit_key_window_control_refusal_names_the_foreground_rung() {
+    run_case(
+        native_background_case(
+            "appkit",
+            "key_window_control",
+            Targeting::Ax,
+            DriverRoute::MacosAxAction,
+        ),
+        |pid, wid, driver| {
+            let snapshot = snapshot_elements(driver, pid, wid);
+            let token = element_token_by_id(&snapshot, "btn-key-only");
+            let press = |delivery_mode: &str| {
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": token,
+                    "action": "press",
+                    "delivery_mode": delivery_mode
+                })
+            };
+            let (refusal, passed) = run_with_background_oracles(
+                driver,
+                TargetWindow {
+                    pid,
+                    native_id: wid,
+                },
+                |driver| {
+                    std::thread::sleep(Duration::from_millis(300));
+                    driver.call("click", press("background"))
+                },
+            )
+            .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+            assert!(
+                refusal.is_error(),
+                "a disabled control was pressed: {}",
+                refusal.text()
+            );
+            let refused = refusal.structured();
+            assert_eq!(refused["code"], "element_disabled", "{}", refusal.text());
+            assert_eq!(
+                refused["escalation"],
+                serde_json::json!({"target": "foreground", "reason": "route_unavailable"}),
+                "{}",
+                refusal.text()
+            );
+            assert_eq!(refused["key_window"]["is_key"], false, "{refused}");
+            assert_eq!(refused["key_window"]["app_frontmost"], false, "{refused}");
+
+            let pressed = driver.call("click", press("foreground"));
+            assert!(
+                !pressed.is_error(),
+                "the foreground rung did not press the control: {}",
+                pressed.text()
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            let after = snapshot_elements(driver, pid, wid);
+            assert!(
+                after.tree_text().contains("key_only_pressed=1"),
+                "the foreground press did not land:\n{}",
+                after.tree_text()
+            );
+            Observation::delivered_with_fixture_state(passed)
+        },
+    );
 }
 
 /// Resolve the native AppKit button from a screenshot-space PX target, then

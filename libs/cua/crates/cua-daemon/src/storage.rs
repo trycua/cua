@@ -112,11 +112,9 @@ async fn pulled_containers(entries: &[&cua_image::catalog::CatalogEntry]) -> Vec
     if wanted.is_empty() {
         return vec![];
     }
-    let Ok(Ok(rt)) = tokio::time::timeout(
-        PROBE,
-        cua_vmm::container::ContainerRuntime::connect(Default::default()),
-    )
-    .await
+    // The engine Linux Spaces use; the built-in runtime only while it runs.
+    let Ok(Some(rt)) =
+        tokio::time::timeout(PROBE, cua_vmm::managed::connect_if_up(Default::default())).await
     else {
         return vec![];
     };

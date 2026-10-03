@@ -589,6 +589,21 @@ pub fn host_refusal(image: &SandboxImage, host: &SpaceHost) -> Option<(&'static 
     ))
 }
 
+/// A setting that makes This Mac able to run the Space: shown when the
+/// person chose to use only this Mac's own runtime and it is missing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeSwitch {
+    /// The `cua config` setting: `runtime.lume`.
+    pub setting: String,
+    /// The value to set: `builtin`.
+    pub value: String,
+    /// The button: "Use built-in Lume".
+    pub label: String,
+    /// One line on what that does.
+    pub detail: String,
+}
+
 /// One entry of the "Run on" menu: a machine that can host the Space.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -767,6 +782,78 @@ fn local_engine_detail(image: &SandboxImage, env: &WizardEnv) -> Option<String> 
     })
 }
 
+/// This Mac can run `image` now: a local runtime answers, and (when the
+/// doctor's list is known) one of the image's engines is among them.
+fn local_ready(image: &SandboxImage, env: &WizardEnv) -> bool {
+    env.local_available
+        && env
+            .local_backends
+            .as_ref()
+            .is_none_or(|b| local_runtime_ready(image, b))
+}
+
+/// The first machine of yours that can run `image` now (online, not at a
+/// limit, the right OS).
+fn usable_host<'a>(image: &SandboxImage, env: &'a WizardEnv) -> Option<&'a SpaceHost> {
+    env.hosts.iter().find(|h| host_refusal(image, h).is_none())
+}
+
+/// Until the person picks where it runs: when This Mac cannot run the
+/// image but one of your machines can, start there instead of on an error.
+fn follow_to_host(state: &mut WizardState, env: &WizardEnv) {
+    if state.picked || state.placement != Location::Local {
+        return;
+    }
+    let image = image_of(state);
+    if local_ready(&image, env) {
+        return;
+    }
+    if let Some(h) = usable_host(&image, env) {
+        state.placement = Location::Host;
+        state.host = Some(h.id.clone());
+    }
+}
+
+/// Switching to a built-in runtime, when the setting says to use only
+/// this Mac's own and it is missing: the built-in Lume for macOS VMs
+/// (`runtime.lume = system`), the built-in Linux runtime for containers
+/// (`runtime.linux = system`). Otherwise cua sets up its built-in one by
+/// itself on the first create that needs it.
+fn runtime_switch(image: &SandboxImage, env: &WizardEnv) -> Option<RuntimeSwitch> {
+    if local_ready(image, env) {
+        return None;
+    }
+    if image.local == Some(LocalEngine::Container) {
+        return (env.linux_source.as_deref() == Some("system")).then(|| RuntimeSwitch {
+            setting: "runtime.linux".into(),
+            value: "builtin".into(),
+            label: "Use built-in runtime".into(),
+            detail: "Cua sets up its own Linux runtime, a small VM that runs Spaces under \
+                     gVisor (about 480 MB), the first time you create a Linux Space."
+                .into(),
+        });
+    }
+    if image.local != Some(LocalEngine::Lume) || env.lume_source.as_deref() != Some("system") {
+        return None;
+    }
+    if env.host_arch.as_deref().is_some_and(|a| a != "arm64") {
+        return None;
+    }
+    Some(RuntimeSwitch {
+        setting: "runtime.lume".into(),
+        value: "builtin".into(),
+        label: "Use built-in Lume".into(),
+        detail: "Cua sets up its own signed Lume (about 6 MB) the first time you create a \
+                 macOS Space."
+            .into(),
+    })
+}
+
+/// The one line under "Run on" when nothing can run the Space here and
+/// none of your machines is listed: how another Mac of yours joins.
+pub const OTHER_MAC_HINT: &str = "To use another Mac, open Cua Spaces on it, choose Set up for \
+     access and turn on Spaces for your devices. It then shows up here.";
+
 /// `host:port` or `http(s)://host:port`: a shape check only.
 pub fn looks_like_address(value: &str) -> bool {
     let v = value.trim();
@@ -941,6 +1028,14 @@ pub struct WizardEnv {
     /// This machine's architecture (`arm64`, `amd64`), when known.
     #[serde(default)]
     pub host_arch: Option<String>,
+    /// Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
+    /// `system`), when known.
+    #[serde(default)]
+    pub lume_source: Option<String>,
+    /// Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
+    /// `builtin`, `system`), when known (a Mac).
+    #[serde(default)]
+    pub linux_source: Option<String>,
     /// Free space and pulled images here (the SDK's `Local.storage()`),
     /// when known.
     #[serde(default)]
@@ -1270,7 +1365,7 @@ pub fn initial(env: &WizardEnv) -> WizardState {
         .first()
         .cloned()
         .expect("at least one published image");
-    WizardState {
+    let mut state = WizardState {
         mode: WizardMode::Create,
         step: 0,
         placement: offered_location(env.default_location, env),
@@ -1291,7 +1386,9 @@ pub fn initial(env: &WizardEnv) -> WizardState {
         host: None,
         gpu: false,
         address: AddressForm::default(),
-    }
+    };
+    follow_to_host(&mut state, env);
+    state
 }
 
 /// The preset the Space is based on.
@@ -1419,10 +1516,12 @@ pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> Wi
             if let Some(r) = first {
                 choose_image(&mut s, &r);
             }
+            follow_to_host(&mut s, env);
         }
         WizardAction::ChooseImage { image_ref } => {
             choose_image(&mut s, image_ref);
             close_suggestions(&mut s);
+            follow_to_host(&mut s, env);
         }
         // The same text is no edit (a field echoing its value on focus).
         WizardAction::SetImageText { text } if *text == s.image_text => {}
@@ -1888,6 +1987,14 @@ pub struct WizardView {
     pub host: Option<String>,
     /// Why the chosen placement cannot be used.
     pub placement_error: Option<String>,
+    /// One line under "Run on" when This Mac cannot run the Space and no
+    /// machine of yours is listed: how another Mac joins.
+    #[serde(default)]
+    pub placement_hint: Option<String>,
+    /// Switches This Mac to the built-in runtime the Space needs, when it
+    /// is set to use its own and that is missing.
+    #[serde(default)]
+    pub runtime_switch: Option<RuntimeSwitch>,
     /// Advanced shown.
     pub advanced: bool,
     /// Kind tiles.
@@ -2448,11 +2555,24 @@ pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
         None => Some(YOUR_CLOUD_CONNECT_DETAIL.to_string()),
     };
     let placeable = can_place(&image, placement);
-    let local_ready = env.local_available
-        && env
-            .local_backends
-            .as_ref()
-            .is_none_or(|b| local_runtime_ready(&image, b));
+    let local_ready = local_ready(&image, env);
+    let runtime_switch = (placement == Location::Local)
+        .then(|| runtime_switch(&image, env))
+        .flatten();
+    let placement_hint = (placement == Location::Local
+        && !local_ready
+        && image.local.is_some()
+        && usable_host(&image, env).is_none())
+    .then(|| match env.hosts.iter().find(|h| !h.online) {
+        // Yours, but its service is down: how it comes back.
+        Some(h) => format!(
+            "{name} is offline. Open Cua Spaces on {name}; once it is back, choose it in Run on.",
+            name = h.name
+        ),
+        None if env.hosts.is_empty() => OTHER_MAC_HINT.to_string(),
+        None => String::new(),
+    })
+    .filter(|h| !h.is_empty());
     let placement_ready = match placement {
         Location::Cloud => env.cloud_available,
         Location::Local => local_ready,
@@ -2513,6 +2633,12 @@ pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
         Location::Host => host_why
             .clone()
             .unwrap_or_else(|| "Choose a machine.".to_string()),
+        Location::Local if runtime_switch.is_some() => match image.local {
+            Some(LocalEngine::Container) => {
+                "No container engine is running on this Mac.".to_string()
+            }
+            _ => "This Mac\u{2019}s own Lume isn\u{2019}t installed.".to_string(),
+        },
         Location::Local => {
             if env.local_available {
                 let what = match image.local {
@@ -2766,6 +2892,8 @@ pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
         cloud: cloud.map(|c| c.name.clone()),
         host: host.map(|h| h.id.clone()),
         placement_error,
+        placement_hint,
+        runtime_switch,
         advanced: state.advanced,
         kind_tiles,
         runtimes: engines
@@ -2886,6 +3014,8 @@ mod tests {
             local_details: None,
             max_cpus: 8,
             host_arch: Some("arm64".into()),
+            lume_source: None,
+            linux_source: None,
             storage: None,
             cloud_pricing: None,
             clouds: vec![],
@@ -3675,6 +3805,167 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// macOS is never a dead end. With the built-in Lume (set up on the
+    /// first create) This Mac just runs it. Set to use only this Mac's own
+    /// Lume and without one, the error says so, offers the built-in one in
+    /// one click, and one line says how another Mac joins.
+    #[test]
+    fn macos_runs_on_the_builtin_lume_or_says_how_to_get_one() {
+        // The app counts a Lume cua sets up itself as ready.
+        let builtin = WizardEnv {
+            local_backends: Some(vec!["lume".into()]),
+            lume_source: Some("auto".into()),
+            ..env()
+        };
+        let s = reduce(
+            &initial(&builtin),
+            &WizardAction::ChooseOs { os: SpaceOs::Macos },
+            &builtin,
+        );
+        let v = view(&s, &builtin);
+        assert_eq!(v.placement_id, "local");
+        assert!(
+            v.placement_error.is_none() && v.runtime_switch.is_none() && v.placement_hint.is_none()
+        );
+        assert!(v.can_continue);
+
+        let system = WizardEnv {
+            local_available: false,
+            local_reason: Some("No local runtime found (Docker or Lume).".into()),
+            local_backends: Some(vec![]),
+            lume_source: Some("system".into()),
+            ..env()
+        };
+        let v = view(&s, &system);
+        assert_eq!(
+            v.placement_error.as_deref(),
+            Some("This Mac\u{2019}s own Lume isn\u{2019}t installed.")
+        );
+        let switch = v.runtime_switch.expect("built-in offered");
+        assert_eq!(
+            (
+                switch.setting.as_str(),
+                switch.value.as_str(),
+                switch.label.as_str()
+            ),
+            ("runtime.lume", "builtin", "Use built-in Lume")
+        );
+        assert_eq!(v.placement_hint.as_deref(), Some(OTHER_MAC_HINT));
+        assert!(!v.can_continue);
+        // Not on an Intel Mac (Lume needs Apple silicon).
+        let intel = WizardEnv {
+            host_arch: Some("amd64".into()),
+            ..system.clone()
+        };
+        assert!(view(&s, &intel).runtime_switch.is_none());
+    }
+
+    /// A Linux Space with no Docker: the built-in Linux runtime counts as
+    /// ready (set up on the first create). Set to use only this Mac's own
+    /// engine and with none running, the error says so and offers the
+    /// built-in runtime in one click.
+    #[test]
+    fn linux_runs_on_the_builtin_runtime_or_offers_it() {
+        let builtin = WizardEnv {
+            local_backends: Some(vec!["managed".into()]),
+            linux_source: Some("auto".into()),
+            ..env()
+        };
+        let s = reduce(
+            &initial(&builtin),
+            &WizardAction::ChooseOs { os: SpaceOs::Linux },
+            &builtin,
+        );
+        let v = view(&s, &builtin);
+        assert_eq!(v.placement_id, "local");
+        assert!(v.placement_error.is_none() && v.runtime_switch.is_none());
+        assert!(v.can_continue);
+
+        let system = WizardEnv {
+            local_available: false,
+            local_reason: Some("No local runtime found (Docker or Lume).".into()),
+            local_backends: Some(vec![]),
+            linux_source: Some("system".into()),
+            ..env()
+        };
+        let v = view(&s, &system);
+        assert_eq!(
+            v.placement_error.as_deref(),
+            Some("No container engine is running on this Mac.")
+        );
+        let switch = v.runtime_switch.expect("built-in offered");
+        assert_eq!(
+            (
+                switch.setting.as_str(),
+                switch.value.as_str(),
+                switch.label.as_str()
+            ),
+            ("runtime.linux", "builtin", "Use built-in runtime")
+        );
+        assert!(!v.can_continue);
+        // Automatic needs no switch: cua sets the built-in one up itself.
+        let auto = WizardEnv {
+            linux_source: Some("auto".into()),
+            ..system.clone()
+        };
+        assert!(view(&s, &auto).runtime_switch.is_none());
+    }
+
+    /// With your other Mac online and This Mac unable to run the image,
+    /// New Space starts on that Mac, by name; a choice the person made
+    /// stays.
+    #[test]
+    fn a_mac_that_cannot_run_it_starts_on_your_other_mac() {
+        let e = WizardEnv {
+            local_available: false,
+            local_backends: Some(vec![]),
+            hosts: vec![host("m-studio", "Studio", "relay", true)],
+            ..env()
+        };
+        let s = reduce(
+            &initial(&e),
+            &WizardAction::ChooseOs { os: SpaceOs::Macos },
+            &e,
+        );
+        let v = view(&s, &e);
+        assert_eq!(v.placement_id, "host:m-studio");
+        assert_eq!(v.host.as_deref(), Some("m-studio"));
+        assert!(
+            v.placement_error.is_none() && v.placement_hint.is_none() && v.runtime_switch.is_none()
+        );
+        assert!(v.can_continue);
+        // Picked This Mac on purpose: it stays (with the install offered).
+        let picked = reduce(
+            &s,
+            &WizardAction::ChoosePlacement { on: "local".into() },
+            &e,
+        );
+        let picked = reduce(&picked, &WizardAction::ChooseOs { os: SpaceOs::Macos }, &e);
+        let v = view(&picked, &e);
+        assert_eq!(v.placement_id, "local");
+        assert!(v.placement_error.is_some());
+        assert!(v.placement_hint.is_none(), "your Mac is in the menu");
+        // An offline Mac is listed but never chosen for you.
+        let offline = WizardEnv {
+            hosts: vec![host("m-studio", "Studio", "relay", false)],
+            ..e
+        };
+        let s = reduce(
+            &initial(&offline),
+            &WizardAction::ChooseOs { os: SpaceOs::Macos },
+            &offline,
+        );
+        let v = view(&s, &offline);
+        assert_eq!(v.placement_id, "local");
+        // One line says how it comes back.
+        assert_eq!(
+            v.placement_hint.as_deref(),
+            Some(
+                "Studio is offline. Open Cua Spaces on Studio; once it is back, choose it in Run on."
+            )
+        );
     }
 
     /// The "Run on" menu lists This Mac and your machines; your clouds

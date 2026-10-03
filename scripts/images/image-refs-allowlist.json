@@ -628,6 +628,7 @@
     "ghcr.io/trycua/cua-desktop-linux": "legacy name of ghcr.io/trycua/linux (frozen, read-only; see legacy)",
     "ghcr.io/trycua/localhost": "resolver test message (a host:port prefix is not a repo)",
     "ghcr.io/trycua/macos-sequoia-vanilla": "tag-safety guard list of repos never to re-tag",
+    "ghcr.io/trycua/runtime-gvisor": "disk of the built-in Linux runtime VM (cua_vmm::managed), pinned by layer digest; not a Space image, so not in the catalog",
     "public.ecr.aws/k5j5w0x5/cua-omarchy-workspace": "cloud-built Fleet workspace repo (cloud repo owned)",
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04": "cloud-built Fleet workspace repo (cloud repo owned)",
     "public.ecr.aws/k5j5w0x5/cua-windows-2022": "cloud-built Fleet workspace repo (cloud repo owned); source of ghcr.io/trycua/windows:2022-disk"

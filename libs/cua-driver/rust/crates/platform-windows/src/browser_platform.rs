@@ -40,7 +40,12 @@ use crate::browser_standard_user::{
 };
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_INSUFFICIENT_BUFFER, E_ACCESSDENIED, FILETIME, HWND, NO_ERROR, RECT,
+    CloseHandle, BOOL, ERROR_INSUFFICIENT_BUFFER, E_ACCESSDENIED, FILETIME, HWND, LPARAM, NO_ERROR,
+    RECT,
+};
+use windows::Win32::Graphics::Gdi::{
+    EnumDisplayMonitors, GetMonitorInfoW, MonitorFromWindow, HDC, HMONITOR, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::NetworkManagement::IpHelper::{
     GetExtendedTcpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCP6TABLE_OWNER_PID, MIB_TCPROW_OWNER_PID,
@@ -59,7 +64,7 @@ use windows::Win32::System::Threading::{
     GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Shell::{
     FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX86, SHGetKnownFolderPath, KF_FLAG_DEFAULT,
 };
@@ -992,13 +997,208 @@ fn cdp_comparable_window_bounds(window_id: u64) -> Result<Rect, BrowserRefusal> 
             format!("could not read Windows outer bounds for window {window_id}: {error}"),
         )
     })?;
+    let physical = (
+        outer.left,
+        outer.top,
+        outer.right - outer.left,
+        outer.bottom - outer.top,
+    );
+    let displays = physical_displays();
+    let window_monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    let monitor_rect = monitor_info(window_monitor).map(|(rect, _)| rect);
+    let window_display = monitor_rect.and_then(|rect| {
+        displays.iter().position(|display| {
+            (display.left, display.top, display.right, display.bottom)
+                == (rect.left, rect.top, rect.right, rect.bottom)
+        })
+    });
+    if let Some(bounds) =
+        window_display.and_then(|index| physical_window_to_chromium_dip(physical, &displays, index))
+    {
+        return Ok(bounds);
+    }
+    // Fallback (display layout unavailable or not edge-connected to the
+    // primary): scale absolute coordinates by the window DPI. Exact on the
+    // primary display and on any display whose physical origin equals its
+    // Chromium DIP origin.
     let dpi = unsafe { GetDpiForWindow(hwnd) };
     let scale = if dpi == 0 { 1.0 } else { f64::from(dpi) / 96.0 };
     Ok(Rect::new(
-        f64::from(outer.left) / scale,
-        f64::from(outer.top) / scale,
-        f64::from(outer.right - outer.left) / scale,
-        f64::from(outer.bottom - outer.top) / scale,
+        f64::from(physical.0) / scale,
+        f64::from(physical.1) / scale,
+        f64::from(physical.2) / scale,
+        f64::from(physical.3) / scale,
+    ))
+}
+
+/// One monitor in physical (virtual-screen) pixels with its effective scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PhysicalDisplay {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    scale: f64,
+    primary: bool,
+}
+
+const MONITORINFOF_PRIMARY_FLAG: u32 = 1;
+
+fn monitor_info(monitor: HMONITOR) -> Option<(RECT, bool)> {
+    if monitor.is_invalid() {
+        return None;
+    }
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetMonitorInfoW(monitor, &mut info) }
+        .as_bool()
+        .then_some((
+            info.rcMonitor,
+            info.dwFlags & MONITORINFOF_PRIMARY_FLAG != 0,
+        ))
+}
+
+fn physical_displays() -> Vec<PhysicalDisplay> {
+    unsafe extern "system" fn collect(
+        monitor: HMONITOR,
+        _hdc: HDC,
+        _clip: *mut RECT,
+        data: LPARAM,
+    ) -> BOOL {
+        let displays = &mut *(data.0 as *mut Vec<PhysicalDisplay>);
+        if let Some((rect, primary)) = monitor_info(monitor) {
+            let (mut dpi_x, mut dpi_y) = (0u32, 0u32);
+            let scale = match GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) {
+                Ok(()) if dpi_x != 0 => f64::from(dpi_x) / 96.0,
+                _ => 1.0,
+            };
+            displays.push(PhysicalDisplay {
+                left: rect.left,
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+                scale,
+                primary,
+            });
+        }
+        BOOL(1)
+    }
+
+    let mut displays: Vec<PhysicalDisplay> = Vec::new();
+    unsafe {
+        let _ = EnumDisplayMonitors(
+            HDC::default(),
+            None,
+            Some(collect),
+            LPARAM(&mut displays as *mut Vec<PhysicalDisplay> as isize),
+        );
+    }
+    displays
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DisplayEdge {
+    Right,
+    Left,
+    Bottom,
+    Top,
+}
+
+/// Which edge of `parent` the `child` display shares (with a non-empty
+/// overlap along that edge), mirroring Chromium's touching-display test.
+fn shared_edge(parent: &PhysicalDisplay, child: &PhysicalDisplay) -> Option<DisplayEdge> {
+    let overlaps = |a0: i32, a1: i32, b0: i32, b1: i32| a0.max(b0) < a1.min(b1);
+    let vertical_overlap = overlaps(parent.top, parent.bottom, child.top, child.bottom);
+    let horizontal_overlap = overlaps(parent.left, parent.right, child.left, child.right);
+    if child.left == parent.right && vertical_overlap {
+        Some(DisplayEdge::Right)
+    } else if child.right == parent.left && vertical_overlap {
+        Some(DisplayEdge::Left)
+    } else if child.top == parent.bottom && horizontal_overlap {
+        Some(DisplayEdge::Bottom)
+    } else if child.bottom == parent.top && horizontal_overlap {
+        Some(DisplayEdge::Top)
+    } else {
+        None
+    }
+}
+
+/// Lay displays out in DIP space the way Chromium's `display::win::ScreenWin`
+/// does: the primary display keeps its origin, and every other display is
+/// placed against the edge it shares with an already placed display. The
+/// offset along that edge is scaled by the display it lies within (the
+/// child's scale when the child starts before the parent, otherwise the
+/// parent's), so a display's DIP origin generally differs from its physical
+/// origin divided by its own scale. Returns `None` for displays that are not
+/// edge-connected to the primary display.
+fn chromium_dip_origins(displays: &[PhysicalDisplay]) -> Vec<Option<(f64, f64)>> {
+    let mut origins: Vec<Option<(f64, f64)>> = vec![None; displays.len()];
+    let Some(primary) = displays.iter().position(|display| display.primary) else {
+        return origins;
+    };
+    origins[primary] = Some((
+        f64::from(displays[primary].left),
+        f64::from(displays[primary].top),
+    ));
+    let mut remaining: Vec<usize> = (0..displays.len()).filter(|&i| i != primary).collect();
+    let mut parents = vec![primary];
+    while let Some(parent_index) = parents.pop() {
+        let parent = displays[parent_index];
+        let (parent_x, parent_y) = origins[parent_index].expect("placed parent");
+        let parent_width = f64::from(parent.right - parent.left) / parent.scale;
+        let parent_height = f64::from(parent.bottom - parent.top) / parent.scale;
+        let mut still_remaining = Vec::with_capacity(remaining.len());
+        for child_index in remaining {
+            let child = displays[child_index];
+            let Some(edge) = shared_edge(&parent, &child) else {
+                still_remaining.push(child_index);
+                continue;
+            };
+            let (parent_begin, child_begin) = match edge {
+                DisplayEdge::Right | DisplayEdge::Left => (parent.top, child.top),
+                DisplayEdge::Bottom | DisplayEdge::Top => (parent.left, child.left),
+            };
+            let offset = if child_begin < parent_begin {
+                -(f64::from(parent_begin - child_begin) / child.scale)
+            } else {
+                f64::from(child_begin - parent_begin) / parent.scale
+            }
+            .floor();
+            let child_width = f64::from(child.right - child.left) / child.scale;
+            let child_height = f64::from(child.bottom - child.top) / child.scale;
+            origins[child_index] = Some(match edge {
+                DisplayEdge::Right => (parent_x + parent_width, parent_y + offset),
+                DisplayEdge::Left => (parent_x - child_width, parent_y + offset),
+                DisplayEdge::Bottom => (parent_x + offset, parent_y + parent_height),
+                DisplayEdge::Top => (parent_x + offset, parent_y - child_height),
+            });
+            parents.push(child_index);
+        }
+        remaining = still_remaining;
+    }
+    origins
+}
+
+/// Convert a physical window rect `(x, y, width, height)` on
+/// `displays[display_index]` to the DIP coordinates Chromium reports through
+/// CDP `Browser.getWindowForTarget` (#4428).
+fn physical_window_to_chromium_dip(
+    physical: (i32, i32, i32, i32),
+    displays: &[PhysicalDisplay],
+    display_index: usize,
+) -> Option<Rect> {
+    let display = displays.get(display_index)?;
+    let (origin_x, origin_y) = chromium_dip_origins(displays)
+        .get(display_index)
+        .copied()??;
+    let scale = display.scale;
+    Some(Rect::new(
+        origin_x + f64::from(physical.0 - display.left) / scale,
+        origin_y + f64::from(physical.1 - display.top) / scale,
+        f64::from(physical.2) / scale,
+        f64::from(physical.3) / scale,
     ))
 }
 
@@ -2478,6 +2678,78 @@ impl BrowserPlatform for WindowsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn display(left: i32, top: i32, right: i32, bottom: i32, scale: f64) -> PhysicalDisplay {
+        PhysicalDisplay {
+            left,
+            top,
+            right,
+            bottom,
+            scale,
+            primary: left == 0 && top == 0,
+        }
+    }
+
+    /// The mixed-DPI layout measured in #4428 (Chrome stable, Windows 11).
+    fn issue_4428_displays() -> Vec<PhysicalDisplay> {
+        vec![
+            display(6000, 13, 9840, 2173, 1.0),    // DISPLAY1, 100%
+            display(3840, -1000, 6000, 2840, 1.5), // DISPLAY2, 150%
+            display(0, 0, 3840, 2160, 1.0),        // DISPLAY3, primary
+        ]
+    }
+
+    fn assert_cdp_match(actual: Rect, expected: Rect) {
+        assert!(
+            actual.approx_eq(&expected, 2.0),
+            "actual {actual:?} expected CDP {expected:?}"
+        );
+    }
+
+    #[test]
+    fn chromium_dip_layout_matches_measured_cdp_bounds_on_mixed_dpi() {
+        let displays = issue_4428_displays();
+        // Primary, 100%: exact.
+        assert_cdp_match(
+            physical_window_to_chromium_dip((1470, 19, 2356, 2119), &displays, 2).unwrap(),
+            Rect::new(1470.0, 19.0, 2356.0, 2119.0),
+        );
+        // DISPLAY1, 100%, right of the 150% display: x shifted by its lost width.
+        assert_cdp_match(
+            physical_window_to_chromium_dip((6193, 200, 2014, 1507), &displays, 0).unwrap(),
+            Rect::new(5473.0, 195.0, 2014.0, 1507.0),
+        );
+        // DISPLAY2, 150%: monitor origin keeps 3840 DIP, not 3840 / 1.5.
+        assert_cdp_match(
+            physical_window_to_chromium_dip((3943, -800, 2721, 2261), &displays, 1).unwrap(),
+            Rect::new(3909.0, -534.0, 1815.0, 1508.0),
+        );
+    }
+
+    #[test]
+    fn chromium_dip_layout_places_left_top_and_detached_displays() {
+        let displays = vec![
+            display(0, 0, 1920, 1080, 1.0),
+            display(-3840, 0, 0, 2160, 2.0),      // left, 200%
+            display(0, -1440, 2560, 0, 1.0),      // above
+            display(5000, 5000, 6000, 6000, 1.0), // not edge-connected
+        ];
+        let origins = chromium_dip_origins(&displays);
+        assert_eq!(origins[0], Some((0.0, 0.0)));
+        assert_eq!(origins[1], Some((-1920.0, 0.0)));
+        assert_eq!(origins[2], Some((0.0, -1440.0)));
+        assert_eq!(origins[3], None);
+        assert!(physical_window_to_chromium_dip((5100, 5100, 10, 10), &displays, 3).is_none());
+    }
+
+    #[test]
+    fn chromium_dip_layout_without_primary_is_unplaced() {
+        let mut displays = issue_4428_displays();
+        for display in &mut displays {
+            display.primary = false;
+        }
+        assert!(chromium_dip_origins(&displays).iter().all(Option::is_none));
+    }
 
     #[test]
     fn process_fingerprint_uses_manifest_canonical_executable_path() {

@@ -33,6 +33,11 @@ pub const ENV_DEBUG: &str = "CUA_TELEMETRY_DEBUG";
 pub const ENV_ENDPOINT: &str = "CUA_TELEMETRY_ENDPOINT";
 /// Refuse every non-loopback send (set for all test runs).
 pub const ENV_FORBID_NETWORK: &str = "CUA_TELEMETRY_FORBID_NETWORK";
+/// Set (to the run id) in the environment of every Cua agent run, by the
+/// run's launcher inside the Space. A Cua program running there is not the
+/// install that started the run, so it records no agent runs of its own:
+/// the host install that started the run records it.
+pub const ENV_IN_AGENT_RUN: &str = "CUA_AGENT_RUN_ID";
 /// How Cua was installed (set by installers).
 pub const ENV_INSTALL_CHANNEL: &str = "CUA_INSTALL_CHANNEL";
 /// File in the telemetry state dir where install.sh / install.ps1 record the

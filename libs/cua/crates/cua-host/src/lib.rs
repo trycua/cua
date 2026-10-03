@@ -41,15 +41,18 @@ pub mod preflight;
 pub mod provided;
 pub mod relay;
 pub mod service;
+#[cfg(test)]
+mod setup_tests;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 #[cfg(test)]
 mod tests;
 
 pub use device::{DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot};
+pub use host::SetupStage;
 pub use host::{
     DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,
-    HostStatus, PermissionHint, SetupOptions, SpacesDaemon, permission_hints,
+    HostStatus, META_PROVIDES_SPACES, PermissionHint, SetupOptions, SpacesDaemon, permission_hints,
 };
 pub use machine::machine_id;
 pub use provided::{
@@ -106,6 +109,32 @@ pub enum Error {
     /// Anything else.
     #[error("{0}")]
     Internal(String),
+}
+
+impl Error {
+    /// The HTTP status the relay or the download server answered with,
+    /// when one did. None: the server was not reached (offline, DNS, TLS,
+    /// timeout) or the error is not about HTTP at all.
+    pub fn http_status(&self) -> Option<u16> {
+        match self {
+            // `relay::http_error` maps these statuses to these variants.
+            Error::Unauthenticated(m) if m.starts_with("relay: ") => Some(401),
+            Error::PermissionDenied(m) if m.starts_with("relay: ") => Some(403),
+            Error::NotFound(m) if m.starts_with("relay: ") => Some(404),
+            Error::Conflict(m) if m.starts_with("relay: ") => Some(409),
+            Error::Relay(m) | Error::Download(m) => status_in(m),
+            _ => None,
+        }
+    }
+}
+
+/// The status in an "HTTP 503: ..." / "<url>: HTTP 404 Not Found" message.
+fn status_in(message: &str) -> Option<u16> {
+    message.match_indices("HTTP ").find_map(|(i, _)| {
+        let digits = message.get(i + 5..i + 8)?;
+        let code: u16 = digits.parse().ok()?;
+        (100..600).contains(&code).then_some(code)
+    })
 }
 
 /// Result alias.

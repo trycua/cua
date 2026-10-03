@@ -24,6 +24,7 @@
 
 pub mod api;
 pub mod assertion;
+pub mod auth_log;
 pub mod client;
 pub mod device_api;
 pub mod devices;

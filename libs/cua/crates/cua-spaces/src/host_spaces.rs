@@ -1480,7 +1480,8 @@ impl Spaces {
     /// (at most [`HOST_PROBE`] each, all at once). One that answers without
     /// providing Spaces is left out; one that does not answer is listed
     /// offline when it provided one of your Spaces before (relay) or was
-    /// added as a host (direct). Without a relay account, or when the relay
+    /// added as a host (direct), or is yours and set up to provide Spaces
+    /// (its relay meta, [`cua_host::META_PROVIDES_SPACES`]). Without a relay account, or when the relay
     /// cannot be asked, only the direct hosts are listed.
     pub async fn hosts(&self) -> Result<Vec<HostOffer>> {
         let relay: Vec<crate::relay::RelayMachine> = if self.relay_account().is_some() {
@@ -1523,7 +1524,16 @@ impl Spaces {
                     } else {
                         None
                     };
-                    host_offer(m.id.clone(), name, "relay", answer, known.contains(&m.id))
+                    // Offline, it is listed (with why) when it provided one
+                    // of your Spaces before, or its setup said it provides
+                    // Spaces (or predates saying so): a Mac whose service
+                    // is down must not just vanish from "Run on".
+                    let offers_spaces = m
+                        .meta
+                        .get(cua_host::META_PROVIDES_SPACES)
+                        .is_none_or(|v| v != "off");
+                    let keep = known.contains(&m.id) || (m.role == "owner" && offers_spaces);
+                    host_offer(m.id.clone(), name, "relay", answer, keep)
                 }),
         )
         .await;

@@ -27,6 +27,7 @@ struct Snapshot<S> {
     screenshot_owner: Option<String>,
     screenshot_scale: Option<f64>,
     zoom: Option<ZoomContext>,
+    semantic: bool,
     payload: S,
 }
 
@@ -151,6 +152,31 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         session: Option<&str>,
         screenshot_scale: Option<f64>,
     ) -> Option<(u32, Vec<u32>)> {
+        self.publish_snapshot(pid, window_id, payload, session, screenshot_scale, true)
+    }
+
+    /// Publish screenshot/capture state without claiming that an accessibility
+    /// walk has completed for this window.
+    pub fn publish_capture_for_session(
+        &self,
+        pid: i32,
+        window_id: u64,
+        payload: S,
+        session: Option<&str>,
+        screenshot_scale: Option<f64>,
+    ) -> Option<(u32, Vec<u32>)> {
+        self.publish_snapshot(pid, window_id, payload, session, screenshot_scale, false)
+    }
+
+    fn publish_snapshot(
+        &self,
+        pid: i32,
+        window_id: u64,
+        payload: S,
+        session: Option<&str>,
+        screenshot_scale: Option<f64>,
+        semantic: bool,
+    ) -> Option<(u32, Vec<u32>)> {
         let (id, retired) = {
             let mut inner = self.inner.lock().unwrap();
             if session.is_some_and(crate::session::is_session_ended) {
@@ -171,6 +197,7 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
                 screenshot_owner: session.map(str::to_owned),
                 screenshot_scale,
                 zoom: None,
+                semantic,
                 payload,
             });
             (id, retired)
@@ -321,6 +348,24 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             .iter()
             .find(|entry| entry.id == snapshot_id)
             .map(|entry| entry.window_id)
+    }
+
+    /// Whether this runtime has already published any snapshot for the window.
+    pub fn contains_window(&self, pid: i32, window_id: u64) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .get(&pid)
+            .is_some_and(|lane| lane.iter().any(|entry| entry.window_id == window_id))
+    }
+
+    /// Whether an accessibility/semantic snapshot has been published for the
+    /// window. Screenshot-only previews deliberately do not satisfy this.
+    pub fn contains_semantic_window(&self, pid: i32, window_id: u64) -> bool {
+        self.inner.lock().unwrap().get(&pid).is_some_and(|lane| {
+            lane.iter()
+                .any(|entry| entry.window_id == window_id && entry.semantic)
+        })
     }
 
     pub fn resolve(
@@ -523,6 +568,28 @@ mod tests {
         assert!(cache
             .resolve(9, &serde_json::json!({ "element_token": token_for(id, 5) }))
             .is_err());
+    }
+
+    #[test]
+    fn semantic_membership_ignores_capture_only_publication() {
+        let cache = SnapshotStore::new();
+        assert!(!cache.contains_window(9, 99));
+        assert!(!cache.contains_semantic_window(9, 99));
+
+        cache
+            .publish_capture_for_session(9, 99, Payload(vec![]), None, Some(1.0))
+            .unwrap();
+        assert!(cache.contains_window(9, 99));
+        assert!(!cache.contains_semantic_window(9, 99));
+
+        cache.publish(9, 99, Payload(vec![]));
+        assert!(cache.contains_semantic_window(9, 99));
+        assert!(!cache.contains_semantic_window(9, 100));
+        assert!(!cache.contains_semantic_window(10, 99));
+
+        cache.remove(9, 99);
+        assert!(!cache.contains_window(9, 99));
+        assert!(!cache.contains_semantic_window(9, 99));
     }
 
     fn token_refusal(cache: &SnapshotStore<Payload>, pid: i32, token: &str) -> serde_json::Value {

@@ -16,6 +16,8 @@ public struct HostSetupFailure: Equatable, Sendable {
         case guiSession
         /// The Cua account is signed out or its session expired.
         case signedOut
+        /// macOS did not start the host service (launchd).
+        case service
         case other
     }
 
@@ -29,6 +31,18 @@ public struct HostSetupFailure: Equatable, Sendable {
     public static let retryingLabel = "Retrying\u{2026}"
     public static let detailsLabel = "Details"
     public static let copyLabel = "Copy"
+    public static let signInLabel = "Sign In"
+
+    /// A failure whose kind the error itself says (the account refused,
+    /// whatever its words), with the raw error as details.
+    public static func presenting(_ raw: String, as kind: Kind) -> HostSetupFailure {
+        let (title, message) = words(kind)
+        return HostSetupFailure(kind: kind, title: title, message: message, details: raw)
+    }
+
+    /// The failure's button: Sign In when the account is what is missing
+    /// (it signs in inline, then sets up), Retry otherwise.
+    public var actionLabel: String { kind == .signedOut ? Self.signInLabel : Self.retryLabel }
 
     /// Maps the raw setup error to what the sheet shows.
     public static func presenting(_ raw: String) -> HostSetupFailure {
@@ -58,6 +72,8 @@ public struct HostSetupFailure: Equatable, Sendable {
         if any(["aqua", "no gui session", "gui session", "not logged in at the console", "console user",
                 "no console"]) { return .guiSession }
 
+        if any(["launchctl", "launchd", "host service", "bootstrap failed"]) { return .service }
+
         if word("401") || any([
             "signed out", "not signed in", "sign in again", "please sign in", "unauthenticated", "unauthorized",
             "login required", "not logged in", "session expired", "token expired", "invalid token",
@@ -84,6 +100,10 @@ public struct HostSetupFailure: Equatable, Sendable {
         case .signedOut:
             return ("Sign in to Cua",
                     "Your Cua account isn\u{2019}t signed in on this Mac. Sign in, then try again.")
+        case .service:
+            return ("Couldn\u{2019}t start the Cua host service",
+                    "macOS didn\u{2019}t start the service your other devices connect to. Try again; "
+                        + "if it keeps failing, restart this Mac.")
         case .other:
             return ("Couldn\u{2019}t set up this Mac for access",
                     "Something went wrong. Try again, or open Details to see what happened.")

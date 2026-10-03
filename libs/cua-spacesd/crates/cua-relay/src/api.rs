@@ -29,6 +29,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
+use crate::auth_log::{self, Reason, Route};
 use crate::device_api::{flag_grace, gate, session_header, Gate};
 use crate::devices::AuditEvent;
 use crate::directory::{
@@ -198,7 +199,10 @@ async fn caller(relay: &Relay, headers: &HeaderMap) -> Result<Caller, Response> 
             .directory
             .machine_for_token(token)
             .map(Caller::Machine)
-            .ok_or_else(|| error(StatusCode::UNAUTHORIZED, "invalid machine token"));
+            .ok_or_else(|| {
+                auth_log::rejected(headers, Route::Machines, Reason::UnknownMachineToken, None);
+                error(StatusCode::UNAUTHORIZED, "invalid machine token")
+            });
     }
     let Some(oidc) = &relay.config.oidc else {
         return Err(error(
@@ -207,6 +211,7 @@ async fn caller(relay: &Relay, headers: &HeaderMap) -> Result<Caller, Response> 
         ));
     };
     let Some(token) = account_token(headers) else {
+        auth_log::rejected(headers, Route::Machines, Reason::MissingToken, None);
         return Err(error(StatusCode::UNAUTHORIZED, "missing account token"));
     };
     oidc.validate(token)
@@ -216,6 +221,7 @@ async fn caller(relay: &Relay, headers: &HeaderMap) -> Result<Caller, Response> 
             Caller::Account(who, g)
         })
         .map_err(|e| {
+            auth_log::rejected(headers, Route::Machines, e.reason, Some(&e.facts));
             error(
                 StatusCode::UNAUTHORIZED,
                 format!("invalid account token: {e}"),

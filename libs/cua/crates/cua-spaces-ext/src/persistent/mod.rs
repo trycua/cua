@@ -520,6 +520,12 @@ impl Persistent {
     /// the home, and starts the harness with its memory in the home and
     /// the bridge attached.
     pub async fn start(&self, name: &str, prompt: &str) -> Result<Delivery> {
+        self.start_from(name, prompt, "persistent").await
+    }
+
+    /// [`Self::start`], recording `entry` (`persistent` or `routine`) as
+    /// where the run was started from.
+    async fn start_from(&self, name: &str, prompt: &str, entry: &str) -> Result<Delivery> {
         let rec = self.get(name)?;
         if rec.paused {
             return Err(Error::Agent(format!(
@@ -576,10 +582,15 @@ impl Persistent {
             )
             .await;
         let started = match started {
-            Ok(s) => s,
+            Ok(s) => {
+                cua_spaces::agents::telemetry::started(&agents, &rec.space, entry, &s);
+                s
+            }
             Err(e) => {
                 self.release_lease(name).await;
-                return Err(e.into());
+                let e = Error::from(e);
+                cua_spaces::agents::telemetry::start_failed(&rec.harness, &rec.space, entry, &e);
+                return Err(e);
             }
         };
         self.update(name, |r| {
@@ -599,6 +610,11 @@ impl Persistent {
     /// the home restored) when it has none. Refused while a turn runs or
     /// while paused.
     pub async fn send(&self, name: &str, text: &str) -> Result<Delivery> {
+        self.send_from(name, text, "persistent").await
+    }
+
+    /// [`Self::send`], recording `entry` for a run it starts.
+    async fn send_from(&self, name: &str, text: &str, entry: &str) -> Result<Delivery> {
         let rec = self.get(name)?;
         if rec.paused {
             return Err(Error::Agent(format!("{name} is paused")));
@@ -627,7 +643,7 @@ impl Persistent {
                 _ => {}
             }
         }
-        self.start(name, text).await
+        self.start_from(name, text, entry).await
     }
 
     async fn stop_run(&self, rec: &AgentRecord) -> Result<Option<String>> {
@@ -635,7 +651,9 @@ impl Persistent {
             return Ok(None);
         };
         let agents = self.agents_for(&rec.space).await?;
+        cua_spaces::agents::telemetry::before_stop(&agents, run).await;
         agents.stop(run).await?;
+        cua_spaces::agents::telemetry::stopped(run);
         Ok(Some(run.clone()))
     }
 
@@ -1045,6 +1063,7 @@ impl Persistent {
             }
             self.update(&rec.name, |r| r.saved_turn = turn)?;
         }
+        let run_failed = failed.is_some();
         if let Some(err) = failed
             && page.cursor > rec.cursor
             && rec.notify
@@ -1058,6 +1077,13 @@ impl Persistent {
                 Some(&rec.space),
             )?;
             report.notified += 1;
+        }
+        // Agent-run telemetry: the end of a run this install started.
+        if (!ended.is_empty() || run_failed)
+            && cua_telemetry::global().agent_run_pending(&run)
+            && let Ok(info) = agents.status(&run).await
+        {
+            cua_spaces::agents::telemetry::observe(&info);
         }
         if page.cursor != rec.cursor {
             let cursor = page.cursor;
@@ -1087,7 +1113,11 @@ impl RoutineRunner for Runner {
                 };
             }
         }
-        match self.0.send(&routine.bot_id, &routine.turn_text()).await {
+        match self
+            .0
+            .send_from(&routine.bot_id, &routine.turn_text(), "routine")
+            .await
+        {
             Ok(d) => RoutineFiring::Started { run_id: d.run_id },
             Err(Error::Agent(m)) if m.contains("middle of a turn") => {
                 RoutineFiring::Refused { reason: m }

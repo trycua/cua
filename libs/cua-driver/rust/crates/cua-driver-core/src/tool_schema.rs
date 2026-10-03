@@ -153,6 +153,21 @@ pub fn resolve_timeout_ms(value: Option<&Value>) -> u64 {
         .unwrap_or(TIMEOUT_MS_DEFAULT)
 }
 
+/// Resolve a walk timeout while allowing a platform to grant an omitted
+/// timeout a larger budget until that window has produced its first snapshot.
+/// Explicit caller values always retain the shared clamp semantics.
+pub fn resolve_timeout_ms_with_first_snapshot_grace(
+    value: Option<&Value>,
+    has_prior_snapshot: bool,
+    first_snapshot_default: u64,
+) -> u64 {
+    if value.is_none() && !has_prior_snapshot {
+        first_snapshot_default.clamp(TIMEOUT_MS_MIN, TIMEOUT_MS_MAX)
+    } else {
+        resolve_timeout_ms(value)
+    }
+}
+
 // ── The gate ─────────────────────────────────────────────────────────────────
 
 /// The canonical *shape* of each shared param (description stripped). `None` for
@@ -311,6 +326,22 @@ mod tests {
             &json!({"type":"object","properties":{"timeout_ms": schema}})
         )
         .is_empty());
+    }
+
+    #[test]
+    fn first_snapshot_grace_never_overrides_an_explicit_timeout() {
+        assert_eq!(
+            resolve_timeout_ms_with_first_snapshot_grace(None, false, 2_000),
+            2_000
+        );
+        assert_eq!(
+            resolve_timeout_ms_with_first_snapshot_grace(None, true, 2_000),
+            TIMEOUT_MS_DEFAULT
+        );
+        assert_eq!(
+            resolve_timeout_ms_with_first_snapshot_grace(Some(&json!(750)), false, 2_000),
+            750
+        );
     }
 
     #[test]

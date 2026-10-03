@@ -640,10 +640,39 @@ pub fn onboarding_step(step: &str, outcome: Outcome) -> Option<Event> {
     })
 }
 
-/// `cua_agent_run_completed`.
+/// Where an agent run was started from ([`schema::AGENT_ENTRIES`]), else
+/// `other`.
+pub fn agent_entry(entry: &str) -> &'static str {
+    pick(schema::AGENT_ENTRIES, entry, "other")
+}
+
+/// `cua_agent_run_started`: a run was started (`Outcome::Ok`) or its start
+/// failed (`Outcome::Error` with the error variant). `on` is a location word
+/// or a Space id (`local:dev`; only the location word before `:` is kept).
+pub fn agent_run_started(
+    harness_id: &str,
+    on: &str,
+    entry: &str,
+    outcome: Outcome,
+    error_variant: Option<&str>,
+) -> Event {
+    Event::new(event::AGENT_RUN_STARTED)
+        .s("harness", harness(harness_id))
+        .s("location", location(on))
+        .s("entry", agent_entry(entry))
+        .s("outcome", outcome.as_str())
+        .s(
+            "error_kind",
+            error_variant.map(error_kind).unwrap_or("none"),
+        )
+}
+
+/// `cua_agent_run_completed`: a run's first turn ended (or the run failed,
+/// crashed or was stopped first).
 pub fn agent_run_completed(
     harness_id: &str,
     on: &str,
+    entry: &str,
     outcome: Outcome,
     error_variant: Option<&str>,
     elapsed: Duration,
@@ -651,12 +680,33 @@ pub fn agent_run_completed(
     Event::new(event::AGENT_RUN_COMPLETED)
         .s("harness", harness(harness_id))
         .s("location", location(on))
+        .s("entry", agent_entry(entry))
         .s("outcome", outcome.as_str())
         .s(
             "error_kind",
             error_variant.map(error_kind).unwrap_or("none"),
         )
         .s("duration_bucket", duration_bucket(elapsed))
+}
+
+/// How an agent run ended, from its published status (`cua_agents`
+/// `RunStatus::as_str`), the ACP stop reason of its last turn and whether
+/// it recorded an error. None while it still runs (or cannot be read).
+pub fn agent_run_end(
+    status: &str,
+    stop_reason: Option<&str>,
+    recorded_error: bool,
+) -> Option<(Outcome, Option<&'static str>)> {
+    match status.trim() {
+        "idle" if stop_reason.is_some_and(|r| r.trim() == "cancelled") => {
+            Some((Outcome::Cancelled, None))
+        }
+        "idle" if recorded_error => Some((Outcome::Error, Some("AgentFailed"))),
+        "idle" => Some((Outcome::Ok, None)),
+        "failed" => Some((Outcome::Error, Some("AgentFailed"))),
+        "crashed" => Some((Outcome::Error, Some("AgentCrashed"))),
+        _ => None,
+    }
 }
 
 /// `cua_bench_run_completed`.
@@ -884,6 +934,19 @@ pub fn persistent_agent(
     })
 }
 
+/// What a host setup knew about its account and where it stopped.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HostSetupDetail<'a> {
+    /// A Cua account session is stored on this machine.
+    pub signed_in: bool,
+    /// `provided`, `expired`, `missing` or `not_needed`.
+    pub token_state: &'a str,
+    /// The stage a failure stopped at (`token`, `register`, ...).
+    pub failed_stage: Option<&'a str>,
+    /// The HTTP status behind the failure, if a server answered.
+    pub http_status: Option<u16>,
+}
+
 /// `cua_host_setup`. `profile` is the request's (`desktop`, `spare`);
 /// `share_desktop` and `provide_spaces` both on is `both`.
 pub fn host_setup(
@@ -892,6 +955,7 @@ pub fn host_setup(
     provide_spaces: bool,
     outcome: Outcome,
     error_variant: Option<&str>,
+    detail: &HostSetupDetail<'_>,
 ) -> Event {
     let profile = match (share_desktop, provide_spaces) {
         (true, true) => "both",
@@ -909,6 +973,25 @@ pub fn host_setup(
         .s(
             "error_kind",
             error_variant.map(error_kind).unwrap_or("none"),
+        )
+        .b("signed_in", detail.signed_in)
+        .s(
+            "token_state",
+            pick(schema::HOST_TOKEN_STATES, detail.token_state, "missing"),
+        )
+        .s(
+            "failed_stage",
+            detail
+                .failed_stage
+                .map(|st| pick(schema::HOST_SETUP_STAGES, st, "none"))
+                .unwrap_or("none"),
+        )
+        .n(
+            "http_status",
+            detail
+                .http_status
+                .filter(|c| (100..600).contains(c))
+                .map_or(0, u64::from),
         )
 }
 

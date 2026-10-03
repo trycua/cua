@@ -15,5 +15,11 @@ base64.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
 tracing.workspace = true
+zeroize = "1"
+serde_json.workspace = true
 # A maintained, pure-Rust LevelDB (reads Chromium's Snappy tables and log).
 rusty-leveldb = "4"
+
+[target.'cfg(windows)'.dependencies]
+# DPAPI (`CryptProtectData`/`CryptUnprotectData`) for Chromium's Windows key.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Memory"] }

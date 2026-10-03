@@ -308,6 +308,8 @@ Returned by [`app_wizard_env_from_json`](#app_wizard_env_from_json).
 | `local_details` / `localDetails` | `Option<HashMap<String, String>>` |  | Why each local backend that is not ready is not (the runtime doctor's detail, by backend name), when known: the wizard names the reason instead of only "This Mac cannot run container Spaces." |
 | `max_cpus` / `maxCpus` | `u32` |  | Upper bound for the CPU slider. |
 | `host_arch` / `hostArch` | `Option<String>` |  | This machine's architecture (`arm64`, `amd64`), when known. |
+| `lume_source` / `lumeSource` | `Option<String>` |  | Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`, `system`), when known. |
+| `linux_source` / `linuxSource` | `Option<String>` |  | Which engine local Linux Spaces run on (`runtime.linux`: `auto`, `builtin`, `system`), when known (a Mac). |
 | `storage` | [`Option<AppLocalStorage>`](#applocalstorage-record) |  | Free space and pulled images here (the SDK's `Local.storage()`), when known. |
 | `cloud_pricing` / `cloudPricing` | [`Option<AppCloudPricing>`](#appcloudpricing-record) |  | This account's Cua Cloud rates, when known (no estimate without). |
 | `clouds` | [`Vec<AppConnectedCloud>`](/cua-sdk/reference/spaces/app-core/cloud#appconnectedcloud-record) |  | The user's connected clouds (`cloud_status`), for "Your cloud" (offered only while its experiment is on: `offered_clouds`). |
@@ -388,6 +390,8 @@ Returned by [`app_wizard_view`](#app_wizard_view).
 | `cloud` | `Option<String>` |  | The connected cloud "Your cloud" creates in (`aws`). |
 | `host` | `Option<String>` |  | The machine of yours it creates on (`SpaceHost.id`). |
 | `placement_error` / `placementError` | `Option<String>` |  | Why the chosen placement cannot be used. |
+| `placement_hint` / `placementHint` | `Option<String>` |  | One line under "Run on" when This Mac cannot run the Space and no machine of yours is listed: how another Mac joins. |
+| `runtime_switch` / `runtimeSwitch` | [`Option<AppRuntimeSwitch>`](/cua-sdk/reference/spaces/app-core#appruntimeswitch-record) |  | Switches This Mac to the built-in runtime the Space needs, when it is set to use its own and that is missing. |
 | `advanced` | `bool` |  | Advanced shown. |
 | `kind_tiles` / `kindTiles` | [`Vec<AppTile>`](#apptile-record) |  | Kind tiles. |
 | `runtimes` | [`Vec<AppMenuOption>`](#appmenuoption-record) |  | Runtime menu. |

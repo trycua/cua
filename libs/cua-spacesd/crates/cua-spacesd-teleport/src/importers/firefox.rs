@@ -63,7 +63,24 @@ impl ImportProvider for FirefoxImporter {
 
         let mut reader = BundleReader::open_with_limit(bundle, self.max_total_bytes)?;
         let mut tab_urls: Vec<String> = Vec::new();
+        let (mut cookies, mut local_storage, mut logins) = (None, None, None);
         while let Some(entry) = reader.next_entry()? {
+            // Items from the Keyvault go into the profile's own stores below.
+            match entry.rel_path.as_str() {
+                cua_teleport_bundle::cookies::COOKIES_ENTRY => {
+                    cookies = Some(entry.bytes);
+                    continue;
+                }
+                cua_teleport_bundle::local_storage::LOCAL_STORAGE_ENTRY => {
+                    local_storage = Some(entry.bytes);
+                    continue;
+                }
+                cua_teleport_bundle::logins::LOGINS_ENTRY => {
+                    logins = Some(entry.bytes);
+                    continue;
+                }
+                _ => {}
+            }
             if entry.rel_path == TABS_JSON {
                 tab_urls = serde_json::from_slice(&entry.bytes).unwrap_or_default();
                 continue;
@@ -74,6 +91,28 @@ impl ImportProvider for FirefoxImporter {
                 continue;
             };
             write_entry(&profile_dir.join(within), &entry, false, record)?;
+        }
+
+        if let Some(b) = cookies {
+            crate::firefox_items::install_cookies(
+                &profile_dir,
+                &cua_teleport_bundle::cookies::parse(&b),
+                record,
+            )?;
+        }
+        if let Some(b) = local_storage {
+            crate::firefox_items::install_local_storage(
+                &profile_dir,
+                &cua_teleport_bundle::local_storage::parse(&b),
+                record,
+            )?;
+        }
+        if let Some(b) = logins {
+            crate::firefox_items::install_logins(
+                &profile_dir,
+                &cua_teleport_bundle::logins::parse(&b),
+                record,
+            )?;
         }
 
         // Session-restore fallback: a running source Firefox keeps the live

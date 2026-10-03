@@ -940,7 +940,7 @@ mod tests {
         let app = e.app.unwrap();
         assert_eq!(
             (app.id.as_str(), app.capability),
-            ("vscode", TeleportCapability::InstallOnly)
+            ("vscode", TeleportCapability::Full)
         );
         let mv = window_event(
             &registry(),

@@ -580,6 +580,19 @@ impl RecordCodec for GenericCodec {
                         })?);
                     }
                 }
+                // Saved logins a provider decrypted because the user ticked them.
+                LOGINS_ENTRY => {
+                    let bytes = entry_bytes(e)?;
+                    let rows: Vec<LoginRow> = serde_json::from_slice(&bytes)
+                        .map_err(|_| Error::Corrupt("logins.json is not valid".into()))?;
+                    for r in &rows {
+                        out.records.push(password_record(&LoginRecord {
+                            origin: r.origin.clone(),
+                            username: r.username.clone(),
+                            password: String::from_utf8_lossy(&r.password).into_owned(),
+                        })?);
+                    }
+                }
                 path => {
                     let bytes = entry_bytes(e)?;
                     out.records.push(file_record(path, e.mode, &bytes)?);
@@ -1114,6 +1127,33 @@ mod tests {
             sorted(by(LOCAL_STORAGE_ENTRY), &["origin", "key"]),
             sorted(storage, &["origin", "key"])
         );
+    }
+
+    /// A provider's decrypted logins (ticked by the user) become password
+    /// items, and delivering them again gives the same rows.
+    #[test]
+    fn logins_entry_round_trips_through_password_items() {
+        let rows = serde_json::json!([
+            {"origin": "https://github.com", "username": "octo", "password": b64().encode(b"gh-pw"),
+             "signon_realm": "https://github.com/"}
+        ]);
+        let exported = GenericCodec
+            .export(
+                vec![entry(LOGINS_ENTRY, rows.to_string().as_bytes())],
+                &ExportOptions::default(),
+            )
+            .unwrap();
+        assert_eq!(exported.records.len(), 1);
+        assert_eq!(exported.records[0].kind, ItemKind::Password);
+        assert_eq!(
+            exported.records[0].domain.as_deref(),
+            Some("https://github.com")
+        );
+        let payloads: Vec<ItemPayload> = exported.records.into_iter().map(payload_of).collect();
+        let entries = GenericCodec.import(&payloads).unwrap();
+        let back: serde_json::Value =
+            serde_json::from_slice(&b64().decode(&entries[0].data).unwrap()).unwrap();
+        assert_eq!(back, rows);
     }
 
     #[test]

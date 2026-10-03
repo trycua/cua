@@ -83,14 +83,13 @@ pub trait DockerApi: Send + Sync {
     async fn remove_volume(&self, name: &str) -> Result<(), String>;
 }
 
-/// The engine the SDK would use (discovered like the docker CLI), when it
-/// answers within a few seconds. Never starts an engine.
+/// The engine the SDK would use (this Mac's own, discovered like the docker
+/// CLI, or the built-in Linux runtime while it runs), when it answers within
+/// a few seconds. Never starts an engine.
 pub async fn connect() -> Option<Arc<dyn DockerApi>> {
-    let fut = cua_vmm::container::ContainerRuntime::connect(
-        cua_vmm::container::ContainerConfig::default(),
-    );
+    let fut = cua_vmm::managed::connect_if_up(cua_vmm::container::ContainerConfig::default());
     match tokio::time::timeout(Duration::from_secs(5), fut).await {
-        Ok(Ok(rt)) => Some(Arc::new(Engine(rt.docker().clone()))),
+        Ok(Some(rt)) => Some(Arc::new(Engine(rt.docker().clone()))),
         _ => None,
     }
 }

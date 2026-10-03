@@ -457,6 +457,14 @@ struct Session {
     expires: u64,
 }
 
+/// [`DeviceError::Proof`] message: the proof's timestamp is outside the
+/// allowed clock window.
+pub const PROOF_STALE: &str = "the device clock is off or the proof is stale";
+/// [`DeviceError::Proof`] message: the signature does not verify.
+pub const PROOF_BAD_SIGNATURE: &str = "invalid device signature";
+/// [`DeviceError::Proof`] message: the proof was already used.
+pub const PROOF_REPLAYED: &str = "device proof already used";
+
 /// Errors, mapped to HTTP statuses by the API.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeviceError {
@@ -860,12 +868,10 @@ impl DeviceStore {
     ) -> Result<(), DeviceError> {
         let now = now_secs();
         if ts.abs_diff(now) > PROOF_SKEW_SECS {
-            return Err(DeviceError::Proof(
-                "the device clock is off or the proof is stale".into(),
-            ));
+            return Err(DeviceError::Proof(PROOF_STALE.into()));
         }
         if !verify(key, message, sig) {
-            return Err(DeviceError::Proof("invalid device signature".into()));
+            return Err(DeviceError::Proof(PROOF_BAD_SIGNATURE.into()));
         }
         // Keyed by the signature's `r` (the first half): an ECDSA signature
         // has a second valid form with the same `r`, so the whole signature
@@ -876,7 +882,7 @@ impl DeviceStore {
         proofs.retain(|_, exp| *exp > now);
         let fingerprint = hex::encode(ring::digest::digest(&ring::digest::SHA256, r).as_ref());
         if proofs.contains_key(&fingerprint) {
-            return Err(DeviceError::Proof("device proof already used".into()));
+            return Err(DeviceError::Proof(PROOF_REPLAYED.into()));
         }
         proofs.insert(fingerprint, now + 2 * PROOF_SKEW_SECS + 1);
         Ok(())

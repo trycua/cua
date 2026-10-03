@@ -106,6 +106,10 @@ public final class HostModel {
     let host: HostRunning?
     /// The host's state (`nil` until it answers).
     public private(set) var state: AppHostState?
+    /// This install's relay machine id, once set up in relay mode: its own
+    /// entry in the relay listing is "This machine", not one of "My
+    /// machines".
+    public private(set) var machineId: String?
     /// The host setup form, while it shows.
     public private(set) var form: AppHostFormState?
     public private(set) var busy = false
@@ -158,6 +162,7 @@ public final class HostModel {
 
     func apply(_ status: HostStatus) {
         state = appHostState(status: status)
+        machineId = status.machineId
         // Setup that provides Spaces, launch on a Mac that already does, or
         // Spaces turned on: ask now, while someone is at this Mac, not when
         // the first Space boots (see `LocalNetworkPermissionRequesting`).

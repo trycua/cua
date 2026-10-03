@@ -264,6 +264,14 @@ public final class DevicesModel {
         return view.banner
     }
 
+    /// Signed in, read, and this Mac cannot open the account's machines
+    /// (never enrolled, waiting for approval, expired, revoked): why, for
+    /// every machine's greyed-out Connect, and its one action.
+    public var accessNotice: AppMachineAccessNotice? {
+        guard signedIn, snapshot != nil else { return nil }
+        return appMachineAccessNotice(kind: view.thisDevice.kind, pendingCode: pendingCode)
+    }
+
     public var enrollView: AppEnrollView? { enroll.map { appEnrollView(state: $0) } }
     public var approvalView: AppApproveSheetView? { approval.map { appApproveView(state: $0, devices: input.devices) } }
 

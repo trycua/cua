@@ -373,6 +373,73 @@ AppNoticeKind::Create
 | `Switch` | Switched Spaces. |
 | `Create` | Created (or creating) Spaces. |
 
+## `AppNewSpaceOn` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `label` | `String` |  | The button's label. |
+| `on` | `String` |  | The "Run on" entry it picks (`host:<machine id>`; the wizard's `ChoosePlacement`). |
+
+## `app_hosted_rows`
+
+The Spaces one of your machines provides (`machine_space_id` is its
+`relay:<id>`), as sidebar rows.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appHostedRows(spaces: [AppSpace], machineSpaceId: String, selectedId: String) -> [AppSidebarRow]
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_hosted_rows(spaces: Vec<AppSpace>, machine_space_id: String, selected_id: String) -> Vec<AppSidebarRow>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `spaces` | [`Vec<AppSpace>`](#appspace-record) | required |
+| `machine_space_id` | `String` | required |
+| `selected_id` | `String` | required |
+
+**Returns** [`Vec<AppSidebarRow>`](#appsidebarrow-record)
+
+## `app_without_this_relay_machine`
+
+The roster without this machine's own relay entry (`this_machine_id`
+is `HostStatus.machine_id`): it is "This machine", not one of "My
+machines". Matched by id, never by name.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appWithoutThisRelayMachine(spaces: [AppSpace], thisMachineId: String?) -> [AppSpace]
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_without_this_relay_machine(spaces: Vec<AppSpace>, this_machine_id: Option<String>) -> Vec<AppSpace>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `spaces` | [`Vec<AppSpace>`](#appspace-record) | required |
+| `this_machine_id` | `Option<String>` | required |
+
+**Returns** [`Vec<AppSpace>`](#appspace-record)
+
 ## `AppRemoteWindow` record
 
 | Field | Type | Default | Description |
@@ -412,6 +479,8 @@ Returned by [`app_roster_initial`](#app_roster_initial), [`app_roster_reduce`](#
 
 ## `AppSidebarRow` record
 
+Returned by [`app_hosted_rows`](#app_hosted_rows).
+
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `id` | `String` |  | Space id. |
@@ -448,7 +517,7 @@ Returned by [`app_sidebar`](#app_sidebar).
 
 ## `AppSpace` record
 
-Returned by [`app_creates_compose`](/cua-sdk/reference/spaces/app-core/creates#app_creates_compose), [`app_rows_to_spaces`](#app_rows_to_spaces), [`app_spaces_from_json`](#app_spaces_from_json), [`app_this_machine_space`](#app_this_machine_space), [`app_with_this_machine`](/cua-sdk/reference/spaces/app-core/this-machine#app_with_this_machine).
+Returned by [`app_creates_compose`](/cua-sdk/reference/spaces/app-core/creates#app_creates_compose), [`app_rows_to_spaces`](#app_rows_to_spaces), [`app_spaces_from_json`](#app_spaces_from_json), [`app_this_machine_space`](#app_this_machine_space), [`app_with_this_machine`](/cua-sdk/reference/spaces/app-core/this-machine#app_with_this_machine), [`app_without_this_relay_machine`](#app_without_this_relay_machine).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -496,7 +565,7 @@ Returned by [`app_agent_rows`](/cua-sdk/reference/spaces/agents-app-core#app_age
 
 ## `AppSpaceDetail` record
 
-Returned by [`app_space_detail`](#app_space_detail), [`app_space_detail_live`](/cua-sdk/reference/spaces/app-core/stream#app_space_detail_live), [`app_space_detail_with`](#app_space_detail_with).
+Returned by [`app_space_detail`](#app_space_detail), [`app_space_detail_for`](#app_space_detail_for), [`app_space_detail_live`](/cua-sdk/reference/spaces/app-core/stream#app_space_detail_live), [`app_space_detail_with`](#app_space_detail_with).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -516,6 +585,9 @@ Returned by [`app_space_detail`](#app_space_detail), [`app_space_detail_live`](/
 | `sections` | `Vec<String>` |  | The sections under the facts, in order (Stream, Agents, Teleport). |
 | `credit_notice` / `creditNotice` | [`Option<AppCreditNotice>`](/cua-sdk/reference/spaces/app-core/billing#appcreditnotice-record) |  | A cloud Space refused for want of credit: one line and "Add credit" (the website billing page). |
 | `power_error` / `powerError` | `Option<String>` |  | Why turning it off or on failed, shown inline under the preview. |
+| `access` | [`Option<AppMachineAccessNotice>`](/cua-sdk/reference/spaces/app-core/devices#appmachineaccessnotice-record) |  | Signed in, but this device is not enrolled: a machine reached through the relay is listed with its Connect greyed out under this line and its one action (`detail_for`). |
+| `desktop_note` / `desktopNote` | `Option<String>` |  | One of your machines that does not share its desktop: the line shown in place of its desktop, Stream, Agents and Teleport (`desktop_note`). |
+| `new_space` / `newSpace` | [`Option<AppNewSpaceOn>`](#appnewspaceon-record) |  | With `Self.desktop_note`, when the machine provides Spaces: "New Space on &lt;name&gt;…", which opens New Space on it. |
 
 ## `AppSpaceProgress` record
 
@@ -879,6 +951,41 @@ pub fn app_space_detail(space: AppSpace) -> AppSpaceDetail
 | Parameter | Type | Default |
 | --- | --- | --- |
 | `space` | [`AppSpace`](#appspace-record) | required |
+
+**Returns** [`AppSpaceDetail`](#appspacedetail-record)
+
+## `app_space_detail_for`
+
+`app_space_detail_with` as this device sees it: `access` (from
+`app_machine_access_notice`) greys out Connect on every Space reached
+through the relay while this device is not enrolled; one of your
+machines that does not share its desktop shows its note in place of the
+desktop, Stream, Agents and Teleport.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appSpaceDetailFor(space: AppSpace, usage: AppSpaceUsage?, hostArch: String?, experiments: AppExperiments, access: AppMachineAccessNotice?) -> AppSpaceDetail
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_space_detail_for(space: AppSpace, usage: Option<AppSpaceUsage>, host_arch: Option<String>, experiments: AppExperiments, access: Option<AppMachineAccessNotice>) -> AppSpaceDetail
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `space` | [`AppSpace`](#appspace-record) | required |
+| `usage` | [`Option<AppSpaceUsage>`](/cua-sdk/reference/spaces/app-core/stream#appspaceusage-record) | required |
+| `host_arch` | `Option<String>` | required |
+| `experiments` | [`AppExperiments`](/cua-sdk/reference/spaces/app-core/experiments#appexperiments-record) | required |
+| `access` | [`Option<AppMachineAccessNotice>`](/cua-sdk/reference/spaces/app-core/devices#appmachineaccessnotice-record) | required |
 
 **Returns** [`AppSpaceDetail`](#appspacedetail-record)
 

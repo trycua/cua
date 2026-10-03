@@ -125,11 +125,11 @@ async fn devices_enroll_and_reach_machines_on_the_real_relay() {
             .await
             .is_err()
     );
-    // The session alone lists nothing.
-    assert!(matches!(
-        client.machines(&stale).await,
-        Err(cua_host::Error::PermissionDenied(_))
-    ));
+    // The session alone lists the machines by name only (the apps show
+    // them with a greyed-out Connect) and reaches none of them.
+    let listed = client.machines(&stale).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].url.is_empty() && listed[0].clients.is_empty());
 
     // The first device needs a fresh sign-in.
     let laptop = device(&url, &stale, "laptop", "laptop");

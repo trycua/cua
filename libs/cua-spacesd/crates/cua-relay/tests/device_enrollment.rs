@@ -353,13 +353,30 @@ async fn clients_need_an_enrolled_device_after_the_grace_period() {
     issuer.set_auth_time("ada", now() as i64 - 3600);
     let ada = issuer.token("ada", Some("ada@example.com"), "cua-relay", 300);
     // Hosting needs no enrolled device: a host only registers itself.
-    let reg = register_machine(&base, &ada, "machine-aaaa", &[]).await;
+    let reg = register_machine(&base, &ada, "machine-aaaa", &["carol@example.com"]).await;
     let machine_token = reg["machine_token"].as_str().unwrap().to_owned();
 
-    // The account token alone lists nothing and reaches nothing.
+    // The account token alone lists the machines by name only (so the apps
+    // can show them with a greyed-out Connect) and reaches nothing.
     let r = get(&base, "/v1/machines", &ada, None).await;
-    assert_eq!(r.status(), StatusCode::FORBIDDEN);
-    assert!(r.text().await.unwrap().contains("not enrolled"));
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(
+        r.headers().get("x-cua-device-enrollment").unwrap(),
+        "not-enrolled"
+    );
+    let list: Value = r.json().await.unwrap();
+    let m = &list["machines"][0];
+    assert_eq!(m["id"], "machine-aaaa");
+    assert_eq!(m["role"], "owner");
+    assert_eq!(m["url"], "", "no address for a device that is not enrolled");
+    assert!(m["allow"].as_array().unwrap().is_empty());
+    assert!(m["clients"].as_array().unwrap().is_empty());
+    assert_eq!(
+        get(&base, "/v1/machines/machine-aaaa", &ada, None)
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
     let r = get(&base, "/m/machine-aaaa/v1/anything", &ada, None).await;
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
     // Re-registering (token rotation) needs the machine token or a device.

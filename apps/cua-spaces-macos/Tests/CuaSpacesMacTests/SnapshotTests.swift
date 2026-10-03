@@ -219,7 +219,7 @@ struct SnapshotTests {
         // A Space that cannot stream: its line on the same blurred preview.
         let stopped = appDesktopCover(input: AppDesktopCoverInput(
             canStream: false, previewText: "Stopped", autoConnect: true, connectRequested: false,
-            stream: .noSession))
+            stream: .noSession, access: nil))
         try assertSnapshot(card(stopped, preview), "space-cover-stopped", size: size)
     }
 

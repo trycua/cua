@@ -1555,11 +1555,7 @@ impl Spaces {
             relay.iter().filter_map(|m| m.host.clone()).collect();
         let known = &known;
         // This machine is "This Mac" in the menu, not one of the hosts.
-        let this_machine = Host::new(self.home_dir())
-            .config()
-            .ok()
-            .flatten()
-            .and_then(|c| c.machine_id);
+        let this_machine = self.this_relay_machine_id();
         let relay_offers = futures_util::future::join_all(
             relay
                 .iter()

@@ -697,6 +697,10 @@ pub struct CallerIdentity {
     pub viewer: Option<Arc<ViewerGrant>>,
     /// The relay-verified account of a relayed call.
     pub account: Option<RelayCaller>,
+    /// A relayed call to a machine that does not share its desktop
+    /// ([`ExternalGrant::host_only`]): `GetCapabilities` reports the
+    /// desktop's features unsupported to it.
+    pub host_only: bool,
 }
 
 /// Tower layer that authenticates gRPC (and gRPC-Web) calls.
@@ -779,6 +783,7 @@ where
                         asserted: true,
                         viewer: Some(viewer),
                         account: grant.account,
+                        host_only: grant.host_only,
                     });
                     let mut inner = self.inner.clone();
                     std::mem::swap(&mut self.inner, &mut inner);
@@ -816,6 +821,7 @@ where
                         asserted: true,
                         viewer: None,
                         account: grant.account,
+                        host_only: grant.host_only,
                     });
                     let mut inner = self.inner.clone();
                     std::mem::swap(&mut self.inner, &mut inner);
@@ -852,6 +858,7 @@ where
                         asserted: true,
                         viewer: Some(Arc::new(grant)),
                         account: None,
+                        host_only: false,
                     });
                     let mut inner = self.inner.clone();
                     std::mem::swap(&mut self.inner, &mut inner);
@@ -925,6 +932,7 @@ where
                     asserted: false,
                     viewer: None,
                     account: None,
+                    host_only: false,
                 });
                 let mut inner = self.inner.clone();
                 std::mem::swap(&mut self.inner, &mut inner);

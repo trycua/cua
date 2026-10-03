@@ -1640,6 +1640,7 @@ impl Spaces {
   fn fleet_namespace(&self) -> &str;
   fn list(&self) -> Result<Vec<SpaceInfo>>;
   async fn list_all(&self) -> Result<Vec<SpaceInfo>>;
+  fn this_relay_machine_id(&self) -> Option<String>;
   fn relay_account(&self) -> Option<RelayAccount>;
   fn set_site_login_broker(&self, broker: Option<Arc<dyn SiteLoginBroker>>);
   fn site_login_broker(&self) -> Option<Arc<dyn SiteLoginBroker>>;

@@ -765,6 +765,18 @@ impl Spaces {
 
     // --------------------------------------------------------------- relay
 
+    /// This install's relay machine id (`cua host setup` in relay mode),
+    /// when it has one: the relay listing's entry for this machine itself
+    /// (apps show it in its own place, not among "your machines").
+    pub fn this_relay_machine_id(&self) -> Option<String> {
+        cua_host::Host::new(self.home_dir())
+            .config()
+            .ok()
+            .flatten()
+            .and_then(|c| c.machine_id)
+            .filter(|id| !id.is_empty())
+    }
+
     /// The relay account, when configured.
     pub fn relay_account(&self) -> Option<crate::relay::RelayAccount> {
         self.inner.relay.read().expect("relay").clone()

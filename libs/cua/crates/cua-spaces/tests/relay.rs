@@ -26,6 +26,62 @@ impl AccountTokens for Counting {
     }
 }
 
+/// This install's relay machine id comes from its host setup, so apps can
+/// tell this machine's own relay entry from another machine of the same
+/// name. The listing itself still has both (`cua spaces ls` on the host).
+#[tokio::test]
+async fn this_relay_machine_id_names_this_install() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("owner-token", "user-1", Some("ada@example.com"));
+    let client = cua_host::RelayClient::new(&relay.url).unwrap();
+    for id in ["aaaa000000000001", "bbbb000000000002"] {
+        client
+            .register(
+                "owner-token",
+                &cua_host::relay::RegisterRequest {
+                    id: id.into(),
+                    name: "Dana's MacBook Pro".into(),
+                    allow: vec![],
+                    host: None,
+                    meta: Default::default(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let home = tempfile::tempdir().unwrap();
+    let spaces = || {
+        Spaces::builder()
+            .home(home.path())
+            .relay(RelayAccount::new(
+                &relay.url,
+                Arc::new(StaticToken("owner-token".into())),
+            ))
+            .build()
+    };
+    assert_eq!(spaces().this_relay_machine_id(), None);
+    // `cua host setup` in relay mode wrote this install's machine id.
+    std::fs::create_dir_all(home.path().join("host")).unwrap();
+    std::fs::write(
+        home.path().join("host/config.json"),
+        serde_json::json!({
+            "mode": "relay",
+            "name": "This machine",
+            "machine_id": "aaaa000000000001",
+            "runner": "process",
+            "driver_bin": "/nonexistent/cua-spacesd",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let spaces = spaces();
+    assert_eq!(
+        spaces.this_relay_machine_id().as_deref(),
+        Some("aaaa000000000001")
+    );
+    assert_eq!(spaces.list_all().await.unwrap().len(), 2);
+}
+
 #[tokio::test]
 async fn lists_owned_and_shared_relay_machines_as_spaces() {
     let relay = FakeRelay::start().await;

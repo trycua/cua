@@ -197,6 +197,13 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
                         if !info.imageDigest.isEmpty { row.imageDigest = info.imageDigest }
                         if let kind = AppSpaceKind(word: info.kind) { row.kind = kind }
                         if !info.arch.isEmpty { row.arch = info.arch }
+                        // What it answered with just now (a machine on the
+                        // relay lists none until it is reached): one that
+                        // does not share its desktop reports the desktop's
+                        // features unsupported.
+                        if let live = Self.supportedFeatures(capabilitiesJson: try? space.capabilitiesJson()) {
+                            row.features = live
+                        }
                     case .failure(let error):
                         row.error = Self.words(error)
                     }
@@ -206,6 +213,17 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
             var out = [(Int, AppSpaceRow)]()
             for await r in group { out.append(r) }
             return out.sorted { $0.0 < $1.0 }.map(\.1)
+        }
+    }
+
+    /// The supported feature names of a `GetCapabilities` answer (proto3
+    /// JSON); nil when it cannot be read.
+    static func supportedFeatures(capabilitiesJson json: String?) -> [String]? {
+        guard let data = json?.data(using: .utf8),
+              let caps = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let features = caps["features"] as? [[String: Any]] else { return nil }
+        return features.compactMap { f in
+            (f["supported"] as? Bool) == true ? f["name"] as? String : nil
         }
     }
 

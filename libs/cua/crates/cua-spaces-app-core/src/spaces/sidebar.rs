@@ -454,6 +454,83 @@ pub struct SpaceDetail {
     /// Why turning it off or on failed, shown inline under the preview.
     #[serde(default)]
     pub power_error: Option<String>,
+    /// Signed in, but this device is not enrolled: a machine reached
+    /// through the relay is listed with its Connect greyed out under this
+    /// line and its one action ([`detail_for`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<crate::devices::MachineAccessNotice>,
+    /// One of your machines that does not share its desktop: the line
+    /// shown in place of its desktop, Stream, Agents and Teleport
+    /// ([`desktop_note`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desktop_note: Option<String>,
+    /// With [`Self::desktop_note`], when the machine provides Spaces:
+    /// "New Space on <name>…", which opens New Space on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_space: Option<NewSpaceOn>,
+}
+
+/// "New Space on <machine>…": New Space with "Run on" set to that machine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewSpaceOn {
+    /// The button's label.
+    pub label: String,
+    /// The "Run on" entry it picks (`host:<machine id>`; the wizard's
+    /// `ChoosePlacement`).
+    pub on: String,
+}
+
+/// spacesd's feature for a machine that provides Spaces.
+pub const HOST_SPACES_FEATURE: &str = "host_spaces";
+
+/// One of your machines itself, reached through the relay: not a Space it
+/// provides and not a Space in your cloud.
+pub fn is_your_machine(space: &Space) -> bool {
+    space.id.starts_with("relay:")
+        && space.host.as_deref().is_none_or(str::is_empty)
+        && !in_your_cloud(space)
+}
+
+/// Whether one of your machines shares its own desktop, when it said so:
+/// it answered with its features, and a machine that does not share its
+/// desktop reports the desktop's features unsupported to you (cua-spacesd
+/// with `share_desktop` off). `None` when it is not one of your machines
+/// or has not answered (an older cua-spacesd always reports them, so it
+/// counts as sharing, as before).
+pub fn shares_desktop(space: &Space) -> Option<bool> {
+    let sdk = space.sdk.as_ref()?;
+    if !is_your_machine(space) || !sdk.reachable || sdk.features.is_empty() {
+        return None;
+    }
+    Some(super::has_feature(space, super::feature::DESKTOP_STREAM))
+}
+
+/// The line in place of a machine's desktop when it does not share it:
+/// that you can still create Spaces on it, or that it shares neither.
+pub fn desktop_note(space: &Space) -> Option<String> {
+    if shares_desktop(space)? {
+        return None;
+    }
+    let name = &space.name;
+    Some(if super::has_feature(space, HOST_SPACES_FEATURE) {
+        format!("{name} isn\u{2019}t sharing its desktop. You can still create Spaces on it.")
+    } else {
+        format!("{name} isn\u{2019}t sharing its desktop or Spaces.")
+    })
+}
+
+/// The Spaces one of your machines provides, as sidebar rows (its detail
+/// lists them under New Space).
+pub fn hosted_rows(spaces: &[Space], machine_space_id: &str, selected_id: &str) -> Vec<SidebarRow> {
+    let Some(machine) = machine_space_id.strip_prefix("relay:") else {
+        return vec![];
+    };
+    spaces
+        .iter()
+        .filter(|s| s.host.as_deref() == Some(machine))
+        .map(|s| row(s, Some(selected_id)))
+        .collect()
 }
 
 /// What a toolbar button does.
@@ -950,6 +1027,9 @@ pub fn detail_live(
         delete_label: delete_label.into(),
         remove_only,
         power_error: power_error(space),
+        access: None,
+        desktop_note: None,
+        new_space: None,
         actions,
         confirm: delete_confirm(space, remove_only, delete_label),
         sections: if show_sections {
@@ -975,6 +1055,62 @@ pub fn detail_with(
     let mut d = detail_live(space, usage, host_arch);
     if !experiments.sharing {
         d.actions.retain(|a| a.id != DetailActionId::Share);
+    }
+    d
+}
+
+/// [`detail_with`] as this device sees it. `access` is why this device
+/// cannot open the account's machines (signed in, not enrolled;
+/// [`crate::devices::machine_access_notice`]): every Space reached through
+/// the relay then shows its Connect greyed out under that line, says why
+/// in its Status, and nothing that needs a connection is offered. One of
+/// your machines that does not share its desktop shows [`desktop_note`] in
+/// place of its desktop, Stream, Agents and Teleport, and New Space on it
+/// when it provides Spaces.
+pub fn detail_for(
+    space: &Space,
+    usage: Option<&SpaceUsage>,
+    host_arch: Option<&str>,
+    experiments: &crate::experiments::Experiments,
+    access: Option<&crate::devices::MachineAccessNotice>,
+) -> SpaceDetail {
+    let mut d = detail_with(space, usage, host_arch, experiments);
+    let connection = [
+        DetailActionId::Teleport,
+        DetailActionId::Pip,
+        DetailActionId::Share,
+        DetailActionId::Open,
+    ];
+    if let Some(access) = access.filter(|_| space.id.starts_with("relay:")) {
+        d.can_stream = false;
+        d.show_sections = false;
+        d.sections.clear();
+        d.preview_text = access.text.clone();
+        if let Some(status) = d.facts.iter_mut().find(|f| f.label == "Status") {
+            status.value = access.status.clone();
+        }
+        for a in d.actions.iter_mut().filter(|a| connection.contains(&a.id)) {
+            a.enabled = false;
+        }
+        d.access = Some(access.clone());
+        return d;
+    }
+    if let Some(note) = desktop_note(space) {
+        d.can_stream = false;
+        d.show_sections = false;
+        d.sections.clear();
+        d.preview_text = note.clone();
+        d.actions.retain(|a| {
+            !matches!(
+                a.id,
+                DetailActionId::Teleport | DetailActionId::Pip | DetailActionId::Open
+            )
+        });
+        d.new_space = super::has_feature(space, HOST_SPACES_FEATURE).then(|| NewSpaceOn {
+            label: format!("New Space on {}\u{2026}", space.name),
+            on: format!("host:{}", space.id.trim_start_matches("relay:")),
+        });
+        d.desktop_note = Some(note);
     }
     d
 }
@@ -1034,6 +1170,144 @@ mod tests {
 
     fn fact_of<'a>(d: &'a SpaceDetail, label: &str) -> Option<&'a Fact> {
         d.facts.iter().find(|f| f.label == label)
+    }
+
+    /// One of your machines on the relay, as the app's probe saw it.
+    fn machine(features: &[&str], reachable: bool) -> Space {
+        let row: SpaceRow = serde_json::from_value(serde_json::json!({
+            "id": "relay:m1",
+            "name": "Studio",
+            "provider": "relay",
+            "os": "macos",
+            "reachable": reachable,
+            "features": features,
+        }))
+        .unwrap();
+        super::super::row_to_space(&row, 0)
+    }
+
+    fn ids(d: &SpaceDetail) -> Vec<DetailActionId> {
+        d.actions.iter().map(|a| a.id).collect()
+    }
+
+    const SHARED: &[&str] = &["desktop_stream", "window_stream", "host_spaces"];
+
+    /// Enrolled: nothing changes. Not enrolled, waiting or expired: the
+    /// machine is listed, Connect is greyed out under the notice, Status
+    /// says why and nothing that needs a connection is offered.
+    #[test]
+    fn a_machine_seen_from_a_device_that_is_not_enrolled() {
+        use crate::devices::{EnrollmentKind, machine_access_notice};
+        let x = crate::experiments::Experiments::default();
+        let m = machine(SHARED, true);
+        let enrolled = detail_for(&m, None, None, &x, None);
+        assert_eq!(enrolled, detail_with(&m, None, None, &x));
+        assert!(enrolled.can_stream && enrolled.access.is_none());
+        for (kind, status) in [
+            (EnrollmentKind::NeedsEnrollment, "Not enrolled"),
+            (EnrollmentKind::Waiting, "Waiting for approval"),
+            (EnrollmentKind::Due, "Re-verification due"),
+        ] {
+            let notice = machine_access_notice(kind, Some("K7QX-M2RP")).unwrap();
+            // Unreachable (the relay refuses it): still listed, still explained.
+            for reachable in [false, true] {
+                let d = detail_for(&machine(&[], reachable), None, None, &x, Some(&notice));
+                assert_eq!(d.access.as_ref(), Some(&notice));
+                assert!(!d.can_stream && !d.show_sections && d.sections.is_empty());
+                assert_eq!(fact_of(&d, "Status").unwrap().value, status);
+                assert!(
+                    d.actions
+                        .iter()
+                        .filter(|a| matches!(
+                            a.id,
+                            DetailActionId::Open | DetailActionId::Teleport | DetailActionId::Pip
+                        ))
+                        .all(|a| !a.enabled)
+                );
+                assert!(d.desktop_note.is_none());
+            }
+        }
+        // A Space that is not reached through the relay is not affected.
+        let local = super::super::row_to_space(&local_row("local:a", None, None, None), 0);
+        let notice = machine_access_notice(EnrollmentKind::NeedsEnrollment, None).unwrap();
+        assert!(
+            detail_for(&local, None, None, &x, Some(&notice))
+                .access
+                .is_none()
+        );
+    }
+
+    /// Desktop shared: Stream, Agents and Teleport as before. Not shared
+    /// (Spaces still provided): the note, no desktop actions, New Space on
+    /// it. Neither: the note alone. A machine that has not answered, or an
+    /// older one that does not say, counts as sharing.
+    #[test]
+    fn a_machine_that_does_not_share_its_desktop() {
+        let x = crate::experiments::Experiments::default();
+        let shared = detail_for(&machine(SHARED, true), None, None, &x, None);
+        assert_eq!(shared.sections, ["Stream", "Agents", "Teleport"]);
+        assert!(shared.desktop_note.is_none() && shared.new_space.is_none());
+        assert_eq!(shares_desktop(&machine(SHARED, true)), Some(true));
+
+        let spaces_only = machine(&["host_spaces", "files"], true);
+        assert_eq!(shares_desktop(&spaces_only), Some(false));
+        let d = detail_for(&spaces_only, None, None, &x, None);
+        assert_eq!(
+            d.desktop_note.as_deref(),
+            Some("Studio isn\u{2019}t sharing its desktop. You can still create Spaces on it.")
+        );
+        assert!(!d.can_stream && !d.show_sections && d.sections.is_empty());
+        assert!(ids(&d).iter().all(|a| !matches!(
+            a,
+            DetailActionId::Teleport | DetailActionId::Pip | DetailActionId::Open
+        )));
+        assert_eq!(
+            d.new_space,
+            Some(NewSpaceOn {
+                label: "New Space on Studio\u{2026}".into(),
+                on: "host:m1".into()
+            })
+        );
+
+        let neither = detail_for(&machine(&["files"], true), None, None, &x, None);
+        assert_eq!(
+            neither.desktop_note.as_deref(),
+            Some("Studio isn\u{2019}t sharing its desktop or Spaces.")
+        );
+        assert!(neither.new_space.is_none() && neither.sections.is_empty());
+
+        // Unknown: offline, or no features reported.
+        assert_eq!(shares_desktop(&machine(&["host_spaces"], false)), None);
+        assert_eq!(shares_desktop(&machine(&[], true)), None);
+        assert!(
+            detail_for(&machine(&[], true), None, None, &x, None)
+                .desktop_note
+                .is_none()
+        );
+        // Only your machines: a Space added by address without a desktop is
+        // not "not sharing".
+        let direct =
+            super::super::row_to_space(&local_row("direct:10.0.0.5:3211", None, None, None), 0);
+        assert_eq!(shares_desktop(&direct), None);
+    }
+
+    /// The Spaces a machine provides, for its detail.
+    #[test]
+    fn hosted_rows_are_the_spaces_a_machine_provides() {
+        let mut child = machine(SHARED, true);
+        child.id = "relay:s1".into();
+        child.name = "Linux".into();
+        child.host = Some("m1".into());
+        let mut other = child.clone();
+        other.id = "relay:s2".into();
+        other.host = Some("m9".into());
+        let spaces = vec![machine(SHARED, true), child, other];
+        let rows = hosted_rows(&spaces, "relay:m1", "");
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["relay:s1"]
+        );
+        assert!(hosted_rows(&spaces, "local:a", "").is_empty());
     }
 
     #[test]

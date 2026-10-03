@@ -485,23 +485,75 @@ async fn list(State(relay): State<Relay>, headers: HeaderMap) -> Response {
         Ok(c) => c,
         Err(r) => return r,
     };
-    if let Err(r) = caller.require_device() {
-        return r;
+    // A signed-in device that is not enrolled (never, waiting for
+    // approval, expired) and so sends no device session still sees which
+    // machines the account has, so the apps can list them with a
+    // greyed-out Connect and say how to enroll. It gets names only: no
+    // address, allowlist, viewers, version or who is connected, and every
+    // route that reaches a machine still needs an enrolled device. A
+    // session that was sent and is not valid (another account's, revoked,
+    // or forgotten by a relay restart) is refused as before, so a client
+    // opens a new one.
+    let locked =
+        matches!(&caller, Caller::Account(_, Err(_))) && session_header(&headers).is_none();
+    if !locked {
+        if let Err(r) = caller.require_device() {
+            return r;
+        }
     }
     let machines = match &caller {
         Caller::Account(who, _) => relay
             .directory
             .visible_to(who)
             .into_iter()
-            .map(|(r, role)| view(&relay, &headers, &r, role))
+            .map(|(r, role)| {
+                if locked {
+                    locked_view(&relay, &r, role)
+                } else {
+                    view(&relay, &headers, &r, role)
+                }
+            })
             .collect::<Vec<_>>(),
         Caller::Machine(record) => vec![view(&relay, &headers, record, Role::Owner)],
     };
-    finish(
-        &relay,
-        &caller,
-        Json(serde_json::json!({ "machines": machines })).into_response(),
-    )
+    let mut response = Json(serde_json::json!({ "machines": machines })).into_response();
+    if locked {
+        response.headers_mut().insert(
+            crate::devices::ENROLLMENT_HEADER,
+            axum::http::HeaderValue::from_static(NOT_ENROLLED_FLAG),
+        );
+    }
+    finish(&relay, &caller, response)
+}
+
+/// `x-cua-device-enrollment` on a listing for a device that is not
+/// enrolled: the machines are listed by name only and cannot be reached.
+pub const NOT_ENROLLED_FLAG: &str = "not-enrolled";
+
+/// [`view`] for a device that is not enrolled: what the machine is called,
+/// whether it is online and what it is (a host, a Space a host provides,
+/// a Space in your cloud), nothing that reaches or describes access to it.
+fn locked_view(relay: &Relay, record: &MachineRecord, role: Role) -> MachineView {
+    let online = relay.machine(&record.id).is_some_and(
+        |m| matches!(&m.registrant, Registrant::Account(owner) if owner == &record.owner.id),
+    );
+    MachineView {
+        id: record.id.clone(),
+        name: record.name.clone(),
+        owner: record.owner.clone(),
+        role: role.as_str().into(),
+        online,
+        sharing: record.sharing,
+        version: String::new(),
+        connected_at: None,
+        url: String::new(),
+        allow: Vec::new(),
+        viewers: Vec::new(),
+        clients: Vec::new(),
+        host: record.host.clone(),
+        confirmed: record.confirmed,
+        meta: record.meta.clone(),
+    }
 }
 
 async fn get_one(

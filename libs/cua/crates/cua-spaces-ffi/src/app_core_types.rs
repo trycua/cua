@@ -919,6 +919,45 @@ pub struct AppSpaceDetail {
     pub credit_notice: Option<AppCreditNotice>,
     /// Why turning it off or on failed, shown inline under the preview.
     pub power_error: Option<String>,
+    /// Signed in, but this device is not enrolled: a machine reached
+    /// through the relay is listed with its Connect greyed out under this
+    /// line and its one action.
+    #[uniffi(default = None)]
+    pub access: Option<AppMachineAccessNotice>,
+    /// One of your machines that does not share its desktop: the line shown
+    /// in place of its desktop, Stream, Agents and Teleport.
+    #[uniffi(default = None)]
+    pub desktop_note: Option<String>,
+    /// With `desktop_note`, when the machine provides Spaces: "New Space on
+    /// <name>…".
+    #[uniffi(default = None)]
+    pub new_space: Option<AppNewSpaceOn>,
+}
+
+/// "New Space on <machine>…": New Space with "Run on" set to that machine.
+pub type AppNewSpaceOn = core::spaces::sidebar::NewSpaceOn;
+#[uniffi::remote(Record)]
+pub struct AppNewSpaceOn {
+    /// The button's label.
+    pub label: String,
+    /// The "Run on" entry it picks (`host:<machine id>`).
+    pub on: String,
+}
+
+/// Why this device cannot open the account's machines (signed in, not
+/// enrolled): the line above a greyed-out Connect, the Status word and the
+/// one action (the enroll sheet).
+pub type AppMachineAccessNotice = core::devices::MachineAccessNotice;
+#[uniffi::remote(Record)]
+pub struct AppMachineAccessNotice {
+    /// This device's enrollment.
+    pub kind: AppEnrollmentKind,
+    /// The machine's Status: "Not enrolled", "Waiting for approval", ...
+    pub status: String,
+    /// The line above the disabled Connect.
+    pub text: String,
+    /// The action's label; it opens the enroll sheet.
+    pub action_label: String,
 }
 
 /// Where the shell's stream session stands.
@@ -953,6 +992,9 @@ pub struct AppDesktopCoverInput {
     pub connect_requested: bool,
     /// The shell's stream session.
     pub stream: AppStreamPhase,
+    /// The detail's `access`: Connect greyed out under this notice.
+    #[uniffi(default = None)]
+    pub access: Option<AppMachineAccessNotice>,
 }
 
 /// How the cover draws.
@@ -987,6 +1029,14 @@ pub struct AppDesktopCover {
     pub open_stream: bool,
     /// The shell starts the open session again (Try again was pressed).
     pub retry: bool,
+    /// The button shows greyed out (Connect while this device is not
+    /// enrolled).
+    #[uniffi(default = false)]
+    pub button_disabled: bool,
+    /// The one action above a greyed-out Connect ("Enroll This Mac…"): the
+    /// shell opens the enroll sheet.
+    #[uniffi(default = None)]
+    pub action: Option<String>,
 }
 
 /// How fresh the shells keep each Space's thumbnail (the notch tiles and

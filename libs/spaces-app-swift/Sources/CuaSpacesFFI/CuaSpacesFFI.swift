@@ -8356,6 +8356,16 @@ public struct AppDesktopCover: Equatable, Hashable {
      * The shell starts the open session again (Try again was pressed).
      */
     public var retry: Bool
+    /**
+     * The button shows greyed out (Connect while this device is not
+     * enrolled).
+     */
+    public var buttonDisabled: Bool
+    /**
+     * The one action above a greyed-out Connect ("Enroll This Mac…"): the
+     * shell opens the enroll sheet.
+     */
+    public var action: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -8378,13 +8388,23 @@ public struct AppDesktopCover: Equatable, Hashable {
          */openStream: Bool,
         /**
          * The shell starts the open session again (Try again was pressed).
-         */retry: Bool) {
+         */retry: Bool,
+        /**
+         * The button shows greyed out (Connect while this device is not
+         * enrolled).
+         */buttonDisabled: Bool = false,
+        /**
+         * The one action above a greyed-out Connect ("Enroll This Mac…"): the
+         * shell opens the enroll sheet.
+         */action: String? = nil) {
         self.kind = kind
         self.text = text
         self.button = button
         self.buttonHelp = buttonHelp
         self.openStream = openStream
         self.retry = retry
+        self.buttonDisabled = buttonDisabled
+        self.action = action
     }
 
 
@@ -8408,7 +8428,9 @@ public struct FfiConverterTypeAppDesktopCover: FfiConverterRustBuffer {
                 button: FfiConverterOptionString.read(from: &buf),
                 buttonHelp: FfiConverterOptionString.read(from: &buf),
                 openStream: FfiConverterBool.read(from: &buf),
-                retry: FfiConverterBool.read(from: &buf)
+                retry: FfiConverterBool.read(from: &buf),
+                buttonDisabled: FfiConverterBool.read(from: &buf),
+                action: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -8419,6 +8441,8 @@ public struct FfiConverterTypeAppDesktopCover: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.buttonHelp, into: &buf)
         FfiConverterBool.write(value.openStream, into: &buf)
         FfiConverterBool.write(value.retry, into: &buf)
+        FfiConverterBool.write(value.buttonDisabled, into: &buf)
+        FfiConverterOptionString.write(value.action, into: &buf)
     }
 }
 
@@ -8459,6 +8483,10 @@ public struct AppDesktopCoverInput: Equatable, Hashable {
      * The shell's stream session.
      */
     public var stream: AppStreamPhase
+    /**
+     * The detail's `access`: Connect greyed out under this notice.
+     */
+    public var access: AppMachineAccessNotice?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -8477,12 +8505,16 @@ public struct AppDesktopCoverInput: Equatable, Hashable {
          */connectRequested: Bool,
         /**
          * The shell's stream session.
-         */stream: AppStreamPhase) {
+         */stream: AppStreamPhase,
+        /**
+         * The detail's `access`: Connect greyed out under this notice.
+         */access: AppMachineAccessNotice? = nil) {
         self.canStream = canStream
         self.previewText = previewText
         self.autoConnect = autoConnect
         self.connectRequested = connectRequested
         self.stream = stream
+        self.access = access
     }
 
 
@@ -8505,7 +8537,8 @@ public struct FfiConverterTypeAppDesktopCoverInput: FfiConverterRustBuffer {
                 previewText: FfiConverterString.read(from: &buf),
                 autoConnect: FfiConverterBool.read(from: &buf),
                 connectRequested: FfiConverterBool.read(from: &buf),
-                stream: FfiConverterTypeAppStreamPhase.read(from: &buf)
+                stream: FfiConverterTypeAppStreamPhase.read(from: &buf),
+                access: FfiConverterOptionTypeAppMachineAccessNotice.read(from: &buf)
         )
     }
 
@@ -8515,6 +8548,7 @@ public struct FfiConverterTypeAppDesktopCoverInput: FfiConverterRustBuffer {
         FfiConverterBool.write(value.autoConnect, into: &buf)
         FfiConverterBool.write(value.connectRequested, into: &buf)
         FfiConverterTypeAppStreamPhase.write(value.stream, into: &buf)
+        FfiConverterOptionTypeAppMachineAccessNotice.write(value.access, into: &buf)
     }
 }
 
@@ -16922,6 +16956,92 @@ public func FfiConverterTypeAppLoginItemPlan_lower(_ value: AppLoginItemPlan) ->
 }
 
 
+public struct AppMachineAccessNotice: Equatable, Hashable {
+    /**
+     * This device's enrollment.
+     */
+    public var kind: AppEnrollmentKind
+    /**
+     * The machine's Status: "Not enrolled", "Waiting for approval", ...
+     */
+    public var status: String
+    /**
+     * The line above the disabled Connect.
+     */
+    public var text: String
+    /**
+     * The action's label; it opens the enroll sheet.
+     */
+    public var actionLabel: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * This device's enrollment.
+         */kind: AppEnrollmentKind,
+        /**
+         * The machine's Status: "Not enrolled", "Waiting for approval", ...
+         */status: String,
+        /**
+         * The line above the disabled Connect.
+         */text: String,
+        /**
+         * The action's label; it opens the enroll sheet.
+         */actionLabel: String) {
+        self.kind = kind
+        self.status = status
+        self.text = text
+        self.actionLabel = actionLabel
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppMachineAccessNotice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppMachineAccessNotice: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppMachineAccessNotice {
+        return
+            try AppMachineAccessNotice(
+                kind: FfiConverterTypeAppEnrollmentKind.read(from: &buf),
+                status: FfiConverterString.read(from: &buf),
+                text: FfiConverterString.read(from: &buf),
+                actionLabel: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppMachineAccessNotice, into buf: inout [UInt8]) {
+        FfiConverterTypeAppEnrollmentKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.status, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterString.write(value.actionLabel, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachineAccessNotice_lift(_ buf: RustBuffer) throws -> AppMachineAccessNotice {
+    return try FfiConverterTypeAppMachineAccessNotice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppMachineAccessNotice_lower(_ value: AppMachineAccessNotice) -> RustBuffer {
+    return FfiConverterTypeAppMachineAccessNotice.lower(value)
+}
+
+
 public struct AppMachineInput: Equatable, Hashable {
     /**
      * Machine id.
@@ -17711,6 +17831,72 @@ public func FfiConverterTypeAppModeChoice_lift(_ buf: RustBuffer) throws -> AppM
 #endif
 public func FfiConverterTypeAppModeChoice_lower(_ value: AppModeChoice) -> RustBuffer {
     return FfiConverterTypeAppModeChoice.lower(value)
+}
+
+
+public struct AppNewSpaceOn: Equatable, Hashable {
+    /**
+     * The button's label.
+     */
+    public var label: String
+    /**
+     * The "Run on" entry it picks (`host:<machine id>`).
+     */
+    public var on: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The button's label.
+         */label: String,
+        /**
+         * The "Run on" entry it picks (`host:<machine id>`).
+         */on: String) {
+        self.label = label
+        self.on = on
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppNewSpaceOn: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppNewSpaceOn: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppNewSpaceOn {
+        return
+            try AppNewSpaceOn(
+                label: FfiConverterString.read(from: &buf),
+                on: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppNewSpaceOn, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.on, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppNewSpaceOn_lift(_ buf: RustBuffer) throws -> AppNewSpaceOn {
+    return try FfiConverterTypeAppNewSpaceOn.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppNewSpaceOn_lower(_ value: AppNewSpaceOn) -> RustBuffer {
+    return FfiConverterTypeAppNewSpaceOn.lower(value)
 }
 
 
@@ -27432,6 +27618,22 @@ public struct AppSpaceDetail: Equatable, Hashable {
      * Why turning it off or on failed, shown inline under the preview.
      */
     public var powerError: String?
+    /**
+     * Signed in, but this device is not enrolled: a machine reached
+     * through the relay is listed with its Connect greyed out under this
+     * line and its one action.
+     */
+    public var access: AppMachineAccessNotice?
+    /**
+     * One of your machines that does not share its desktop: the line shown
+     * in place of its desktop, Stream, Agents and Teleport.
+     */
+    public var desktopNote: String?
+    /**
+     * With `desktop_note`, when the machine provides Spaces: "New Space on
+     * <name>…".
+     */
+    public var newSpace: AppNewSpaceOn?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -27486,7 +27688,20 @@ public struct AppSpaceDetail: Equatable, Hashable {
          */creditNotice: AppCreditNotice?,
         /**
          * Why turning it off or on failed, shown inline under the preview.
-         */powerError: String?) {
+         */powerError: String?,
+        /**
+         * Signed in, but this device is not enrolled: a machine reached
+         * through the relay is listed with its Connect greyed out under this
+         * line and its one action.
+         */access: AppMachineAccessNotice? = nil,
+        /**
+         * One of your machines that does not share its desktop: the line shown
+         * in place of its desktop, Stream, Agents and Teleport.
+         */desktopNote: String? = nil,
+        /**
+         * With `desktop_note`, when the machine provides Spaces: "New Space on
+         * <name>…".
+         */newSpace: AppNewSpaceOn? = nil) {
         self.id = id
         self.title = title
         self.facts = facts
@@ -27503,6 +27718,9 @@ public struct AppSpaceDetail: Equatable, Hashable {
         self.sections = sections
         self.creditNotice = creditNotice
         self.powerError = powerError
+        self.access = access
+        self.desktopNote = desktopNote
+        self.newSpace = newSpace
     }
 
 
@@ -27536,7 +27754,10 @@ public struct FfiConverterTypeAppSpaceDetail: FfiConverterRustBuffer {
                 confirm: FfiConverterTypeAppDeleteConfirm.read(from: &buf),
                 sections: FfiConverterSequenceString.read(from: &buf),
                 creditNotice: FfiConverterOptionTypeAppCreditNotice.read(from: &buf),
-                powerError: FfiConverterOptionString.read(from: &buf)
+                powerError: FfiConverterOptionString.read(from: &buf),
+                access: FfiConverterOptionTypeAppMachineAccessNotice.read(from: &buf),
+                desktopNote: FfiConverterOptionString.read(from: &buf),
+                newSpace: FfiConverterOptionTypeAppNewSpaceOn.read(from: &buf)
         )
     }
 
@@ -27557,6 +27778,9 @@ public struct FfiConverterTypeAppSpaceDetail: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.sections, into: &buf)
         FfiConverterOptionTypeAppCreditNotice.write(value.creditNotice, into: &buf)
         FfiConverterOptionString.write(value.powerError, into: &buf)
+        FfiConverterOptionTypeAppMachineAccessNotice.write(value.access, into: &buf)
+        FfiConverterOptionString.write(value.desktopNote, into: &buf)
+        FfiConverterOptionTypeAppNewSpaceOn.write(value.newSpace, into: &buf)
     }
 }
 
@@ -54057,6 +54281,30 @@ fileprivate struct FfiConverterOptionTypeAppLoginItemInput: FfiConverterRustBuff
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAppMachineAccessNotice: FfiConverterRustBuffer {
+    typealias SwiftType = AppMachineAccessNotice?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppMachineAccessNotice.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppMachineAccessNotice.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeAppMenuPreview: FfiConverterRustBuffer {
     typealias SwiftType = AppMenuPreview?
 
@@ -54073,6 +54321,30 @@ fileprivate struct FfiConverterOptionTypeAppMenuPreview: FfiConverterRustBuffer 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppMenuPreview.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppNewSpaceOn: FfiConverterRustBuffer {
+    typealias SwiftType = AppNewSpaceOn?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppNewSpaceOn.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppNewSpaceOn.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -60314,6 +60586,19 @@ public func appHostValidateSetup(request: AppHostSetupRequest)throws  -> AppHost
 })
 }
 /**
+ * The Spaces one of your machines provides (`machine_space_id` is its
+ * `relay:<id>`), as sidebar rows.
+ */
+public func appHostedRows(spaces: [AppSpace], machineSpaceId: String, selectedId: String) -> [AppSidebarRow]  {
+    return try!  FfiConverterSequenceTypeAppSidebarRow.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_hosted_rows(
+        FfiConverterSequenceTypeAppSpace.lower(spaces),
+        FfiConverterString.lower(machineSpaceId),
+        FfiConverterString.lower(selectedId),$0
+    )
+})
+}
+/**
  * Whether a `default.on` value names one of the user's clouds.
  */
 public func appIsCloudWord(on: String) -> Bool  {
@@ -60345,6 +60630,19 @@ public func appLoginItemLaunchPlan(choice: Bool?, onboarded: Bool, serves: Bool,
         FfiConverterBool.lower(onboarded),
         FfiConverterBool.lower(serves),
         FfiConverterTypeAppLoginItemStatus_lower(status),$0
+    )
+})
+}
+/**
+ * Why this device cannot open the account's machines for its enrollment
+ * `kind` (`None` while it can). `pending_code` is the code it shows while
+ * it waits for approval.
+ */
+public func appMachineAccessNotice(kind: AppEnrollmentKind, pendingCode: String?) -> AppMachineAccessNotice?  {
+    return try!  FfiConverterOptionTypeAppMachineAccessNotice.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_machine_access_notice(
+        FfiConverterTypeAppEnrollmentKind_lower(kind),
+        FfiConverterOptionString.lower(pendingCode),$0
     )
 })
 }
@@ -61159,6 +61457,24 @@ public func appSpaceDetail(space: AppSpace) -> AppSpaceDetail  {
 public func appSpaceDetailCopy() -> AppDetailCopy  {
     return try!  FfiConverterTypeAppDetailCopy_lift(try! rustCall() {
     uniffi_cua_spaces_ffi_fn_func_app_space_detail_copy($0
+    )
+})
+}
+/**
+ * [`app_space_detail_with`] as this device sees it: `access` (from
+ * [`app_machine_access_notice`]) greys out Connect on every Space reached
+ * through the relay while this device is not enrolled; one of your
+ * machines that does not share its desktop shows its note in place of the
+ * desktop, Stream, Agents and Teleport.
+ */
+public func appSpaceDetailFor(space: AppSpace, usage: AppSpaceUsage?, hostArch: String?, experiments: AppExperiments, access: AppMachineAccessNotice?) -> AppSpaceDetail  {
+    return try!  FfiConverterTypeAppSpaceDetail_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_space_detail_for(
+        FfiConverterTypeAppSpace_lower(space),
+        FfiConverterOptionTypeAppSpaceUsage.lower(usage),
+        FfiConverterOptionString.lower(hostArch),
+        FfiConverterTypeAppExperiments_lower(experiments),
+        FfiConverterOptionTypeAppMachineAccessNotice.lower(access),$0
     )
 })
 }
@@ -62457,6 +62773,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_host_validate_setup() != 11018) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_hosted_rows() != 169) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_is_cloud_word() != 38584) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -62464,6 +62783,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_login_item_launch_plan() != 57994) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_machine_access_notice() != 55788) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_main_chrome() != 29313) {
@@ -62692,6 +63014,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_space_detail_copy() != 55740) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_space_detail_for() != 46982) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_space_detail_live() != 55583) {

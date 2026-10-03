@@ -552,12 +552,34 @@ fn require_root(caller: &crate::auth::CallerIdentity, what: &str) -> Result<(), 
     Ok(())
 }
 
+/// Why the desktop's features are unsupported for a relayed caller of a
+/// machine that does not share its desktop (it only provides Spaces).
+pub const DESKTOP_NOT_SHARED: &str =
+    "this machine does not share its desktop (it only provides Spaces)";
+
+/// `features` with every desktop feature ([`crate::provider::DESKTOP_FEATURES`])
+/// unsupported because the desktop is not shared.
+fn desktop_not_shared(mut features: Vec<Feature>) -> Vec<Feature> {
+    for f in features
+        .iter_mut()
+        .filter(|f| crate::provider::DESKTOP_FEATURES.contains(&f.name.as_str()))
+    {
+        f.supported = false;
+        DESKTOP_NOT_SHARED.clone_into(&mut f.limitation);
+    }
+    features
+}
+
 #[tonic::async_trait]
 impl SystemService for SystemServiceImpl {
     async fn get_capabilities(
         &self,
-        _request: Request<GetCapabilitiesRequest>,
+        request: Request<GetCapabilitiesRequest>,
     ) -> Result<Response<GetCapabilitiesResponse>, Status> {
+        // A relayed caller of a machine that does not share its desktop
+        // reaches none of it: its features say so, so apps show the
+        // machine without Stream, Agents and Teleport.
+        let host_only = crate::auth::caller(&request).host_only;
         let kernel = sysinfo::System::kernel_version().unwrap_or_default();
         let (runtime, runtime_detail) = match self
             .ctx
@@ -604,7 +626,11 @@ impl SystemService for SystemServiceImpl {
             arch: architecture() as i32,
             display_server: display_server as i32,
             displays,
-            features: self.features(),
+            features: if host_only {
+                desktop_not_shared(self.features())
+            } else {
+                self.features()
+            },
             hostname: sysinfo::System::host_name().unwrap_or_default(),
             // Await-token-file mode: initialized once the file holds a token
             // (Init cannot and need not install one).

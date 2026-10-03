@@ -39,14 +39,21 @@ struct SpaceDetailView: View {
         let detail = model.detail(space)
         ScrollViewReader { scroller in
             Form {
-                Section {
-                    PreviewCard(session: detail.canStream ? session : nil) { preview(detail) }
-                } footer: {
-                    if let error = detail.powerError {
-                        // Turning it off or on failed: why, inline.
-                        Text(error)
-                            .foregroundStyle(.red)
-                            .accessibilityIdentifier("space-power-error")
+                if let note = detail.desktopNote {
+                    // One of your machines that does not share its desktop:
+                    // why, in place of the desktop, and what it still does.
+                    DesktopNotSharedSections(model: model, machineId: space.id, note: note,
+                                             newSpace: detail.newSpace)
+                } else {
+                    Section {
+                        PreviewCard(session: detail.canStream ? session : nil) { preview(detail) }
+                    } footer: {
+                        if let error = detail.powerError {
+                            // Turning it off or on failed: why, inline.
+                            Text(error)
+                                .foregroundStyle(.red)
+                                .accessibilityIdentifier("space-power-error")
+                        }
                     }
                 }
                 Section {
@@ -167,7 +174,8 @@ struct SpaceDetailView: View {
                     }
                     if cover.kind != .stream {
                         DesktopCoverView(cover: cover, image: model.thumbnails[space.id],
-                                         progress: detail.progress, progressText: detail.progressText) {
+                                         progress: detail.progress, progressText: detail.progressText,
+                                         onAction: { model.devices.startEnroll(in: .main) }) {
                             press(cover)
                         }
                         .transition(.opacity)
@@ -364,6 +372,47 @@ struct SpaceDetailView: View {
             if let entry { t.preselect(entry, files: files) } else { await t.load() }
         } catch {
             model.show(error: LiveSpacesBackend.words(error))
+        }
+    }
+}
+
+/// One of your machines that does not share its desktop: the core's line
+/// in place of the desktop (with "New Space on <name>…" when it provides
+/// Spaces), then the Spaces it provides. No Stream, Agents or Teleport.
+struct DesktopNotSharedSections: View {
+    let model: AppModel
+    let machineId: String
+    let note: String
+    let newSpace: AppNewSpaceOn?
+
+    var body: some View {
+        Section {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(note)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("machine-desktop-note")
+                Spacer(minLength: 8)
+                if let newSpace {
+                    Button(newSpace.label) { Task { await model.openNewSpace(on: newSpace.on) } }
+                        .accessibilityIdentifier("machine-new-space")
+                }
+            }
+        }
+        if newSpace != nil {
+            Section("Spaces") {
+                let rows = model.hostedRows(machineId)
+                if rows.isEmpty {
+                    Text("No Spaces yet").foregroundStyle(.secondary)
+                }
+                ForEach(rows, id: \.id) { row in
+                    Button { model.select(row.id) } label: {
+                        SpaceRowView(row: row).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .accessibilityIdentifier("machine-spaces")
         }
     }
 }

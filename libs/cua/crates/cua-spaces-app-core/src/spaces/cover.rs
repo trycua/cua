@@ -27,6 +27,8 @@ pub const CONNECTING_TEXT: &str = "Connecting\u{2026}";
 pub const CONNECT_BUTTON: &str = "Connect";
 /// Its tooltip.
 pub const CONNECT_HELP: &str = "Show the live desktop";
+/// Its tooltip while this device is not enrolled.
+pub const CONNECT_DISABLED_HELP: &str = "Enroll this Mac to connect";
 /// The line when the stream could not open.
 pub const FAILED_TEXT: &str = "Could not connect to the desktop";
 /// The retry button.
@@ -64,6 +66,10 @@ pub struct DesktopCoverInput {
     pub connect_requested: bool,
     /// The shell's stream session.
     pub stream: StreamPhase,
+    /// The detail's `access`: this device is signed in but not enrolled,
+    /// so Connect shows greyed out under this notice and its action.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<crate::devices::MachineAccessNotice>,
 }
 
 /// How the cover draws.
@@ -98,6 +104,14 @@ pub struct DesktopCover {
     pub open_stream: bool,
     /// The shell starts the open session again (Try again was pressed).
     pub retry: bool,
+    /// The button shows greyed out (Connect while this device is not
+    /// enrolled).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub button_disabled: bool,
+    /// The one action above a greyed-out Connect ("Enroll This Mac…"): the
+    /// shell opens the enroll sheet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
 }
 
 /// The cover for `input`.
@@ -109,7 +123,22 @@ pub fn desktop_cover(input: &DesktopCoverInput) -> DesktopCover {
         button_help: help.map(str::to_string),
         open_stream: false,
         retry: false,
+        button_disabled: false,
+        action: None,
     };
+    // Signed in, not enrolled: why, its one action, and Connect greyed out.
+    if let Some(access) = &input.access {
+        return DesktopCover {
+            button_disabled: true,
+            action: Some(access.action_label.clone()),
+            ..cover(
+                DesktopCoverKind::Connect,
+                Some(&access.text),
+                Some(CONNECT_BUTTON),
+                Some(CONNECT_DISABLED_HELP),
+            )
+        };
+    }
     if !input.can_stream {
         return cover(
             DesktopCoverKind::Status,
@@ -193,7 +222,40 @@ mod tests {
             auto_connect: true,
             connect_requested: false,
             stream,
+            access: None,
         }
+    }
+
+    /// Signed in, not enrolled: Connect greyed out under the notice and its
+    /// one action, whatever the setting or the stream says.
+    #[test]
+    fn an_unenrolled_device_sees_connect_greyed_out_with_its_action() {
+        for kind in [
+            crate::devices::EnrollmentKind::NeedsEnrollment,
+            crate::devices::EnrollmentKind::Waiting,
+            crate::devices::EnrollmentKind::Due,
+        ] {
+            let notice = crate::devices::machine_access_notice(kind, None).unwrap();
+            for auto_connect in [true, false] {
+                let c = desktop_cover(&DesktopCoverInput {
+                    can_stream: false,
+                    auto_connect,
+                    access: Some(notice.clone()),
+                    ..input(StreamPhase::NoSession)
+                });
+                assert_eq!(c.kind, DesktopCoverKind::Connect);
+                assert_eq!(c.button.as_deref(), Some(CONNECT_BUTTON));
+                assert!(c.button_disabled && !c.open_stream && !c.retry);
+                assert_eq!(c.text.as_deref(), Some(notice.text.as_str()));
+                assert_eq!(c.action.as_deref(), Some(notice.action_label.as_str()));
+            }
+        }
+        // Enrolled: Connect works as before.
+        let c = desktop_cover(&DesktopCoverInput {
+            auto_connect: false,
+            ..input(StreamPhase::NoSession)
+        });
+        assert!(!c.button_disabled && c.action.is_none());
     }
 
     #[test]

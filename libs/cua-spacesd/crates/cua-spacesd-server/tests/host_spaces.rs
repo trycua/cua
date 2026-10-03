@@ -286,6 +286,31 @@ async fn a_host_provides_spaces_through_the_relay_and_keeps_its_desktop_private(
         .features
         .iter()
         .any(|f| f.name == "host_spaces" && f.supported));
+    // The desktop is not shared: its features say so to the relayed caller
+    // (apps hide Stream, Agents and Teleport), while the local token
+    // holder keeps the plain answer.
+    let stream = caps
+        .features
+        .iter()
+        .find(|f| f.name == "desktop_stream")
+        .unwrap();
+    assert!(!stream.supported);
+    assert_eq!(
+        stream.limitation,
+        cua_spacesd_server::services::system::DESKTOP_NOT_SHARED
+    );
+    let local_caps = client(&format!("http://{addr}"), HOST_TOKEN)
+        .await
+        .system()
+        .get_capabilities(GetCapabilitiesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(local_caps
+        .features
+        .iter()
+        .filter(|f| f.name == "desktop_stream")
+        .all(|f| f.limitation != cua_spacesd_server::services::system::DESKTOP_NOT_SHARED));
     let got = owner
         .host_spaces()
         .get_host_spaces(GetHostSpacesRequest {})

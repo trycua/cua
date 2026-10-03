@@ -128,6 +128,50 @@ pub fn app_space_detail_with(
     core::spaces::sidebar::detail_with(&space, usage.as_ref(), host_arch.as_deref(), &experiments)
 }
 
+/// [`app_space_detail_with`] as this device sees it: `access` (from
+/// [`app_machine_access_notice`]) greys out Connect on every Space reached
+/// through the relay while this device is not enrolled; one of your
+/// machines that does not share its desktop shows its note in place of the
+/// desktop, Stream, Agents and Teleport.
+#[uniffi::export]
+pub fn app_space_detail_for(
+    space: AppSpace,
+    usage: Option<AppSpaceUsage>,
+    host_arch: Option<String>,
+    experiments: AppExperiments,
+    access: Option<AppMachineAccessNotice>,
+) -> AppSpaceDetail {
+    core::spaces::sidebar::detail_for(
+        &space,
+        usage.as_ref(),
+        host_arch.as_deref(),
+        &experiments,
+        access.as_ref(),
+    )
+}
+
+/// Why this device cannot open the account's machines for its enrollment
+/// `kind` (`None` while it can). `pending_code` is the code it shows while
+/// it waits for approval.
+#[uniffi::export]
+pub fn app_machine_access_notice(
+    kind: AppEnrollmentKind,
+    pending_code: Option<String>,
+) -> Option<AppMachineAccessNotice> {
+    core::devices::machine_access_notice(kind, pending_code.as_deref())
+}
+
+/// The Spaces one of your machines provides (`machine_space_id` is its
+/// `relay:<id>`), as sidebar rows.
+#[uniffi::export]
+pub fn app_hosted_rows(
+    spaces: Vec<AppSpace>,
+    machine_space_id: String,
+    selected_id: String,
+) -> Vec<AppSidebarRow> {
+    core::spaces::sidebar::hosted_rows(&spaces, &machine_space_id, &selected_id)
+}
+
 /// This machine's CPU architecture as the Spaces apps pass it to the core
 /// (`arm64`, `amd64`).
 #[uniffi::export]

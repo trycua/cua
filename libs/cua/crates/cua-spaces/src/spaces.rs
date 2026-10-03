@@ -703,8 +703,16 @@ impl Spaces {
                 Ok(info)
             })
             .collect::<Result<_>>()?;
+        // This machine's own relay registration (it shares its desktop or
+        // provides Spaces) is not one of "your machines": it has its own
+        // place. Matched by this install's relay machine id, never by name,
+        // so another machine of the same name still lists.
+        let this_machine = self.this_relay_machine_id();
         let cache = self.inner.relay_cache.lock().expect("relay cache");
-        for m in cache.iter() {
+        for m in cache
+            .iter()
+            .filter(|m| this_machine.as_deref() != Some(m.id.as_str()))
+        {
             let mut info = relay_info(m);
             if !info.host.is_empty() {
                 info.host_name = cache
@@ -764,6 +772,18 @@ impl Spaces {
     }
 
     // --------------------------------------------------------------- relay
+
+    /// This install's relay machine id (`cua host setup` in relay mode),
+    /// when it has one: the machine itself, never listed among "your
+    /// machines".
+    pub fn this_relay_machine_id(&self) -> Option<String> {
+        cua_host::Host::new(self.home_dir())
+            .config()
+            .ok()
+            .flatten()
+            .and_then(|c| c.machine_id)
+            .filter(|id| !id.is_empty())
+    }
 
     /// The relay account, when configured.
     pub fn relay_account(&self) -> Option<crate::relay::RelayAccount> {

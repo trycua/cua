@@ -751,6 +751,74 @@ pub fn devices_view(input: &DevicesInput, now: u64) -> DevicesView {
     }
 }
 
+// ---- Opening a machine while this device is not enrolled --------------
+
+/// Why this device cannot open the account's machines (signed in, but not
+/// enrolled): the one line above a machine's greyed-out Connect, its
+/// status word and the one action that fixes it (the enroll sheet, which
+/// offers a fresh sign-in or an approval from an enrolled device).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MachineAccessNotice {
+    /// This device's enrollment.
+    pub kind: EnrollmentKind,
+    /// The machine's Status: "Not enrolled", "Waiting for approval", ...
+    pub status: String,
+    /// The line above the disabled Connect.
+    pub text: String,
+    /// The action's label; it opens the enroll sheet.
+    pub action_label: String,
+}
+
+/// "Enroll This Mac…": the notice's action for a device that never
+/// enrolled, waits for approval or was revoked.
+pub const ENROLL_THIS_MAC_LABEL: &str = "Enroll This Mac\u{2026}";
+/// "Re-verify This Mac…": the notice's action once enrollment expired.
+pub const REVERIFY_THIS_MAC_LABEL: &str = "Re-verify This Mac\u{2026}";
+
+/// The notice for this device's enrollment `kind`: `None` while it may
+/// open the account's machines (enrolled, or still in the grace period).
+/// `pending_code` is the one-time code this device shows while it waits.
+pub fn machine_access_notice(
+    kind: EnrollmentKind,
+    pending_code: Option<&str>,
+) -> Option<MachineAccessNotice> {
+    let notice = |status: &str, text: String, action: &str| MachineAccessNotice {
+        kind,
+        status: status.into(),
+        text,
+        action_label: action.into(),
+    };
+    match kind {
+        EnrollmentKind::Enrolled | EnrollmentKind::Grace => None,
+        EnrollmentKind::NeedsEnrollment => Some(notice(
+            "Not enrolled",
+            "Enroll this Mac to connect to your other machines.".into(),
+            ENROLL_THIS_MAC_LABEL,
+        )),
+        EnrollmentKind::Waiting => Some(notice(
+            "Waiting for approval",
+            match pending_code.map(str::trim).filter(|c| !c.is_empty()) {
+                Some(code) => format!(
+                    "Waiting for approval. On an enrolled device, approve this Mac with the code {code}."
+                ),
+                None => "Waiting for approval. Approve this Mac in Settings \u{203a} Devices on an enrolled device.".into(),
+            },
+            ENROLL_THIS_MAC_LABEL,
+        )),
+        EnrollmentKind::Due => Some(notice(
+            "Re-verification due",
+            "This Mac\u{2019}s access expired. Re-verify it to connect to your other machines.".into(),
+            REVERIFY_THIS_MAC_LABEL,
+        )),
+        EnrollmentKind::Revoked => Some(notice(
+            "Revoked",
+            "This Mac was revoked. Enroll it again to connect to your other machines.".into(),
+            ENROLL_THIS_MAC_LABEL,
+        )),
+    }
+}
+
 // ---- Enroll this device ------------------------------------------------
 
 /// How this device enrolls.
@@ -1763,5 +1831,37 @@ mod tests {
         });
         let s = failed(&expired, &one_match);
         assert!(!s.code_expired);
+    }
+
+    /// Signed in but not enrolled: every state says why Connect is greyed
+    /// out and offers the one action; enrolled (or in the grace period)
+    /// says nothing.
+    #[test]
+    fn machine_access_notice_covers_every_enrollment_state() {
+        assert!(machine_access_notice(EnrollmentKind::Enrolled, None).is_none());
+        assert!(machine_access_notice(EnrollmentKind::Grace, None).is_none());
+        let never = machine_access_notice(EnrollmentKind::NeedsEnrollment, None).unwrap();
+        assert_eq!(never.status, "Not enrolled");
+        assert_eq!(never.action_label, ENROLL_THIS_MAC_LABEL);
+        assert!(never.text.contains("Enroll this Mac"));
+        let waiting = machine_access_notice(EnrollmentKind::Waiting, Some("K7QX-M2RP")).unwrap();
+        assert_eq!(waiting.status, "Waiting for approval");
+        assert!(waiting.text.contains("K7QX-M2RP"), "{}", waiting.text);
+        // No code this launch: how to approve from another device instead.
+        let waiting = machine_access_notice(EnrollmentKind::Waiting, Some(" ")).unwrap();
+        assert!(
+            waiting.text.contains("Settings \u{203a} Devices"),
+            "{}",
+            waiting.text
+        );
+        let expired = machine_access_notice(EnrollmentKind::Due, None).unwrap();
+        assert_eq!(expired.action_label, REVERIFY_THIS_MAC_LABEL);
+        assert!(expired.text.contains("expired"));
+        let revoked = machine_access_notice(EnrollmentKind::Revoked, None).unwrap();
+        assert_eq!(revoked.action_label, ENROLL_THIS_MAC_LABEL);
+        for n in [never, waiting, expired, revoked] {
+            assert!(!n.text.contains('\u{2014}'), "{}", n.text);
+            assert!(n.text.len() < 100, "one short line: {}", n.text);
+        }
     }
 }

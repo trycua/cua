@@ -180,6 +180,8 @@ Returned by [`app_desktop_cover`](#app_desktop_cover).
 | `button_help` / `buttonHelp` | `Option<String>` |  | Its tooltip. |
 | `open_stream` / `openStream` | `bool` |  | The shell opens a stream session now (none is open, and one is wanted). |
 | `retry` | `bool` |  | The shell starts the open session again (Try again was pressed). |
+| `button_disabled` / `buttonDisabled` | `bool` | `false` | The button shows greyed out (Connect while this device is not enrolled). |
+| `action` | `Option<String>` | `None` | The one action above a greyed-out Connect ("Enroll This Mac…"): the shell opens the enroll sheet. |
 
 ## `AppDesktopCoverInput` record
 
@@ -190,6 +192,7 @@ Returned by [`app_desktop_cover`](#app_desktop_cover).
 | `auto_connect` / `autoConnect` | `bool` |  | Settings: "Connect to the desktop automatically". |
 | `connect_requested` / `connectRequested` | `bool` |  | Connect (or Try again) was pressed for this Space. |
 | `stream` | [`AppStreamPhase`](#appstreamphase-enum) |  | The shell's stream session. |
+| `access` | [`Option<AppMachineAccessNotice>`](/cua-sdk/reference/spaces/app-core/devices#appmachineaccessnotice-record) | `None` | The detail's `access`: Connect greyed out under this notice. |
 
 ## `AppDesktopCoverKind` enum
 

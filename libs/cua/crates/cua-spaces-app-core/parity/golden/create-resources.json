@@ -50,7 +50,7 @@
           "Disk: 2.8 GB (download 1.1 GB)",
           "Available: 3.0 GB on Colima"
         ],
-        "resourcesError": "Not enough space on Colima: needs 8.9 GB, 3.0 GB available.",
+        "resourcesError": "Not enough space on Colima: needs 9.0 GB, 3.0 GB available.",
         "runtime": "auto",
         "runtimes": [
           "auto",
@@ -106,7 +106,7 @@
           "Disk: 2.8 GB (download 1.1 GB)",
           "Available: 3.0 GB on Colima"
         ],
-        "resourcesError": "Not enough space on Colima: needs 8.9 GB, 3.0 GB available.",
+        "resourcesError": "Not enough space on Colima: needs 9.0 GB, 3.0 GB available.",
         "runtime": "auto",
         "runtimes": [
           "auto",
@@ -166,7 +166,7 @@
           "Disk: 2.8 GB (download 1.1 GB)",
           "Available: 3.0 GB on Colima"
         ],
-        "resourcesError": "Not enough space on Colima: needs 8.9 GB, 3.0 GB available.",
+        "resourcesError": "Not enough space on Colima: needs 9.0 GB, 3.0 GB available.",
         "runtime": "auto",
         "runtimes": [
           "auto",

@@ -29,11 +29,14 @@ pub use cua_vmm::gpu;
 /// the guest), reported to the [`progress::scope`] that started it.
 pub use cua_vmm::progress;
 
-/// Deletes the runtimes cua set up itself (the built-in Lume under
-/// `$CUA_HOME/runtimes`). A runtime the user installed is never touched;
-/// the built-in one is set up again the next time a Space needs it.
-pub fn remove_builtin_runtimes() -> std::result::Result<(), String> {
-    cua_vmm::lume::builtin::remove().map_err(|e| e.to_string())
+/// Deletes the runtimes cua set up itself under `$CUA_HOME/runtimes`: the
+/// built-in Lume, and the built-in Linux runtime's VM with its disks. A
+/// runtime the user installed is never touched; a built-in one is set up
+/// again the next time a Space needs it.
+pub async fn remove_builtin_runtimes() -> std::result::Result<(), String> {
+    let lume = cua_vmm::lume::builtin::remove().map_err(|e| e.to_string());
+    let linux = cua_vmm::managed::remove().await.map_err(|e| e.to_string());
+    lume.and(linux)
 }
 /// Cancels a create ([`Sandboxes::create_cancellable`]).
 pub use tokio_util::sync::CancellationToken;

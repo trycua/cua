@@ -610,9 +610,10 @@ impl Host {
         let home = self.home.clone();
         run(async move {
             cua_host::Host::new(home).remove().await?;
-            // Then the runtimes cua set up itself (the built-in Lume, set up
-            // again on the next create that needs it); the user's own stay.
-            if let Err(e) = cua_sandbox_core::remove_builtin_runtimes() {
+            // Then the runtimes cua set up itself (the built-in Lume and the
+            // built-in Linux runtime, set up again on the next create that
+            // needs them); the user's own stay.
+            if let Err(e) = cua_sandbox_core::remove_builtin_runtimes().await {
                 tracing::warn!("could not remove the built-in runtimes: {e}");
             }
             Ok(())

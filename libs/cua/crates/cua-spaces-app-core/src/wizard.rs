@@ -814,14 +814,26 @@ fn follow_to_host(state: &mut WizardState, env: &WizardEnv) {
     }
 }
 
-/// Switching to the built-in Lume, when macOS VMs are set to use this
-/// Mac's own Lume (`runtime.lume = system`) and it is missing. Otherwise
-/// cua sets up its built-in Lume by itself on the first macOS create.
+/// Switching to a built-in runtime, when the setting says to use only
+/// this Mac's own and it is missing: the built-in Lume for macOS VMs
+/// (`runtime.lume = system`), the built-in Linux runtime for containers
+/// (`runtime.linux = system`). Otherwise cua sets up its built-in one by
+/// itself on the first create that needs it.
 fn runtime_switch(image: &SandboxImage, env: &WizardEnv) -> Option<RuntimeSwitch> {
-    if image.local != Some(LocalEngine::Lume) || local_ready(image, env) {
+    if local_ready(image, env) {
         return None;
     }
-    if env.lume_source.as_deref() != Some("system") {
+    if image.local == Some(LocalEngine::Container) {
+        return (env.linux_source.as_deref() == Some("system")).then(|| RuntimeSwitch {
+            setting: "runtime.linux".into(),
+            value: "builtin".into(),
+            label: "Use built-in runtime".into(),
+            detail: "Cua sets up its own Linux runtime, a small VM that runs Spaces under \
+                     gVisor (about 480 MB), the first time you create a Linux Space."
+                .into(),
+        });
+    }
+    if image.local != Some(LocalEngine::Lume) || env.lume_source.as_deref() != Some("system") {
         return None;
     }
     if env.host_arch.as_deref().is_some_and(|a| a != "arm64") {
@@ -1020,6 +1032,10 @@ pub struct WizardEnv {
     /// `system`), when known.
     #[serde(default)]
     pub lume_source: Option<String>,
+    /// Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
+    /// `builtin`, `system`), when known (a Mac).
+    #[serde(default)]
+    pub linux_source: Option<String>,
     /// Free space and pulled images here (the SDK's `Local.storage()`),
     /// when known.
     #[serde(default)]
@@ -2617,9 +2633,12 @@ pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
         Location::Host => host_why
             .clone()
             .unwrap_or_else(|| "Choose a machine.".to_string()),
-        Location::Local if runtime_switch.is_some() => {
-            "This Mac\u{2019}s own Lume isn\u{2019}t installed.".to_string()
-        }
+        Location::Local if runtime_switch.is_some() => match image.local {
+            Some(LocalEngine::Container) => {
+                "No container engine is running on this Mac.".to_string()
+            }
+            _ => "This Mac\u{2019}s own Lume isn\u{2019}t installed.".to_string(),
+        },
         Location::Local => {
             if env.local_available {
                 let what = match image.local {
@@ -2996,6 +3015,7 @@ mod tests {
             max_cpus: 8,
             host_arch: Some("arm64".into()),
             lume_source: None,
+            linux_source: None,
             storage: None,
             cloud_pricing: None,
             clouds: vec![],
@@ -3840,6 +3860,57 @@ mod tests {
             ..system.clone()
         };
         assert!(view(&s, &intel).runtime_switch.is_none());
+    }
+
+    /// A Linux Space with no Docker: the built-in Linux runtime counts as
+    /// ready (set up on the first create). Set to use only this Mac's own
+    /// engine and with none running, the error says so and offers the
+    /// built-in runtime in one click.
+    #[test]
+    fn linux_runs_on_the_builtin_runtime_or_offers_it() {
+        let builtin = WizardEnv {
+            local_backends: Some(vec!["managed".into()]),
+            linux_source: Some("auto".into()),
+            ..env()
+        };
+        let s = reduce(
+            &initial(&builtin),
+            &WizardAction::ChooseOs { os: SpaceOs::Linux },
+            &builtin,
+        );
+        let v = view(&s, &builtin);
+        assert_eq!(v.placement_id, "local");
+        assert!(v.placement_error.is_none() && v.runtime_switch.is_none());
+        assert!(v.can_continue);
+
+        let system = WizardEnv {
+            local_available: false,
+            local_reason: Some("No local runtime found (Docker or Lume).".into()),
+            local_backends: Some(vec![]),
+            linux_source: Some("system".into()),
+            ..env()
+        };
+        let v = view(&s, &system);
+        assert_eq!(
+            v.placement_error.as_deref(),
+            Some("No container engine is running on this Mac.")
+        );
+        let switch = v.runtime_switch.expect("built-in offered");
+        assert_eq!(
+            (
+                switch.setting.as_str(),
+                switch.value.as_str(),
+                switch.label.as_str()
+            ),
+            ("runtime.linux", "builtin", "Use built-in runtime")
+        );
+        assert!(!v.can_continue);
+        // Automatic needs no switch: cua sets the built-in one up itself.
+        let auto = WizardEnv {
+            linux_source: Some("auto".into()),
+            ..system.clone()
+        };
+        assert!(view(&s, &auto).runtime_switch.is_none());
     }
 
     /// With your other Mac online and This Mac unable to run the image,

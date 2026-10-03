@@ -371,6 +371,15 @@ struct ViewModelTests {
         #expect(model.lumeSource == "builtin")
         #expect(model.settingsPage.sections.first { $0.id == "runtimes" }!.rows[0]
             .options.first(where: \.active)?.id == "builtin")
+        // Linux picks runtime.linux (the built-in Linux runtime).
+        let linux = model.settingsPage.sections.first { $0.id == "runtimes" }!.rows
+            .first { $0.id == "linux-runtime" }!
+        #expect(linux.label == "Linux")
+        #expect(linux.options.first(where: \.active)?.id == "auto")
+        await model.choose(row: "linux-runtime", option: "system")
+        #expect(model.linuxSource == "system")
+        #expect(model.settingsPage.sections.first { $0.id == "runtimes" }!.rows
+            .first { $0.id == "linux-runtime" }!.options.first(where: \.active)?.id == "system")
         #expect(model.chrome.signInLabel == "Sign in")
         await model.press(row: "sign-in")
         #expect(model.identity == "you@example.com")

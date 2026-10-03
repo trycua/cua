@@ -309,6 +309,7 @@ Returned by [`app_wizard_env_from_json`](#app_wizard_env_from_json).
 | `max_cpus` / `maxCpus` | `u32` |  | Upper bound for the CPU slider. |
 | `host_arch` / `hostArch` | `Option<String>` |  | This machine's architecture (`arm64`, `amd64`), when known. |
 | `lume_source` / `lumeSource` | `Option<String>` |  | Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`, `system`), when known. |
+| `linux_source` / `linuxSource` | `Option<String>` |  | Which engine local Linux Spaces run on (`runtime.linux`: `auto`, `builtin`, `system`), when known (a Mac). |
 | `storage` | [`Option<AppLocalStorage>`](#applocalstorage-record) |  | Free space and pulled images here (the SDK's `Local.storage()`), when known. |
 | `cloud_pricing` / `cloudPricing` | [`Option<AppCloudPricing>`](#appcloudpricing-record) |  | This account's Cua Cloud rates, when known (no estimate without). |
 | `clouds` | [`Vec<AppConnectedCloud>`](/cua-sdk/reference/spaces/app-core/cloud#appconnectedcloud-record) |  | The user's connected clouds (`cloud_status`), for "Your cloud" (offered only while its experiment is on: `offered_clouds`). |

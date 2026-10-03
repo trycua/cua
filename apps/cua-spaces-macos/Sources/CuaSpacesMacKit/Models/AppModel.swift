@@ -139,7 +139,7 @@ public final class AppModel {
             defaultLocation: settings.defaultLocation, cloudAvailable: false,
             localAvailable: true, localReason: nil, localBackends: nil, localDetails: nil,
             maxCpus: UInt32(max(2, min(16, ProcessInfo.processInfo.activeProcessorCount))),
-            hostArch: Self.hostArch, lumeSource: nil, storage: nil, cloudPricing: nil, clouds: [], hosts: [],
+            hostArch: Self.hostArch, lumeSource: nil, linuxSource: nil, storage: nil, cloudPricing: nil, clouds: [], hosts: [],
             experiments: settings.experiments, gpus: nil))
         self.notch = NotchModel()
         // The notch tiles and the preview cover read one thumbnail store,
@@ -383,6 +383,7 @@ public final class AppModel {
         async let hostsProbe = backend.hosts()
         let cloud = await backend.cloudAvailable()
         lumeSource = await backend.lumeSource()
+        linuxSource = await backend.linuxSource()
         await self.cloud.refresh()
         let (runtimes, storage, pricing, gpus) = await (runtimesProbe, storageProbe, pricingProbe, gpusProbe)
         hosts = await hostsProbe
@@ -404,17 +405,29 @@ public final class AppModel {
 
     /// Which Lume macOS Spaces run on (`runtime.lume`), once read.
     public private(set) var lumeSource: String?
+    /// Which engine local Linux Spaces run on (`runtime.linux`), once read.
+    public private(set) var linuxSource: String?
 
-    /// New Space's "Use built-in Lume": switches `runtime.lume`, then the
-    /// open wizard reads the runtimes again (This Mac can run it now).
+    /// New Space's "Use built-in Lume" / "Use built-in runtime": switches
+    /// `runtime.lume` or `runtime.linux`, then the open wizard reads the
+    /// runtimes again (This Mac can run it now).
     public func applyRuntimeSwitch(_ change: AppRuntimeSwitch) async {
+        let linux = change.setting == "runtime.linux"
         do {
-            try await backend.setLumeSource(change.value)
+            if linux {
+                try await backend.setLinuxSource(change.value)
+            } else {
+                try await backend.setLumeSource(change.value)
+            }
         } catch {
             show(error: LiveSpacesBackend.words(error))
             return
         }
-        lumeSource = await backend.lumeSource() ?? change.value
+        if linux {
+            linuxSource = await backend.linuxSource() ?? change.value
+        } else {
+            lumeSource = await backend.lumeSource() ?? change.value
+        }
         let runtimes = await backend.localRuntimes()
         var e = wizard.env
         let backends = runtimes?.ready
@@ -423,6 +436,7 @@ public final class AppModel {
         e.localBackends = backends
         e.localDetails = runtimes?.details
         e.lumeSource = lumeSource
+        e.linuxSource = linuxSource
         wizard.update(env: e)
     }
 
@@ -444,7 +458,8 @@ public final class AppModel {
             localAvailable: backends.map { !$0.isEmpty } ?? true,
             localReason: backends?.isEmpty == true ? "No local runtime found (Docker or Lume)." : nil,
             localBackends: backends, localDetails: runtimes?.details, maxCpus: wizard.env.maxCpus,
-            hostArch: Self.hostArch, lumeSource: lumeSource, storage: storage.map(Self.wizardStorage),
+            hostArch: Self.hostArch, lumeSource: lumeSource, linuxSource: linuxSource,
+            storage: storage.map(Self.wizardStorage),
             cloudPricing: available ? pricing : nil, clouds: [], hosts: [],
             experiments: settings.experiments, gpus: gpus))
     }
@@ -681,7 +696,7 @@ public final class AppModel {
             experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe,
             keyvaultUnlockPrompt: keyvault.unlockPromptShows,
             keyvaultSiteIcons: settings.keyvaultSiteIcons, keyvaultProtection: keyvault.page.protection,
-            autoConnect: settings.autoConnect, lumeSource: lumeSource))
+            autoConnect: settings.autoConnect, lumeSource: lumeSource, linuxSource: linuxSource))
     }
 
     /// Settings, General with Settings, Storage after General while the Cua
@@ -774,6 +789,7 @@ public final class AppModel {
     /// Reads what Settings shows (telemetry, the coding agents).
     public func loadSettings() async {
         lumeSource = await backend.lumeSource()
+        linuxSource = await backend.linuxSource()
         telemetryInput = telemetry?.status()
         readLoginItem()
         await storage.load()
@@ -821,6 +837,13 @@ public final class AppModel {
             do {
                 try await backend.setLumeSource(option)
                 lumeSource = await backend.lumeSource() ?? option
+            } catch {
+                show(error: LiveSpacesBackend.words(error))
+            }
+        case "linux-runtime":
+            do {
+                try await backend.setLinuxSource(option)
+                linuxSource = await backend.linuxSource() ?? option
             } catch {
                 show(error: LiveSpacesBackend.words(error))
             }

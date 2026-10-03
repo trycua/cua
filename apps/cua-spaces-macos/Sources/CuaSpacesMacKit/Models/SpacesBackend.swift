@@ -49,6 +49,11 @@ public protocol SpacesBackend: AnyObject, Sendable {
     func lumeSource() async -> String?
     /// Sets `runtime.lume`.
     func setLumeSource(_ value: String) async throws
+    /// Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
+    /// `builtin`, `system`), when known.
+    func linuxSource() async -> String?
+    /// Sets `runtime.linux`.
+    func setLinuxSource(_ value: String) async throws
     /// Free space where local Spaces are written and which images are
     /// pulled (`local().storage()`), when known.
     func localStorage() async -> LocalStorage?
@@ -103,6 +108,8 @@ public extension SpacesBackend {
     func unshare(id: String, who: String) async throws -> [AppShareEntryInput] { [] }
     func lumeSource() async -> String? { nil }
     func setLumeSource(_ value: String) async throws {}
+    func linuxSource() async -> String? { nil }
+    func setLinuxSource(_ value: String) async throws {}
 }
 
 /// The wizard's GPU choices from the SDK's `gpu_support`: the first option
@@ -273,10 +280,12 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
             try await cua.local().doctor()
         }
         guard case .success(let report) = result else { return nil }
-        // Lume counts as ready when cua sets it up by itself on the first
-        // macOS create (the built-in Lume): nothing for the person to do.
+        // Lume and the built-in Linux runtime count as ready when cua sets
+        // them up by itself on the first create that needs them (or boots
+        // them): nothing for the person to do.
+        let setsUpItself: Set<String> = ["lume", "managed"]
         let ready = report.checks
-            .filter { $0.status == .ok || ($0.status == .installable && $0.name.lowercased() == "lume") }
+            .filter { $0.status == .ok || ($0.status == .installable && setsUpItself.contains($0.name.lowercased())) }
             .map { $0.name.lowercased() }
         var details: [String: String] = [:]
         for check in report.checks where check.status != .ok { details[check.name.lowercased()] = check.detail }
@@ -289,6 +298,14 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
 
     public func setLumeSource(_ value: String) async throws {
         _ = try configSet(key: "runtime.lume", value: value)
+    }
+
+    public func linuxSource() async -> String? {
+        (try? configGet(key: "runtime.linux"))?.value
+    }
+
+    public func setLinuxSource(_ value: String) async throws {
+        _ = try configSet(key: "runtime.linux", value: value)
     }
 
     public func localStorage() async -> LocalStorage? {
@@ -705,6 +722,10 @@ public final class FixtureSpacesBackend: SpacesBackend, @unchecked Sendable {
     public var fixtureLumeSource: String? = "auto"
     public func lumeSource() async -> String? { await MainActor.run { fixtureLumeSource } }
     public func setLumeSource(_ value: String) async throws { await MainActor.run { fixtureLumeSource = value } }
+    /// The fixture Mac's `runtime.linux`.
+    public var fixtureLinuxSource: String? = "auto"
+    public func linuxSource() async -> String? { await MainActor.run { fixtureLinuxSource } }
+    public func setLinuxSource(_ value: String) async throws { await MainActor.run { fixtureLinuxSource = value } }
     public func localBackends() async -> [String]? { await MainActor.run { fixtureBackends } }
     /// The fixture Mac's free space and pulled images (none: the wizard
     /// shows no room lines).

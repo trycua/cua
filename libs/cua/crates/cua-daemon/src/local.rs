@@ -35,6 +35,7 @@ use cua_vmm::{
     auto::{self, DoctorReport},
     container::{ContainerConfig, ContainerRuntime},
     lume::LumeRuntime,
+    managed::{self, LinuxSource},
     qemu::{QemuConfig, QemuRuntime},
 };
 use std::{path::Path, sync::Arc};
@@ -413,9 +414,20 @@ fn endpoints_of(e: Endpoints) -> LocalEndpoints {
 /// `cua-vmm` behind [`LocalRuntime`].
 pub struct VmmLocal {
     container_cfg: ContainerConfig,
-    container: tokio::sync::OnceCell<Arc<ContainerRuntime>>,
+    /// The container engine, and the `runtime.linux` setting it was chosen
+    /// for (chosen again when the setting changes).
+    container: tokio::sync::Mutex<Option<(LinuxSource, Engine)>>,
     qemu: Arc<QemuRuntime>,
     lume: Arc<LumeRuntime>,
+}
+
+/// The container engine [`VmmLocal`] uses.
+#[derive(Clone)]
+enum Engine {
+    /// This Mac's own (Docker Desktop, Colima, OrbStack, a Linux dockerd).
+    System(Arc<ContainerRuntime>),
+    /// The built-in Linux runtime (its VM boots on demand).
+    Builtin(Arc<managed::ManagedContainers>),
 }
 
 impl Default for VmmLocal {
@@ -434,22 +446,47 @@ impl VmmLocal {
         });
         Self {
             container_cfg,
-            container: tokio::sync::OnceCell::new(),
+            container: tokio::sync::Mutex::new(None),
             qemu: Arc::new(qemu),
             lume: Arc::new(LumeRuntime::with_defaults()),
         }
     }
 
-    /// The container backend (connects to the engine on first use).
+    /// The engine local Linux Spaces use ([`managed::choose`]): this Mac's
+    /// own, or the built-in runtime. Chosen on first use, without booting
+    /// anything.
+    async fn engine(&self) -> std::result::Result<Engine, VmmError> {
+        let source = LinuxSource::current();
+        let mut slot = self.container.lock().await;
+        if let Some((s, e)) = slot.as_ref()
+            && *s == source
+        {
+            return Ok(e.clone());
+        }
+        let e = match managed::choose(self.container_cfg.clone(), source).await? {
+            managed::Choice::System(rt) => Engine::System(Arc::new(*rt)),
+            managed::Choice::Builtin(m) => Engine::Builtin(m),
+        };
+        *slot = Some((source, e.clone()));
+        Ok(e)
+    }
+
+    /// The container backend (connects to the engine on first use, and
+    /// boots the built-in Linux runtime when that is the engine).
     pub async fn container(&self) -> std::result::Result<Arc<ContainerRuntime>, VmmError> {
-        self.container
-            .get_or_try_init(|| async {
-                Ok(Arc::new(
-                    ContainerRuntime::connect(self.container_cfg.clone()).await?,
-                ))
-            })
-            .await
-            .cloned()
+        match self.engine().await? {
+            Engine::System(rt) => Ok(rt),
+            Engine::Builtin(m) => m.engine().await,
+        }
+    }
+
+    /// The container backend when its engine is up; never boots the
+    /// built-in Linux runtime.
+    pub async fn container_if_up(&self) -> Option<Arc<ContainerRuntime>> {
+        match self.engine().await.ok()? {
+            Engine::System(rt) => Some(rt),
+            Engine::Builtin(m) => m.engine_if_running().await,
+        }
     }
 
     /// The QEMU backend.
@@ -462,7 +499,10 @@ impl VmmLocal {
         kind: BackendKind,
     ) -> std::result::Result<Arc<dyn VmmRuntime>, VmmError> {
         Ok(match kind {
-            BackendKind::Container => self.container().await? as Arc<dyn VmmRuntime>,
+            BackendKind::Container => match self.engine().await? {
+                Engine::System(rt) => rt as Arc<dyn VmmRuntime>,
+                Engine::Builtin(m) => m as Arc<dyn VmmRuntime>,
+            },
             BackendKind::Lume => self.lume.clone() as Arc<dyn VmmRuntime>,
             _ => self.qemu.clone() as Arc<dyn VmmRuntime>,
         })
@@ -649,10 +689,17 @@ impl LocalRuntime for VmmLocal {
             out.push(self.lume.gpu_support());
         }
         out.push(self.qemu.gpu_support().await);
-        match self.container().await {
-            Ok(rt) => {
+        match self.engine().await {
+            Ok(Engine::System(rt)) => {
                 out.push(rt.gpu_support_for("container").await);
                 out.push(rt.gpu_support_for("gvisor").await);
+            }
+            // The built-in runtime's VM has no GPU (and is not booted to
+            // say so).
+            Ok(Engine::Builtin(_)) => {
+                for r in ["container", "gvisor"] {
+                    out.push(cua_vmm::gpu::container_support("macos", r, false));
+                }
             }
             Err(e) => {
                 for r in ["container", "gvisor"] {
@@ -852,11 +899,16 @@ impl LocalRuntime for VmmLocal {
     }
 
     /// Containers pause in memory (`docker pause`) and QEMU VMs pause over
-    /// QMP; Lume has no pause, so a Lume VM stops and boots again.
+    /// QMP; Lume has no pause, so a Lume VM stops and boots again. On the
+    /// built-in Linux runtime containers stop too, so its VM can stop once
+    /// no Linux Space runs (a paused one would hold it up).
     fn power_control(&self, runtime_type: &str) -> Option<cua_sandbox_core::PowerControl> {
         use cua_sandbox_core::PowerControl;
         match runtime_type.trim().to_ascii_lowercase().as_str() {
             "lume" => Some(PowerControl::Stop),
+            "gvisor" | "runsc" | "runc" | "container" | "docker" if managed::in_use() => {
+                Some(PowerControl::Stop)
+            }
             "gvisor" | "runsc" | "runc" | "container" | "docker" | "qemu-docker" | "qemu" => {
                 Some(PowerControl::Suspend)
             }

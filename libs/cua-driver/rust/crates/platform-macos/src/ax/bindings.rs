@@ -183,6 +183,28 @@ pub unsafe fn copy_string_attr(element: AXUIElementRef, attr_name: &str) -> Opti
     Some(s.to_string())
 }
 
+/// Copy the `AXURL` attribute (a `CFURL`) as its absolute URL string.
+/// Returns `None` on any error or if the attribute is not a `CFURL`.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn copy_url_attr(element: AXUIElementRef) -> Option<String> {
+    use core_foundation::url::CFURL;
+    let attr = CFStr::new("AXURL");
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    if core_foundation::base::CFGetTypeID(value) != CFURL::type_id() {
+        CFRelease(value);
+        return None;
+    }
+    let url = CFURL::wrap_under_create_rule(value as _);
+    Some(url.absolute().get_string().to_string())
+}
+
 /// Copy a numeric attribute from an AX element as an `f64`. Returns `None` on
 /// any error or if the attribute is not a `CFNumber`. SwiftUI sliders expose a
 /// readable numeric `AXValue` even when that value is not settable — this lets

@@ -3130,6 +3130,9 @@ pub struct AppWizardEnv {
     /// Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
     /// `system`), when known.
     pub lume_source: Option<String>,
+    /// Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
+    /// `builtin`, `system`), when known (a Mac).
+    pub linux_source: Option<String>,
     /// Free space and pulled images here (the SDK's `Local.storage()`),
     /// when known.
     pub storage: Option<AppLocalStorage>,
@@ -6307,6 +6310,9 @@ pub struct AppSettingsInput {
     /// Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
     /// `system`); none: no Runtimes section.
     pub lume_source: Option<String>,
+    /// Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
+    /// `builtin`, `system`); none: no Linux row.
+    pub linux_source: Option<String>,
 }
 
 /// How a Settings row draws.

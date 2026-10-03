@@ -316,20 +316,15 @@ pub async fn doctor() -> DoctorReport {
                 .push("a Docker-API container engine".into());
         }
     }
-    if !container_status.ready {
-        container_status.provisioning.push(
-            "boot the managed cua-runtime VM (containerd + runsc) — see cua_vmm::managed".into(),
-        );
+    let managed_status = managed_status(
+        crate::managed::LinuxSource::current(),
+        container_status.ready,
+    );
+    if !container_status.ready && managed_status.provisionable {
+        container_status
+            .provisioning
+            .push("use the built-in Linux runtime (a VM with Docker and gVisor)".into());
     }
-
-    let managed_status = BackendStatus {
-        backend: BackendKind::Managed,
-        ready: false,
-        provisionable: qemu_status.ready || lume_status.ready,
-        detail: crate::managed::STATUS.into(),
-        missing: vec![],
-        provisioning: vec![],
-    };
 
     DoctorReport {
         host,
@@ -337,6 +332,46 @@ pub async fn doctor() -> DoctorReport {
         qemu,
         lume,
         container,
+    }
+}
+
+/// The built-in Linux runtime ([`crate::managed`]) for `doctor`: ready
+/// while its VM runs; else used (set up or booted on demand) when the
+/// `runtime.linux` setting picks it here.
+fn managed_status(source: crate::managed::LinuxSource, engine_ready: bool) -> BackendStatus {
+    use crate::managed::{self, LinuxSource};
+    let mb = managed::first_use_download() >> 20;
+    let picked = source.allows_builtin()
+        && (source == LinuxSource::Builtin || managed::exists() || !engine_ready);
+    let running = picked && managed::running();
+    BackendStatus {
+        backend: BackendKind::Managed,
+        ready: running,
+        provisionable: picked && !running,
+        detail: if !managed::supported() {
+            "the built-in Linux runtime runs on macOS".into()
+        } else if source == LinuxSource::System {
+            "Linux Spaces are set to use this Mac's own container engine".into()
+        } else if running {
+            "built-in Linux runtime running (gVisor)".into()
+        } else if picked && managed::exists() {
+            "built-in Linux runtime, started on demand".into()
+        } else if picked {
+            format!("{}, about {mb} MB", managed::STATUS)
+        } else {
+            "not used: this Mac's own container engine runs Linux Spaces".into()
+        },
+        missing: vec![],
+        provisioning: if picked && !running && !managed::exists() {
+            vec![
+                format!("download the built-in Linux runtime (about {mb} MB)"),
+                "boot its VM".into(),
+            ]
+        } else if picked && !running {
+            vec!["boot its VM".into()]
+        } else {
+            vec![]
+        },
     }
 }
 
@@ -360,11 +395,18 @@ pub fn select(req: &SelectRequest, report: &DoctorReport) -> Result<Selection> {
                     provisioning: c.provisioning,
                 });
             }
+            if let Some(m) = status(BackendKind::Managed).filter(|m| m.ready || m.provisionable) {
+                return Ok(Selection {
+                    backend: BackendKind::Container,
+                    reason: "the built-in Linux runtime (Docker in a VM); isolation: gVisor".into(),
+                    provisioning: m.provisioning,
+                });
+            }
             Err(VmmError::missing(
                 "a container engine",
                 format!(
-                    "{}. The managed cua-runtime VM is not available yet; install Colima (`brew install colima docker && colima start`) \
-                     or Docker Engine",
+                    "{}. Install Docker (or Colima), or set `runtime.linux` to `auto` to use \
+                     the built-in Linux runtime on a Mac",
                     c.detail
                 ),
             ))

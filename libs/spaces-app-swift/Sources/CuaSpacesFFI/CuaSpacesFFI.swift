@@ -25440,6 +25440,11 @@ public struct AppSettingsInput: Equatable, Hashable {
      * `system`); none: no Runtimes section.
      */
     public var lumeSource: String?
+    /**
+     * Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
+     * `builtin`, `system`); none: no Linux row.
+     */
+    public var linuxSource: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -25510,7 +25515,11 @@ public struct AppSettingsInput: Equatable, Hashable {
         /**
          * Which Lume macOS Spaces run on (`runtime.lume`: `auto`, `builtin`,
          * `system`); none: no Runtimes section.
-         */lumeSource: String?) {
+         */lumeSource: String?,
+        /**
+         * Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
+         * `builtin`, `system`); none: no Linux row.
+         */linuxSource: String?) {
         self.identity = identity
         self.apiKeyClient = apiKeyClient
         self.signIn = signIn
@@ -25531,6 +25540,7 @@ public struct AppSettingsInput: Equatable, Hashable {
         self.keyvaultProtection = keyvaultProtection
         self.autoConnect = autoConnect
         self.lumeSource = lumeSource
+        self.linuxSource = linuxSource
     }
 
 
@@ -25568,7 +25578,8 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
                 keyvaultSiteIcons: FfiConverterBool.read(from: &buf),
                 keyvaultProtection: FfiConverterSequenceTypeAppFact.read(from: &buf),
                 autoConnect: FfiConverterOptionBool.read(from: &buf),
-                lumeSource: FfiConverterOptionString.read(from: &buf)
+                lumeSource: FfiConverterOptionString.read(from: &buf),
+                linuxSource: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -25593,6 +25604,7 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
         FfiConverterSequenceTypeAppFact.write(value.keyvaultProtection, into: &buf)
         FfiConverterOptionBool.write(value.autoConnect, into: &buf)
         FfiConverterOptionString.write(value.lumeSource, into: &buf)
+        FfiConverterOptionString.write(value.linuxSource, into: &buf)
     }
 }
 
@@ -30907,6 +30919,11 @@ public struct AppWizardEnv: Equatable, Hashable {
      */
     public var lumeSource: String?
     /**
+     * Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
+     * `builtin`, `system`), when known (a Mac).
+     */
+    public var linuxSource: String?
+    /**
      * Free space and pulled images here (the SDK's `Local.storage()`),
      * when known.
      */
@@ -30969,6 +30986,10 @@ public struct AppWizardEnv: Equatable, Hashable {
          * `system`), when known.
          */lumeSource: String?,
         /**
+         * Which engine local Linux Spaces run on (`runtime.linux`: `auto`,
+         * `builtin`, `system`), when known (a Mac).
+         */linuxSource: String?,
+        /**
          * Free space and pulled images here (the SDK's `Local.storage()`),
          * when known.
          */storage: AppLocalStorage?,
@@ -30999,6 +31020,7 @@ public struct AppWizardEnv: Equatable, Hashable {
         self.maxCpus = maxCpus
         self.hostArch = hostArch
         self.lumeSource = lumeSource
+        self.linuxSource = linuxSource
         self.storage = storage
         self.cloudPricing = cloudPricing
         self.clouds = clouds
@@ -31032,6 +31054,7 @@ public struct FfiConverterTypeAppWizardEnv: FfiConverterRustBuffer {
                 maxCpus: FfiConverterUInt32.read(from: &buf),
                 hostArch: FfiConverterOptionString.read(from: &buf),
                 lumeSource: FfiConverterOptionString.read(from: &buf),
+                linuxSource: FfiConverterOptionString.read(from: &buf),
                 storage: FfiConverterOptionTypeAppLocalStorage.read(from: &buf),
                 cloudPricing: FfiConverterOptionTypeAppCloudPricing.read(from: &buf),
                 clouds: FfiConverterSequenceTypeAppConnectedCloud.read(from: &buf),
@@ -31051,6 +31074,7 @@ public struct FfiConverterTypeAppWizardEnv: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.maxCpus, into: &buf)
         FfiConverterOptionString.write(value.hostArch, into: &buf)
         FfiConverterOptionString.write(value.lumeSource, into: &buf)
+        FfiConverterOptionString.write(value.linuxSource, into: &buf)
         FfiConverterOptionTypeAppLocalStorage.write(value.storage, into: &buf)
         FfiConverterOptionTypeAppCloudPricing.write(value.cloudPricing, into: &buf)
         FfiConverterSequenceTypeAppConnectedCloud.write(value.clouds, into: &buf)

@@ -10,6 +10,7 @@
 //! | `CUA_E2E_LUME=1` | Lume backend against `lume serve` |
 //! | `CUA_E2E_IMAGE=1` | cua-image registry pulls + local builder |
 //! | `CUA_E2E_FLEET_CATALOG=1` | every Fleet catalog image through the SDK local provider (`tests/fleet_catalog.rs`) |
+//! | `CUA_E2E_BUILTIN_LINUX=1` | a Linux Space on the built-in Linux runtime (macOS; `tests/builtin_linux.rs`) |
 
 use std::time::Instant;
 

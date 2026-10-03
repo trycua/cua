@@ -60,6 +60,15 @@ Pass the same `--stamp` (and `--work`, when set) to every run of one release. `t
 - **Identity:** `/etc/cua-image/manifest.json` (from `image.json` claims and `cua-spacesd build-info`), `/etc/cua-image/spacesd-source`, `/etc/cua-image/variant` (`lume`).
 - **Gate:** `doctor-gate.sh` runs `cua-spacesd doctor --strict` in the guest over `lume ssh` after a reboot, then `tools/ax_probe.py` (the official MCP SDK against the image's `/mcp`: permissions, an AX tree read, CGEvent clicks in Calculator and a session-keyed `move_cursor` that must return). The build fails unless both pass. The release's `input/arm64/lume` gate (`live-input-gate.sh`) then boots a clone of the built VM and runs `libs/cua/crates/cua-spaces-ext/tests/e2e_macos_input.rs`: a Dock click on a whole-display stream must be delivered and change the screen. The pushed VM itself never boots again after its sanitize.
 
+## Built-in Linux runtime (`runtime-gvisor`)
+
+`runtime-gvisor/` builds `ghcr.io/trycua/runtime-gvisor`, the disk of the VM a Mac with no Docker runs Linux Spaces in (`cua_vmm::managed`, the Linux row of Settings → Runtimes, `cua config set runtime.linux auto|builtin|system`). It is not a Space image and not in the catalog.
+
+- **Contents:** Colima's own Ubuntu 24.04 Docker disk (colima-core, Docker Engine and containerd) with gVisor's `runsc` and its sentry baked into `/usr/local/bin`; every input is pinned by digest in `runtime-gvisor/versions.env`. The SDK's Colima profile makes `runsc` Docker's default runtime, mounts no host directory, and Lima forwards the guest's Docker socket to `$CUA_HOME/runtimes/linux/vm/cua/docker.sock` (mode 0600).
+- **Build:** `sudo runtime-gvisor/build.sh arm64|amd64 out/` on any Linux (loop devices; it only adds files, so one runner builds both arches). About 425 MB (arm64) and 460 MB (amd64) compressed.
+- **Publish:** `runtime-gvisor/push.sh <tag> out/` (`.github/workflows/cd-image-runtime-gvisor.yml` on `runtime-gvisor-v*` tags) pushes `<tag>-<arch>` OCI artifacts (one gzip raw-disk layer each) and the `<tag>` index. Tags are written once; there is no floating tag. The SDK pins each arch's layer digest and size in `managed.rs` (a unit test checks the pins against `versions.env`), so a new disk ships with the SDK release that pins it.
+- **Gate:** the opt-in `managed::tests::sets_up_boots_and_removes_the_builtin_runtime` on an Apple silicon Mac downloads the pinned bytes into a temporary `CUA_HOME`, boots the VM and checks `runsc` is Docker's default runtime. A pre-release tag (`<version>-rcN`) can be tested before the SDK pin moves.
+
 ## Image references
 
 `sandbox-images.json` is the one list of images the repo points at: the apps, the CLI (`cua images ls`), the docs tables and cua-bench read it. Benchmark entries name their `bench/<id>/lock.json` pins and the benchmarks they run.

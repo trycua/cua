@@ -315,6 +315,36 @@ struct SnapshotTests {
         try assertSnapshot(Sidebar(model: m).frame(width: 260), "sidebar", size: CGSize(width: 260, height: 520))
     }
 
+    /// The first Linux Space on a Mac with no Docker: the built-in Linux
+    /// runtime's download shows on the new Space's row, in words, with its
+    /// bytes (simulated progress).
+    @Test func mainWindowSidebarSettingUpLinuxRuntime() async throws {
+        let m = try await model()
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        m.sendCreate(.start(id: "pending:linux", name: "linux-dev", os: .linux, provider: .local, now: now,
+                            image: "ghcr.io/trycua/linux:24.04", kind: .container, hostArch: "arm64",
+                            gpu: false))
+        m.sendCreate(.progress(id: "pending:linux", phase: "preparing", fraction: 0.4, now: now,
+                               bytesDone: 192 << 20, bytesTotal: 478 << 20, bytesPerSecond: 24e6))
+        let space = try #require(m.spaces.first { $0.id == "pending:linux" })
+        let detail = m.detail(space)
+        #expect(detail.progressText?.contains("of 478 MB") == true)
+        let cover = m.cover(detail, requested: false, stream: .noSession)
+        let view = HStack(spacing: 0) {
+            Sidebar(model: m).frame(width: 260)
+            Form {
+                Section {
+                    PreviewCard(session: nil) {
+                        DesktopCoverView(cover: cover, image: nil, progress: detail.progress,
+                                         progressText: detail.progressText)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+        }
+        try assertSnapshot(view, "setting-up-linux-runtime", size: CGSize(width: 820, height: 420))
+    }
+
     /// The power button next to Delete on the rows: a suspended Space
     /// (selected: Resume), a macOS VM turning off (a spinner), and one whose
     /// turn-off failed (why, inline).

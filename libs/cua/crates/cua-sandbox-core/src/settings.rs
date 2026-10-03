@@ -36,7 +36,7 @@ pub struct Key {
 }
 
 /// Every setting, in display order.
-pub const KEYS: [Key; 8] = [
+pub const KEYS: [Key; 9] = [
     Key {
         name: "default.on",
         env: "CUA_DEFAULT_ON",
@@ -84,6 +84,12 @@ pub const KEYS: [Key; 8] = [
         env: "CUA_RUNTIME_LUME",
         default: "auto",
         description: "the Lume macOS Spaces run on: auto (this Mac's own, else built-in), builtin (cua's pinned, signed Lume, set up on first use) or system (only this Mac's own; nothing is downloaded)",
+    },
+    Key {
+        name: "runtime.linux",
+        env: "CUA_RUNTIME_LINUX",
+        default: "auto",
+        description: "the engine local Linux Spaces run on, on a Mac: auto (a working Docker engine on this Mac, else built-in; built-in once it exists), builtin (cua's own VM with Docker and gVisor, set up on first use) or system (only this Mac's own engine; nothing is downloaded)",
     },
 ];
 
@@ -424,6 +430,14 @@ pub fn normalize(key: Key, value: &str) -> Result<String, SettingsError> {
             .ok_or_else(|| {
                 SettingsError(format!(
                     "runtime.lume: expected auto, builtin or system, got {v:?}"
+                ))
+            })?
+            .as_str()
+            .to_string(),
+        "runtime.linux" => cua_vmm::managed::LinuxSource::parse(v)
+            .ok_or_else(|| {
+                SettingsError(format!(
+                    "runtime.linux: expected auto, builtin or system, got {v:?}"
                 ))
             })?
             .as_str()

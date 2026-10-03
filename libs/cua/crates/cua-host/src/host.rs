@@ -684,6 +684,7 @@ pub struct Host {
     paths: HostPaths,
     manager: Option<Arc<dyn ServiceManager>>,
     preflight: Option<Arc<dyn SessionProbe>>,
+    device: Option<Arc<crate::DeviceAuth>>,
 }
 
 impl std::fmt::Debug for Host {
@@ -701,7 +702,16 @@ impl Host {
             home,
             manager: None,
             preflight: None,
+            device: None,
         }
+    }
+
+    /// Registers with the relay carrying `device`'s session when this
+    /// install is enrolled (a device that is not enrolled registers with
+    /// the account token alone, as before).
+    pub fn with_device(mut self, device: Arc<crate::DeviceAuth>) -> Self {
+        self.device = Some(device);
+        self
     }
 
     /// Uses `manager` instead of the OS runner (tests, embedding).
@@ -902,9 +912,18 @@ impl Host {
         };
         match &opts.mode {
             HostMode::Relay { url } => {
-                let relay = RelayClient::new(url)?;
                 *stage = SetupStage::Token;
                 let token = tokens.access_token().await?;
+                // An enrolled device proves itself, so the relay lets it
+                // re-register a machine it no longer holds the token of.
+                // Only a device of this relay: another relay's session means
+                // nothing here.
+                let relay = RelayClient::new(url)?;
+                let session = match &self.device {
+                    Some(d) if d.relay_url() == relay.base() => d.try_session().await,
+                    _ => None,
+                };
+                let relay = relay.with_device_session(session);
                 *stage = SetupStage::Register;
                 let id = load_or_create_machine_id(&self.paths.machine_id)?;
                 // Re-running setup proves it is this machine with its current

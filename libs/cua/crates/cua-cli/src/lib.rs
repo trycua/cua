@@ -1617,8 +1617,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             let home = util::cua_home();
             let tokens = host::SetupTokens::session_or_sign_in();
             let device = devices_cmd::device_auth(&host::relay_url(None, &home)).ok();
-            let code =
-                host::run_host(cmd, &home, &tokens, device.as_deref(), None, json, out).await?;
+            let code = host::run_host(cmd, &home, &tokens, device, None, json, out).await?;
             if tokens.used_ephemeral() && !json {
                 eprintln!(
                     "Signed in for this command only: this machine keeps no cua.ai session, just its machine token."

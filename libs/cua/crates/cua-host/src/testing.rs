@@ -75,6 +75,7 @@ struct State_ {
     fail_register: std::collections::VecDeque<u16>,
     /// Machine registrations received (including refused ones).
     register_calls: usize,
+    register_sessions: Vec<Option<String>>,
     /// machine id → `(path prefix, base URL)` its `/m/<id>/…` gRPC-Web
     /// requests go to (the longest matching prefix wins).
     tunnels: BTreeMap<String, Vec<(String, String)>>,
@@ -245,6 +246,11 @@ async fn register(
 ) -> Response {
     let mut st = s.lock().unwrap();
     st.register_calls += 1;
+    let session = headers
+        .get(crate::relay::DEVICE_SESSION_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    st.register_sessions.push(session);
     if let Some(code) = st.fail_register.pop_front() {
         let status = StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         return err(status, "the fake relay failed this registration");
@@ -1011,6 +1017,11 @@ impl FakeRelay {
     /// Machine registrations received so far (refused ones too).
     pub fn register_calls(&self) -> usize {
         self.state.lock().unwrap().register_calls
+    }
+
+    /// The device session header of each machine registration, in order.
+    pub fn register_sessions(&self) -> Vec<Option<String>> {
+        self.state.lock().unwrap().register_sessions.clone()
     }
 
     /// Refuses account calls to the machine API without an enrolled

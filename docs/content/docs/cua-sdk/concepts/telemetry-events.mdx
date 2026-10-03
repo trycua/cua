@@ -27,7 +27,8 @@ Every event carries: `telemetry_schema_version`, `event_version`, `product`
 | `cua_spaces_feature_used` | `feature` (a fixed Spaces app feature) | Spaces app feature adoption. |
 | `cua_stream_stats` | `transport`, `codec`, `decode` (`hw` or `sw`), `fps_bucket`, `latency_bucket`, `resolution`, `duration_bucket` | Streaming performance (50% sampled). |
 | `cua_onboarding_step` | `step`, `outcome` | Install and onboarding funnel. |
-| `cua_agent_run_completed` | `harness` (cua-agents id), `location`, `outcome`, `error_kind`, `duration_bucket` | Which agent harnesses run and how reliably. |
+| `cua_agent_run_started` | `harness` (cua-agents id or `other`), `location`, `entry` (`spaces_tool`, `cli`, `sdk`, `persistent`, `routine`), `outcome`, `error_kind` | Agent runs started, and failed starts. |
+| `cua_agent_run_completed` | `harness`, `location`, `entry`, `outcome`, `error_kind`, `duration_bucket` | First agent run, and how reliably runs finish. Once per run. |
 | `cua_bench_run_completed` | `taskset` (cua-bench dataset or `custom`), `score_bucket`, `task_count`, `outcome` | Benchmark use and coarse scores. |
 | `cua_daemon_started` | `mode`, `outcome` | Daemon startup reliability. |
 | `cua_daemon_health` | `uptime_bucket`, `sandboxes` | Hourly aggregate health. |

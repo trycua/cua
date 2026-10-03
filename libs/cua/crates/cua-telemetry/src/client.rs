@@ -250,7 +250,7 @@ impl Telemetry {
         }
     }
 
-    fn env(&self, name: &str) -> Option<String> {
+    pub(crate) fn env(&self, name: &str) -> Option<String> {
         (self.inner.env)(name)
     }
 

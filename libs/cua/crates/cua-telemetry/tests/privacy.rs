@@ -130,7 +130,8 @@ fn all_builders(s: &str) -> Vec<Event> {
             height: 1080,
             duration: d,
         }),
-        events::agent_run_completed(s, s, Outcome::Ok, Some(s), d),
+        events::agent_run_started(s, s, s, Outcome::Error, Some(s)),
+        events::agent_run_completed(s, s, s, Outcome::Ok, Some(s), d),
         events::bench_run_completed(s, Some(0.42), 12, Outcome::Ok),
         events::daemon_started(s, Outcome::Ok),
         events::daemon_health(d, 3),
@@ -1166,4 +1167,173 @@ fn stream_summary_is_bucketed_and_needs_video() {
     assert!(
         events::stream_summary("websocket", "h264", None, 5, 720, None, Duration::ZERO).is_none()
     );
+}
+
+/// Agent runs: one `cua_agent_run_started`, one `cua_agent_run_completed`
+/// per run (whichever process sees it end first), `first_agent_run` once
+/// per install, and only fixed words in any of them.
+#[test]
+fn agent_runs_are_recorded_once_by_the_install_that_started_them() {
+    let h = tempfile::tempdir().unwrap();
+    let (t, sink) = ready(h.path(), &[]);
+    assert_eq!(
+        t.agent_run_started(
+            "run-0000abcd",
+            "claude-code",
+            "local:my-private-sandbox-name",
+            "spaces_tool"
+        ),
+        Captured::Queued
+    );
+    assert!(t.agent_run_pending("run-0000abcd"));
+    // The marker keeps fixed words only.
+    let marker =
+        std::fs::read_to_string(h.path().join("telemetry/agent_runs/run-0000abcd")).unwrap();
+    assert!(!marker.contains("private"), "{marker}");
+    // A run this install did not start is never counted here.
+    assert_eq!(
+        t.agent_run_finished("run-ffffffff", Outcome::Ok, None),
+        Captured::AlreadyRecorded
+    );
+    // Another process of the same install sees it end: recorded once.
+    let (t2, sink2) = ready(h.path(), &[]);
+    assert_eq!(
+        t2.agent_run_finished("run-0000abcd", Outcome::Ok, None),
+        Captured::Queued
+    );
+    assert_eq!(
+        t.agent_run_finished("run-0000abcd", Outcome::Ok, None),
+        Captured::AlreadyRecorded
+    );
+    assert!(!t.agent_run_pending("run-0000abcd"));
+    // A second run: completed again, but first_agent_run never again.
+    t.agent_run_started("run-0000abce", "openai-codex", "cloud", "cli");
+    t.agent_run_finished("run-0000abce", Outcome::Error, Some("AgentCrashed"));
+    t.agent_run_start_failed("goose", "relay", "routine", Some("Timeout"));
+    t.agent_run_started("run-0000abcf", "pi", "direct", "persistent");
+    t2.agent_run_started("run-0000abd0", "goose", "local", "sdk");
+    t2.agent_run_finished("run-0000abd0", Outcome::Ok, None);
+    t.flush(Duration::from_secs(1));
+    t2.flush(Duration::from_secs(1));
+    let mut all = sink.events();
+    all.extend(sink2.events());
+    let id = std::fs::read_to_string(h.path().join("telemetry/install_id")).unwrap();
+    for e in &all {
+        assert_eq!(e["distinct_id"], id.trim(), "one install");
+        let text = e.to_string().to_lowercase();
+        assert!(!text.contains("private"), "{text}");
+    }
+    let named = |n: &str| -> Vec<&Value> { all.iter().filter(|e| e["event"] == n).collect() };
+    let started = named("cua_agent_run_started");
+    assert_eq!(started.len(), 5);
+    assert!(started.iter().any(|e| e["properties"]["outcome"] == "error"
+        && e["properties"]["error_kind"] == "timeout"
+        && e["properties"]["entry"] == "routine"
+        && e["properties"]["location"] == "relay"));
+    let completed = named("cua_agent_run_completed");
+    assert_eq!(completed.len(), 3);
+    let first = completed
+        .iter()
+        .find(|e| e["properties"]["harness"] == "claude-code")
+        .unwrap();
+    let p = &first["properties"];
+    assert_eq!(p["location"], "local");
+    assert_eq!(p["entry"], "spaces_tool");
+    assert_eq!(p["outcome"], "ok");
+    assert_eq!(p["error_kind"], "none");
+    assert!(schema::DURATIONS.contains(&p["duration_bucket"].as_str().unwrap()));
+    assert_eq!(p["event_version"], 2);
+    assert!(
+        completed
+            .iter()
+            .any(|e| e["properties"]["error_kind"] == "agent_crashed")
+    );
+    let steps: Vec<&Value> = named("cua_onboarding_step")
+        .into_iter()
+        .filter(|e| e["properties"]["step"] == "first_agent_run")
+        .collect();
+    assert_eq!(steps.len(), 1, "first_agent_run once per install");
+}
+
+#[test]
+fn agent_runs_respect_every_opt_out_and_never_count_inside_a_run() {
+    for env in [
+        &[("CUA_TELEMETRY", "0")][..],
+        &[("DO_NOT_TRACK", "1")][..],
+        &[("CI", "true")][..],
+    ] {
+        let h = tempfile::tempdir().unwrap();
+        let (t, sink) = ready(h.path(), env);
+        assert_eq!(
+            t.agent_run_started("run-00000001", "claude-code", "local", "cli"),
+            Captured::Disabled
+        );
+        assert!(!t.agent_run_pending("run-00000001"), "no marker while off");
+        t.flush(Duration::from_secs(1));
+        assert!(sink.events().is_empty());
+    }
+    // The config switch (`cua telemetry off`, the app's Settings).
+    let h = tempfile::tempdir().unwrap();
+    let (t, sink) = ready(h.path(), &[]);
+    t.agent_run_started("run-00000002", "claude-code", "local", "cli");
+    std::fs::write(
+        h.path().join("config.toml"),
+        "[telemetry]\nenabled = \"off\"\n",
+    )
+    .unwrap();
+    t.refresh();
+    assert_eq!(
+        t.agent_run_finished("run-00000002", Outcome::Ok, None),
+        Captured::Disabled
+    );
+    assert!(!t.agent_run_pending("run-00000002"));
+    t.flush(Duration::from_secs(1));
+    assert!(
+        !sink
+            .events()
+            .iter()
+            .any(|e| e["event"] == "cua_agent_run_completed")
+    );
+    // Inside an agent run (a Space): nothing, so the guest never counts as
+    // an install that ran an agent.
+    let h = tempfile::tempdir().unwrap();
+    let (t, sink) = ready(h.path(), &[("CUA_AGENT_RUN_ID", "run-1a2b3c4d")]);
+    assert_eq!(
+        t.agent_run_started("run-00000003", "claude-code", "local", "cli"),
+        Captured::Disabled
+    );
+    assert_eq!(
+        t.agent_run_finished("run-00000003", Outcome::Ok, None),
+        Captured::Disabled
+    );
+    t.flush(Duration::from_secs(1));
+    assert!(
+        sink.events()
+            .iter()
+            .all(|e| !e["event"].as_str().unwrap().starts_with("cua_agent_run"))
+    );
+}
+
+#[test]
+fn agent_run_end_follows_the_published_status() {
+    assert_eq!(events::agent_run_end("running", None, false), None);
+    assert_eq!(events::agent_run_end("unknown", None, false), None);
+    assert_eq!(
+        events::agent_run_end("idle", Some("end_turn"), false),
+        Some((Outcome::Ok, None))
+    );
+    assert_eq!(
+        events::agent_run_end("idle", Some("cancelled"), false),
+        Some((Outcome::Cancelled, None))
+    );
+    assert_eq!(
+        events::agent_run_end("failed", None, true),
+        Some((Outcome::Error, Some("AgentFailed")))
+    );
+    assert_eq!(
+        events::agent_run_end("crashed", None, false),
+        Some((Outcome::Error, Some("AgentCrashed")))
+    );
+    assert_eq!(events::error_kind("AgentFailed"), "agent_failed");
+    assert_eq!(events::error_kind("Agent"), "agent");
 }

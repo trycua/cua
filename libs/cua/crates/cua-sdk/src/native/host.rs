@@ -176,7 +176,7 @@ impl Relay {
             let o = cua_spacesd_client::ConnectOptions::parse(&url)?
                 .fleet_gateway(Arc::new(cua_spacesd_client::StaticBearer(token)), None);
             let client = cua_spacesd_client::SpacesdClient::connect(o).await?;
-            Ok(Arc::new(SpacesdClient::new(client, vec![])))
+            Ok(Arc::new(SpacesdClient::new(client, vec![]).at("relay")))
         })
         .await
     }

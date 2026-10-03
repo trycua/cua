@@ -85,7 +85,14 @@ app launched (`cua_onboarding_step` `app_launched`), first run completed
 (`onboarding_completed`), signed in (`signed_in`), first Space created
 (`first_space_created`), first Space ready (`first_space_ready`), first
 teleport (`first_teleport`) and first agent run (`first_agent_run`). The
-`first_*` steps are sent once per install. Retention counts installs with a
+`first_*` steps are sent once per install.
+
+An agent run is counted by the install that started it: once when it
+starts, and once when any Cua program of that install first sees its first
+turn end, fail or stop. Until then a marker with the same fixed words waits
+in `~/.cua/telemetry/agent_runs/` (dropped after 7 days). Cua programs
+inside an agent run (`CUA_AGENT_RUN_ID` set) record no agent runs, so a
+Space never counts as an install. Retention counts installs with a
 `cua_app_active` event on day 1, 7 and 30 after their first one.
 
 ## Never collected

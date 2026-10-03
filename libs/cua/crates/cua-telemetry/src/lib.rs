@@ -13,6 +13,7 @@
 //! keystrokes, screenshots or prompts; identifiers are per-install salted
 //! hashes or absent; nothing from the Keyvault but counts.
 
+pub mod agent_runs;
 pub mod client;
 pub mod config;
 pub mod events;

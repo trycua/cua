@@ -10058,7 +10058,7 @@
      "usage": "cua spaces start [OPTIONS] <SPACE>"
     },
     {
-     "abstract": "Forget a registered Space and its stored token. The sandbox keeps running",
+     "abstract": "Forget a registered Space and its stored token. The sandbox keeps running. The `relay:<machine>` record of a Space that registered itself and is gone (not connected) also leaves your relay directory",
      "after_help": "Examples:\n  cua spaces rm direct:10.0.0.5:3211\n  cua spaces rm studio",
      "aliases": [
       "remove"
@@ -10249,8 +10249,8 @@
      "usage": "cua spaces relay-register [OPTIONS] <SPACE>"
     },
     {
-     "abstract": "Take a Space off the relay (every share with it ends)",
-     "after_help": "Examples:\n  cua spaces relay-unregister local:studio",
+     "abstract": "Take a Space off the relay (every share with it ends). With a `relay:<machine>` id, removes that machine's record from your relay directory: a Space that registered itself (also after it was deleted), or a machine of yours that is gone. Only its owner can",
+     "after_help": "Examples:\n  cua spaces relay-unregister local:studio\n  cua spaces relay-unregister relay:space-0123abcd4567ef89",
      "aliases": [],
      "arguments": [
       {

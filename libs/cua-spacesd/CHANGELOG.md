@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.5.1...cua-spacesd-v0.5.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* **relay:** let the owner re-register a machine whose host is gone ([#4553](https://github.com/trycua/cua/issues/4553)) ([21b7bd6](https://github.com/trycua/cua/commit/21b7bd6e0c58b16b35494f6a0e4327f892c007da))
+
 ## [0.5.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.5.0...cua-spacesd-v0.5.1) (2026-10-03)
 
 

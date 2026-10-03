@@ -64,7 +64,7 @@ from ._native import Cua, CuaConfig, FleetSettings
 from ._native import Sandbox as SandboxHandle
 from ._native import cua_sdk_version
 
-__version__ = "0.2.0"  # x-release-please-version
+__version__ = "0.3.0"  # x-release-please-version
 
 # Usage telemetry (anonymous, content-free; https://cua.ai/docs/cua-sdk/concepts/telemetry)
 # attributes events to this binding; `cua.telemetry` has the switches. It

@@ -141,6 +141,40 @@ python automated-eval/cli.py fleet \
 
 Fleet reads the selected task descriptors and provisions supported external applications, including Google Chrome, LibreOffice, and GnuCash. Results are written to `automated-eval/fleet-results/<UTC timestamp>/`. The worker is released after the reports and raw trial artifacts are downloaded.
 
+## Publish a Static Report
+
+Publishing uses the AWS CLI and the standard AWS credential chain. Configure the
+`cua-artifacts` profile locally, then set these non-secret values in
+`automated-eval/.env`:
+
+```env
+AWS_PROFILE=cua-artifacts
+AWS_REGION=us-west-2
+AWS_S3_BUCKET=cua-agent-artifacts
+AWS_S3_REPORT_PREFIX=cua-driver-bench
+```
+
+Publish an existing completed run without rerunning the benchmark:
+
+```bash
+python automated-eval/cli.py publish \
+  --run-dir automated-eval/fleet-results/<run>
+```
+
+Or publish automatically after a local comparison or Fleet run by passing
+`--publish` to the `compare` or `fleet` command.
+
+The publisher uploads only `report/`, `comparison.md`, and `comparison.json`.
+It keeps the local run unchanged and prints one machine-readable line:
+
+```text
+REPORT_URL=https://...
+```
+
+The S3 report prefix must already be publicly readable. The publisher verifies
+the generated HTTP URL and fails if S3 returns `403` or `404`. It does not change
+bucket policy, Block Public Access, ACLs, or CloudFront configuration.
+
 ## Main Options
 
 | Option | Purpose |
@@ -158,6 +192,7 @@ Fleet reads the selected task descriptors and provisions supported external appl
 | `--codex-home` | Select the source Codex configuration and authentication directory. |
 | `--platform` | Select `auto`, `linux`, `windows`, or `macos`. |
 | `--dry-run` | Print the trial plan without starting the benchmark. |
+| `--publish` | Publish the generated static report bundle after a successful run. |
 
 Run this command for the complete option list:
 

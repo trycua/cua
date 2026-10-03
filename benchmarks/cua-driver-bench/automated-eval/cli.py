@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import shutil
 import sys
 from datetime import UTC, datetime
@@ -21,6 +22,7 @@ from compare_drivers import (
     resolve_platform,
     run_comparison,
 )
+from s3_publish import publish_report
 
 
 def _executable(value: str) -> Path:
@@ -146,6 +148,25 @@ def build_parser(*, fleet: bool = False) -> argparse.ArgumentParser:
             )
         ),
     )
+    parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="publish the generated static report bundle to the configured S3 bucket",
+    )
+    return parser
+
+
+def build_publish_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="compare_drivers publish",
+        description="Publish an existing static benchmark report bundle to S3.",
+    )
+    parser.add_argument(
+        "--run-dir",
+        type=Path,
+        required=True,
+        help="completed benchmark run containing comparison files and report/index.html",
+    )
     return parser
 
 
@@ -191,16 +212,43 @@ def _load_environment() -> None:
     load_dotenv(repo_root / "automated-eval" / ".env")
 
 
-def _fleet_mode(argv: list[str] | None) -> tuple[bool, list[str]]:
+def _command_mode(argv: list[str] | None) -> tuple[str, list[str]]:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if arguments[:1] == ["fleet"]:
-        return True, arguments[1:]
-    return False, arguments
+    if arguments[:1] and arguments[0] in {"compare", "fleet", "publish"}:
+        return arguments[0], arguments[1:]
+    return "compare", arguments
+
+
+def _publish_run(run_dir: Path) -> str:
+    bucket = os.environ.get("AWS_S3_BUCKET", "").strip()
+    if not bucket:
+        raise ValueError("AWS_S3_BUCKET is required to publish a report")
+    prefix = os.environ.get("AWS_S3_REPORT_PREFIX", "cua-driver-bench")
+    profile = os.environ.get("AWS_PROFILE") or None
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or None
+    return publish_report(
+        run_dir,
+        bucket=bucket,
+        prefix=prefix,
+        profile=profile,
+        region=region,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     _load_environment()
-    fleet_mode, arguments_list = _fleet_mode(argv)
+    mode, arguments_list = _command_mode(argv)
+    if mode == "publish":
+        parser = build_publish_parser()
+        try:
+            arguments = parser.parse_args(arguments_list)
+            report_url = _publish_run(arguments.run_dir)
+        except (OSError, RuntimeError, ValueError) as error:
+            parser.error(str(error))
+        print(f"REPORT_URL={report_url}")
+        return 0
+
+    fleet_mode = mode == "fleet"
     parser = build_parser(fleet=fleet_mode)
     try:
         arguments = parser.parse_args(arguments_list)
@@ -208,6 +256,8 @@ def main(argv: list[str] | None = None) -> int:
         if config.timeout_seconds <= 30:
             raise ValueError("timeout must be greater than 30 seconds")
         if arguments.dry_run:
+            if arguments.publish:
+                raise ValueError("--publish cannot be used with --dry-run")
             plan = build_plan(config)
             print(f"planned {len(plan['trials'])} diagnostic trials on {plan['platform']}")
             for trial in plan["trials"]:
@@ -227,6 +277,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"JSON: {json_path}")
     print(f"Markdown: {markdown_path}")
     print(f"HTML: {json_path.parent / 'report' / 'index.html'}")
+    if arguments.publish:
+        try:
+            report_url = _publish_run(json_path.parent)
+        except (OSError, RuntimeError, ValueError) as error:
+            parser.error(str(error))
+        print(f"REPORT_URL={report_url}")
     return 0
 
 

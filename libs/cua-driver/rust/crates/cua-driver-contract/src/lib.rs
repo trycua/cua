@@ -60,8 +60,8 @@ pub use inputs::{
 };
 pub use outputs::{
     advertised_output_schema, conforming_error_envelope, is_refusal_envelope,
-    refusal_envelope_schema, ActionDelivery, ActionDeliveryMode, ActionEffect, ActionError,
-    ActionEscalation, ActionEscalationReason, ActionEscalationTarget, ActionEvidence,
+    refusal_envelope_schema, ActionCommit, ActionDelivery, ActionDeliveryMode, ActionEffect,
+    ActionError, ActionEscalation, ActionEscalationReason, ActionEscalationTarget, ActionEvidence,
     ActionEvidenceKind, ActionResult, ActionResultValidationError, ActionRoute,
     AgentOverlayCapture, AgentOverlayCaptureStatus, ClipboardReadOutput, ClipboardWriteOutput,
     CursorMotionOutput, CursorPointOutput, CursorPositionOutput, CursorThemeOutput,
@@ -91,7 +91,7 @@ pub const TOOLS_LIST_SCHEMA_VERSION: &str = "1";
 pub const CAPABILITY_VERSION: &str = "1";
 
 /// Shape version for the checked-in generated client contract.
-pub const CONTRACT_VERSION: &str = "0.8.0";
+pub const CONTRACT_VERSION: &str = "0.9.0";
 
 /// Legacy version negotiated by `initialize.params.protocolVersion` and served
 /// by the loopback HTTP compatibility endpoint. Modern stdio discovery and
@@ -430,7 +430,7 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
-        assert_eq!(manifest.contract_version, "0.8.0");
+        assert_eq!(manifest.contract_version, "0.9.0");
         assert!(manifest.experimental);
     }
 

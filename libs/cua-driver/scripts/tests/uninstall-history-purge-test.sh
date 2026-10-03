@@ -58,10 +58,10 @@ fi
 grep -Fq history_purge_incomplete "$FIXTURE/linux-error.log"
 
 purge_line="$(grep -n 'purge_macos_history \\' "$UNINSTALL" | tail -1 | cut -d: -f1)"
-remove_line="$(grep -n 'rm -rf "\$APP_BUNDLE"' "$UNINSTALL" | head -1 | cut -d: -f1)"
+remove_line="$(grep -n 'rm -rf -- "\$PAYLOAD"' "$UNINSTALL" | head -1 | cut -d: -f1)"
 [[ "$purge_line" -lt "$remove_line" ]]
 linux_purge_line="$(grep -n 'purge_linux_history "\$HISTORY_PURGE_HELPER"' "$UNINSTALL" | tail -1 | cut -d: -f1)"
-package_remove_line="$(grep -n 'rm -rf "\$HOME_DIR"' "$UNINSTALL" | head -1 | cut -d: -f1)"
+package_remove_line="$(grep -n 'rm -rf -- "\$HOME_PAYLOAD"' "$UNINSTALL" | head -1 | cut -d: -f1)"
 [[ "$linux_purge_line" -lt "$package_remove_line" ]]
 grep -Fq 'preserved encrypted Computer History' "$UNINSTALL"
 

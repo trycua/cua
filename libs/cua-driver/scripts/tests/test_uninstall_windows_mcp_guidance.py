@@ -16,3 +16,5 @@ def test_windows_guidance_requires_command_ownership_verification() -> None:
     assert "cua-driver-local" in script
     assert "claude mcp remove cua-computer-use -s user" in script
     assert "claude mcp remove cua-driver-rs -s user" in script
+
+    assert "For the older cua-driver-rs name, verify the exact command ownership too" in script

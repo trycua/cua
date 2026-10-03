@@ -230,7 +230,7 @@ fn set_window_frame() -> ToolContract {
 fn invoke_menu() -> ToolContract {
     contract::<InvokeMenuInput, ActionResult>(
         "invoke_menu",
-        "Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. Missing, ambiguous, disabled, or structurally mismatched segments fail closed; this tool never falls back to pixels.",
+        "Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. A final segment that opens a submenu is never pressed: the reply lists that submenu's items instead, so a caller can extend the path. Missing, ambiguous, disabled, or structurally mismatched segments fail closed and name both the segment that failed and the items available at that level; this tool never falls back to pixels.",
         &["menu.path.invoke", "accessibility.menu.native"],
         ToolAnnotations {
             read_only: false,

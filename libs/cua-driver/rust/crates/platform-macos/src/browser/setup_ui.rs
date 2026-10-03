@@ -102,20 +102,38 @@ fn release_actionable_nodes(nodes: &[AXNode]) {
     }
 }
 
+// Keep the first occurrence and its tree position for scoped child lookups.
+fn distinct_elements<'a>(
+    nodes: impl IntoIterator<Item = (usize, &'a AXNode)>,
+    same_element: impl Fn(usize, usize) -> bool,
+) -> Vec<(usize, &'a AXNode)> {
+    let mut distinct: Vec<(usize, &AXNode)> = Vec::new();
+    for (index, node) in nodes {
+        if !distinct.iter().any(|(_, prior)| {
+            prior.element_ptr == node.element_ptr
+                || same_element(prior.element_ptr, node.element_ptr)
+        }) {
+            distinct.push((index, node));
+        }
+    }
+    distinct
+}
+
 fn unique_actionable(
     nodes: &[AXNode],
     role: &str,
     label: &str,
     action: &str,
 ) -> Result<Option<usize>, BrowserRefusal> {
-    let matches = nodes
-        .iter()
-        .filter(|node| node.role == role && field_equals(node, label) && has_action(node, action))
-        .map(|node| node.element_ptr)
-        .collect::<Vec<_>>();
+    let matches = distinct_elements(
+        nodes.iter().enumerate().filter(|(_, node)| {
+            node.role == role && field_equals(node, label) && has_action(node, action)
+        }),
+        is_same_element,
+    );
     match matches.as_slice() {
         [] => Ok(None),
-        [element] => Ok(Some(*element)),
+        [(_, node)] => Ok(Some(node.element_ptr)),
         _ => Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!("multiple exact {role} controls matched {label:?}"),
@@ -146,28 +164,30 @@ fn setup_page_proven(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor) -> b
 }
 
 fn native_setup_page_proven(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor) -> bool {
-    let exact_urls = nodes
-        .iter()
-        .filter(|node| {
+    let exact_urls = distinct_elements(
+        nodes.iter().enumerate().filter(|(_, node)| {
             node.role == "AXTextField"
                 && field_equals(node, "Address and search bar")
                 && node
                     .value
                     .as_deref()
                     .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
-        })
-        .count();
-    let exact_selected_tabs = nodes
-        .iter()
-        .filter(|node| {
+        }),
+        is_same_element,
+    )
+    .len();
+    let exact_selected_tabs = distinct_elements(
+        nodes.iter().enumerate().filter(|(_, node)| {
             node.role == "AXRadioButton"
                 && node.selected == Some(true)
                 && descriptor
                     .page_titles
                     .iter()
                     .any(|title| tab_name_matches_title(node, title))
-        })
-        .count();
+        }),
+        is_same_element,
+    )
+    .len();
     let omnibox_popup_open = nodes
         .iter()
         .any(|node| node.role == "AXWebArea" && field_equals(node, "Omnibox Popup"));
@@ -262,17 +282,18 @@ fn exact_omnibox_suggestion(
     nodes: &[AXNode],
     descriptor: &BrowserSetupDescriptor,
 ) -> Result<Option<usize>, BrowserRefusal> {
-    let omniboxes = nodes
-        .iter()
-        .filter(|node| {
+    let omniboxes = distinct_elements(
+        nodes.iter().enumerate().filter(|(_, node)| {
             node.role == "AXTextField"
                 && field_equals(node, "Address and search bar")
                 && node
                     .value
                     .as_deref()
                     .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
-        })
-        .count();
+        }),
+        is_same_element,
+    )
+    .len();
     match omniboxes {
         0 => return Ok(None),
         1 => {}
@@ -286,11 +307,13 @@ fn exact_omnibox_suggestion(
             ))
         }
     }
-    let popups = nodes
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| node.role == "AXWebArea" && field_equals(node, "Omnibox Popup"))
-        .collect::<Vec<_>>();
+    let popups = distinct_elements(
+        nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.role == "AXWebArea" && field_equals(node, "Omnibox Popup")),
+        is_same_element,
+    );
     let (popup_index, popup) = match popups.as_slice() {
         [] => return Ok(None),
         [(index, popup)] => (*index, *popup),
@@ -310,18 +333,20 @@ fn exact_omnibox_suggestion(
         .skip(popup_index + 1)
         .find(|(_, node)| node.depth <= popup.depth)
         .map_or(nodes.len(), |(index, _)| index);
-    let matches = nodes[popup_index + 1..end]
-        .iter()
-        .filter(|node| {
-            node.role == "AXMenuItem"
-                && node_is_exact_setup_suggestion(node, descriptor.setup_url)
-                && has_action(node, "AXPress")
-        })
-        .map(|node| node.element_ptr)
-        .collect::<Vec<_>>();
+    let matches = distinct_elements(
+        nodes[popup_index + 1..end]
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| {
+                node.role == "AXMenuItem"
+                    && node_is_exact_setup_suggestion(node, descriptor.setup_url)
+                    && has_action(node, "AXPress")
+            }),
+        is_same_element,
+    );
     match matches.as_slice() {
         [] => Ok(None),
-        [element] => Ok(Some(*element)),
+        [(_, node)] => Ok(Some(node.element_ptr)),
         _ => Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
@@ -336,23 +361,7 @@ fn new_tab_button(
     nodes: &[AXNode],
     descriptor: &BrowserSetupDescriptor,
 ) -> Result<usize, BrowserRefusal> {
-    let mut button = None;
-    for node in nodes.iter().filter(|node| {
-        node.role == "AXButton" && field_equals(node, "New Tab") && has_action(node, "AXPress")
-    }) {
-        if let Some(prior) = button {
-            // A tree can expose the same AX control through several ancestors.
-            if !is_same_element(prior, node.element_ptr) {
-                return Err(refusal(
-                    BrowserRefusalCode::BrowserWrongTargetRefused,
-                    "multiple exact AXButton controls matched \"New Tab\"",
-                ));
-            }
-        } else {
-            button = Some(node.element_ptr);
-        }
-    }
-    button.ok_or_else(|| {
+    unique_actionable(nodes, "AXButton", "New Tab", "AXPress")?.ok_or_else(|| {
         refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
@@ -378,17 +387,16 @@ fn select_new_tab_close_button(
         .filter(|node| node.role == "AXRadioButton" && node.element_index.is_some())
         .map(|node| node.element_ptr)
         .collect::<Vec<_>>();
-    let new_tabs = after
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| {
+    let new_tabs = distinct_elements(
+        after.iter().enumerate().filter(|(_, node)| {
             node.role == "AXRadioButton"
                 && node.element_index.is_some()
                 && !prior_tabs
                     .iter()
                     .any(|prior| same_element(*prior, node.element_ptr))
-        })
-        .collect::<Vec<_>>();
+        }),
+        &same_element,
+    );
     let (tab_index, tab) = match new_tabs.as_slice() {
         [(index, tab)] => (*index, *tab),
         [] => return Ok(None),
@@ -408,20 +416,22 @@ fn select_new_tab_close_button(
         .skip(tab_index + 1)
         .find(|(_, node)| node.depth <= tab.depth)
         .map_or(after.len(), |(index, _)| index);
-    let close_buttons = after[tab_index + 1..end]
-        .iter()
-        .filter(|node| {
-            node.role == "AXButton"
-                && descriptor
-                    .tab_close_labels
-                    .iter()
-                    .any(|label| field_equals(node, label))
-                && has_action(node, "AXPress")
-        })
-        .map(|node| node.element_ptr)
-        .collect::<Vec<_>>();
+    let close_buttons = distinct_elements(
+        after[tab_index + 1..end]
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| {
+                node.role == "AXButton"
+                    && descriptor
+                        .tab_close_labels
+                        .iter()
+                        .any(|label| field_equals(node, label))
+                    && has_action(node, "AXPress")
+            }),
+        same_element,
+    );
     match close_buttons.as_slice() {
-        [element] => Ok(Some(*element)),
+        [(_, node)] => Ok(Some(node.element_ptr)),
         [] => Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
@@ -796,11 +806,16 @@ fn exact_pixel_setup_checkbox(
     if !native_setup_page_committed(pid, nodes, descriptor) {
         return Ok(None);
     }
-    let window_frames = nodes
-        .iter()
-        .filter(|node| node.role == "AXWindow")
-        .filter_map(|node| node.frame)
-        .collect::<Vec<_>>();
+    let window_frames = distinct_elements(
+        nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.role == "AXWindow"),
+        is_same_element,
+    )
+    .iter()
+    .filter_map(|(_, node)| node.frame)
+    .collect::<Vec<_>>();
     let [window_frame] = window_frames.as_slice() else {
         return Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -810,9 +825,8 @@ fn exact_pixel_setup_checkbox(
             ),
         ));
     };
-    let omnibox_frames = nodes
-        .iter()
-        .filter(|node| {
+    let omnibox_frames = distinct_elements(
+        nodes.iter().enumerate().filter(|(_, node)| {
             node.role == "AXTextField"
                 && node.element_index.is_some()
                 && field_equals(node, "Address and search bar")
@@ -820,9 +834,12 @@ fn exact_pixel_setup_checkbox(
                     .value
                     .as_deref()
                     .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
-        })
-        .filter_map(|node| node.frame)
-        .collect::<Vec<_>>();
+        }),
+        is_same_element,
+    )
+    .iter()
+    .filter_map(|(_, node)| node.frame)
+    .collect::<Vec<_>>();
     let [omnibox_frame] = omnibox_frames.as_slice() else {
         return Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -1926,6 +1943,63 @@ mod tests {
     }
 
     #[test]
+    fn actionable_selectors_collapse_only_repeated_accessibility_identities() {
+        let first = ApplicationElement::new(std::process::id() as i32);
+        let repeated = ApplicationElement::new(std::process::id() as i32);
+        let distinct = ApplicationElement::new(std::process::id() as i32 + 1);
+        for (role, label) in [
+            ("AXCheckBox", chrome().checkbox_label),
+            ("AXTextField", "Address and search bar"),
+        ] {
+            let mut nodes = vec![
+                tree_node(role, Some(label), first.0 as usize, 1),
+                tree_node(role, Some(label), repeated.0 as usize, 1),
+            ];
+            assert_eq!(
+                unique_actionable(&nodes, role, label, "AXPress").unwrap(),
+                Some(first.0 as usize)
+            );
+            nodes.push(tree_node(role, Some(label), distinct.0 as usize, 1));
+            assert_eq!(
+                unique_actionable(&nodes, role, label, "AXPress")
+                    .unwrap_err()
+                    .code,
+                BrowserRefusalCode::BrowserWrongTargetRefused
+            );
+        }
+    }
+
+    #[test]
+    fn native_setup_proof_counts_identities_not_repeated_entries() {
+        let first = ApplicationElement::new(std::process::id() as i32);
+        let repeated = ApplicationElement::new(std::process::id() as i32);
+        let distinct = ApplicationElement::new(std::process::id() as i32 + 1);
+        let mut omnibox = tree_node(
+            "AXTextField",
+            Some("Address and search bar"),
+            first.0 as usize,
+            1,
+        );
+        omnibox.value = Some(chrome().setup_url.into());
+        let mut repeated_omnibox = omnibox.clone();
+        repeated_omnibox.element_ptr = repeated.0 as usize;
+        let mut tab = tree_node(
+            "AXRadioButton",
+            Some(chrome().page_titles[0]),
+            first.0 as usize,
+            1,
+        );
+        tab.selected = Some(true);
+        let mut repeated_tab = tab.clone();
+        repeated_tab.element_ptr = repeated.0 as usize;
+        let mut nodes = vec![omnibox, repeated_omnibox, tab.clone(), repeated_tab];
+        assert!(native_setup_page_proven(&nodes, chrome()));
+        tab.element_ptr = distinct.0 as usize;
+        nodes.push(tab);
+        assert!(!native_setup_page_proven(&nodes, chrome()));
+    }
+
+    #[test]
     fn checkbox_requires_exact_internal_page_proof() {
         let nodes = vec![
             node("AXWebArea", Some(chrome().page_titles[0]), None, &[]),
@@ -1958,7 +2032,9 @@ mod tests {
 
     #[test]
     fn checkbox_matcher_refuses_ambiguity() {
-        let nodes = vec![
+        let first = ApplicationElement::new(std::process::id() as i32);
+        let second = ApplicationElement::new(std::process::id() as i32 + 1);
+        let mut nodes = vec![
             node("AXWebArea", Some(chrome().page_titles[0]), None, &[]),
             node("AXHeading", Some(chrome().page_heading), None, &[]),
             node(
@@ -1980,6 +2056,8 @@ mod tests {
                 &["AXPress"],
             ),
         ];
+        nodes[3].element_ptr = first.0 as usize;
+        nodes[4].element_ptr = second.0 as usize;
         assert_eq!(
             exact_setup_checkbox(&tree(nodes), chrome())
                 .unwrap_err()
@@ -2560,7 +2638,7 @@ mod tests {
             tree_node("AXRadioButton", Some("Original"), 10, 1),
             tree_node("AXRadioButton", Some("New Tab"), 20, 1),
             tree_node("AXButton", Some("Close"), 21, 2),
-            tree_node("AXRadioButton", Some("Another"), 30, 1),
+            tree_node("AXRadioButton", Some("New Tab"), 30, 1),
             tree_node("AXButton", Some("Close"), 31, 2),
         ];
         assert_eq!(
@@ -2569,6 +2647,45 @@ mod tests {
                 .code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
+    }
+
+    #[test]
+    fn new_tab_cleanup_collapses_repeated_tab_and_close_identities() {
+        let before = vec![tree_node("AXRadioButton", Some("Original"), 10, 1)];
+        let after = vec![
+            tree_node("AXRadioButton", Some("Original"), 110, 1),
+            tree_node("AXRadioButton", Some("New Tab"), 20, 1),
+            tree_node("AXButton", Some("Close"), 21, 2),
+            tree_node("AXButton", Some("Close"), 121, 2),
+            tree_node("AXRadioButton", Some("New Tab"), 120, 1),
+            tree_node("AXButton", Some("Close"), 221, 2),
+            tree_node("AXRadioButton", Some("New Tab"), 220, 1),
+            tree_node("AXButton", Some("Close"), 321, 2),
+            tree_node("AXRadioButton", Some("New Tab"), 320, 1),
+            tree_node("AXButton", Some("Close"), 421, 2),
+        ];
+        assert_eq!(
+            select_new_tab_close_button(
+                &before,
+                &after,
+                |left, right| left % 100 == right % 100,
+                chrome(),
+            )
+            .unwrap(),
+            Some(21)
+        );
+    }
+
+    #[test]
+    fn new_tab_cleanup_refuses_distinct_close_identities() {
+        let after = vec![
+            tree_node("AXRadioButton", Some("New Tab"), 20, 1),
+            tree_node("AXButton", Some("Close"), 21, 2),
+            tree_node("AXButton", Some("Close"), 22, 2),
+        ];
+        let error = select_new_tab_close_button(&[], &after, |l, r| l == r, chrome()).unwrap_err();
+        assert_eq!(error.code, BrowserRefusalCode::BrowserWrongTargetRefused);
+        assert!(error.message.contains("multiple Close buttons"));
     }
 
     #[test]
@@ -2627,6 +2744,8 @@ mod tests {
 
     #[test]
     fn setup_navigation_refuses_multiple_exact_suggestions() {
+        let first_element = ApplicationElement::new(std::process::id() as i32);
+        let second_element = ApplicationElement::new(std::process::id() as i32 + 1);
         let omnibox = node(
             "AXTextField",
             Some("Address and search bar"),
@@ -2636,14 +2755,67 @@ mod tests {
         let mut popup = node("AXWebArea", Some("Omnibox Popup"), None, &[]);
         popup.depth = 1;
         let mut first = node("AXMenuItem", Some(chrome().setup_url), None, &["AXPress"]);
+        first.element_ptr = first_element.0 as usize;
         first.depth = 2;
         let mut second = first.clone();
-        second.element_ptr = 8;
+        second.element_ptr = second_element.0 as usize;
 
         assert_eq!(
             exact_omnibox_suggestion(&[omnibox, popup, first, second], chrome())
                 .unwrap_err()
                 .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
+    fn setup_navigation_collapses_only_repeated_accessibility_identities() {
+        let first = ApplicationElement::new(std::process::id() as i32);
+        let repeated = ApplicationElement::new(std::process::id() as i32);
+        let distinct = ApplicationElement::new(std::process::id() as i32 + 1);
+        let mut omnibox = tree_node(
+            "AXTextField",
+            Some("Address and search bar"),
+            first.0 as usize,
+            0,
+        );
+        omnibox.value = Some(chrome().setup_url.into());
+        let mut repeated_omnibox = omnibox.clone();
+        repeated_omnibox.element_ptr = repeated.0 as usize;
+        let mut nodes = vec![
+            omnibox,
+            repeated_omnibox,
+            tree_node("AXWebArea", Some("Omnibox Popup"), first.0 as usize, 1),
+            tree_node("AXMenuItem", Some(chrome().setup_url), first.0 as usize, 2),
+            tree_node(
+                "AXMenuItem",
+                Some(chrome().setup_url),
+                repeated.0 as usize,
+                2,
+            ),
+            tree_node("AXWebArea", Some("Omnibox Popup"), repeated.0 as usize, 1),
+            tree_node(
+                "AXMenuItem",
+                Some(chrome().setup_url),
+                repeated.0 as usize,
+                2,
+            ),
+        ];
+        assert_eq!(
+            exact_omnibox_suggestion(&nodes, chrome()).unwrap(),
+            Some(first.0 as usize)
+        );
+        nodes.insert(
+            5,
+            tree_node(
+                "AXMenuItem",
+                Some(chrome().setup_url),
+                distinct.0 as usize,
+                2,
+            ),
+        );
+        assert_eq!(
+            exact_omnibox_suggestion(&nodes, chrome()).unwrap_err().code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
     }

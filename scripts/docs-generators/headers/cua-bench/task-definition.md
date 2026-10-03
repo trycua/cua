@@ -1,0 +1,1 @@
+A task is a directory with a `main.py`. `cb` imports it, calls the `@cb.tasks_config` function to list the variants, then for each variant starts a sandbox from its `computer` and runs setup, the agent (or the `@cb.solve_task` oracle) and evaluation. Each lifecycle function receives the variant's `cb.Task` and the session on its sandbox.

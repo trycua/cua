@@ -32,7 +32,7 @@ from tasks import TaskSources  # noqa: E402
 
 FIXTURES = EXAMPLE / "fixtures" / "native"
 APPS = EXAMPLE.parents[1] / "tests" / "fixtures" / "apps"
-DENSITY_HARNESSES = ("gtk3", "appkit")
+DENSITY_HARNESSES = ("gtk3", "appkit", "wpf", "winui3")
 TARGETS = {
     "counter": {"ax:button:increment"},
     "save-note": {"ax:text_input:note:set:note", "ax:button:save-note"},
@@ -96,8 +96,9 @@ class DensityFixtureTest(unittest.TestCase):
         expected_sizes = {
             ("gtk3", 12): {"counter": 12, "save-note": 14, "choose-size": 12},
             ("appkit", 12): {"counter": 14, "save-note": 16, "choose-size": 12},
-            ("gtk3", 24): dict.fromkeys(TASK_KINDS, 26),
-            ("appkit", 24): dict.fromkeys(TASK_KINDS, 26),
+            ("wpf", 12): {"counter": 12, "save-note": 14, "choose-size": 12},
+            ("winui3", 12): {"counter": 12, "save-note": 14, "choose-size": 12},
+            **{(harness, 24): dict.fromkeys(TASK_KINDS, 26) for harness in DENSITY_HARNESSES},
         }
         for (harness, density), sizes in expected_sizes.items():
             payload = load(f"{harness}-window-state-density-{density}-v1.json")
@@ -111,7 +112,7 @@ class DensityFixtureTest(unittest.TestCase):
     def test_golden_sets(self) -> None:
         """The presented IDs match the golden file that the TypeScript test also checks."""
         golden = load("native-density-candidates-v1.json")["sets"]
-        self.assertEqual(len(golden), 2 * 2 * 3 * 2)
+        self.assertEqual(len(golden), len(DENSITY_HARNESSES) * 2 * 3 * 2)
         for harness in DENSITY_HARNESSES:
             for density in (12, 24):
                 payload = load(f"{harness}-window-state-density-{density}-v1.json")
@@ -136,6 +137,7 @@ class DensityFixtureTest(unittest.TestCase):
         fixtures = {
             "appkit": "appkit-window-state-initial-v1.json",
             "wpf": "wpf-window-state-initial-v1.json",
+            "winui3": "winui3-window-state-initial-v1.json",
             "gtk3": "gtk3-window-state-initial-v1.json",
         }
         for harness, name in fixtures.items():
@@ -148,12 +150,13 @@ class DensityFixtureTest(unittest.TestCase):
                         [(c.id, c.description, dict(c.arguments)) for c in ranked.candidates],
                         [(c.id, c.description, dict(c.arguments)) for c in plain.candidates],
                     )
-        payload = load("gtk3-window-state-density-12-v1.json")
-        for kind in TASK_KINDS:
-            self.assertEqual(
-                [c.id for c in plan_for("gtk3", kind, payload).candidates],
-                [c.id for c in plan_for("gtk3", kind, payload, cap_order="depth_first").candidates],
-            )
+        for harness in ("gtk3", "wpf", "winui3"):
+            payload = load(f"{harness}-window-state-density-12-v1.json")
+            for kind in TASK_KINDS:
+                self.assertEqual(
+                    [c.id for c in plan_for(harness, kind, payload).candidates],
+                    [c.id for c in plan_for(harness, kind, payload, cap_order="depth_first").candidates],
+                )
 
     def test_relevance_uses_no_values(self) -> None:
         payload = load("gtk3-window-state-density-24-v1.json")
@@ -220,6 +223,12 @@ class DistractorLabelTest(unittest.TestCase):
         assert match, name
         return re.findall(r'"([^"]+)"', match.group(1))
 
+    @staticmethod
+    def csharp_list(source: str, name: str) -> list[str]:
+        match = re.search(rf"{name}\s*=\s*\{{(.*?)\}};", source, re.S)
+        assert match, name
+        return re.findall(r'"([^"]+)"', match.group(1))
+
     def test_labels(self) -> None:
         gtk3 = self.gtk3_lists()
         swift = (APPS / "macos/appkit/main.swift").read_text(encoding="utf-8")
@@ -232,6 +241,18 @@ class DistractorLabelTest(unittest.TestCase):
         self.assertEqual(list(gtk3["DISTRACTOR_FIELDS"]), self.swift_list(swift, "kDistractorFields"))
         self.assertIn("12: (8, 3, 1, 1), 24: (26, 12, 4, 2)", swift)
         self.assertEqual(gtk3["DENSITY_COUNTS"], {12: (8, 3, 1, 1), 24: (26, 12, 4, 2)})
+        for harness in ("wpf", "winui3"):
+            with self.subTest(harness=harness):
+                source = (APPS / f"windows/{harness}/TaskWindow.cs").read_text(encoding="utf-8")
+                self.assertEqual(list(gtk3["DISTRACTOR_BUTTONS"]), self.csharp_list(source, "DistractorButtons"))
+                self.assertEqual(list(gtk3["DISTRACTOR_CHECKBOXES"]), self.csharp_list(source, "DistractorCheckboxes"))
+                self.assertEqual(
+                    [label for group in gtk3["DISTRACTOR_RADIO_GROUPS"] for label in group],
+                    self.csharp_list(source, "DistractorRadioGroups"),
+                )
+                self.assertEqual(list(gtk3["DISTRACTOR_FIELDS"]), self.csharp_list(source, "DistractorFields"))
+                self.assertIn("[12] = (8, 3, 1, 1), [24] = (26, 12, 4, 2)", source)
+                self.assertIn(f'"CUA_{harness.upper()}_TASK_DENSITY"', source)
         labels = [
             *gtk3["DISTRACTOR_BUTTONS"], *gtk3["DISTRACTOR_CHECKBOXES"], *gtk3["DISTRACTOR_FIELDS"],
             *(label for group in gtk3["DISTRACTOR_RADIO_GROUPS"] for label in group),

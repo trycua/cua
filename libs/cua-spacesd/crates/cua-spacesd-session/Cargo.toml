@@ -1,0 +1,27 @@
+[package]
+name = "cua-spacesd-session"
+description = "In-process session runtime for RCDP window streaming and control"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+cua-media-protocol = { path = "../../../cua/crates/cua-media-protocol" }
+cua-spacesd-provider-api = { path = "../cua-spacesd-provider-api" }
+cua-media-transport = { path = "../../../cua/crates/cua-media-transport" }
+# Only for the shared media clock; the codec backends stay in cua-spacesd-desktop.
+cua-media-codec = { path = "../../../cua/crates/cua-media-codec", default-features = false }
+tracing.workspace = true
+tokio.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.2.2", default-features = false, features = ["NSPasteboard", "NSPasteboardItem"] }
+objc2-foundation = { version = "0.2.2", features = ["NSArray", "NSString", "NSURL"] }
+objc2-v5 = { package = "objc2", version = "0.5.2" }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // CuaTestHarness.AppKit — deterministic Cocoa AppKit host app for the
 // cua-driver-rs test harness. Mirrors the role of CuaTestHarness.Wpf.
 //
@@ -241,7 +244,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         content.addArrangedSubview(inputRow)
 
         // click_target — a REAL NSButton so it is in the AX tree and addressable
-        // by element_index (AppKit NSButton ignores synthetic pixel clicks, but
+        // by element_token (AppKit NSButton ignores synthetic pixel clicks, but
         // AXPress works). AXPress / single mouse → click; pixel double → double_click;
         // right-click → right_click. (matches WPF btn-clicktarget contract.)
         content.addArrangedSubview(sectionLabel("click_target"))
@@ -709,7 +712,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
 
 // MARK: - Click target button
 
-// A real NSButton (so it shows up in the AX tree and is element_index-addressable
+// A real NSButton (so it shows up in the AX tree and is element_token-addressable
 // via AXPress) that additionally reports double-click and right-click. AXPress and
 // single mouse-up fire the target/action (→ click); a pixel double-click is caught
 // here before super so it reports double_click; right-click reports right_click.

@@ -219,6 +219,9 @@ struct InputExperiment::Impl {
     xkb_keymap* physical_keymap = nullptr;
     xkb_state* physical_keyboard_state = nullptr;
     int keymap_fd = -1;
+    // Hyprland's input:repeat_rate and input:repeat_delay defaults, advertised
+    // until an active keyboard reports the user's values.
+    int repeat_rate = 25, repeat_delay = 600;
     bool retired = false, suspended = true, typing_keymap = false, physical_keymap_present = false;
     WP<IKeyboard> physical_keyboard;
     CHyprSignalListener keymap_listener;
@@ -304,9 +307,35 @@ struct InputExperiment::Impl {
         return physical_keymap_present && typing_keymap && physical_keyboard_state && keyboard &&
             keyboard->m_xkbKeymapV1FD.get() >= 0 && keyboard->m_xkbKeymapV1String == physical_keymap_text;
     }
+    // Agent keyboards advertise the user seat's wl_keyboard.repeat_info. A zero
+    // rate is valid Wayland, but a single-seat client that binds an agent seat
+    // may divide by it: imv 5.0.1 raised SIGFPE on repeat_info(0, 0) (#4257).
+    //
+    // A real rate cannot make Driver typing repeat. Protocol v3 has no key-down
+    // or key-up request. One KEY request presses the key and its modifiers,
+    // releases them, and leaves keyboard focus in a single synchronous handler
+    // on the compositor thread, with no event-loop iteration in between. The
+    // client gets the release together with the press and handles both in one
+    // dispatch, so a repeat timer armed by the press is cancelled before the
+    // client's event loop can run it; the wl_keyboard.leave that follows also
+    // requires the client to stop repeating. The hold is therefore bounded by
+    // that handler, not by the user's delay. DRAG holds only a pointer button.
+    // A request that holds a key across dispatches would have to keep the
+    // advertised delay above its longest hold.
+    //
+    // Like the user seat, keep the last values while no keyboard is active.
+    void sync_key_repeat(const SP<IKeyboard>& keyboard) {
+        if (!keyboard) return;
+        const auto rate = std::max(0, keyboard->m_repeatRate), delay = std::max(0, keyboard->m_repeatDelay);
+        if (rate == repeat_rate && delay == repeat_delay) return;
+        repeat_rate = rate; repeat_delay = delay;
+        for (auto& k : keyboards)
+            if (!k->dead && k->wl->resource() && k->wl->version() >= 4) k->wl->sendRepeatInfo(rate, delay);
+    }
     void sync_keymap() {
         initialize_agent_keymap();
         const auto keyboard = g_pSeatManager->m_keyboard.lock();
+        sync_key_repeat(keyboard);
         if (physical_keyboard != keyboard) {
             if (physical_keymap_present) desktop_transition();
             keymap_listener.reset();
@@ -479,7 +508,7 @@ struct InputExperiment::Impl {
         k->wl->setRelease([entry](CWlKeyboard*) { entry->dead = true; });
         k->wl->setOnDestroy([entry](CWlKeyboard*) { entry->dead = true; });
         k->wl->sendKeymap(WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, keymap_fd, keymap_text.size() + 1);
-        if (seat->version() >= 4) k->wl->sendRepeatInfo(0, 0);
+        if (seat->version() >= 4) k->wl->sendRepeatInfo(repeat_rate, repeat_delay);
         keyboards.push_back(std::move(k));
     }
     void add_touch(CWlSeat* seat, std::uint32_t id) {
@@ -1203,6 +1232,7 @@ struct InputExperiment::Impl {
             if (code == 0 || code > 247 || mods > 15 || code == 58 || code == 69 || code == 70) { send(c, refusal("unsupported")); return; }
             if (!consume_grant(c, cap)) return;
             if (!keyboard_enter(c)) { send(c, refusal("client_not_bound")); return; }
+            // Every key is released in this handler; sync_key_repeat relies on it.
             const std::array<std::uint32_t, 4> keys{42, 29, 56, 125};
             for (unsigned i = 0; i < 4; ++i) if ((mods & (1u << i)) && keys[i] != code) key(keys[i], true);
             key(code, true); key(code, false);

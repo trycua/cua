@@ -60,7 +60,7 @@ fn def() -> &'static ToolDef {
         name: "scroll".into(),
         description: "Scroll the target pid. Two paths, picked by how you address the scroll:\n\n\
             • **Targeted wheel path** — when you pass a target, either \
-            `element_index`/`element_token` (preferred) or window-local `x, y` pixels: \
+            `element_token` (preferred) or window-local `x, y` pixels: \
             the driver synthesizes a real mouse-wheel event (CGEventCreateScrollWheelEvent, \
             at that screen point. The renderer hit-tests the wheel at the \
             cursor, so the scroll lands on whatever element is under the point — exactly \
@@ -81,7 +81,7 @@ fn def() -> &'static ToolDef {
             "required": ["direction"],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid": { "type": "integer" },
+                "pid": { "type": "integer", "description": "Target process ID. Required unless scope is \"desktop\"." },
                 "direction": {
                     "type": "string",
                     "enum": ["up", "down", "left", "right"],
@@ -98,10 +98,8 @@ fn def() -> &'static ToolDef {
                     "maximum": AMOUNT_MAX,
                     "description": "Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Larger requests are clamped to the maximum. Default: 3."
                 },
-                "window_id": { "type": "integer" },
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "window_id": { "type": "integer", "description": "CGWindowID of the target window. Required with x/y; optional with element_token (the token carries it)." },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "x": { "type": "number", "description": "Window-local screenshot X (top-left origin of the PNG from get_window_state). With `y`, routes through the pixel-wheel path at this point — use for a scrollable surface that isn't in the AX tree. Requires window_id to anchor the window→screen conversion." },
                 "y": { "type": "number", "description": "Window-local screenshot Y. See `x`." },
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with x,y and no pid/window_id for native get_desktop_state screenshot coordinates." },
@@ -187,18 +185,8 @@ impl Tool for ScrollTool {
         };
         let by = args.str_or("by", "line");
         let amount = clamp_amount(args.u64_or("amount", 3));
-        // Surface 6: element_token / element_index precedence.
-        let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "scroll",
-        ) {
+        let resolved = match self.state.snapshots.resolve(pid, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };

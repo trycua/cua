@@ -279,7 +279,7 @@ All five commands must succeed, and `csrutil status` must report disabled.
 
 ### Seed app-owned grants in disposable SIP-off workers
 
-The public [Run Cua Driver in a macOS Lume VM](https://cua.ai/docs/how-to-guides/driver/run-in-macos-lume-vm)
+The public [Run Cua Driver in a macOS Lume VM](https://cua.ai/docs/cua-driver/guides/vms-and-remote)
 guide grants macOS consent through the VM display. Keep using that prompt flow
 for reusable private seeds. For automated disposable workers that are not cloned
 from a granted seed, run the host helper after `CuaDriverLocal.app` is installed
@@ -310,6 +310,9 @@ notarized release (`anchor apple generic` with a 10-character team ID). It
 rejects ad hoc `cdhash` requirements unless `--allow-adhoc` is passed. To seed
 the released app, pass `--app /Applications/CuaDriver.app --expected-client
 com.trycua.driver`. The host wrapper parses `lume get` with `jq`.
+Database rows or a successful helper exit alone do not certify the desktop:
+require both grants in `permissions status --json`, a fresh screenshot, and a
+reversible input action through the guest Driver before the matrix.
 
 After seeding, restart `CuaDriverLocal.app` before checking permission status if
 `install-local --autostart` or an earlier probe may have started the daemon:

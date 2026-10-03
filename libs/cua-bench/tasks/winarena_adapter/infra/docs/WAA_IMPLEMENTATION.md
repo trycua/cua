@@ -23,7 +23,7 @@ This document provides a comprehensive overview of the Windows Arena Azure imple
 
 ## Overview
 
-Windows Arena Azure (WAA) is a benchmarking system that runs AI agents against Windows desktop tasks. The system runs a Windows 11 VM inside a Docker container using QEMU/KVM, with a Python client orchestrating benchmark tasks against the VM via a custom HTTP API (CUA Computer Server).
+Windows Arena Azure (WAA) is a benchmarking system that runs AI agents against Windows desktop tasks. The system runs a Windows 11 VM inside a Docker container using QEMU/KVM, with a Python client orchestrating benchmark tasks against the VM via a custom HTTP API (the WAA Flask control server).
 
 ### Key Components
 
@@ -41,7 +41,7 @@ Windows Arena Azure (WAA) is a benchmarking system that runs AI agents against W
 │  │                         │ HTTP (172.30.0.2:5000)          │  │
 │  │  ┌──────────────────────▼──────────────────────────────┐  │  │
 │  │  │  Windows 11 VM (QEMU/KVM)                           │  │  │
-│  │  │  - CUA Computer Server (Flask, port 5000)           │  │  │
+│  │  │  - WAA control server (Flask, port 5000)            │  │  │
 │  │  │  - PyAutoGUI, UIA automation                        │  │  │
 │  │  │  - Task execution environment                       │  │  │
 │  │  └─────────────────────────────────────────────────────┘  │  │
@@ -116,7 +116,7 @@ denpasar-v1/
 │       ├── setup/               # Windows setup scripts
 │       │   ├── setup.ps1        # PowerShell setup
 │       │   ├── install.bat      # Batch installer
-│       │   └── server/          # CUA Computer Server
+│       │   └── server/          # WAA control server (Flask)
 │       ├── storage/             # VM disk images
 │       └── unattend-files/      # Windows unattend configs
 ├── .env.local                   # Azure credentials (gitignored)
@@ -398,9 +398,10 @@ ENV ARGUMENTS="-qmp tcp:0.0.0.0:7200,server,nowait"
 
 ## Windows VM Integration
 
-### CUA Computer Server
+### WAA control server
 
-The CUA Computer Server is a Flask-based HTTP API running inside the Windows VM:
+The control server (`vm/setup/server`, from Windows Agent Arena; unrelated to the
+removed cua-computer-server package) is a Flask HTTP API inside the Windows VM:
 
 **Endpoints:**
 | Endpoint | Method | Purpose |
@@ -884,7 +885,7 @@ rsync -avz --exclude='.git' --exclude='vm/storage' ./ user@vm:/path/
 
 | Port | Purpose                              |
 | ---- | ------------------------------------ |
-| 5000 | CUA Computer Server (internal)       |
+| 5000 | WAA control server (internal)        |
 | 7200 | QEMU QMP Protocol                    |
 | 3390 | RDP (dev mode only)                  |
 | 8006 | noVNC browser access (dev mode only) |

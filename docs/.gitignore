@@ -5,6 +5,7 @@
 .contentlayer
 .content-collections
 .source
+src/lib/doc-modules.generated.ts
 
 # test & build
 /coverage

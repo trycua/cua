@@ -2,7 +2,7 @@
 //!
 //! Two addressing modes:
 //!
-//! * **AX path** (`element_index` + `window_id`): performs AXAction on the cached
+//! * **AX path** (`element_token`): performs AXAction on the cached
 //!   element. Fires via AX RPC — the target app never needs to be frontmost.
 //!   Extra behaviors vs. the naive dispatch:
 //!   - AXTextField / AXTextArea: 800 ms post-click delay for WebKit DOM focus settle.
@@ -104,10 +104,7 @@ fn nearest_selectable_container_center(element_ptr: usize) -> Option<(f64, f64)>
         if owns_current {
             unsafe { CFRelease(current as CFTypeRef) };
         }
-        let Some(parent) = parent else {
-            return None;
-        };
-        current = parent;
+        current = parent?;
         owns_current = true;
     }
 
@@ -183,7 +180,7 @@ fn def() -> &'static ToolDef {
              `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface \
              that doesn't appear in the AX tree.\n\n\
              Two addressing modes:\n\n\
-             - element_token, or element_index + snapshot_id (from get_window_state): AX action path. \
+             - element_token (from get_window_state): AX action path. \
                Works on backgrounded/hidden windows. No cursor move, no focus steal. \
                The snapshot cache is scoped per (pid, window_id) and is replaced by the \
                next snapshot of the same window — re-snapshot every turn before clicking.\n\n\
@@ -212,10 +209,8 @@ fn def() -> &'static ToolDef {
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "pid":           { "type": "integer", "description": "Target process ID." },
-                "window_id":     { "type": "integer", "description": "Target window ID. Required for element_index. Optional when element_token is supplied (the token carries it)." },
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "window_id":     { "type": "integer", "description": "Target window ID. Omit when element_token is supplied (the token carries it)." },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "capture_id": { "type": "string", "description": "Optional immutable source capture ID returned by get_window_state or get_desktop_state. With x,y, Driver atomically admits and consumes that exact capture before dispatch; stale, mismatched, or out-of-bounds captures are refused without fallback." },
                 "x":             { "type": "number",  "description": "X in screenshot pixels. A window target uses the get_window_state PNG; a desktop target uses the native get_desktop_state PNG. The driver reverses Retina backing scale and any window-image downscale." },
                 "y":             { "type": "number",  "description": "Y in screenshot pixels from the image selected by target." },
@@ -242,7 +237,7 @@ fn def() -> &'static ToolDef {
                 "delivery_mode": {
                     "type": "string",
                     "enum": ["background", "foreground"],
-                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require \"foreground\" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_index) → snapshot → background pixel (x/y) → snapshot → delivery_mode:\"foreground\"."
+                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require \"foreground\" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_token) → snapshot → background pixel (x/y) → snapshot → delivery_mode:\"foreground\"."
                 },
                 "scope": {
                     "type": "string",
@@ -413,21 +408,8 @@ impl Tool for ClickTool {
         // the calling session's cursor, not the shared "default" one.
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
-        // Surface 6: resolve element_token / element_index precedence
-        // BEFORE the pixel-path fallback. Token wins on disagreement; a
-        // stale token returns an explicit error instead of silently
-        // falling back to the integer (Surface 6 hard constraint).
-        let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "click",
-        ) {
+        let resolved = match self.state.snapshots.resolve(pid, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -550,7 +532,7 @@ impl Tool for ClickTool {
                     Some(c) => c,
                     None => {
                         return ToolResult::error(
-                            "click(button=middle) on element_index: could not resolve element \
+                            "click(button=middle) on element_token: could not resolve element \
                          center for the pixel-middle-click fallback. Pass x, y directly.",
                         )
                     }
@@ -695,10 +677,8 @@ impl Tool for ClickTool {
                             let has_modifiers = !selection_modifiers.is_empty();
                             let action = || {
                                 outcome = Some(perform_ax_click(
-                                    element_ptr,
-                                    idx,
-                                    pid,
-                                    wid,
+                                    (element_ptr, idx),
+                                    (pid, wid),
                                     &action_clone,
                                     &ck,
                                     selection_pixel,
@@ -728,10 +708,8 @@ impl Tool for ClickTool {
                             Ok((outcome, fronted))
                         } else {
                             perform_ax_click(
-                                element_ptr,
-                                idx,
-                                pid,
-                                wid,
+                                (element_ptr, idx),
+                                (pid, wid),
                                 &action_clone,
                                 &ck,
                                 selection_pixel,
@@ -1002,14 +980,13 @@ impl Tool for ClickTool {
             // backend after resolving the requested screen point. This keeps
             // targeting (PX) orthogonal to delivery (AX) and avoids making a
             // Chromium/AppKit window key merely to satisfy first-mouse rules.
-            if !delivery_mode.is_foreground()
-                && window_id.is_some()
-                && button_str == "left"
-                && count == 1
-                && modifiers.is_empty()
-            {
+            if let Some(hit_test_wid) = window_id.filter(|_| {
+                !delivery_mode.is_foreground()
+                    && button_str == "left"
+                    && count == 1
+                    && modifiers.is_empty()
+            }) {
                 let focus_only = action == "focus";
-                let hit_test_wid = window_id.expect("guarded by window_id.is_some() above");
                 let ax_result = tokio::task::spawn_blocking(move || unsafe {
                     let Some(element) = element_at_screen_position(pid, screen_x, screen_y) else {
                         return Ok::<bool, anyhow::Error>(false);
@@ -1300,9 +1277,7 @@ impl Tool for ClickTool {
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
         } else {
-            ToolResult::error(
-                "Provide either (element_index + window_id) or (x + y). pid is always required.",
-            )
+            ToolResult::error("Provide either element_token or (x + y). pid is always required.")
         }
     }
 }
@@ -1317,17 +1292,20 @@ impl Tool for ClickTool {
 /// the driver's only signal that the press likely did nothing. The caller turns
 /// it into `effect: "suspected_noop"` + an escalation hint so the agent crosses
 /// to the vision/pixel path instead of trusting a hollow success.
+///
+/// `element` is the cached AX element pointer and its snapshot index; `window`
+/// is the target (pid, window_id).
 fn perform_ax_click(
-    element_ptr: usize,
-    idx: usize,
-    pid: i32,
-    window_id: u32,
+    element: (usize, usize),
+    window: (i32, u32),
     action_str: &str,
     cursor_key: &str,
     selection_pixel: Option<SelectionPixelTarget>,
     modifiers: &[String],
     foreground: bool,
 ) -> anyhow::Result<(String, bool, bool, bool, bool)> {
+    let (element_ptr, idx) = element;
+    let (pid, window_id) = window;
     let ax_action = map_action(action_str);
     let element = element_ptr as AXUIElementRef;
 
@@ -1517,7 +1495,7 @@ fn perform_ax_click(
                 summary.push_str(
                     "\n\n⚠️ This is a popup/select button. The native macOS menu closes \
                      immediately when the window is in the background. Do NOT use click \
-                     again — instead, use:\n  set_value(pid, window_id, element_index, value)\n\
+                     again — instead, use:\n  set_value(pid, element_token, value)\n\
                      Available options: [",
                 );
                 summary.push_str(&opt_list);

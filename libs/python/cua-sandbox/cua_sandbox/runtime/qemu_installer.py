@@ -11,6 +11,7 @@ import zipfile
 from pathlib import Path
 
 import httpx
+from cua_sandbox._paths import cua_home
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +19,11 @@ QEMU_PORTABLE_URL = (
     "https://github.com/ganarcasas/qemu-portable/releases/download/20241220/"
     "qemu-portable-20241220.zip"
 )
-QEMU_DIR = Path.home() / ".cua" / "cua-sandbox" / "qemu"
+QEMU_DIR = cua_home() / "cua-sandbox" / "qemu"
 QEMU_INNER_DIR = "qemu-portable-20241220"
 
 WIMLIB_URL = "https://wimlib.net/downloads/wimlib-1.14.5-windows-x86_64-bin.zip"
-WIMLIB_DIR = Path.home() / ".cua" / "cua-sandbox" / "wimlib"
+WIMLIB_DIR = cua_home() / "cua-sandbox" / "wimlib"
 
 
 def qemu_bin(arch: str = "x86_64") -> str:

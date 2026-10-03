@@ -518,6 +518,17 @@ impl SessionAuthorizationRegistry {
         &self.ceiling
     }
 
+    /// The runtime-private key dispatch through this registry's contexts
+    /// gives `public_session` (see
+    /// [`EffectiveAuthorizationContext::runtime_session_key`]).
+    #[doc(hidden)]
+    pub fn runtime_session_key(&self, public_session: &str) -> String {
+        format!(
+            "__cua_runtime_{}:{public_session}",
+            self.daemon_generation.0.simple()
+        )
+    }
+
     pub fn legacy_context(&self) -> Result<Arc<EffectiveAuthorizationContext>, String> {
         let mode = crate::authorization::configured_permission_mode()?;
         let capability_manifest = crate::session_manifest::configured_capability_manifest()?
@@ -784,9 +795,10 @@ impl SessionAuthorizationRegistry {
     }
 }
 
-static CONFIGURED_REGISTRY: OnceLock<
-    Mutex<Option<Result<Arc<SessionAuthorizationRegistry>, String>>>,
-> = OnceLock::new();
+/// The process registry, or the configuration error that prevented it.
+type ConfiguredRegistry = Result<Arc<SessionAuthorizationRegistry>, String>;
+
+static CONFIGURED_REGISTRY: OnceLock<Mutex<Option<ConfiguredRegistry>>> = OnceLock::new();
 
 pub fn configured_registry() -> Result<Arc<SessionAuthorizationRegistry>, String> {
     CONFIGURED_REGISTRY

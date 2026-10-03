@@ -33,18 +33,39 @@ client = httpx.Client(base_url=HOST_URL, timeout=30.0)
 telemetry_client = httpx.Client(base_url=HOST_URL, timeout=1.0)
 
 
+# Only these argument keys are ever sent, and only as numbers (or a mouse
+# button name). Typed text, key names, save paths and anything else a tool
+# receives never leave the container.
+_TELEMETRY_NUMERIC_ARGS = frozenset(
+    {"x", "y", "delta_x", "delta_y", "from_x", "from_y", "to_x", "to_y", "delay"}
+)
+_TELEMETRY_BUTTONS = frozenset({"left", "right", "middle"})
+
+
+def _telemetry_safe_args(tool_args: dict) -> dict:
+    safe = {}
+    for key, value in tool_args.items():
+        if (
+            key in _TELEMETRY_NUMERIC_ARGS
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        ):
+            safe[key] = value
+        elif key == "button" and value in _TELEMETRY_BUTTONS:
+            safe[key] = value
+    return safe
+
+
 def log_mcp_tool_call(tool_name: str, tool_args: dict) -> None:
-    """Send MCP tool call telemetry to cuabotd"""
+    """Send MCP tool call telemetry to cuabotd (tool name + safe numeric args)."""
     if not TELEMETRY_ENABLED:
         return
     try:
-        # Filter out large data (like screenshots) from args
-        filtered_args = {k: v for k, v in tool_args.items() if not isinstance(v, bytes)}
         event = {
             "type": "mcp_tool_call",
             "timestamp": int(time.time() * 1000),
             "tool_name": tool_name,
-            "tool_args": filtered_args,
+            "tool_args": _telemetry_safe_args(tool_args),
         }
         telemetry_client.post("/telemetry", json=event)
     except Exception:
@@ -81,7 +102,7 @@ def screenshot(save_path: str | None = None) -> Image:
     """
     import base64
 
-    log_mcp_tool_call("screenshot", {"save_path": save_path})
+    log_mcp_tool_call("screenshot", {})
     result = request("screenshot")
     image_bytes = base64.b64decode(result["image"])
 
@@ -127,7 +148,7 @@ def type_text(text: str, delay: int = 50) -> str:
         text: Text to type
         delay: Delay between keystrokes in ms (default: 50)
     """
-    log_mcp_tool_call("type_text", {"text": text, "delay": delay})
+    log_mcp_tool_call("type_text", {"delay": delay})
     request("type", {"text": text, "delay": delay})
     return "Typed"
 
@@ -195,7 +216,7 @@ def key_down(key: str) -> str:
     Args:
         key: Key to press (e.g., 'Shift', 'Control', 'a', 'Enter')
     """
-    log_mcp_tool_call("key_down", {"key": key})
+    log_mcp_tool_call("key_down", {})
     request("keyDown", {"key": key})
     return "Key down"
 
@@ -207,7 +228,7 @@ def key_up(key: str) -> str:
     Args:
         key: Key to release
     """
-    log_mcp_tool_call("key_up", {"key": key})
+    log_mcp_tool_call("key_up", {})
     request("keyUp", {"key": key})
     return "Key up"
 
@@ -219,7 +240,7 @@ def key_press(key: str) -> str:
     Args:
         key: Key to press (e.g., 'Enter', 'Tab', 'Escape', 'F1')
     """
-    log_mcp_tool_call("key_press", {"key": key})
+    log_mcp_tool_call("key_press", {})
     request("keyPress", {"key": key})
     return "Key pressed"
 

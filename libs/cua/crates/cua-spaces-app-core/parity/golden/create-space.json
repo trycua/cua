@@ -1,0 +1,2324 @@
+{
+  "flow": "create-space",
+  "frames": [
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "initial"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": false,
+        "cpusText": "4 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/windows:2022",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/windows:2022"
+        },
+        "kinds": [
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Disk: 64 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 0
+      },
+      "wizard": "choose-os"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "choose-os"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "set-placement"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "set-placement"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "toggle-advanced"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": false,
+        "cpusText": "2 cores",
+        "disk": "20 GB (20-1024) ~Uses about 1.2 GB on this Mac at first, up to 20 GB as the Space fills it. ?A VM disk cannot shrink below the image's 20 GB.",
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04-disk"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Virtual machine"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 0
+      },
+      "wizard": "choose-kind"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "choose-kind"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "set-runtime"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": true,
+          "rows": [
+            "Desktop images: ghcr.io/trycua/linux:24.04 (Ubuntu 24.04) selected highlighted",
+            "Desktop images: ghcr.io/trycua/linux:24.04-disk (Ubuntu 24.04 VM)",
+            "Desktop images: ghcr.io/trycua/linux:24.04-slim (Ubuntu 24.04 slim)",
+            "Desktop images: ghcr.io/trycua/linux:24.04-slim-disk (Ubuntu 24.04 slim VM)",
+            "Distribution images: ghcr.io/trycua/omarchy:edge (Omarchy)",
+            "Distribution images: ghcr.io/trycua/omarchy:edge-disk (Omarchy disk)"
+          ],
+          "text": "ghcr.io/trycua/linux:24.04"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "open-image-suggestions"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": true,
+          "rows": [
+            "Desktop images: ghcr.io/trycua/linux:24.04 (Ubuntu 24.04) selected",
+            "Desktop images: ghcr.io/trycua/linux:24.04-disk (Ubuntu 24.04 VM) highlighted",
+            "Desktop images: ghcr.io/trycua/linux:24.04-slim (Ubuntu 24.04 slim)",
+            "Desktop images: ghcr.io/trycua/linux:24.04-slim-disk (Ubuntu 24.04 slim VM)",
+            "Distribution images: ghcr.io/trycua/omarchy:edge (Omarchy)",
+            "Distribution images: ghcr.io/trycua/omarchy:edge-disk (Omarchy disk)"
+          ],
+          "text": "ghcr.io/trycua/linux:24.04"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "move-image-suggestion"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": true,
+          "rows": [
+            "Desktop images: ghcr.io/trycua/linux:24.04 (Ubuntu 24.04) selected highlighted",
+            "Desktop images: ghcr.io/trycua/linux:24.04-disk (Ubuntu 24.04 VM)",
+            "Desktop images: ghcr.io/trycua/linux:24.04-slim (Ubuntu 24.04 slim)",
+            "Desktop images: ghcr.io/trycua/linux:24.04-slim-disk (Ubuntu 24.04 slim VM)",
+            "Distribution images: ghcr.io/trycua/omarchy:edge (Omarchy)",
+            "Distribution images: ghcr.io/trycua/omarchy:edge-disk (Omarchy disk)"
+          ],
+          "text": "ghcr.io/trycua/linux:24.04"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "move-image-suggestion"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "dismiss-image-suggestions"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "win",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": true,
+          "rows": [
+            "Desktop images: ghcr.io/trycua/windows:2022 (Windows Server 2022)"
+          ],
+          "text": "win"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "set-image-text"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "win",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": true,
+          "rows": [
+            "Desktop images: ghcr.io/trycua/windows:2022 (Windows Server 2022) highlighted"
+          ],
+          "text": "win"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "move-image-suggestion"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": false,
+        "cpusText": "4 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/windows:2022",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/windows:2022"
+        },
+        "kinds": [
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Disk: 64 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 0
+      },
+      "wizard": "pick-image-suggestion"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": false,
+        "cpusText": "4 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag] !Use lowercase letters in the image name.",
+          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/Acme/desktop",
+        "imageField": {
+          "custom": true,
+          "error": "Use lowercase letters in the image name.",
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/Acme/desktop"
+        },
+        "kinds": [
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Virtual machine"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 0
+      },
+      "wizard": "set-image-text"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": false,
+        "cpusText": "4 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag] !An image reference has no spaces.",
+          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2 x",
+        "imageField": {
+          "custom": true,
+          "error": "An image reference has no spaces.",
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2 x"
+        },
+        "kinds": [
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Virtual machine"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 0
+      },
+      "wizard": "set-image-text"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": false,
+        "cpusText": "4 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag] !This image is not published yet.",
+          "placement: Run on !This Mac cannot run QEMU Spaces.",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/windows:2022-disk",
+        "imageField": {
+          "custom": true,
+          "error": "This image is not published yet.",
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/windows:2022-disk"
+        },
+        "kinds": [
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": "This Mac cannot run QEMU Spaces.",
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Virtual machine"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "qemu"
+        ],
+        "step": 0
+      },
+      "wizard": "set-image-text"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": true,
+          "rows": [
+            "Desktop images: ghcr.io/trycua/linux:24.04 (Ubuntu 24.04) selected",
+            "Desktop images: ghcr.io/trycua/linux:24.04-disk (Ubuntu 24.04 VM)",
+            "Desktop images: ghcr.io/trycua/linux:24.04-slim (Ubuntu 24.04 slim)",
+            "Desktop images: ghcr.io/trycua/linux:24.04-slim-disk (Ubuntu 24.04 slim VM)"
+          ],
+          "text": "ghcr.io/trycua/linux:24.04"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "set-image-text"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "set-image-text"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "pick-image-suggestion"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "address: Address [10.0.0.5:3211]",
+          "token: Token [CUA_ENV_TOKEN]",
+          "address-name: Name [Optional]"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "show-address"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": true,
+          "error": null,
+          "submit": "10.0.0.5:3211 token= name=",
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "address: Address [10.0.0.5:3211]",
+          "token: Token [CUA_ENV_TOKEN]",
+          "address-name: Name [Optional]"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "set-address"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": true,
+          "error": null,
+          "submit": "10.0.0.5:3211 token=tok name=",
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "address: Address [10.0.0.5:3211]",
+          "token: Token [CUA_ENV_TOKEN]",
+          "address-name: Name [Optional]"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "set-token"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": true,
+          "error": null,
+          "submit": "10.0.0.5:3211 token=tok name=",
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "address: Address [10.0.0.5:3211]",
+          "token: Token [CUA_ENV_TOKEN]",
+          "address-name: Name [Optional]"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "set-address-name"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": true,
+          "error": null,
+          "submit": "10.0.0.5:3211 token=tok name=",
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "hide-address"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": true,
+          "error": null,
+          "submit": "10.0.0.5:3211 token=tok name=",
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 1
+      },
+      "wizard": "next"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": true,
+          "error": null,
+          "submit": "10.0.0.5:3211 token=tok name=",
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "4 cores",
+        "disk": null,
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 1
+      },
+      "wizard": "set-cpus"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": true,
+          "error": null,
+          "submit": "10.0.0.5:3211 token=tok name=",
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "4 cores",
+        "disk": null,
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 1
+      },
+      "wizard": "set-memory"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": true,
+          "error": null,
+          "submit": "10.0.0.5:3211 token=tok name=",
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "4 cores",
+        "disk": null,
+        "fields": [
+          "name: Name [Optional]",
+          "open-when-ready: Open when ready"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 2
+      },
+      "wizard": "next"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": true,
+          "error": null,
+          "submit": "10.0.0.5:3211 token=tok name=",
+          "submitLabel": "Add Space"
+        },
+        "canContinue": false,
+        "cpusText": "4 cores",
+        "disk": null,
+        "fields": [
+          "name: Name [Optional] !Lowercase letters, digits and dashes",
+          "open-when-ready: Open when ready"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": true,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 2
+      },
+      "wizard": "set-name"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": true,
+          "error": null,
+          "submit": "10.0.0.5:3211 token=tok name=",
+          "submitLabel": "Add Space"
+        },
+        "canContinue": false,
+        "cpusText": "4 cores",
+        "disk": null,
+        "fields": [
+          "name: Name [Optional] !Lowercase letters, digits and dashes",
+          "open-when-ready: Open when ready"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": true,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 2
+      },
+      "wizard": "next"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": true,
+          "error": null,
+          "submit": "10.0.0.5:3211 token=tok name=",
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "4 cores",
+        "disk": null,
+        "fields": [
+          "name: Name [Optional]",
+          "open-when-ready: Open when ready"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 2
+      },
+      "wizard": "set-name"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": true,
+          "error": null,
+          "submit": "10.0.0.5:3211 token=tok name=",
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "4 cores",
+        "disk": null,
+        "fields": [
+          "name: Name [Optional]",
+          "open-when-ready: Open when ready"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 2
+      },
+      "wizard": "set-open-when-ready"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": true,
+          "error": null,
+          "submit": "10.0.0.5:3211 token=tok name=",
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "4 cores",
+        "disk": null,
+        "fields": [],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Create Space",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 3
+      },
+      "wizard": "next"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": true,
+          "error": null,
+          "submit": "10.0.0.5:3211 token=tok name=",
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "4 cores",
+        "disk": null,
+        "fields": [
+          "name: Name [Optional]",
+          "open-when-ready: Open when ready"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 2
+      },
+      "wizard": "back"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": true,
+          "error": null,
+          "submit": "10.0.0.5:3211 token=tok name=",
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "4 cores",
+        "disk": null,
+        "fields": [],
+        "gpu": null,
+        "image": "ghcr.io/acme/desktop:1.2",
+        "imageField": {
+          "custom": true,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/acme/desktop:1.2"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Create Space",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container"
+        ],
+        "resourcesError": null,
+        "runtime": "gvisor",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 3
+      },
+      "wizard": "next"
+    },
+    {
+      "plan": {
+        "createSpace": {
+          "cpus": 4,
+          "image": "ghcr.io/acme/desktop:1.2",
+          "kind": "container",
+          "memoryMb": 8192,
+          "name": "demo",
+          "on": "local",
+          "runtime": "gvisor",
+          "spacesd": true
+        },
+        "creating": "Creating demo. It appears in the list when it is ready.",
+        "failed": "Could not create the Space: connection refused",
+        "openDesktop": false,
+        "summary": [
+          "System: Linux",
+          "Image: ghcr.io/acme/desktop:1.2",
+          "Runs on: This Mac",
+          "Kind: Container",
+          "Runtime: gVisor container on this Mac",
+          "Resources: 4 cores, 8 GB memory",
+          "Name: demo",
+          "When ready: Stay in the list"
+        ]
+      }
+    },
+    {
+      "frame": {
+        "focusIndex": 0,
+        "ids": [
+          "direct:10.0.0.5:3211",
+          "local:demo"
+        ],
+        "mode": "ambient",
+        "names": [
+          "10.0.0.5:3211",
+          "Demo"
+        ],
+        "notice": null,
+        "selectedId": "direct:10.0.0.5:3211"
+      },
+      "roster": "sync-spaces"
+    },
+    {
+      "frame": {
+        "focusIndex": 0,
+        "ids": [
+          "local:demo",
+          "direct:10.0.0.5:3211"
+        ],
+        "mode": "ambient",
+        "names": [
+          "Demo",
+          "10.0.0.5:3211"
+        ],
+        "notice": "Switching to Demo",
+        "selectedId": "local:demo"
+      },
+      "roster": "select"
+    },
+    {
+      "frame": {
+        "focusIndex": 0,
+        "ids": [
+          "local:demo",
+          "direct:10.0.0.5:3211"
+        ],
+        "mode": "switcher",
+        "names": [
+          "Demo",
+          "10.0.0.5:3211"
+        ],
+        "notice": "Switching to Demo",
+        "selectedId": "local:demo"
+      },
+      "roster": "expand"
+    },
+    {
+      "frame": {
+        "focusIndex": 1,
+        "ids": [
+          "local:demo",
+          "direct:10.0.0.5:3211"
+        ],
+        "mode": "switcher",
+        "names": [
+          "Demo",
+          "10.0.0.5:3211"
+        ],
+        "notice": "Switching to Demo",
+        "selectedId": "local:demo"
+      },
+      "roster": "focus-move"
+    },
+    {
+      "frame": {
+        "focusIndex": -1,
+        "ids": [
+          "local:demo",
+          "direct:10.0.0.5:3211"
+        ],
+        "mode": "switcher",
+        "names": [
+          "Demo",
+          "10.0.0.5:3211"
+        ],
+        "notice": "Switching to Demo",
+        "selectedId": "local:demo"
+      },
+      "roster": "focus-move"
+    },
+    {
+      "frame": {
+        "focusIndex": -1,
+        "ids": [
+          "local:demo",
+          "direct:10.0.0.5:3211"
+        ],
+        "mode": "ambient",
+        "names": [
+          "Demo",
+          "10.0.0.5:3211"
+        ],
+        "notice": "Switching to Demo",
+        "selectedId": "local:demo"
+      },
+      "roster": "collapse"
+    },
+    {
+      "frame": {
+        "emptyText": null,
+        "sections": [
+          "This Mac: Demo (selected)",
+          "Connected: 10.0.0.5:3211 (dim)"
+        ],
+        "selectedId": "local:demo",
+        "thisMachine": null
+      },
+      "sidebar": ""
+    },
+    {
+      "frame": {
+        "emptyText": null,
+        "sections": [
+          "This Mac: Demo (selected)"
+        ],
+        "selectedId": "local:demo",
+        "thisMachine": null
+      },
+      "sidebar": "dem"
+    },
+    {
+      "detail": "local:demo",
+      "frame": {
+        "canStream": true,
+        "deleteLabel": "Delete Space",
+        "facts": [
+          "Status: Running",
+          "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: Linux"
+        ],
+        "previewText": "Loading the desktop…",
+        "showSections": true,
+        "title": "Demo"
+      }
+    },
+    {
+      "detail": "direct:10.0.0.5:3211",
+      "frame": {
+        "canStream": false,
+        "deleteLabel": "Remove",
+        "facts": [
+          "Status: timed out",
+          "Identifier: direct:10.0.0.5:3211 [copy direct:10.0.0.5:3211 doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: Linux"
+        ],
+        "previewText": "Not reachable",
+        "showSections": false,
+        "title": "10.0.0.5:3211"
+      }
+    }
+  ]
+}

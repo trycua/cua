@@ -1709,6 +1709,10 @@ export type DragInput = {
     fromY: number,
     toX: number,
     toY: number,
+    /**
+     * Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+     * primary desktop (`kind="desktop"`, `display_id="primary"`).
+     */
     target?: ActionTarget,
     /**
      * Deprecated flat desktop target retained for wire compatibility.
@@ -2074,7 +2078,13 @@ const FfiConverterTypeEscalationReason = (() => {
 })();
 
 export type EscalateSessionInput = {
+    /**
+     * Public label of the legacy capture-scope session to escalate.
+     */
     session: string,
+    /**
+     * Why the window-scoped attempt failed and desktop capture is needed.
+     */
     reason: EscalationReason,
     /**
      * Optional bounded diagnostic detail. Never use secrets or page content.
@@ -2124,6 +2134,9 @@ const FfiConverterTypeEscalateSessionInput = (() => {
 })();
 
 export type GetAgentCursorStateInput = {
+    /**
+     * Public label of the session whose cursor to inspect.
+     */
     session: string
 }
 
@@ -2548,6 +2561,10 @@ const FfiConverterTypeGetWindowStateInput = (() => {
 
 export type HotkeyInput = {
     keys: Array<string>,
+    /**
+     * Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+     * primary desktop (`kind="desktop"`, `display_id="primary"`).
+     */
     target?: ActionTarget,
     /**
      * Deprecated flat desktop target retained for wire compatibility.
@@ -2610,8 +2627,18 @@ const FfiConverterTypeHotkeyInput = (() => {
  * trimming surrounding whitespace and otherwise remain case-sensitive.
  */
 export type InvokeMenuInput = {
+    /**
+     * Process ID of the application that owns the menu.
+     */
     pid: number,
+    /**
+     * Window ID from list_windows whose menu is invoked.
+     */
     windowId: bigint,
+    /**
+     * Menu labels from the top-level menu to the item, e.g. `["File", "Save As..."]`
+     * (1 to 16 labels).
+     */
     path: Array<string>,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
@@ -3234,10 +3261,18 @@ const FfiConverterTypeListWindowsOutput = (() => {
 })();
 
 export type MoveCursorInput = {
+    /**
+     * Destination X: window-local screenshot pixels for a window target, native
+     * get_desktop_state screenshot pixels for the desktop.
+     */
     x: number,
+    /**
+     * Destination Y, in the same space as `x`.
+     */
     y: number,
     /**
-     * Preferred per-call target. New callers should set this field.
+     * Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+     * primary desktop (`kind="desktop"`, `display_id="primary"`).
      */
     target?: ActionTarget,
     /**
@@ -3331,8 +3366,17 @@ const FfiConverterTypeVisualRegionKind = (() => {
  * Optional, model-neutral controls for one bounded parse.
  */
 export type ParseVisualRegionsOptions = {
+    /**
+     * Region kinds to return (`text`, `icon`). Omit for all kinds.
+     */
     kinds?: Array<VisualRegionKind>,
+    /**
+     * Drop regions below this confidence (0 to 1).
+     */
     minConfidence?: number,
+    /**
+     * Return at most this many regions.
+     */
     maxRegions?: number
 }
 
@@ -3383,6 +3427,9 @@ const FfiConverterTypeParseVisualRegionsOptions = (() => {
  * resolves it to the exact pixels and action-coordinate transform.
  */
 export type ParseVisualRegionsInput = {
+    /**
+     * `capture_id` of a screenshot returned by get_window_state or get_desktop_state.
+     */
     captureId: string,
     options: ParseVisualRegionsOptions
 }
@@ -4362,6 +4409,10 @@ const FfiConverterTypePredicateOutcome = (() => {
 
 export type PressKeyInput = {
     key: string,
+    /**
+     * Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+     * primary desktop (`kind="desktop"`, `display_id="primary"`).
+     */
     target?: ActionTarget,
     /**
      * Deprecated flat desktop target retained for wire compatibility.
@@ -4490,6 +4541,10 @@ export type ScrollInput = {
     x: number,
     y: number,
     direction: ScrollDirection,
+    /**
+     * Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+     * primary desktop (`kind="desktop"`, `display_id="primary"`).
+     */
     target?: ActionTarget,
     /**
      * Deprecated flat desktop target retained for wire compatibility.
@@ -4696,7 +4751,13 @@ const FfiConverterTypeSessionStateOutput = (() => {
 })();
 
 export type SetAgentCursorEnabledInput = {
+    /**
+     * Public label of the session that owns the cursor.
+     */
     session: string,
+    /**
+     * `true` shows the session's agent cursor overlay; `false` hides it.
+     */
     enabled: boolean
 }
 
@@ -4782,15 +4843,53 @@ const FfiConverterTypeSetAgentCursorEnabledOutput = (() => {
 })();
 
 export type SetAgentCursorMotionInput = {
+    /**
+     * Public label of the session that owns the cursor. Omitted or null motion fields keep
+     * their current value.
+     */
     session: string,
+    /**
+     * Path control-point offset from the start, as a fraction of the distance. Clamped to
+     * 0..1 (default 0.3).
+     */
     startHandle?: number,
+    /**
+     * Path control-point offset from the end, as a fraction of the distance. Clamped to 0..1
+     * (default 0.3).
+     */
     endHandle?: number,
+    /**
+     * Sideways arc deflection as a fraction of the distance. Clamped to 0..1 (default 0.25).
+     */
     arcSize?: number,
+    /**
+     * Arc asymmetry: positive puts the apex near the destination, negative near the start.
+     * Clamped to -1..1 (default 0).
+     */
     arcFlow?: number,
+    /**
+     * Post-arrival spring damping: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1
+     * (default 0.72).
+     */
     spring?: number,
+    /**
+     * Fixed glide duration in milliseconds. 0 (the default) uses speed-based timing. Clamped
+     * to 0..5000.
+     */
     glideDurationMs?: number,
+    /**
+     * Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).
+     */
     dwellAfterClickMs?: number,
+    /**
+     * Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to
+     * 0..60000 (default 15000).
+     */
     idleHideMs?: number,
+    /**
+     * Minimum turning radius of the glide path, in points; smaller turns tighter. Clamped to
+     * 1..1000 (default 80).
+     */
     turnRadius?: number
 }
 
@@ -4900,8 +4999,18 @@ const FfiConverterTypeSetAgentCursorMotionOutput = (() => {
 })();
 
 export type SetAgentCursorThemeInput = {
+    /**
+     * Public label of the session that owns the cursor.
+     */
     session: string,
+    /**
+     * Id of an installed cursor theme (see `cua-driver cursor-theme list`).
+     */
     themeId: string,
+    /**
+     * Theme animation policy: `on` uses the theme's reduced-motion frames, `off` always
+     * animates, `auto` (default) leaves the choice to the host.
+     */
     reducedMotion: CursorReducedMotion
 }
 
@@ -4990,11 +5099,29 @@ const FfiConverterTypeSetAgentCursorThemeOutput = (() => {
 })();
 
 export type SetWindowFrameInput = {
+    /**
+     * Process ID that owns the window.
+     */
     pid: number,
+    /**
+     * Window ID from list_windows.
+     */
     windowId: bigint,
+    /**
+     * New left edge in the desktop coordinate space reported by list_windows.
+     */
     x: number,
+    /**
+     * New top edge in the desktop coordinate space reported by list_windows.
+     */
     y: number,
+    /**
+     * New width, in the same units as list_windows bounds.
+     */
     width: number,
+    /**
+     * New height, in the same units as list_windows bounds.
+     */
     height: number,
     /**
      * For multi-call work, prefer a short public session label and repeat it on every call that
@@ -5297,6 +5424,10 @@ const FfiConverterTypeStatePredicate = (() => {
 
 export type TypeTextInput = {
     text: string,
+    /**
+     * Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+     * primary desktop (`kind="desktop"`, `display_id="primary"`).
+     */
     target?: ActionTarget,
     /**
      * Deprecated flat desktop target retained for wire compatibility.

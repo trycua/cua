@@ -1,0 +1,5241 @@
+/* SPDX-License-Identifier: FSL-1.1-MIT */
+/* Copyright (c) 2026 Cua AI, Inc. */
+
+/* ------------------------------------------------------------------ */
+/* Base                                                               */
+/* ------------------------------------------------------------------ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* Browser-only wallpaper stand-in (never shown inside Tauri). */
+html.is-browser {
+  min-height: 100vh;
+  background:
+    radial-gradient(120% 90% at 20% 110%, #f2b56a 0%, transparent 60%),
+    radial-gradient(90% 70% at 85% 20%, #7fb6ff 0%, transparent 55%),
+    linear-gradient(180deg, #5f8ac2 0%, #9fc0e8 45%, #e8c9a2 100%);
+  background-attachment: fixed;
+}
+html.is-browser body {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+html.is-browser #root {
+  height: auto;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: default;
+}
+button,
+select {
+  -webkit-appearance: none;
+  appearance: none;
+}
+button:focus {
+  outline: none;
+}
+button:focus-visible,
+select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ */
+/* Portal frame                                                       */
+/* ------------------------------------------------------------------ */
+
+.portal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+}
+.portal[data-mode="ambient"] {
+  justify-content: flex-start;
+}
+
+/* Cap that overlays the hardware notch: 200pt wide, rounded bottom. */
+.notch-cap {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  /* The real notch dimensions, so the ambient "N Spaces" tab extends flush from
+     its right edge as one continuous shape. */
+  width: var(--notch-width, 220px);
+  height: var(--notch-height, 38px);
+  transform: translateX(-50%);
+  transform-origin: 50% 0;
+  /* Only `transform` transitions (for the springy hover); the teleport corner
+     change below stays instant because border-radius isn't listed. */
+  transition: transform var(--dur-spring) var(--ease-spring);
+  background: var(--notch-black);
+  border-radius: 0 0 14px 14px;
+  z-index: 3;
+  pointer-events: none;
+}
+/* In ambient the "N Spaces" tab hangs off the notch's right edge, so square the
+   cap's bottom-right corner — otherwise its rounding leaves a gap at the join.
+   The bottom-left stays rounded to match the physical notch. */
+.notch-cap[data-mode="ambient"] {
+  border-radius: 0 0 0 14px;
+}
+/* During a drag teleport, round the bottom-right corner instantly (there is no
+   transition on the cap) so no sharp corner is exposed in the moment before the
+   taller rounded "Teleport to Cua" box slides down over the cap. Placed after
+   the ambient rule so it wins at equal specificity. */
+.notch-cap[data-teleport="on"] {
+  border-radius: 0 0 14px 14px;
+}
+.notch-cap::before,
+.notch-cap::after {
+  /* Inverted corners so the cap flows into the top edge like the real notch. */
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 10px;
+  height: 10px;
+  background: transparent;
+}
+.notch-cap::before {
+  left: -10px;
+  border-top-right-radius: 10px;
+  box-shadow: 4px -4px 0 4px var(--notch-black);
+}
+.notch-cap::after {
+  right: -10px;
+  border-top-left-radius: 10px;
+  box-shadow: -4px -4px 0 4px var(--notch-black);
+}
+
+/* ------------------------------------------------------------------ */
+/* Acrylic shelf                                                      */
+/* ------------------------------------------------------------------ */
+
+.shelf {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: var(--acrylic-bg);
+  -webkit-backdrop-filter: blur(var(--acrylic-blur)) saturate(var(--acrylic-saturate));
+  backdrop-filter: blur(var(--acrylic-blur)) saturate(var(--acrylic-saturate));
+  border: 1px solid var(--acrylic-border);
+  box-shadow:
+    inset 0 0 0 0.5px var(--acrylic-edge),
+    var(--shadow-shelf);
+  border-radius: var(--radius-xl);
+  /* Springy expand so the selector unfurls with the same Dynamic-Island feel
+     as the notch morph it grows out of. */
+  animation: shelf-in var(--dur-spring) var(--ease-spring);
+}
+[data-display="notched"] .shelf {
+  margin-top: 44px;
+}
+[data-display="no-notch"] .shelf {
+  margin-top: 28px;
+}
+
+@keyframes shelf-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Ambient                                                            */
+/* ------------------------------------------------------------------ */
+
+.ambient {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  display: flex;
+  align-items: stretch;
+  color: var(--ink);
+}
+.ambient:focus-visible {
+  box-shadow: none;
+}
+.ambient:focus-visible .ambient-shoulder,
+.ambient-capsule:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.ambient-notched {
+  position: relative;
+  width: 100%;
+  /* The bar matches the notch band height; the tab hangs from its right edge. */
+  height: var(--notch-height, 38px);
+  z-index: 4;
+  /* Light lead for the two-part morph: on open the tab starts retracting and
+     the box begins growing almost together (a ~40ms lead), so the shape stretches
+     as one fluid move rather than one waiting for the other. On close the order
+     reverses. */
+  --teleport-tab-delay: 0ms;
+  --teleport-box-delay: 40ms;
+}
+.ambient-notched[data-teleport="off"] {
+  --teleport-tab-delay: 40ms;
+  --teleport-box-delay: 0ms;
+}
+/* A black tab the height of the notch, flush against the notch cap's right edge
+   (centre + half the notch width). No left rounding, so it extends the notch
+   shape rather than reading as its own separate notch. Two small stacked rows.
+   During a teleport it retracts leftward into the notch (scaleX → 0). */
+.ambient-tab {
+  position: absolute;
+  top: 0;
+  left: calc(50% + var(--notch-width, 220px) / 2);
+  height: var(--notch-height, 38px);
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 0 10px;
+  border: 0;
+  cursor: pointer;
+  background: var(--notch-black);
+  color: #fff;
+  line-height: 1;
+  white-space: nowrap;
+  /* Flush-left against the notch; only the outer (right) bottom corner rounds. */
+  border-radius: 0 0 8px 0;
+  /* Collapse toward the notch: the left edge sits at the notch's right edge. */
+  transform-origin: left center;
+  transition:
+    transform var(--dur-spring) var(--ease-spring) var(--teleport-tab-delay, 0ms),
+    opacity var(--dur-fast) var(--ease-out) var(--teleport-tab-delay, 0ms),
+    background var(--dur-fast) var(--ease-out);
+}
+/* Extend the tab's black leftward, tucked UNDER the notch cap (which has a
+   higher z-index and covers it at rest), so no seam gap ever shows between the
+   notch and the tab as the tab springs / collapses. It stays within the notch's
+   own width, so it can't peek past the cap's rounded left corner. */
+.ambient-tab::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 100%;
+  width: calc(var(--notch-width, 220px) * 0.6);
+  background: var(--notch-black);
+}
+/* The tab's outer (top-right) inverted corner, mirroring the notch cap's own,
+   so the black flows into the top edge and the tab reads as the notch extended
+   to the right. */
+.ambient-tab::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: -10px;
+  width: 10px;
+  height: 10px;
+  background: transparent;
+  border-top-left-radius: 10px;
+  box-shadow: -4px -4px 0 4px var(--notch-black);
+}
+/* The notch's own right inverted corner now sits at the seam with the tab; hide
+   it in ambient so the combined shape has a single outer curve (the tab's). */
+.notch-cap[data-mode="ambient"]::after {
+  display: none;
+}
+.ambient-tab:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+/* Hover brightens the word; a press scales the label, never the black
+   shape (it stays joined to the notch). The shell's cursor poller drives
+   data-notch-hover while the app is inactive, when :hover cannot fire. */
+.ambient-tab-count,
+.ambient-tab-word {
+  transition:
+    color var(--notch-press-dur) var(--ease-out),
+    transform var(--notch-press-dur) var(--notch-press-ease);
+}
+.ambient-tab:hover .ambient-tab-word,
+.portal[data-notch-hover="on"] .ambient-tab-word {
+  color: #fff;
+}
+.ambient-tab:active .ambient-tab-count,
+.ambient-tab:active .ambient-tab-word {
+  transform: scale(var(--notch-press-button));
+}
+
+/* Left-of-notch hotspot indicator: the mirror of .ambient-tab, flush against
+ * the notch's LEFT edge, shown only while sharing this Mac's network. */
+.ambient-hotspot {
+  position: absolute;
+  top: 0;
+  right: calc(50% + var(--notch-width, 220px) / 2);
+  height: var(--notch-height, 38px);
+  /* Match the "N Spaces" tab's footprint (~50px) so both blocks flanking the
+     notch read as equal-weight extensions. */
+  min-width: 50px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 0;
+  background: var(--notch-black);
+  color: var(--accent, #34c759);
+  line-height: 1;
+  /* Flush-right against the notch; only the outer (left) bottom corner rounds. */
+  border-radius: 0 0 0 8px;
+  transition: transform var(--dur-spring) var(--ease-spring);
+}
+/* Extend the indicator's black RIGHT, tucked under the notch cap, so no seam
+   gap shows as it springs (mirror of the tab's ::before on the other side). */
+.ambient-hotspot::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 100%;
+  width: calc(var(--notch-width, 220px) * 0.6);
+  background: var(--notch-black);
+}
+/* The indicator's outer (top-left) inverted corner, mirroring the notch cap's
+   left corner, so the black flows into the top edge like the notch extended. */
+.ambient-hotspot::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -10px;
+  width: 10px;
+  height: 10px;
+  border-top-right-radius: 10px;
+  box-shadow: 4px -4px 0 4px var(--notch-black);
+}
+/* Scale with the notch on hover, about the notch's top-centre (to the
+   indicator's RIGHT) so cap + tab + indicator grow as one rigid unit. */
+.portal[data-mode="ambient"][data-notch-hover="on"] .ambient-hotspot {
+  transform: scaleX(1.08);
+  transform-origin: calc(100% + var(--notch-width, 220px) / 2) 0;
+}
+.ambient-hotspot-glyph {
+  width: 20px;
+  height: 20px;
+  animation: hotspot-pulse 2s var(--ease-out, ease-out) infinite;
+}
+.ambient-wrap-plain .ambient-hotspot {
+  right: auto;
+  left: 12px;
+  border-radius: 999px;
+  height: 24px;
+  padding: 0 8px;
+}
+@keyframes hotspot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ambient-hotspot-glyph {
+    animation: none;
+  }
+}
+
+/* Footer "stop sharing network" button in the switcher, shown when a hotspot is
+   active anywhere. */
+.switcher-hotspot-stop {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent, #34c759);
+  background: rgba(52, 199, 89, 0.16);
+}
+.switcher-hotspot-stop:hover {
+  background: rgba(52, 199, 89, 0.26);
+}
+.switcher-hotspot-stop-glyph {
+  width: 13px;
+  height: 13px;
+}
+
+/* Corner badge on a Space tile that is borrowing this Mac's network. */
+.tile-hotspot-badge {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--accent, #34c759);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.tile-hotspot-badge-glyph {
+  width: 11px;
+  height: 11px;
+}
+
+.ambient-notched[data-teleport="on"] .ambient-tab {
+  /* Slide (don't scale) leftward so the full black tab tucks behind the notch.
+     Because it stays opaque and keeps its width, it covers the notch's corner
+     throughout the spring — no gap flashes as it springs back out. */
+  transform: translateX(-100%);
+  pointer-events: none;
+}
+.ambient-tab-count {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ambient-tab-word {
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+/* Hovering the notch springs the whole assembly up a touch — the black cap and
+   the "N Spaces" tab scale together so it reads as the notch itself growing.
+   Driven by the shell's global-cursor poller (data-notch-hover) rather than CSS
+   :hover, which can't fire while the app is inactive. The base transform
+   transitions already carry the spring easing. */
+.portal[data-mode="ambient"][data-notch-hover="on"] .notch-cap {
+  transform: translateX(-50%) scaleX(1.08);
+}
+.portal[data-mode="ambient"][data-notch-hover="on"] .ambient-tab {
+  transform: scaleX(1.08);
+  /* Scale about the notch's top-centre (a point to the tab's left, the same
+     screen point the cap scales about) so the cap + tab grow as one rigid unit
+     instead of at apparently different rates. */
+  transform-origin: calc(var(--notch-width, 220px) / -2) 0;
+}
+
+/* The morphing teleport hint: the notch itself grows slightly taller into a
+   #000 rounded box holding one compact line, "Teleport to Cua". It shares the
+   notch's width and colour and grows downward (height 0 → open) with a springy
+   overshoot, so the notch appears to stretch rather than a separate panel
+   appearing. Deliberately small/unintrusive — no icon. Always present;
+   `data-teleport` drives it. Never interactive (the gesture is a foreign window
+   drag hit-tested globally). */
+.ambient-teleport-box {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: var(--notch-width, 220px);
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  /* The single caption line sits just below the notch band as the box grows. */
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: var(--notch-height, 38px) 12px 9px;
+  box-sizing: border-box;
+  background: var(--notch-black);
+  color: #fff;
+  border-radius: 0 0 16px 16px;
+  box-shadow: 0 10px 20px -10px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  z-index: 1;
+  transition:
+    height var(--dur-spring) var(--ease-spring) var(--teleport-box-delay, 0ms),
+    opacity var(--dur-fast) var(--ease-out) var(--teleport-box-delay, 0ms);
+}
+.ambient-notched[data-teleport="on"] .ambient-teleport-box,
+.ambient-wrap-plain[data-teleport="on"] .ambient-teleport-box {
+  height: 62px;
+  opacity: 1;
+}
+.ambient-teleport-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #fff;
+  white-space: nowrap;
+}
+
+/* No-notch fallback: no notch cap to merge with, so round every corner, drop it
+   clear of the screen top, and skip the notch-height top padding. It hangs
+   under the centred capsule. */
+.ambient-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.ambient-wrap-plain .ambient-teleport-box {
+  top: 2px;
+  border-radius: 14px;
+  padding-top: 10px;
+}
+.ambient-gap {
+  position: relative;
+  /* Physical notch width in points. Overridden at runtime with the real
+     per-display value (NSScreen auxiliary areas); 220 is the measured default
+     for current notched MacBooks, not the older 200 guess. */
+  width: var(--notch-width, 220px);
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+}
+.ambient-glow {
+  width: 26px;
+  height: 3px;
+  margin-bottom: 2px;
+  border-radius: 2px;
+  background: #47c8ff;
+  opacity: 0;
+  filter: blur(0.5px);
+}
+.ambient-glow[data-on="on"] {
+  opacity: 0.9;
+  animation: glow-pulse 2.8s ease-in-out infinite;
+}
+@keyframes glow-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scaleX(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+.ambient-shoulder {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  background: var(--acrylic-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(var(--acrylic-saturate));
+  backdrop-filter: blur(20px) saturate(var(--acrylic-saturate));
+  border: 1px solid var(--acrylic-border);
+  border-top: 0;
+  box-shadow:
+    inset 0 0 0 0.5px var(--acrylic-edge),
+    0 6px 14px -8px rgba(0, 0, 0, 0.35);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.ambient-shoulder-left {
+  border-radius: 0 0 0 16px;
+  border-right: 0;
+  /* Trimmed so the dots keep their original snug distance from the notch after
+     the gap widened from 200 to the true 220 (which only needed to move the
+     right shoulder outward). */
+  padding-right: 8px;
+}
+.ambient-shoulder-right {
+  border-radius: 0 0 16px 0;
+  border-left: 0;
+  padding-left: 18px;
+}
+.ambient:hover .ambient-shoulder,
+.ambient-capsule:hover {
+  background: var(--acrylic-bg-strong);
+}
+
+.ambient-label {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.ambient-dots {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.ambient-dots .status-dot {
+  width: 8px;
+  height: 8px;
+}
+.ambient-dots[data-pulse="on"] .status-running {
+  animation: dot-pulse 2.8s ease-in-out infinite;
+}
+@keyframes dot-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(48, 197, 82, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(48, 197, 82, 0);
+  }
+}
+
+/* No-notch fallback: centred capsule */
+.ambient-capsule {
+  margin-top: 4px;
+  height: 26px;
+  padding: 0 12px 0 11px;
+  gap: 10px;
+  align-items: center;
+  border-radius: 13px;
+  background: var(--acrylic-bg);
+  -webkit-backdrop-filter: blur(20px) saturate(var(--acrylic-saturate));
+  backdrop-filter: blur(20px) saturate(var(--acrylic-saturate));
+  border: 1px solid var(--acrylic-border);
+  box-shadow:
+    inset 0 0 0 0.5px var(--acrylic-edge),
+    0 4px 12px -6px rgba(0, 0, 0, 0.35);
+}
+.ambient-capsule .ambient-dots .status-dot {
+  width: 6px;
+  height: 6px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Status dots                                                        */
+/* ------------------------------------------------------------------ */
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+.status-dot.status-running,
+.status-dot.status-local {
+  background: var(--status-running);
+}
+.status-dot.status-approval {
+  background: var(--status-approval);
+}
+.status-dot.status-suspended {
+  background: var(--status-suspended);
+}
+.status-dot.status-provisioning {
+  background: var(--status-provisioning);
+  animation: dot-blink 1.4s ease-in-out infinite;
+}
+.status-dot.status-deleting {
+  background: var(--status-deleting);
+}
+.status-dot.status-error {
+  background: var(--status-error);
+}
+/* Unknown is drawn as an OUTLINE, not a colour: a hollow dot reads as "no
+   reading", where any filled colour would read as a verdict. */
+.status-dot.status-unknown {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--status-suspended);
+}
+.status-dot.is-off {
+  opacity: 0.28;
+  filter: saturate(0.4);
+  animation: none;
+}
+@keyframes dot-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Switcher                                                           */
+/* ------------------------------------------------------------------ */
+
+.switcher {
+  /* No container padding: the filter-row divider bleeds to the panel edges, and
+     the inset is applied per-child (header content, tile row, footer). */
+  padding: 0;
+  gap: 0;
+}
+.switcher > .shelf-header,
+.switcher > .tile-row,
+.switcher > .shelf-footer {
+  padding-left: 18px;
+  padding-right: 18px;
+}
+
+.shelf-header {
+  display: flex;
+  align-items: center;
+  /* Full-width filter row with a hairline divider below, macOS-picker style. */
+  padding: 10px 2px 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+/* In drop mode the header is just the centered hint — no divider. */
+.switcher[data-drop-mode="true"] .shelf-header {
+  justify-content: center;
+  padding: 6px 2px;
+  border-bottom: 0;
+}
+.shelf-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.shelf-header-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.switcher-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Full width plain row (no pill); the panel is the background. The whole
+     row is a <label>, so a click anywhere in it focuses the field. */
+  width: 100%;
+  height: 29px;
+  padding: 0 2px;
+  border-radius: 8px;
+  cursor: text;
+  transition: background var(--notch-press-dur) var(--ease-out);
+}
+.switcher-search:hover {
+  background: var(--fill);
+}
+.switcher-search-glyph {
+  width: 19px;
+  height: 19px;
+  color: var(--ink-3);
+}
+.switcher-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 17px;
+  outline: none;
+}
+.switcher-search-input::placeholder {
+  color: var(--ink-3);
+}
+/* Hide the native clear affordance; Escape clears instead. */
+.switcher-search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.switcher-search-count {
+  flex: none;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--fill-active);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.switcher-empty {
+  margin: 8px 2px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Island theme                                                       */
+/* The switcher as an opaque black panel that hugs the top edge of the */
+/* screen (covering the notch) and expands out of it like macOS's      */
+/* Dynamic Island. Glass (the translucent acrylic default styling      */
+/* above) is the alternative; it needs no overrides here.              */
+/* ------------------------------------------------------------------ */
+
+.portal[data-theme="island"] .switcher {
+  /* Always-light ink on the always-black panel, independent of the OS light/
+     dark setting (the panel is black in both). */
+  --ink: rgba(255, 255, 255, 0.92);
+  --ink-2: rgba(255, 255, 255, 0.62);
+  --ink-3: rgba(255, 255, 255, 0.42);
+  --hairline: rgba(255, 255, 255, 0.1);
+  --fill: rgba(255, 255, 255, 0.07);
+  --fill-hover: rgba(255, 255, 255, 0.12);
+  --fill-active: rgba(255, 255, 255, 0.18);
+
+  /* Flush to the very top of the screen; inset from the window sides so the
+     concave top-corner fillets have room to paint. The notch's height is
+     reserved at the top so the search + tiles clear the physical notch and the
+     button row can sit in the strip beside it. */
+  margin-top: 0;
+  padding-top: var(--notch-height);
+  width: calc(100% - 24px);
+  background: var(--notch-black);
+  border: 0;
+  /* Square top (meets the screen's top edge), rounded bottom. */
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+  box-shadow: 0 22px 44px -18px rgba(0, 0, 0, 0.7);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  /* Grow out of the notch: reveal from a notch-sized region at top-centre to
+     the full panel, with the springy Dynamic-Island easing. clip-path (not
+     transform) so the content is revealed, never distorted; fill-mode is left
+     default so the clip is dropped once settled and hover-scaled tiles at the
+     edges are never clipped afterwards. */
+  animation: island-expand var(--dur-island) var(--ease-spring);
+}
+
+/* Concave fillets joining the panel's top-left/right corners into the screen's
+   top edge — the same inverted-corner trick the notch cap uses, so the panel
+   reads as carved from the top bezel. */
+.portal[data-theme="island"] .switcher::before,
+.portal[data-theme="island"] .switcher::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 10px;
+  height: 10px;
+  background: transparent;
+  pointer-events: none;
+}
+.portal[data-theme="island"] .switcher::before {
+  left: -10px;
+  border-top-right-radius: 10px;
+  box-shadow: 4px -4px 0 4px var(--notch-black);
+}
+.portal[data-theme="island"] .switcher::after {
+  right: -10px;
+  border-top-left-radius: 10px;
+  box-shadow: -4px -4px 0 4px var(--notch-black);
+}
+
+/* The panel itself covers the notch and is flush black, so the separate cap
+   would only risk a seam over it. */
+.portal[data-theme="island"][data-mode="switcher"] .notch-cap {
+  display: none;
+}
+
+/* Keep the Settings overlay dark to match the black panel in both OS themes
+   (it inherits the light-ink tokens above, so its surface must stay dark). */
+.portal[data-theme="island"] .settings-panel {
+  background: rgba(22, 22, 24, 0.94);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+}
+
+@keyframes island-expand {
+  from {
+    clip-path: inset(0 calc(50% - var(--notch-width) / 2) calc(100% - var(--notch-height))
+      round 0 0 var(--radius-lg) var(--radius-lg));
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 0 0 var(--radius-xl) var(--radius-xl));
+  }
+}
+
+/* The filter row (and, in drop mode, the concise grey drop hint) lifts into the
+   strip to the LEFT of the notch (top-anchored, no divider); the tiles still
+   flow below the reserved strip. */
+.portal[data-theme="island"] .switcher > .shelf-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: calc(50% + var(--notch-width) / 2);
+  height: var(--notch-height);
+  padding: 0 12px 0 16px;
+  border-bottom: 0;
+  z-index: 4;
+}
+
+/* Button row lifted into the strip to the RIGHT of the notch (no bottom bar):
+   the footer becomes a top-anchored strip with the gear pinned to the far
+   right (row-reverse), and loses its divider and bottom placement entirely. */
+.portal[data-theme="island"] .switcher-footer {
+  position: absolute;
+  top: 0;
+  left: calc(50% + var(--notch-width) / 2);
+  right: 0;
+  height: var(--notch-height);
+  min-height: 0;
+  padding: 0 14px 0 10px;
+  border-top: 0;
+  background: transparent;
+  flex-direction: row-reverse;
+  justify-content: flex-start;
+  gap: 8px;
+  z-index: 4;
+}
+/* In the strip the stop-sharing button flows inline rather than centering in a
+   (now non-existent) bottom bar. */
+.portal[data-theme="island"] .switcher-hotspot-stop {
+  position: static;
+  transform: none;
+}
+
+/* Dismiss: spring the panel back down into the notch before the window shrinks
+   to the ambient tab. `forwards` holds it clipped at the notch until the mode
+   flips and the window collapses. */
+.portal[data-theme="island"][data-collapsing="true"] .switcher {
+  animation: island-collapse var(--dur-island) var(--ease-spring) forwards;
+  pointer-events: none;
+}
+@keyframes island-collapse {
+  from {
+    clip-path: inset(0 0 0 0 round 0 0 var(--radius-xl) var(--radius-xl));
+  }
+  to {
+    clip-path: inset(0 calc(50% - var(--notch-width) / 2) calc(100% - var(--notch-height))
+      round 0 0 var(--radius-lg) var(--radius-lg));
+    opacity: 0.85;
+  }
+}
+
+.ghost-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.ghost-button:hover {
+  background: var(--fill);
+  color: var(--ink);
+}
+.ghost-button:active {
+  background: var(--fill-active);
+}
+.glyph {
+  flex: none;
+}
+
+/* SF Symbol rendered by the shell: a PNG template used as a mask over
+   currentColor. `:where` keeps the default size at zero specificity so any
+   per-context size class (e.g. .tile-hotspot-badge-glyph) still wins. */
+:where(.sf-icon) {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  background-color: currentColor;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+.tile-row {
+  margin-top: 10px;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 2px 2px 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.tile-row::-webkit-scrollbar {
+  display: none;
+}
+
+.tile {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 168px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: var(--ink);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: transform var(--notch-press-dur) var(--notch-press-ease);
+}
+/* Pressed: a quick scale-down on the notch spring. */
+.tile:active {
+  transform: scale(var(--notch-press-tile));
+}
+.tile:focus-visible {
+  box-shadow: none;
+}
+.tile:focus-visible .tile-frame {
+  box-shadow: var(--focus-ring), var(--shadow-tile);
+}
+.tile-frame {
+  position: relative;
+  display: block;
+  width: 168px;
+  height: 108px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-tile);
+  outline: 1px solid rgba(0, 0, 0, 0.12);
+  outline-offset: -1px;
+  transition:
+    transform var(--notch-press-dur) var(--notch-press-ease),
+    box-shadow var(--notch-press-dur) var(--ease-out),
+    outline-color var(--notch-press-dur) var(--ease-out);
+}
+/* Hover: the frame lifts and its hairline brightens. */
+.tile:hover .tile-frame {
+  transform: translateY(var(--notch-tile-lift));
+  outline-color: rgba(255, 255, 255, 0.32);
+}
+
+.tile-caption {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 2px;
+  min-height: 34px;
+}
+.tile-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The Space's OS icon before its name (the core's per-tile icon). */
+.tile-name .os-icon {
+  width: 11px;
+  height: 11px;
+  opacity: 0.6;
+  margin-right: -2px;
+}
+.tile-status {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  padding-left: 15px;
+}
+.tile-check {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-3);
+  position: relative;
+  flex: none;
+}
+.tile-check::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  width: 3px;
+  height: 5.5px;
+  border: solid var(--ink-2);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+.tile-new .tile-new-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 84px;
+  height: 84px;
+  margin-top: 12px;
+  background: var(--fill);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+  outline: 1px dashed rgba(0, 0, 0, 0.14);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.tile-new {
+  width: 84px;
+  align-items: center;
+}
+
+.tile-new .tile-caption {
+  align-items: center;
+  padding-top: 4px;
+}
+.tile-new:hover .tile-new-frame {
+  background: var(--fill-hover);
+}
+.tile-plus {
+  font-size: 28px;
+  font-weight: 300;
+  color: var(--ink-2);
+  line-height: 1;
+}
+
+.shelf-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 24px;
+  padding: 4px 2px 0;
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+.shelf-hints {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.shelf-hints span + kbd {
+  margin-left: 8px;
+}
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: var(--fill);
+  border: 1px solid var(--hairline);
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  color: var(--ink-2);
+}
+
+.notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 500;
+  animation: notice-in var(--dur) var(--ease-out);
+}
+.notice-mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.notice[data-kind="create"] .notice-mark {
+  animation: dot-blink 1.4s ease-in-out infinite;
+}
+@keyframes notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.dev-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: transparent;
+  font-size: 10.5px;
+  color: var(--ink-3);
+  opacity: 0.7;
+}
+.dev-toggle:hover {
+  opacity: 1;
+  background: var(--fill);
+}
+.dev-toggle-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ------------------------------------------------------------------ */
+/* Switcher footer: settings gear + coexisting notice/footer          */
+/* ------------------------------------------------------------------ */
+
+/* Hairline rule above the footer strip, then the strip itself. */
+.switcher-footer {
+  position: relative;
+  border-top: 1px solid var(--hairline);
+  padding-top: 6px;
+  padding-bottom: 6px;
+  gap: 10px;
+}
+/* Bigger, matching the old 18px gear SVG (the SF Symbol defaults smaller). */
+.settings-gear .glyph {
+  width: 20px;
+  height: 20px;
+}
+.switcher-footer-main {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  min-width: 0;
+}
+/* Floating gear: no chrome at rest, subtle glass hover (like .tile-action). */
+.settings-gear {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 28 pt: the notch's minimum hit target. */
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    background var(--notch-press-dur) var(--ease-out),
+    color var(--notch-press-dur) var(--ease-out),
+    transform var(--notch-press-dur) var(--notch-press-ease);
+}
+.settings-gear:hover {
+  background: var(--fill-hover);
+  color: var(--ink);
+}
+.settings-gear:active {
+  background: var(--fill-active);
+  transform: scale(var(--notch-press-button));
+}
+.settings-gear[aria-expanded="true"] {
+  background: var(--fill-active);
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------------ */
+/* Settings panel (in-window glass overlay)                           */
+/* ------------------------------------------------------------------ */
+
+.settings-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  background: var(--acrylic-bg-strong);
+  -webkit-backdrop-filter: blur(var(--acrylic-blur)) saturate(var(--acrylic-saturate));
+  backdrop-filter: blur(var(--acrylic-blur)) saturate(var(--acrylic-saturate));
+  box-shadow: inset 0 0 0 0.5px var(--acrylic-edge);
+  animation: settings-in var(--dur-spring) var(--ease-spring);
+}
+@keyframes settings-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+.settings-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.settings-back:hover {
+  background: var(--fill);
+  color: var(--ink);
+}
+.settings-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.settings-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 6px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scrollbar-width: thin;
+}
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-section-title {
+  margin: 6px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.settings-hint {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+/* AI agents: MCP-configure results */
+.settings-mcp-results {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-mcp-results li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.settings-mcp-mark {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  flex: none;
+}
+.settings-mcp-results li[data-ok="true"] .settings-mcp-mark {
+  background: var(--status-running, #30c552);
+}
+.settings-mcp-results li[data-installed="false"] {
+  opacity: 0.5;
+}
+.settings-mcp-name {
+  color: var(--ink);
+  font-weight: 500;
+}
+.settings-mcp-detail {
+  color: var(--ink-3);
+  margin-left: auto;
+  font-variant: tabular-nums;
+}
+
+/* Per-row fix-up action, shown only on an installed agent that isn't
+   configured yet. Sized down from .settings-secondary so it reads as a row
+   affordance rather than competing with the section's own button. */
+.settings-mcp-action {
+  flex: none;
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid var(--hairline, rgba(128, 128, 128, 0.3));
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.settings-mcp-action:hover {
+  background: var(--hover, rgba(128, 128, 128, 0.12));
+}
+.settings-mcp-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Teleport permissions: per-app allow-sensitive / allow-non-sensitive grid */
+.settings-tele-head,
+.settings-tele-app {
+  display: grid;
+  grid-template-columns: 1fr 84px 72px;
+  align-items: center;
+  gap: 6px;
+}
+.settings-tele-head {
+  margin: 8px 0 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ink-3);
+  text-align: center;
+}
+.settings-tele-head > :first-child {
+  text-align: left;
+}
+.settings-tele-apps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-tele-app {
+  height: 26px;
+  font-size: 12.5px;
+}
+.settings-tele-app[data-disabled="true"] {
+  opacity: 0.5;
+}
+.settings-tele-name {
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-tele-soon {
+  color: var(--ink-3);
+  font-size: 11px;
+}
+.settings-tele-box {
+  display: flex;
+  justify-content: center;
+  cursor: pointer;
+}
+
+/* Account row */
+.settings-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* The "Signed in via API key" row shown above the account sign-in button when
+   only env credentials are present — same row layout as the signed-in state. */
+.settings-account-env {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.settings-account[data-state="out"] {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.settings-account-check {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--status-running);
+  position: relative;
+}
+.settings-account-check::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 3px;
+  width: 4px;
+  height: 7px;
+  border: solid #fff;
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(45deg);
+}
+.settings-account-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.settings-account-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+.settings-account-id {
+  font-size: 11px;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-primary {
+  align-self: flex-start;
+  height: 32px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: filter var(--dur-fast) var(--ease-out);
+}
+.settings-primary:hover {
+  filter: brightness(1.05);
+}
+.settings-primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Device-flow sign-in: prominent user code + waiting state. */
+.settings-account[data-state="waiting"] {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.settings-device-code {
+  margin: 2px 0;
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--ink-1, currentColor);
+  user-select: all;
+}
+.settings-error {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--status-error, #d9534f);
+}
+/* Secondary (sign out / cancel) and link-style (sign up) buttons. */
+.settings-secondary {
+  align-self: flex-start;
+  margin-left: auto;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--hairline, rgba(128, 128, 128, 0.3));
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.settings-account[data-state="waiting"] .settings-secondary {
+  margin-left: 0;
+}
+.settings-secondary:hover {
+  background: var(--hover, rgba(128, 128, 128, 0.12));
+}
+.settings-link {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.settings-link:hover {
+  color: var(--accent, currentColor);
+}
+
+/* Segmented notch / menu-bar control */
+.settings-segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 2px;
+  gap: 2px;
+  border-radius: var(--radius-md);
+  background: var(--fill);
+  border: 1px solid var(--hairline);
+}
+.settings-segment {
+  min-width: 78px;
+  height: 26px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: calc(var(--radius-md) - 3px);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.settings-segment:hover {
+  color: var(--ink);
+}
+.settings-segment[data-active="true"] {
+  background: var(--acrylic-bg-strong);
+  color: var(--ink);
+  box-shadow:
+    inset 0 0 0 0.5px var(--acrylic-edge),
+    0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+/* Labeled row (hotkey) */
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-row-label {
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.settings-hotkey {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--fill);
+  color: var(--ink-2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.settings-hotkey:hover {
+  background: var(--fill-hover);
+}
+.settings-hotkey[data-recording="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.settings-hotkey kbd {
+  border: 0;
+  background: transparent;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+/* Sandbox providers checklist */
+.settings-providers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-provider {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.settings-provider[data-disabled="true"] {
+  color: var(--ink-3);
+}
+.settings-provider[role="button"] {
+  cursor: pointer;
+}
+.settings-provider[role="button"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+.settings-provider-hint {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  margin-left: auto;
+}
+.settings-check {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  border: 1.5px solid var(--ink-3);
+  position: relative;
+}
+.settings-check[data-checked="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.settings-check[data-checked="true"]::after {
+  content: "";
+  position: absolute;
+  left: 4.5px;
+  top: 1.5px;
+  width: 3.5px;
+  height: 7px;
+  border: solid #fff;
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(45deg);
+}
+.settings-provider-name {
+  font-weight: 500;
+}
+.settings-provider-soon {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--fill);
+}
+
+/* ------------------------------------------------------------------ */
+/* Thumbnails (synthetic)                                             */
+/* ------------------------------------------------------------------ */
+
+.thumb {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+  font-size: 0;
+}
+.thumb-line {
+  position: absolute;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.55);
+}
+.thumb-line.is-green {
+  background: #64d87c;
+}
+.thumb-line.is-amber {
+  background: #f2b34a;
+}
+.w30 {
+  width: 30%;
+}
+.w35 {
+  width: 35%;
+}
+.w40 {
+  width: 40%;
+}
+.w45 {
+  width: 45%;
+}
+.w50 {
+  width: 50%;
+}
+.w60 {
+  width: 60%;
+}
+.w65 {
+  width: 65%;
+}
+.w70 {
+  width: 70%;
+}
+.w75 {
+  width: 75%;
+}
+.w80 {
+  width: 80%;
+}
+.w85 {
+  width: 85%;
+}
+.w90 {
+  width: 90%;
+}
+
+.thumb-window {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+.thumb-window .thumb-line {
+  background: rgba(0, 0, 0, 0.14);
+  left: 8%;
+}
+.thumb-window .thumb-line:nth-of-type(2) {
+  top: 40%;
+}
+.thumb-window .thumb-line:nth-of-type(3) {
+  top: 58%;
+}
+.thumb-titlebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 18%;
+  background: rgba(0, 0, 0, 0.06);
+}
+.thumb-titlebar::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 40%;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #ff5f57;
+  box-shadow:
+    5px 0 0 #febc2e,
+    10px 0 0 #28c840;
+}
+.thumb-cursor {
+  position: absolute;
+  width: 4px;
+  height: 7px;
+  background: #d8d8d8;
+  animation: cursor-blink 1.1s steps(1) infinite;
+}
+@keyframes cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.thumb[data-live="off"] .thumb-cursor,
+.thumb[data-live="off"] .thumb-progress::after,
+.thumb[data-live="off"] .thumb-agent-pointer {
+  animation: none;
+}
+
+/* macOS desktop */
+.scene-mac-desktop {
+  background:
+    radial-gradient(70% 60% at 30% 100%, #f0b26b 0%, transparent 60%),
+    linear-gradient(180deg, #6f9dd6 0%, #b5cbe8 55%, #e6c7a1 100%);
+}
+.thumb-menubar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 7px;
+  background: rgba(255, 255, 255, 0.55);
+}
+.thumb-window-a {
+  left: 6%;
+  top: 16%;
+  width: 52%;
+  height: 56%;
+}
+.thumb-window-b {
+  right: 5%;
+  top: 40%;
+  width: 46%;
+  height: 46%;
+}
+.thumb-terminal {
+  background: #1c1c1f;
+}
+.thumb-terminal .thumb-line {
+  background: rgba(255, 255, 255, 0.35);
+  left: 8%;
+  top: 22%;
+}
+.thumb-terminal .thumb-line:nth-of-type(2) {
+  top: 42%;
+}
+.thumb-terminal .thumb-cursor {
+  left: 8%;
+  top: 58%;
+}
+.thumb-dock {
+  position: absolute;
+  bottom: 4px;
+  left: 20%;
+  right: 20%;
+  height: 8px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+/* Windows desktop */
+.scene-windows-desktop {
+  background:
+    radial-gradient(60% 80% at 60% 40%, #6cc0ff 0%, transparent 65%),
+    linear-gradient(160deg, #0b5cd6 0%, #1d8cf0 50%, #74c4ff 100%);
+}
+.thumb-window-center {
+  left: 14%;
+  top: 12%;
+  width: 72%;
+  height: 64%;
+  background: #f3f3f6;
+}
+.thumb-tiles {
+  position: absolute;
+  left: 8%;
+  top: 30%;
+  width: 84%;
+  height: 58%;
+  background:
+    linear-gradient(90deg, transparent 0 46%, #f3f3f6 46% 54%, transparent 54%),
+    linear-gradient(0deg, transparent 0 46%, #f3f3f6 46% 54%, transparent 54%),
+    linear-gradient(135deg, #ffd7a8, #ffb0c0 50%, #a8c8ff);
+  border-radius: 2px;
+}
+.thumb-taskbar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 9px;
+  background: rgba(240, 243, 250, 0.9);
+}
+.thumb-taskbar::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 5px;
+  height: 5px;
+  margin-left: -12px;
+  background: #0a7aff;
+  border-radius: 1px;
+  box-shadow:
+    8px 0 0 #3fa7ff,
+    16px 0 0 #7cc0ff,
+    24px 0 0 #b7dbff;
+}
+.thumb-agent-pointer {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  left: 40%;
+  top: 40%;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(10, 122, 255, 0.7);
+  animation: pointer-drift 5s ease-in-out infinite;
+}
+@keyframes pointer-drift {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  35% {
+    transform: translate(28px, 14px);
+  }
+  70% {
+    transform: translate(10px, 26px);
+  }
+}
+
+/* Linux terminal */
+.scene-linux-terminal {
+  background: linear-gradient(180deg, #2b1d38 0%, #1b1425 100%);
+  padding: 0;
+}
+.scene-linux-terminal .thumb-line {
+  left: 8%;
+  background: rgba(255, 255, 255, 0.45);
+}
+.scene-linux-terminal .thumb-line:nth-of-type(1) {
+  top: 14%;
+}
+.scene-linux-terminal .thumb-line:nth-of-type(2) {
+  top: 26%;
+}
+.scene-linux-terminal .thumb-line:nth-of-type(3) {
+  top: 38%;
+}
+.scene-linux-terminal .thumb-line:nth-of-type(4) {
+  top: 50%;
+}
+.thumb-progress {
+  position: absolute;
+  left: 8%;
+  top: 66%;
+  width: 84%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+.thumb-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 62%;
+  background: #f2b34a;
+  border-radius: 2px;
+  animation: progress-creep 6s ease-in-out infinite alternate;
+}
+@keyframes progress-creep {
+  from {
+    width: 58%;
+  }
+  to {
+    width: 66%;
+  }
+}
+.scene-linux-terminal .thumb-cursor {
+  left: 8%;
+  top: 80%;
+}
+
+/* Notes */
+.scene-notes {
+  background: #fbf7ee;
+  padding: 0;
+}
+.thumb-note-title {
+  position: absolute;
+  left: 10%;
+  top: 12%;
+  width: 55%;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.6);
+}
+.scene-notes .thumb-line {
+  left: 10%;
+  background: rgba(0, 0, 0, 0.18);
+}
+.scene-notes .thumb-line:nth-of-type(2) {
+  top: 34%;
+}
+.scene-notes .thumb-line:nth-of-type(3) {
+  top: 46%;
+}
+.scene-notes .thumb-line:nth-of-type(4) {
+  top: 58%;
+}
+.scene-notes .thumb-line:nth-of-type(5) {
+  top: 70%;
+}
+
+/* Browser */
+.scene-browser {
+  background: linear-gradient(180deg, #d9e4f5 0%, #eef2f8 100%);
+}
+.thumb-window-full {
+  left: 6%;
+  top: 8%;
+  width: 88%;
+  height: 86%;
+}
+.thumb-urlbar {
+  position: absolute;
+  left: 28%;
+  right: 12%;
+  top: 30%;
+  height: 40%;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.08);
+}
+.thumb-hero {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 26%;
+  height: 30%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #c9dcff, #e4eeff);
+}
+.thumb-window-full .thumb-line:nth-of-type(2) {
+  top: 64%;
+}
+.thumb-window-full .thumb-line:nth-of-type(3) {
+  top: 76%;
+}
+
+/* Overlays */
+.thumb-dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 20, 24, 0.42);
+  -webkit-backdrop-filter: saturate(0.3);
+  backdrop-filter: saturate(0.3);
+}
+.thumb-provisioning {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  /* Dark tint (not light) so the light progress pie reads clearly on top. */
+  background: rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+/* macOS-installer-style radial pie: a filling disc (inner radius 0). The filled
+   wedge is light and translucent, the remaining track fainter; --progress
+   (0..1) is driven from JS. */
+.radial-pie {
+  border-radius: 50%;
+  /* Light and quite transparent (~25%); the track is fainter still. */
+  background: conic-gradient(
+    from 0deg,
+    rgba(255, 255, 255, 0.25) calc(var(--progress, 0) * 360deg),
+    rgba(255, 255, 255, 0.08) 0
+  );
+  /* Punch out the middle (inner radius ~80%) so it reads as a thin ring rather
+     than a filled disc. `closest-side` sizes the hole to the element's radius,
+     not the farthest corner (which would mask the whole visible circle away). */
+  -webkit-mask: radial-gradient(circle closest-side, transparent 80%, #000 81%);
+  mask: radial-gradient(circle closest-side, transparent 80%, #000 81%);
+  transition: background 0.2s linear;
+}
+.thumb-radial {
+  width: 34px;
+  height: 34px;
+}
+.ambient-progress-pie {
+  width: 18px;
+  height: 18px;
+}
+.thumb-provisioning-status {
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.92);
+}
+.thumb-provisioning-detail {
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.7);
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Create fleet                                                       */
+/* ------------------------------------------------------------------ */
+
+.create {
+  padding: 10px 22px 18px;
+  gap: 14px;
+}
+.create-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding-top: 4px;
+}
+.grabber {
+  align-self: center;
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ink-3);
+  opacity: 0.6;
+  margin-bottom: 10px;
+}
+.create-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.create-subtitle {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.template {
+  border-radius: var(--radius-lg);
+  background: var(--fill);
+  border: 1.5px solid transparent;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.template[data-active="true"] {
+  border-color: var(--accent);
+  background: var(--acrylic-bg-strong);
+}
+.template-row {
+  display: grid;
+  grid-template-columns: 32px 1fr 22px;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  border-radius: var(--radius-lg);
+}
+.template-row:hover {
+  background: var(--fill);
+}
+.template-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.template-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+.template-summary {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.radio-mark {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-3);
+  position: relative;
+  justify-self: end;
+}
+.template[data-active="true"] .radio-mark {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.template[data-active="true"] .radio-mark::after {
+  content: "";
+  position: absolute;
+  left: 6.5px;
+  top: 3px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.template-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--ink);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: 26px;
+  mask-size: 26px;
+  opacity: 0.85;
+}
+.icon-qa-matrix {
+  -webkit-mask-image: radial-gradient(circle, #000 34%, transparent 36%);
+  mask-image: radial-gradient(circle, #000 34%, transparent 36%);
+  -webkit-mask-size: 9px 9px;
+  mask-size: 9px 9px;
+  -webkit-mask-repeat: repeat;
+  mask-repeat: repeat;
+  -webkit-mask-position: 2px 2px;
+  mask-position: 2px 2px;
+}
+.icon-parallel-build {
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    #000 0 22%,
+    transparent 22% 39%,
+    #000 39% 61%,
+    transparent 61% 78%,
+    #000 78% 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    #000 0 22%,
+    transparent 22% 39%,
+    #000 39% 61%,
+    transparent 61% 78%,
+    #000 78% 100%
+  );
+  -webkit-mask-size: 22px 20px;
+  mask-size: 22px 20px;
+}
+.icon-clean-browsers {
+  -webkit-mask-image: radial-gradient(circle, transparent 60%, #000 62% 72%, transparent 74%),
+    linear-gradient(90deg, transparent 47%, #000 47% 53%, transparent 53%),
+    linear-gradient(0deg, transparent 47%, #000 47% 53%, transparent 53%);
+  mask-image: radial-gradient(circle, transparent 60%, #000 62% 72%, transparent 74%),
+    linear-gradient(90deg, transparent 47%, #000 47% 53%, transparent 53%),
+    linear-gradient(0deg, transparent 47%, #000 47% 53%, transparent 53%);
+  -webkit-mask-size: 26px, 26px 20px, 20px 26px;
+  mask-size: 26px, 26px 20px, 20px 26px;
+}
+.icon-custom {
+  -webkit-mask-image: linear-gradient(90deg, #000 0 2px, transparent 2px 9px, #000 9px 11px, transparent 11px 18px, #000 18px 20px, transparent 20px);
+  mask-image: linear-gradient(90deg, #000 0 2px, transparent 2px 9px, #000 9px 11px, transparent 11px 18px, #000 18px 20px, transparent 20px);
+  -webkit-mask-size: 20px 22px;
+  mask-size: 20px 22px;
+}
+
+.template-detail {
+  padding: 0 14px 14px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: notice-in var(--dur) var(--ease-out);
+}
+.template-description,
+.template-empty {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.member-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 12px 0 10px;
+  border-radius: var(--radius-sm);
+  background: var(--fill);
+  border: 1px solid var(--hairline);
+  font-size: 12px;
+  font-weight: 500;
+}
+.os-glyph {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--ink-2);
+}
+.os-glyph.os-windows {
+  background: linear-gradient(90deg, #0a7aff 47%, transparent 47% 53%, #0a7aff 53%),
+    linear-gradient(0deg, #0a7aff 47%, transparent 47% 53%, #0a7aff 53%);
+  background-blend-mode: multiply;
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px transparent;
+}
+.os-glyph.os-macos {
+  border-radius: 50% 50% 45% 45%;
+  background: var(--ink);
+}
+.os-glyph.os-linux {
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 40%, #fff 0 25%, var(--ink) 27%);
+}
+
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--hairline);
+}
+.option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 140px;
+  flex: 1 1 140px;
+}
+.option-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+select {
+  height: 30px;
+  padding: 0 28px 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--hairline);
+  background: var(--fill)
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23808080' stroke-width='1.5' stroke-linecap='round'/></svg>")
+    no-repeat right 10px center;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+}
+.option-count {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--fill);
+  overflow: hidden;
+}
+.stepper button {
+  width: 30px;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  font-size: 16px;
+  color: var(--ink-2);
+}
+.stepper button:hover:not(:disabled) {
+  background: var(--fill-hover);
+}
+.stepper button:disabled {
+  opacity: 0.35;
+}
+.stepper output {
+  min-width: 28px;
+  text-align: center;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.create-footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+}
+.estimate {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.estimate-main {
+  font-size: 14px;
+}
+.estimate-main strong {
+  font-weight: 600;
+}
+.estimate-detail {
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+.estimate-note {
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+.create-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.primary-button,
+.secondary-button {
+  height: 34px;
+  padding: 0 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+.primary-button {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+.primary-button:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+.primary-button:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+.primary-button:disabled {
+  opacity: 0.55;
+}
+.secondary-button {
+  background: var(--fill);
+  border-color: var(--hairline);
+  color: var(--ink);
+}
+.secondary-button:hover {
+  background: var(--fill-hover);
+}
+
+/* ------------------------------------------------------------------ */
+/* Reduced motion                                                     */
+/* ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .ambient-glow[data-on="on"] {
+    opacity: 0.8;
+  }
+  /* Drop the two-part morph stagger so the teleport box appears at once. */
+  .ambient-notched,
+  .ambient-notched[data-teleport="off"],
+  .ambient-wrap-plain {
+    --teleport-tab-delay: 0ms;
+    --teleport-box-delay: 0ms;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Fleet live data: tile pin affordance, real thumbnails
+ * ------------------------------------------------------------------------- */
+
+.tile-wrap {
+  position: relative;
+  flex: none;
+  display: block;
+}
+.tile-action {
+  position: absolute;
+  top: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  /* Rounded-square, liquid-glass affordance: no chrome at rest (like the gear),
+     a transparent-grey glass fill on hover. */
+  border-radius: 8px;
+  background: transparent;
+  color: #fff;
+  /* Legible over any frame while there's no background box. */
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
+  opacity: 0;
+  cursor: pointer;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    transform var(--notch-press-dur) var(--notch-press-ease);
+}
+.tile-action:active {
+  transform: scale(var(--notch-press-button));
+}
+/* Icons match the settings gear (20px). */
+.tile-action .sf-icon {
+  width: 20px;
+  height: 20px;
+}
+.tile-pin {
+  right: 6px;
+}
+/* Sits left of the pin when both are present; still top-right when alone. */
+.tile-share {
+  right: 6px;
+}
+.tile-wrap:has(.tile-pin) .tile-share {
+  right: 38px;
+}
+/* Release (trash) sits top-left. */
+.tile-delete {
+  left: 6px;
+}
+/* Power sits next to Delete; alone, top-left. Shown while it runs. */
+.tile-power {
+  left: 6px;
+}
+.tile-wrap:has(.tile-delete) .tile-power {
+  left: 38px;
+}
+.tile-power[data-busy="true"] {
+  opacity: 1;
+}
+.tile-wrap:hover .tile-action,
+.tile-action:focus-visible {
+  opacity: 1;
+}
+.tile-action:hover {
+  background: rgba(120, 120, 128, 0.38);
+  backdrop-filter: blur(10px) saturate(1.4);
+  -webkit-backdrop-filter: blur(10px) saturate(1.4);
+  filter: none;
+}
+
+/* Window-drag drop mode: the tile under the cursor lights up as a target. */
+.tile-wrap[data-drop-target="true"] .tile-frame,
+.tile-new[data-drop-target="true"] .tile-new-frame {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.18);
+}
+/* Active "+" drop target: brighten the plus so it reads as "drop to create". */
+.tile-new[data-drop-target="true"] .tile-plus {
+  color: var(--accent);
+}
+/* Inline "+" glyph in the drop hint ("…or on + for a new Space"). */
+.shelf-drop-plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15em;
+  height: 1.15em;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.12);
+  font-weight: 600;
+  line-height: 1;
+}
+.shelf-drop-hint {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+/* The ghost preview of the dragged window only appears once it is over a Space
+ * tile: it drops into that tile's thumbnail, so the target reads as "this is
+ * where the window is going". */
+.tile-drop-ghost {
+  /* Centered within the tile thumbnail, keeping the window's aspect ratio and
+     leaving ~7px margin, rather than filling/cropping it. */
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: auto;
+  height: auto;
+  max-width: calc(100% - 14px);
+  max-height: calc(100% - 14px);
+  object-fit: contain;
+  border-radius: 5px;
+  box-shadow: 0 3px 10px -3px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  animation: tile-drop-ghost-in var(--dur-fast) var(--ease-spring);
+}
+@keyframes tile-drop-ghost-in {
+  from {
+    opacity: 0;
+    transform: scale(1.06);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ax-prompt {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--ink);
+  font-size: 11.5px;
+  text-align: center;
+  cursor: pointer;
+}
+.ax-prompt:hover {
+  background: rgba(0, 122, 255, 0.16);
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.link-button:hover {
+  opacity: 0.82;
+}
+
+.thumb-live {
+  position: absolute;
+  inset: 0;
+  display: block;
+  background: #101014;
+}
+.thumb-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ---------------------------------------------------------------------------
+ * Cloud create panel (real mode)
+ * ------------------------------------------------------------------------- */
+
+.create-cloud-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* Inset the fields from the card edges; dividers negative-margin back out to
+     stay flush (the card component itself has no padding). */
+  padding: 16px 16px 12px;
+}
+.create-cloud-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.create-cloud-field select,
+.create-cloud-field input {
+  font: inherit;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--stroke, rgba(0, 0, 0, 0.16));
+  background: var(--fill, rgba(255, 255, 255, 0.6));
+  color: var(--ink);
+}
+.create-cloud-field input[aria-invalid="true"] {
+  border-color: #c62828;
+}
+.create-cloud-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0;
+}
+.create-cloud-divider {
+  border: 0;
+  border-top: 1px solid var(--stroke, rgba(0, 0, 0, 0.1));
+  /* Span the full card width (flush) despite the body's horizontal padding. */
+  margin: 0 -16px;
+}
+.create-cloud-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.create-cloud-row-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+.create-cloud-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.create-cloud-toggle input {
+  width: auto;
+}
+.create-cloud-note {
+  font-weight: 400;
+  color: #c62828;
+}
+.create-cloud-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.create-cloud-error {
+  margin: 0;
+  font-size: 12px;
+  color: #c62828;
+  word-break: break-word;
+}
+.create-cloud-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px 14px;
+}
+
+/* "New Space" chooser: template cards for the recommended workspace, an
+   existing pool, or a brand-new pool. */
+.new-space-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 16px 8px;
+}
+.new-space-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--stroke, rgba(0, 0, 0, 0.12));
+  border-radius: var(--radius-md);
+  background: var(--fill, rgba(255, 255, 255, 0.5));
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.new-space-card:hover:not(:disabled) {
+  background: var(--fill-active, rgba(0, 0, 0, 0.05));
+  border-color: var(--accent);
+}
+.new-space-card:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.new-space-card-primary {
+  border-color: var(--accent);
+}
+.new-space-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.new-space-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.new-space-card-badge {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent-ink, #fff);
+  background: var(--accent);
+}
+.new-space-card-desc {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* ---------------------------------------------------------------------------
+ * Space viewer windows (space-* / pip-*)
+ * ------------------------------------------------------------------------- */
+
+.is-viewer,
+.is-viewer body,
+.is-viewer #root {
+  height: 100%;
+  background: #000000;
+}
+.viewer {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  background: #000000;
+  color: rgba(255, 255, 255, 0.92);
+  overflow: hidden;
+}
+.viewer-screen {
+  position: absolute;
+  inset: 0;
+}
+.viewer-message,
+.viewer-status {
+  position: absolute;
+  inset: auto 0 0 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.75);
+}
+.viewer-message {
+  height: 100%;
+}
+.viewer-error {
+  color: #ef9a9a;
+  padding: 0 24px;
+  text-align: center;
+}
+.viewer-status {
+  pointer-events: none;
+}
+.viewer-status button {
+  pointer-events: auto;
+}
+
+/* Fullscreen Space top bar: a solid black strip pinned to the very top,
+   spanning the notch band. The live stream fills the whole window UNDER it, so
+   the notch sits invisibly within this bar. Buttons flank the centered notch. */
+.viewer-topbar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  background: #000;
+}
+/* Reserve the bar's height so it never covers the bottom of the live desktop:
+   the stream fills the area above the bar and scales to fit it. */
+.viewer-space .viewer-screen,
+.viewer-space .viewer-bg {
+  bottom: 42px;
+}
+.viewer-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.viewer-topbar-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 7px 14px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background-color var(--dur-fast, 0.14s) ease;
+}
+.viewer-topbar-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.viewer-topbar-btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.55);
+  outline-offset: -1px;
+}
+/* Centered "stop sharing network" button in the bottom bar, shown only while
+   this Mac is sharing its network with the Space being viewed. */
+.viewer-hotspot-stop {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent, #34c759);
+  background: rgba(52, 199, 89, 0.16);
+}
+.viewer-hotspot-stop:hover {
+  background: rgba(52, 199, 89, 0.26);
+}
+.viewer-hotspot-stop-glyph {
+  width: 14px;
+  height: 14px;
+}
+
+/* "Launch Agent" dropdown: a trigger in the bar that opens a small dark rounded
+   panel of coding agents ABOVE the bar (the bar sits at the window bottom, so
+   the menu opens upward). Items are transparent with white text and a subtle
+   hover, to match the bar. */
+.viewer-agent-menu {
+  position: relative;
+  display: flex;
+}
+.viewer-agent-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.viewer-agent-menu-caret {
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.75;
+}
+.viewer-agent-menu-list {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  min-width: 208px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(28, 28, 30, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
+}
+.viewer-agent-menu-item {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background-color var(--dur-fast, 0.14s) ease;
+}
+.viewer-agent-menu-item:hover,
+.viewer-agent-menu-item:focus-visible {
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+}
+/* Transient "coming soon" notice for the not-yet-built agent controls, floated
+   just above the bottom bar. */
+.viewer-topbar-notice {
+  position: absolute;
+  bottom: 50px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.viewer-pip .viewer-status,
+.viewer-pip .viewer-message {
+  font-size: 11.5px;
+}
+/* The PiP is a real decorated window (OS title bar drags/resizes/closes it). The
+   stream is view-only: its canvas must not capture clicks, which would hide the
+   remote cursor and offer no interaction on a mirror. */
+.viewer-pip .viewer-screen {
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * App teleport consent sheet
+ * ------------------------------------------------------------------------- */
+
+.teleport-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(8, 8, 12, 0.35);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: notice-in var(--dur-fast) var(--ease-out);
+}
+.teleport-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(430px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 16px 18px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--acrylic-border);
+  background: var(--acrylic-bg-strong);
+  box-shadow: var(--shadow-shelf);
+  color: var(--ink);
+}
+.teleport-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.teleport-warning {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.teleport-hint,
+.teleport-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.teleport-error {
+  margin: 0;
+  font-size: 12px;
+  color: #c62828;
+  word-break: break-word;
+}
+@media (prefers-color-scheme: dark) {
+  .teleport-error {
+    color: #ef9a9a;
+  }
+}
+.teleport-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 132px;
+  overflow: auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+}
+.teleport-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.teleport-item + .teleport-item {
+  border-top: 1px solid var(--hairline);
+}
+.teleport-item-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.teleport-item-meta {
+  flex: none;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.teleport-flag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(242, 166, 0, 0.16);
+  color: #b57b00;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+@media (prefers-color-scheme: dark) {
+  .teleport-flag {
+    color: #f2c14e;
+  }
+}
+.teleport-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.teleport-field select {
+  font: inherit;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--hairline);
+  background: var(--fill);
+  color: var(--ink);
+}
+
+/* Page 1: open-window picker grid. */
+.teleport-window-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow: auto;
+  list-style: none;
+}
+.teleport-window-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--hairline);
+  background: var(--fill);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.teleport-window-cell:hover,
+.teleport-window-cell:focus-visible {
+  border-color: var(--accent);
+  background: var(--fill-strong, rgba(255, 255, 255, 0.72));
+}
+.teleport-window-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+.teleport-window-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.teleport-window-app {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.teleport-window-title {
+  font-size: 11px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Page 2: checklist rows carry a checkbox before the item label. */
+.teleport-item-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+}
+.teleport-item-check input {
+  flex: none;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.teleport-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+/* Match the ghost (Back/Cancel) buttons to the primary button's height so the
+   row lines up. */
+.teleport-actions .ghost-button {
+  height: 34px;
+  border-radius: var(--radius-md);
+}
+
+.viewer-pip-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(10, 10, 14, 0.66);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+.viewer-pip-badge[data-controller="agent"] {
+  color: #7ee2a0;
+}
+
+/* ---------------------------------------------------------------------------
+ * Per-window RCDP client (win-* windows)
+ * ------------------------------------------------------------------------- */
+
+.window-stream {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #000000;
+  color: rgba(255, 255, 255, 0.92);
+}
+.window-stream-surface {
+  position: absolute;
+  inset: 0;
+}
+.window-stream-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+  pointer-events: none;
+}
+.window-stream-sub {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.45);
+}
+.window-stream-spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-top-color: rgba(255, 255, 255, 0.7);
+  animation: window-stream-spin 0.8s linear infinite;
+}
+@keyframes window-stream-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Each remote window becomes its own draggable framed panel. */
+.ws-frame {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000000;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+}
+.ws-frame-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  background: rgba(28, 28, 32, 0.96);
+  cursor: grab;
+  user-select: none;
+}
+.ws-frame-bar:active {
+  cursor: grabbing;
+}
+.ws-frame-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.85);
+}
+.ws-frame-badge {
+  flex: none;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.5);
+}
+.ws-frame-close {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 11px;
+  cursor: pointer;
+}
+.ws-frame-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.ws-frame-canvas {
+  display: block;
+  max-width: calc(100vw - 26px);
+  max-height: calc(100vh - 52px);
+  background: #000000;
+  outline: none;
+}
+
+/* SINGLE mode (winone-* windows): one dedicated OS window per remote window.
+ * The OS titlebar/resize IS the frame, so the single panel is full-bleed with
+ * no chrome — no border, no titlebar — and the canvas stretches to fill it. */
+.window-stream[data-single="true"] {
+  background: #000000;
+}
+.ws-frame[data-single="true"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  max-width: none;
+  max-height: none;
+  background: #000000;
+}
+.ws-frame[data-single="true"] .ws-frame-bar {
+  display: none;
+}
+.ws-frame[data-single="true"] .ws-frame-canvas {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+}
+
+/* Agent / remote-user cursor overlay, positioned in window-local % over the
+ * canvas. left/top transition so the cursor glides between server updates
+ * (the trajectory reads 1:1 without streaming a second video). */
+.ws-remote-cursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 5;
+  transition: left 90ms linear, top 90ms linear;
+  --cursor-color: #3b82f6;
+}
+.ws-remote-cursor-arrow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 15px;
+  height: auto;
+  fill: var(--cursor-color);
+  stroke: #ffffff;
+  stroke-width: 1;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+}
+.ws-remote-cursor-pulse {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%) scale(0);
+  background: var(--cursor-color);
+  opacity: 0;
+}
+.ws-remote-cursor.is-pressed .ws-remote-cursor-pulse {
+  animation: ws-remote-cursor-pulse 420ms ease-out;
+}
+@keyframes ws-remote-cursor-pulse {
+  0% { transform: translate(-50%, -50%) scale(0.4); opacity: 0.55; }
+  100% { transform: translate(-50%, -50%) scale(3.2); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ws-remote-cursor { transition: none; }
+  .ws-remote-cursor.is-pressed .ws-remote-cursor-pulse { animation: none; }
+}
+
+/* ---------------------------------------------------------------------------
+ * Teleport picker window (teleport-picker window)
+ *
+ * A macOS/Chrome screen-share-style modal: a large, centered, dark translucent
+ * rounded panel floating over the active screen. The window itself is
+ * transparent so the panel's rounded corners and drop shadow read against the
+ * desktop.
+ * ------------------------------------------------------------------------- */
+
+html.is-teleport-picker,
+.is-teleport-picker body,
+.is-teleport-picker #root {
+  height: 100%;
+  background: transparent;
+}
+
+.hp-window {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 22px;
+  box-sizing: border-box;
+}
+
+.hp-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  box-sizing: border-box;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--acrylic-border);
+  background: var(--acrylic-bg-strong);
+  backdrop-filter: blur(var(--acrylic-blur)) saturate(var(--acrylic-saturate));
+  -webkit-backdrop-filter: blur(var(--acrylic-blur)) saturate(var(--acrylic-saturate));
+  box-shadow: 0 28px 70px -20px rgba(0, 0, 0, 0.55), 0 6px 16px -8px rgba(0, 0, 0, 0.4);
+  color: var(--ink);
+  overflow: hidden;
+  animation: notice-in var(--dur) var(--ease-out);
+}
+
+.hp-panel-status {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 12px;
+}
+
+/* --- Pick view -------------------------------------------------------------*/
+
+.hp-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  flex: 1;
+}
+
+/* Two-way tab control at the very top of the picker: "Teleport to {Space}" /
+   "Teleport to This Mac". The active tab drives both the grid contents and the
+   primary button. Bleeds to the panel edges and each tab fills half the width —
+   wide and flush like the filter bar below it, with an underline indicator. */
+.hp-tabs {
+  display: flex;
+  /* Pull flush to the panel's top edge too (cancel its 18px top padding). */
+  margin: -18px -18px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.hp-tab {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 11px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.hp-tab:hover {
+  background: var(--fill-hover);
+  color: var(--ink);
+}
+.hp-tab[data-active="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.hp-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  /* Flush "Filter Cua Spaces"-style bar: no pill, and a hairline divider below
+     that bleeds to the panel's edges. The panel insets its content by 18px, so
+     the row cancels that with a negative margin and re-insets its own content —
+     the divider then spans the full panel width (same technique as .switcher). */
+  margin: 0 -18px;
+  padding: 2px 18px 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.hp-search-glyph {
+  flex: none;
+  width: 19px;
+  height: 19px;
+  color: var(--ink-3);
+}
+.hp-search-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 17px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+}
+.hp-search-input::placeholder {
+  color: var(--ink-3);
+}
+
+.hp-grid-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border-radius: var(--radius-md);
+}
+.hp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 2px;
+  list-style: none;
+}
+.hp-empty {
+  margin: 0;
+  padding: 32px 8px;
+  text-align: center;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.hp-hint,
+.hp-note {
+  margin: 6px 2px 0;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.hp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border-radius: var(--radius-md);
+  border: 2px solid transparent;
+  background: var(--fill);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.hp-card:hover {
+  background: var(--fill-hover);
+}
+.hp-card[data-selected="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--fill));
+}
+.hp-card[data-unsupported="true"] {
+  opacity: 0.72;
+}
+.hp-card-preview {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.28);
+}
+.hp-card-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.hp-card-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 26px;
+  font-weight: 700;
+}
+/* No window thumbnail but we do have the app icon: drop the blue monogram
+   surface and show the real icon centered on a neutral tile. */
+.hp-card-fallback-icon {
+  background: var(--fill);
+  border: 1px solid var(--hairline);
+}
+.hp-card-fallback-img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  display: block;
+}
+.hp-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.hp-card-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 10px;
+  font-weight: 700;
+}
+/* Real app icon next to the window title (replaces the monogram badge). */
+.hp-card-badge-icon {
+  background: transparent;
+  object-fit: contain;
+}
+.hp-card-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Footer (shared by pick + consent) ------------------------------------ */
+
+.hp-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+.hp-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  min-width: 0;
+}
+/* Transient, honest notice on the footer's left (e.g. local→remote streaming
+   isn't built yet). The button cluster keeps its `margin-left:auto` so it stays
+   pinned right whether or not a notice is present. */
+.hp-notice {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hp-button,
+.hp-cancel {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.hp-cancel {
+  border: 1px solid var(--hairline);
+  background: var(--fill);
+  color: var(--ink);
+}
+.hp-cancel:hover {
+  background: var(--fill-hover);
+}
+.hp-button-primary {
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.hp-button-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.hp-kbd {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* --- Consent view ----------------------------------------------------------*/
+
+.hp-consent {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  flex: 1;
+}
+.hp-consent-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.hp-consent-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.hp-consent-warning {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.hp-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+}
+/* While the manifest is preparing, the item list area holds a centered spinner
+   so the consent sheet keeps its shape and just swaps in the checklist. */
+.hp-items-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  overflow: hidden;
+}
+.hp-spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(10, 122, 255, 0.25);
+  border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+.hp-loading-text {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+@media (prefers-reduced-motion: reduce) {
+  .hp-spinner {
+    animation-duration: 2.4s;
+  }
+}
+.hp-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+.hp-item + .hp-item {
+  border-top: 1px solid var(--hairline);
+}
+.hp-item-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  cursor: pointer;
+}
+.hp-item-check input {
+  flex: none;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.hp-item-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hp-item-meta {
+  flex: none;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.hp-flag {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(242, 166, 0, 0.16);
+  color: #b57b00;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* The primary Teleport button shows a padlock when the current selection
+   includes a sensitive item — a cue that confirming will require Touch ID. */
+.hp-lock {
+  width: 13px;
+  height: 13px;
+  vertical-align: -2px;
+  margin-right: 5px;
+}
+@media (prefers-color-scheme: dark) {
+  .hp-flag {
+    color: #f2c14e;
+  }
+}
+/* The "Network Fingerprint" option's badge: same pill as SENSITIVE, but the
+   hotspot glyph instead of a lock, in the accent hue. */
+.hp-flag-hotspot {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(52, 199, 89, 0.16);
+  color: #1f8f43;
+}
+.hp-flag-glyph {
+  width: 11px;
+  height: 11px;
+}
+@media (prefers-color-scheme: dark) {
+  .hp-flag-hotspot {
+    color: #34c759;
+  }
+}
+/* The hotspot option sits at the top of the checklist; a hairline sets it off
+   from the transfer items below. */
+.hp-item-hotspot {
+  border-bottom: 1px solid var(--stroke, rgba(0, 0, 0, 0.08));
+  padding-bottom: 8px;
+  margin-bottom: 2px;
+}
+
+/* --- Status views (loading / pushing / done / error) ----------------------*/
+
+.hp-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+.hp-status-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.hp-status-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+  max-width: 460px;
+}
+.hp-status-error {
+  margin: 0;
+  font-size: 13px;
+  color: #c62828;
+  max-width: 460px;
+  word-break: break-word;
+}
+@media (prefers-color-scheme: dark) {
+  .hp-status-error {
+    color: #ef9a9a;
+  }
+}
+.hp-status-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Viewer: blurred connecting background (item D) + transfer overlay (item B)
+ * ------------------------------------------------------------------------- */
+
+/* A recent cached screenshot, blurred, stands in for the black background while
+   the live stream connects. Sits behind the stream canvas, which paints over it. */
+.viewer-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-size: cover;
+  background-position: center;
+  filter: blur(22px) saturate(115%);
+  transform: scale(1.08);
+  opacity: 0.85;
+}
+.viewer-screen {
+  z-index: 1;
+}
+.viewer-status,
+.viewer-message {
+  z-index: 2;
+}
+
+/* Frosted overlay over the live Space view while a teleport runs. */
+.viewer-transfer {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 8, 12, 0.35);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: blur(16px) saturate(140%);
+  animation: notice-in var(--dur) var(--ease-out);
+}
+.viewer-transfer-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  min-width: 280px;
+  max-width: 60%;
+  padding: 26px 30px;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--acrylic-border);
+  background: var(--acrylic-bg-strong);
+  -webkit-backdrop-filter: blur(var(--acrylic-blur)) saturate(var(--acrylic-saturate));
+  backdrop-filter: blur(var(--acrylic-blur)) saturate(var(--acrylic-saturate));
+  box-shadow: var(--shadow-shelf);
+  color: var(--ink);
+  text-align: center;
+}
+.viewer-transfer-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.viewer-transfer-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.viewer-transfer-error {
+  margin: 0;
+  font-size: 12.5px;
+  color: #e5484d;
+}
+/* Error-phase actions: Retry (primary intent) beside a secondary Cancel that
+   dismisses the overlay back to the live stream. */
+.viewer-transfer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.viewer-transfer-cancel {
+  color: var(--ink-2);
+}
+/* Progress bar. DETERMINATE once byte totals are known (a real fill whose width
+   is sent/total); INDETERMINATE shimmer sweep only for the brief pre-upload
+   phase (no bytes yet) and under prefers-reduced-motion. */
+.viewer-transfer-bar {
+  position: relative;
+  width: 240px;
+  max-width: 60vw;
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--fill);
+}
+/* Determinate fill: width is set inline from sent/total. */
+.viewer-transfer-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 180ms var(--ease-out);
+}
+.viewer-transfer-sweep {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 40%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: transfer-sweep 1.25s var(--ease-out) infinite;
+}
+@keyframes transfer-sweep {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(320%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* No sweeping animation; show a calm static fill instead. */
+  .viewer-transfer-sweep {
+    animation: none;
+    width: 100%;
+    opacity: 0.45;
+  }
+  .viewer-transfer-fill {
+    transition: none;
+  }
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Per-window view + list view (switcher)                             */
+/* ------------------------------------------------------------------ */
+
+/* The filter row's stand-in while a Space is open: back caret + its name. */
+.switcher-crumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 29px;
+  padding: 0 2px;
+  min-width: 0;
+}
+.switcher-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.switcher-back:hover {
+  background: var(--fill);
+  color: var(--ink);
+}
+.switcher-back:active {
+  background: var(--fill-active);
+}
+.switcher-back .glyph {
+  width: 17px;
+  height: 17px;
+}
+.switcher-crumb-title {
+  margin: 0;
+  min-width: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Gear + list (top level), or PiP + stream-desktop (per-window view). */
+.switcher-space-actions {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* The per-window body sits where the tile row does and scrolls on its own.
+   The panel is content-sized, and in the Island theme the header (the Space's
+   name) and the footer lift into the strips either side of the notch cap — so
+   keep the body wide enough that those strips stay usable.
+
+   Height: the portal WINDOW is only 320pt tall (geometry.rs `mode_size`), so a
+   list taller than that spilled past the window and was simply unreachable —
+   the window clips, and nothing inside it was the scroller. The panel is now
+   bounded by the window (`.switcher` below) and THIS is the single scroll
+   container, so the header strip and the action icons stay put while the rows
+   scroll. Do not add a second `overflow` to an ancestor. */
+.switcher-windows {
+  flex: 1 1 auto;
+  min-width: 560px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 18px 2px;
+}
+/* Bound the panel to the portal window in both themes. Island lifts the header
+   and footer into the notch strips (absolute), Glass keeps them in flow; either
+   way the panel may not grow past the window it lives in. */
+.portal[data-mode="switcher"] .switcher {
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.swl-section + .swl-section {
+  margin-top: 10px;
+}
+/* The display block is headed by its own STREAM label, the way TELEPORT heads
+   the drop zone — so no rule is needed to separate it from the first app
+   group. */
+.swl-screens {
+  padding-bottom: 6px;
+}
+.swl-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.swl-empty {
+  margin: 4px 2px 8px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+.swl-group + .swl-group {
+  margin-top: 6px;
+}
+/* App header above its own windows (reference's app-grouped Windows section). */
+.swl-app {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 2px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.swl-app-icon {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+.swl-app-monogram {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 10px;
+  font-weight: 700;
+}
+.swl-app-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A row: small live thumbnail + title, with a rounded hover/selection wash. */
+.swl-row,
+.hp-card-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.swl-row:hover,
+.hp-card-row:hover,
+.swl-row:focus-visible,
+.hp-card-row:focus-visible {
+  background: var(--fill-hover);
+  outline: none;
+}
+.swl-row[data-selected="true"],
+.hp-card-row[data-selected="true"] {
+  background: var(--fill-active);
+  border: 0;
+}
+.swl-row-preview,
+.hp-card-row .hp-card-preview {
+  flex: none;
+  width: 46px;
+  aspect-ratio: 16 / 10;
+  border-radius: 5px;
+  border: 1px solid var(--hairline);
+  background: rgba(0, 0, 0, 0.2);
+}
+.swl-row-preview-screen {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-2);
+}
+.swl-screen-glyph {
+  width: 18px;
+  height: 18px;
+}
+.swl-row-title,
+.hp-card-row .hp-card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.swl-row-meta {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+/* The row already sits under its app header, so drop the per-row app badge
+   and the card's fallback monogram tile. */
+.hp-card-row .hp-card-badge {
+  display: none;
+}
+.hp-card-row .hp-card-fallback {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+.hp-card-row .hp-card-fallback-img {
+  width: 20px;
+  height: 20px;
+}
+.hp-card-row .hp-card-meta {
+  flex: 1 1 auto;
+}
+
+/* The popped-out Spaces list window (label `spaces-list`): a normal decorated
+   OS window, so it paints an opaque panel under the system title bar. */
+
+
+/* Transparent to the window's native material; the page paints nothing. */
+html.is-spaces-list,
+html.is-spaces-list body {
+  background: transparent;
+  color: var(--ink);
+  height: 100%;
+}
+/* The pop-out list is ALWAYS glass — it does not follow the switcher theme
+   (that is the notch panel's setting). The glass itself is the window's NATIVE
+   macOS vibrancy material, applied by the shell, so the surface here must stay
+   transparent: painting a background would hide the material behind it. Only
+   the content follows the OS light/dark appearance.
+
+   `data-glass="css"` is the fallback the shell sets when the native material
+   is unavailable; then, and only then, the page approximates it. */
+.sl-window {
+  background: transparent;
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  font-family: var(--font-ui);
+  /* The fine top-edge highlight that makes glass read as a physical layer. */
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+}
+.sl-window[data-glass="css"] {
+  background: var(--acrylic-bg-strong);
+  -webkit-backdrop-filter: blur(var(--acrylic-blur)) saturate(var(--acrylic-saturate));
+  backdrop-filter: blur(var(--acrylic-blur)) saturate(var(--acrylic-saturate));
+}
+/* The filter row: full width, under the OS title bar. */
+.sl-head {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+}
+.sl-head::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--hairline);
+  pointer-events: none;
+}
+.sl-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.sl-back:hover {
+  background: var(--fill-hover);
+  color: var(--ink);
+}
+.sl-back .glyph {
+  width: 16px;
+  height: 16px;
+}
+.sl-search {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  /* A layer above the glass surface, not an opaque fill. */
+  background: var(--fill);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.sl-search-glyph {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--ink-3);
+}
+.sl-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+.sl-search-input::placeholder {
+  color: var(--ink-3);
+}
+.sl-search-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+/* Narrow: one page, scrolling as a whole. Wide: two panes side by side, each
+   with its own scroll, split at the same 240pt the breakpoint is built from.
+   Driven by the WINDOW's width (a ResizeObserver on the root), not a viewport
+   media query, so two windows of different sizes on one display disagree. */
+.sl-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  min-width: 0;
+}
+.sl-pane {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 12px 6px;
+}
+[data-mode="split"] .sl-pane-list {
+  flex: none;
+  width: 240px;
+  border-right: 1px solid var(--hairline);
+}
+/* The filter heads the Spaces column in split view, where it sat flush against
+   the first row with nothing between them. */
+.sl-pane-list > .sl-search {
+  margin-bottom: 8px;
+}
+.sl-pane-empty {
+  margin: 14px 6px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+/* Who you are looking at. Inline in the narrow header (one row, beside the back
+   caret); stacked at the top of the targets column in split view, where the name
+   heads the column and its reachability sits under it. */
+.sl-identity {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.sl-identity-stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 2px 2px 10px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--hairline);
+}
+.sl-identity-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sl-identity-stacked .sl-identity-name {
+  font-size: 17px;
+  line-height: 1.2;
+}
+.sl-identity-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+.sl-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 10px;
+  border-top: 1px solid var(--hairline);
+}
+.sl-footer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.settings-gear:disabled {
+  color: var(--ink-3);
+  background: transparent;
+  cursor: default;
+}
+
+/* Pop-out window, page 1: the machines. Avatar, name over detail, status dot —
+   the reference's machine list. */
+.sl-back {
+  margin-left: -2px;
+}
+.sl-spaces {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.sl-space-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.sl-space-row:hover,
+.sl-space-row:focus-visible {
+  background: var(--fill-hover);
+  outline: none;
+}
+.sl-space-row[data-selected="true"] {
+  background: var(--fill-active);
+}
+/* The machine rows reuse the window rows' preview slot (`.swl-row-preview`:
+   46pt wide, 16/10, 5pt radius, hairline) so both pages read as one component
+   family. It carries the Space's OS glyph, or its monogram when the provider
+   reports no OS. */
+.sl-space-os {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-2);
+}
+.sl-space-os-glyph {
+  width: 18px;
+  height: 18px;
+}
+.sl-space-monogram {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+}
+.sl-space-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.sl-space-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sl-space-detail {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sl-space-row .status-dot {
+  flex: none;
+}
+
+/* Pop-out window, page 2: the Teleport drop zone beneath the Windows section.
+   Structure: dashed boundary, centred glyph, one caption, actions below,
+   in the pop-out's own always-glass palette (the SwitcherTheme
+   Island/Glass split belongs to the notch panel, never to this window), so it
+   reads as a recessed well inside the list rather than a pasted-in card. */
+.sl-teleport {
+  /* Inset from the pane so the dashed boundary reads as a well inside the
+     list, not as another full-bleed row. */
+  padding: 2px 10px 10px;
+  /* Same hairline the display block uses to separate itself from the first app
+     group, so Teleport reads as a peer section rather than a footer. */
+  border-top: 1px solid var(--hairline);
+  margin-top: 10px;
+}
+/* Shared by STREAM and TELEPORT: one labelling idiom for the whole window. */
+.sl-section-label {
+  /* A section label, not a title: uppercase with tracking, the way small caps
+     labels need letter-spacing to stay legible. */
+  margin: 8px 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+/* The first label in a pane would otherwise stack its margin on the pane's own
+   top padding and sit noticeably lower than the filter opposite it. */
+.swl > .swl-section:first-child > .sl-section-label {
+  margin-top: 0;
+}
+.sl-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 12px 12px;
+  box-sizing: border-box;
+  max-width: 100%;
+  text-align: center;
+  border: 1.5px dashed var(--hairline-strong, var(--hairline));
+  border-radius: var(--radius-lg, 12px);
+  background: var(--fill-1, rgba(127, 127, 127, 0.06));
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease;
+}
+/* Same affordance the notch tiles use for a drag they can accept, so a window
+   dragged down here lights up the way it does up there. */
+.sl-dropzone[data-drop-target="true"] {
+  border-style: solid;
+  border-color: var(--accent);
+  background: rgba(0, 122, 255, 0.1);
+  box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.18);
+}
+.sl-dropzone[data-busy="true"] {
+  opacity: 0.72;
+}
+.sl-dropzone-glyph {
+  width: 26px;
+  height: 26px;
+  color: var(--ink-2);
+}
+.sl-dropzone[data-drop-target="true"] .sl-dropzone-glyph {
+  color: var(--accent);
+}
+.sl-dropzone-caption {
+  margin: 0;
+  max-width: 30ch;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--ink-2);
+}
+.sl-dropzone-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+.sl-dropzone-button {
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--fill-2, rgba(127, 127, 127, 0.12));
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.sl-dropzone-button:hover:not(:disabled),
+.sl-dropzone-button:focus-visible {
+  background: var(--fill-3, rgba(127, 127, 127, 0.2));
+}
+.sl-dropzone-button:disabled {
+  color: var(--ink-3);
+  cursor: default;
+}
+/* The outcome line. A send is only ever called done once the Space has hashed
+   the landed bytes, so this says where the file is and how big it is rather
+   than a bare "Sent" — the failure mode this feature was built around was a
+   transfer that claimed success over a file that was not there. */
+.sl-dropzone-status {
+  margin: 2px 0 0;
+  max-width: 36ch;
+  font-size: 11.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  color: var(--ink-2);
+}
+.sl-dropzone-status[data-kind="failed"] {
+  color: var(--danger, #ff453a);
+}
+
+/* ------------------------------------------------------------------ */
+/* AGENTS section (pop-out list window)                               */
+/* ------------------------------------------------------------------ */
+
+/* The rows reuse .swl-row and its 46pt 16:10 .swl-row-preview slot, so this
+   section is the same component family as the window rows above it. Only the
+   two-line text column and the status pair are new. */
+/* The harness mark sits on a light tile, the way an app icon carries its own
+   colours in the window rows above — the Claude mark is its brand coral and the
+   OpenAI mark is near-black, so both need a consistent ground to read against
+   in either theme. */
+.swl-row-preview-agent {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #f4f4f6;
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #0d0d0d;
+}
+.swl-agent-glyph {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+/* Not a button: nothing is wired to a click yet, so it must not offer one. */
+.swl-row-agent {
+  cursor: default;
+}
+.swl-agent-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.swl-agent-summary {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.swl-agent-status {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.swl-agent-status-label {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+/* Narrow pane: the status word is the first thing to go, since the dot already
+   carries the state and the summary is what the row is for. */
+@media (max-width: 380px) {
+  .swl-agent-status-label {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- host
+   First-run onboarding and the "This machine" page (host setup, sharing,
+   presence, Stop sharing). Reuses the create-cloud form and card styles. */
+.onboarding-title {
+  margin: 16px 16px 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.host-setup-lede,
+.host-permissions-lede {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink);
+  opacity: 0.8;
+}
+.host-advanced-toggle {
+  align-self: flex-start;
+  font-size: 12px;
+}
+.host-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--stroke, rgba(0, 0, 0, 0.12));
+}
+.host-permissions ul,
+.this-machine-clients ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+}
+.host-permissions li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.this-machine {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px;
+  color: var(--ink);
+}
+.this-machine-summary {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.this-machine-muted {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.65;
+}
+.this-machine-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.this-machine-facts dt {
+  opacity: 0.65;
+}
+.this-machine-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.this-machine-clients h3,
+.host-permissions h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.65;
+}
+.this-machine-actions {
+  display: flex;
+  gap: 8px;
+}
+.primary-button.danger {
+  background: var(--danger, #ff453a);
+}
+
+/* ---------------------------------------------------------------- installer
+   First-run graphical installer (InstallerFlow): step strip, exact paths,
+   agent checklist. Reuses the onboarding / create-cloud styles. */
+.installer-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 12px 16px 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+  color: var(--ink);
+  opacity: 0.55;
+}
+.installer-steps li[aria-current="step"] {
+  font-weight: 600;
+  opacity: 1;
+}
+.installer-path {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+code.installer-path {
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--stroke, rgba(0, 0, 0, 0.12));
+}
+.installer-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  list-style: none;
+}
+.installer-agent {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  align-items: center;
+  font-size: 12.5px;
+}
+.installer-agent > :not(input):not(.installer-agent-name) {
+  grid-column: 2;
+}
+li.installer-agent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.installer-agent-name {
+  font-weight: 600;
+}
+.installer-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.installer-skills {
+  margin: 0 0 0 24px;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* ---- "Teleport an app…" (AppTeleportPicker, over the SDK's headless
+   picker): search, the app list with capability badges, the move choice,
+   the consent list and progress. */
+.ta-pick,
+.ta-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  height: 100%;
+}
+.ta-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ta-section-title {
+  margin: 10px 4px 4px;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ta-row {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ta-row[aria-selected="true"] {
+  border-color: var(--accent);
+  background: var(--hover, rgba(127, 127, 127, 0.1));
+}
+.ta-row:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.ta-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ta-name {
+  font-weight: 500;
+}
+.ta-reason,
+.ta-detail {
+  color: var(--ink-3);
+  font-size: 12px;
+  white-space: normal;
+}
+.ta-detail {
+  display: block;
+  word-break: break-all;
+}
+.ta-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+.ta-mono {
+  display: grid;
+  place-items: center;
+  background: var(--hover, rgba(127, 127, 127, 0.14));
+  font-weight: 600;
+}
+.ta-badge {
+  padding: 2px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  color: var(--ink-3);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ta-badge[data-capability="full"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ta-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ta-choices,
+.ta-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ta-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.ta-choice input {
+  accent-color: var(--accent);
+}
+.ta-optin {
+  align-items: flex-start;
+}
+.ta-optin-label {
+  display: block;
+}
+.ta-optin-detail {
+  display: block;
+  color: var(--ink-3);
+  font-size: 11px;
+}
+.ta-file {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--hover, rgba(127, 127, 127, 0.1));
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.ta-consent .hp-item-label {
+  display: block;
+  white-space: normal;
+}
+.ta-kind {
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.hp-item[data-sensitive="true"] .ta-kind {
+  color: #b57b00;
+}
+.ta-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--hairline);
+  overflow: hidden;
+}
+.ta-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+.hp-footer-note {
+  flex: 1;
+  color: var(--text-muted, #8e8e94);
+  font-size: 12px;
+}
+.ta-icon:empty {
+  background: transparent;
+}
+
+/* Setup steps as dots (labels stay for assistive tech and tooltips). */
+.installer-dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+.installer-dots li {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--dw-border-strong, #d0d0d5);
+  font-size: 0;
+}
+.installer-dots li[aria-current="step"] {
+  background: var(--dw-text, #0d0d0d);
+}
+
+/* The Apps tab's grid (the core's picker tiles), sectioned like the list was. */
+.ta-grid-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.ta-grid-wrap .ta-section + .ta-section {
+  margin-top: 10px;
+}
+.ta-grid-wrap .ta-section-title {
+  margin: 4px 4px 8px;
+}
+.hp-card.ta-tile:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* This machine: the two sharing settings and the setup form's profile. */
+.this-machine-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.this-machine-settings .create-cloud-toggle {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  align-items: center;
+}
+.this-machine-settings .create-cloud-toggle .this-machine-muted {
+  grid-column: 2;
+  font-size: 12px;
+}
+.host-profile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.host-profile label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

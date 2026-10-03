@@ -1,0 +1,9 @@
+# Settings every Cargo build in this repository shares. Cargo merges this file
+# with the nested workspace configs (libs/cua/.cargo, libs/cua-spacesd/.cargo,
+# ...) for any build whose working directory is inside the repository.
+[env]
+# CMake 4 removed compatibility with `cmake_minimum_required` below 3.5.
+# Vendored C libraries built through the `cmake` crate (libopus via
+# audiopus_sys for cua-media-codec's `opus` feature) still declare an older
+# minimum, so tell CMake to treat them as 3.5 projects.
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"

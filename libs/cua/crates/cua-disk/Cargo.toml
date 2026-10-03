@@ -1,0 +1,21 @@
+[package]
+name = "cua-disk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Disk accounting, cache budget and garbage collection for the cua SDK: every location it writes, `cua cache ls|du|prune`."
+
+[dependencies]
+async-trait.workspace = true
+bollard = "0.21"
+cua-image.workspace = true
+cua-vmm = { path = "../cua-vmm" }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -62,8 +62,8 @@ a native effect may outlive a dropped future. A lost exchange future also
 closes the session. Cancellation cannot promise to undo input already delivered.
 
 Closing a receiver is idempotent. It closes only its session, not the shared
-Driver runtime, computer-server, Fleet claim, pool, or local VM. Existing
-computer-server and Sandbox APIs are unchanged.
+Driver runtime, cua-spacesd, Fleet claim, pool, or local VM. Existing
+cua-spacesd and Sandbox APIs are unchanged.
 
 ## Verification
 

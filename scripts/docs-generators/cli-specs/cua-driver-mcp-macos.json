@@ -1,0 +1,2950 @@
+{
+ "tools": [
+  {
+   "description": "List macOS apps — both currently running and installed-but-not-running — with per-app state flags:\n\n- running: is a process for this app live? (pid is 0 when false)\n- active: is it the system-frontmost app? (implies running)\n- launch_path: filesystem path to the `.app` bundle, when known. Pass this to `launch_app` to start the app cold.\n- kind: `\"desktop\"` for `.app` bundles on macOS.\n- last_used: RFC3339 timestamp from the bundle's filesystem mtime, when readable; otherwise null.\n\nStandalone running entries include only apps with NSApplicationActivationPolicyRegular — background helpers and system UI agents are filtered out. Installed apps resolve their running/pid state against all live processes by bundle identifier, so an installed app whose process runs as an accessory (LSUIElement / menu-bar apps, e.g. Cua Driver itself) still reports its live pid. Installed apps come from scanning /Applications, /Applications/Utilities, ~/Applications, /System/Applications, and /System/Applications/Utilities.\n\nUse this for \"is X installed?\" as well as \"is X running?\". For per-window state — on-screen, on-current-Space, minimized, window titles — call list_windows instead. For just opening an app — running or not — call launch_app({bundle_id: ...}) directly; list_apps is not a prerequisite.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "list_apps",
+   "read_only": true
+  },
+  {
+   "description": "List all layer-0 top-level windows currently known to WindowServer. Includes off-screen windows (minimized, on another Space, hidden-launched). Use this to find a window_id before calling get_window_state.\n\nPer-record fields: window_id, pid, app_name, title, bounds (x/y/width/height, top-left origin), z_index (integer or null; higher values are closer to the front; null means stacking order is unavailable and callers must not infer one), is_on_screen, space_ids, current_space_id (the active Space on that window's display), and on_current_space. The top-level current_space_id is WindowServer's main/global active Space and can differ from a record's current_space_id when displays use independent Spaces. To select a frontmost candidate, take the maximum integer z_index; if every value is null, use an explicit fallback instead of relying on array order.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "on_screen_only": {
+      "description": "When true, drop windows not on the current Space. Default false.",
+      "type": "boolean"
+     },
+     "pid": {
+      "description": "Optional pid filter. When set, only this pid's windows are returned.",
+      "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "list_windows",
+   "read_only": true
+  },
+  {
+   "description": "Walk a running app's AX tree and return BOTH a structured `elements` array (preferred) AND a Markdown rendering of the same tree (back-compat). Every actionable element is tagged with [element_index N] in the markdown and as `element_index` in the structured array; pass each element's `element_token` to click, type_text, press_key, etc.\n\nINVARIANT: call get_window_state once per turn per (pid, window_id) before any element action. The next snapshot of the window replaces this one, stales its element tokens, and lists the replaced ids in `invalidated_snapshot_ids`.\n\nPREFERRED CONSUMERS read `structuredContent.elements` (one entry per indexed row with `element_index`, `role`, `label`, `value` (the element's text/AXValue when present — use it to verify what a field holds), `actions` (names of AX actions exposed by the element, omitted when empty), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown `tree_markdown` stays available and unchanged in shape for existing text-parsing callers — but new fields will only be added to the structured side.\n\nAlways returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces: Electron echo-confirms, Catalyst null values, virtualized off-viewport rows with `h:1` frames). You choose the modality at ACTION time, not here: an element ax action (pass `element_token` → the accessibility rung) or an element px action (pass `x`,`y` → the pixel rung, read straight off this screenshot). `capture_mode` is deprecated and ignored. Pass `include_screenshot:false` to skip the grab and get the tree only — the cheap path when you're just re-indexing before an element ax action.\n\nThe mirror image: pass `include_accessibility_tree:false` to SKIP the AX walk entirely (the expensive part, bounded by timeout_ms) and return just the screenshot plus window metadata — `window_bounds`, `screenshot_scale`, `screenshot_width`/`screenshot_height`, `app_name`, and `window_title` — the capture-only path for rendering a live window preview / picture-in-picture without paying for perception. Setting BOTH `include_accessibility_tree:false` and `include_screenshot:false` is an error (nothing to return). Optional `max_image_dimension` overrides the configured screenshot long-edge limit for this call; use 0 for native resolution. The legacy `max_dimension` remains a tighter cap for compatibility.\n\nThe snapshot is SCOPED to `window_id`: a window_id that no longer exists is refused with `window_id_not_found`, and one owned by another process is refused with `window_owner_pid_mismatch` naming the real `owner_pid` to retry with (macOS hosts a sandboxed app's Open/Save panel out-of-process, so its window belongs to the panel service, not the app). If the window is live under this pid but its accessibility surface can't be resolved, the tree comes back EMPTY with `degraded_reason: ax_window_unresolved` and the screenshot of the requested window; background input is refused until it resolves, so re-snapshot or act with `delivery_mode:\"foreground\"`. When that pid is an app still launching (its window exists before it answers accessibility), the walk first waits up to `timeout_ms` for it; if it never answers, the tree comes back EMPTY with `degraded_reason: ax_app_launching`, `truncated: true` and `truncation_reason: app_lookup_timeout`. A window on another Space still resolves by its exact CGWindowID. This tool never returns another surface's elements under your window_id. Before exposing a screenshot, its raw dimensions are validated as a coherent 1x/2x representation of the requested WindowServer bounds. `px_frame_mismatch` or `px_capture_unavailable` omits an unprovable screenshot/pixel frame instead of guessing a transform; the truthful AX payload remains available.\n\nOptional `query` projects both tree_markdown and structured `elements` to matching lines plus their ancestor chain (case-insensitive substring). The element_index values are unchanged, the complete snapshot remains actionable, and `element_count` continues to report its total size; `filtered_element_count` reports the projected response size.\n\nOptional `max_elements` / `max_depth` bound the AX walk to mitigate context-window blow-up on Electron / Obsidian / large web apps that produce 10k+ element trees. When applied, BOTH the markdown and the structured elements are truncated identically. Omit both for current default behaviour (≤2 000 elements, depth ≤25).",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "capture_mode": {
+      "description": "DEPRECATED and ignored. get_window_state always returns BOTH the element tree and a screenshot — ground on both. The modality is chosen at action time by how you address the target: an element ax action (element_token) or an element px action (x,y). Any value (including the old \"som\"/\"screenshot\" aliases) is accepted but has no effect.",
+      "enum": [
+       "ax",
+       "vision"
+      ],
+      "type": "string"
+     },
+     "include_accessibility_tree": {
+      "description": "Default true — walk the AX tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the AX walk entirely (the expensive part, bounded by timeout_ms) and return just the screenshot plus window metadata (bounds, scale, app_name, window_title) — the capture-only path for rendering a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return).",
+      "type": "boolean"
+     },
+     "include_screenshot": {
+      "description": "Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return the tree only (the cheap path when you're just re-indexing before an element ax action; saves the image tokens + screen-grab latency). screenshot_out_file still forces a capture to disk.",
+      "type": "boolean"
+     },
+     "max_depth": {
+      "description": "Cap on the AX-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower this for deep menu/Electron trees.",
+      "minimum": 1,
+      "type": "integer"
+     },
+     "max_dimension": {
+      "description": "Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview / thumbnail. Applied on top of the session/global max_image_dimension ceiling; the tighter of the two wins. Omit for the configured default.",
+      "minimum": 1,
+      "type": "integer"
+     },
+     "max_elements": {
+      "description": "Cap on the total number of AX nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (2 000). Lower this for Electron / Obsidian / large web apps that produce 10k+ element trees and blow context windows.",
+      "minimum": 1,
+      "type": "integer"
+     },
+     "max_image_dimension": {
+      "description": "Per-call override for the returned screenshot's long edge in pixels. An explicit value wins over the session/global setting; 0 returns native resolution. Omit to preserve configured behavior.",
+      "minimum": 0,
+      "type": "integer"
+     },
+     "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+     },
+     "query": {
+      "description": "Case-insensitive filter for tree_markdown and structured elements. Returns matching actionable rows plus their actionable ancestors without renumbering element_index values.",
+      "type": "string"
+     },
+     "screenshot_out_file": {
+      "description": "When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output will contain screenshot_file_path instead.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "timeout_ms": {
+      "default": 1000,
+      "description": "Wall-clock budget in milliseconds for the accessibility-tree walk (default 1000, min 100, max 120000). Bounds the WHOLE walk. When the budget runs out the tool returns the PARTIAL tree it has, flagged with `truncated: true`, `truncation_reason`, `nodes_visited`, `nodes_pending` and `elements_complete: false`; retry with a larger value (e.g. 5000) or narrow with `query` / `max_depth`.",
+      "maximum": 120000,
+      "minimum": 100,
+      "type": "integer"
+     },
+     "window_id": {
+      "description": "Target window ID from list_windows.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "pid",
+     "window_id"
+    ],
+    "type": "object"
+   },
+   "name": "get_window_state",
+   "read_only": true
+  },
+  {
+   "description": "Deterministically verify bounded predicates against one exact window. The driver evaluates structured window/accessibility state and may return the final screenshot as uninterpreted visual evidence for a multimodal caller. Predicate results are satisfied, unsatisfied, or unknown; unknown never implies success. Accessibility projections are conservative: absence remains unknown unless the observed search domain is proven exhaustive.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "expect": {
+      "description": "One to eight predicates, combined with logical AND.",
+      "items": {
+       "additionalProperties": false,
+       "properties": {
+        "element": {
+         "additionalProperties": false,
+         "properties": {
+          "enabled": {
+           "type": [
+            "boolean",
+            "null"
+           ]
+          },
+          "exists": {
+           "description": "Assert that at least one trusted element matches the selector.\n\nElement walks are not yet exhaustive on every platform, so absence\ncannot be proven. `false` is rejected instead of returning an\nindefinitely-unknown predicate.",
+           "type": "boolean"
+          },
+          "selected": {
+           "type": [
+            "boolean",
+            "null"
+           ]
+          },
+          "selector": {
+           "additionalProperties": false,
+           "properties": {
+            "label_contains": {
+             "minLength": 1,
+             "type": "string"
+            },
+            "role": {
+             "minLength": 1,
+             "type": "string"
+            }
+           },
+           "required": [],
+           "type": "object"
+          },
+          "value_equals": {
+           "type": [
+            "string",
+            "null"
+           ]
+          }
+         },
+         "required": [
+          "selector"
+         ],
+         "type": [
+          "object",
+          "null"
+         ]
+        },
+        "window": {
+         "additionalProperties": false,
+         "properties": {
+          "bounds": {
+           "additionalProperties": false,
+           "properties": {
+            "height": {
+             "type": "number"
+            },
+            "tolerance_px": {
+             "maximum": 100,
+             "minimum": 0,
+             "type": "number"
+            },
+            "width": {
+             "type": "number"
+            },
+            "x": {
+             "type": "number"
+            },
+            "y": {
+             "type": "number"
+            }
+           },
+           "required": [
+            "x",
+            "y",
+            "width",
+            "height"
+           ],
+           "type": [
+            "object",
+            "null"
+           ]
+          },
+          "exists": {
+           "type": [
+            "boolean",
+            "null"
+           ]
+          }
+         },
+         "type": [
+          "object",
+          "null"
+         ]
+        }
+       },
+       "required": [],
+       "type": "object"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "type": "array"
+     },
+     "include_screenshot": {
+      "description": "Return the final window screenshot as image content for a multimodal\ncaller. The driver does not interpret that image.",
+      "type": [
+       "boolean",
+       "null"
+      ]
+     },
+     "pid": {
+      "description": "Exact process whose window may be observed.",
+      "minimum": 1,
+      "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session. This\nfield never selects capture modality or authorization.",
+      "type": "string"
+     },
+     "stable_samples": {
+      "default": 2,
+      "description": "Consecutive satisfied samples required before returning success.",
+      "maximum": 5,
+      "minimum": 1,
+      "type": "integer"
+     },
+     "timeout_ms": {
+      "default": 5000,
+      "description": "Bounded wait. Zero performs one sample.",
+      "maximum": 10000,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "window_id": {
+      "description": "Exact native window identifier.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "pid",
+     "window_id",
+     "expect"
+    ],
+    "type": "object"
+   },
+   "name": "verify_state",
+   "read_only": true
+  },
+  {
+   "description": "Launch a macOS app in the background — the target does NOT come to the foreground.\n\nProvide either `bundle_id` (preferred — unambiguous, e.g. `com.apple.calculator`) or `name` (e.g. \"Calculator\"). If both are given, bundle_id wins.\n\nOptional `urls` are handed to the app as open targets — for Finder, pass a folder path to open a backgrounded Finder window there.\n\nBrowser DevTools setup belongs to `browser_prepare`, which can prove that a separate isolated profile is driver-owned before enabling CDP.\n\nOptional `webkit_inspector_port`: opens a WebKit inspector server on the specified port (sets WEBKIT_INSPECTOR_SERVER=127.0.0.1:N + TAURI_WEBVIEW_AUTOMATION=1). Use this for Tauri/WebKit-based apps.\n\nOptional `creates_new_application_instance`: when true, forces a new app instance even if one is already running (passes -n to open). Reach for this when another agent or session may drive the SAME app concurrently — it returns a fresh pid + window so each session acts on its own isolated window instead of clobbering one shared instance. Without it, single-instance apps (Calculator, many utilities) hand every caller the same window, so two sessions fight over it.\n\nOptional `additional_arguments`: extra argv strings appended after --args.\n\nReturns the launched app's pid, bundle_id, name, and a `windows` array (same shape as `list_windows`) so callers can skip an extra round-trip before `get_window_state(pid, window_id)`. `launch_state` distinguishes whether the request was sent, the process is running, and a window is ready. When the focus-steal belt-and-braces demotion check ran (target pid ≠ prior frontmost), the response also includes `self_activation_suppressed: bool` — true if focus stayed with the prior frontmost, false if the launched app held focus despite the re-demote attempt.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "additional_arguments": {
+      "description": "Extra arguments appended after --args when launching.",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "bundle_id": {
+      "description": "App bundle identifier, e.g. com.apple.calculator. Preferred over name.",
+      "type": "string"
+     },
+     "creates_new_application_instance": {
+      "description": "When true, force a new app instance even if already running (open -n). Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one — on single-instance apps (e.g. Calculator) every caller otherwise gets the same window and the sessions clobber each other.",
+      "type": "boolean"
+     },
+     "name": {
+      "description": "App display name. Used only when bundle_id is absent.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "urls": {
+      "description": "Optional file paths or URLs to open with the app (e.g. a folder path for Finder).",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "webkit_inspector_port": {
+      "description": "Open a WebKit inspector server on this port (sets WEBKIT_INSPECTOR_SERVER env var).",
+      "type": "integer"
+     }
+    },
+    "type": "object"
+   },
+   "name": "launch_app",
+   "read_only": false
+  },
+  {
+   "description": "Force-terminate a process by pid (kill -9 equivalent on macOS / Linux; taskkill /F equivalent on Windows). Use as escalation when the cooperative close path (hotkey cmd+q on macOS, click-the-X on Windows) failed to make the process exit. Unsaved state is lost — prefer the cooperative path first.",
+   "destructive": true,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "pid": {
+      "description": "PID of the process to terminate.",
+      "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "pid"
+    ],
+    "type": "object"
+   },
+   "name": "kill_app",
+   "read_only": false
+  },
+  {
+   "description": "Persistently activate an app and leave it in the foreground. Most input does not need this; use it only for a focus-proxy surface that must remain foreground across interactions. With window_id, success means the exact ordinary macOS window was independently verified as the frontmost process's focused window and the front window of that process on the display it sits on. `exact_window_effect.frontmost_ordinary` additionally reports whether it is first in the global WindowServer layer-0 order; another application (an always-raised utility window, another display's front window) can hold that spot without the requested window losing keyboard focus, so it is reported and not required. Request acceptance alone is reported as a partial result, never as activation. This DOES steal foreground and does NOT restore the previously frontmost application.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "pid": {
+      "description": "Process ID of the app to activate.",
+      "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "window_id": {
+      "description": "CGWindowID to verify as the focused, frontmost window. Omit to activate the app only.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "pid"
+    ],
+    "type": "object"
+   },
+   "name": "bring_to_front",
+   "read_only": false
+  },
+  {
+   "description": "Set one exact top-level window's frame in the desktop-coordinate space reported by list_windows and verify the resulting geometry through an independent readback.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "height": {
+      "description": "New height, in the same units as list_windows bounds.",
+      "minimum": 1,
+      "type": "number"
+     },
+     "pid": {
+      "description": "Process ID that owns the window.",
+      "minimum": 1,
+      "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "width": {
+      "description": "New width, in the same units as list_windows bounds.",
+      "minimum": 1,
+      "type": "number"
+     },
+     "window_id": {
+      "description": "Window ID from list_windows.",
+      "minimum": 1,
+      "type": "integer"
+     },
+     "x": {
+      "description": "New left edge in the desktop coordinate space reported by list_windows.",
+      "type": "number"
+     },
+     "y": {
+      "description": "New top edge in the desktop coordinate space reported by list_windows.",
+      "type": "number"
+     }
+    },
+    "required": [
+     "pid",
+     "window_id",
+     "x",
+     "y",
+     "width",
+     "height"
+    ],
+    "type": "object"
+   },
+   "name": "set_window_frame",
+   "read_only": false
+  },
+  {
+   "description": "Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. Missing, ambiguous, disabled, or structurally mismatched segments fail closed; this tool never falls back to pixels.",
+   "destructive": true,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "description": "Exact, immediate-child application menu path to resolve and invoke through\nthe operating system's accessibility API. Path labels are matched after\ntrimming surrounding whitespace and otherwise remain case-sensitive.",
+    "properties": {
+     "path": {
+      "description": "Menu labels from the top-level menu to the item, e.g. `[\"File\", \"Save As...\"]`\n(1 to 16 labels).",
+      "items": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "type": "array"
+     },
+     "pid": {
+      "description": "Process ID of the application that owns the menu.",
+      "minimum": 1,
+      "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "window_id": {
+      "description": "Window ID from list_windows whose menu is invoked.",
+      "minimum": 1,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "pid",
+     "window_id",
+     "path"
+    ],
+    "type": "object"
+   },
+   "name": "invoke_menu",
+   "read_only": false
+  },
+  {
+   "description": "Click against a target pid. **Prefer `element_token` over pixel coordinates** — the token works on backgrounded / minimized / hidden / off-Space windows, identifies one exact snapshot element, and tells you what you're clicking via the cached element's role + label. Reach for `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface that doesn't appear in the AX tree.\n\nTwo addressing modes:\n\n- element_token (from get_window_state): AX action path. Works on backgrounded/hidden windows. No cursor move, no focus steal. The snapshot cache is scoped per (pid, window_id) and is replaced by the next snapshot of the same window — re-snapshot every turn before clicking.\n\n- x, y (window-local screenshot pixels, top-left origin of the PNG returned by get_window_state): CGEvent path. Synthesizes mouse events and posts to pid. Use modifier for cmd/shift/option/ctrl. Needs a visible on-screen window to anchor the conversion.\n\nbutton: \"left\" (default), \"right\", or \"middle\". Defaults to left so the field is fully back-compat — omit it and you get the legacy left-click behaviour. Pixel path: routes through the CGEvent left/right/middle mouse-button primitives. AX path: \"right\" maps to AXShowMenu (same surface as the dedicated `right_click` tool); \"middle\" has no AX equivalent and falls back to a pixel middle-click at the element's center.\naction: press (default), show_menu, pick, confirm, cancel, open.\nfrom_zoom: set true after a zoom call to auto-translate zoom-image pixel coordinates to full-window space.",
+   "destructive": true,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "description": "AX action: press, show_menu, pick, confirm, cancel, open.",
+      "type": "string"
+     },
+     "button": {
+      "description": "Mouse button. Default: \"left\" — omit for legacy left-click behaviour. Pixel path uses the matching CGEvent primitive; AX path maps \"right\" to AXShowMenu and falls back to a pixel middle-click at the element's center for \"middle\".",
+      "enum": [
+       "left",
+       "right",
+       "middle"
+      ],
+      "type": "string"
+     },
+     "capture_id": {
+      "description": "Optional immutable source capture ID returned by get_window_state or get_desktop_state. With x,y, Driver atomically admits and consumes that exact capture before dispatch; stale, mismatched, or out-of-bounds captures are refused without fallback.",
+      "type": "string"
+     },
+     "count": {
+      "description": "Click count (pixel path only). Default 1.",
+      "type": "integer"
+     },
+     "debug_image_out": {
+      "description": "Optional file path. When set on a pixel-addressed click, captures a fresh screenshot, draws a red crosshair at (x, y), and writes the PNG. Use to verify coordinate spaces. Requires window_id; incompatible with from_zoom.",
+      "type": "string"
+     },
+     "delivery_mode": {
+      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require \"foreground\" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_token) → snapshot → background pixel (x/y) → snapshot → delivery_mode:\"foreground\".",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
+     },
+     "element_token": {
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+      "type": "string"
+     },
+     "from_zoom": {
+      "description": "When true, x and y are in the last zoom image for this pid; driver translates back to full-window coordinates.",
+      "type": "boolean"
+     },
+     "modifier": {
+      "description": "Modifier keys: cmd, shift, option/alt, ctrl.",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+     },
+     "scope": {
+      "description": "Coordinate frame for a windowless screen-absolute click (default \"window\"). Pass \"desktop\" when sending x,y with NO pid/window_id — the coordinates are then true screen pixels (read from get_desktop_state with scope=\"desktop\"). Per-call; not a setting.",
+      "enum": [
+       "window",
+       "desktop"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "target": {
+      "description": "Exact capture/input target selected independently for each action.\n\n`display_id=\"primary\"` is the portable desktop target in this release.\nPlatforms that cannot address another display reject it explicitly rather\nthan silently changing coordinate spaces.",
+      "oneOf": [
+       {
+        "additionalProperties": true,
+        "properties": {
+         "kind": {
+          "const": "window",
+          "type": "string"
+         },
+         "pid": {
+          "minimum": 0,
+          "type": "integer"
+         },
+         "window_id": {
+          "minimum": 0,
+          "type": "integer"
+         }
+        },
+        "required": [
+         "kind",
+         "pid",
+         "window_id"
+        ],
+        "type": "object"
+       },
+       {
+        "additionalProperties": true,
+        "properties": {
+         "display_id": {
+          "type": "string"
+         },
+         "kind": {
+          "const": "desktop",
+          "type": "string"
+         }
+        },
+        "required": [
+         "kind",
+         "display_id"
+        ],
+        "type": "object"
+       }
+      ]
+     },
+     "window_id": {
+      "description": "Target window ID. Omit when element_token is supplied (the token carries it).",
+      "type": "integer"
+     },
+     "x": {
+      "description": "X in screenshot pixels. A window target uses the get_window_state PNG; a desktop target uses the native get_desktop_state PNG. The driver reverses Retina backing scale and any window-image downscale.",
+      "type": "number"
+     },
+     "y": {
+      "description": "Y in screenshot pixels from the image selected by target.",
+      "type": "number"
+     }
+    },
+    "required": [],
+    "type": "object"
+   },
+   "name": "click",
+   "read_only": false
+  },
+  {
+   "description": "Double-click at (x, y) or on an AX element identified by element_token.\n\nAX path (element_token provided): performs `AXOpen` when the element advertises it (Finder items, openable list rows/cells); otherwise resolves the element's on-screen center and falls back to a pixel double-click there.\n\nPixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordinates.",
+   "destructive": true,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "delivery_mode": {
+      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": inject without fronting or raising the target — no focus steal. \"foreground\": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with \"foreground\" only for the action that needs it.",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
+     },
+     "element_token": {
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+      "type": "string"
+     },
+     "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "window_id": {
+      "description": "CGWindowID. Omit when element_token is supplied (the token carries it).",
+      "type": "integer"
+     },
+     "x": {
+      "description": "Screen X coordinate (pixel path).",
+      "type": "number"
+     },
+     "y": {
+      "description": "Screen Y coordinate (pixel path).",
+      "type": "number"
+     }
+    },
+    "required": [
+     "pid"
+    ],
+    "type": "object"
+   },
+   "name": "double_click",
+   "read_only": false
+  },
+  {
+   "description": "Right-click against a target pid. Two addressing modes:\n\n- `element_token` (from the last `get_window_state` snapshot) — performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / hidden windows, no cursor move or focus steal. Requires a prior `get_window_state(pid, window_id)` in this turn.\n\n- `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted to the pid. Driver converts image-pixel → screen-point internally. `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).\n\nExactly one of `element_token` or (`x` AND `y`) must be provided. `pid` always required.",
+   "destructive": true,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "delivery_mode": {
+      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": inject without fronting or raising the target — no focus steal. \"foreground\": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with \"foreground\" only for the action that needs it.",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
+     },
+     "element_token": {
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+      "type": "string"
+     },
+     "modifier": {
+      "description": "Modifier keys held during the right-click: cmd/shift/option/ctrl. Pixel path only.",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "window_id": {
+      "description": "CGWindowID. Omit when element_token is supplied (the token carries it).",
+      "type": "integer"
+     },
+     "x": {
+      "description": "X in window-local screenshot pixels. Must be provided together with y.",
+      "type": "number"
+     },
+     "y": {
+      "description": "Y in window-local screenshot pixels. Must be provided together with x.",
+      "type": "number"
+     }
+    },
+    "required": [
+     "pid"
+    ],
+    "type": "object"
+   },
+   "name": "right_click",
+   "read_only": false
+  },
+  {
+   "description": "Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels — the same space get_window_state returns. Top-left origin of the target's window.\n\nUse for: marquee/lasso selection, drag-and-drop, resizing via a handle, scrubbing a slider, repositioning a panel.\n\n`duration_ms` (default 500) is the wall-clock budget for the path between mouse-down and mouse-up; `steps` (default 20) is the number of intermediate mouseDragged events linearly interpolated along the path. Increase both for slower, more human drags; decrease for snap gestures.\n\n`modifier` keys (cmd/shift/option/ctrl) are held across the entire gesture.\n\nWhen `from_zoom` is true, coordinates are in the last zoom image for this pid; the driver maps them back to window coordinates before dispatching.",
+   "destructive": true,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "button": {
+      "description": "Mouse button used for the drag. Default: left.",
+      "enum": [
+       "left",
+       "right",
+       "middle"
+      ],
+      "type": "string"
+     },
+     "delivery_mode": {
+      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": inject without fronting or raising the target — no focus steal. \"foreground\": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with \"foreground\" only for the action that needs it.",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
+     },
+     "duration_ms": {
+      "description": "Wall-clock duration of the drag path between mouseDown and mouseUp. Default: 500.",
+      "maximum": 10000,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "from_x": {
+      "description": "Drag-start X in window-local screenshot pixels. Top-left origin.",
+      "type": "number"
+     },
+     "from_y": {
+      "description": "Drag-start Y in window-local screenshot pixels. Top-left origin.",
+      "type": "number"
+     },
+     "from_zoom": {
+      "description": "When true, coordinates are in the last zoom image for this pid; driver maps back to window coordinates.",
+      "type": "boolean"
+     },
+     "modifier": {
+      "description": "Modifier keys held across the entire gesture: cmd/shift/option/ctrl.",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+     },
+     "scope": {
+      "default": "window",
+      "description": "Use desktop with no pid/window_id for native get_desktop_state screenshot coordinates.",
+      "enum": [
+       "window",
+       "desktop"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "steps": {
+      "description": "Number of intermediate mouseDragged events linearly interpolated along the path. Default: 20.",
+      "maximum": 200,
+      "minimum": 1,
+      "type": "integer"
+     },
+     "target": {
+      "anyOf": [
+       {
+        "description": "Exact capture/input target selected independently for each action.\n\n`display_id=\"primary\"` is the portable desktop target in this release.\nPlatforms that cannot address another display reject it explicitly rather\nthan silently changing coordinate spaces.",
+        "oneOf": [
+         {
+          "additionalProperties": true,
+          "properties": {
+           "kind": {
+            "const": "window",
+            "type": "string"
+           },
+           "pid": {
+            "minimum": 0,
+            "type": "integer"
+           },
+           "window_id": {
+            "minimum": 0,
+            "type": "integer"
+           }
+          },
+          "required": [
+           "kind",
+           "pid",
+           "window_id"
+          ],
+          "type": "object"
+         },
+         {
+          "additionalProperties": true,
+          "properties": {
+           "display_id": {
+            "type": "string"
+           },
+           "kind": {
+            "const": "desktop",
+            "type": "string"
+           }
+          },
+          "required": [
+           "kind",
+           "display_id"
+          ],
+          "type": "object"
+         }
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
+     },
+     "to_x": {
+      "description": "Drag-end X in window-local screenshot pixels.",
+      "type": "number"
+     },
+     "to_y": {
+      "description": "Drag-end Y in window-local screenshot pixels.",
+      "type": "number"
+     },
+     "window_id": {
+      "description": "CGWindowID for the window the pixel coordinates were measured against. Optional only when pid owns exactly one eligible top-level window; otherwise the action refuses with ambiguous_window_target.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "from_x",
+     "from_y",
+     "to_x",
+     "to_y"
+    ],
+    "type": "object"
+   },
+   "name": "drag",
+   "read_only": false
+  },
+  {
+   "description": "Insert text into the target pid via `AXSetAttribute(kAXSelectedText)`. Works for standard Cocoa text fields and text views. No keystrokes are synthesized — special keys (Return / Escape / arrows) go through `press_key` / `hotkey`. For Chromium / Electron inputs that don't implement `kAXSelectedText`, the tool falls back to CGEvent character synthesis automatically when the estimated route stays within the daemon transport budget. Longer synthesized routes are refused before character events and return a safe chunk size; one-call AX insertion remains uncapped.\n\nOptional `element_token` (from the last `get_window_state` snapshot) directs the write to a specific field. Without `element_token`, the write goes to the pid's currently focused element.\n\nWEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, X's compose box): AXValue is not independent proof that the renderer/DOM observed an AX write or synthesized keystrokes. The driver detects this at the element level (an AXWebArea ancestor) and refuses to trust AXValue-only read-back there. Electron AX targets that are web content or cannot be proven native refuse background delivery before mutation because the AX route cannot establish exact renderer focus; use the px form or explicit foreground delivery. Other web-content paths return effect:\"unverifiable\" + escalation, never a false \"confirmed\" (a browser's own native address bar/toolbar stays trusted). For a browser TAB the reliable path is the `page` tool (drives the DOM via CDP); for an embedded web view use this tool's px form: pass x,y (no element_token) to pixel-click the field then type, in one call. NOTE: a px focus-click won't reliably open+focus a CLOSED control; AX-press to open/activate it first (works in the background), then px-type. Always confirm via the screenshot; if px-background still drops, escalate to delivery_mode:\"foreground\".",
+   "destructive": true,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "delay_ms": {
+      "description": "Milliseconds between characters in the CGEvent fallback path. Default 30. Ignored when the AX path succeeds.",
+      "maximum": 200,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "delivery_mode": {
+      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": AX insert, then CGEvent keystrokes if needed — no focus steal; native controls can be confirmed via AXValue read-back, while web-content writes remain effect:\"unverifiable\". \"foreground\": briefly front the window, type, restore the prior frontmost — the explicit last resort for focus-sensitive surfaces (e.g. WhatsApp/Catalyst) where background keystrokes don't land. Re-call with \"foreground\" when a background attempt remains unverifiable and a fresh snapshot shows the text did not appear.",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
+     },
+     "element_token": {
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+      "type": "string"
+     },
+     "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+     },
+     "scope": {
+      "default": "window",
+      "description": "Use desktop with no pid/window_id to type into the frontmost application.",
+      "enum": [
+       "window",
+       "desktop"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "target": {
+      "anyOf": [
+       {
+        "description": "Exact capture/input target selected independently for each action.\n\n`display_id=\"primary\"` is the portable desktop target in this release.\nPlatforms that cannot address another display reject it explicitly rather\nthan silently changing coordinate spaces.",
+        "oneOf": [
+         {
+          "additionalProperties": true,
+          "properties": {
+           "kind": {
+            "const": "window",
+            "type": "string"
+           },
+           "pid": {
+            "minimum": 0,
+            "type": "integer"
+           },
+           "window_id": {
+            "minimum": 0,
+            "type": "integer"
+           }
+          },
+          "required": [
+           "kind",
+           "pid",
+           "window_id"
+          ],
+          "type": "object"
+         },
+         {
+          "additionalProperties": true,
+          "properties": {
+           "display_id": {
+            "type": "string"
+           },
+           "kind": {
+            "const": "desktop",
+            "type": "string"
+           }
+          },
+          "required": [
+           "kind",
+           "display_id"
+          ],
+          "type": "object"
+         }
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
+     },
+     "text": {
+      "description": "Text to insert at the target's cursor.",
+      "type": "string"
+     },
+     "window_id": {
+      "description": "CGWindowID. Omit when element_token is supplied (the token carries it).",
+      "type": "integer"
+     },
+     "x": {
+      "description": "Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_token) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click.",
+      "type": "number"
+     },
+     "y": {
+      "description": "Screenshot-pixel Y of the field (see x).",
+      "type": "number"
+     }
+    },
+    "required": [
+     "text"
+    ],
+    "type": "object"
+   },
+   "name": "type_text",
+   "read_only": false
+  },
+  {
+   "description": "Press and release a single key. Follows the same `delivery_mode` ladder as click/type_text — it does NOT raise the window by default:\n• `background` (default): post to the pid WITHOUT fronting/raising — the auth-message path (Chromium-safe). With element_token it focuses that AX element first. `window_id` only targets; it does not raise.\n• `foreground`: guard and briefly front the exact window, focus an addressed AX element when supplied, send a genuine HID key transition so Chromium content, inline editors, and native menu equivalents receive it, then restore prior frontmost. Requires window_id.\n\nA key press is confirmed only when a bounded native AX value/selection read-back changes on the same control. Otherwise a successfully attempted post remains effect:\"unverifiable\" without implying delivery failure or recommending foreground. Key names: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, plus any letter or digit. Modifiers array: cmd, shift, option/alt, ctrl, fn.",
+   "destructive": true,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "delivery_mode": {
+      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": inject without fronting or raising the target — no focus steal. \"foreground\": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with \"foreground\" only for the action that needs it.",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
+     },
+     "element_token": {
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+      "type": "string"
+     },
+     "key": {
+      "description": "Key name: return, tab, escape, up, down, etc.",
+      "type": "string"
+     },
+     "modifiers": {
+      "description": "Modifier keys: cmd, shift, option/alt, ctrl, fn.",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+     },
+     "scope": {
+      "default": "window",
+      "description": "Use desktop with no pid/window_id to send the key to the frontmost application.",
+      "enum": [
+       "window",
+       "desktop"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "target": {
+      "anyOf": [
+       {
+        "description": "Exact capture/input target selected independently for each action.\n\n`display_id=\"primary\"` is the portable desktop target in this release.\nPlatforms that cannot address another display reject it explicitly rather\nthan silently changing coordinate spaces.",
+        "oneOf": [
+         {
+          "additionalProperties": true,
+          "properties": {
+           "kind": {
+            "const": "window",
+            "type": "string"
+           },
+           "pid": {
+            "minimum": 0,
+            "type": "integer"
+           },
+           "window_id": {
+            "minimum": 0,
+            "type": "integer"
+           }
+          },
+          "required": [
+           "kind",
+           "pid",
+           "window_id"
+          ],
+          "type": "object"
+         },
+         {
+          "additionalProperties": true,
+          "properties": {
+           "display_id": {
+            "type": "string"
+           },
+           "kind": {
+            "const": "desktop",
+            "type": "string"
+           }
+          },
+          "required": [
+           "kind",
+           "display_id"
+          ],
+          "type": "object"
+         }
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
+     },
+     "window_id": {
+      "description": "Target window. Required for delivery_mode:\"foreground\". Does NOT itself raise the window — raising is gated on delivery_mode.",
+      "type": "integer"
+     },
+     "x": {
+      "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_token.",
+      "type": "number"
+     },
+     "y": {
+      "description": "Screenshot-pixel Y (see x).",
+      "type": "number"
+     }
+    },
+    "required": [
+     "key"
+    ],
+    "type": "object"
+   },
+   "name": "press_key",
+   "read_only": false
+  },
+  {
+   "description": "Press a key combination — e.g. `[\"cmd\", \"c\"]` for Copy, `[\"cmd\", \"shift\", \"4\"]` for screenshot selection. Follows the same `delivery_mode` ladder as click/type_text — it does NOT raise the window by default:\n• `background` (default): post the combo to the target pid WITHOUT fronting or raising it — uses the macOS 14+ auth-message envelope so Chromium/Electron accept it as trusted live input. With an AX target, focus that exact element first. No top-level focus steal. `window_id` here only targets the combo; it does not raise.\n• `foreground`: briefly front the window (NSMenu path, < 1 ms via SLPSSetFrontProcessWithOptions) so native menu key-equivalents (Cmd+Z, Cmd+W) dispatch, then restore the prior frontmost — the explicit escalation for menu-bar shortcuts on non-Chromium apps that ignore a background combo. With an AX target or x,y, the focused field receives the chord through the foreground HID queue (needed by native Chromium fields such as the omnibox). Requires window_id.\n\nA combo is never driver-verifiable (no read-back) → effect:\"unverifiable\"; confirm via screenshot. NOTE: a keyboard combo does NOT focus a text field — to type into a backgrounded Electron input, establish real renderer focus with a PIXEL click first, then `type_text`. If an app only accepts paste, call `clipboard_write`, then `clipboard_read` and verify its types (and text when applicable) before selecting or replacing editor content; only then send Cmd+V.\n\nRecognized modifiers: cmd/command, shift, option/alt, ctrl/control, fn. Non-modifier keys use the same vocabulary as `press_key`. Order: modifiers first, one non-modifier last.",
+   "destructive": true,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "delivery_mode": {
+      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": inject without fronting or raising the target — no focus steal. \"foreground\": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with \"foreground\" only for the action that needs it.",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
+     },
+     "element_token": {
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+      "type": "string"
+     },
+     "keys": {
+      "description": "Modifier(s) and one non-modifier key, e.g. [\"cmd\", \"c\"].",
+      "items": {
+       "type": "string"
+      },
+      "minItems": 2,
+      "type": "array"
+     },
+     "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+     },
+     "scope": {
+      "default": "window",
+      "description": "Use desktop with no pid/window_id to send the chord to the frontmost application.",
+      "enum": [
+       "window",
+       "desktop"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "target": {
+      "anyOf": [
+       {
+        "description": "Exact capture/input target selected independently for each action.\n\n`display_id=\"primary\"` is the portable desktop target in this release.\nPlatforms that cannot address another display reject it explicitly rather\nthan silently changing coordinate spaces.",
+        "oneOf": [
+         {
+          "additionalProperties": true,
+          "properties": {
+           "kind": {
+            "const": "window",
+            "type": "string"
+           },
+           "pid": {
+            "minimum": 0,
+            "type": "integer"
+           },
+           "window_id": {
+            "minimum": 0,
+            "type": "integer"
+           }
+          },
+          "required": [
+           "kind",
+           "pid",
+           "window_id"
+          ],
+          "type": "object"
+         },
+         {
+          "additionalProperties": true,
+          "properties": {
+           "display_id": {
+            "type": "string"
+           },
+           "kind": {
+            "const": "desktop",
+            "type": "string"
+           }
+          },
+          "required": [
+           "kind",
+           "display_id"
+          ],
+          "type": "object"
+         }
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
+     },
+     "window_id": {
+      "description": "Target window. Required for delivery_mode:\"foreground\" (the NSMenu activation needs a window). Does NOT itself raise the window — raising is gated on delivery_mode.",
+      "type": "integer"
+     },
+     "x": {
+      "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo (so e.g. Cmd+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach.",
+      "type": "number"
+     },
+     "y": {
+      "description": "Screenshot-pixel Y (see x).",
+      "type": "number"
+     }
+    },
+    "required": [
+     "keys"
+    ],
+    "type": "object"
+   },
+   "name": "hotkey",
+   "read_only": false
+  },
+  {
+   "description": "Set a value on a UI element. Two modes depending on element role:\n\n- **AXPopUpButton / select dropdown**: finds the child option whose title or value matches `value` (case-insensitive) and AXPresses it directly — the native macOS popup menu is never opened, so focus is never stolen. Use this for HTML <select> elements in Safari or any native NSPopUpButton.\n\n- **All other elements**: writes AXValue directly (sliders, steppers, date pickers, native text fields that expose settable AXValue).\n\nFor free-form text entry into web inputs, prefer `type_text_chars` which synthesises key events — AXValue writes are ignored by WebKit.",
+   "destructive": true,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "element_token": {
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+      "type": "string"
+     },
+     "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "value": {
+      "description": "New value. AX will coerce to the element's native type.",
+      "type": "string"
+     },
+     "window_id": {
+      "description": "CGWindowID. Omit when element_token is supplied (the token carries it).",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "pid",
+     "value"
+    ],
+    "type": "object"
+   },
+   "name": "set_value",
+   "read_only": false
+  },
+  {
+   "description": "Scroll the target pid. Two paths, picked by how you address the scroll:\n\n• **Targeted wheel path** — when you pass a target, either `element_token` (preferred) or window-local `x, y` pixels: the driver synthesizes a real mouse-wheel event (CGEventCreateScrollWheelEvent, at that screen point. The renderer hit-tests the wheel at the cursor, so the scroll lands on whatever element is under the point — exactly like physically rolling the wheel over it. This is the ONLY way to scroll a nested `overflow:auto` region (e.g. a scrollable <div> with no tabindex): such regions never take keyboard focus, so the keystroke path below no-ops on them. Use this for inner/nested scrollers in web views.\n\n• **Keystroke path (focused region)** — when you pass NO target (just pid + direction): synthesizes PageDown/PageUp (by='page') or Down/Up arrows (by='line'); horizontal uses Left/Right arrows. Drives the focused / page scroller only.\n\nMapping: by='page' → larger step; by='line' → smaller step; amount = number of wheel notches (targeted path) or keystroke repetitions (keystroke path).",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "amount": {
+      "description": "Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Larger requests are clamped to the maximum. Default: 3.",
+      "maximum": 50,
+      "minimum": 1,
+      "type": "integer"
+     },
+     "by": {
+      "description": "Scroll granularity. Default: line.",
+      "enum": [
+       "line",
+       "page"
+      ],
+      "type": "string"
+     },
+     "delivery_mode": {
+      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": inject without fronting or raising the target — no focus steal. \"foreground\": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with \"foreground\" only for the action that needs it.",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
+     },
+     "direction": {
+      "description": "Scroll direction.",
+      "enum": [
+       "up",
+       "down",
+       "left",
+       "right"
+      ],
+      "type": "string"
+     },
+     "element_token": {
+      "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
+      "type": "string"
+     },
+     "pid": {
+      "description": "Target process ID. Required unless scope is \"desktop\".",
+      "type": "integer"
+     },
+     "scope": {
+      "default": "window",
+      "description": "Use desktop with x,y and no pid/window_id for native get_desktop_state screenshot coordinates.",
+      "enum": [
+       "window",
+       "desktop"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "target": {
+      "anyOf": [
+       {
+        "description": "Exact capture/input target selected independently for each action.\n\n`display_id=\"primary\"` is the portable desktop target in this release.\nPlatforms that cannot address another display reject it explicitly rather\nthan silently changing coordinate spaces.",
+        "oneOf": [
+         {
+          "additionalProperties": true,
+          "properties": {
+           "kind": {
+            "const": "window",
+            "type": "string"
+           },
+           "pid": {
+            "minimum": 0,
+            "type": "integer"
+           },
+           "window_id": {
+            "minimum": 0,
+            "type": "integer"
+           }
+          },
+          "required": [
+           "kind",
+           "pid",
+           "window_id"
+          ],
+          "type": "object"
+         },
+         {
+          "additionalProperties": true,
+          "properties": {
+           "display_id": {
+            "type": "string"
+           },
+           "kind": {
+            "const": "desktop",
+            "type": "string"
+           }
+          },
+          "required": [
+           "kind",
+           "display_id"
+          ],
+          "type": "object"
+         }
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
+     },
+     "window_id": {
+      "description": "CGWindowID of the target window. Required with x/y; optional with element_token (the token carries it).",
+      "type": "integer"
+     },
+     "x": {
+      "description": "Window-local screenshot X (top-left origin of the PNG from get_window_state). With `y`, routes through the pixel-wheel path at this point — use for a scrollable surface that isn't in the AX tree. Requires window_id to anchor the window→screen conversion.",
+      "type": "number"
+     },
+     "y": {
+      "description": "Window-local screenshot Y. See `x`.",
+      "type": "number"
+     }
+    },
+    "required": [
+     "direction"
+    ],
+    "type": "object"
+   },
+   "name": "scroll",
+   "read_only": false
+  },
+  {
+   "description": "List available system clipboard types and optionally return privacy-sensitive plain text. Clipboard content is never retained in telemetry.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "include_text": {
+      "default": false,
+      "description": "Return plain-text clipboard content in addition to the available types.\nClipboard content is privacy-sensitive and is never retained in telemetry.",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "required": [],
+    "type": "object"
+   },
+   "name": "clipboard_read",
+   "read_only": true
+  },
+  {
+   "description": "Replace the system clipboard with exactly one value: plain text, an image from an absolute local path, or a file URL from an absolute local path. Returns the available types for read-back before paste.",
+   "destructive": true,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "file_path": {
+      "description": "Absolute path to a local file to place on the clipboard as a file URL.",
+      "type": "string"
+     },
+     "image_path": {
+      "description": "Absolute path to a local image to place on the clipboard.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that\naccepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "text": {
+      "description": "Plain text to place on the clipboard.",
+      "type": "string"
+     }
+    },
+    "required": [],
+    "type": "object"
+   },
+   "name": "clipboard_write",
+   "read_only": false
+  },
+  {
+   "description": "Return the logical size of the main display in points plus its backing scale factor. Agents click in points; Retina displays have scale_factor 2.0. Requires no TCC permissions.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_screen_size",
+   "read_only": true
+  },
+  {
+   "description": "Capture the full display in true screen pixels, full size unless `max_image_dimension` caps it. Use its PNG as the coordinate source for actions whose target is {kind:\"desktop\",display_id:\"primary\"}. Returns the true screen size and backing scale factor. Vision-only: no AX tree walk.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "max_image_dimension": {
+      "description": "Optional long-edge cap for the returned PNG, in pixels (aspect ratio preserved). Omitted or 0 returns the full-size capture. When the cap downsizes the image, the response reports `screenshot_original_width/height`, and x/y read off it for this session's later scope:\"desktop\" actions (or passed with its `capture_id`) are mapped back to the full-size frame automatically.",
+      "minimum": 0,
+      "type": "integer"
+     },
+     "screenshot_out_file": {
+      "description": "Write PNG here instead of base64.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_desktop_state",
+   "read_only": true
+  },
+  {
+   "description": "Return the current mouse cursor position in screen points (origin top-left).",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_cursor_position",
+   "read_only": true
+  },
+  {
+   "description": "Move a cursor to (x, y). In window scope (default), moves only the agent cursor overlay. With scope=desktop, moves the real OS pointer in native get_desktop_state screenshot coordinates.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "cursor_id": {
+      "description": "Cursor instance to move. Default: 'default'.",
+      "type": "string"
+     },
+     "scope": {
+      "default": "window",
+      "description": "\"window\" (default) moves only the agent cursor overlay; \"desktop\" moves the real OS pointer.",
+      "enum": [
+       "window",
+       "desktop"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "target": {
+      "anyOf": [
+       {
+        "description": "Exact capture/input target selected independently for each action.\n\n`display_id=\"primary\"` is the portable desktop target in this release.\nPlatforms that cannot address another display reject it explicitly rather\nthan silently changing coordinate spaces.",
+        "oneOf": [
+         {
+          "additionalProperties": true,
+          "properties": {
+           "kind": {
+            "const": "window",
+            "type": "string"
+           },
+           "pid": {
+            "minimum": 0,
+            "type": "integer"
+           },
+           "window_id": {
+            "minimum": 0,
+            "type": "integer"
+           }
+          },
+          "required": [
+           "kind",
+           "pid",
+           "window_id"
+          ],
+          "type": "object"
+         },
+         {
+          "additionalProperties": true,
+          "properties": {
+           "display_id": {
+            "type": "string"
+           },
+           "kind": {
+            "const": "desktop",
+            "type": "string"
+           }
+          },
+          "required": [
+           "kind",
+           "display_id"
+          ],
+          "type": "object"
+         }
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
+     },
+     "x": {
+      "description": "Destination X. Window scope: screen points for the agent cursor overlay. Desktop scope: native get_desktop_state screenshot pixels.",
+      "type": "number"
+     },
+     "y": {
+      "description": "Destination Y, in the same space as x.",
+      "type": "number"
+     }
+    },
+    "required": [
+     "x",
+     "y"
+    ],
+    "type": "object"
+   },
+   "name": "move_cursor",
+   "read_only": false
+  },
+  {
+   "description": "Show or hide the agent cursor owned by a session.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "enabled": {
+      "description": "`true` shows the session's agent cursor overlay; `false` hides it.",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "Public label of the session that owns the cursor.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session",
+     "enabled"
+    ],
+    "type": "object"
+   },
+   "name": "set_agent_cursor_enabled",
+   "read_only": false
+  },
+  {
+   "description": "Configure only movement physics and visibility timing for a session cursor.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "arc_flow": {
+      "description": "Arc asymmetry: positive puts the apex near the destination, negative near the start.\nClamped to -1..1 (default 0).",
+      "type": [
+       "number",
+       "null"
+      ]
+     },
+     "arc_size": {
+      "description": "Sideways arc deflection as a fraction of the distance. Clamped to 0..1 (default 0.25).",
+      "type": [
+       "number",
+       "null"
+      ]
+     },
+     "dwell_after_click_ms": {
+      "description": "Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).",
+      "type": [
+       "number",
+       "null"
+      ]
+     },
+     "end_handle": {
+      "description": "Path control-point offset from the end, as a fraction of the distance. Clamped to 0..1\n(default 0.3).",
+      "type": [
+       "number",
+       "null"
+      ]
+     },
+     "glide_duration_ms": {
+      "description": "Fixed glide duration in milliseconds. 0 (the default) uses speed-based timing. Clamped\nto 0..5000.",
+      "type": [
+       "number",
+       "null"
+      ]
+     },
+     "idle_hide_ms": {
+      "description": "Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to\n0..60000 (default 15000).",
+      "type": [
+       "number",
+       "null"
+      ]
+     },
+     "session": {
+      "description": "Public label of the session that owns the cursor. Omitted or null motion fields keep\ntheir current value.",
+      "type": "string"
+     },
+     "spring": {
+      "description": "Post-arrival spring damping: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1\n(default 0.72).",
+      "type": [
+       "number",
+       "null"
+      ]
+     },
+     "start_handle": {
+      "description": "Path control-point offset from the start, as a fraction of the distance. Clamped to\n0..1 (default 0.3).",
+      "type": [
+       "number",
+       "null"
+      ]
+     },
+     "turn_radius": {
+      "description": "Minimum turning radius of the glide path, in points; smaller turns tighter. Clamped to\n1..1000 (default 80).",
+      "type": [
+       "number",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "session"
+    ],
+    "type": "object"
+   },
+   "name": "set_agent_cursor_motion",
+   "read_only": false
+  },
+  {
+   "description": "Select an already-installed cursor theme for a session.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "reduced_motion": {
+      "default": "auto",
+      "description": "Theme animation policy: `on` uses the theme's reduced-motion frames, `off` always\nanimates, `auto` (default) leaves the choice to the host.",
+      "enum": [
+       "auto",
+       "on",
+       "off"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "Public label of the session that owns the cursor.",
+      "type": "string"
+     },
+     "theme_id": {
+      "description": "Id of an installed cursor theme (see `cua-driver cursor-theme list`).",
+      "maxLength": 200,
+      "minLength": 1,
+      "type": "string"
+     }
+    },
+    "required": [
+     "session",
+     "theme_id"
+    ],
+    "type": "object"
+   },
+   "name": "set_agent_cursor_theme",
+   "read_only": false
+  },
+  {
+   "description": "Return the session cursor's theme, semantic playback, position, visibility, and motion.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "session": {
+      "description": "Public label of the session whose cursor to inspect.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session"
+    ],
+    "type": "object"
+   },
+   "name": "get_agent_cursor_state",
+   "read_only": true
+  },
+  {
+   "description": "Report TCC permission status for Accessibility and Screen Recording. By default also raises the system permission dialogs for any missing grants — Apple's request APIs are no-ops when the grant is already active, so this is safe to call repeatedly. Pass {\"prompt\": false} for a purely read-only status check.\n\nReturns: `accessibility` + `screen_recording` (booleans from the TCC preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit probe when `prompt` is true; null on read-only calls), `direct_capture_status` (`ready`, `unavailable`, `timed_out`, `probe_failed`, `blocked_by_screen_recording`, or `not_checked`), `direct_capture_error` (a structured timeout/probe failure when applicable), `direct_capture_verification` (validated source, UTC time, and bundle identity from an explicit grant probe), and `source` (which TCC identity the booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). macOS attributes grants to the responsible process, so a standalone call from a terminal reports the terminal's grants, not the driver's. The prompt-capable ScreenCaptureKit probe never runs when `prompt` is false. Pass `probe_direct_capture:false` with `prompt:true` to register/request only the two required TCC grants before separately explaining Tahoe's direct-capture consent.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "probe_direct_capture": {
+      "description": "When prompting and Screen Recording is granted, also run the live ScreenCaptureKit probe that may raise Tahoe's direct-capture consent. Default true. Set false for a staged Accessibility/Screen Recording request.",
+      "type": "boolean"
+     },
+     "prompt": {
+      "default": false,
+      "description": "Raise the system permission prompts for missing grants. Default false; only a trusted host setup route may set true.",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "check_permissions",
+   "read_only": false
+  },
+  {
+   "description": "Single-call end-to-end driver diagnostics. Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and platform capability status. On macOS, prompt-capable direct capture is deliberately skipped; use `cua-driver permissions grant` to verify it explicitly. cua-driver owns the health model; consumers stay thin.\n\nInput — all optional:\n  {\n    \"include\": [\"<check_name>\", ...],   // run only these\n    \"skip\":    [\"<check_name>\", ...]    // skip these\n  }\nIf both are given, `include` wins.\n\nCanonical check names:\n  macOS  : binary_version, platform_supported, session_active,\n           bundle_identity, tcc_accessibility, tcc_screen_recording,\n           ax_capability, screen_capture_capability\n  Windows: binary_version, platform_supported, session_active,\n           ax_capability (via UIA), screen_capture_capability (via DXGI)\n  Linux  : binary_version, platform_supported, session_active,\n           ax_capability (via AT-SPI), screen_capture_capability (via X11)\n\nOutput — stable contract, schema_version=\"1\":\n  {\n    \"schema_version\": \"1\",\n    \"platform\": \"darwin\" | \"win32\" | \"linux\",\n    \"driver_version\": \"<semver>\",\n    \"overall\": \"ok\" | \"degraded\" | \"failed\",\n    \"checks\": [\n      {\n        \"name\": \"<one of the canonical names above>\",\n        \"status\": \"pass\" | \"fail\" | \"skip\",\n        \"message\": \"<one-line summary, always present>\",\n        \"hint\": \"<remediation step, present when status=fail>\",\n        \"data\": { /* check-specific structured fields */ }\n      },\n      ...\n    ]\n  }\n\n`overall` rules:\n  - `ok`       — every non-skipped check passes\n  - `degraded` — at least one non-core check fails (binary is still usable)\n  - `failed`   — any core check fails (binary_version, platform_supported, session_active)\n\nStability: schema_version=\"1\" is the contract. Future breaking changes will be `\"2\"`. Adding new check names under the same schema_version is non-breaking; consumers must tolerate unknown check names.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "include": {
+      "description": "Only run these checks (canonical names). Wins over `skip`.",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "skip": {
+      "description": "Skip these checks (canonical names). Ignored when `include` is set.",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "type": "object"
+   },
+   "name": "health_report",
+   "read_only": true
+  },
+  {
+   "description": "Return the current cua-driver-rs configuration.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_config",
+   "read_only": true
+  },
+  {
+   "description": "Update cua-driver-rs configuration. Changes to max_image_dimension take effect immediately. The experimental_pip keys are persisted to ~/.cua-driver/config.json and take effect on the next daemon restart (the PiP backend is initialised once at startup).\n\nNote: capture_mode is a per-call param (on get_window_state / click), not a stored setting. Capture modality is selected by each action's target; the old capture_scope config key is retired.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "experimental_pip": {
+      "description": "Enable the experimental picture-in-picture preview window. Applies on next daemon restart.",
+      "type": "boolean"
+     },
+     "experimental_pip_geometry": {
+      "description": "PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart.",
+      "type": "string"
+     },
+     "key": {
+      "description": "Name of a single config field to write ({key, value} shape, matching the CLI `config set` and the Windows/Linux tools). Pair with `value`. Equivalent to passing the field directly.",
+      "type": "string"
+     },
+     "max_image_dimension": {
+      "description": "Max dimension for screenshot resizing (0 = no limit).",
+      "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "value": {
+      "description": "New value for `key`. JSON type depends on the key."
+     }
+    },
+    "type": "object"
+   },
+   "name": "set_config",
+   "read_only": false
+  },
+  {
+   "description": "Return a lightweight snapshot of the desktop: running regular apps and on-screen visible windows with their bounds, z-order, and owner pid.\n\nFor the full AX subtree of a single window (with interactive element indices you can click by), use `get_window_state` instead — that's the heavy per-window tool. This one is a fast discovery read that needs no TCC grants.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_accessibility_tree",
+   "read_only": true
+  },
+  {
+   "description": "Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixel coordinates, with 20% padding added on each side. The output image is at most 500 px wide.\n\nAfter a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates back to full-window space. Coordinate actions return `screenshot_context_missing` when no current snapshot contains a screenshot owned by this session. `from_zoom` actions return `zoom_context_missing` when the zoom was never created or was replaced; call `get_window_state`, then `zoom`, again on the same connection.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "pid": {
+      "description": "Optional target pid. When omitted, the driver resolves the unique current snapshot for this session and window.",
+      "type": "integer"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "window_id": {
+      "description": "CGWindowID from list_windows.",
+      "type": "integer"
+     },
+     "x1": {
+      "description": "Left edge of region in screenshot pixels.",
+      "type": "number"
+     },
+     "x2": {
+      "description": "Right edge of region in screenshot pixels.",
+      "type": "number"
+     },
+     "y1": {
+      "description": "Top edge of region in screenshot pixels.",
+      "type": "number"
+     },
+     "y2": {
+      "description": "Bottom edge of region in screenshot pixels.",
+      "type": "number"
+     }
+    },
+    "required": [
+     "window_id",
+     "x1",
+     "y1",
+     "x2",
+     "y2"
+    ],
+    "type": "object"
+   },
+   "name": "zoom",
+   "read_only": true
+  },
+  {
+   "description": "Legacy browser compatibility tool. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent. Read-only get_text and query_dom remain available by default. Mutating actions require the daemon operator to set CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1 before daemon startup (restart the daemon after changing it); this escape hatch does not provide the typed browser surface's exact binding or existing-profile grant guarantees. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA for read; CDP for execute_javascript when --remote-debugging-port is set), and WKWebView/Tauri/AT-SPI fallbacks.\n\nActions:\n- execute_javascript: Run JS and return the result.\n- get_text: Extract visible text from the page.\n- query_dom: Find elements matching a CSS selector.\n- click_element: Click a CSS-selected element AND animate the agent cursor to its on-screen center first (so the user sees what the agent is doing). Prefer over `execute_javascript('el.click()')` whenever you want visible cursor feedback.\n- insert_text: Insert `text` at whatever currently holds DOM focus in one native operation (CDP Input.insertText) — no synthesized key events, but more durable than a one-shot execute_javascript write since rich-text editors already have to treat it like an IME commit. Try this before type_keystrokes on a contenteditable that discarded an execute_javascript write. Click/focus the target field first.\n- type_keystrokes: Type `text` via real per-character keystroke events into whatever currently holds DOM focus. Slower than insert_text but the most durable rung — use it when insert_text also gets discarded, or the editor's own keydown/keyup handlers need to see real keys. Click/focus the target field first.\n- enable_javascript_apple_events: macOS-only — patch the browser's Preferences to allow JS from Apple Events (Chrome/Brave/Edge, requires user confirmation and a browser restart).",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "description": "Action to perform.",
+      "enum": [
+       "execute_javascript",
+       "get_text",
+       "query_dom",
+       "click_element",
+       "insert_text",
+       "type_keystrokes",
+       "enable_javascript_apple_events"
+      ],
+      "type": "string"
+     },
+     "attributes": {
+      "description": "Element attributes to include in query_dom results.",
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     },
+     "bundle_id": {
+      "description": "Bundle ID of the browser. Required for enable_javascript_apple_events (macOS only).",
+      "type": "string"
+     },
+     "cdp_port": {
+      "description": "Optional, for execute_javascript/insert_text/type_keystrokes: use this exact CDP port instead of auto-discovering one from pid. Needed when the port was opened via the browser's own remote-debugging toggle rather than a launch-time flag, since that path may not answer the auto-discovery probe.",
+      "maximum": 65535,
+      "minimum": 1,
+      "type": "integer"
+     },
+     "css_selector": {
+      "description": "CSS selector for query_dom (e.g. 'a', 'button', 'input', 'h1'-'h6', 'p', 'img', 'select', '*').",
+      "type": "string"
+     },
+     "javascript": {
+      "description": "JavaScript to execute. Required for execute_javascript.",
+      "type": "string"
+     },
+     "pid": {
+      "description": "Target process ID.",
+      "type": "integer"
+     },
+     "selector": {
+      "description": "CSS selector for click_element (e.g. 'button.submit', '#login a').",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "target_url_contains": {
+      "description": "Optional, for execute_javascript/insert_text/type_keystrokes: require exactly one browser tab whose URL contains this substring. Use this on a multi-tab browser — there's no built-in link between window_id and which tab a CDP call reaches.",
+      "type": "string"
+     },
+     "text": {
+      "description": "Text to insert or type. Required for insert_text and type_keystrokes. The target field must already have DOM focus (click/focus it first).",
+      "type": "string"
+     },
+     "user_has_confirmed_enabling": {
+      "description": "Must be true to proceed with enable_javascript_apple_events. This will quit and relaunch the browser.",
+      "type": "boolean"
+     },
+     "window_id": {
+      "description": "Target window ID from list_windows.",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "page",
+   "read_only": false
+  },
+  {
+   "description": "Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, and opaque continuation. Never performs setup — a missing endpoint is a structured browser_requires_setup refusal pointing at browser_prepare.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "continuation": {
+      "description": "Opaque continuation minted by an earlier semantic_v2 response.",
+      "type": "string"
+     },
+     "include_screenshot": {
+      "default": false,
+      "description": "Capture the exact tab viewport as PNG through CDP without selecting the tab or foregrounding its native window. The request refuses if capture cannot be completed.",
+      "type": "boolean"
+     },
+     "pid": {
+      "description": "Native browser process id (bind mode).",
+      "type": "integer"
+     },
+     "query": {
+      "description": "Read-only semantic match over role, accessible name, and visible text.",
+      "type": "string"
+     },
+     "scope_ref": {
+      "description": "Current semantic/content ref whose subtree should be observed.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "snapshot_format": {
+      "description": "Versioned snapshot contract. dom_refs_v1 remains the compatibility default.",
+      "enum": [
+       "dom_refs_v1",
+       "semantic_v2"
+      ],
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped).",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     },
+     "window_id": {
+      "description": "Native window id owned by pid (bind mode).",
+      "type": "integer"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_browser_state",
+   "read_only": true
+  },
+  {
+   "description": "Explicitly prepare an owned DevTools endpoint for a browser. pid is required for an existing process or existing-profile attachment, and optional only for allow_launch=true with an isolated profile. Existing endpoints are detected without side effects. Acting setup for an isolated profile follows the runtime permission mode and optional capability manifest. It requires allow_launch=true, launches a separate browser, and never copies, modifies, or terminates the requested user profile. Without pid, only a platform-attested system Chrome/Edge installation (or a root-owned package payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile attachment is explicit and follows the runtime's immutable permission mode: standard requires an explicit --grant existing-profile launch grant or an embedding authorization host, bounded requires a launch-approved exact resource manifest, and unrestricted requires explicit trusted startup risk acceptance. Ordinary MCP transport approval never proves profile authorization. On proven platforms, an authorized request also permits one bounded exact-window setup: open the recognized browser product's fixed remote-debugging page, toggle its uniquely matched per-instance checkbox, prove the PID-owned loopback endpoint, and close the temporary tab. Every visible effect is reported; ambiguity is refused.",
+   "destructive": true,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "allow_launch": {
+      "description": "Allow a separate driver-owned isolated Chromium process to be launched (default false).",
+      "type": "boolean"
+     },
+     "pid": {
+      "description": "Browser process id to prepare. Required except for a driver-owned isolated_new/isolated_named launch with allow_launch=true.",
+      "type": "integer"
+     },
+     "profile": {
+      "additionalProperties": false,
+      "description": "Driver-owned isolated Chromium profile to launch with allow_launch=true. mode=isolated_new creates a fresh throwaway profile; mode=isolated_named reuses the named driver-owned profile. Never an existing user profile.",
+      "properties": {
+       "mode": {
+        "enum": [
+         "isolated_new",
+         "isolated_named"
+        ],
+        "type": "string"
+       },
+       "name": {
+        "description": "Required only for isolated_named; 1-64 path-safe ASCII characters.",
+        "type": "string"
+       }
+      },
+      "required": [
+       "mode"
+      ],
+      "type": "object"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "strategy": {
+      "additionalProperties": false,
+      "description": "Attach to an already-running browser instead of launching one. kind=existing_profile attaches to the user's running profile at pid/window_id and requires explicit profile authorization.",
+      "properties": {
+       "kind": {
+        "enum": [
+         "existing_profile"
+        ],
+        "type": "string"
+       }
+      },
+      "required": [
+       "kind"
+      ],
+      "type": "object"
+     },
+     "window_id": {
+      "description": "Exact native window approval anchor; required for strategy.kind=existing_profile.",
+      "type": "integer"
+     }
+    },
+    "required": [],
+    "type": "object"
+   },
+   "name": "browser_prepare",
+   "read_only": false
+  },
+  {
+   "description": "Navigate one tab of an exactly-bound browser target to a new URL (http/https/about only). Refused for heuristic bindings. Navigation invalidates all p<snapshot>:<index> refs for the tab.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped).",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     },
+     "url": {
+      "description": "Destination URL (http:, https:, or about:).",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id",
+     "url"
+    ],
+    "type": "object"
+   },
+   "name": "browser_navigate",
+   "read_only": false
+  },
+  {
+   "description": "Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode=\"foreground\" accepts that the browser window may activate (Linux Chromium; for example a browser inside a sandbox). input_route=\"dom_event\" (synthetic el.click(), ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. Refused for heuristic bindings.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "delivery_mode": {
+      "default": "background",
+      "description": "background (default) refuses trusted input where it would activate the browser window (Linux Chromium). foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox).",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
+     },
+     "input_route": {
+      "description": "\"trusted\" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. \"dom_event\": synthetic full-background DOM click, only when explicitly requested. Dispatch does not prove the control activated; refresh page state and verify the expected postcondition.",
+      "enum": [
+       "trusted",
+       "dom_event"
+      ],
+      "type": "string"
+     },
+     "ref": {
+      "description": "Page element ref in the p<snapshot>:<index> namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped).",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     },
+     "x": {
+      "description": "Viewport x (CSS px) — alternative to ref.",
+      "type": "number"
+     },
+     "y": {
+      "description": "Viewport y (CSS px) — alternative to ref.",
+      "type": "number"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id"
+    ],
+    "type": "object"
+   },
+   "name": "browser_click",
+   "read_only": false
+  },
+  {
+   "description": "Type text into an exactly-bound tab via the Input domain. mode=\"insert_text\" (default) uses Input.insertText; mode=\"keystrokes\" dispatches per-character key events. Both insert at the caret, so typing into a field that already holds text appends to it; pass replace=true to set the field instead, or to clear it by typing an empty string. Pass a ref to an editable element from the latest snapshot. A ref is required; heuristic bindings are refused.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "mode": {
+      "description": "insert_text (default): bulk Input.insertText. keystrokes: per-character Input.dispatchKeyEvent.",
+      "enum": [
+       "insert_text",
+       "keystrokes"
+      ],
+      "type": "string"
+     },
+     "ref": {
+      "description": "Page element ref in the p<snapshot>:<index> namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.",
+      "type": "string"
+     },
+     "replace": {
+      "description": "false (default): insert at the caret, appending to whatever the field already holds. true: select the element's whole content first so the text replaces it — with an empty text this clears the field. Replacement goes through the selection, so beforeinput/input still fire and framework state stays consistent.",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped).",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     },
+     "text": {
+      "description": "Text to type.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id",
+     "ref",
+     "text"
+    ],
+    "type": "object"
+   },
+   "name": "browser_type",
+   "read_only": false
+  },
+  {
+   "description": "Inspect or resolve a page-owned JavaScript alert, confirm, prompt, or beforeunload dialog on one exactly-bound tab. This never handles browser permission UI, extension UI, native dialogs, or file pickers. Inspect returns an opaque dialog_id; accept/dismiss require that exact current id. Resolution defaults to background delivery; Linux callers must explicitly request foreground delivery because Chromium's native modal cannot be resolved there without changing foreground posture.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "action": {
+      "description": "inspect returns the current dialog and its dialog_id; accept or dismiss resolves that exact dialog.",
+      "enum": [
+       "inspect",
+       "accept",
+       "dismiss"
+      ],
+      "type": "string"
+     },
+     "delivery_mode": {
+      "default": "background",
+      "description": "Requested foreground posture for accept/dismiss. Linux Chromium requires foreground; inspect is read-only.",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
+     },
+     "dialog_id": {
+      "description": "Opaque current dialog generation returned by action=inspect.",
+      "type": "string"
+     },
+     "prompt_text": {
+      "description": "Sensitive response text, valid only when accepting a prompt dialog.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped).",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id",
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "browser_dialog",
+   "read_only": false
+  },
+  {
+   "description": "Assign one or more explicit absolute local files to an exact live <input type=file> ref through CDP. This bypasses native file pickers, rejects symlinks and non-regular files, and never returns local paths.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "files": {
+      "description": "Absolute paths of 1 to 32 local regular files to assign to the input.",
+      "items": {
+       "description": "Absolute path to one local regular file.",
+       "type": "string"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "type": "array"
+     },
+     "ref": {
+      "description": "Page element ref in the p<snapshot>:<index> namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id from get_browser_state (session-scoped).",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id",
+     "ref",
+     "files"
+    ],
+    "type": "object"
+   },
+   "name": "browser_set_input_files",
+   "read_only": false
+  },
+  {
+   "description": "Trigger one download through an exact live browser ref and save it inside an explicitly approved directory. Requires MCP-host destructive-tool approval, refuses ambiguous or stale capabilities, and never returns the source URL, filename, or destination path.",
+   "destructive": true,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "destination_root": {
+      "description": "Absolute, existing, canonical directory approved to receive the download.",
+      "type": "string"
+     },
+     "ref": {
+      "description": "Live page ref whose activation initiates the download.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. This tool requires the label that owns its browser target, tab, and refs.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque exact tab id from get_browser_state.",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque exact browser target id from get_browser_state.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session",
+     "target_id",
+     "tab_id",
+     "ref",
+     "destination_root"
+    ],
+    "type": "object"
+   },
+   "name": "browser_download",
+   "read_only": false
+  },
+  {
+   "description": "Perform hover, right-click, double-click, scroll, or drag in an exactly-bound browser tab. Semantic refs must declare pointer for hover, right-click, double-click, and drag; scroll accepts a scroll or pointer capability. The trusted route uses CDP Input events and refuses if standalone background posture cannot be preserved. The explicit dom_event route requires a page ref and synthesizes full-background DOM events. Never activates or brings a tab to the foreground.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "action": {
+      "description": "Pointer gesture. scroll needs delta_x or delta_y; drag needs destination_ref or to_x/to_y.",
+      "enum": [
+       "hover",
+       "right_click",
+       "double_click",
+       "scroll",
+       "drag"
+      ],
+      "type": "string"
+     },
+     "delivery_mode": {
+      "default": "background",
+      "description": "background (default) refuses trusted input where it would activate the browser window (Linux Chromium). foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox).",
+      "enum": [
+       "background",
+       "foreground"
+      ],
+      "type": "string"
+     },
+     "delta_x": {
+      "description": "Horizontal scroll delta in CSS pixels.",
+      "type": "number"
+     },
+     "delta_y": {
+      "description": "Vertical scroll delta in CSS pixels.",
+      "type": "number"
+     },
+     "destination_ref": {
+      "description": "Drag destination page ref in the exact same frame.",
+      "type": "string"
+     },
+     "input_route": {
+      "default": "trusted",
+      "description": "trusted sends CDP Input events; dom_event synthesizes DOM events in the page and requires ref.",
+      "enum": [
+       "trusted",
+       "dom_event"
+      ],
+      "type": "string"
+     },
+     "ref": {
+      "description": "Origin page ref. Alternative to x/y.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. This tool requires the label that owns its browser target, tab, and refs.",
+      "type": "string"
+     },
+     "tab_id": {
+      "description": "Opaque tab id minted by get_browser_state.",
+      "type": "string"
+     },
+     "target_id": {
+      "description": "Opaque target id minted by get_browser_state.",
+      "type": "string"
+     },
+     "to_x": {
+      "description": "Drag destination viewport x in CSS pixels.",
+      "type": "number"
+     },
+     "to_y": {
+      "description": "Drag destination viewport y in CSS pixels.",
+      "type": "number"
+     },
+     "x": {
+      "description": "Origin viewport x in CSS pixels.",
+      "type": "number"
+     },
+     "y": {
+      "description": "Origin viewport y in CSS pixels.",
+      "type": "number"
+     }
+    },
+    "required": [
+     "target_id",
+     "tab_id",
+     "session",
+     "action"
+    ],
+    "type": "object"
+   },
+   "name": "browser_pointer",
+   "read_only": false
+  },
+  {
+   "description": "Start trajectory recording for the calling session. Each action-tool invocation (click, right_click, scroll, type_text, press_key, hotkey, set_value) from that session writes a turn folder under `output_dir`. Without `session`, every call on the same connection is recorded, including named-session calls. Other connections and session lifecycle calls (`start_session` / `end_session`) are not recorded. CLI recordings started with `cua-driver recording start` are daemon-wide.\n\nEach turn folder holds:\n\n- `before_state.json` / `after_state.json` — application AX/UIA/AT-SPI state immediately before and after the action.\n- `before.png` / `after.png` — target-window screenshots immediately before and after the action.\n- `evidence.json` — capture status and a stable classification when an expected artifact could not be captured.\n- `app_state.json` — post-action AX/UIA snapshot for the target pid.\n- `screenshot.png` — compatibility alias of `after.png`.\n- `action.json` — tool name, full input arguments, result summary, result-error flag, pid, click point (when applicable), ISO-8601 timestamp.\n- `click.png` — for dispatched click-family actions only, `before.png` with a red marker at the click point. A call refused before target resolution is explicitly not applicable instead.\n\nThe per-turn accessibility walk is bounded like `get_window_state`: `state_timeout_ms` (default 1000) caps each before/after walk, a walk that runs out of budget records the PARTIAL tree, and `evidence.json` carries `truncated`, `truncation_reason`, `nodes_visited`, `nodes_pending` and `timeout_ms` for that phase. A provider that stops answering is abandoned after the budget plus a short grace and the phase is classified `state_capture_timeout`. Actions refused before dispatch (for example an unknown or expired `capture_id`) skip the state walk; their state is classified `not_applicable` / `action_refused_before_dispatch`. Pass `include_accessibility_tree: false` to record screenshots and actions without state.\n\nTurn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restarts at 1 each time recording is (re-)started.\n\n**Video is off by default.** Pass `record_video: true` to also capture the main display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. The recording is torn down automatically when the MCP client disconnects.\n\n**macOS uses native ScreenCaptureKit** (daemon-owned SCStream + SCRecordingOutput) under the daemon's Screen Recording grant, with no ffmpeg subprocess. Requires macOS 15.0+. On macOS 26 (Tahoe), the first direct capture can also show a one-time consent asking to let Cua Driver bypass the system private window picker and directly access your screen and audio; choose Allow, or run `cua-driver permissions grant` beforehand to answer it up front. The recorder captures screen video only and does not enable system-audio capture.\n\n**Windows + Linux use an ffmpeg subprocess** (`gdigrab` / `x11grab` + libx264). Requires ffmpeg on PATH (winget install Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or fails on startup the per-turn capture (screenshots + action.json) still runs and the session's `last_error` field carries the diagnostic.\n\nState persists for the life of the daemon; a restart resets to disabled with no on-disk state. Call `stop_recording` to disable + finalize the mp4.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "include_accessibility_tree": {
+      "default": true,
+      "description": "Default true. Set false to skip the per-turn before/after accessibility walks entirely; screenshots, click markers and action.json are still recorded and state is classified `state_capture_disabled`.",
+      "type": "boolean"
+     },
+     "output_dir": {
+      "description": "Absolute or ~-rooted directory where turn folders and (when enabled) the video file are written.",
+      "type": "string"
+     },
+     "record_video": {
+      "description": "Capture the main display to <output_dir>/recording.mp4. Default: false. Set to true to also capture the main display to recording.mp4 (otherwise only the per-turn screenshots + JSON are recorded). On macOS this uses native ScreenCaptureKit (macOS 15.0+); macOS 26 can show a one-time direct screen-capture consent on first use (see `cua-driver permissions grant`). On Windows + Linux it requires ffmpeg on PATH.",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "state_timeout_ms": {
+      "default": 1000,
+      "description": "Wall-clock budget in milliseconds for EACH per-turn before/after accessibility walk (same default and bounds as get_window_state's timeout_ms). A walk that runs out records the partial tree and marks it truncated in evidence.json.",
+      "maximum": 120000,
+      "minimum": 100,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "output_dir"
+    ],
+    "type": "object"
+   },
+   "name": "start_recording",
+   "read_only": false
+  },
+  {
+   "description": "Stop trajectory recording. Disables further per-turn capture and, when video was enabled, gracefully terminates the ffmpeg subprocess so the mp4's moov atom is finalized (the file is playable). Calling stop on an already-stopped session is a no-op. The response carries `last_video_path` pointing at the finalized mp4 (when video was on).\n\nA manual `stop_recording` is **unconditional** — it stops whatever recording is active regardless of which session started it. Ownership-scoped teardown (so one client disconnecting can't stop a recording a later client started) is handled by the registry's `session_end` lifecycle hook, not by this tool.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "stop_recording",
+   "read_only": false
+  },
+  {
+   "description": "Report the current trajectory recorder state: whether recording is enabled, the output directory (when enabled), and the 1-based counter for the next turn folder that will be written. Counter increments on every recorded action tool call and resets to 1 each time recording is (re-)enabled.\n\nPure read-only.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "get_recording_state",
+   "read_only": true
+  },
+  {
+   "description": "Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. `dir` must point at a directory previously written by `start_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the recorded tool is called with its recorded `arguments` via the same dispatch path an MCP / CLI call uses.\n\nCaveats:\n- Element-token actions (`click({pid, element_token})` etc.) will fail because element tokens are per-snapshot and don't survive across sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools replay cleanly. Failures are reported but don't stop replay unless `stop_on_error` is true.\n- `get_window_state` and other read-only tools are NOT currently recorded, so replays do not re-populate the per-(pid, window_id) element cache.\n- If recording is ENABLED while replay runs, the replay itself is recorded into the currently configured output directory.  That's deliberate: recording a replay against a new build and diffing the two trajectories is the regression-test workflow.",
+   "destructive": true,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "delay_ms": {
+      "description": "Milliseconds to sleep between turns, for human-observable pacing. Default 500.",
+      "maximum": 10000,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "dir": {
+      "description": "Trajectory directory previously written by `start_recording`. Absolute or ~-rooted.",
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "stop_on_error": {
+      "description": "Stop replay on the first tool-call error. Default true — set false to best-effort through the full trajectory.",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "dir"
+    ],
+    "type": "object"
+   },
+   "name": "replay_trajectory",
+   "read_only": false
+  },
+  {
+   "description": "Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg). Two-step and confirmed: called without `confirm` it only REPORTS the exact install command for this platform's package manager; pass `confirm: true` to actually run it. No-op if ffmpeg is already on PATH. ffmpeg is run as a separate process, never linked into the driver.",
+   "destructive": true,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "confirm": {
+      "description": "Run the install command. Without it, only the planned command is reported.",
+      "type": "boolean"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "install_ffmpeg",
+   "read_only": false
+  },
+  {
+   "description": "Optionally create or return a lifecycle session before acting. For multi-call work, prefer a short public `session` label and repeat it on every call that accepts it; an omitted value uses the authenticated transport lease's implicit session instead. This tool is optional because an ordinary action can create or reuse a named run directly. Use it to set the initial cursor theme before acting or to revive a public name after it has ended; ordinary actions never revive ended names. `capture_scope` is deprecated compatibility input; new callers select window or desktop modality per action. Idempotent.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "capture_scope": {
+      "description": "Deprecated compatibility policy. New callers select window or desktop\nmodality on each action instead of storing it on the session.",
+      "enum": [
+       "auto",
+       "window",
+       "desktop"
+      ],
+      "type": "string"
+     },
+     "cursor_theme": {
+      "description": "Optional initial cursor theme. The host applies it before the cursor is\nfirst made visible, avoiding a flash of the default theme.",
+      "properties": {
+       "reduced_motion": {
+        "default": "auto",
+        "enum": [
+         "auto",
+         "on",
+         "off"
+        ],
+        "type": "string"
+       },
+       "theme_id": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "theme_id"
+      ],
+      "type": [
+       "object",
+       "null"
+      ]
+     },
+     "session": {
+      "description": "Optional stable public label for this run (e.g. \"research-run-1\").\nWhen omitted, the authenticated transport lease's implicit session is\ncreated or returned.",
+      "type": "string"
+     }
+    },
+    "required": [],
+    "type": "object"
+   },
+   "name": "start_session",
+   "read_only": false
+  },
+  {
+   "description": "Deprecated compatibility tool for legacy capture-scope sessions. New callers select window or desktop modality on each action. No deescalate_session tool exists.",
+   "destructive": false,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "detail": {
+      "description": "Optional bounded diagnostic detail. Never use secrets or page content.",
+      "maxLength": 200,
+      "type": "string"
+     },
+     "reason": {
+      "description": "Why the window-scoped attempt failed and desktop capture is needed.",
+      "enum": [
+       "ax_tree_pixel_mismatch",
+       "background_delivery_failed",
+       "foreground_ineffective",
+       "no_window_target",
+       "other"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "Public label of the legacy capture-scope session to escalate.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "session",
+     "reason"
+    ],
+    "type": "object"
+   },
+   "name": "escalate_session",
+   "read_only": false
+  },
+  {
+   "description": "Read content-free lifecycle, cursor, recording, and idle status for one session visible to this authenticated transport. Omit `session` to inspect its implicit session.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "session": {
+      "description": "Optional public label. When omitted, inspect the caller's attached\nimplicit session.",
+      "type": "string"
+     }
+    },
+    "required": [],
+    "type": "object"
+   },
+   "name": "get_session",
+   "read_only": true
+  },
+  {
+   "description": "List content-free lifecycle summaries attached to this authenticated transport lease. It does not enumerate other callers' sessions.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "cursor": {
+      "description": "Opaque continuation cursor returned by a previous call.",
+      "type": "string"
+     },
+     "limit": {
+      "description": "Maximum number of content-free summaries to return (default 50, max\n100). Ordinary agent transports are scoped to their own lease.",
+      "minimum": 0,
+      "type": [
+       "integer",
+       "null"
+      ]
+     }
+    },
+    "required": [],
+    "type": "object"
+   },
+   "name": "list_sessions",
+   "read_only": true
+  },
+  {
+   "description": "Deprecated compatibility alias that reads a live legacy session's capture policy. Use get_session for lifecycle state.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "session": {
+      "description": "Optional public label. When omitted, inspect the caller's attached\nimplicit session.",
+      "type": "string"
+     }
+    },
+    "required": [],
+    "type": "object"
+   },
+   "name": "get_session_state",
+   "read_only": true
+  },
+  {
+   "description": "End one visible lifecycle session and run its cursor, recording, configuration, and other cleanup hooks exactly once. Omit `session` to end the authenticated transport's implicit session. Idempotent.",
+   "destructive": true,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": true,
+    "properties": {
+     "session": {
+      "description": "Optional public label to end. When omitted, end the caller's attached\nimplicit session.",
+      "type": "string"
+     }
+    },
+    "required": [],
+    "type": "object"
+   },
+   "name": "end_session",
+   "read_only": false
+  },
+  {
+   "description": "Check the saved stable/nightly Cua Driver channel for a release on GitHub. Returns current and selected channels, current and latest versions, an `update_available` boolean, the install one-liner, and the release notes URL. Read-only — never installs. Pacman-owned Linux executables return package-manager guidance without checking GitHub. Mirror of `cua-driver check-update --json`.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "type": "object"
+   },
+   "name": "check_for_update",
+   "read_only": true
+  },
+  {
+   "description": "Preview or install one Driver-managed optional extension. The first call without confirm returns the exact signed artifact, destination, license, source, and trust plan without mutation. Re-call with confirm=true to perform that exact verified installation.",
+   "destructive": true,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "confirm": {
+      "description": "Install the previewed extension. Omit or false for a read-only plan.",
+      "type": "boolean"
+     },
+     "name": {
+      "description": "Extension to preview or install. Only perception (the local visual-region parser used by parse_visual_regions) is available.",
+      "enum": [
+       "perception"
+      ],
+      "type": "string"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name"
+    ],
+    "type": "object"
+   },
+   "name": "install_extension",
+   "read_only": false
+  },
+  {
+   "description": "Parse one immutable registered capture into model-neutral text and icon regions.",
+   "destructive": false,
+   "idempotent": true,
+   "input_schema": {
+    "additionalProperties": false,
+    "description": "Parse one immutable screenshot capture. Pass the `capture_id` returned by\n`get_window_state` or `get_desktop_state`; the Driver capture registry\nresolves it to the exact pixels and action-coordinate transform.",
+    "properties": {
+     "capture_id": {
+      "description": "`capture_id` of a screenshot returned by get_window_state or get_desktop_state.",
+      "minLength": 1,
+      "type": "string"
+     },
+     "options": {
+      "additionalProperties": false,
+      "default": {},
+      "description": "Optional, model-neutral controls for one bounded parse.",
+      "properties": {
+       "kinds": {
+        "anyOf": [
+         {
+          "items": {
+           "enum": [
+            "text",
+            "icon"
+           ]
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "description": "Region kinds to return (`text`, `icon`). Omit for all kinds."
+       },
+       "max_regions": {
+        "description": "Return at most this many regions.",
+        "minimum": 1,
+        "type": "integer"
+       },
+       "min_confidence": {
+        "description": "Drop regions below this confidence (0 to 1).",
+        "maximum": 1,
+        "minimum": 0,
+        "type": "number"
+       }
+      },
+      "required": [],
+      "type": "object"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     }
+    },
+    "required": [
+     "capture_id"
+    ],
+    "type": "object"
+   },
+   "name": "parse_visual_regions",
+   "read_only": true
+  }
+ ]
+}

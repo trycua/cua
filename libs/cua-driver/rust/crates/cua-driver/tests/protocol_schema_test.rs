@@ -5,7 +5,9 @@
 //! advertised `enum` is string-only, that `type_text_chars` is hidden, the
 //! `list_windows.on_screen_only` knob, the `set_agent_cursor_motion` Bezier
 //! knobs, delivery and scope enums, and the `set_config.capture_mode` enum and
-//! the per-session capture-scope contract.
+//! the per-session capture-scope contract. Every advertised top-level parameter
+//! must carry a non-empty description: the generated Cua Driver MCP reference
+//! renders it verbatim.
 
 #![cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 
@@ -67,6 +69,7 @@ fn tools_list_schema_shape() {
             .unwrap_or_else(|| panic!("{name} not found in tools/list"))["inputSchema"]
             ["properties"]
     };
+    let mut undocumented = Vec::new();
     for tool in tools {
         let name = tool["name"].as_str().expect("tool name");
         let schema = &tool["inputSchema"];
@@ -74,6 +77,16 @@ fn tools_list_schema_shape() {
             schema["type"], "object",
             "{name} must advertise a plain object input schema"
         );
+        if let Some(params) = schema["properties"].as_object() {
+            for (param, param_schema) in params {
+                let described = param_schema["description"]
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty());
+                if !described {
+                    undocumented.push(format!("{name}.{param}"));
+                }
+            }
+        }
         for unsupported in ["anyOf", "oneOf", "allOf"] {
             assert!(
                 schema.get(unsupported).is_none(),
@@ -84,6 +97,11 @@ fn tools_list_schema_shape() {
             assert_string_enums(&tool[field], &format!("{name}.{field}"));
         }
     }
+    assert!(
+        undocumented.is_empty(),
+        "advertised parameters without a description (add one at the tool's schema source): {}",
+        undocumented.join(", ")
+    );
     let enum_contains = |schema: &serde_json::Value, expected: &str| {
         schema["enum"]
             .as_array()
@@ -168,6 +186,13 @@ fn tools_list_schema_shape() {
         "hotkey",
         "scroll",
         "browser_dialog",
+        // Trusted browser input may activate the browser window (Linux
+        // Chromium); foreground accepts that.
+        "browser_click",
+        "browser_pointer",
+        // macOS set_value has no delivery ladder.
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        "set_value",
     ];
     for tool in DELIVERY_MODE_TOOLS {
         let delivery = &properties(tool)["delivery_mode"];
@@ -329,6 +354,10 @@ fn legacy_page_mutation_requires_unrestricted_launch_and_operator_opt_in() {
 
 #[test]
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "host desktop: macOS serves the knobs only with the overlay window on the real display; Linux runs it unignored"
+)]
 fn cursor_motion_knobs_are_applied() {
     // macOS serves cursor-overlay controls only when the daemon hosts the
     // overlay; Linux applies the knobs without one.

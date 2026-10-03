@@ -1,0 +1,102 @@
+---
+title: Manage sandbox lifecycle
+description: Create, keep, reconnect to, list, suspend and delete sandboxes, keep cloud sandboxes alive, and run many at once.
+---
+
+Sandboxes run on this machine by default, so the examples pass no location.
+Every lifecycle call takes the same `local=` switch as `Sandbox.create`.
+
+## Ephemeral or kept
+
+```python test="container" id="ephemeral-or-persistent" session="local" prelude="local-cleanup"
+from cua_sandbox import Image, Sandbox
+
+# Deleted when the block exits.
+async with Sandbox.ephemeral(Image.linux()) as sb:
+    ...
+
+# Kept until you delete it.
+sb = await Sandbox.create(Image.linux(), name="dev")
+await sb.disconnect()          # the sandbox keeps running
+```
+
+Disconnecting never stops a sandbox. A connection and a sandbox have separate
+lifetimes.
+
+## Inspect
+
+```python test="container" id="inspect" session="local" prelude="local-cleanup"
+print(sb.id)                   # its ref, like local:dev: what connect() and delete() take
+info = await sb.info()
+info.status                    # provisioning, starting, ready or stopped
+info.location                  # local or cloud
+info.services                  # {"web": 8000, ...}
+info.expires_at                # cloud: when the sandbox lapses without a keep-alive
+info.provider_details          # backend internals (local runtime; cloud pool and claim)
+```
+
+| Status | Meaning |
+| --- | --- |
+| `provisioning` | Capacity is being found or created (image pull, cloud capacity) |
+| `starting` | Booting, or `wait_for` probes have not passed yet |
+| `ready` | Running and every probe passed |
+| `stopped` | Exited, suspended or released |
+
+Refs are `local:<name>`, `cloud:<name>` or `direct:<host:port>`. A bare name
+works when it is unique; otherwise the call raises `AmbiguousSandbox`.
+
+## Reconnect, list, delete
+
+```python test="container" id="reconnect-list-delete" session="local" prelude="local-cleanup"
+sb = await Sandbox.connect("dev")
+for s in await Sandbox.list():
+    print(s.name, s.status, s.location)
+await Sandbox.suspend("dev")
+sb = await Sandbox.resume("dev")
+await Sandbox.delete("dev")
+```
+
+`await sb.destroy()` deletes the sandbox you hold. Suspend, resume and restart
+are local only: in the cloud `suspend` and `restart` raise `Unsupported`, and
+`resume` of a running sandbox reconnects. The CLI and the SDK share local state
+in `~/.cua/sandboxes`, so either can reconnect to the other's sandboxes.
+
+```bash test="cli-shape" id="cua-sb-create-linux"
+cua sb create linux --name dev
+cua sb ls                               # local and cloud; --local or --cloud filters
+cua sb info dev
+cua sb suspend dev && cua sb resume dev
+cua sb keep-alive dev --for 2h          # cloud
+cua sb rm dev -f
+```
+
+## Cloud lifetime
+
+A cloud sandbox has a TTL (15 minutes by default) that the SDK renews while
+your process holds it. When the process exits, it lapses after the TTL. Set a
+longer TTL or extend it:
+
+```python test="docs" id="cloud-lifetime" session="cloud" prelude="fakefleet,image"
+from datetime import timedelta
+from cua_sandbox import CloudOptions
+
+sb = await Sandbox.create(image, cloud=CloudOptions(claim_ttl=timedelta(hours=2)))
+await sb.keep_alive(minutes=60)
+```
+
+- `cloud=` implies the cloud; passing it with `local=True` is an error.
+- `sb.to_dict()` and `Sandbox.from_dict(...)` carry a cloud sandbox to another
+  process.
+- With `cua daemon` running, CLI-created cloud sandboxes keep being renewed
+  after the command exits.
+
+Local sandboxes run until you delete them. For pool and claim TTLs, see
+[Capacity and claims](/fleets/guides/capacity-and-claims#expiry).
+
+## Run many at once
+
+`Sandbox.ephemeral` is async, so `asyncio.gather` runs sandboxes in parallel.
+Cap concurrency with an `asyncio.Semaphore` (every local sandbox uses host CPU,
+memory and disk) and pass `return_exceptions=True` so one failure does not
+cancel the rest. In the cloud, one image runs at most 10 at once unless you
+raise `CloudOptions(max_pool_size=...)`.

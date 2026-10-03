@@ -100,6 +100,7 @@
           },
           "element_token": {
             "default": null,
+            "pattern": "^s[0-9a-f]{8}:[0-9]+$",
             "type": "string"
           },
           "session": {
@@ -583,7 +584,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           },
           "to_x": {
             "type": "number"
@@ -826,6 +828,7 @@
             "type": "string"
           },
           "reason": {
+            "description": "Why the window-scoped attempt failed and desktop capture is needed.",
             "enum": [
               "ax_tree_pixel_mismatch",
               "background_delivery_failed",
@@ -836,6 +839,7 @@
             "type": "string"
           },
           "session": {
+            "description": "Public label of the legacy capture-scope session to escalate.",
             "type": "string"
           }
         },
@@ -934,6 +938,7 @@
         "additionalProperties": false,
         "properties": {
           "session": {
+            "description": "Public label of the session whose cursor to inspect.",
             "type": "string"
           }
         },
@@ -2029,7 +2034,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           }
         },
         "required": [
@@ -2211,6 +2217,7 @@
         "description": "Exact, immediate-child application menu path to resolve and invoke through\nthe operating system's accessibility API. Path labels are matched after\ntrimming surrounding whitespace and otherwise remain case-sensitive.",
         "properties": {
           "path": {
+            "description": "Menu labels from the top-level menu to the item, e.g. `[\"File\", \"Save As...\"]`\n(1 to 16 labels).",
             "items": {
               "maxLength": 200,
               "minLength": 1,
@@ -2221,6 +2228,7 @@
             "type": "array"
           },
           "pid": {
+            "description": "Process ID of the application that owns the menu.",
             "minimum": 1,
             "type": "integer"
           },
@@ -2229,6 +2237,7 @@
             "type": "string"
           },
           "window_id": {
+            "description": "Window ID from list_windows whose menu is invoked.",
             "minimum": 1,
             "type": "integer"
           }
@@ -2849,12 +2858,14 @@
                 "type": "null"
               }
             ],
-            "description": "Preferred per-call target. New callers should set this field."
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           },
           "x": {
+            "description": "Destination X: window-local screenshot pixels for a window target, native\nget_desktop_state screenshot pixels for the desktop.",
             "type": "number"
           },
           "y": {
+            "description": "Destination Y, in the same space as `x`.",
             "type": "number"
           }
         },
@@ -3038,6 +3049,7 @@
         "description": "Parse one immutable screenshot capture. Pass the `capture_id` returned by\n`get_window_state` or `get_desktop_state`; the Driver capture registry\nresolves it to the exact pixels and action-coordinate transform.",
         "properties": {
           "capture_id": {
+            "description": "`capture_id` of a screenshot returned by get_window_state or get_desktop_state.",
             "minLength": 1,
             "type": "string"
           },
@@ -3063,13 +3075,16 @@
                   {
                     "type": "null"
                   }
-                ]
+                ],
+                "description": "Region kinds to return (`text`, `icon`). Omit for all kinds."
               },
               "max_regions": {
+                "description": "Return at most this many regions.",
                 "minimum": 1,
                 "type": "integer"
               },
               "min_confidence": {
+                "description": "Drop regions below this confidence (0 to 1).",
                 "maximum": 1,
                 "minimum": 0,
                 "type": "number"
@@ -3594,7 +3609,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           }
         },
         "required": [
@@ -3853,7 +3869,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           },
           "x": {
             "type": "number"
@@ -4038,9 +4055,11 @@
         "additionalProperties": false,
         "properties": {
           "enabled": {
+            "description": "`true` shows the session's agent cursor overlay; `false` hides it.",
             "type": "boolean"
           },
           "session": {
+            "description": "Public label of the session that owns the cursor.",
             "type": "string"
           }
         },
@@ -4089,57 +4108,67 @@
         "additionalProperties": false,
         "properties": {
           "arc_flow": {
+            "description": "Arc asymmetry: positive puts the apex near the destination, negative near the start.\nClamped to -1..1 (default 0).",
             "type": [
               "number",
               "null"
             ]
           },
           "arc_size": {
+            "description": "Sideways arc deflection as a fraction of the distance. Clamped to 0..1 (default 0.25).",
             "type": [
               "number",
               "null"
             ]
           },
           "dwell_after_click_ms": {
+            "description": "Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).",
             "type": [
               "number",
               "null"
             ]
           },
           "end_handle": {
+            "description": "Path control-point offset from the end, as a fraction of the distance. Clamped to 0..1\n(default 0.3).",
             "type": [
               "number",
               "null"
             ]
           },
           "glide_duration_ms": {
+            "description": "Fixed glide duration in milliseconds. 0 (the default) uses speed-based timing. Clamped\nto 0..5000.",
             "type": [
               "number",
               "null"
             ]
           },
           "idle_hide_ms": {
+            "description": "Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to\n0..60000 (default 15000).",
             "type": [
               "number",
               "null"
             ]
           },
           "session": {
+            "description": "Public label of the session that owns the cursor. Omitted or null motion fields keep\ntheir current value.",
             "type": "string"
           },
           "spring": {
+            "description": "Post-arrival spring damping: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1\n(default 0.72).",
             "type": [
               "number",
               "null"
             ]
           },
           "start_handle": {
+            "description": "Path control-point offset from the start, as a fraction of the distance. Clamped to\n0..1 (default 0.3).",
             "type": [
               "number",
               "null"
             ]
           },
           "turn_radius": {
+            "description": "Minimum turning radius of the glide path, in points; smaller turns tighter. Clamped to\n1..1000 (default 80).",
             "type": [
               "number",
               "null"
@@ -4231,6 +4260,7 @@
         "properties": {
           "reduced_motion": {
             "default": "auto",
+            "description": "Theme animation policy: `on` uses the theme's reduced-motion frames, `off` always\nanimates, `auto` (default) leaves the choice to the host.",
             "enum": [
               "auto",
               "on",
@@ -4239,9 +4269,11 @@
             "type": "string"
           },
           "session": {
+            "description": "Public label of the session that owns the cursor.",
             "type": "string"
           },
           "theme_id": {
+            "description": "Id of an installed cursor theme (see `cua-driver cursor-theme list`).",
             "maxLength": 200,
             "minLength": 1,
             "type": "string"
@@ -4331,10 +4363,12 @@
         "additionalProperties": false,
         "properties": {
           "height": {
+            "description": "New height, in the same units as list_windows bounds.",
             "minimum": 1,
             "type": "number"
           },
           "pid": {
+            "description": "Process ID that owns the window.",
             "minimum": 1,
             "type": "integer"
           },
@@ -4343,17 +4377,21 @@
             "type": "string"
           },
           "width": {
+            "description": "New width, in the same units as list_windows bounds.",
             "minimum": 1,
             "type": "number"
           },
           "window_id": {
+            "description": "Window ID from list_windows.",
             "minimum": 1,
             "type": "integer"
           },
           "x": {
+            "description": "New left edge in the desktop coordinate space reported by list_windows.",
             "type": "number"
           },
           "y": {
+            "description": "New top edge in the desktop coordinate space reported by list_windows.",
             "type": "number"
           }
         },
@@ -4739,7 +4777,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           },
           "text": {
             "type": "string"

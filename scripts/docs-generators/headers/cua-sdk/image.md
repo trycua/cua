@@ -1,0 +1,1 @@
+`canonical_image` names one public repository per OS; `CUA_IMAGE_LINUX`, `CUA_IMAGE_WINDOWS` and `CUA_IMAGE_MACOS` override it. The [image catalog details](/cua-sdk/reference/os-image-catalog) lists each image's variants, and [runtime support](/cua-sdk/reference/runtime-support) where each one runs.

@@ -4,7 +4,7 @@ This directory contains examples demonstrating how to use the `@trycua/agent` cl
 
 ## Browser Example
 
-### `browser-example.html`
+### `playground-example.html`
 
 A simple HTML page that demonstrates using the Cua Agent Client in a browser environment.
 
@@ -57,19 +57,6 @@ A simple HTML page that demonstrates using the Cua Agent Client in a browser env
 - `openai/gpt-4`
 - `huggingface-local/microsoft/UI-TARS-7B`
 
-**Note:** Make sure you have a Cua agent proxy server running at the specified URL before testing.
-
-## Running Agent Proxy Server
-
-To test the examples, you'll need a Cua agent proxy server running:
-
-```bash
-# HTTP server (default port 8000)
-python -m agent.proxy.cli
-
-# P2P server
-python -m agent.proxy.cli --mode p2p
-
-# Both HTTP and P2P
-python -m agent.proxy.cli --mode both
-```
+**Note:** A Cua agent proxy must be running at the URL you enter. The request
+handlers live in `cua_agent.proxy` ([libs/python/agent](../../../python/agent));
+`python -m cua_agent.proxy.examples` sends sample requests to one.

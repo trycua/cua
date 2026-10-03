@@ -40,13 +40,28 @@ PATH_MOD_RE = re.compile(r'#\[path\s*=\s*"([^"]+)"\]')
 COMMAND_BOUNDARY_RE = re.compile(r"\bcargo\s|Invoke-CargoTest\b|\brun_test\s|\n\s*\n")
 
 
+def _is_ignore_attribute(lines: list[str], index: int) -> bool:
+    """`#[ignore...]`, or a `#[cfg_attr(<cfg>, ignore...)]` spanning any lines."""
+    stripped = lines[index].lstrip()
+    if stripped.startswith("#[ignore"):
+        return True
+    if not stripped.startswith("#[cfg_attr("):
+        return False
+    attribute = []
+    for following in lines[index:]:
+        attribute.append(following.strip())
+        if following.rstrip().endswith(")]"):
+            break
+    return re.search(r"(?:,|\()\s*ignore\b", " ".join(attribute)) is not None
+
+
 def _ignored_in_source(text: str) -> list[str]:
     """Return ignored test names, expanding ignored `macro_rules!` rows."""
     lines = text.splitlines()
     names: list[str] = []
     ignored_macros: set[str] = set()
     for index, line in enumerate(lines):
-        if not line.lstrip().startswith("#[ignore"):
+        if not _is_ignore_attribute(lines, index):
             continue
         for following in lines[index + 1 :]:
             match = FN_RE.match(following)
@@ -251,3 +266,13 @@ def test_inventory_expands_macro_rows_and_support_modules() -> None:
 )
 def test_whole_binary_detection_is_scoped_to_one_command(runner: str, selected: bool) -> None:
     assert runs_whole_binary_ignored(runner, "demo_test") is selected
+
+
+def test_platform_conditional_ignores_are_inventoried() -> None:
+    source = (
+        '#[test]\n#[cfg_attr(\n    target_os = "macos",\n    ignore = "desktop"\n)]\n'
+        "fn wrapped_row() {}\n"
+        '#[cfg_attr(windows, ignore = "desktop")]\nfn one_line_row() {}\n'
+        '#[cfg_attr(windows, should_panic)]\nfn not_ignored() {}\n'
+    )
+    assert _ignored_in_source(source) == ["wrapped_row", "one_line_row"]

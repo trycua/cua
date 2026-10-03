@@ -112,6 +112,10 @@ enum Location {
 struct PointerRequest {
     action: PointerAction,
     route: InputRoute,
+    /// `delivery_mode="foreground"`: the caller accepts that trusted input
+    /// may activate the browser's own window (platforms whose trusted route
+    /// cannot stay in the background, such as Linux Chromium).
+    foreground: bool,
     origin: Location,
     destination: Option<Location>,
     delta_x: f64,
@@ -169,6 +173,7 @@ fn parse_request(args: &Value) -> Result<PointerRequest, String> {
             .and_then(Value::as_str)
             .unwrap_or("trusted"),
     )?;
+    let foreground = super::tools::parse_delivery_mode(args)?;
     let origin = one_location(args, "ref", "x", "y")?
         .ok_or_else(|| "browser_pointer needs a ref or x/y coordinates".to_owned())?;
     let destination = one_location(args, "destination_ref", "to_x", "to_y")?;
@@ -200,6 +205,7 @@ fn parse_request(args: &Value) -> Result<PointerRequest, String> {
     Ok(PointerRequest {
         action,
         route,
+        foreground,
         origin,
         destination,
         delta_x,
@@ -301,8 +307,9 @@ impl BrowserPointerTool {
                         "target_id": { "type": "string", "description": "Opaque target id minted by get_browser_state." },
                         "tab_id": { "type": "string", "description": "Opaque tab id minted by get_browser_state." },
                         "session": required_session_schema(),
-                        "action": { "type": "string", "enum": ["hover", "right_click", "double_click", "scroll", "drag"] },
-                        "input_route": { "type": "string", "enum": ["trusted", "dom_event"], "default": "trusted" },
+                        "action": { "type": "string", "enum": ["hover", "right_click", "double_click", "scroll", "drag"], "description": "Pointer gesture. scroll needs delta_x or delta_y; drag needs destination_ref or to_x/to_y." },
+                        "input_route": { "type": "string", "enum": ["trusted", "dom_event"], "default": "trusted", "description": "trusted sends CDP Input events; dom_event synthesizes DOM events in the page and requires ref." },
+                        "delivery_mode": { "type": "string", "enum": ["background", "foreground"], "default": "background", "description": "background (default) refuses trusted input where it would activate the browser window (Linux Chromium). foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)." },
                         "ref": { "type": "string", "description": "Origin page ref. Alternative to x/y." },
                         "x": { "type": "number", "description": "Origin viewport x in CSS pixels." },
                         "y": { "type": "number", "description": "Origin viewport y in CSS pixels." },
@@ -375,7 +382,7 @@ impl BrowserPointerTool {
                     BrowserRefusal::new(
                         BrowserRefusalCode::BrowserInputTrustUnavailable,
                         format!(
-                            "{limitation}; use input_route=\"dom_event\" with refs to explicitly request synthetic full-background pointer delivery"
+                            "{limitation}; use input_route=\"dom_event\" with refs to explicitly request synthetic full-background pointer delivery, or delivery_mode=\"foreground\" to accept that the browser window may activate"
                         ),
                     )
                     .with_detail(json!({
@@ -383,6 +390,7 @@ impl BrowserPointerTool {
                         "limitation": limitation,
                         "alternative_route": "dom_event",
                         "alternative_requires_ref": true,
+                        "alternative_delivery_mode": "foreground",
                         "trusted_delivery_attempted": false,
                     }))
                     .to_tool_result(),
@@ -789,7 +797,7 @@ impl Tool for BrowserPointerTool {
             Ok(value) => value,
             Err(refusal) => return refusal.to_tool_result(),
         };
-        if request.route == InputRoute::Trusted {
+        if request.route == InputRoute::Trusted && !request.foreground {
             if let Some(refusal) = self.trusted_background_refusal(&validated) {
                 return refusal;
             }

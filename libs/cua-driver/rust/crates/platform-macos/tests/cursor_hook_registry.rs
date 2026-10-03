@@ -18,6 +18,9 @@
 //! one-shot, so the registration and the assertions must share a process and
 //! must not race.
 
+// `platform_macos::cursor` only exists on macOS.
+#![cfg(target_os = "macos")]
+
 use cua_driver_core::cursor_hook::{set_cursor_hook_fn, CursorHookEvent};
 use platform_macos::cursor::state::CursorRegistry;
 use std::sync::{Arc, Mutex};

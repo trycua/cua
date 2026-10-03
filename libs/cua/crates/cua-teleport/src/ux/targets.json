@@ -1,0 +1,42 @@
+{
+  "_note": "Apps that teleport can bring up in a Space, keyed by target id. `match` lists host identifiers (macOS bundle ids, Linux desktop ids, app names; case-insensitive). `install` names an item in the pinned, checksum-verified install manifest (cua-agents installables.json); `image` means cua's Linux Space images ship the app. `provider` names a teleport provider (state import). `launch.bin` is started in the Space after install (linked into ~/.cua/bin, or on PATH for image apps); `opens_files` means it takes files or folders as arguments. Providers not listed here are still offered through their own app ids.",
+  "targets": {
+    "vscode": {
+      "name": "Visual Studio Code",
+      "match": ["com.microsoft.VSCode", "Visual Studio Code", "code", "code-oss", "com.visualstudio.code", "Code"],
+      "install": "vscode",
+      "launch": { "bin": "code", "args": ["--no-sandbox", "--user-data-dir=$HOME/.cua/app-data/vscode", "--new-window"] },
+      "opens_files": true
+    },
+    "blender": {
+      "name": "Blender",
+      "match": ["org.blenderfoundation.blender", "Blender", "blender", "org.blender.Blender"],
+      "install": "blender",
+      "launch": { "bin": "blender" },
+      "opens_files": true
+    },
+    "firefox": {
+      "name": "Firefox",
+      "match": ["org.mozilla.firefox", "Firefox", "firefox", "org.mozilla.firefox.desktop"],
+      "provider": "firefox",
+      "image": true,
+      "launch": { "bin": "firefox" },
+      "opens_files": true
+    },
+    "chrome": {
+      "name": "Google Chrome",
+      "match": ["com.google.Chrome", "Google Chrome", "google-chrome", "chrome"],
+      "provider": "chrome",
+      "launch": { "bin": "google-chrome" },
+      "opens_files": true
+    },
+    "claude-code": {
+      "name": "Claude Code",
+      "match": ["claude-code", "claude", "Claude Code"],
+      "provider": "claude-code",
+      "install": "claude-code",
+      "launch": { "bin": "claude", "terminal": true },
+      "opens_files": false
+    }
+  }
+}

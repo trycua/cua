@@ -1,0 +1,149 @@
+{
+  "comment": "Regression budgets for `cua-bench-streaming check`. Each entry: glob `match` over run ids (runtime/transport/decoder/client/scenario), a metric, and max and/or min. Thresholds are loose enough for a 4-vCPU hosted runner with software (OpenH264) encode and decode; tighten them on dedicated or GPU runners. `optional` entries do not fail when the run or metric is missing (lanes that depend on toolchains).",
+  "budgets": [
+    {
+      "match": "*/rust/timecode",
+      "metric": "ttff_ms",
+      "max": 2000
+    },
+    {
+      "match": "*/rust/timecode",
+      "metric": "fps",
+      "min": 15
+    },
+    {
+      "match": "*/rust/timecode",
+      "metric": "interval_ms_p95",
+      "max": 150
+    },
+    {
+      "match": "*/rust/timecode",
+      "metric": "g2g_ms_p50",
+      "max": 150,
+      "note": "glass-to-glass, in-frame timecode"
+    },
+    {
+      "match": "*/rust/timecode",
+      "metric": "g2g_ms_p95",
+      "max": 400
+    },
+    {
+      "match": "*/rust/timecode",
+      "metric": "decode_errors",
+      "max": 0
+    },
+    {
+      "match": "*/rust/timecode",
+      "metric": "input_photon_ms_p50",
+      "max": 300,
+      "note": "interactive_input click to photon-square toggle"
+    },
+    {
+      "match": "*/rust/timecode",
+      "metric": "server_cpu_pct",
+      "max": 150
+    },
+    {
+      "match": "*/rust/static",
+      "metric": "video_bytes_per_s",
+      "max": 20000,
+      "note": "idle window must be near-silent"
+    },
+    {
+      "match": "*/rust/desktop-static",
+      "metric": "video_bytes_per_s",
+      "max": 50000
+    },
+    {
+      "match": "*/rust/desktop-static",
+      "metric": "ttff_ms",
+      "max": 2000
+    },
+    {
+      "match": "*/rust/scroll",
+      "metric": "fps",
+      "min": 10
+    },
+    {
+      "match": "*/rust/scroll",
+      "metric": "g2g_ms_p50",
+      "max": 250
+    },
+    {
+      "match": "*/rust/video",
+      "metric": "fps",
+      "min": 10
+    },
+    {
+      "match": "*/rust/video",
+      "metric": "g2g_ms_p50",
+      "max": 300
+    },
+    {
+      "match": "*/rust/video",
+      "metric": "video_bytes_per_s",
+      "max": 3000000
+    },
+    {
+      "match": "*/rust/drag",
+      "metric": "fps",
+      "min": 10
+    },
+    {
+      "match": "*/rust/drag",
+      "metric": "g2g_ms_p50",
+      "max": 300
+    },
+    {
+      "match": "runc/*/rust/avsync",
+      "metric": "av_skew_abs_ms_p50",
+      "max": 40,
+      "note": "plan §8.5 budget ±40 ms (runc; VMs and hosts use the same)"
+    },
+    {
+      "match": "runsc/*/rust/avsync",
+      "metric": "av_skew_abs_ms_p50",
+      "max": 80,
+      "note": "gVisor (runsc) exception, measured 2026-09-22: the avsync fixture writes its beep with pacat (--latency-msec=20) and draws the flash at the same instant; in-container parec onset detection shows the beep reaching the sink monitor 40-53 ms after the write under runsc vs 18-42 ms under runc (pipewire-pulse IPC and timers run through the gVisor Sentry), while the flash is drawn within 1 ms in both. The capture side is not the cause: monitor delivery jitter is the same in both runtimes (p50 4-7 ms, rate within 0.2% of real time). So the skew is the fixture content's own playback latency, which does not fit ±40 under runsc; the driver reports it as an audio.desktop limitation under gVisor."
+    },
+    {
+      "match": "*/rust/avsync",
+      "metric": "audio_latency_ms_p50",
+      "max": 250
+    },
+    {
+      "match": "*/rust/avsync",
+      "metric": "audio_onsets",
+      "min": 5
+    },
+    {
+      "match": "*/quic/*/rust*/loss",
+      "metric": "frames_decoded",
+      "min": 20
+    },
+    {
+      "match": "*/quic/*/rust*/loss",
+      "metric": "recovery_ms_p95",
+      "max": 2500,
+      "note": "keyframe recovery after injected datagram loss"
+    },
+    {
+      "match": "*/ws/*/rust/stall",
+      "metric": "recovery_ms_max",
+      "max": 3000,
+      "note": "fresh frame after a 1 s reader stall"
+    },
+    {
+      "match": "*/sdk/*/timecode",
+      "metric": "fps",
+      "min": 10,
+      "optional": true
+    },
+    {
+      "match": "*/sdk/*/timecode",
+      "metric": "g2g_ms_p50",
+      "max": 250,
+      "optional": true
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "title": "Spaces app core",
+  "pages": [
+    "spaces",
+    "creates",
+    "stream",
+    "new-space",
+    "images",
+    "teleport",
+    "teleport-transfer",
+    "teleport-run",
+    "teleport-review",
+    "teleport-grid",
+    "cloud",
+    "drag-trigger",
+    "experiments",
+    "run-on",
+    "power",
+    "notch",
+    "keyvault",
+    "keyvault-screens",
+    "onboarding-settings",
+    "about",
+    "billing",
+    "this-machine",
+    "window",
+    "devices",
+    "share",
+    "telemetry"
+  ]
+}

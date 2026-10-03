@@ -199,6 +199,9 @@ pub async fn login(opts: &LoginOptions, out: &mut dyn Write) -> Result<i32, CuaE
     let _ = out.flush();
     let creds = pending.complete().await.map_err(auth_err)?;
     let id = s.install(creds).await.map_err(auth_err)?;
+    // Activation funnel: a sign-in from the CLI (browser or device code)
+    // counts like one in the Spaces app's first run.
+    cua_telemetry::global().capture_step("signed_in", cua_telemetry::Outcome::Ok);
     let who = match (&id.username, &id.email) {
         (Some(u), Some(e)) if u != e => format!(" as {u} ({e})"),
         (Some(u), _) | (None, Some(u)) => format!(" as {u}"),

@@ -356,6 +356,21 @@ struct ViewModelTests {
         #expect(toggled == ["experiment_on cua_volume"])
     }
 
+    /// A sign-in from the main window (the first run done or not showing)
+    /// still counts in the activation funnel, once.
+    @Test func mainWindowSignInRecordsSignedIn() async {
+        let telemetry = FixtureTelemetry()
+        let model = makeModel(account: FixtureAccount(), telemetry: telemetry)
+        #expect(model.onboarding.state.step == .welcome)
+        await model.beginSignIn()
+        #expect(model.identity == "you@example.com")
+        let steps = telemetry.recorded.compactMap { s -> String? in
+            if case let .step(step, ok) = s, ok { return step }
+            return nil
+        }
+        #expect(steps == ["signed_in"])
+    }
+
     @Test func settingsPageAndAccountFromTheCore() async {
         let account = FixtureAccount()
         let agents = FixtureAgentSetup()

@@ -377,8 +377,8 @@ struct SpaceDetailView: View {
 }
 
 /// One of your machines that does not share its desktop: the core's line
-/// in place of the desktop (with "New Space on <name>…" when it provides
-/// Spaces), then the Spaces it provides. No Stream, Agents or Teleport.
+/// in place of the desktop, then the Spaces it provides. No Stream, Agents
+/// or Teleport.
 struct DesktopNotSharedSections: View {
     let model: AppModel
     let machineId: String
@@ -387,17 +387,10 @@ struct DesktopNotSharedSections: View {
 
     var body: some View {
         Section {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(note)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("machine-desktop-note")
-                Spacer(minLength: 8)
-                if let newSpace {
-                    Button(newSpace.label) { Task { await model.openNewSpace(on: newSpace.on) } }
-                        .accessibilityIdentifier("machine-new-space")
-                }
-            }
+            Text(note)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("machine-desktop-note")
         }
         if newSpace != nil {
             Section("Spaces") {

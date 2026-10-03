@@ -1438,3 +1438,47 @@ fn relay_url_for_prefers_flag_then_env_then_host_config() {
         env.unwrap_or_else(|| "https://host.example".into())
     );
 }
+
+/// `cua host setup` registers as this install's enrolled device (the relay
+/// needs that, or the machine token, to re-register a live machine), and
+/// with the account token alone when the device is not enrolled.
+#[tokio::test]
+async fn setup_registers_with_the_device_session_only_when_enrolled() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let (laptop, _) = device(&relay, "acct", "laptop");
+    let laptop = Arc::new(laptop);
+    let host = f.host().with_device(laptop.clone());
+
+    // Not enrolled: no session header, and setup works as before.
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+        .await
+        .unwrap();
+    assert_eq!(relay.register_sessions(), vec![None]);
+
+    relay.fresh_sign_in("user-1");
+    laptop.enroll().await.unwrap();
+    let session = laptop.session().await.unwrap();
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+        .await
+        .unwrap();
+    assert_eq!(relay.register_sessions(), vec![None, Some(session.clone())]);
+
+    // A device of another relay is not sent.
+    let other = Arc::new(
+        DeviceAuth::new(
+            "https://other-relay.example",
+            Arc::new(StaticToken("acct".into())),
+            Arc::new(MemoryKeySlot::default()),
+            "laptop",
+        )
+        .unwrap(),
+    );
+    f.host()
+        .with_device(other)
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+        .await
+        .unwrap();
+    assert_eq!(relay.register_sessions().last(), Some(&None));
+}

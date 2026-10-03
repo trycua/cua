@@ -1177,7 +1177,7 @@ pub async fn run_host(
     cmd: HostCmd,
     home: &Path,
     tokens: &dyn AccountTokens,
-    device: Option<&DeviceAuth>,
+    device: Option<Arc<DeviceAuth>>,
     manager: Option<Arc<dyn ServiceManager>>,
     json: bool,
     out: &mut dyn Write,
@@ -1186,6 +1186,11 @@ pub async fn run_host(
     if let Some(m) = manager {
         host = host.with_service_manager(m);
     }
+    // `cua host setup` registers as this enrolled device, if it is one.
+    if let Some(d) = &device {
+        host = host.with_device(d.clone());
+    }
+    let device = device.as_deref();
     match cmd {
         HostCmd::Setup {
             relay,

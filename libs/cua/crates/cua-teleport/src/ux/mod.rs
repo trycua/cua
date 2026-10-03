@@ -207,9 +207,9 @@ mod tests {
         // The host's own app format: the catalog enumerates what this OS lists.
         testing::fixture_host_app(
             root.path(),
-            "Visual Studio Code",
-            "com.microsoft.VSCode",
-            "code",
+            "Blender",
+            "org.blenderfoundation.blender",
+            "blender",
         );
         testing::fixture_host_app(
             root.path(),
@@ -260,7 +260,7 @@ mod tests {
         let e = entry_for_path(&reg, b.to_str().unwrap(), &TargetHint::default()).unwrap();
         assert_eq!((e.id.as_str(), e.capability), ("firefox", Capability::Full));
         assert!(entry_for_path(&reg, "/tmp/x.txt", &TargetHint::default()).is_err());
-        let e = entry_for_name(&reg, "Visual Studio Code", &TargetHint::default());
+        let e = entry_for_name(&reg, "Blender", &TargetHint::default());
         assert_eq!(e.capability, Capability::InstallOnly);
     }
 }

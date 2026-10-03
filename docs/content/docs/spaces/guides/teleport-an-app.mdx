@@ -15,8 +15,8 @@ teleport can do with each one in a Space:
 | Install only | the app is installed from the pinned, checksum-verified install manifest, and opens empty or with your files | the app; the app with files |
 | Unsupported | shown disabled, with the reason (for example "not published for aarch64 Linux") | nothing |
 
-Full today: `firefox`, `chrome`, `slack`, `discord`, `unity-hub`, `steam`,
-`whatsapp` (macOS) and `claude-code`. Install only: Visual Studio Code and
+Full today: `firefox`, `chrome`, `slack`, `discord`, `vscode`, `notion`,
+`unity-hub`, `steam`, `whatsapp` (macOS) and `claude-code`. Install only:
 Blender (x86_64). Apps come from `/Applications` and `~/Applications` on
 macOS, `.desktop` entries on Linux and the Start Menu on Windows.
 
@@ -40,14 +40,19 @@ key; the Space re-encrypts them under its own Safe Storage key before Chrome
 ever reads them. The source's key never leaves this Mac.
 
 <Callout type="warn">
-**Saved passwords** here still moves Chrome's `Login Data` as an encrypted
+For Chrome, **Saved passwords** here still moves `Login Data` as an encrypted
 file, which only a Chrome that already shares this Mac's Safe Storage key can
 read -- a Space's Chrome does not, so a password moved this way does not yet
-decrypt there. To actually sign in with a saved password, use the
+decrypt there. (For Firefox, **Saved passwords** decrypts here with the
+profile's own `key4.db` master key and re-encrypts under the destination
+profile's own key, the same way as **Keep me signed in**, so it does decrypt
+there -- unless a master password is set, which is refused rather than
+guessed at.) To actually sign in with a saved Chrome password, use the
 [Keyvault](/spaces/guides/keyvault) (`cua keyvault import-passwords`)
 instead: it decrypts on import and signs in through [site
 login](/spaces/guides/site-login), without ever exposing the password to an
-agent. **Keep me signed in** (cookies) does not have this limitation.
+agent. **Keep me signed in** (cookies) does not have this limitation on
+either browser.
 </Callout>
 
 ### Choosing sites and sending from the Keyvault

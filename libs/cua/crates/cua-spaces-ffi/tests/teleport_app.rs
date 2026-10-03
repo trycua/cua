@@ -108,7 +108,7 @@ async fn the_catalog_lists_every_app_with_capabilities_recents_first() {
         rows,
         [
             ("firefox", TeleportCapability::Full),
-            ("vscode", TeleportCapability::InstallOnly),
+            ("vscode", TeleportCapability::Full),
             ("blender", TeleportCapability::Unsupported),
             (NOTES_ID, TeleportCapability::Unsupported),
         ]
@@ -116,9 +116,14 @@ async fn the_catalog_lists_every_app_with_capabilities_recents_first() {
     let blender = all.iter().find(|e| e.id == "blender").unwrap();
     assert!(blender.reason.as_deref().unwrap().contains("aarch64"));
     let vs = all.iter().find(|e| e.id == "vscode").unwrap();
+    // VS Code is Chromium underneath, so its signed-in state teleports too.
     assert_eq!(
         vs.moves,
-        [TeleportMove::AppOnly, TeleportMove::AppWithFiles]
+        [
+            TeleportMove::AppOnly,
+            TeleportMove::AppWithFiles,
+            TeleportMove::AppWithState
+        ]
     );
     assert_eq!(vs.install_source.as_deref(), Some("manifest"));
     assert_eq!(vs.install_id.as_deref(), Some("vscode"));
@@ -198,7 +203,7 @@ fn drops_and_dropped_bundles() {
     let e = t.catalog_entry_for_path(d.apps[0].clone(), None).unwrap();
     assert_eq!(
         (e.id.as_str(), e.capability),
-        ("vscode", TeleportCapability::InstallOnly)
+        ("vscode", TeleportCapability::Full)
     );
     assert!(matches!(
         t.catalog_entry_for_path("/tmp/a.txt".into(), None),

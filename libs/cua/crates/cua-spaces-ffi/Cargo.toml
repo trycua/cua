@@ -50,3 +50,9 @@ cua-spacesd-client = { workspace = true, features = ["testing"] }
 cua-fleet = { workspace = true, features = ["testing"] }
 cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
 tempfile.workspace = true
+# The teleport fixture encrypts a cookie the way a real Chromium Safe
+# Storage item would, to exercise the structured Electron capture path
+# (on Windows, through the real DPAPI-wrapped Local State key).
+cua-teleport-bundle.workspace = true
+cua-chromium-storage.workspace = true
+rand.workspace = true

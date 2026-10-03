@@ -14,9 +14,15 @@
 //! | Linux    | `v10`  | PBKDF2-HMAC-SHA1(`peanuts`, `saltysalt`, 1 round, 16 bytes) |
 //! | Linux    | `v11`  | PBKDF2-HMAC-SHA1(the libsecret secret, `saltysalt`, 1 round, 16 bytes) |
 //!
-//! then AES-128-CBC with a fixed IV of 16 spaces and PKCS#7 padding. Windows
-//! (DPAPI-wrapped AES-GCM) is a different scheme entirely and is out of
-//! scope here.
+//! then AES-128-CBC with a fixed IV of 16 spaces and PKCS#7 padding.
+//!
+//! Windows is a different scheme, in the [`gcm`] section below: `v10` +
+//! 12-byte nonce + AES-256-GCM ciphertext + 16-byte tag under a random
+//! 32-byte key that Chrome keeps in `Local State` (`os_crypt.encrypted_key`,
+//! base64 of `"DPAPI"` + a DPAPI blob). Unwrapping that blob is an OS call the
+//! sender makes (`cua_teleport::safe_storage`); the cipher and the Local State
+//! encoding live here, pure. `v20` (app-bound) cannot be decrypted by anyone
+//! but Chrome.
 //!
 //! This module is **pure**: it derives keys and runs the cipher over bytes
 //! it is given. It never reads a Keychain, a file, or the network -- every
@@ -250,5 +256,132 @@ mod tests {
         assert_eq!(macos_safe_storage_service("arc"), Some("Arc Safe Storage"));
         assert_eq!(macos_safe_storage_service("firefox"), None);
         assert_eq!(macos_safe_storage_service("safari"), None);
+    }
+}
+
+/// Windows `v10`: AES-256-GCM under the 32-byte key from `Local State`.
+pub mod gcm {
+    use aes_gcm::aead::{Aead, KeyInit};
+    use aes_gcm::{Aes256Gcm, Nonce};
+    use base64::Engine as _;
+    use zeroize::Zeroizing;
+
+    use crate::error::TeleportError;
+
+    /// AES-256 key length.
+    pub const KEY_LEN: usize = 32;
+    /// Nonce length.
+    pub const NONCE_LEN: usize = 12;
+    /// GCM tag length.
+    pub const TAG_LEN: usize = 16;
+    /// `os_crypt.encrypted_key` is `base64("DPAPI" + blob)`.
+    pub const DPAPI_PREFIX: &[u8] = b"DPAPI";
+
+    /// The DPAPI blob inside a Local State `os_crypt.encrypted_key` value
+    /// (base64 decoded, `DPAPI` stripped).
+    pub fn dpapi_blob(encrypted_key_b64: &str) -> Result<Vec<u8>, TeleportError> {
+        let raw = base64::engine::general_purpose::STANDARD
+            .decode(encrypted_key_b64.trim())
+            .map_err(|_| {
+                TeleportError::Provider("Local State encrypted_key is not base64".into())
+            })?;
+        raw.strip_prefix(DPAPI_PREFIX)
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| {
+                TeleportError::Provider("Local State encrypted_key is not a DPAPI key".into())
+            })
+    }
+
+    /// `os_crypt.encrypted_key` for a DPAPI blob (what a new Local State holds).
+    pub fn encrypted_key_value(dpapi_blob: &[u8]) -> String {
+        let mut raw = DPAPI_PREFIX.to_vec();
+        raw.extend_from_slice(dpapi_blob);
+        base64::engine::general_purpose::STANDARD.encode(raw)
+    }
+
+    /// The `os_crypt.encrypted_key` string of a Local State JSON document.
+    pub fn encrypted_key_of(local_state_json: &[u8]) -> Option<String> {
+        let v: serde_json::Value = serde_json::from_slice(local_state_json).ok()?;
+        v.get("os_crypt")?
+            .get("encrypted_key")?
+            .as_str()
+            .map(str::to_string)
+    }
+
+    /// Whether `value` is a `v10` GCM value (`v10` + nonce + tag at least).
+    pub fn is_v10(value: &[u8]) -> bool {
+        value.starts_with(b"v10") && value.len() >= 3 + NONCE_LEN + TAG_LEN
+    }
+
+    /// Decrypts a `v10` value (prefix included) with `key`.
+    pub fn decrypt(key: &[u8; KEY_LEN], value: &[u8]) -> Result<Zeroizing<Vec<u8>>, TeleportError> {
+        if !is_v10(value) {
+            return Err(TeleportError::Provider(
+                "a Windows Chromium value is too short to be v10 AES-GCM".into(),
+            ));
+        }
+        let (nonce, ct) = value[3..].split_at(NONCE_LEN);
+        Aes256Gcm::new(key.into())
+            .decrypt(Nonce::from_slice(nonce), ct)
+            .map(Zeroizing::new)
+            .map_err(|_| {
+                TeleportError::Provider(
+                    "a Windows Chromium value did not decrypt (wrong key or damaged)".into(),
+                )
+            })
+    }
+
+    /// Encrypts `plaintext` under `key` the way Chromium does: `v10` + nonce +
+    /// ciphertext + tag. The nonce is supplied by the caller (random per value).
+    pub fn encrypt(key: &[u8; KEY_LEN], nonce: &[u8; NONCE_LEN], plaintext: &[u8]) -> Vec<u8> {
+        let ct = Aes256Gcm::new(key.into())
+            .encrypt(Nonce::from_slice(nonce), plaintext)
+            .expect("AES-GCM encryption of an in-memory buffer cannot fail");
+        let mut out = Vec::with_capacity(3 + NONCE_LEN + ct.len());
+        out.extend_from_slice(b"v10");
+        out.extend_from_slice(nonce);
+        out.extend_from_slice(&ct);
+        out
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn v10_round_trips_and_a_wrong_key_or_damage_fails() {
+            let key = [7u8; KEY_LEN];
+            let nonce = [3u8; NONCE_LEN];
+            let enc = encrypt(&key, &nonce, b"session-value");
+            assert!(enc.starts_with(b"v10") && &enc[3..15] == nonce.as_slice());
+            assert_eq!(enc.len(), 3 + 12 + 13 + 16);
+            assert_eq!(&*decrypt(&key, &enc).unwrap(), b"session-value");
+            assert!(decrypt(&[8u8; KEY_LEN], &enc).is_err());
+            let mut bad = enc.clone();
+            *bad.last_mut().unwrap() ^= 1;
+            assert!(decrypt(&key, &bad).is_err());
+            assert!(decrypt(&key, b"v10short").is_err());
+            assert!(!is_v10(b"v20aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        }
+
+        /// A vector computed independently (RFC-style, AES-256-GCM, nonce
+        /// 000000000000000000000000, key of 32 zero bytes, empty plaintext):
+        /// the tag of empty data under the zero key and zero nonce.
+        #[test]
+        fn matches_the_published_aes_256_gcm_zero_vector() {
+            let key = [0u8; KEY_LEN];
+            let enc = encrypt(&key, &[0u8; NONCE_LEN], b"");
+            assert_eq!(hex::encode(&enc[15..]), "530f8afbc74536b9a963b4f1c4cb738b");
+        }
+
+        #[test]
+        fn local_state_key_encoding_round_trips() {
+            let v = encrypted_key_value(&[1, 2, 3]);
+            assert_eq!(dpapi_blob(&v).unwrap(), [1, 2, 3]);
+            assert!(dpapi_blob("AAAA").is_err());
+            let ls = format!(r#"{{"os_crypt":{{"encrypted_key":"{v}"}}}}"#);
+            assert_eq!(encrypted_key_of(ls.as_bytes()).as_deref(), Some(v.as_str()));
+            assert_eq!(encrypted_key_of(b"{}"), None);
+        }
     }
 }

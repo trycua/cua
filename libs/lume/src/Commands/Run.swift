@@ -60,6 +60,28 @@ struct Run: AsyncParsableCommand {
         completion: .file())
     var additionalDisks: [String] = []
 
+    @Option(
+        name: [.customLong("disk-stack")],
+        help: ArgumentHelp(
+            """
+            Attach a disk as a read-only base plus DiskImageKit layers, in the form \
+            <base>[+<layer>[@cache|@overlay]]... (e.g. --disk-stack="data-base.asif+session.asif"). \
+            Layers default to @overlay. Only the topmost layer takes writes, so one base can back \
+            many VMs at once, and a layer that does not exist yet is created. Requires macOS 27.
+            """),
+        completion: .file())
+    var stackedDisks: [String] = []
+
+    @Option(
+        name: [.customLong("vsock-forward")],
+        help: ArgumentHelp(
+            """
+            Forward a host TCP port to a guest AF_VSOCK port, as <hostPort>:<guestPort> \
+            (e.g. --vsock-forward=8000:5005). Lets a guest daemon be reached without guest \
+            networking — no DHCP wait, and no reliance on per-host NAT addresses.
+            """))
+    var vsockForwards: [String] = []
+
     @Option(help: "Github Container Registry to pull the images from. Defaults to ghcr.io")
     var registry: String = "ghcr.io"
 
@@ -172,6 +194,14 @@ struct Run: AsyncParsableCommand {
         additionalDisks.map { Path($0) }
     }
 
+    private func parsedStackedDisks() throws -> [StackedDiskSpec] {
+        try stackedDisks.map { try StackedDiskSpec(argument: $0) }
+    }
+
+    private func parsedVsockForwards() throws -> [VsockForwarder.Rule] {
+        try vsockForwards.map { try VsockForwarder.Rule(argument: $0) }
+    }
+
     init() {
     }
 
@@ -223,6 +253,8 @@ struct Run: AsyncParsableCommand {
             nvramPath: nvramPath.map { Path($0) },
             usbMassStoragePaths: parsedUSBStorageDevices.isEmpty ? nil : parsedUSBStorageDevices,
             additionalDiskPaths: parsedAdditionalDisks.isEmpty ? nil : parsedAdditionalDisks,
+            stackedDiskSpecs: stackedDisks.isEmpty ? nil : try parsedStackedDisks(),
+            vsockForwards: vsockForwards.isEmpty ? nil : try parsedVsockForwards(),
             networkMode: parsedNetworkMode,
             clipboard: clipboard,
             vncPolicy: vnc

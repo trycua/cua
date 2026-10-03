@@ -72,7 +72,10 @@ fn def() -> &'static ToolDef {
             this pid but its accessibility surface can't be resolved, the tree comes back \
             EMPTY with `degraded_reason: ax_window_unresolved` and the screenshot of the \
             requested window; background input is refused until it resolves, so \
-            re-snapshot or act with `delivery_mode:\"foreground\"`. When that pid is an \
+            re-snapshot or act with `delivery_mode:\"foreground\"`. An attached sheet (a \
+            Save or Open panel) is listed as its own window but never resolves: when \
+            `escalation.parent_window_id` is present, the sheet's controls are in that \
+            window's tree, so read and act through it. When that pid is an \
             app still launching (its window exists before it answers accessibility), the \
             walk first waits up to `timeout_ms` for it; if it never answers, the tree comes \
             back EMPTY with `degraded_reason: ax_app_launching`, `truncated: true` and \
@@ -710,6 +713,30 @@ impl Tool for GetWindowStateTool {
                                reach a same-process sibling window. Re-snapshot after the \
                                app settles, or act with delivery_mode:\"foreground\"."
                 });
+                // A sheet's own CGWindowID never resolves: no AXWindow reports
+                // it. Name the window it is attached to, whose tree holds its
+                // controls. What is actionable here does not change.
+                let host = tokio::task::spawn_blocking(move || {
+                    crate::ax::exact_target::attached_sheet_host(pid, window_id)
+                })
+                .await
+                .ok()
+                .flatten();
+                if let Some(host) = host {
+                    structured["degraded_reason"] = serde_json::json!(format!(
+                        "ax_window_unresolved: window_id {window_id} is a sheet attached to \
+                         window_id {host} of pid {pid}. No AXWindow reports a sheet's own \
+                         CGWindowID; its controls are in window {host}'s accessibility tree, \
+                         so the tree for this id is returned EMPTY."
+                    ));
+                    structured["escalation"]["parent_window_id"] = serde_json::json!(host);
+                    structured["escalation"]["reason"] = serde_json::json!(format!(
+                        "call get_window_state with window_id {host} and act on the sheet's \
+                         elements with window_id {host}. Background input aimed at this id \
+                         stays refused; delivery_mode:\"foreground\" keys aimed at window \
+                         {host} reach its focused sheet."
+                    ));
+                }
             }
         }
         // Additive read-only `background_input` capability section (macOS

@@ -22,6 +22,9 @@
 //   scroll_target  — NSScrollView with a tall body and offset label
 //   ns_menubar     — main menu item with known title (Mac-specific)
 //   exit           — NSButton terminates the app
+//   save_sheet     — opt-in (CUA_APPKIT_SAVE_SHEET=1): a button that opens an
+//                    NSSavePanel as a sheet on the main window; the label
+//                    records what the panel returned (#3351, #4392)
 //   jev_use_tasks  — opt-in (CUA_APPKIT_TASK_STATE=<path>): a labeled Note
 //                    field with a Save button and Small/Medium/Large radio
 //                    buttons, plus an app-owned JSON state file rewritten on
@@ -72,6 +75,10 @@ let kMenuItemTitle = "Harness Test Item"
 let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
 let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
 let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
+let kSaveSheetEnv = "CUA_APPKIT_SAVE_SHEET"
+let kSaveSheetButtonAID = "btn-save-sheet"
+let kSaveSheetStateAID = "lbl-save-sheet"
+let kSaveSheetDefaultName = "harness-untitled"
 let kTaskStateEnv = "CUA_APPKIT_TASK_STATE"
 let kTaskStateSchema = "cua.appkit_task_state_v1"
 let kNoteFieldAID = "txt-note"
@@ -140,6 +147,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let selectionTable = NSTableView()
     let selectionStateLabel = NSTextField(labelWithString: "selection=none")
     let menuActionLabel = NSTextField(labelWithString: "menu_action=none")
+    let saveSheetLabel = NSTextField(labelWithString: "save_sheet=none")
     let scrollOffsetLabel = NSTextField(labelWithString: "scroll_offset=0")
     let accelCountLabel = NSTextField(labelWithString: "accel_fired=0")
     var accelCount = 0
@@ -403,6 +411,9 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         if ProcessInfo.processInfo.environment[kErroringTogglesEnv] == "1" {
             addErroringToggles(to: content)
         }
+        if ProcessInfo.processInfo.environment[kSaveSheetEnv] == "1" {
+            addSaveSheetControls(to: content)
+        }
 
         // No outer scroll-view wrap: the content is sized to fit the window
         // so the only scrollable surface is the inner scroll_target NSScrollView.
@@ -495,6 +506,34 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     private func recordErroringToggles() {
         erroringTogglesLabel.stringValue =
             "acts_then_errors=\(actsThenErrors.state == .on) errors_only=\(errorsOnly.state == .on)"
+    }
+
+    /// Opt-in Save sheet (#3351, #4392), appended below Exit like the task
+    /// controls so every ordinary control keeps its position. The panel's
+    /// controls live in the main window's accessibility tree while it is open;
+    /// the label is the fixture's own record of how the panel ended.
+    private func addSaveSheetControls(to content: NSStackView) {
+        content.addArrangedSubview(sectionLabel("save_sheet"))
+        let open = NSButton(title: "Save…", target: self, action: #selector(onSaveSheet))
+        open.setAccessibilityIdentifier(kSaveSheetButtonAID)
+        saveSheetLabel.setAccessibilityIdentifier(kSaveSheetStateAID)
+        saveSheetLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let row = NSStackView(views: [open, saveSheetLabel])
+        row.orientation = .horizontal
+        row.spacing = 12
+        content.addArrangedSubview(row)
+    }
+
+    @objc private func onSaveSheet() {
+        let panel = NSSavePanel()
+        panel.directoryURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        panel.nameFieldStringValue = kSaveSheetDefaultName
+        saveSheetLabel.stringValue = "save_sheet=open"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            let name = panel.url?.lastPathComponent ?? ""
+            self?.saveSheetLabel.stringValue =
+                response == .OK ? "save_sheet=saved name=\(name)" : "save_sheet=cancelled"
+        }
     }
 
     /// Benign distractor controls for density mode (#4312): a grid of buttons,

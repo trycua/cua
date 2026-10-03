@@ -1,5 +1,5 @@
 import pytest
-from cua_bench.actions import repr_to_action
+from cua_bench.actions import parse_action_string, repr_to_action, snake_case_to_action
 from cua_bench.types import (
     ClickAction,
     DoneAction,
@@ -293,6 +293,54 @@ class TestReprToAction:
         assert isinstance(parsed, ClickAction)
         assert parsed.x == 50
         assert parsed.y == 75
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "line one\nline two\tindented\rreturn",
+        r"C:\Users\agent\notes.txt",
+        "both 'single' and \"double\" quotes",
+        "a quoted parenthesis: ')', then more text",
+        "Türkçe 日本語 🙂",
+        "a null byte: \0",
+    ],
+)
+def test_type_action_preserves_string_literals(text):
+    action = TypeAction(text=text)
+    assert repr_to_action(repr(action)) == action
+    assert parse_action_string(repr(action)) == action
+    assert snake_case_to_action(f"type({text!r})") == action
+
+
+@pytest.mark.parametrize("key", ["'", '"', "\\", "]", ","])
+def test_key_action_preserves_punctuation(key):
+    action = KeyAction(key=key)
+    assert repr_to_action(repr(action)) == action
+
+
+@pytest.mark.parametrize("keys", [[], ["ctrl", ","], ["ctrl", "]"], ["ctrl", "\\"]])
+def test_hotkey_action_preserves_string_list(keys):
+    action = HotkeyAction(keys=keys)
+    assert repr_to_action(repr(action)) == action
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        "TypeAction(text='unterminated\")",
+        "TypeAction(text='a', unexpected=True)",
+        "TypeAction(text='first') TypeAction(text='second')",
+        "type('unterminated\")",
+        "type('first'); done()",
+        "HotkeyAction(keys=[ctrl, 'c'])",
+        "HotkeyAction(keys=['ctrl', 1])",
+        r"TypeAction(text='\xZZ')",
+    ],
+)
+def test_invalid_keyboard_literals_are_rejected(action):
+    with pytest.raises(ValueError, match="Could not parse action string"):
+        parse_action_string(action)
 
 
 class TestReprRoundTrip:

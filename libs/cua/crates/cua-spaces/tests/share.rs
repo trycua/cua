@@ -60,6 +60,9 @@ async fn sharing_a_space_attaches_it_and_moves_people_between_roles() {
         .await
         .unwrap_err();
     assert_eq!(e.tag(), "capability_missing", "{e}");
+    // The mock driver's version predates the feature: the error names the
+    // release to update to.
+    assert!(e.to_string().contains("cua-spacesd 0.2.2 or newer"), "{e}");
     assert!(env.state.relay_attached.lock().unwrap().is_none());
 
     env.state.advertise(&["relay_attach"]);

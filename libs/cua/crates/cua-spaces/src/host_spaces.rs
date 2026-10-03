@@ -200,6 +200,32 @@ fn resolve_image(image: &str) -> (String, String) {
     (word.to_string(), os.into())
 }
 
+/// Why the host `name` (its own Space `s`) does not take host Space
+/// calls: Spaces are off on it, or its cua-spacesd predates them (it does
+/// not report `host_spaces` at all).
+fn not_providing(s: &crate::Space, name: &str) -> Error {
+    if s.feature(HOST_SPACES_FEATURE).is_none() {
+        let version = s.capabilities().version.trim();
+        return Error::host(
+            "host spaces",
+            format!(
+                "{name} runs cua-spacesd {}, which is too old to provide Spaces (it does not \
+                 report `{HOST_SPACES_FEATURE}`). On {name}, update cua and run `cua host setup` \
+                 again: it installs a current cua-spacesd",
+                if version.is_empty() {
+                    "of an unknown version"
+                } else {
+                    version
+                }
+            ),
+        );
+    }
+    Error::host(
+        "host spaces",
+        format!("{name} does not provide Spaces (on it: `cua host config --provide-spaces on`)"),
+    )
+}
+
 fn to_pb(s: &ProvidedSpace) -> pb::HostSpace {
     pb::HostSpace {
         relay_machine: s.relay_machine.clone(),
@@ -1803,15 +1829,8 @@ impl Spaces {
             // settings: check once more.
             self.forget_connection(&id).await?;
             let s = self.space(&id).await?;
-            s.require(HOST_SPACES_FEATURE).map_err(|_| {
-                Error::host(
-                    "host spaces",
-                    format!(
-                        "{} does not provide Spaces (on it: `cua host config --provide-spaces on`)",
-                        if m.name.is_empty() { &m.id } else { &m.name }
-                    ),
-                )
-            })?;
+            s.require(HOST_SPACES_FEATURE)
+                .map_err(|_| not_providing(&s, if m.name.is_empty() { &m.id } else { &m.name }))?;
             return Ok(s);
         }
         Ok(s)
@@ -1833,15 +1852,8 @@ impl Spaces {
         // settings: check once more.
         self.forget_connection(&host.space).await?;
         let s = self.space(&host.space).await?;
-        s.require(HOST_SPACES_FEATURE).map_err(|_| {
-            Error::host(
-                "host spaces",
-                format!(
-                    "{} does not provide Spaces (on it: `cua host config --provide-spaces on`)",
-                    host.name
-                ),
-            )
-        })?;
+        s.require(HOST_SPACES_FEATURE)
+            .map_err(|_| not_providing(&s, &host.name))?;
         Ok(s)
     }
 

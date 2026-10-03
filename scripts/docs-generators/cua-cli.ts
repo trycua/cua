@@ -98,7 +98,7 @@ export const CLI_GROUPS: CliGroup[] = [
     title: 'cua sandbox',
     summary: 'Create, list, connect to, suspend and delete sandboxes, local or in the cloud',
     commands: ['sandbox'],
-    subcommands: ['create', 'launch', 'connect', 'ls', 'info', 'suspend', 'resume', 'restart', 'keep-alive', 'rm'],
+    subcommands: ['create', 'launch', 'connect', 'ls', 'info', 'suspend', 'resume', 'restart', 'keep-alive', 'rm', 'gc'],
   },
   {
     slug: 'sandbox-access',

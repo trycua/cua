@@ -224,3 +224,25 @@ async fn resume_of_a_record_whose_vm_is_gone_is_refused() {
     );
     assert!(rt.calls().is_empty());
 }
+
+/// Another process (the Spaces app, another CLI) deletes a local VM and its
+/// record while this daemon holds a handle from an earlier connect: `ls`
+/// must not keep saying `ready`, and the stale handle goes.
+#[tokio::test]
+async fn ls_drops_a_handle_whose_sandbox_was_deleted_elsewhere() {
+    let dir = tempfile::tempdir().unwrap();
+    let name = "space-0123456789";
+    let rt = Runtime::with(name, InstanceStatus::Running);
+    let d = daemon(dir.path(), rt.clone(), name);
+    d.connect(name).await.unwrap();
+    let ids = |l: &[cua_daemon::SandboxRecord]| l.iter().map(|r| r.id.clone()).collect::<Vec<_>>();
+    assert_eq!(ids(&d.list(None).await.unwrap()), [format!("local:{name}")]);
+
+    // Deleted by someone else: the VM and its state file are gone.
+    rt.instances.lock().unwrap().remove(name);
+    d.sandboxes().state().delete(name).unwrap();
+
+    assert!(ids(&d.list(None).await.unwrap()).is_empty());
+    // The handle was forgotten: a later connect does not find a ghost.
+    assert!(d.connect(name).await.is_err());
+}

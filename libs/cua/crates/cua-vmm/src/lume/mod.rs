@@ -34,7 +34,7 @@ use crate::runtime::Runtime;
 use crate::types::*;
 
 pub use client::{CreateVm, LumeClient, RunVm, SetVm, SharedDir, VmDetails};
-pub use owned::{OwnedKind, OwnedVm, OwnedVms};
+pub use owned::{OwnedKind, OwnedVm, OwnedVms, Ownership, bundle_identity};
 pub use ssh::LumeSshExec;
 
 /// File name of the env token in the macOS setup share (guest:
@@ -655,7 +655,7 @@ impl LumeRuntime {
         // Recorded before the pull: a pull an older Lume finishes in the
         // background after a cancelled create is still the SDK's base (the
         // cache GC can remove it); a cancelled pull's record goes with it.
-        OwnedVms::default().mark(base_name, OwnedKind::Base, Some(pinned));
+        OwnedVms::default().mark_in(&self.cfg.root, base_name, OwnedKind::Base, Some(pinned));
         let pulled = match creds.filter(|c| c.applies_to(crate::registry_of(reference))) {
             // `lume serve`'s pull API takes no credentials: the `lume pull`
             // CLI reads them from its environment (never argv).
@@ -678,7 +678,7 @@ impl LumeRuntime {
             }
             return Err(e);
         }
-        OwnedVms::default().mark(base_name, OwnedKind::Base, Some(pinned));
+        OwnedVms::default().mark_in(&self.cfg.root, base_name, OwnedKind::Base, Some(pinned));
         Ok(CheckpointInfo::now(
             base_name,
             BackendKind::Lume,
@@ -1079,7 +1079,12 @@ impl Runtime for LumeRuntime {
                     .clone_vm(&base, &spec.name)
                     .await
                     .inspect_err(|_| made.done())?;
-                OwnedVms::default().mark(&spec.name, OwnedKind::Instance, Some(&base));
+                OwnedVms::default().mark_in(
+                    &self.cfg.root,
+                    &spec.name,
+                    OwnedKind::Instance,
+                    Some(&base),
+                );
                 OwnedVms::default().touch(&base);
                 // A clone inherits the base's CPU, memory and disk: apply the
                 // requested ones before the first boot.
@@ -1141,6 +1146,8 @@ impl Runtime for LumeRuntime {
                         _ => tokio::time::sleep(Duration::from_millis(500)).await,
                     }
                 }
+                // The bundle exists now: record its identity too.
+                OwnedVms::default().mark_in(&self.cfg.root, &spec.name, OwnedKind::Instance, None);
                 self.run_linux_detached(&spec.name, &disk, seed.as_deref())
                     .await?;
             }
@@ -1242,7 +1249,12 @@ impl Runtime for LumeRuntime {
             return Err(VmmError::AlreadyExists(new_name.into()));
         }
         self.client.clone_vm(source, new_name).await?;
-        OwnedVms::default().mark(new_name, OwnedKind::Checkpoint, Some(source));
+        OwnedVms::default().mark_in(
+            &self.cfg.root,
+            new_name,
+            OwnedKind::Checkpoint,
+            Some(source),
+        );
         // Linux disk VMs keep their disk outside lume: copy it (APFS clonefile
         // via `cp -c` keeps this instant and copy-on-write).
         if let Some((disk, seed)) = self.linux_state(source) {

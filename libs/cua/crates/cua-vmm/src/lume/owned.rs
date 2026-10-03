@@ -6,6 +6,12 @@
 //! `$CUA_HOME/vmm/lume/owned/<name>.json`, so `cua cache` can report them
 //! and the cache garbage collection only ever removes VMs the SDK made. The
 //! file's mtime is the VM's last use.
+//!
+//! A record also ties the name to the VM it was written for: the bundle
+//! directory's on-disk identity (inode and birth time), the creating
+//! process and a random nonce. A VM deleted outside the SDK and later
+//! re-made under the same name (by the user, by `lume`) no longer matches,
+//! so a record-driven delete never reaches it ([`OwnedVms::verify`]).
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -39,6 +45,62 @@ pub struct OwnedVm {
     /// Last use (the record's mtime); filled in on read.
     #[serde(skip)]
     pub last_used: Option<SystemTime>,
+    /// The bundle directory's identity when it was recorded
+    /// ([`bundle_identity`]); `None` in records older than identities.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
+    /// Who created it (`cua-sdk`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<String>,
+    /// The creating process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    /// A random value unique to this creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
+}
+
+/// Whether a record still describes the VM on disk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ownership {
+    /// The record was written for this very bundle.
+    Matches,
+    /// A record from before identities: matched by name only.
+    NameOnly,
+    /// The bundle on disk is another VM (re-made under the name): not ours.
+    Replaced,
+    /// No record, or no bundle.
+    NotOwned,
+}
+
+/// The on-disk identity of a VM bundle directory: inode and birth time.
+/// A directory deleted and made again under the same path differs.
+pub fn bundle_identity(dir: &Path) -> Option<String> {
+    let m = std::fs::metadata(dir).ok()?;
+    if !m.is_dir() {
+        return None;
+    }
+    #[cfg(unix)]
+    let ino = std::os::unix::fs::MetadataExt::ino(&m);
+    #[cfg(not(unix))]
+    let ino = 0u64;
+    let born = m
+        .created()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    Some(format!("{ino}:{born}"))
+}
+
+fn nonce(name: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let t = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let d = Sha256::digest(format!("{name}:{t}:{}", std::process::id()).as_bytes());
+    d.iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
 
 /// The ownership records.
@@ -73,14 +135,29 @@ impl OwnedVms {
         self.dir.join(format!("{name}.json"))
     }
 
-    /// Records `name` as created by the SDK.
+    /// Records `name` as created by the SDK (without the bundle's
+    /// identity; prefer [`Self::mark_in`]).
     pub fn mark(&self, name: &str, kind: OwnedKind, source: Option<&str>) {
+        self.write(name, kind, source, None);
+    }
+
+    /// Records `name`, whose bundle is `root/<name>`, as created by this
+    /// process, with the bundle's identity.
+    pub fn mark_in(&self, root: &Path, name: &str, kind: OwnedKind, source: Option<&str>) {
+        self.write(name, kind, source, bundle_identity(&root.join(name)));
+    }
+
+    fn write(&self, name: &str, kind: OwnedKind, source: Option<&str>, identity: Option<String>) {
         let rec = OwnedVm {
             name: name.into(),
             kind,
             source: source.map(str::to_string),
             created_at: crate::host::now_secs(),
             last_used: None,
+            identity,
+            creator: Some("cua-sdk".into()),
+            pid: Some(std::process::id()),
+            nonce: Some(nonce(name)),
         };
         let res = std::fs::create_dir_all(&self.dir)
             .and_then(|()| std::fs::write(self.file(name), serde_json::to_vec_pretty(&rec)?));
@@ -92,6 +169,21 @@ impl OwnedVms {
     /// Whether the SDK created `name`.
     pub fn owns(&self, name: &str) -> bool {
         self.file(name).exists()
+    }
+
+    /// Whether the record for `name` describes the bundle at `root/<name>`.
+    pub fn verify(&self, root: &Path, name: &str) -> Ownership {
+        let Some(rec) = self.get(name) else {
+            return Ownership::NotOwned;
+        };
+        let Some(now) = bundle_identity(&root.join(name)) else {
+            return Ownership::NotOwned;
+        };
+        match rec.identity {
+            None => Ownership::NameOnly,
+            Some(id) if id == now => Ownership::Matches,
+            Some(_) => Ownership::Replaced,
+        }
     }
 
     /// Marks `name` as used now (no-op when not recorded).
@@ -158,5 +250,32 @@ mod tests {
         o.touch("box");
         o.forget("box");
         assert_eq!(o.list().len(), 1);
+    }
+
+    /// A record matches the bundle it was written for, not one re-made
+    /// under the same name, and never a VM it has no record of.
+    #[test]
+    fn verify_ties_a_record_to_its_bundle() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("lume");
+        let o = OwnedVms::new(d.path().join("owned"));
+        std::fs::create_dir_all(root.join("space-0123456789")).unwrap();
+        assert_eq!(o.verify(&root, "space-0123456789"), Ownership::NotOwned);
+        std::fs::create_dir_all(root.join("box")).unwrap();
+        o.mark_in(&root, "box", OwnedKind::Instance, None);
+        let rec = o.get("box").unwrap();
+        assert!(rec.nonce.is_some() && rec.pid == Some(std::process::id()));
+        assert_eq!(o.verify(&root, "box"), Ownership::Matches);
+        // Deleted outside the SDK and made again under the same name.
+        std::fs::remove_dir_all(root.join("box")).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::create_dir_all(root.join("box")).unwrap();
+        assert_eq!(o.verify(&root, "box"), Ownership::Replaced);
+        std::fs::remove_dir_all(root.join("box")).unwrap();
+        assert_eq!(o.verify(&root, "box"), Ownership::NotOwned);
+        // A record from before identities matches by name only.
+        std::fs::create_dir_all(root.join("old")).unwrap();
+        o.mark("old", OwnedKind::Base, None);
+        assert_eq!(o.verify(&root, "old"), Ownership::NameOnly);
     }
 }

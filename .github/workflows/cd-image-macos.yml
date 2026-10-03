@@ -133,12 +133,11 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Runner hygiene
         run: |
-          # Stale CI VMs from cancelled runs (never the SDK's cua-base-* cache).
-          lume ls --format json | python3 -c '
-          import json, sys
-          for vm in json.load(sys.stdin):
-              if vm["name"].startswith("cua-ci-") and vm.get("status") != "running":
-                  print(vm["name"])' | while read -r vm; do lume delete "$vm" --force || true; done
+          # VMs crashed or cancelled runs left on this runner: only those an
+          # ownership record proves our builds or CI jobs made, whose run is
+          # gone, after 2 h (libs/images/common/tools/cua-vm-owner). Never
+          # by name: other jobs' VMs, the SDK's cache and Spaces stay.
+          python3 libs/images/common/tools/cua-vm-owner reap --kind image-build --kind ci --grace 2h || true
           free_gb="$(df -g "$HOME" | awk 'NR==2 {print $4}')"
           [ "$free_gb" -ge 200 ] || { echo "::error::only ${free_gb} GB free; the tiers need 200 GB"; exit 1; }
       - name: Build the cua CLI
@@ -211,9 +210,10 @@ jobs:
       - name: Delete the build VMs
         if: always()
         run: |
+          # Only the VMs this run's builds recorded (their owner, the
+          # release, has exited by now).
           for tier in slim full xcode; do
-            lume stop "$PREFIX-$tier" >/dev/null 2>&1 || true
-            lume delete "$PREFIX-$tier" --force >/dev/null 2>&1 || true
+            python3 libs/images/common/tools/cua-vm-owner reclaim "$PREFIX-$tier" || true
           done
 
   tracking-issue:

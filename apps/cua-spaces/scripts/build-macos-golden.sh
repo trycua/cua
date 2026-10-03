@@ -105,8 +105,18 @@ done
 
 # --- create the VM (CI-specific: the hand-run path starts from a live VM) ----
 echo "==> Cloning $BASE_IMAGE -> $GOLDEN"
-lume delete "$GOLDEN" --force >/dev/null 2>&1 || true
+# The rebuild deletes $GOLDEN first: only a golden-build name, never the base
+# or any other VM (a user's Space is `space-<hex>`).
+[[ "$GOLDEN" =~ ^(cua-spaces-golden|cua-(ci|e2e)-)[A-Za-z0-9._-]*$ ]] && [ "$GOLDEN" != "$BASE_IMAGE" ] ||
+  { echo "FATAL: GOLDEN must be cua-spaces-golden* or cua-ci-*/cua-e2e-* and not the base (got '$GOLDEN')" >&2; exit 2; }
+VM_OWNER="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/libs/images/common/tools/cua-vm-owner"
+# Only a golden VM an earlier run of this script recorded is replaced.
+if lume get "$GOLDEN" --format json >/dev/null 2>&1; then
+  python3 "$VM_OWNER" reclaim "$GOLDEN" ||
+    { echo "FATAL: $GOLDEN exists and is not a golden VM this script made; delete it yourself" >&2; exit 2; }
+fi
 lume clone "$BASE_IMAGE" "$GOLDEN"
+python3 "$VM_OWNER" mark "$GOLDEN" --kind golden --run "golden-${GITHUB_RUN_ID:-local}" || true
 # Never `lume run --no-display`; drive it through the API so no window opens on
 # the runner's desktop.
 curl -s -X POST "$LUME_API/lume/vms/$GOLDEN/run" -H 'content-type: application/json' \

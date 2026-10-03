@@ -557,6 +557,46 @@ async fn lume_bases_the_sdk_pulled_are_evicted_and_nothing_else() {
     assert!(owned.owns("my-mac"));
 }
 
+/// A record whose VM was deleted outside the SDK and then made again under
+/// the same name (by the user) no longer matches the bundle: the GC drops
+/// the record and never deletes that VM.
+#[tokio::test]
+async fn a_vm_re_made_under_a_recorded_name_is_never_collected() {
+    use cua_vmm::lume::{OwnedKind, OwnedVms};
+    let d = tempfile::tempdir().unwrap();
+    let l = Layout::new(d.path());
+    let owned = OwnedVms::new(l.lume_owned());
+    let bundle = l.lume().join("cua-base-old");
+    std::fs::create_dir_all(&bundle).unwrap();
+    owned.mark_in(
+        &l.lume(),
+        "cua-base-old",
+        OwnedKind::Base,
+        Some("ghcr.io/trycua/macos:15"),
+    );
+    mark_used_at(&owned.dir().join("cua-base-old.json"), days_ago(30));
+    std::fs::remove_dir_all(&bundle).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::create_dir_all(&bundle).unwrap();
+    let fake = Arc::new(FakeLume {
+        vms: Mutex::new(vec![LumeVm {
+            name: "cua-base-old".into(),
+            status: "stopped".into(),
+            allocated: 27 * GIB,
+        }]),
+    });
+    let s = Scanner::new(
+        l.clone(),
+        config(Budget::Bytes(GIB)),
+        None,
+        Some(fake.clone() as Arc<dyn LumeApi>),
+    );
+    let g = collect(&s, opts(None, false, false)).await;
+    assert_eq!(fake.vms.lock().unwrap().len(), 1, "{g:?}");
+    assert!(bundle.exists());
+    assert!(!owned.owns("cua-base-old"));
+}
+
 #[tokio::test]
 async fn report_totals_cover_every_category() {
     let d = tempfile::tempdir().unwrap();

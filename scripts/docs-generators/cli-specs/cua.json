@@ -3265,6 +3265,32 @@
      "usage": "cua sandbox keep-alive [OPTIONS] <NAME>"
     },
     {
+     "abstract": "Delete what our own crashed or abandoned creates left behind, and only that: ephemeral sandboxes whose process exited, interrupted build instances, and local Space creates abandoned for over 24 hours. Each must have an ownership record of ours; a finished Space or a VM without a record is never touched. `--dry-run` lists what would go",
+     "after_help": "Examples:\n  cua sb gc --dry-run\n  cua sb gc",
+     "aliases": [],
+     "arguments": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "List what would be deleted, and what is kept and why; delete nothing",
+       "hidden": false,
+       "name": "dry-run",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "gc",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua sandbox gc [OPTIONS]"
+    },
+    {
      "abstract": "Delete a sandbox (Fleet: release the claim; managed pools are kept for reuse)",
      "after_help": "Examples:\n  cua sb rm dev\n  # Without the prompt (required in scripts and agents)\n  cua sb rm cloud:dev --force",
      "aliases": [

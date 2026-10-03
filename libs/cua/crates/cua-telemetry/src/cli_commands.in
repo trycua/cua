@@ -125,6 +125,7 @@
     "sandbox.cp",
     "sandbox.create",
     "sandbox.exec",
+    "sandbox.gc",
     "sandbox.info",
     "sandbox.keep-alive",
     "sandbox.launch",

@@ -365,3 +365,128 @@ async fn a_cancel_while_connecting_removes_the_running_instance() {
     assert!(!e.rt.running.lock().unwrap().contains_key("connecting"));
     assert_eq!(journals(&e.spaces), 0);
 }
+
+/// A create given the name of a Space that already runs (its cua-spacesd
+/// answers another token, so readiness and the handshake fail) never
+/// deletes it: only what a create made is its to remove.
+#[tokio::test]
+async fn a_failed_create_never_deletes_an_existing_space_of_that_name() {
+    let e = env();
+    e.rt.boots.store(true, std::sync::atomic::Ordering::SeqCst);
+    let mute = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    e.rt.port.store(
+        mute.local_addr().unwrap().port(),
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((sock, _)) = mute.accept().await {
+            held.push(sock);
+        }
+    });
+    let name = "space-0123456789";
+    e.rt.running.lock().unwrap().insert(name.into(), true);
+    let mut opts = local(Some(name), "p5");
+    opts.timeout = Some(Duration::from_secs(3));
+    assert!(e.spaces.create(opts).await.is_err());
+    assert!(e.rt.running.lock().unwrap().contains_key(name));
+    assert!(
+        e.rt.deleted.lock().unwrap().is_empty(),
+        "{:?}",
+        e.rt.deleted.lock().unwrap()
+    );
+}
+
+/// A create whose process died is the only thing the recovery reaps, and
+/// only after it was abandoned for the grace period: a younger one is kept
+/// (its journal too, for a later pass), and a finished Space, which has no
+/// journal, is never touched. A dry run reports and changes nothing.
+#[tokio::test]
+async fn an_abandoned_create_is_reaped_only_after_the_grace_period() {
+    use cua_spaces::RecoveryOutcome;
+    let e = env();
+    let dead_pid = {
+        let mut c = std::process::Command::new("true").spawn().unwrap();
+        let pid = c.id();
+        c.wait().unwrap();
+        pid
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let dir = e.spaces.home_dir().join("creating");
+    std::fs::create_dir_all(&dir).unwrap();
+    let journal = |name: &str, started: u64| {
+        std::fs::write(
+            dir.join(format!("{name}.json")),
+            serde_json::json!({
+                "name": name, "token": "t0k", "pid": dead_pid, "spacesd": true,
+                "started": started, "kind": "local", "id": format!("local:{name}"),
+                "made": [{"type": "local_sandbox", "name": name, "fresh": true}],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        e.rt.running.lock().unwrap().insert(name.into(), true);
+    };
+    journal("space-young00", now - 3600);
+    journal("space-old0000", now - 25 * 3600);
+    // A Space that finished creating: no journal.
+    e.rt.running
+        .lock()
+        .unwrap()
+        .insert("space-done000".into(), true);
+    let outcome = |got: &[cua_spaces::RecoveredCreate], id: &str| {
+        got.iter().find(|r| r.id == id).map(|r| r.outcome.clone())
+    };
+
+    let dry = e
+        .spaces
+        .gc_interrupted_creates(
+            Duration::from_secs(1),
+            cua_spaces::ABANDONED_CREATE_GRACE,
+            true,
+        )
+        .await;
+    assert!(
+        matches!(
+            outcome(&dry, "local:space-young00"),
+            Some(RecoveryOutcome::Kept(_))
+        ),
+        "{dry:?}"
+    );
+    assert!(
+        matches!(
+            outcome(&dry, "local:space-old0000"),
+            Some(RecoveryOutcome::WouldDelete(_))
+        ),
+        "{dry:?}"
+    );
+    assert_eq!(outcome(&dry, "local:space-done000"), None);
+    assert!(e.rt.deleted.lock().unwrap().is_empty());
+    assert_eq!(journals(&e.spaces), 2);
+
+    let got = e
+        .spaces
+        .recover_interrupted_creates(Duration::from_secs(1))
+        .await;
+    assert!(
+        matches!(
+            outcome(&got, "local:space-young00"),
+            Some(RecoveryOutcome::Kept(_))
+        ),
+        "{got:?}"
+    );
+    assert!(
+        matches!(
+            outcome(&got, "local:space-old0000"),
+            Some(RecoveryOutcome::Deleted(_))
+        ),
+        "{got:?}"
+    );
+    assert_eq!(e.rt.deleted.lock().unwrap().as_slice(), ["space-old0000"]);
+    let running = e.rt.running.lock().unwrap();
+    assert!(running.contains_key("space-young00") && running.contains_key("space-done000"));
+    assert!(dir.join("space-young00.json").exists() && !dir.join("space-old0000.json").exists());
+}

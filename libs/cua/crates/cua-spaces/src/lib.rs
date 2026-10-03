@@ -121,9 +121,9 @@ pub use id::{Provider, SpaceId};
 pub use relay::{RelayAccount, RelayMachine};
 pub use space::{SPACESD_FEATURE, ServiceSource, Space, SpaceInfo, SpacePower, SpaceService};
 pub use spaces::{
-    CreatePhase, CreateProgress, DEFAULT_PROBE_TIMEOUT, PendingSpace, ProgressSink,
-    RecoveredCreate, RecoveryOutcome, SpaceCreate, SpaceCreated, Spaces, SpacesBuilder,
-    expects_spacesd, pool_key, sanitize_label, sized_pool_key,
+    ABANDONED_CREATE_GRACE, CreatePhase, CreateProgress, DEFAULT_PROBE_TIMEOUT, PendingSpace,
+    ProgressSink, RecoveredCreate, RecoveryOutcome, SpaceCreate, SpaceCreated, Spaces,
+    SpacesBuilder, expects_spacesd, pool_key, sanitize_label, sized_pool_key,
 };
 
 /// The Spaces tool contract (manifest, input types).

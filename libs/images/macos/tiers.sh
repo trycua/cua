@@ -40,16 +40,24 @@ while [ $# -gt 0 ]; do
 done
 case "$UPTO" in slim) TIERS=(slim) ;; full) TIERS=(slim full) ;; xcode) TIERS=(slim full xcode) ;;
     *) echo "--upto is slim, full or xcode" >&2; exit 2 ;; esac
+[[ "$PREFIX" =~ ^cua-(e2e|ci)-[A-Za-z0-9._-]+$ ]] ||
+    { echo "--prefix must start with cua-e2e- or cua-ci- (got '$PREFIX')" >&2; exit 2; }
 [ -z "$STAMP" ] || [[ "$STAMP" =~ ^[0-9]{8}-[0-9a-f]{7}$ ]] || { echo "--stamp is <yyyymmdd>-<sha7>" >&2; exit 2; }
 # shellcheck source=versions.env
 . "$HERE/versions.env"
 log() { echo "[macos-tiers $(date +%T)] $*" >&2; }
 
+VM_OWNER="$REPO/libs/images/common/tools/cua-vm-owner"
+# The tier VMs' owner is this script: a later build reaps them only after it
+# exits (and the grace period passes), never while it chains the tiers.
+export CUA_VM_OWNER_PID="${CUA_VM_OWNER_PID:-$$}"
 built=()
 cleanup() {
     [ "$KEEP" = 1 ] && return 0
     local vm
-    for vm in ${built[@]+"${built[@]}"}; do lume delete "$vm" --force >/dev/null 2>&1 || true; done
+    for vm in ${built[@]+"${built[@]}"}; do
+        lume delete "$vm" --force >/dev/null 2>&1 && python3 "$VM_OWNER" forget "$vm" 2>/dev/null || true
+    done
 }
 trap cleanup EXIT
 
@@ -74,6 +82,11 @@ for tier in "${TIERS[@]}"; do
         esac
     fi
     log "tier $tier -> $vm"
+    # build.sh refuses a name that already exists, so a VM it leaves behind
+    # is one this run made: only then is it ours to delete.
+    if lume get "$vm" --format json >/dev/null 2>&1 && ! python3 "$VM_OWNER" reclaim "$vm"; then
+        echo "$vm already exists: delete it yourself or pick another --prefix" >&2; exit 1
+    fi
     built+=("$vm")
     "$HERE/build.sh" --tier "$tier" --name "$vm" --keep --app "$APP" --out "$OUT/$tier" \
         ${base[@]+"${base[@]}"} ${expect[@]+"${expect[@]}"} ${push[@]+"${push[@]}"}

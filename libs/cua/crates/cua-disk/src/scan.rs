@@ -795,6 +795,22 @@ impl Scanner {
                 });
                 continue;
             }
+            // The VM under this name is not the one the record was written
+            // for (deleted outside the SDK, then made again): never ours to
+            // collect or reap. Only the stale record goes.
+            if vm.is_some()
+                && owned.verify(&self.layout.lume(), &r.name) == cua_vmm::lume::Ownership::Replaced
+            {
+                items.push(Item {
+                    category: Category::LumeBases,
+                    kind: "stale-record".into(),
+                    name: r.name.clone(),
+                    orphan: true,
+                    target: Target::Record(owned.dir().join(format!("{}.json", r.name))),
+                    ..Default::default()
+                });
+                continue;
+            }
             let status = vm.map(|v| v.status.clone());
             let (category, kind) = match r.kind {
                 OwnedKind::Base => (Category::LumeBases, "lume-base"),

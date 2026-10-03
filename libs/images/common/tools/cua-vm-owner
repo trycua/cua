@@ -1,0 +1,380 @@
+#!/usr/bin/env python3
+"""Ownership records for the Lume VMs our build and CI scripts create.
+
+A script that makes a VM records it right after creating it; cleanup and
+reaping only ever delete a VM whose record proves we made it. A record lives
+in a ledger (`$CUA_VM_LEDGER`, default `~/.cua/vm-owners/<nonce>.json`) and
+ties the creation to:
+
+- the VM's on-disk identity: its bundle directory's inode plus birth time,
+  so a VM deleted and made again under the same name (by a user, another
+  tool) is not ours any more;
+- its creator: kind (`image-build`, `ci`, `golden`), run id, the owning process (pid
+  and its start time, on this host) and a random nonce.
+
+    cua-vm-owner mark VM --kind KIND --run RUN [--ref local:NAME]
+    cua-vm-owner forget VM          (after this run deleted VM)
+    cua-vm-owner adopt VM           (drop the record: VM is yours, never reaped)
+    cua-vm-owner owns VM            (exit 0 when a record matches the VM on disk)
+    cua-vm-owner reclaim VM         (delete VM if ours and its owner is gone)
+    cua-vm-owner reap [--kind KIND]... [--grace 2h] [--dry-run] [--cua PATH]
+    cua-vm-owner ls
+
+`reap` never lists Lume's VMs and never matches names: it walks the ledger
+and deletes a VM only when its record matches the bundle on disk, its owner
+(process, on this host) is gone, and it is older than the grace period. Every
+deletion and every skip is logged with its reason.
+
+The owner is `$CUA_VM_OWNER_PID` when set, else the nearest ancestor process
+named `cua` (a `cua images release`) or `Runner.Worker` (a CI job), else the
+calling process.
+
+Environment: CUA_VM_LEDGER, CUA_VM_OWNER_PID, CUA_VM_OWNER_LUME (the lume
+binary), CUA_LUME_ROOT (VM root; default: Lume's configured location).
+Python 3 standard library only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import secrets
+import socket
+import subprocess
+import sys
+import time
+
+KINDS = ("image-build", "ci", "golden")
+# `golden` VMs are kept on purpose (cloned later): only their own script
+# replaces them (`reclaim`); `reap` without --kind never takes them.
+REAPED_BY_DEFAULT = ("image-build", "ci")
+OWNER_ANCESTORS = ("cua", "Runner.Worker")
+
+
+def log(msg: str) -> None:
+    print(f"[cua-vm-owner] {msg}", file=sys.stderr)
+
+
+def ledger_dir() -> str:
+    return os.environ.get("CUA_VM_LEDGER") or os.path.expanduser("~/.cua/vm-owners")
+
+
+def lume_bin() -> str:
+    return os.environ.get("CUA_VM_OWNER_LUME") or "lume"
+
+
+def lume(*args: str, check: bool = False) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [lume_bin(), *args], capture_output=True, text=True, check=check
+    )
+
+
+def lume_locations() -> dict[str, str]:
+    """Lume's VM locations (name -> path) from its config file."""
+    out = {"home": "~/.lume"}
+    cfg = os.path.expanduser("~/.config/lume/config.yaml")
+    try:
+        with open(cfg, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return out
+    name = None
+    for line in text.splitlines():
+        m = re.match(r"\s*-?\s*name:\s*\"?([^\"]+)\"?\s*$", line)
+        if m:
+            name = m.group(1)
+            continue
+        m = re.match(r"\s*path:\s*\"?([^\"]+)\"?\s*$", line)
+        if m and name:
+            out[name] = m.group(1)
+            name = None
+    return out
+
+
+def bundle_of(vm: str) -> str | None:
+    """The VM's bundle directory, when Lume has the VM."""
+    r = lume("get", vm, "--format", "json")
+    if r.returncode != 0:
+        return None
+    root = os.environ.get("CUA_LUME_ROOT")
+    if not root:
+        try:
+            d = json.loads(r.stdout)
+            d = d[0] if isinstance(d, list) else d
+            location = d.get("locationName") or "home"
+        except (ValueError, IndexError, AttributeError):
+            location = "home"
+        root = lume_locations().get(location, "~/.lume")
+    path = os.path.join(os.path.expanduser(root), vm)
+    return path if os.path.isdir(path) else None
+
+
+def identity(path: str) -> str | None:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    born = getattr(st, "st_birthtime", None)
+    born_ns = int(born * 1e9) if born else st.st_ctime_ns
+    return f"{st.st_ino}:{born_ns}"
+
+
+def proc_start(pid: int) -> str | None:
+    r = subprocess.run(
+        ["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True
+    )
+    s = r.stdout.strip()
+    return s if r.returncode == 0 and s else None
+
+
+def proc_parent(pid: int) -> tuple[int, str] | None:
+    r = subprocess.run(
+        ["ps", "-o", "ppid=,comm=", "-p", str(pid)], capture_output=True, text=True
+    )
+    parts = r.stdout.strip().split(None, 1)
+    if r.returncode != 0 or len(parts) != 2:
+        return None
+    return int(parts[0]), os.path.basename(parts[1].strip())
+
+
+def owner_pid() -> int:
+    env = os.environ.get("CUA_VM_OWNER_PID")
+    if env and env.isdigit():
+        return int(env)
+    pid = os.getppid()
+    seen = 0
+    cur = pid
+    while cur > 1 and seen < 32:
+        p = proc_parent(cur)
+        if p is None:
+            break
+        _, comm = p
+        if comm in OWNER_ANCESTORS:
+            return cur
+        cur = p[0]
+        seen += 1
+    return pid
+
+
+def owner_alive(rec: dict) -> bool:
+    """The creating run is still going. Another host's run is never judged
+    gone (its process cannot be checked here)."""
+    if rec.get("host") != socket.gethostname():
+        return True
+    start = proc_start(int(rec.get("pid", 0)))
+    return start is not None and start == rec.get("pid_start")
+
+
+def records() -> list[tuple[str, dict]]:
+    d = ledger_dir()
+    out = []
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return out
+    for n in names:
+        if not n.endswith(".json"):
+            continue
+        p = os.path.join(d, n)
+        try:
+            with open(p, encoding="utf-8") as f:
+                out.append((p, json.load(f)))
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def records_for(vm: str) -> list[tuple[str, dict]]:
+    return [(p, r) for p, r in records() if r.get("vm") == vm]
+
+
+def verdict(rec: dict) -> str:
+    """`matches`, `gone` (no VM) or `replaced` (another VM under the name)."""
+    bundle = bundle_of(rec["vm"])
+    if bundle is None:
+        return "gone"
+    if os.path.realpath(bundle) != os.path.realpath(rec.get("bundle", "")):
+        return "replaced"
+    return "matches" if identity(bundle) == rec.get("identity") else "replaced"
+
+
+def matching(vm: str) -> tuple[str, dict] | None:
+    for p, r in records_for(vm):
+        if verdict(r) == "matches":
+            return p, r
+    return None
+
+
+def delete_vm(rec: dict, cua: str | None) -> str | None:
+    """Deletes the VM; returns an error, or None."""
+    if rec.get("ref") and cua:
+        r = subprocess.run(
+            [cua, "sb", "rm", rec["ref"], "--force"], capture_output=True, text=True
+        )
+        if r.returncode == 0:
+            return None
+    lume("stop", rec["vm"])
+    r = lume("delete", rec["vm"], "--force")
+    return None if r.returncode == 0 else (r.stderr.strip() or "lume delete failed")
+
+
+def cmd_mark(a) -> int:
+    bundle = bundle_of(a.vm)
+    if bundle is None:
+        log(f"not recording {a.vm}: Lume has no such VM")
+        return 1
+    pid = owner_pid()
+    nonce = secrets.token_hex(8)
+    rec = {
+        "vm": a.vm,
+        "kind": a.kind,
+        "run": a.run,
+        "ref": a.ref,
+        "bundle": bundle,
+        "identity": identity(bundle),
+        "pid": pid,
+        "pid_start": proc_start(pid),
+        "host": socket.gethostname(),
+        "created_at": int(time.time()),
+        "nonce": nonce,
+    }
+    os.makedirs(ledger_dir(), exist_ok=True)
+    path = os.path.join(ledger_dir(), f"{nonce}.json")
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(rec, f, indent=2)
+    os.replace(path + ".tmp", path)
+    log(f"recorded {a.vm} ({a.kind}, run {a.run}, owner pid {pid})")
+    return 0
+
+
+def cmd_forget(a, why: str) -> int:
+    for p, _ in records_for(a.vm):
+        os.remove(p)
+    log(f"{a.vm}: {why}")
+    return 0
+
+
+def cmd_owns(a) -> int:
+    m = matching(a.vm)
+    if m is None:
+        print(f"{a.vm}: no record of ours matches the VM on disk")
+        return 1
+    r = m[1]
+    state = "running" if owner_alive(r) else "gone"
+    print(f"{a.vm}: ours ({r['kind']}, run {r['run']}, owner pid {r['pid']} {state})")
+    return 0
+
+
+def cmd_reclaim(a) -> int:
+    if bundle_of(a.vm) is None:
+        return 0
+    m = matching(a.vm)
+    if m is None:
+        log(f"refusing to delete {a.vm}: no record of ours matches it (not created by us)")
+        return 1
+    p, r = m
+    if owner_alive(r):
+        log(f"refusing to delete {a.vm}: its run ({r['run']}, pid {r['pid']}) is still going")
+        return 1
+    err = delete_vm(r, a.cua)
+    if err:
+        log(f"could not delete {a.vm}: {err}")
+        return 1
+    os.remove(p)
+    log(f"deleted {a.vm}: left by run {r['run']}, whose owner is gone")
+    return 0
+
+
+def parse_duration(s: str) -> int:
+    m = re.fullmatch(r"(\d+)([smhd]?)", s.strip())
+    if not m:
+        raise argparse.ArgumentTypeError(f"bad duration {s!r} (e.g. 90m, 2h)")
+    return int(m.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}[m.group(2)]
+
+
+def cmd_reap(a) -> int:
+    kinds = set(a.kind or REAPED_BY_DEFAULT)
+    now = int(time.time())
+    verb = "would delete" if a.dry_run else "deleted"
+    failed = 0
+    for p, r in records():
+        vm = r.get("vm", "?")
+        if r.get("kind") not in kinds:
+            continue
+        v = verdict(r)
+        if v == "gone":
+            log(f"dropped the record of {vm}: the VM no longer exists")
+            if not a.dry_run:
+                os.remove(p)
+            continue
+        if v == "replaced":
+            log(f"kept {vm}: it is not the VM the record was written for; record dropped")
+            if not a.dry_run:
+                os.remove(p)
+            continue
+        if owner_alive(r):
+            log(f"kept {vm}: its run ({r.get('run')}, pid {r.get('pid')}) is still going")
+            continue
+        age = now - int(r.get("created_at", now))
+        if age < a.grace:
+            log(f"kept {vm}: {age // 60} min old, reaped after {a.grace // 60} min")
+            continue
+        if a.dry_run:
+            log(f"{verb} {vm}: left by run {r.get('run')} ({r.get('kind')}), owner gone, {age // 3600} h old")
+            continue
+        err = delete_vm(r, a.cua)
+        if err:
+            failed += 1
+            log(f"could not delete {vm}: {err}")
+            continue
+        os.remove(p)
+        log(f"{verb} {vm}: left by run {r.get('run')} ({r.get('kind')}), owner gone, {age // 3600} h old")
+    return 1 if failed else 0
+
+
+def cmd_ls(_a) -> int:
+    for _, r in records():
+        alive = "running" if owner_alive(r) else "gone"
+        print(f"{r.get('vm')}\t{r.get('kind')}\trun {r.get('run')}\towner {r.get('pid')} {alive}\t{verdict(r)}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="cua-vm-owner", description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    m = sub.add_parser("mark")
+    m.add_argument("vm")
+    m.add_argument("--kind", choices=KINDS, required=True)
+    m.add_argument("--run", required=True)
+    m.add_argument("--ref", default=None, help="a cua sandbox ref (local:NAME): reaped with `cua sb rm`")
+    for name in ("forget", "adopt", "owns"):
+        sub.add_parser(name).add_argument("vm")
+    rc = sub.add_parser("reclaim")
+    rc.add_argument("vm")
+    rc.add_argument("--cua", default=None)
+    r = sub.add_parser("reap")
+    r.add_argument("--kind", action="append", choices=KINDS)
+    r.add_argument("--grace", type=parse_duration, default=2 * 3600)
+    r.add_argument("--dry-run", action="store_true")
+    r.add_argument("--cua", default=None, help="the cua CLI, to remove sandboxes with `cua sb rm`")
+    sub.add_parser("ls")
+    a = ap.parse_args(argv)
+    if a.cmd == "mark":
+        return cmd_mark(a)
+    if a.cmd == "forget":
+        return cmd_forget(a, "record removed (deleted by its run)")
+    if a.cmd == "adopt":
+        return cmd_forget(a, "record removed: the VM is yours now and is never reaped")
+    if a.cmd == "owns":
+        return cmd_owns(a)
+    if a.cmd == "reclaim":
+        return cmd_reclaim(a)
+    if a.cmd == "reap":
+        return cmd_reap(a)
+    return cmd_ls(a)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -27,8 +27,8 @@ Every event carries: `telemetry_schema_version`, `event_version`, `product`
 | `cua_spaces_feature_used` | `feature` (a fixed Spaces app feature) | Spaces app feature adoption. |
 | `cua_stream_stats` | `transport`, `codec`, `decode` (`hw` or `sw`), `fps_bucket`, `latency_bucket`, `resolution`, `duration_bucket` | Streaming performance (50% sampled). |
 | `cua_onboarding_step` | `step`, `outcome` | Install and onboarding funnel. |
-| `cua_agent_run_started` | `harness` (cua-agents id such as `claude-code` or `openai-codex`, else `other`), `location` (`local`, `cloud`, `relay` or `direct`), `entry` (`spaces_tool`, `cli`, `sdk`, `persistent`, `routine`), `outcome`, `error_kind` | Agent runs started, from where, and how often a start fails. |
-| `cua_agent_run_completed` | `harness`, `location`, `entry`, `outcome` (`ok`, `error`, or `cancelled` when the turn was cancelled or the run stopped), `error_kind`, `duration_bucket` | First agent run (activation) and how reliably each harness finishes its first turn. Sent once per run. |
+| `cua_agent_run_started` | `harness` (cua-agents id or `other`), `location`, `entry` (`spaces_tool`, `cli`, `sdk`, `persistent`, `routine`), `outcome`, `error_kind` | Agent runs started, and failed starts. |
+| `cua_agent_run_completed` | `harness`, `location`, `entry`, `outcome`, `error_kind`, `duration_bucket` | First agent run, and how reliably runs finish. Once per run. |
 | `cua_bench_run_completed` | `taskset` (cua-bench dataset or `custom`), `score_bucket`, `task_count`, `outcome` | Benchmark use and coarse scores. |
 | `cua_daemon_started` | `mode`, `outcome` | Daemon startup reliability. |
 | `cua_daemon_health` | `uptime_bucket`, `sandboxes` | Hourly aggregate health. |
@@ -49,20 +49,6 @@ Every event carries: `telemetry_schema_version`, `event_version`, `product`
 | `cua_app_update` | `action` (`checked`, `found`, `not_found`, `installed`, `failed`), `channel` (`stable` or `beta`), `trigger` (`user` or `background`) | Whether people update. |
 | `cua_device_enroll` | `method` (`sign_in`, `approval`, `rekey`), `outcome` | How devices join your account's relay. |
 | `cua_experiment` | `action` (`experiment_on` or `experiment_off`), `experiment` (`cua_volume`, `your_cloud`, `sharing`) | Which Cua Spaces experiments people try, and which they turn off again. |
-
-## Agent runs
-
-An agent run lives in a Space and outlives the program that started it.
-The install that started it records it: `cua_agent_run_started` when it
-starts, and `cua_agent_run_completed` once, when any Cua program of that
-install (the app, `cua daemon`, the CLI, an SDK) first sees its first turn
-end, fail or stop. Until then the install keeps a small marker in
-`~/.cua/telemetry/agent_runs/` with the same fixed words (harness id,
-location, entry point) and the start time; markers older than 7 days are
-dropped. Nothing about the prompt, the repository, files, keys or output is
-recorded. Inside a Space, Cua programs started by an agent run record no
-agent runs of their own (`CUA_AGENT_RUN_ID` is set there), so a run is never
-counted for the Space as if it were an install.
 
 ## Teleport caller kinds
 

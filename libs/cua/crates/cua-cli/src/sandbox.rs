@@ -430,8 +430,6 @@ pub enum SandboxCmd {
         #[arg(long = "for", default_value = "15m", value_parser = parse_secs)]
         duration: u32,
     },
-    /// Delete a sandbox (Fleet: release the claim; managed pools are kept
-    /// for reuse).
     /// Delete what our own crashed or abandoned creates left behind, and
     /// only that: ephemeral sandboxes whose process exited, interrupted
     /// build instances, and local Space creates abandoned for over 24 hours.
@@ -446,6 +444,8 @@ pub enum SandboxCmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Delete a sandbox (Fleet: release the claim; managed pools are kept
+    /// for reuse).
     #[command(
         visible_alias = "delete",
         after_help = "Examples:

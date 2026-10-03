@@ -21,6 +21,7 @@ description: "Create, list, connect to, suspend and delete sandboxes, local or i
 | [`cua sandbox resume`](#cua-sandbox-resume) | Resume (Fleet managed pool: claim a fresh sandbox of the same shape). |
 | [`cua sandbox restart`](#cua-sandbox-restart) | Restart. |
 | [`cua sandbox keep-alive`](#cua-sandbox-keep-alive) | Extend a Fleet claim's lease. |
+| [`cua sandbox gc`](#cua-sandbox-gc) | Delete what our own crashed or abandoned creates left behind, and only that: ephemeral sandboxes whose process exited, interrupted build instances, and local Space creates abandoned for over 24 hours. |
 | [`cua sandbox rm`](#cua-sandbox-rm) | Delete a sandbox (Fleet: release the claim; managed pools are kept for reuse). |
 
 Every command also accepts the [global options](/cua-cli/reference/cli#global-options).
@@ -273,6 +274,25 @@ cua sandbox keep-alive [OPTIONS] <NAME>
 ```bash test="cli-shape" id="ref-cua-sandbox-keep-alive"
 # Keep the claim for two more hours
 cua sb keep-alive cloud:dev --for 2h
+```
+
+## `cua sandbox gc`
+
+Delete what our own crashed or abandoned creates left behind, and only that: ephemeral sandboxes whose process exited, interrupted build instances, and local Space creates abandoned for over 24 hours. Each must have an ownership record of ours; a finished Space or a VM without a record is never touched. `--dry-run` lists what would go.
+
+```text output
+cua sandbox gc [OPTIONS]
+```
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-sandbox-gc--dry-run"></span>`--dry-run` | boolean | `false` | List what would be deleted, and what is kept and why; delete nothing. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-sandbox-gc"
+cua sb gc --dry-run
+cua sb gc
 ```
 
 ## `cua sandbox rm`

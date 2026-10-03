@@ -1023,6 +1023,9 @@ pub enum RecoveryOutcome {
   Failed(String),
   AlreadyRegistered,
   NothingLeft,
+  Kept(String),
+  WouldDelete(String),
+  WouldRegister,
 }
 ```
 
@@ -1655,6 +1658,7 @@ impl Spaces {
   async fn gpu_support(&self, on: &On) -> Vec<GpuSupport>;
   fn fleet_pool_name(&self, runtime: FleetRuntime, image: &str) -> String;
   async fn recover_interrupted_creates(&self, budget: Duration) -> Vec<RecoveredCreate>;
+  async fn gc_interrupted_creates(&self, budget: Duration, grace: Duration, dry_run: bool) -> Vec<RecoveredCreate>;
   async fn delete(&self, space: &str) -> Result<String>;
   fn thumbnails(&self) -> &ThumbnailCache;
   async fn thumbnail(&self, space: &str, max_age: Option<Duration>) -> Result<Thumbnail>;
@@ -2252,6 +2256,8 @@ pub fn walk(root: &Path, respect_ignore_files: bool) -> Result<Walk>
 ## Constants
 
 ```rust
+/// How long a create must have been ...
+pub const ABANDONED_CREATE_GRACE: Duration = _;
 /// Default time allowed for the ...
 pub const DEFAULT_PROBE_TIMEOUT: Duration = _;
 /// The spacesd pseudo-feature every ...

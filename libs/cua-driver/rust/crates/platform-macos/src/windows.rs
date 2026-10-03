@@ -425,6 +425,54 @@ pub fn resolve_main_window_id(pid: i32) -> anyhow::Result<u32> {
     Ok(largest.unwrap().window_id)
 }
 
+/// kCGPopUpMenuWindowLevel: the WindowServer layer of an open menu's window.
+const MENU_WINDOW_LAYER: i32 = 101;
+
+/// The ids of the menu windows `pid` has on screen; `None` when
+/// WindowServer's window list could not be read (unknown, never "no menu").
+pub(crate) fn menu_window_ids(pid: i32) -> Option<Vec<u32>> {
+    let windows = all_windows_any_layer();
+    (!windows.is_empty()).then(|| {
+        windows
+            .iter()
+            .filter(|w| w.pid == pid && w.is_on_screen && w.layer == MENU_WINDOW_LAYER)
+            .map(|w| w.window_id)
+            .collect()
+    })
+}
+
+/// How many menu windows of `pid` are on screen that were not in `before`;
+/// `None` when unknown.
+pub(crate) fn new_menu_windows(pid: i32, before: &[u32]) -> Option<usize> {
+    menu_window_ids(pid).map(|ids| ids.iter().filter(|id| !before.contains(id)).count())
+}
+
+/// `Some(true)` once no menu window of `pid` outside `before` is on screen
+/// (polled for up to 400 ms), `Some(false)` when one still is, `None` when
+/// that could not be read.
+pub(crate) fn wait_for_new_menus_closed(pid: i32, before: &[u32]) -> Option<bool> {
+    poll_until_no_menu(
+        || new_menu_windows(pid, before),
+        std::time::Duration::from_millis(400),
+    )
+}
+
+fn poll_until_no_menu(
+    mut open_menus: impl FnMut() -> Option<usize>,
+    timeout: std::time::Duration,
+) -> Option<bool> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if open_menus()? == 0 {
+            return Some(true);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Some(false);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,6 +526,19 @@ mod tests {
             on_current_space: None,
             space_ids: None,
         }
+    }
+
+    #[test]
+    fn menu_close_polling_keeps_an_unreadable_window_list_unknown() {
+        let timeout = std::time::Duration::from_millis(100);
+        assert_eq!(poll_until_no_menu(|| Some(0), timeout), Some(true));
+        assert_eq!(poll_until_no_menu(|| None, timeout), None);
+        assert_eq!(poll_until_no_menu(|| Some(1), timeout), Some(false));
+        let mut reads = [Some(1), Some(0)].into_iter();
+        assert_eq!(
+            poll_until_no_menu(|| reads.next().flatten(), timeout),
+            Some(true)
+        );
     }
 
     #[test]

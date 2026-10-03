@@ -1560,6 +1560,7 @@ dependencies = [
  "cua-spacesd-client",
  "cua-spacesd-desktop",
  "cua-spacesd-doctor",
+ "cua-spacesd-prompts",
  "cua-spacesd-provider-api",
  "cua-spacesd-server",
  "cua-spacesd-session",
@@ -1711,6 +1712,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-spacesd-prompts"
+version = "0.2.1"
+dependencies = [
+ "core-foundation",
+ "libc",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "cua-spacesd-provider-api"
 version = "0.5.1"
 dependencies = [
@@ -1736,6 +1748,7 @@ dependencies = [
  "cua-relay",
  "cua-spacesd-client",
  "cua-spacesd-html5",
+ "cua-spacesd-prompts",
  "cua-spacesd-socks",
  "cua-spacesd-teleport",
  "cua-telemetry",

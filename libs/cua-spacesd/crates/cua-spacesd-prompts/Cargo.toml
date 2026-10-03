@@ -1,0 +1,18 @@
+[package]
+name = "cua-spacesd-prompts"
+description = "Answers macOS SecurityAgent / keychain dialogs through the accessibility tree, inside disposable Space VMs whose guest password is known"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"

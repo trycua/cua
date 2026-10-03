@@ -327,6 +327,15 @@ class ReleaseWiringTests(unittest.TestCase):
         self.assertIn("-f build=false", script)
         self.assertIn("build:", top_block(top_block(self.fanout, "on", 0), "workflow_dispatch", 2))
 
+    def test_macos_keychain_check_gates_each_publish(self) -> None:
+        with open(os.path.join(ROOT, "scripts/images/release-macos.sh")) as fh:
+            script = fh.read()
+        loop = script[script.index('for tier in slim full; do'):]
+        check = loop.index('keychain_check "$PREFIX-$tier"')
+        self.assertLess(check, loop.index("--resume --publish"))
+        self.assertIn("security unlock-keychain -p lume", script)
+        self.assertIn("grep -q '^RENAMED=0$'", script)
+
     def test_lag_check_never_blocks(self) -> None:
         lag = read("ci-images-spacesd-lag.yml")
         self.assertIn("continue-on-error: true", lag)

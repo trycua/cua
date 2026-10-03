@@ -3,50 +3,50 @@
   "variant": "rootfs",
   "where": "local",
   "arch": "amd64",
-  "image": "ghcr.io/trycua/bench-osworld@sha256:afe8e25fdda48cc71c60a6118a1bdfa0235352f311d27b271c5b7f5711f9001a",
+  "image": "cua-e2e-local/bench-osworld:docker-local-amd64",
   "child": null,
-  "container_runtime": "runc",
-  "pinned_ref": "ghcr.io/trycua/bench-osworld@sha256:afe8e25fdda48cc71c60a6118a1bdfa0235352f311d27b271c5b7f5711f9001a",
+  "container_runtime": "auto (gVisor when available)",
+  "pinned_ref": null,
   "doctor": "pass",
-  "seconds": 175.2,
-  "ok": false,
+  "seconds": 21.1,
+  "ok": true,
   "checks": [
     {
       "check": "ready",
       "status": "pass",
-      "detail": "after 11s"
+      "detail": "after 4s"
     },
     {
       "check": "server",
       "status": "pass",
       "detail": "GET /screenshot on :5000 -> 200",
-      "seconds": 1.64
+      "seconds": 2.34
     },
     {
-      "check": "guestd",
+      "check": "spacesd",
       "status": "pass",
-      "detail": "GetCapabilities: arch, bootTime, displayServer, displays, features, hostname, initialized, limits, os, protocolRevision, protocolVersion, runtime, sideChannels, version",
-      "seconds": 0.09
+      "detail": "GetCapabilities: arch, bootTime, displayServer, displays, features, hostname, limits, machineSealPublicKey, os, protocolRevision, protocolVersion, runtime, runtimeDetail, sideChannels, version",
+      "seconds": 0.18
     },
     {
       "check": "screen",
-      "status": "fail",
-      "detail": "1920x1080 (want 1920x1080), color variety 0.000",
-      "seconds": 124.68
+      "status": "pass",
+      "detail": "1920x1080 (want 1920x1080), color variety 0.522",
+      "seconds": 2.67
     },
     {
       "check": "input",
-      "status": "fail",
+      "status": "pass",
       "detail": {
-        "ok": false,
-        "changed_fraction": 0.0
+        "ok": true,
+        "changed_fraction": 0.381
       },
-      "seconds": 4.15
+      "seconds": 4.42
     },
     {
       "check": "bench.server_screenshot",
       "status": "pass",
-      "detail": "200, 6537 bytes"
+      "detail": "200, 1666338 bytes"
     },
     {
       "check": "bench.server_execute",
@@ -60,8 +60,8 @@
     },
     {
       "check": "bench.server_accessibility",
-      "status": "fail",
-      "detail": "500, 0 chars: <!doctype html>\n<html lang=en>\n  <head>\n    <title>AttributeError: &#39;NoneType&#39; object has no attribute &#39;items&#39;\n // Werkzeug Debugger</title>\n    <link rel=\"stylesheet\" href=\"?__debugger__=yes&amp;cmd=resource&amp;f=style.css\">\n    <link rel=\"shortcut icon\"\n        href=\"?__debugger__="
+      "status": "pass",
+      "detail": "200, 143672 chars"
     },
     {
       "check": "bench.server_screen_size",
@@ -72,8 +72,8 @@
       "check": "doctor",
       "status": "pass",
       "detail": "rc=0 (report in rootfs-local-amd64-doctor.json); all checks pass",
-      "seconds": 8.59
+      "seconds": 3.1
     }
   ],
-  "date": "2026-09-24T09:43:34Z"
+  "date": "2026-10-03T22:20:00Z"
 }

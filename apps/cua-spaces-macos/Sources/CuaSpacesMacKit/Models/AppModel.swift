@@ -402,8 +402,7 @@ public final class AppModel {
 
     // MARK: - New Space
 
-    /// New Space with "Run on" set to `on` (`host:<machine>`): a machine's
-    /// "New Space on <name>…".
+    /// New Space with "Run on" set to `on` (`host:<machine>`).
     public func openNewSpace(on: String) async {
         await openNewSpace()
         wizard.send(.choosePlacement(on: on))

@@ -150,7 +150,7 @@ JSON: `space`, `relay_space` (`relay:<machine>`: how the account's other devices
 
 Take a Space off the relay.
 
-Takes the Space off the relay: its driver leaves and its machine is removed, with every share. A host is removed with `cua host remove` on that machine instead.
+Takes the Space off the relay: its driver leaves and its machine is removed, with every share. A `relay:<machine>` id removes that machine's record from the relay directory, which only its owner may do: a Space that registered itself (also after it was deleted), or a machine that is no longer connected. A host that is connected now is taken off with `cua host remove` on that machine instead.
 
 | | |
 | --- | --- |
@@ -174,4 +174,4 @@ JSON: `space` and `unregistered` (false when it was not on the relay).
 
 ### Errors
 
-[`invalid_argument`](/spaces/reference/errors#invalid_argument), [`not_found`](/spaces/reference/errors#not_found), [`ambiguous_sandbox`](/spaces/reference/errors#ambiguous_sandbox), [`host_capability_missing`](/spaces/reference/errors#host_capability_missing), [`relay`](/spaces/reference/errors#relay), [`unauthenticated`](/spaces/reference/errors#unauthenticated)
+[`invalid_argument`](/spaces/reference/errors#invalid_argument), [`not_found`](/spaces/reference/errors#not_found), [`ambiguous_sandbox`](/spaces/reference/errors#ambiguous_sandbox), [`host_capability_missing`](/spaces/reference/errors#host_capability_missing), [`relay`](/spaces/reference/errors#relay), [`unauthenticated`](/spaces/reference/errors#unauthenticated), [`permission_denied`](/spaces/reference/errors#permission_denied)

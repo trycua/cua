@@ -202,10 +202,7 @@ async fn connects_through_the_relay_path_with_the_account_token_per_call() {
     );
     // Relay Spaces are not registry entries; releasing just disconnects.
     let released = spaces.delete(&format!("relay:{MACHINE}")).await.unwrap();
-    assert!(
-        released.contains("stays in your relay directory"),
-        "{released}"
-    );
+    assert!(released.contains("disconnected"), "{released}");
 
     // A wrong account token is refused by the (emulated) relay.
     let home = tempfile::tempdir().unwrap();

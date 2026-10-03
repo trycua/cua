@@ -520,8 +520,12 @@ impl Spaces {
     }
 
     /// Takes `space` off the relay: its driver leaves, its machine is
-    /// removed (and with it every share). A host (`relay:<id>`) is removed
-    /// with `cua host remove` on that machine instead.
+    /// removed (and with it every share). `relay:<machine>` removes that
+    /// machine's record from the relay directory, which only its owner may
+    /// do (the relay enforces it): a Space that registered itself (also
+    /// after the Space is gone), or a machine that is no longer connected.
+    /// A host that is connected now is taken off with `cua host remove` on
+    /// it instead.
     pub async fn relay_unregister(&self, space: &str) -> Result<bool> {
         let id = match self.resolve(space) {
             // A bare relay machine id (`space-…`) is known once the
@@ -534,27 +538,101 @@ impl Spaces {
         };
         let canonical = id.to_string();
         if let SpaceId::Relay { machine_id } = &id {
-            // A Space a host provides (or a stale entry of one) is your
-            // account's registration, not a host: take it off the relay.
-            let provided = self
-                .relay_row(machine_id)
-                .await
-                .filter(|m| m.role == "owner" && m.host.as_deref().is_some_and(|h| !h.is_empty()));
-            if provided.is_none() {
-                return Err(Error::invalid(format!(
-                    "{canonical} is a host; remove it with `cua host remove` on that machine"
-                )));
+            let removed = self.forget_relay_machine(machine_id).await?;
+            if removed.is_some() {
+                self.audit_share("forget", &canonical, &format!("machine={machine_id}"));
             }
-            self.remove_relay_machine(machine_id).await?;
-            let _ = self.inner.registry.remove(&canonical);
-            self.audit_share("detach", &canonical, &format!("machine={machine_id}"));
-            return Ok(true);
+            return Ok(removed.is_some());
         }
         let Some(machine) = self.share_machine(&canonical, &id) else {
             return Ok(false);
         };
         self.detach(&canonical, &machine).await?;
         Ok(true)
+    }
+
+    /// The Space this device attached to the relay as `machine`.
+    fn attached_space_of(&self, machine: &str) -> Option<String> {
+        self.attached()
+            .into_iter()
+            .find(|(_, a)| a.machine == machine)
+            .map(|(space, _)| space)
+    }
+
+    /// Asks the driver of the Space attached as `machine` (when it still
+    /// answers, briefly) to leave the relay, so it does not keep dialing
+    /// with a token the relay no longer knows.
+    pub(crate) async fn detach_attached_driver(&self, machine: &str) {
+        if let Some(space) = self.attached_space_of(machine) {
+            self.detach_attached_space(&space).await;
+        }
+    }
+
+    /// [`Self::detach_attached_driver`] by the Space's id (a Space that was
+    /// never attached is left alone).
+    pub(crate) async fn detach_attached_space(&self, space: &str) {
+        if !self.attached().contains_key(space) {
+            return;
+        }
+        let detach = async {
+            if let Ok(s) = self.space(space).await
+                && let Ok(d) = s.spacesd()
+            {
+                let _ = d
+                    .system()
+                    .detach_relay(cua_proto::env::v1::DetachRelayRequest {})
+                    .await;
+            }
+        };
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), detach).await;
+    }
+
+    /// Forgets that a Space was attached as `machine`.
+    pub(crate) fn forget_attached_machine(&self, machine: &str) {
+        let mut all = self.attached();
+        let before = all.len();
+        all.retain(|_, a| a.machine != machine);
+        if all.len() != before
+            && let Err(e) = self.save_attached(&all)
+        {
+            tracing::warn!("shared spaces: {e}");
+        }
+    }
+
+    /// A Space being deleted that registered itself on the relay leaves it:
+    /// its machine record is removed (as its owner), so no stale row stays
+    /// behind. Best effort: a failure is logged and returned as a note for
+    /// the delete's message.
+    pub(crate) async fn release_attached(&self, canonical: &str) -> Option<String> {
+        let machine = self.attached().get(canonical).map(|a| a.machine.clone())?;
+        let removed = async {
+            let relay = self.relay()?;
+            let token = relay.tokens.access_token().await?;
+            match relay.client().await?.delete(&token, &machine).await {
+                Ok(()) | Err(cua_host::Error::NotFound(_)) => Ok(()),
+                Err(e) => Err(Error::from(e)),
+            }
+        }
+        .await;
+        match removed {
+            Ok(()) => {
+                self.forget_attached_machine(&machine);
+                self.inner
+                    .relay_cache
+                    .lock()
+                    .expect("relay cache")
+                    .retain(|m| m.id != machine);
+                self.audit_share("detach", canonical, &format!("machine={machine}"));
+                None
+            }
+            Err(e) => {
+                tracing::warn!(space = canonical, machine, "relay machine not removed: {e}");
+                Some(format!(
+                    "its relay machine relay:{machine} could not be removed ({e}); remove it with \
+                     `cua spaces relay-unregister relay:{machine}`"
+                ))
+            }
+        }
     }
 
     /// Who `space` is shared with, and who of them is connected now.

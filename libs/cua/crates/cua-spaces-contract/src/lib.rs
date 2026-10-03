@@ -657,7 +657,7 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::RemoveSpace>(),
         Spec {
             category: Category::Lifecycle,
-            result: "JSON: an array of Spaces (`id`, `name`, `provider`, `spacesd_version`, `features`, `os`, `services`, `added_at`, for a Space one of your machines provides `host` and `host_name`, for a Space that can be turned off and on `power` (`suspend` or `stop`) and `power_state`, and for a Space in your cloud `cloud`, `cloud_place` and `cloud_delete`), each with `phase: \"ready\"`.",
+            result: "JSON: an array of Spaces (`id`, `name`, `provider`, `spacesd_version`, `features`, `os`, `services`, `added_at`, for a Space one of your machines provides `host` and `host_name`, for a Space that can be turned off and on `power` (`suspend` or `stop`) and `power_state`, and for a Space in your cloud `cloud`, `cloud_place` and `cloud_delete`, and for a relay machine the relay cannot reach now `status` (`offline` or `not sharing`)), each with `phase`: `ready`, or `offline` for a relay machine the relay cannot reach now (a machine that is off or stopped sharing, or a Space that is gone and left its record; `relay_unregister_space` removes it).",
             errors: &["relay", "unauthenticated"],
             instructions: "Every registered Space (cloud, local, direct and relay) with its id (local:<name>, cloud:<name>, direct:<host:port>, relay:<machine-id>), provider, spacesd version (empty without one) and supported features as of the last handshake. The signed-in account's machines on the relay are listed too: those are the names `create_space` accepts as on=\"host:<machine>\". A Space a machine provides carries `host` (that machine's id) and `host_name`; group them under it when you show them. A Space in your cloud carries `cloud` (the provider: aws, gcp, modal), `cloud_place` (account and region, to show with it) and `cloud_delete` (where delete_space can delete it: here, host:<machine>, or elsewhere).",
             capabilities: &["space.discover"],
@@ -1615,8 +1615,8 @@ pub fn tools() -> Vec<Tool> {
         Spec {
             category: Category::Sharing,
             result: "JSON: `space` and `unregistered` (false when it was not on the relay).",
-            errors: &["relay", "unauthenticated"],
-            instructions: "Takes the Space off the relay: its driver leaves and its machine is removed, with every share. A host is removed with `cua host remove` on that machine instead.",
+            errors: &["relay", "unauthenticated", "permission_denied", "invalid_argument"],
+            instructions: "Takes the Space off the relay: its driver leaves and its machine is removed, with every share. A `relay:<machine>` id removes that machine's record from the relay directory, which only its owner may do: a Space that registered itself (also after it was deleted), or a machine that is no longer connected. A host that is connected now is taken off with `cua host remove` on that machine instead.",
             capabilities: &["space.relay"],
             host_requires: &[host::RELAY_ACCOUNT],
             annotations: Annotations::mutating_idempotent(),

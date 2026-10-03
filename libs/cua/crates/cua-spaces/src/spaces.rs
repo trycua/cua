@@ -617,7 +617,7 @@ pub(crate) struct Inner {
     #[cfg(feature = "spaces-agents")]
     relay: std::sync::RwLock<Option<crate::relay::RelayAccount>>,
     /// The last directory listing (so `list` and `resolve` stay sync).
-    relay_cache: std::sync::Mutex<Vec<crate::relay::RelayMachine>>,
+    pub(crate) relay_cache: std::sync::Mutex<Vec<crate::relay::RelayMachine>>,
     /// The Keyvault broker `request_site_login` signs in through (the
     /// daemon sets it once its Keyvault is up).
     site_login: std::sync::RwLock<Option<Arc<dyn crate::site_login::SiteLoginBroker>>>,
@@ -982,6 +982,23 @@ impl Spaces {
         let id = self.resolve(space)?;
         let info = self.info(&id).ok();
         self.drop_connection(&id).await;
+        // A Space that registered itself on the relay and is gone (its
+        // machine is not connected) leaves the relay directory: otherwise
+        // its stale record would list again on the next refresh. Only its
+        // owner can remove it; anything else is only dropped here.
+        if let SpaceId::Relay { machine_id } = &id
+            && self.relay_account().is_some()
+            && let Some(m) = self
+                .relay_machines()
+                .await
+                .ok()
+                .and_then(|all| all.into_iter().find(|m| &m.id == machine_id))
+            && m.role == "owner"
+            && !m.online
+            && crate::relay::is_registered_space(&m)
+        {
+            self.forget_relay_machine(machine_id).await?;
+        }
         // A direct host, or a Space one created, leaves the direct-host list.
         if matches!(id, SpaceId::Direct { .. }) {
             let _ = self.inner.registry.forget_direct(&id.to_string());
@@ -2337,9 +2354,32 @@ impl Spaces {
     /// Deletes a Space's sandbox and forgets it: a cloud Space's sandbox is
     /// deleted (metering stops), a local one's instance is deleted. A Space
     /// added by address (`direct:`, `relay:`) is only forgotten: cua did not
-    /// create it. Hotspots on it stop.
+    /// create it. Hotspots on it stop. A Space that registered itself on
+    /// the relay (`relay_register`, or a share) leaves the relay directory
+    /// with it, and deleting such a Space's `relay:<machine>` removes that
+    /// record (as its owner) even when the Space itself is already gone.
     pub async fn delete(&self, space: &str) -> Result<String> {
         let id = self.resolve(space)?;
+        // A Space added by address keeps running: if it is attached to the
+        // relay, its driver is asked to leave while it is still reachable.
+        #[cfg(feature = "spaces-agents")]
+        if matches!(id, SpaceId::Direct { .. }) {
+            self.detach_attached_space(&id.to_string()).await;
+        }
+        let message = self.delete_space(&id).await?;
+        // A Space this device attached to the relay as a machine of its own
+        // takes that machine with it.
+        #[cfg(feature = "spaces-agents")]
+        if !matches!(id, SpaceId::Relay { .. })
+            && let Some(note) = self.release_attached(&id.to_string()).await
+        {
+            return Ok(format!("{message} Note: {note}."));
+        }
+        Ok(message)
+    }
+
+    async fn delete_space(&self, id: &SpaceId) -> Result<String> {
+        let id = id.clone();
         self.drop_connection(&id).await;
         self.inner.thumbnails.remove(&id.to_string());
         // A Space in your cloud: its sandbox goes, with everything the
@@ -2416,9 +2456,24 @@ impl Spaces {
                         let _ = self.relay_machines().await;
                         return Ok(message);
                     }
-                    None => format!(
-                        "Removed {id} (disconnected; the machine stays in your relay directory)."
-                    ),
+                    // A Space that registered itself as a machine of yours:
+                    // its record leaves the relay directory.
+                    None => match row {
+                        Some(m) if m.role == "owner" && crate::relay::is_registered_space(&m) => {
+                            self.forget_relay_machine(machine_id).await?;
+                            format!("Removed {id} from your relay directory.")
+                        }
+                        Some(m) if m.role != "owner" => format!(
+                            "Removed {id} (disconnected; it is shared with you, so only its \
+                             owner can remove it from the relay directory)."
+                        ),
+                        Some(_) => format!(
+                            "Removed {id} (disconnected; it is one of your machines, so it stays \
+                             in your relay directory: run `cua host remove` on it, or if that \
+                             machine is gone, `cua spaces relay-unregister {id}`)."
+                        ),
+                        None => format!("Removed {id} (disconnected)."),
+                    },
                 }
             }
         };

@@ -1,6 +1,7 @@
+import Darwin
 import Foundation
 
-/// Prints VM status information in a formatted table
+/// Prints VM status as a table, or labeled fields in a narrow terminal.
 enum VMDetailsPrinter {
     /// Represents a column in the VM status table
     private struct Column: Sendable {
@@ -41,7 +42,8 @@ enum VMDetailsPrinter {
             getValue: { vm in
                 // Only show shared directories if the VM is running
                 if vm.status == "running", let dirs = vm.sharedDirectories, !dirs.isEmpty {
-                    return dirs.map { "\($0.hostPath) (\($0.readOnly ? "ro" : "rw"))" }.joined(separator: ", ")
+                    return dirs.map { "\($0.hostPath) (\($0.readOnly ? "ro" : "rw"))" }.joined(
+                        separator: ", ")
                 } else {
                     return "-"
                 }
@@ -66,10 +68,12 @@ enum VMDetailsPrinter {
             }),
     ]
 
-    /// Prints the status of all VMs in a formatted table
-    /// - Parameter vms: Array of VM status objects to display
+    /// Prints all fields without truncation when a terminal is too narrow for the table.
+    /// JSON and redirected text retain their existing formats.
+    /// - Parameter terminalWidth: Available columns; nil detects the width of standard output.
     static func printStatus(
-        _ vms: [VMDetails], format: FormatOption, print: (String) -> Void = { print($0) }
+        _ vms: [VMDetails], format: FormatOption, terminalWidth: Int? = nil,
+        print: (String) -> Void = { print($0) }
     ) throws {
         if format == .json {
             let jsonEncoder = JSONEncoder()
@@ -77,12 +81,36 @@ enum VMDetailsPrinter {
             let jsonData = try jsonEncoder.encode(vms)
             let jsonString = String(data: jsonData, encoding: .utf8)!
             print(jsonString)
+        } else if let width = try terminalWidth ?? standardOutputWidth(),
+            width < columns.reduce(0, { $0 + $1.width })
+        {
+            let labelWidth = columns.reduce(0) { max($0, $1.header.count) } + 2
+            for (index, vm) in vms.enumerated() {
+                if index > 0 {
+                    print("")
+                }
+                for column in columns {
+                    let label = "\(column.header):".paddedToWidth(labelWidth)
+                    print(label + column.getValue(vm))
+                }
+            }
         } else {
             printHeader(print: print)
-            vms.forEach({ vm in 
+            vms.forEach({ vm in
                 printVM(vm, print: print)
             })
         }
+    }
+
+    /// Non-terminal output has no display width and keeps the stable table layout.
+    private static func standardOutputWidth() throws -> Int? {
+        guard isatty(STDOUT_FILENO) == 1 else { return nil }
+
+        var size = winsize()
+        guard ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        return size.ws_col > 0 ? Int(size.ws_col) : nil
     }
 
     private static func printHeader(print: (String) -> Void = { print($0) }) {

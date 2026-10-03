@@ -410,6 +410,16 @@
     }
    },
    {
+    "id": "save_sheet",
+    "kind": "native_sheet",
+    "description": "Opt-in (CUA_APPKIT_SAVE_SHEET=1): an NSButton that opens an NSSavePanel as a sheet on the main window. The panel's name field and Save button appear in the main window's accessibility tree; tests set the name and press Save through the main window, and send foreground Return and Escape aimed at the main window and at the sheet's own window id (#3351, #4392). save_sheet= label records open, cancelled, or saved name=.",
+    "controls": {
+     "open_button_aid": "btn-save-sheet",
+     "state_label_aid": "lbl-save-sheet",
+     "default_name": "harness-untitled"
+    }
+   },
+   {
     "id": "exit",
     "kind": "exit_button",
     "controls": {

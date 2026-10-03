@@ -50,7 +50,7 @@
           "Disk: 2.8 GB (download 1.1 GB)",
           "Available: 3.0 GB on Colima"
         ],
-        "resourcesError": "Not enough space on Colima: needs 8.9 GB, 3.0 GB available.",
+        "resourcesError": "Not enough space on Colima: needs 9.0 GB, 3.0 GB available.",
         "runtime": "auto",
         "runtimes": [
           "auto",
@@ -106,7 +106,7 @@
           "Disk: 2.8 GB (download 1.1 GB)",
           "Available: 3.0 GB on Colima"
         ],
-        "resourcesError": "Not enough space on Colima: needs 8.9 GB, 3.0 GB available.",
+        "resourcesError": "Not enough space on Colima: needs 9.0 GB, 3.0 GB available.",
         "runtime": "auto",
         "runtimes": [
           "auto",
@@ -166,7 +166,7 @@
           "Disk: 2.8 GB (download 1.1 GB)",
           "Available: 3.0 GB on Colima"
         ],
-        "resourcesError": "Not enough space on Colima: needs 8.9 GB, 3.0 GB available.",
+        "resourcesError": "Not enough space on Colima: needs 9.0 GB, 3.0 GB available.",
         "runtime": "auto",
         "runtimes": [
           "auto",
@@ -1191,7 +1191,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 5.6 GB)",
+          "Disk: 64 GB (download 6.7 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1249,7 +1249,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 5.6 GB)",
+          "Disk: 64 GB (download 6.7 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1303,7 +1303,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 5.6 GB)",
+          "Disk: 64 GB (download 6.7 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1361,7 +1361,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 5.6 GB)",
+          "Disk: 64 GB (download 6.7 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,

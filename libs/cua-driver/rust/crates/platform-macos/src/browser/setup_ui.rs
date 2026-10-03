@@ -109,9 +109,15 @@ fn distinct_elements<'a>(
 ) -> Vec<(usize, &'a AXNode)> {
     let mut distinct: Vec<(usize, &AXNode)> = Vec::new();
     for (index, node) in nodes {
+        // Only nodes with an element_index hold a retained AXUIElementRef; the
+        // walker releases every other pointer, so comparing those (by CFEqual
+        // or by address, which may be reused) is unsound. They stay distinct,
+        // which keeps the ambiguity refusal fail-closed.
         if !distinct.iter().any(|(_, prior)| {
-            prior.element_ptr == node.element_ptr
-                || same_element(prior.element_ptr, node.element_ptr)
+            prior.element_index.is_some()
+                && node.element_index.is_some()
+                && (prior.element_ptr == node.element_ptr
+                    || same_element(prior.element_ptr, node.element_ptr))
         }) {
             distinct.push((index, node));
         }
@@ -1927,6 +1933,21 @@ mod tests {
             new_tab_button(&nodes, chrome()).unwrap_err().code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
+    }
+
+    #[test]
+    fn unretained_nodes_are_never_collapsed() {
+        // Nodes without an element_index carry pointers the walker already
+        // released; they must not be compared, even at the same address.
+        let mut first = tree_node("AXButton", Some("New Tab"), 7, 1);
+        let mut second = tree_node("AXButton", Some("New Tab"), 7, 1);
+        first.element_index = None;
+        second.element_index = None;
+        let nodes = [first, second];
+        let distinct = distinct_elements(nodes.iter().enumerate(), |_, _| {
+            panic!("released pointers must not reach CFEqual")
+        });
+        assert_eq!(distinct.len(), 2);
     }
 
     #[test]

@@ -14,7 +14,9 @@ fn def() -> &'static ToolDef {
         name: "list_windows".into(),
         description: "List all layer-0 top-level windows currently known to WindowServer. \
             Includes off-screen windows (minimized, on another Space, hidden-launched). \
-            Use this to find a window_id before calling get_window_state.\n\n\
+            Use this to find a window_id before calling get_window_state. \
+            AppKit-internal helper windows (off screen, untitled, in no Space, and absent \
+            from the app's AXWindows) are omitted: no tool can read, move, or focus them.\n\n\
             Per-record fields: window_id, pid, app_name, title, bounds \
             (x/y/width/height, top-left origin), z_index (integer or null; higher values are \
             closer to the front; null means stacking order is unavailable and callers must not \
@@ -67,6 +69,7 @@ impl Tool for ListWindowsTool {
         if let Some(pid) = pid_filter {
             windows.retain(|w| w.pid == pid);
         }
+        crate::windows::retain_ax_reachable(&mut windows, current_space_id);
 
         let windows_json: Vec<Value> = windows.iter().map(window_record_json).collect();
 

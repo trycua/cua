@@ -1191,7 +1191,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 5.6 GB)",
+          "Disk: 64 GB (download 6.5 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1249,7 +1249,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 5.6 GB)",
+          "Disk: 64 GB (download 6.5 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1303,7 +1303,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 5.6 GB)",
+          "Disk: 64 GB (download 6.5 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1361,7 +1361,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 5.6 GB)",
+          "Disk: 64 GB (download 6.5 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,

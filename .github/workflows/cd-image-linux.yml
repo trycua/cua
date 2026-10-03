@@ -103,6 +103,20 @@ on:
         description: "Only doctor and attest published disk children, ARCH@sha256:... comma separated (the strict VM doctor, report referrer and ledger entry); pushes no image"
         type: string
         default: ""
+  # cd-images-spacesd-release.yml on every cua-spacesd release. A called
+  # workflow sees the caller's event (workflow_run), so meta treats it like
+  # a dispatch.
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+      spacesd_source:
+        type: string
+        default: local
+      spacesd_version:
+        type: string
+        default: latest
 
 concurrency:
   group: cd-image-linux-${{ github.ref }}
@@ -145,7 +159,8 @@ jobs:
           publish=false
           case "$EVENT" in
             push) [[ "$REF" == refs/tags/linux-image-v* ]] && publish=true ;;
-            workflow_dispatch) [ "$INPUT_PUBLISH" = true ] && publish=true ;;
+            # workflow_run: called by cd-images-spacesd-release.yml.
+            workflow_dispatch|workflow_run) [ "$INPUT_PUBLISH" = true ] && publish=true ;;
             # Publishes only the tiers whose content changed (the changes job).
             schedule) publish=true ;;
           esac

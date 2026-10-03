@@ -243,6 +243,16 @@ A publish run whose gates and pushes passed but that stopped before its floating
 
 Pull requests run step 1 only. The plain images are built and smoke tested in the same workflow and not published.
 
+#### On every cua-spacesd release (`cd-images-spacesd-release.yml`)
+
+Nobody dispatches the image builds after a cua-spacesd release:
+
+1. **Builds:** once `CD: cua-spacesd` finishes a `cua-spacesd-vX.Y.Z` tag, the workflow calls `cd-image-linux.yml` (`spacesd_source=release`), `cd-image-omarchy.yml`, `cd-image-windows.yml` (`stage=publish`) and `cd-bench-images.yml` (`bench=osworld push=true`), all in parallel and with the same gates as a manual publish.
+2. **Pins PR:** then `scripts/images/pins-pr.sh` opens or updates one PR from the branch `images/pins`. It changes `sandbox-images.json` (digests and sizes), the README pin rows and the app-core parity goldens. An OS moves only when its floating tags resolve to new digests whose attached doctor reports say cua-spacesd X.Y.Z (`scripts/images/image_pins.py`). A green build that pushed nothing therefore fails the job instead of moving a pin. The PR body lists each OS as done or pending. The PR is rebuilt from `main` and the registry on every run, so never edit it by hand: merge it once its checks pass. Benchmark pins come in `cd-bench-images.yml`'s own catalog PR.
+3. **macOS (by hand, on an Apple silicon Mac with Lume):** run `scripts/images/release-macos.sh X.Y.Z`. It downloads the release's notarized `Cua Spacesd.app`, runs `cua images release libs/images/macos` for `slim` and then `full` (build, gates, publish), promotes both tiers and then dispatches the workflow with `build=false`, which adds macOS to the same PR. Its state lives under `~/.cache/cua-images/macos-release/X.Y.Z`, and a rerun resumes.
+
+`python3 scripts/images/image_pins.py status` shows where each OS stands at any time. `CI: Images on the current cua-spacesd` (`ci-images-spacesd-lag.yml`) warns on PRs that touch the catalog, `libs/cua-spacesd/VERSION` or a release manifest when the pinned images report an older cua-spacesd. It never fails, because images normally trail a release by a few hours and an app release must not wait for them.
+
 ### cua-spacesd
 
 `CUA_SPACESD_SOURCE` selects where the image gets the driver:

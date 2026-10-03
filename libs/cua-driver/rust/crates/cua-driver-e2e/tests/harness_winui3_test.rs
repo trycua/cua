@@ -24,12 +24,16 @@ use std::time::{Duration, Instant};
 
 use cua_driver_testkit::ax::element_index_by_id;
 use cua_driver_testkit::e2e::{
-    execute_case, native_background_case, native_readonly_case, recording_evidence, DriverRoute,
-    Evidence, Observation, OracleKind, Targeting,
+    execute_case, native_background_case, native_foreground_case, native_readonly_case,
+    recording_evidence, DriverRoute, Evidence, Observation, OracleKind, Targeting,
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::run_with_background_oracles;
 use cua_driver_testkit::{harness_app, spawn_in_job, Driver, McpDriver};
+
+#[path = "support/foreground_text_oracle.rs"]
+mod foreground_text_oracle;
+use foreground_text_oracle::{ascii_escape, normalize_line_endings, stable_text};
 
 /// Resolve the WinUI3 harness exe — the `HARNESS_WINUI3_EXE` override wins (if it
 /// points at an existing file), else the built path under `test-apps/`.
@@ -46,17 +50,24 @@ fn harness_winui3_exe() -> PathBuf {
 /// Launch the WinUI3 harness through the driver's reaper (kill-on-close Job
 /// Object) and return its pid. Returns `None` (skip) if the harness isn't built.
 fn launch_winui3(driver: &mut McpDriver) -> Option<u32> {
+    launch_winui3_with_state_file(driver, None)
+}
+
+fn launch_winui3_with_state_file(
+    driver: &mut McpDriver,
+    state_path: Option<&std::path::Path>,
+) -> Option<u32> {
     let exe = harness_winui3_exe();
     if !exe.exists() {
         eprintln!("WinUI3 harness exe not found at {exe:?} — run tests/fixtures/build/windows.ps1");
         return None;
     }
-    let child = spawn_in_job(
-        Command::new(&exe)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null()),
-    )
-    .ok()?;
+    let mut command = Command::new(&exe);
+    command.stdout(Stdio::null()).stderr(Stdio::null());
+    if let Some(path) = state_path {
+        command.env("CUA_E2E_FIXTURE_STATE_PATH", path);
+    }
+    let child = spawn_in_job(&mut command).ok()?;
     let pid = child.id();
     driver.reaper().push(child);
     Some(pid)
@@ -274,6 +285,160 @@ fn harness_winui3_type_text() {
             "WinUI3 TextBox mirror did not advance. Snapshot excerpt: {}",
             post.text().chars().take(600).collect::<String>()
         );
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_winui3_type_text_foreground_single_line_application_state() {
+    const TEXT: &str = "FOREGROUND-SINGLE-19 \u{4e2d}\u{6587} 12345 \u{1f642}";
+
+    let mut case = native_foreground_case(
+        "winui3",
+        "type_text",
+        Targeting::Ax,
+        DriverRoute::WindowsSendInput,
+    );
+    case.cell_id.push_str("-single-line-state");
+    let cell_id = case.cell_id.clone();
+
+    execute_case(case, |evidence| {
+        let state_dir = tempfile::tempdir().expect("create isolated WinUI3 state directory");
+        let state_path = state_dir.path().join("fixture-state.json");
+        let mut driver = McpDriver::spawn_named(&cell_id)
+            .expect("required source-built Windows driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+
+        let pid = launch_winui3_with_state_file(&mut driver, Some(&state_path))
+            .expect("required WinUI3 harness did not launch");
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness WinUI3")
+            .expect("WinUI3 main window not found");
+        wait_for_winui3_ready(&mut driver, pid, wid);
+        assert_eq!(stable_text(&state_path, "txt-input"), "");
+
+        let snap = driver.call(
+            "get_window_state",
+            serde_json::json!({"pid": pid as i64, "window_id": wid, "capture_mode":"ax"}),
+        );
+        let idx = element_index_by_id(snap.text(), "txt-input")
+            .expect("txt-input not in WinUI3 snapshot");
+        let response = driver.call(
+            "type_text",
+            serde_json::json!({
+                "pid": pid as i64,
+                "window_id": wid,
+                "element_token": snap.element_token(idx),
+                "text": TEXT,
+                "delivery_mode": "foreground"
+            }),
+        );
+        assert!(
+            !response.is_error(),
+            "foreground type_text failed: {}",
+            response.text()
+        );
+        assert_eq!(response.structured()["path"], "key_events");
+        assert_eq!(stable_text(&state_path, "txt-input"), TEXT);
+        assert_eq!(stable_text(&state_path, "txt-multiline-input"), "");
+
+        drop(driver);
+        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_winui3_type_text_multiline_application_state() {
+    const TEXT: &str = concat!(
+        "\n",
+        "CUA-MULTILINE-START\n",
+        "ASCII-LF-A-31\nASCII-LF-B-47\n",
+        "ASCII-CRLF-A-52\r\nASCII-CRLF-B-68\n",
+        "ASCII-CR-A-13\rASCII-CR-B-24\n",
+        "\u{8f66}\u{6b21} G7391\r\n",
+        "\u{4e2d}\u{6587} 12345\n",
+        "EMPTY-A-17\n\n\nEMPTY-B-29\n",
+        "EMOJI-A \u{1f642} 123\r\n",
+        "EMOJI-B \u{1f680} 456\n",
+        "CUA-MULTILINE-END\n"
+    );
+
+    let mut case = native_foreground_case(
+        "winui3",
+        "type_text",
+        Targeting::Ax,
+        DriverRoute::WindowsSendInput,
+    );
+    case.cell_id.push_str("-multiline");
+    let cell_id = case.cell_id.clone();
+
+    execute_case(case, |evidence| {
+        let state_dir = tempfile::tempdir().expect("create isolated WinUI3 state directory");
+        let state_path = state_dir.path().join("fixture-state.json");
+        let mut driver = McpDriver::spawn_named(&cell_id)
+            .expect("required source-built Windows driver did not start");
+        *evidence = recording_evidence(driver.recording_dir());
+
+        let pid = launch_winui3_with_state_file(&mut driver, Some(&state_path))
+            .expect("required WinUI3 harness did not launch");
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness WinUI3")
+            .expect("WinUI3 main window not found");
+        wait_for_winui3_ready(&mut driver, pid, wid);
+        assert_eq!(
+            stable_text(&state_path, "txt-multiline-input"),
+            "",
+            "multiline fixture must start blank"
+        );
+
+        let snap = driver.call(
+            "get_window_state",
+            serde_json::json!({
+                "pid": pid as i64, "window_id": wid, "capture_mode": "ax"
+            }),
+        );
+        let idx = element_index_by_id(snap.text(), "txt-multiline-input")
+            .expect("txt-multiline-input not in WinUI3 snapshot");
+        driver.start_behavior_recording();
+        let response = driver.call(
+            "type_text",
+            serde_json::json!({
+                "pid": pid as i64,
+                "window_id": wid,
+                "element_token": snap.element_token(idx),
+                "text": TEXT,
+                "delivery_mode": "foreground"
+            }),
+        );
+        assert!(
+            !response.is_error(),
+            "WinUI3 foreground multiline type_text failed: {}",
+            response.text()
+        );
+        assert_eq!(
+            response.structured()["path"],
+            "key_events",
+            "foreground multiline input must use SendInput: {}",
+            response.structured()
+        );
+
+        let actual = stable_text(&state_path, "txt-multiline-input");
+        assert_eq!(
+            normalize_line_endings(&actual),
+            normalize_line_endings(TEXT),
+            "WinUI3 app-owned multiline state differs; actual={} expected={}",
+            ascii_escape(&actual),
+            ascii_escape(TEXT)
+        );
+        assert_eq!(
+            stable_text(&state_path, "txt-input"),
+            "",
+            "foreground multiline input leaked to the single-line sibling"
+        );
+
+        drop(driver);
+        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
     });
 }
 

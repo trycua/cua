@@ -380,6 +380,7 @@ use cua_driver_core::{
     window_target::{PidOnlyWindowTargetGuard, WindowTargetCandidate, WindowTargetCandidates},
 };
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use crate::uia::Snapshots;
@@ -4373,6 +4374,108 @@ async fn focus_by_pixel(
     Ok(())
 }
 
+struct CancelForegroundTextOnDrop(Arc<AtomicBool>);
+
+impl Drop for CancelForegroundTextOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+fn foreground_text_send_error_result(
+    error: crate::input::keyboard::ForegroundTextSendError,
+) -> ToolResult {
+    use crate::input::keyboard::ForegroundTextSendError as SendError;
+
+    match error {
+        SendError::NotStarted { code, message } => ToolResult::error(format!(
+            "{}: {message}",
+            code.as_str()
+        ))
+        .with_structured(json!({
+            "status": "refused",
+            "refusal": {
+                "code": code.as_str(),
+                "message": message,
+            }
+        })),
+        SendError::Partial {
+            accepted_events,
+            batch_index,
+            batch_count,
+            cause_code,
+            message,
+        } => ToolResult::error(format!(
+            "partial_input_unknown: SendInput accepted {accepted_events} event(s) at batch {} of {batch_count}; application delivery is unknown ({cause_code}: {message}). Input was not replayed; do not automatically retry.",
+            batch_index + 1
+        ))
+        .with_structured(json!({
+            "status": "partial",
+            "code": "partial_input_unknown",
+            "application_delivery": "unknown",
+            "accepted_events": accepted_events,
+            "batch_index": batch_index + 1,
+            "batch_count": batch_count,
+            "cause_code": cause_code.as_str(),
+            "automatic_retry": false,
+        })),
+    }
+}
+
+#[cfg(test)]
+mod foreground_text_tool_error_tests {
+    use super::*;
+    use crate::input::keyboard::{
+        ForegroundTextErrorCode as Code, ForegroundTextSendError as SendError,
+    };
+
+    #[test]
+    fn partial_failure_has_structured_unknown_outcome_and_is_not_retryable() {
+        let result = foreground_text_send_error_result(SendError::Partial {
+            accepted_events: 3,
+            batch_index: 1,
+            batch_count: 4,
+            cause_code: Code::SendInputIncomplete,
+            message: "injected short count".into(),
+        });
+
+        assert_eq!(result.is_error, Some(true));
+        let structured = result
+            .structured_content
+            .expect("structured partial result");
+        assert_eq!(structured["status"], "partial");
+        assert_eq!(structured["code"], "partial_input_unknown");
+        assert_eq!(structured["application_delivery"], "unknown");
+        assert_eq!(structured["accepted_events"], 3);
+        assert_eq!(structured["batch_index"], 2);
+        assert_eq!(structured["batch_count"], 4);
+        assert_eq!(structured["cause_code"], "sendinput_incomplete");
+        assert_eq!(structured["automatic_retry"], false);
+    }
+
+    #[test]
+    fn pre_input_refusal_has_a_structured_code() {
+        let result = foreground_text_send_error_result(SendError::NotStarted {
+            code: Code::InputTooLarge,
+            message: "test budget".into(),
+        });
+
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(structured["status"], "refused");
+        assert_eq!(structured["refusal"]["code"], "input_too_large");
+    }
+
+    #[test]
+    fn dropping_foreground_text_caller_signals_blocking_sender() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let guard = CancelForegroundTextOnDrop(cancelled.clone());
+        assert!(!cancelled.load(Ordering::Acquire));
+        drop(guard);
+        assert!(cancelled.load(Ordering::Acquire));
+    }
+}
+
 pub struct TypeTextTool {
     state: Arc<ToolState>,
 }
@@ -4473,7 +4576,11 @@ impl Tool for TypeTextTool {
                 path, preserving the no-focus-steal property.\n\n\
                 `delay_ms` (0–200, default 30) spaces successive characters on the \
                 PostMessage path so autocomplete and IME can keep up. Ignored on the \
-                UIA path (SetValue is atomic).".into(),
+                UIA path (SetValue is atomic). Explicit pid/window foreground delivery \
+                rejects requests exceeding 32,768 keyboard events total, 16,384 events \
+                in one Unicode run, or 1,024 SendInput batches, before activation or input. \
+                Desktop scope retains its existing single-call path and is not subject to \
+                these limits.".into(),
             input_schema: json!({
                 "type":"object","required":["text"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
@@ -4706,19 +4813,46 @@ impl Tool for TypeTextTool {
                 None
             };
             let text_fg = text.clone();
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let cancel_on_drop = CancelForegroundTextOnDrop(cancelled.clone());
             let r = tokio::task::spawn_blocking({
                 let admitted = admitted.clone();
+                let cancelled = cancelled.clone();
+                let editor_focus_index = focus_target.map(|(index, _)| index);
                 move || {
-                    let _admission = &admitted;
-                    crate::input::send_text_synthesized_after_focus(hwnd, &text_fg, || {
+                    crate::input::keyboard::send_text_synthesized_after_focus_with_admission(
+                        hwnd,
+                        &text_fg,
+                        || {
                         if let Some((idx, point)) = focus_target {
                             focus_cached_element_for_foreground(&admitted, hwnd, idx, Some(point))?;
                         }
                         Ok(())
-                    })
+                        },
+                        || {
+                            if let Some(idx) = editor_focus_index {
+                                match admitted
+                                    .as_ref()
+                                    .and_then(|element| element.element_has_keyboard_focus())
+                                {
+                                    Some(true) => Ok(()),
+                                    Some(false) => anyhow::bail!(
+                                        "foreground_unavailable: UIA element [{idx}] lost keyboard focus"
+                                    ),
+                                    None => anyhow::bail!(
+                                        "foreground_unavailable: UIA element [{idx}] keyboard focus could not be verified"
+                                    ),
+                                }
+                            } else {
+                                Ok(())
+                            }
+                        },
+                        || cancelled.load(Ordering::Acquire),
+                    )
                 }
             })
             .await;
+            drop(cancel_on_drop);
             return match r {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "✅ Typed {text_len} char(s) on pid {raw_pid} via SendInput (delivery_mode:foreground)."
@@ -4731,7 +4865,7 @@ impl Tool for TypeTextTool {
                     // foreground IS the escalated rung (mirrors macOS PATH_KEY_EVENTS_FG).
                     "effect": "unverifiable",
                 })),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Ok(Err(e)) => foreground_text_send_error_result(e),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
         }

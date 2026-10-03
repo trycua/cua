@@ -14,6 +14,21 @@ use foreign_types::ForeignType;
 const SCREEN_SHARING_BUNDLE_ID: &str = "com.apple.ScreenSharing";
 const SHIFT_KEY_CODE: u16 = 56;
 
+/// Default key down→up gap and inter-key pacing.
+const DEFAULT_KEY_GAP: std::time::Duration = std::time::Duration::from_millis(8);
+
+/// Key down→up gap and inter-key pacing: `DEFAULT_KEY_GAP`, or the
+/// host's `CUA_DRIVER_KEY_GAP_MS` clamped by `cua_driver_core::key_pacing`.
+/// Read once: pacing is a launch-time knob, not a per-call one.
+fn key_gap() -> std::time::Duration {
+    static GAP: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
+    *GAP.get_or_init(|| cua_driver_core::key_pacing::key_gap_from_env(DEFAULT_KEY_GAP))
+}
+
+fn key_gap_sleep() {
+    std::thread::sleep(key_gap());
+}
+
 fn is_screen_sharing_bundle_id(bundle_id: &str) -> bool {
     bundle_id == SCREEN_SHARING_BUNDLE_ID
 }
@@ -37,7 +52,7 @@ pub fn press_key(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> 
         let flags = modifier_flags(&["shift"]);
         let eq_code = key_name_to_code("=")?;
         post_key(pid, eq_code, true, modifier_flags(modifiers) | flags)?;
-        std::thread::sleep(std::time::Duration::from_millis(8));
+        key_gap_sleep();
         post_key(pid, eq_code, false, modifier_flags(modifiers) | flags)?;
         return Ok(());
     }
@@ -46,7 +61,7 @@ pub fn press_key(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> 
     let flags = modifier_flags(modifiers);
 
     post_key(pid, key_code, true, flags)?;
-    std::thread::sleep(std::time::Duration::from_millis(8));
+    key_gap_sleep();
     post_key(pid, key_code, false, flags)?;
     Ok(())
 }
@@ -66,20 +81,20 @@ pub fn type_text(pid: i32, text: &str) -> anyhow::Result<()> {
         // and the modifier leaks into the next character (Swift fix: event.flags = []).
         down.set_flags(CGEventFlags::CGEventFlagNull);
         post_keyboard_event(pid, &down);
-        std::thread::sleep(std::time::Duration::from_millis(8));
+        key_gap_sleep();
 
         let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
             .map_err(|_| anyhow::anyhow!("CGEvent keyboard up failed"))?;
         up.set_string(&ch_str);
         up.set_flags(CGEventFlags::CGEventFlagNull);
         post_keyboard_event(pid, &up);
-        std::thread::sleep(std::time::Duration::from_millis(8));
+        key_gap_sleep();
     }
     Ok(())
 }
 
 /// Type a string character-by-character with an extra `inter_char_delay_ms`
-/// pause after each character (on top of the internal 8 ms down/up gap).
+/// pause after each character (on top of the internal down/up key gap).
 pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
@@ -91,7 +106,7 @@ pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> a
         down.set_string(&ch_str);
         down.set_flags(CGEventFlags::CGEventFlagNull);
         post_keyboard_event(pid, &down);
-        std::thread::sleep(std::time::Duration::from_millis(8));
+        key_gap_sleep();
 
         let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
             .map_err(|_| anyhow::anyhow!("CGEvent keyboard up failed"))?;
@@ -99,11 +114,11 @@ pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> a
         up.set_flags(CGEventFlags::CGEventFlagNull);
         post_keyboard_event(pid, &up);
 
-        // Additional inter-character delay on top of the 8 ms internal gap.
+        // Additional inter-character delay on top of the internal key gap.
         if inter_char_delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(inter_char_delay_ms));
         } else {
-            std::thread::sleep(std::time::Duration::from_millis(8));
+            key_gap_sleep();
         }
     }
     Ok(())
@@ -124,7 +139,7 @@ pub fn hotkey_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result
     let key_code = key_name_to_code(key)?;
     let flags = modifier_flags(modifiers);
     post_key_no_auth(pid, key_code, true, flags)?;
-    std::thread::sleep(std::time::Duration::from_millis(8));
+    key_gap_sleep();
     post_key_no_auth(pid, key_code, false, flags)?;
     Ok(())
 }
@@ -135,7 +150,7 @@ pub fn press_key_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Res
     let key_code = key_name_to_code(key)?;
     let flags = modifier_flags(modifiers);
     post_key_no_auth(pid, key_code, true, flags)?;
-    std::thread::sleep(std::time::Duration::from_millis(8));
+    key_gap_sleep();
     post_key_no_auth(pid, key_code, false, flags)?;
     Ok(())
 }
@@ -186,7 +201,7 @@ pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
             return Err(error);
         }
         pressed_modifiers.push((modifier_code, modifier_flag));
-        std::thread::sleep(std::time::Duration::from_millis(8));
+        key_gap_sleep();
     }
 
     let result = (|| {
@@ -197,7 +212,7 @@ pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
             active_flags,
             CGEventTapLocation::HID,
         )?;
-        std::thread::sleep(std::time::Duration::from_millis(8));
+        key_gap_sleep();
         post_global_key(
             &source,
             key_code,
@@ -255,7 +270,7 @@ pub(super) fn with_global_modifier_keys<T>(
             return Err(error);
         }
         pressed.push((key_code, flag));
-        std::thread::sleep(std::time::Duration::from_millis(8));
+        key_gap_sleep();
     }
 
     let result = gesture(active_flags);
@@ -289,7 +304,7 @@ fn release_global_modifiers(
             event.set_flags(active_flags);
             event.post(tap);
         }
-        std::thread::sleep(std::time::Duration::from_millis(8));
+        key_gap_sleep();
     }
 }
 
@@ -337,7 +352,7 @@ pub(super) fn with_pid_modifier_keys<T>(
             return Err(error);
         }
         pressed.push((key_code, flag));
-        std::thread::sleep(std::time::Duration::from_millis(8));
+        key_gap_sleep();
     }
 
     let result = gesture();
@@ -353,7 +368,7 @@ fn release_pid_modifiers(
     for &(key_code, flag) in pressed.iter().rev() {
         active_flags.remove(flag);
         let _ = post_key(pid, key_code, false, active_flags);
-        std::thread::sleep(std::time::Duration::from_millis(8));
+        key_gap_sleep();
     }
 }
 
@@ -372,13 +387,13 @@ pub fn type_text_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<
         down.set_string(&value);
         down.set_flags(CGEventFlags::CGEventFlagNull);
         down.post(CGEventTapLocation::HID);
-        std::thread::sleep(std::time::Duration::from_millis(8));
+        key_gap_sleep();
         let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
             .map_err(|_| anyhow::anyhow!("CGEvent keyboard up failed"))?;
         up.set_string(&value);
         up.set_flags(CGEventFlags::CGEventFlagNull);
         up.post(CGEventTapLocation::HID);
-        std::thread::sleep(std::time::Duration::from_millis(inter_char_delay_ms.max(8)));
+        std::thread::sleep(std::time::Duration::from_millis(inter_char_delay_ms).max(key_gap()));
     }
     Ok(())
 }
@@ -407,10 +422,11 @@ pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow
             .collect::<anyhow::Result<Vec<_>>>()?;
         for cg_event in native_events {
             cg_event.post(CGEventTapLocation::HID);
-            std::thread::sleep(std::time::Duration::from_millis(8));
+            key_gap_sleep();
         }
-        if inter_char_delay_ms > 8 {
-            std::thread::sleep(std::time::Duration::from_millis(inter_char_delay_ms - 8));
+        let extra = std::time::Duration::from_millis(inter_char_delay_ms).saturating_sub(key_gap());
+        if !extra.is_zero() {
+            std::thread::sleep(extra);
         }
     }
     Ok(())
@@ -451,7 +467,7 @@ pub fn press_key_bare_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()
         .collect::<anyhow::Result<Vec<_>>>()?;
     for event in events {
         event.post(CGEventTapLocation::HID);
-        std::thread::sleep(std::time::Duration::from_millis(8));
+        key_gap_sleep();
     }
     Ok(())
 }

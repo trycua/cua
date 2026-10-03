@@ -124,7 +124,13 @@ struct ThisMachineView: View {
                             PermissionRows(rows: panel.permissions, openLabel: panel.openSettingsLabel)
                         }
                     }
-                    if let error = host.error {
+                    if let failure = host.actionFailure {
+                        // A button that failed: what happened in plain
+                        // words, Retry, and the raw error under Details.
+                        HostSetupFailureView(failure: failure, retrying: host.busy) {
+                            Task { await host.retryFailedAction() }
+                        }
+                    } else if let error = host.error {
                         Text(error).foregroundStyle(.red).lineLimit(1).help(error)
                     }
                     if panel.setupChoices.isEmpty {
@@ -154,7 +160,14 @@ struct ThisMachineView: View {
             }
         }
         .navigationTitle(host.form == nil ? panel.title : (host.formView?.title ?? panel.title))
-        .task { await host.refresh() }
+        .task {
+            // Followed while it shows: who is connected now, and a
+            // permission granted in System Settings (no restart needed).
+            while !Task.isCancelled {
+                if host.form == nil { await host.refresh() }
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
         .alert(confirming?.confirm?.title ?? "", isPresented: Binding(
             get: { confirming?.confirm != nil },
             set: { if !$0 { confirming = nil } })) {
@@ -217,6 +230,9 @@ struct HostFormView: View {
     @Bindable var host: HostModel
     /// Draws Back and the submit button (onboarding draws its own).
     var buttons: Bool
+    /// Shows a failed setup (and Retry) inside the form; onboarding draws
+    /// it under the form instead.
+    var showsFailure = true
 
     var body: some View {
         if let v = host.formView {
@@ -233,8 +249,13 @@ struct HostFormView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("host-advanced")
                     ForEach(v.fields.filter(\.advanced), id: \.id) { field($0) }
-                    if let error = v.error {
-                        Text(error).foregroundStyle(.red).lineLimit(1).help(error)
+                    if showsFailure, let failure = host.setupFailure {
+                        HostSetupFailureView(failure: failure, retrying: v.busy) {
+                            Task { await host.submit() }
+                        }
+                    }
+                    if showsFailure, let progress = host.progress {
+                        HostSetupProgressView(text: progress)
                     }
                 }
                 if buttons {
@@ -280,5 +301,85 @@ struct HostFormView: View {
         case "relay": return .setRelayUrl(url: text)
         default: return .setName(name: text)
         }
+    }
+}
+
+/// A failed "Set up for access": a small warning symbol and a short title,
+/// one secondary line saying what to do, Retry, and the raw error under a
+/// collapsed Details (selectable, with Copy).
+/// What a running "Set up for access" waits for (the inline sign-in).
+struct HostSetupProgressView: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            ProgressView().controlSize(.small)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityIdentifier("host-setup-progress")
+    }
+}
+
+struct HostSetupFailureView: View {
+    let failure: HostSetupFailure
+    /// The retry is running: Retry shows progress and is disabled.
+    let retrying: Bool
+    let retry: () -> Void
+    @State private var showDetails = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .symbolRenderingMode(.multicolor)
+                    .imageScale(.small)
+                    .accessibilityHidden(true)
+                Text(failure.title).fontWeight(.medium)
+                Spacer(minLength: 8)
+                Button(action: retry) {
+                    HStack(spacing: 6) {
+                        if retrying { ProgressView().controlSize(.small) }
+                        Text(retrying ? HostSetupFailure.retryingLabel : failure.actionLabel)
+                    }
+                }
+                .controlSize(.small)
+                .disabled(retrying)
+                .accessibilityIdentifier("host-setup-retry")
+            }
+            Text(failure.message)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            DisclosureGroup(HostSetupFailure.detailsLabel, isExpanded: $showDetails) {
+                HStack(alignment: .top, spacing: 8) {
+                    // A long error scrolls instead of pushing the page.
+                    ScrollView {
+                        Text(failure.details)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 80)
+                    Button(HostSetupFailure.copyLabel) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(failure.details, forType: .string)
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("host-setup-copy-details")
+                }
+                .padding(.top, 2)
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("host-setup-details")
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("host-setup-failure")
     }
 }

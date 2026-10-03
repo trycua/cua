@@ -183,7 +183,7 @@ struct OnboardingTests {
     @Test func hostSetupRunsWithTheAccountTokenThenFinishes() async {
         let host = FakeHost()
         let o = model(host: host)
-        o.accountToken = { "tok-1" }
+        o.accountToken = { _ in "tok-1" }
         toMode(o)
         #expect(o.view.step == .mode)
         #expect(o.view.choices.map(\.mode) == [.client, .host])
@@ -211,7 +211,7 @@ struct OnboardingTests {
     @Test func directSetupNeedsAnAddressAndSendsNoToken() async {
         let host = FakeHost()
         let o = model(host: host)
-        o.accountToken = { "tok-1" }
+        o.accountToken = { _ in "tok-1" }
         toMode(o)
         o.host.openForm()
         o.host.send(.toggleAdvanced)

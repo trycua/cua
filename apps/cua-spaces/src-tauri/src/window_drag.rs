@@ -316,7 +316,8 @@ mod tests {
         assert_eq!(json["windowId"], 42);
         assert_eq!(json["appId"], "vscode");
         assert_eq!(json["supported"], true);
-        assert_eq!(json["capability"], "install_only");
+        // VS Code is Chromium underneath, so its signed-in state teleports too.
+        assert_eq!(json["capability"], "full");
         assert_eq!(json["entry"]["launch"]["bin"], "code");
         // The frames at mouse down and now, for the core's move/resize test.
         assert_eq!(json["startFrame"]["x"], 100.0);

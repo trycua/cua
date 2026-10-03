@@ -100,6 +100,13 @@ session, on a trusted machine. CDP exposes that profile's pages, cookies, and
 storage, and loopback is not authentication: other processes running as the
 same user can reach an open endpoint.
 
+Relaunching the browser yourself with `--remote-debugging-port` does not reach
+that profile. Chrome and Edge ignore the flag on their default user-data
+directory: no listener opens and no `DevToolsActivePort` file is written. The
+flag works only with a different `--user-data-dir`, which is a different,
+signed-out profile. The browser's own remote-debugging switch, which
+`browser_prepare` drives below, is the route into the real profile.
+
 <Callout type="warn">
   Attachment is an explicit boundary. It needs `--grant existing-profile` at launch (standard),
   a manifest entry `kind: existing_profile` (bounded), an embedding host's authorization callback,

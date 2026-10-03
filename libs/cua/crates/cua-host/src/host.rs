@@ -10,6 +10,34 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// Where a host setup stopped (see [`Host::setup_staged`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetupStage {
+    /// Checking the request and this machine (GUI session, address).
+    Preflight,
+    /// Getting the account's token (relay mode).
+    Token,
+    /// Registering with the relay.
+    Register,
+    /// Getting cua-spacesd (download or local copy).
+    Download,
+    /// Installing and starting the host service.
+    Service,
+}
+
+impl SetupStage {
+    /// The stage as usage data and logs spell it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Preflight => "preflight",
+            Self::Token => "token",
+            Self::Register => "register",
+            Self::Download => "download",
+            Self::Service => "service",
+        }
+    }
+}
+
 /// How clients reach this machine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostMode {
@@ -297,6 +325,20 @@ pub fn permission_hints(os: &str, driver: &Path) -> Vec<PermissionHint> {
             ),
         },
     ]
+}
+
+/// The relay machine meta key saying whether this machine provides Spaces
+/// (`on` / `off`), as of its last setup. Your other devices list a machine
+/// that provides Spaces in their "Run on" menu even while it is offline
+/// (with why), instead of leaving it out.
+pub const META_PROVIDES_SPACES: &str = "cua.host.spaces";
+
+/// The meta a host registers with.
+fn host_meta(provide_spaces: bool) -> std::collections::BTreeMap<String, String> {
+    std::collections::BTreeMap::from([(
+        META_PROVIDES_SPACES.to_string(),
+        if provide_spaces { "on" } else { "off" }.to_string(),
+    )])
 }
 
 /// What `status` reports (camelCase for the app).
@@ -752,6 +794,29 @@ impl Host {
         opts: SetupOptions,
         tokens: &dyn AccountTokens,
     ) -> Result<HostStatus> {
+        self.setup_staged(opts, tokens).await.map_err(|(_, e)| e)
+    }
+
+    /// [`Host::setup`], saying on failure which stage stopped it (usage
+    /// data and the apps' messages tell "not signed in" from "the relay
+    /// refused the account" from "the download failed").
+    pub async fn setup_staged(
+        &self,
+        opts: SetupOptions,
+        tokens: &dyn AccountTokens,
+    ) -> std::result::Result<HostStatus, (SetupStage, Error)> {
+        let mut stage = SetupStage::Preflight;
+        self.setup_inner(opts, tokens, &mut stage)
+            .await
+            .map_err(|e| (stage, e))
+    }
+
+    async fn setup_inner(
+        &self,
+        opts: SetupOptions,
+        tokens: &dyn AccountTokens,
+        stage: &mut SetupStage,
+    ) -> Result<HostStatus> {
         let runner = match &self.manager {
             Some(m) => m.kind(),
             None => opts.runner.resolve(),
@@ -801,7 +866,9 @@ impl Host {
         match &opts.mode {
             HostMode::Relay { url } => {
                 let relay = RelayClient::new(url)?;
+                *stage = SetupStage::Token;
                 let token = tokens.access_token().await?;
+                *stage = SetupStage::Register;
                 let id = load_or_create_machine_id(&self.paths.machine_id)?;
                 // Re-running setup proves it is this machine with its current
                 // machine token; the account session is used only for this
@@ -816,7 +883,7 @@ impl Host {
                             name: name.clone(),
                             allow: opts.allow.clone(),
                             host: None,
-                            meta: Default::default(),
+                            meta: host_meta(opts.provide_spaces),
                         },
                     )
                     .await?;
@@ -868,11 +935,17 @@ impl Host {
                 write_json(&self.paths.policy(), &policy)?;
             }
         }
+        *stage = SetupStage::Download;
         let source = driver::locate(opts.driver_bin.as_deref())?;
-        if let DriverSource::Download(url) = &source {
-            tracing::info!(%url, "downloading cua-spacesd");
+        match &source {
+            DriverSource::Download(url) => tracing::info!(%url, "downloading cua-spacesd"),
+            DriverSource::Release { version, url, .. } => {
+                tracing::info!(%version, %url, "downloading cua-spacesd")
+            }
+            DriverSource::Local(_) => {}
         }
         driver::install_to(&source, &config.driver_bin).await?;
+        *stage = SetupStage::Service;
         write_json(&self.paths.config(), &config)?;
         let manager = self.manager(runner);
         manager.install(&self.service_spec(&config))?;
@@ -1007,8 +1080,11 @@ impl Host {
         }
         // The driver's flags change with the desktop, and in direct mode
         // with Spaces (it serves HostSpacesService only then).
+        // A service that should run but is down (a start that failed
+        // before) starts again too, so trying the change again repairs it.
+        let down = config.sharing && !self.manager_for_config(&config).state().running;
         let restart =
-            desktop != config.share_desktop || (!relay && provide != config.provide_spaces);
+            down || desktop != config.share_desktop || (!relay && provide != config.provide_spaces);
         config.share_desktop = desktop;
         config.provide_spaces = provide;
         if let Some(mut p) = policy {
@@ -1073,7 +1149,7 @@ impl Host {
                 .collect(),
             service: manager.state(),
             allow: policy.as_ref().map(|p| p.allow.clone()).unwrap_or_default(),
-            permissions: permission_hints(std::env::consts::OS, &config.driver_bin),
+            permissions: self.missing_permissions(&config),
             ..Default::default()
         };
         if config.mode == "direct" {
@@ -1097,6 +1173,27 @@ impl Host {
         status.spaces_audit = audit.recent;
         status.spaces_audit_error = audit.error;
         Ok(status)
+    }
+
+    /// The permissions left to grant: every one macOS needs, less the ones
+    /// the driver reports granted (asked afresh on each status, so a grant
+    /// shows without restarting anything). All of them when it cannot say.
+    fn missing_permissions(&self, config: &HostConfig) -> Vec<PermissionHint> {
+        let hints = permission_hints(std::env::consts::OS, &config.driver_bin);
+        if hints.is_empty() {
+            return hints;
+        }
+        match self.preflight_probe().permission_status(&config.driver_bin) {
+            Some((screen, ax)) => hints
+                .into_iter()
+                .filter(|h| match h.id.as_str() {
+                    "screen-recording" => !screen,
+                    "accessibility" => !ax,
+                    _ => true,
+                })
+                .collect(),
+            None => hints,
+        }
     }
 
     /// Fills the recent accesses from the driver's log and adds the callers
@@ -1172,6 +1269,13 @@ impl Host {
                 let token = read_secret(&self.paths.machine_token())?;
                 RelayClient::new(url)?.start_sharing(&token, id).await?;
                 self.set_policy_sharing(true)?;
+                // The service stays up while sharing is stopped; one that
+                // went down (a failed start) is started again here.
+                let manager = self.manager_for_config(&config);
+                if !manager.state().running {
+                    manager.install(&self.service_spec(&config))?;
+                    manager.start()?;
+                }
             }
             _ => {
                 self.manager_for_config(&config).start()?;

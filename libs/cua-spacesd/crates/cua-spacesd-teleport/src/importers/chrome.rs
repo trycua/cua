@@ -24,6 +24,10 @@ use super::write_entry;
 use crate::host::{default_host, HostEffects};
 use crate::{ImportProvider, ImportRecord, Result};
 
+/// `pgrep -f` pattern for every process of the destination's Google Chrome
+/// (the main process and its helpers all live inside the bundle).
+const MACOS_PROCESS_PATTERN: &str = "Google Chrome.app/Contents/";
+
 /// The Chrome/Chromium importer.
 pub struct ChromeImporter {
     max_total_bytes: u64,
@@ -59,6 +63,37 @@ impl ChromeImporter {
     }
 }
 
+/// Writes localStorage items into `profile_dir`'s `Local State/leveldb`
+/// (`Local Storage/leveldb`), beside what the browser already holds. The
+/// destination browser is not running yet (the import launches it afterwards),
+/// so LevelDB's lock is free. A store this import creates is ledgered with its
+/// files so a wipe removes it.
+pub(crate) fn write_local_storage(
+    profile_dir: &Path,
+    items: &[cua_teleport_bundle::local_storage::LocalStorageItem],
+    record: &mut ImportRecord,
+) -> Result<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let store = cua_chromium_storage::store_dir(profile_dir);
+    let existed = store.is_dir();
+    if !existed {
+        record.create_dir_all(&store)?;
+    }
+    let written = cua_chromium_storage::write(&store, items, crate::cookies::chrome_now_utc())
+        .map_err(|e| crate::TeleportError::Provider(e.to_string()))?;
+    record.local_storage_written(&store, &written);
+    if !existed {
+        if let Ok(entries) = std::fs::read_dir(&store) {
+            for e in entries.flatten() {
+                record.file_written(&e.path());
+            }
+        }
+    }
+    Ok(())
+}
+
 impl ImportProvider for ChromeImporter {
     fn id(&self) -> &str {
         ID
@@ -76,6 +111,16 @@ impl ImportProvider for ChromeImporter {
         record: &mut ImportRecord,
     ) -> Result<LaunchSpec> {
         let mut reader = BundleReader::open_with_limit(bundle, self.max_total_bytes)?;
+        // Stop a running Chrome BEFORE touching its profile (macOS). A Chrome
+        // the user already opened in the Space (the usual case once it has been
+        // "opened once") holds the Cookies database open, caches the Safe
+        // Storage key it read at startup, and would keep serving its old
+        // signed-out session: the launch below is `open -a`, which only focuses
+        // an app that is already running. Quitting it makes the teleport land,
+        // and the relaunch read the key this import installed.
+        if platform == Platform::MacOS {
+            super::terminate_running(&*self.host, MACOS_PROCESS_PATTERN);
+        }
         let mut tab_urls: Vec<String> = Vec::new();
         let mut cookies_entry: Option<Vec<u8>> = None;
         let mut local_storage_entry: Option<Vec<u8>> = None;
@@ -151,29 +196,8 @@ impl ImportProvider for ChromeImporter {
         }
         if let Some(bytes) = local_storage_entry {
             let items = cua_teleport_bundle::local_storage::parse(&bytes);
-            if !items.is_empty() {
-                // Same single-profile scope as the cookies above. The
-                // destination Chrome is not running yet (this import
-                // launches it afterwards), so LevelDB's lock is free.
-                let store = cua_chromium_storage::store_dir(&user_data_dir.join("Default"));
-                let existed = store.is_dir();
-                if !existed {
-                    record.create_dir_all(&store)?;
-                }
-                let written =
-                    cua_chromium_storage::write(&store, &items, crate::cookies::chrome_now_utc())
-                        .map_err(|e| crate::TeleportError::Provider(e.to_string()))?;
-                record.local_storage_written(&store, &written);
-                // The database files themselves are new when it did not
-                // exist: ledger them so a wipe removes them with the keys.
-                if !existed {
-                    if let Ok(entries) = std::fs::read_dir(&store) {
-                        for e in entries.flatten() {
-                            record.file_written(&e.path());
-                        }
-                    }
-                }
-            }
+            // Same single-profile scope as the cookies above.
+            write_local_storage(&user_data_dir.join("Default"), &items, record)?;
         }
         // Suppress the first-run/onboarding flow: on a freshly-imported profile it
         // starts its own new-tab session and discards the transferred session that

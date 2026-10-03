@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 use jsonwebtoken::jwk::{AlgorithmParameters, JwkSet};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 
+use crate::auth_log::Reason;
+
 /// Default audience relay account tokens must carry.
 pub const DEFAULT_AUDIENCE: &str = "cua-relay";
 
@@ -223,21 +225,45 @@ impl OidcValidator {
     }
 
     /// Validates an account token.
-    pub async fn validate(&self, token: &str) -> Result<Identity, String> {
-        let header = jsonwebtoken::decode_header(token).map_err(|_| "not a JWT".to_owned())?;
+    pub async fn validate(&self, token: &str) -> Result<Identity, TokenError> {
+        self.validate_inner(token)
+            .await
+            .map_err(|(reason, message)| {
+                let facts = crate::auth_log::TokenFacts::from_token(
+                    token,
+                    reason,
+                    &self.config.issuer,
+                    &self.config.audiences,
+                );
+                TokenError {
+                    reason,
+                    message,
+                    facts,
+                }
+            })
+    }
+
+    async fn validate_inner(&self, token: &str) -> Result<Identity, (Reason, String)> {
+        let header = jsonwebtoken::decode_header(token)
+            .map_err(|_| (Reason::Malformed, "not a JWT".to_owned()))?;
         if matches!(
             header.alg,
             Algorithm::HS256 | Algorithm::HS384 | Algorithm::HS512
         ) {
-            return Err("symmetric JWTs are not accepted".into());
+            return Err((
+                Reason::UnsupportedAlgorithm,
+                "symmetric JWTs are not accepted".into(),
+            ));
         }
         let _ = self.refresh(false).await;
         let key = match self.key_for(header.kid.as_deref(), header.alg) {
             Some(key) => key,
             None => {
-                self.refresh(true).await?;
+                self.refresh(true)
+                    .await
+                    .map_err(|e| (Reason::JwksUnavailable, e))?;
                 self.key_for(header.kid.as_deref(), header.alg)
-                    .ok_or("unknown signing key")?
+                    .ok_or((Reason::UnknownSigningKey, "unknown signing key".to_owned()))?
             }
         };
         let mut validation = Validation::new(header.alg);
@@ -249,7 +275,7 @@ impl OidcValidator {
         validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
         validation.leeway = 30;
         let data = jsonwebtoken::decode::<serde_json::Value>(token, &key, &validation)
-            .map_err(|e| format!("account token: {e}"))?;
+            .map_err(|e| (jwt_reason(e.kind()), format!("account token: {e}")))?;
         let claims = data.claims;
         let text = |name: &str| {
             claims
@@ -258,7 +284,8 @@ impl OidcValidator {
                 .filter(|s| !s.is_empty())
                 .map(str::to_owned)
         };
-        let user = text("sub").ok_or("account token has no sub")?;
+        let user =
+            text("sub").ok_or((Reason::MissingClaim, "account token has no sub".to_owned()))?;
         let account = text(&self.config.account_claim).unwrap_or_else(|| user.clone());
         // Sharing by email grants access, so only an address the issuer
         // verified counts (some issuers encode the flag as a string).
@@ -295,6 +322,40 @@ impl OidcValidator {
             auth_time: claims.get("auth_time").and_then(|v| v.as_u64()),
             mfa,
         })
+    }
+}
+
+/// A refused account token: the message (shown to the caller, as before)
+/// and the facts the relay logs about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenError {
+    /// Why, as logged.
+    pub reason: Reason,
+    /// The caller-facing message.
+    pub message: String,
+    /// Safe-to-log token details.
+    pub facts: crate::auth_log::TokenFacts,
+}
+
+impl std::fmt::Display for TokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for TokenError {}
+
+fn jwt_reason(kind: &jsonwebtoken::errors::ErrorKind) -> Reason {
+    use jsonwebtoken::errors::ErrorKind as K;
+    match kind {
+        K::InvalidSignature => Reason::BadSignature,
+        K::ExpiredSignature => Reason::Expired,
+        K::ImmatureSignature => Reason::NotYetValid,
+        K::InvalidIssuer => Reason::WrongIssuer,
+        K::InvalidAudience => Reason::WrongAudience,
+        K::MissingRequiredClaim(_) => Reason::MissingClaim,
+        K::InvalidAlgorithm | K::MissingAlgorithm => Reason::UnsupportedAlgorithm,
+        _ => Reason::Malformed,
     }
 }
 

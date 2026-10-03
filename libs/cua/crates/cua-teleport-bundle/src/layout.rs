@@ -25,6 +25,8 @@ pub const PROVIDER_IDS: &[&str] = &[
     firefox::ID,
     electron::SLACK.id,
     electron::DISCORD.id,
+    electron::VSCODE.id,
+    electron::NOTION.id,
     electron::UNITY_HUB.id,
     steam::ID,
     whatsapp::ID,
@@ -382,6 +384,35 @@ pub mod electron {
         home_extra: &[],
     };
 
+    /// Visual Studio Code. Its userData is `Code` and its Safe Storage item
+    /// is "Code Safe Storage" (account "Code"), from Electron's
+    /// `app_name + " Safe Storage"` with `productName` "Code".
+    pub const VSCODE: ElectronApp = ElectronApp {
+        id: "vscode",
+        display: "Visual Studio Code",
+        app_ids: &[
+            "com.microsoft.VSCode",
+            "vscode",
+            "code",
+            "Visual Studio Code",
+        ],
+        support_dir: "Code",
+        keychain_services: &["Code Safe Storage"],
+        extra: &[],
+        home_extra: &[],
+    };
+
+    /// Notion.
+    pub const NOTION: ElectronApp = ElectronApp {
+        id: "notion",
+        display: "Notion",
+        app_ids: &["notion.id", "notion", "Notion"],
+        support_dir: "Notion",
+        keychain_services: &["Notion Safe Storage"],
+        extra: &[],
+        home_extra: &[],
+    };
+
     /// Unity Hub.
     ///
     /// Login lives in accounts.db plus the "unity" Keychain item (service
@@ -430,7 +461,7 @@ pub mod electron {
     };
 
     /// The built-in Electron apps, in registry order.
-    pub const APPS: &[ElectronApp] = &[SLACK, DISCORD, UNITY_HUB];
+    pub const APPS: &[ElectronApp] = &[SLACK, DISCORD, VSCODE, NOTION, UNITY_HUB];
 
     /// The built-in Electron app with provider id `id`.
     pub fn app(id: &str) -> Option<ElectronApp> {
@@ -755,6 +786,8 @@ mod tests {
                 "firefox",
                 "slack",
                 "discord",
+                "vscode",
+                "notion",
                 "unity-hub",
                 "steam",
                 "whatsapp",

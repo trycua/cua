@@ -216,8 +216,21 @@ public struct OnboardingView: View {
             }
         case .mode:
             if onboarding.showingHostForm {
-                HostFormView(host: onboarding.host, buttons: false)
-                    .frame(height: 230)
+                // A failed setup shows under the form, not inside its scroll.
+                VStack(alignment: .leading, spacing: 8) {
+                    HostFormView(host: onboarding.host, buttons: false, showsFailure: false)
+                        .frame(height: 230)
+                    if let failure = onboarding.host.setupFailure {
+                        HostSetupFailureView(failure: failure, retrying: onboarding.host.settingUp) {
+                            Task { await onboarding.setUpHost() }
+                        }
+                        .padding(.horizontal, 20)
+                    }
+                    if let progress = onboarding.host.progress {
+                        HostSetupProgressView(text: progress)
+                            .padding(.horizontal, 20)
+                    }
+                }
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(v.choices, id: \.label) { choice in

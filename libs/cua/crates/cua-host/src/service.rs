@@ -587,16 +587,24 @@ impl ServiceManager for Launchd {
         write_file(&self.plist_path(), &launchd_plist(spec))
     }
     fn start(&self) -> Result<()> {
-        let _ = run(Command::new("launchctl").args(["bootout", &self.target()]));
-        run(Command::new("launchctl").args([
-            "bootstrap",
+        let plist = self.plist_path().to_string_lossy().into_owned();
+        launchd_restart(
             &format!("gui/{}", self.uid),
-            &self.plist_path().to_string_lossy(),
-        ]))
-        .map(drop)
+            &self.target(),
+            &plist,
+            &mut |args: &[&str]| run(Command::new("launchctl").args(args)),
+            &mut |d| std::thread::sleep(d),
+        )
     }
     fn stop(&self) -> Result<()> {
-        run(Command::new("launchctl").args(["bootout", &self.target()])).map(drop)
+        let target = self.target();
+        if !launchd_loaded(&target, &mut |args: &[&str]| {
+            run(Command::new("launchctl").args(args))
+        }) {
+            // Already stopped: nothing to do (not an error).
+            return Ok(());
+        }
+        run(Command::new("launchctl").args(["bootout", &target])).map(drop)
     }
     fn uninstall(&self) -> Result<()> {
         let _ = run(Command::new("launchctl").args(["bootout", &self.target()]));
@@ -617,6 +625,79 @@ impl ServiceManager for Launchd {
             detail: self.plist_path().display().to_string(),
         }
     }
+}
+
+/// How long [`launchd_restart`] waits for a bootout to finish.
+const LAUNCHD_BOOTOUT_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Bootstrap attempts before [`launchd_restart`] gives up.
+const LAUNCHD_BOOTSTRAP_ATTEMPTS: u32 = 3;
+
+/// `launchctl print <target>` succeeds: the service is loaded.
+fn launchd_loaded(target: &str, launchctl: &mut dyn FnMut(&[&str]) -> Result<String>) -> bool {
+    launchctl(&["print", target]).is_ok()
+}
+
+/// (Re)starts a LaunchAgent so that running it twice, or while it is
+/// loaded, never fails:
+///
+/// 1. `enable` clears a "disabled" override (left by turning the item off
+///    in Login Items, or by an old `launchctl disable`), which otherwise
+///    makes `bootstrap` fail with `5: Input/output error`.
+/// 2. A loaded service is booted out, and this waits until launchd has
+///    really let go of it: `bootout` returns before the teardown ends, and
+///    a `bootstrap` in that window fails with `5: Input/output error` (or
+///    `37: Operation already in progress`).
+/// 3. `bootstrap`; when it fails but the service is loaded after all (a
+///    race with launchd's own `RunAtLoad`/`KeepAlive`), `kickstart -k`
+///    restarts it in place instead. Otherwise retried with a short backoff.
+///
+/// The error left after every attempt names the service in plain words,
+/// with launchd's own message at the end.
+pub(crate) fn launchd_restart(
+    domain: &str,
+    target: &str,
+    plist: &str,
+    launchctl: &mut dyn FnMut(&[&str]) -> Result<String>,
+    sleep: &mut dyn FnMut(std::time::Duration),
+) -> Result<()> {
+    let step = std::time::Duration::from_millis(100);
+    let _ = launchctl(&["enable", target]);
+    if launchd_loaded(target, launchctl) {
+        let _ = launchctl(&["bootout", target]);
+        let mut waited = std::time::Duration::ZERO;
+        while waited < LAUNCHD_BOOTOUT_WAIT && launchd_loaded(target, launchctl) {
+            sleep(step);
+            waited += step;
+        }
+    }
+    let mut last = String::new();
+    for attempt in 0..LAUNCHD_BOOTSTRAP_ATTEMPTS {
+        if attempt > 0 {
+            sleep(std::time::Duration::from_millis(500 * u64::from(attempt)));
+        }
+        match launchctl(&["bootstrap", domain, plist]) {
+            Ok(_) => return Ok(()),
+            Err(e) => last = e.to_string(),
+        }
+        if launchd_loaded(target, launchctl) {
+            // Loaded after all: restart it in place.
+            match launchctl(&["kickstart", "-k", target]) {
+                Ok(_) => return Ok(()),
+                Err(e) => last = e.to_string(),
+            }
+        }
+    }
+    let why = last
+        .split_once(" failed: ")
+        .map_or(last.as_str(), |(_, why)| why)
+        .trim()
+        .trim_start_matches("service: ")
+        .to_string();
+    Err(Error::Service(format!(
+        "macOS did not start the Cua host service (launchd: {why}); \
+         try again, and if it keeps failing turn on cua-spacesd in System Settings > \
+         General > Login Items & Extensions, or restart this Mac"
+    )))
 }
 
 /// Ends and deletes the pre-rename task, if any (best effort).
@@ -909,6 +990,115 @@ pub fn manager_for(kind: RunnerKind, user_home: &Path, host_dir: &Path) -> Box<d
 
 #[cfg(test)]
 mod tests {
+
+    /// A scripted `launchctl`: `loaded` says whether `print` succeeds (by
+    /// call), `bootstrap` whether each bootstrap succeeds.
+    struct FakeLaunchctl {
+        calls: Vec<String>,
+        loaded: Box<dyn FnMut(usize) -> bool>,
+        bootstraps: Vec<bool>,
+        prints: usize,
+    }
+
+    impl FakeLaunchctl {
+        fn new(loaded: impl FnMut(usize) -> bool + 'static, bootstraps: Vec<bool>) -> Self {
+            Self {
+                calls: vec![],
+                loaded: Box::new(loaded),
+                bootstraps,
+                prints: 0,
+            }
+        }
+        fn call(&mut self, args: &[&str]) -> Result<String> {
+            self.calls.push(args[0].to_string());
+            let fail = |m: &str| {
+                Err(Error::Service(format!(
+                    "\"launchctl\" \"{}\" failed: {m}",
+                    args[0]
+                )))
+            };
+            match args[0] {
+                "print" => {
+                    self.prints += 1;
+                    if (self.loaded)(self.prints) {
+                        Ok("state = running".into())
+                    } else {
+                        fail("Could not find service")
+                    }
+                }
+                "bootstrap" => {
+                    if self.bootstraps.is_empty() || self.bootstraps.remove(0) {
+                        Ok(String::new())
+                    } else {
+                        fail("Bootstrap failed: 5: Input/output error")
+                    }
+                }
+                _ => Ok(String::new()),
+            }
+        }
+        fn restart(&mut self) -> Result<()> {
+            launchd_restart(
+                "gui/501",
+                "gui/501/x",
+                "/p.plist",
+                &mut |a: &[&str]| self.call(a),
+                &mut |_| {},
+            )
+        }
+    }
+
+    #[test]
+    fn launchd_start_when_not_loaded_bootstraps_once() {
+        let mut lc = FakeLaunchctl::new(|_| false, vec![true]);
+        lc.restart().unwrap();
+        assert_eq!(lc.calls, ["enable", "print", "bootstrap"]);
+    }
+
+    #[test]
+    fn launchd_start_waits_for_the_bootout_to_finish() {
+        // Loaded for the first three prints: bootout is asynchronous.
+        let mut lc = FakeLaunchctl::new(|n| n <= 3, vec![true]);
+        lc.restart().unwrap();
+        assert_eq!(
+            lc.calls,
+            [
+                "enable",
+                "print",
+                "bootout",
+                "print",
+                "print",
+                "print",
+                "bootstrap"
+            ]
+        );
+    }
+
+    #[test]
+    fn launchd_start_kickstarts_a_service_that_is_loaded_after_all() {
+        // Not loaded at first; bootstrap fails (launchd loaded it itself).
+        let mut lc = FakeLaunchctl::new(|n| n >= 2, vec![false]);
+        lc.restart().unwrap();
+        assert_eq!(
+            lc.calls,
+            ["enable", "print", "bootstrap", "print", "kickstart"]
+        );
+    }
+
+    #[test]
+    fn launchd_start_retries_then_says_what_failed_in_words() {
+        let mut lc = FakeLaunchctl::new(|_| false, vec![false, false, true]);
+        lc.restart().unwrap();
+        assert_eq!(lc.calls.iter().filter(|c| *c == "bootstrap").count(), 3);
+
+        let mut lc = FakeLaunchctl::new(|_| false, vec![false, false, false]);
+        let e = lc.restart().unwrap_err().to_string();
+        assert!(
+            e.contains("macOS did not start the Cua host service"),
+            "{e}"
+        );
+        assert!(e.contains("Bootstrap failed: 5: Input/output error"), "{e}");
+        assert!(!e.contains("\"launchctl\""), "{e}");
+    }
     use super::*;
 
     fn spec() -> ServiceSpec {

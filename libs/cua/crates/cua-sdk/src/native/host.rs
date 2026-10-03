@@ -176,7 +176,7 @@ impl Relay {
             let o = cua_spacesd_client::ConnectOptions::parse(&url)?
                 .fleet_gateway(Arc::new(cua_spacesd_client::StaticBearer(token)), None);
             let client = cua_spacesd_client::SpacesdClient::connect(o).await?;
-            Ok(Arc::new(SpacesdClient::new(client, vec![])))
+            Ok(Arc::new(SpacesdClient::new(client, vec![]).at("relay")))
         })
         .await
     }
@@ -431,6 +431,25 @@ impl From<cua_host::HostStatus> for HostStatus {
     }
 }
 
+/// What host setup's usage data says about the account token: `provided`,
+/// `expired` (its `exp` is past: the app passed a stale token), `missing`
+/// (relay mode with none), `not_needed` (direct mode). Never the token.
+pub(crate) fn setup_token_state(mode: &str, token: Option<&str>) -> &'static str {
+    if mode.trim().eq_ignore_ascii_case("direct") {
+        return "not_needed";
+    }
+    let Some(token) = token.filter(|t| !t.trim().is_empty()) else {
+        return "missing";
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    match cua_auth::jwt_claims(token).and_then(|c| c["exp"].as_u64()) {
+        Some(exp) if exp <= now => "expired",
+        _ => "provided",
+    }
+}
+
 /// Converts binding options to cua-host options.
 pub(crate) fn setup_options(o: HostSetupOptions) -> Result<cua_host::SetupOptions> {
     let mut opts = match o.mode.as_deref().unwrap_or("relay") {
@@ -505,22 +524,34 @@ impl Host {
             .as_ref()
             .map(|o| (o.share_desktop, o.provide_spaces))
             .unwrap_or((true, false));
-        let r = match opts {
+        let account_token = account_token.filter(|t| !t.trim().is_empty());
+        let token_state = setup_token_state(&mode, account_token.as_deref());
+        let (r, failed_stage, http_status) = match opts {
             Ok(opts) => {
-                run(async move {
+                let staged = run(async move {
                     let host = cua_host::Host::new(home);
-                    let status = match account_token.filter(|t| !t.is_empty()) {
-                        Some(t) => host.setup(opts, &cua_host::StaticToken(t)).await?,
-                        None => host.setup(opts, &cua_host::NoAccount).await?,
+                    let staged = match account_token {
+                        Some(t) => host.setup_staged(opts, &cua_host::StaticToken(t)).await,
+                        None => host.setup_staged(opts, &cua_host::NoAccount).await,
                     };
-                    Ok(status.into())
+                    Ok(staged)
                 })
-                .await
+                .await;
+                match staged {
+                    Ok(Ok(status)) => (Ok(status.into()), None, None),
+                    Ok(Err((stage, e))) => {
+                        let status = e.http_status();
+                        (Err(e.into()), Some(stage.as_str()), status)
+                    }
+                    Err(e) => (Err(e), Some("preflight"), None),
+                }
             }
-            Err(e) => Err(e),
+            Err(e) => (Err(e), Some("preflight"), None),
         };
         // Host Spaces adoption: the mode and what the machine is for,
-        // never its name, address or who it is shared with.
+        // never its name, address or who it is shared with. A failure says
+        // where it stopped, whether an account token was there (never the
+        // token) and the HTTP status a server answered with.
         cua_telemetry::capture(cua_telemetry::events::host_setup(
             &mode,
             desktop,
@@ -531,6 +562,13 @@ impl Host {
                 cua_telemetry::Outcome::Error
             },
             super::telemetry::variant(&r),
+            &cua_telemetry::events::HostSetupDetail {
+                signed_in: token_state != "missing" && token_state != "not_needed"
+                    || cua_auth::may_have_session(),
+                token_state,
+                failed_stage,
+                http_status,
+            },
         ));
         r
     }
@@ -570,7 +608,17 @@ impl Host {
     /// Unregister, uninstall the service and delete the host state.
     pub async fn remove(&self) -> Result<()> {
         let home = self.home.clone();
-        run(async move { Ok(cua_host::Host::new(home).remove().await?) }).await
+        run(async move {
+            cua_host::Host::new(home).remove().await?;
+            // Then the runtimes cua set up itself (the built-in Lume and the
+            // built-in Linux runtime, set up again on the next create that
+            // needs them); the user's own stay.
+            if let Err(e) = cua_sandbox_core::remove_builtin_runtimes().await {
+                tracing::warn!("could not remove the built-in runtimes: {e}");
+            }
+            Ok(())
+        })
+        .await
     }
 }
 
@@ -858,6 +906,51 @@ impl Devices {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn setup_reports_whether_it_had_a_token_never_the_token() {
+        use base64::Engine;
+        let jwt = |exp: u64| {
+            let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(format!(r#"{{"sub":"u","exp":{exp}}}"#));
+            format!("h.{claims}.s")
+        };
+        assert_eq!(setup_token_state("relay", None), "missing");
+        assert_eq!(setup_token_state("relay", Some("  ")), "missing");
+        assert_eq!(setup_token_state("relay", Some(&jwt(1))), "expired");
+        assert_eq!(
+            setup_token_state("relay", Some(&jwt(u64::MAX / 2))),
+            "provided"
+        );
+        // Opaque tokens are taken as given.
+        assert_eq!(setup_token_state("relay", Some("opaque")), "provided");
+        assert_eq!(setup_token_state("Direct", None), "not_needed");
+    }
+
+    /// A relay setup with no account token stops before the relay with
+    /// `Unauthenticated` (what 0.3.0/0.3.1 sent when the app's token read
+    /// failed): the app must sign in first, never call this without one.
+    #[tokio::test]
+    async fn relay_setup_without_a_token_is_unauthenticated() {
+        let relay = cua_host::testing::FakeRelay::start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let host = Host::new(Some(dir.path().join(".cua").to_string_lossy().into()));
+        let err = host
+            .setup(
+                HostSetupOptions {
+                    mode: Some("relay".into()),
+                    relay_url: Some(relay.url.clone()),
+                    driver_bin: Some(dir.path().join("x").to_string_lossy().into()),
+                    runner: Some("process".into()),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CuaError::Unauthenticated(_)), "{err}");
+        assert_eq!(relay.register_calls(), 0);
+    }
 
     #[tokio::test]
     async fn devices_enroll_approve_rename_and_revoke_through_the_relay() {

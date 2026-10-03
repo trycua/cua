@@ -227,7 +227,65 @@ impl DaemonBackend {
     }
 }
 
+/// The inventory row of `site`, created on first use.
+fn site_entry(
+    domains: &mut std::collections::BTreeMap<String, DomainInventory>,
+    site: String,
+) -> &mut DomainInventory {
+    domains
+        .entry(site.clone())
+        .or_insert_with(|| DomainInventory {
+            domain: site.clone(),
+            identity_provider: cua_keyvault::model::is_identity_provider(&site),
+            ..Default::default()
+        })
+}
+
 impl DaemonBackend {
+    /// Firefox's sites with counts from its plaintext stores: cookies by host,
+    /// localStorage by origin, saved logins by hostname. Nothing is decrypted.
+    fn firefox_inventory(
+        &self,
+        domains: &mut std::collections::BTreeMap<String, DomainInventory>,
+        notes: &mut Vec<String>,
+    ) {
+        use cua_teleport::firefox_store as ff;
+        let Some(home) = self.host.home_dir() else {
+            return;
+        };
+        let root = home.join(cua_teleport_bundle::layout::firefox::root_for(
+            self.platform,
+        ));
+        let Some(profile) = ff::default_profile(&root) else {
+            notes.push("no Firefox profile was found".into());
+            return;
+        };
+        match ff::read_cookies(&profile.dir) {
+            Ok(cookies) => {
+                for c in cookies {
+                    let d = site_entry(domains, record::site_of(&c.host_key));
+                    d.cookies += 1;
+                    if c.expires_utc == 0 {
+                        d.session_cookies += 1;
+                    }
+                    d.signin |= record::looks_like_signin(&c.name);
+                }
+            }
+            Err(e) => notes.push(format!("Firefox cookies were not listed: {e}")),
+        }
+        match ff::read_local_storage(&profile.dir) {
+            Ok(items) => {
+                for i in items {
+                    site_entry(domains, record::site_of(&i.origin)).local_storage += 1;
+                }
+            }
+            Err(e) => notes.push(format!("Firefox localStorage was not listed: {e}")),
+        }
+        for host in ff::login_hosts(&profile.dir) {
+            site_entry(domains, record::site_of(&host)).passwords += 1;
+        }
+    }
+
     /// The decrypted saved logins of `sites` (every site when empty).
     fn site_logins_for(
         &self,
@@ -496,6 +554,9 @@ impl Backend for DaemonBackend {
                     Err(e) => notes.push(format!("localStorage was not listed: {e}")),
                 }
             }
+        }
+        if app == "firefox" {
+            self.firefox_inventory(&mut domains, &mut notes);
         }
         Ok(Inventory {
             provider_id: manifest.app.clone(),

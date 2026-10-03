@@ -454,51 +454,6 @@ fn manifest_item(
     }
 }
 
-/// `Local Storage/` as items: the LevelDB is read from a private copy and its
-/// values travel in the reserved `localstorage.json` entry, which the receiver
-/// writes into the destination browser's own store (a raw copy of LevelDB
-/// files would replace whatever the destination holds, and tear if the source
-/// is running). Anything else under `Local Storage/` stays a file. When the
-/// LevelDB cannot be read, the whole directory is copied as before.
-fn add_local_storage<W: std::io::Write>(
-    writer: &mut cua_teleport_bundle::bundle::BundleWriter<W>,
-    profile_dir: &Path,
-    disk: &Path,
-    rel: &str,
-) -> Result<()> {
-    match cua_chromium_storage::read(&cua_chromium_storage::store_dir(profile_dir)) {
-        Ok(items) => {
-            if !items.is_empty() {
-                writer.add_bytes(
-                    cua_chromium_storage::LOCAL_STORAGE_ENTRY,
-                    0o600,
-                    &cua_teleport_bundle::local_storage::serialize(&items),
-                )?;
-            }
-            if let Ok(entries) = std::fs::read_dir(disk) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    if name == "leveldb" {
-                        continue;
-                    }
-                    let child = format!("{rel}/{name}");
-                    match std::fs::symlink_metadata(&path) {
-                        Ok(m) if m.is_file() => add_file_best_effort(writer, &path, &child)?,
-                        Ok(m) if m.is_dir() => add_dir_recursive(writer, &path, &child)?,
-                        _ => {}
-                    }
-                }
-            }
-            Ok(())
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "localStorage could not be read as items; copying its files");
-            add_dir_recursive(writer, disk, rel)
-        }
-    }
-}
-
 /// Where curated profile file `name` lives on disk: `Cookies` resolves to
 /// whichever of `Network/Cookies` and the root file is newer; every
 /// other file is at the profile root.
@@ -831,7 +786,12 @@ impl ExportProvider for ChromeProvider {
                 let disk = profile_dir.join(dir);
                 if disk.is_dir() {
                     if *dir == "Local Storage" {
-                        add_local_storage(&mut writer, &profile_dir, &disk, &rel)?;
+                        crate::providers::util::add_local_storage(
+                            &mut writer,
+                            &profile_dir,
+                            &disk,
+                            &rel,
+                        )?;
                     } else {
                         add_dir_recursive(&mut writer, &disk, &rel)?;
                     }

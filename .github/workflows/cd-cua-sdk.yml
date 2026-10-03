@@ -70,7 +70,18 @@ jobs:
       tag: ${{ steps.v.outputs.tag }}
       publish: ${{ steps.v.outputs.publish }}
       prerelease: ${{ steps.v.outputs.prerelease }}
+    permissions:
+      contents: read
     steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # The `cua` CLI bakes libs/cua-spacesd/VERSION and `cua host setup`
+      # downloads that release: every job needs this one, so nothing builds
+      # or publishes while the pinned cua-spacesd is unpublished (Cua Spaces
+      # 0.3.0 shipped a CLI pinned to a draft).
+      - name: Check the baked cua-spacesd release is published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/check_spacesd_published.sh "$CUA_RELEASE_REPOSITORY"
       - id: v
         shell: bash
         run: |

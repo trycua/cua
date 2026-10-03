@@ -676,6 +676,7 @@ impl Agents {
         let mut s = format!(
             "#!/bin/sh\n# cua agent run launcher (generated)\numask 077\ncd {q} || exit 1\n\
              export CUA_EVENTS_FILE={q}/events.jsonl\n\
+             export CUA_AGENT_RUN_ID=\"$(basename {q})\"\n\
              cua_state() {{ printf '{{\"status\":\"%s\",\"error\":%s,\"turn\":0}}' \"$1\" \"$2\" > {q}/.state.tmp && mv {q}/.state.tmp {q}/state.json; }}\n\
              cua_event() {{ n=$(( $(wc -l < {q}/events.jsonl 2>/dev/null || echo 0) + 1 )); \
              printf '{{\"seq\":%s,\"ts\":%s000,\"turn\":0,\"type\":\"%s\",\"message\":\"%s\"}}\\n' \"$n\" \"$(date +%s)\" \"$1\" \"$2\" >> {q}/events.jsonl; }}\n\
@@ -1400,6 +1401,32 @@ mod tests {
         assert_eq!(r.stop_reason.as_deref(), Some("end_turn"));
         assert_eq!(r.tool_calls, 1);
         assert!(r.usage.is_some());
+    }
+
+    /// Every run's environment names the run, so a Cua program inside it
+    /// records no agent runs of its own (the host that started it does).
+    #[test]
+    fn launch_script_names_the_run() {
+        let s = Agents::launch_script(
+            "/root",
+            &harness::HARNESSES[0],
+            "/root/.cua/agents/run-1a2b3c4d",
+            "/root/.cua/tools/cua-runner/x",
+            false,
+            None,
+            &[],
+        )
+        .unwrap();
+        let line = s
+            .lines()
+            .find(|l| l.starts_with("export CUA_AGENT_RUN_ID="))
+            .expect("exported");
+        let out = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!("{line}; printf %s \"$CUA_AGENT_RUN_ID\""))
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "run-1a2b3c4d");
     }
 
     /// The launcher is valid shell and never embeds a secret.

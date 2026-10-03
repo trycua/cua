@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import AppKit
+import CoreVideo
 import CuaSpacesFFI
 @testable import CuaSpacesMacKit
 import Foundation
@@ -92,6 +93,57 @@ struct DesktopCoverTests {
         #expect(store["s1"] == nil && store["s2"] != nil)
         store["s2"] = nil
         #expect(store.entries.isEmpty)
+    }
+
+    /// The store never holds more than its byte cap, however many Spaces
+    /// or refreshes come through: the least recently used image goes first.
+    @Test func theStoreStaysWithinItsByteCap() {
+        let store = SpaceThumbnails()
+        store.byteCap = 4 << 20
+        // 640 x 400 x 4 bytes, about 1 MB each.
+        let each = SpaceThumbnails.bytes(of: DesktopCoverTests.bitmap(640, 400))
+        #expect(each == 640 * 400 * 4)
+        for round in 0..<20 {
+            for i in 0..<10 {
+                store.set("s\(i)", DesktopCoverTests.bitmap(640, 400),
+                          at: Date().addingTimeInterval(Double(round)))
+                #expect(store.totalBytes <= store.byteCap, "round \(round) Space \(i)")
+            }
+        }
+        #expect(store.entries.count == store.byteCap / each)
+        #expect(store.totalBytes == store.entries.values.reduce(0) { $0 + $1.bytes })
+        // The newest are kept; a read keeps an image from going next.
+        #expect(store["s9"] != nil && store["s0"] == nil)
+        _ = store["s6"]
+        store.set("s0", DesktopCoverTests.bitmap(640, 400))
+        #expect(store["s6"] != nil && store["s7"] == nil)
+        store.retain([])
+        #expect(store.totalBytes == 0 && store.entries.isEmpty)
+    }
+
+    /// A stream's last frame is kept at thumbnail size, not full size.
+    @Test func theLastFrameIsKeptAtThumbnailSize() throws {
+        var buffer: CVPixelBuffer?
+        CVPixelBufferCreate(nil, 2560, 1600, kCVPixelFormatType_32BGRA,
+                            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer)
+        let frame = try #require(buffer)
+        let image = try #require(SpaceThumbnails.image(frame))
+        let max = Int(SpaceThumbnails.policy.maxDimension)
+        #expect(Int(image.size.width) == max && Int(image.size.height) == max * 1600 / 2560)
+    }
+
+    /// The cover's blur cache is bounded (its keys retain their images).
+    @Test func theBlurCacheIsBounded() {
+        #expect(DesktopCoverView.blurs.countLimit > 0 && DesktopCoverView.blurs.totalCostLimit > 0)
+    }
+
+    static func bitmap(_ w: Int, _ h: Int) -> NSImage {
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8,
+                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        let image = NSImage(size: NSSize(width: w, height: h))
+        image.addRepresentation(rep)
+        return image
     }
 
     @Test func warmingAsksTheCacheOncePerSpace() async {

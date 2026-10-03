@@ -17,10 +17,47 @@ use cua_daemon::server::{self, ServerConfig};
 use cua_daemon::{Runtime, RuntimeConfig};
 use cua_sdk::{Cua, CuaError, SandboxCreateOptions};
 use cua_spaces_ffi::{Teleport, TeleportApproval, TeleportApprovalRequest, TeleportScope};
+use cua_teleport::browser_cookies::{TestCookieRow, write_cookies_db_for_tests};
 use cua_teleport::layout::electron::app_support_root;
-use cua_teleport::{FakeHost, Platform};
+use cua_teleport::{FakeHost, HostOutput, Platform};
+use cua_teleport_bundle::chromium_crypto;
 
 const TOKEN: &str = "env-token";
+
+/// The fake macOS Keychain secret for "Slack Safe Storage" (Slack is sent
+/// structured: its cookies travel as decrypted rows, not the raw file).
+const FAKE_SAFE_STORAGE_SECRET: &[u8] = b"slack-safe-storage-secret";
+
+/// The key Slack's fixture cookie is encrypted under on macOS or Linux,
+/// matching whatever `SafeStorageKeys` derives there: the macOS fixture
+/// secret, or the fixed Linux `v10` password. Windows uses
+/// [`fixture_windows_key`] instead (a real, DPAPI-wrapped Local State key).
+fn fixture_key() -> [u8; 16] {
+    match Platform::current() {
+        Platform::MacOS => *chromium_crypto::derive_key(
+            FAKE_SAFE_STORAGE_SECRET,
+            chromium_crypto::MACOS_PBKDF2_ROUNDS,
+        ),
+        Platform::Linux => *chromium_crypto::derive_key(
+            chromium_crypto::LINUX_V10_PASSWORD,
+            chromium_crypto::LINUX_V10_PBKDF2_ROUNDS,
+        ),
+        Platform::Windows => unreachable!("Windows uses fixture_windows_key instead"),
+    }
+}
+
+/// Windows: a fresh AES-256-GCM key, written into `Local State` next to the
+/// profile and wrapped with the real (user-scope) DPAPI, the way
+/// `cua_chromium_storage::dpapi::ensure_local_state_key` does for a
+/// destination.
+#[cfg(windows)]
+fn fixture_windows_key(local_state: &std::path::Path) -> [u8; 32] {
+    use cua_chromium_storage::dpapi::{SystemDpapi, ensure_local_state_key};
+    let mut random = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::rng(), &mut random);
+    let (key, _) = ensure_local_state_key(local_state, &SystemDpapi, random).unwrap();
+    *key
+}
 
 fn fake_home() -> tempfile::TempDir {
     let home = tempfile::tempdir().unwrap();
@@ -29,7 +66,32 @@ fn fake_home() -> tempfile::TempDir {
         .join(app_support_root(Platform::current()))
         .join("Slack");
     std::fs::create_dir_all(prof.join("Local Storage/leveldb")).unwrap();
-    std::fs::write(prof.join("Cookies"), b"slack-cookies").unwrap();
+    let encrypted = match Platform::current() {
+        Platform::Windows => {
+            #[cfg(windows)]
+            {
+                let key = fixture_windows_key(&prof.join("Local State"));
+                chromium_crypto::gcm::encrypt(&key, &[9u8; 12], b"xoxd-session-value")
+            }
+            #[cfg(not(windows))]
+            unreachable!("Platform::current() reported Windows on a non-Windows build")
+        }
+        _ => chromium_crypto::encrypt_v10(&fixture_key(), b"xoxd-session-value"),
+    };
+    write_cookies_db_for_tests(
+        &prof,
+        &[TestCookieRow {
+            host_key: ".slack.com",
+            name: "d",
+            encrypted_value: encrypted,
+            path: "/",
+            expires_utc: 0,
+            is_secure: true,
+            is_httponly: true,
+            samesite: 0,
+        }],
+    )
+    .unwrap();
     std::fs::write(prof.join("Preferences"), b"{}").unwrap();
     std::fs::write(
         prof.join("Local Storage/leveldb/000003.log"),
@@ -37,6 +99,24 @@ fn fake_home() -> tempfile::TempDir {
     )
     .unwrap();
     home
+}
+
+/// A `FakeHost` that, on macOS, answers a Keychain lookup of "Slack Safe
+/// Storage" with the fixture secret, so the structured capture path can
+/// decrypt the fixture cookie without ever touching the real Keychain. On
+/// Linux and Windows the responder is never consulted (the fixed Linux key
+/// and the real DPAPI-wrapped Local State key need no host command).
+fn fake_keychain_host(home: &std::path::Path) -> Arc<FakeHost> {
+    Arc::new(FakeHost::new().with_home(home).with_responder(|c| {
+        if c.args.iter().any(|a| a == "-w") {
+            Ok(HostOutput::ok([FAKE_SAFE_STORAGE_SECRET, b"\n"].concat()))
+        } else {
+            Ok(HostOutput::ok(
+                b"    \"acct\"<blob>=\"Slack\"\n    \"svce\"<blob>=\"Slack Safe Storage\"\n"
+                    .to_vec(),
+            ))
+        }
+    }))
 }
 
 fn direct(url: &str) -> SandboxCreateOptions {
@@ -87,7 +167,7 @@ impl TeleportApproval for Record {
 
 async fn run_suite(cua: Arc<Cua>, env: &fixtures::SpacesdFixture) {
     let home = fake_home();
-    let host = Arc::new(FakeHost::new().with_home(home.path()));
+    let host = fake_keychain_host(home.path());
     let teleport = Teleport::with_host(host.clone());
 
     let providers = teleport.providers();
@@ -184,11 +264,18 @@ async fn run_suite(cua: Arc<Cua>, env: &fixtures::SpacesdFixture) {
             .unwrap()
             .read_all()
             .unwrap();
-    let cookies = entries
+    // Slack is Chromium underneath, sent structured: the cookie travels
+    // already decrypted in the reserved entry, never as the raw (still
+    // Safe-Storage-encrypted, and so undecryptable on another machine) file.
+    assert!(!entries.iter().any(|e| e.rel_path == "electron/Cookies"));
+    let cookies_entry = entries
         .iter()
-        .find(|e| e.rel_path == "electron/Cookies")
+        .find(|e| e.rel_path == cua_teleport_bundle::cookies::COOKIES_ENTRY)
         .unwrap();
-    assert_eq!(cookies.bytes, b"slack-cookies");
+    let cookies = cua_teleport_bundle::cookies::parse(&cookies_entry.bytes);
+    assert_eq!(cookies.len(), 1);
+    assert_eq!(cookies[0].host_key, ".slack.com");
+    assert_eq!(cookies[0].value, b"xoxd-session-value");
 
     // The same upload through an explicit env connection.
     let env_client = sb.spacesd(Some(5_000)).await.unwrap();

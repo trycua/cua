@@ -23,8 +23,8 @@ Each image publishes directly under `ghcr.io/trycua/<os>` (`linux`, `windows`, `
 | `ghcr.io/trycua/linux:24.04` | OCI index, rootfs for docker / gVisor, amd64 + arm64 |
 | `ghcr.io/trycua/linux:24.04-disk` | OCI index, KubeVirt containerDisk (`/disk/disk.img`, uid 107), amd64 + arm64 |
 | `ghcr.io/trycua/windows:2022`, `2022-disk` | containerDisk, amd64, built by `windows-2022/` (`cd-image-windows.yml`): the Windows workspace plus cua-spacesd, gated on `cua-spacesd doctor --strict` in the guest |
-| `ghcr.io/trycua/macos:26` | Lume image built by `macos/`, full tier (slim plus the Command Line Tools, Homebrew and dev tools); pin `26-20261001-021b87d` |
-| `ghcr.io/trycua/macos:26-slim` | Lume image built by `macos/`, slim tier (the base plus cua-spacesd and Google Chrome); pin `26-slim-20261001-021b87d` |
+| `ghcr.io/trycua/macos:26` | Lume image built by `macos/`, full tier (slim plus the Command Line Tools, Homebrew and dev tools); pin `26-20261002-612e63a` |
+| `ghcr.io/trycua/macos:26-slim` | Lume image built by `macos/`, slim tier (the base plus cua-spacesd and Google Chrome); pin `26-slim-20261002-612e63a` |
 | `ghcr.io/trycua/macos:15` | Lume image (copy of `macos-sequoia-cua`) |
 
 - Every floating tag has an immutable dated pin: `<tag>-<yyyymmdd>-<sha7>`. Pins and per-arch children are written once. In the canonical repos only the floating tags (`<version>[-slim|-xcode[-X.Y]][-disk]`: `24.04`, `24.04-disk`, `2022`, `2022-disk`, `26`, `26-slim`, `15`) ever move, and only to a pin's digest. The macOS tiers also push `<pin>-raw` (the plain `lume push`) before `annotate.sh` writes the pin; it never moves.
@@ -59,6 +59,15 @@ Pass the same `--stamp` (and `--work`, when set) to every run of one release. `t
 - **TCC:** `files/seed-tcc.sh` writes Accessibility, Screen Recording and PostEvent rows to the system TCC database with a csreq derived from the installed bundle (`codesign -d -r-`; for an ad-hoc signature that is its cdhash, so the rows hold for exactly the binary shipped), and seeds the ReplayKit approval ledger so no capture alert appears.
 - **Identity:** `/etc/cua-image/manifest.json` (from `image.json` claims and `cua-spacesd build-info`), `/etc/cua-image/spacesd-source`, `/etc/cua-image/variant` (`lume`).
 - **Gate:** `doctor-gate.sh` runs `cua-spacesd doctor --strict` in the guest over `lume ssh` after a reboot, then `tools/ax_probe.py` (the official MCP SDK against the image's `/mcp`: permissions, an AX tree read, CGEvent clicks in Calculator and a session-keyed `move_cursor` that must return). The build fails unless both pass. The release's `input/arm64/lume` gate (`live-input-gate.sh`) then boots a clone of the built VM and runs `libs/cua/crates/cua-spaces-ext/tests/e2e_macos_input.rs`: a Dock click on a whole-display stream must be delivered and change the screen. The pushed VM itself never boots again after its sanitize.
+
+## Built-in Linux runtime (`runtime-gvisor`)
+
+`runtime-gvisor/` builds `ghcr.io/trycua/runtime-gvisor`, the disk of the VM a Mac with no Docker runs Linux Spaces in (`cua_vmm::managed`, the Linux row of Settings → Runtimes, `cua config set runtime.linux auto|builtin|system`). It is not a Space image and not in the catalog.
+
+- **Contents:** Colima's own Ubuntu 24.04 Docker disk (colima-core, Docker Engine and containerd) with gVisor's `runsc` and its sentry baked into `/usr/local/bin`; every input is pinned by digest in `runtime-gvisor/versions.env`. The SDK's Colima profile makes `runsc` Docker's default runtime, mounts no host directory, and Lima forwards the guest's Docker socket to `$CUA_HOME/runtimes/linux/vm/cua/docker.sock` (mode 0600).
+- **Build:** `sudo runtime-gvisor/build.sh arm64|amd64 out/` on any Linux (loop devices; it only adds files, so one runner builds both arches). About 425 MB (arm64) and 460 MB (amd64) compressed.
+- **Publish:** `runtime-gvisor/push.sh <tag> out/` (`.github/workflows/cd-image-runtime-gvisor.yml` on `runtime-gvisor-v*` tags) pushes `<tag>-<arch>` OCI artifacts (one gzip raw-disk layer each) and the `<tag>` index. Tags are written once; there is no floating tag. The SDK pins each arch's layer digest and size in `managed.rs` (a unit test checks the pins against `versions.env`), so a new disk ships with the SDK release that pins it.
+- **Gate:** the opt-in `managed::tests::sets_up_boots_and_removes_the_builtin_runtime` on an Apple silicon Mac downloads the pinned bytes into a temporary `CUA_HOME`, boots the VM and checks `runsc` is Docker's default runtime. A pre-release tag (`<version>-rcN`) can be tested before the SDK pin moves.
 
 ## Image references
 

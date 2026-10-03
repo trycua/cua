@@ -1218,3 +1218,75 @@ async fn launchd_setup_proceeds_with_a_gui_session() {
         ["install".to_string(), "start".to_string()]
     );
 }
+
+// ------------------------------------------------- recovery and permissions
+
+/// A start that failed leaves the service down. Trying the same change
+/// again (the app's Retry), or Resume sharing, starts it again instead of
+/// only rewriting the settings.
+#[tokio::test]
+async fn retrying_a_change_starts_a_service_that_is_down() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    f.manager.stop().unwrap();
+    assert!(!host.status().await.unwrap().service.running);
+    // The desktop is already on: no change, but the service is down.
+    let status = host
+        .configure(HostSettingsChange {
+            share_desktop: Some(true),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(status.service.running);
+
+    f.manager.stop().unwrap();
+    let status = host.start_sharing().await.unwrap();
+    assert!(status.service.running);
+}
+
+/// A probe that reports the driver's permissions.
+struct GrantsProbe(Option<(bool, bool)>);
+
+impl SessionProbe for GrantsProbe {
+    fn gui_session(&self, _uid: u32) -> bool {
+        true
+    }
+    fn console_user(&self) -> Option<String> {
+        None
+    }
+    fn permission_status(&self, _driver_bin: &Path) -> Option<(bool, bool)> {
+        self.0
+    }
+}
+
+/// "Grant in System Settings" lists only what the driver still lacks,
+/// asked afresh on each status (a grant shows without a restart); when the
+/// driver cannot say, every permission stays listed.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn status_lists_only_the_permissions_still_missing() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    f.host()
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    let with = |grants| f.host().with_preflight_probe(Arc::new(GrantsProbe(grants)));
+    let ids = |s: HostStatus| s.permissions.into_iter().map(|p| p.id).collect::<Vec<_>>();
+    assert_eq!(
+        ids(with(None).status().await.unwrap()),
+        ["screen-recording", "accessibility"]
+    );
+    assert_eq!(
+        ids(with(Some((true, false))).status().await.unwrap()),
+        ["accessibility"]
+    );
+    assert!(ids(with(Some((true, true))).status().await.unwrap()).is_empty());
+}

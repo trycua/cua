@@ -104,6 +104,21 @@ impl HostCaller {
         }
     }
 
+    /// The caller in a request's [`CALLER_METADATA`]. cua-spacesd escapes
+    /// non-ASCII as JSON `\uXXXX`, but releases up to 0.3.0
+    /// sent a Unicode display name as raw UTF-8, which is not ASCII text, so
+    /// any valid UTF-8 value is accepted.
+    pub fn from_grpc_metadata(metadata: &tonic::metadata::MetadataMap) -> Result<Self> {
+        let value = metadata
+            .get(CALLER_METADATA)
+            .map(|v| {
+                std::str::from_utf8(v.as_bytes())
+                    .map_err(|_| Error::invalid(format!("{CALLER_METADATA}: not UTF-8")))
+            })
+            .transpose()?;
+        Self::from_metadata(value)
+    }
+
     /// `Name <email> (account)` for the audit and people.
     pub fn label(&self) -> String {
         if self.account == "local" {
@@ -2175,6 +2190,45 @@ mod tests {
         };
         assert!(!viewer.may_create());
         assert!(HostCaller::from_metadata(Some("nope")).is_err());
+    }
+
+    /// A Unicode display name arrives as ASCII-escaped JSON (current
+    /// cua-spacesd) or as raw UTF-8 bytes (older cua-spacesd); both parse,
+    /// and bytes that are not UTF-8 are refused.
+    #[test]
+    fn callers_from_grpc_metadata() {
+        use tonic::metadata::{MetadataMap, MetadataValue};
+        let with = |v: MetadataValue<tonic::metadata::Ascii>| {
+            let mut m = MetadataMap::new();
+            m.insert(CALLER_METADATA, v);
+            m
+        };
+        let name = "Jos\u{e9} \u{65e5}\u{672c} \u{1f680}";
+
+        let escaped = r#"{"account":"ada","name":"Jos\u00e9 \u65e5\u672c \ud83d\ude80","role":"owner","via":"relay"}"#;
+        assert!(escaped.is_ascii());
+        let c = HostCaller::from_metadata(Some(escaped)).unwrap();
+        assert_eq!(c.name.as_deref(), Some(name));
+        let c = HostCaller::from_grpc_metadata(&with(escaped.parse().unwrap())).unwrap();
+        assert_eq!(c.name.as_deref(), Some(name));
+        assert!(c.is_owner());
+
+        let raw = format!(r#"{{"account":"ada","name":"{name}","role":"owner","via":"relay"}}"#);
+        // What cua-spacesd up to 0.3.0 sent: `str::parse` keeps the bytes.
+        let value: MetadataValue<tonic::metadata::Ascii> = raw.parse().unwrap();
+        assert!(value.to_str().is_err());
+        let c = HostCaller::from_grpc_metadata(&with(value)).unwrap();
+        assert_eq!(c.name.as_deref(), Some(name));
+        assert_eq!(c.account, "ada");
+
+        let not_utf8 = MetadataValue::try_from(&b"{\"account\":\"\xff\"}"[..]).unwrap();
+        let err = HostCaller::from_grpc_metadata(&with(not_utf8)).unwrap_err();
+        assert!(err.to_string().contains("not UTF-8"), "{err}");
+
+        assert_eq!(
+            HostCaller::from_grpc_metadata(&MetadataMap::new()).unwrap(),
+            HostCaller::local()
+        );
     }
 
     /// A host that answered is listed with its limits unless it does not

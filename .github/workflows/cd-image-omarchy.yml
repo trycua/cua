@@ -65,6 +65,17 @@ on:
         type: choice
         options: [edge]
         default: edge
+  # cd-images-spacesd-release.yml on every cua-spacesd release. A called
+  # workflow sees the caller's event (workflow_run), so meta treats it like
+  # a dispatch.
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+      series:
+        type: string
+        default: edge
 
 concurrency:
   group: cd-image-omarchy-${{ github.ref }}
@@ -103,7 +114,8 @@ jobs:
           publish=false
           case "$EVENT" in
             push) [[ "$REF" == refs/tags/omarchy-image-v* ]] && publish=true ;;
-            workflow_dispatch) [ "$INPUT_PUBLISH" = true ] && publish=true ;;
+            # workflow_run: called by cd-images-spacesd-release.yml.
+            workflow_dispatch|workflow_run) [ "$INPUT_PUBLISH" = true ] && publish=true ;;
             # Publishes only when the content changed (the build job decides).
             schedule) publish=true ;;
           esac

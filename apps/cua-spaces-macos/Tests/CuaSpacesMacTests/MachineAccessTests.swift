@@ -255,8 +255,8 @@ struct MachineAccessTests {
         }
     }
 
-    /// Desktop shared (its live card), not shared with Spaces on (the note,
-    /// New Space on it, its Spaces), and both off (the note alone).
+    /// Desktop shared (its live card), not shared with Spaces on (the note
+    /// and its Spaces), and both off (the note alone).
     @Test func desktopSnapshots() async throws {
         let size = CGSize(width: 560, height: 440)
         let snap = SnapshotTests()

@@ -23,8 +23,8 @@ Each image publishes directly under `ghcr.io/trycua/<os>` (`linux`, `windows`, `
 | `ghcr.io/trycua/linux:24.04` | OCI index, rootfs for docker / gVisor, amd64 + arm64 |
 | `ghcr.io/trycua/linux:24.04-disk` | OCI index, KubeVirt containerDisk (`/disk/disk.img`, uid 107), amd64 + arm64 |
 | `ghcr.io/trycua/windows:2022`, `2022-disk` | containerDisk, amd64, built by `windows-2022/` (`cd-image-windows.yml`): the Windows workspace plus cua-spacesd, gated on `cua-spacesd doctor --strict` in the guest |
-| `ghcr.io/trycua/macos:26` | Lume image built by `macos/`, full tier (slim plus the Command Line Tools, Homebrew and dev tools); pin `26-20261003-6348741` |
-| `ghcr.io/trycua/macos:26-slim` | Lume image built by `macos/`, slim tier (the base plus cua-spacesd and Google Chrome); pin `26-slim-20261003-6348741` |
+| `ghcr.io/trycua/macos:26` | Lume image built by `macos/`, full tier (slim plus the Command Line Tools, Homebrew and dev tools); pin `26-20261003-5845488` |
+| `ghcr.io/trycua/macos:26-slim` | Lume image built by `macos/`, slim tier (the base plus cua-spacesd and Google Chrome); pin `26-slim-20261003-5845488` |
 | `ghcr.io/trycua/macos:15` | Lume image (copy of `macos-sequoia-cua`) |
 
 - Every floating tag has an immutable dated pin: `<tag>-<yyyymmdd>-<sha7>`. Pins and per-arch children are written once. In the canonical repos only the floating tags (`<version>[-slim|-xcode[-X.Y]][-disk]`: `24.04`, `24.04-disk`, `2022`, `2022-disk`, `26`, `26-slim`, `15`) ever move, and only to a pin's digest. The macOS tiers also push `<pin>-raw` (the plain `lume push`) before `annotate.sh` writes the pin; it never moves.
@@ -242,6 +242,16 @@ cua images release libs/images/omarchy --publish --promote --resume
 A publish run whose gates and pushes passed but that stopped before its floating tags moved is finished with `workflow_dispatch` `promote_run=<run id>`: it merges that run's gated evidence, push records and publish evidence and runs `--resume --steps attest,publish,verify,promote` (steps that already passed there are skipped), building and pushing no image. A child without a doctor verdict passes verify only when no doctor lane ran for it (`scripts/images/verify_pins.py`). Every arch's disk gets the strict VM doctor: hosted arm64 runners have no KVM, so `image-doctor-lane.sh` runs it under QEMU TCG with stretched budgets (`--timeout-scale`, default 8 under TCG). `workflow_dispatch` `doctor_children=arm64@sha256:...,...` doctors disk children that are already published and attests them (report referrer and ledger entry) without pushing any image. It runs this commit's doctor (`image-doctor-lane.sh --doctor-bin`) against the image's own service, since published disks bake the older doctor. The lane waits for cloud-init and a serving desktop before the doctor starts, and under TCG the timing checks (audio uplink tone, A/V sync) stretch with `CUA_DOCTOR_TIMEOUT_SCALE`; accelerated lanes (scale 1) are unchanged.
 
 Pull requests run step 1 only. The plain images are built and smoke tested in the same workflow and not published.
+
+#### On every cua-spacesd release (`cd-images-spacesd-release.yml`)
+
+Nobody dispatches the image builds after a cua-spacesd release:
+
+1. **Builds:** once `CD: cua-spacesd` finishes a `cua-spacesd-vX.Y.Z` tag, the workflow calls `cd-image-linux.yml` (`spacesd_source=release`), `cd-image-omarchy.yml`, `cd-image-windows.yml` (`stage=publish`) and `cd-bench-images.yml` (`bench=osworld push=true`), all in parallel and with the same gates as a manual publish.
+2. **Pins PR:** then `scripts/images/pins-pr.sh` opens or updates one PR from the branch `images/pins`. It changes `sandbox-images.json` (digests and sizes), the README pin rows and the app-core parity goldens. An OS moves only when its floating tags resolve to new digests whose attached doctor reports say cua-spacesd X.Y.Z (`scripts/images/image_pins.py`). A green build that pushed nothing therefore fails the job instead of moving a pin. The PR body lists each OS as done or pending. The PR is rebuilt from `main` and the registry on every run, so never edit it by hand: merge it once its checks pass. Benchmark pins come in `cd-bench-images.yml`'s own catalog PR.
+3. **macOS (by hand, on an Apple silicon Mac with Lume):** run `scripts/images/release-macos.sh X.Y.Z`. It downloads the release's notarized `Cua Spacesd.app`, runs `cua images release libs/images/macos` for `slim` and then `full` (build, gates, publish), promotes both tiers and then dispatches the workflow with `build=false`, which adds macOS to the same PR. Its state lives under `~/.cache/cua-images/macos-release/X.Y.Z`, and a rerun resumes.
+
+`python3 scripts/images/image_pins.py status` shows where each OS stands at any time. `CI: Images on the current cua-spacesd` (`ci-images-spacesd-lag.yml`) warns on PRs that touch the catalog, `libs/cua-spacesd/VERSION` or a release manifest when the pinned images report an older cua-spacesd. It never fails, because images normally trail a release by a few hours and an app release must not wait for them.
 
 ### cua-spacesd
 

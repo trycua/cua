@@ -551,6 +551,43 @@ pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
     }
 }
 
+/// [`focused_window_id_of_pid`] for a check against one requested window: a
+/// focused sheet (a Save panel, Go to Folder) attached to `target` reports
+/// `target`, since keys for that window go to its sheet. A sheet requested by
+/// its own id still matches itself, and a sheet attached to another window
+/// keeps its own id.
+pub fn focused_window_id_for_target(pid: i32, target: u32) -> Option<u32> {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        let window = copy_element_attr(app, "AXFocusedWindow");
+        CFRelease(app as CFTypeRef);
+        let window = window?;
+        let window_id = focused_id_for_target(ax_get_window_id(window), target, || {
+            super::exact_target::owning_window_id(window)
+        });
+        CFRelease(window as CFTypeRef);
+        window_id
+    }
+}
+
+/// The pure decision behind [`focused_window_id_for_target`]: the focused
+/// surface's own id, unless that is not `target` and the window it belongs to
+/// (`owner`, read only then) is.
+fn focused_id_for_target(
+    own: Option<u32>,
+    target: u32,
+    owner: impl FnOnce() -> Option<u32>,
+) -> Option<u32> {
+    if own != Some(target) && owner() == Some(target) {
+        Some(target)
+    } else {
+        own
+    }
+}
+
 /// Get the children of an AX element.
 ///
 /// # Safety
@@ -948,6 +985,28 @@ pub unsafe fn copy_ax_windows_including(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focus_on_the_target_itself_needs_no_owner_lookup() {
+        let owner = || -> Option<u32> { panic!("owner read for an exact match") };
+        assert_eq!(focused_id_for_target(Some(10), 10, owner), Some(10));
+    }
+
+    #[test]
+    fn a_focused_sheet_counts_as_the_window_it_is_attached_to() {
+        // Save sheet 20 on window 10: keys for 10 go to the sheet.
+        assert_eq!(focused_id_for_target(Some(20), 10, || Some(10)), Some(10));
+    }
+
+    #[test]
+    fn a_focused_sheet_of_another_window_does_not() {
+        // Sheet 20 is attached to window 11, a sibling of the target 10; an
+        // unprovable owner keeps the surface's own id too.
+        assert_eq!(focused_id_for_target(Some(20), 10, || Some(11)), Some(20));
+        assert_eq!(focused_id_for_target(Some(20), 10, || Some(20)), Some(20));
+        assert_eq!(focused_id_for_target(Some(20), 10, || None), Some(20));
+        assert_eq!(focused_id_for_target(None, 10, || None), None);
+    }
     use crate::windows::WindowSpaceView;
     use core_foundation::{boolean::CFBoolean, number::CFNumber};
 

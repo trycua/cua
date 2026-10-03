@@ -13,6 +13,7 @@
 //!   - click_target   : right_click / double_click recognised by NSView
 //!   - scroll_target  : scroll updates VerticalOffset label
 //!   - ns_menubar     : main menubar item enumerable (Mac-specific)
+//!   - save_sheet     : NSSavePanel sheet acts through its window
 //!
 //! Run locally (after `libs/cua-driver/tests/fixtures/build/macos.sh`):
 //!   cargo test --test harness_appkit_test -- --ignored --nocapture
@@ -101,6 +102,11 @@ impl Harness {
             &[("CUA_APPKIT_ERRORING_TOGGLES", "1")],
         )
         .presented()
+    }
+
+    /// Launch with the opt-in Save sheet button (`save_sheet` scenario).
+    fn launch_with_save_sheet() -> Self {
+        Self::spawn(None, None, false, None, &[("CUA_APPKIT_SAVE_SHEET", "1")]).presented()
     }
 
     fn presented(self) -> Self {
@@ -298,13 +304,21 @@ fn run_case(
     case: cua_driver_testkit::e2e::CaseSpec,
     test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
 ) {
+    run_case_with(case, Harness::launch, test);
+}
+
+fn run_case_with(
+    case: cua_driver_testkit::e2e::CaseSpec,
+    launch: impl FnOnce() -> Harness,
+    test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
+) {
     let cell_id = case.cell_id.clone();
     let delivery = case.delivery;
     execute_case(case, |evidence| {
         let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
             .expect("start installed macOS daemon proxy");
         *evidence = recording_evidence(driver.recording_dir());
-        let harness = Harness::launch();
+        let harness = launch();
         let (wid, _) = driver
             .find_window(harness.pid as i64, "CuaTestHarness AppKit")
             .expect("AppKit main window not found");
@@ -1696,6 +1710,227 @@ fn harness_appkit_erroring_toggle_press_counts_only_when_its_value_moved() {
 
         Observation::delivered_with_fixture_state(passed)
     });
+}
+
+/// The token of the first element in `snapshot` with `role` whose label or
+/// value is exactly `text`.
+fn element_token_by_role_text(snapshot: &ToolResponse, role: &str, text: &str) -> Option<String> {
+    snapshot.structured()["elements"]
+        .as_array()?
+        .iter()
+        .find(|element| {
+            element["role"] == role && (element["label"] == text || element["value"] == text)
+        })
+        .and_then(|element| element["element_token"].as_str())
+        .map(str::to_owned)
+}
+
+/// Press the fixture's Save… button and wait until the sheet's name field,
+/// holding `harness-untitled`, is in the window's tree. Returns that snapshot
+/// and the field's token.
+fn open_save_sheet(driver: &mut McpDriver, pid: u32, wid: u64) -> (ToolResponse, String) {
+    let snapshot = snapshot_elements(driver, pid, wid);
+    // AppKit often answers this press with -25204 or -25205 while the panel
+    // loads, after opening it; the sheet appearing below is the evidence.
+    driver.call(
+        "click",
+        serde_json::json!({
+            "pid": pid as i64,
+            "window_id": wid,
+            "element_token": element_token_by_id(&snapshot, "btn-save-sheet"),
+            "action": "press",
+            "delivery_mode": "background"
+        }),
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let snapshot = snapshot_elements(driver, pid, wid);
+        let field = (!snapshot.is_error() && !snapshot.degraded())
+            .then(|| element_token_by_role_text(&snapshot, "AXTextField", "harness-untitled"))
+            .flatten();
+        if let Some(field) = field {
+            assert!(
+                snapshot.tree_text().contains("AXSheet"),
+                "{}",
+                snapshot.tree_text()
+            );
+            return (snapshot, field);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the Save sheet's name field did not appear in its window's tree: {}",
+            snapshot.raw
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// The sheet's own CGWindowID: the pid's other on-screen window.
+fn save_sheet_window_id(driver: &mut McpDriver, pid: u32, wid: u64) -> u64 {
+    let windows = driver.call("list_windows", serde_json::json!({"pid": pid as i64}));
+    windows.structured()["windows"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|window| window["is_on_screen"] == true)
+        .filter_map(|window| window["window_id"].as_u64())
+        .find(|id| *id != wid)
+        .unwrap_or_else(|| panic!("the sheet has no window of its own: {}", windows.raw))
+}
+
+/// Wait until the fixture records `state` and the sheet is gone.
+fn await_save_sheet_closed(driver: &mut McpDriver, pid: u32, wid: u64, state: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let after = snapshot_elements(driver, pid, wid);
+        if after.tree_text().contains(state) && !after.tree_text().contains("AXSheet") {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the panel did not end with {state}:\n{}",
+            after.tree_text()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// An NSSavePanel shown as a sheet has its own CGWindowID, but its controls
+/// are in the accessibility tree of the window it is attached to (#3351,
+/// #4392). Its name field and Save button act by element token through that
+/// window in the background, and a read of the sheet's own id names that
+/// window instead of returning a bare empty tree.
+#[test]
+#[ignore]
+fn harness_appkit_save_sheet_controls_act_through_their_window() {
+    run_case_with(
+        native_background_case(
+            "appkit",
+            "save_sheet",
+            Targeting::Ax,
+            DriverRoute::MacosAxAction,
+        ),
+        Harness::launch_with_save_sheet,
+        |pid, wid, driver| {
+            let (_, passed) = run_with_background_oracles(
+                driver,
+                TargetWindow {
+                    pid,
+                    native_id: wid,
+                },
+                |driver| {
+                    let (_, name_field) = open_save_sheet(driver, pid, wid);
+                    let named = driver.call(
+                        "set_value",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": wid,
+                            "element_token": name_field,
+                            "value": "harness-sheet"
+                        }),
+                    );
+                    assert!(
+                        !named.is_error(),
+                        "set the sheet's name field: {}",
+                        named.raw
+                    );
+                    let snapshot = snapshot_elements(driver, pid, wid);
+                    assert!(
+                        element_token_by_role_text(&snapshot, "AXTextField", "harness-sheet")
+                            .is_some(),
+                        "the name field does not read back the new name:\n{}",
+                        snapshot.tree_text()
+                    );
+
+                    let sheet_id = save_sheet_window_id(driver, pid, wid);
+                    let own = driver.call(
+                        "get_window_state",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": sheet_id,
+                            "include_screenshot": false
+                        }),
+                    );
+                    assert_eq!(
+                        own.structured()["escalation"]["parent_window_id"].as_u64(),
+                        Some(wid),
+                        "a read of the sheet's own id does not name its window: {}",
+                        own.structured()
+                    );
+
+                    let save = element_token_by_role_text(&snapshot, "AXButton", "Save")
+                        .unwrap_or_else(|| panic!("no Save button:\n{}", snapshot.tree_text()));
+                    let saved = driver.call(
+                        "click",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": wid,
+                            "element_token": save,
+                            "action": "press",
+                            "delivery_mode": "background"
+                        }),
+                    );
+                    assert!(
+                        !saved.is_error(),
+                        "press the sheet's Save button: {}",
+                        saved.raw
+                    );
+                    await_save_sheet_closed(
+                        driver,
+                        pid,
+                        wid,
+                        "save_sheet=saved name=harness-sheet",
+                    );
+                },
+            )
+            .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+            Observation::delivered_with_fixture_state(passed)
+        },
+    );
+}
+
+/// While a sheet attached to the window holds focus, a foreground key aimed
+/// at the window reaches the sheet (#4392): Return saves under the default
+/// name. A key aimed at the sheet's own id still works: Escape cancels.
+#[test]
+#[ignore]
+fn harness_appkit_foreground_key_reaches_an_attached_sheet() {
+    run_case_with(
+        native_foreground_case(
+            "appkit",
+            "save_sheet_press_key",
+            Targeting::Ax,
+            DriverRoute::MacosCgEventHid,
+        ),
+        Harness::launch_with_save_sheet,
+        |pid, wid, driver| {
+            let press = |driver: &mut McpDriver, window_id: u64, key: &str| {
+                let pressed = driver.call(
+                    "press_key",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": window_id,
+                        "key": key,
+                        "delivery_mode": "foreground"
+                    }),
+                );
+                assert!(
+                    !pressed.is_error(),
+                    "foreground {key} aimed at window {window_id} failed: {}",
+                    pressed.raw
+                );
+            };
+            open_save_sheet(driver, pid, wid);
+            press(driver, wid, "return");
+            await_save_sheet_closed(driver, pid, wid, "save_sheet=saved name=harness-untitled");
+
+            open_save_sheet(driver, pid, wid);
+            let sheet_id = save_sheet_window_id(driver, pid, wid);
+            press(driver, sheet_id, "escape");
+            await_save_sheet_closed(driver, pid, wid, "save_sheet=cancelled");
+            Observation::delivered_with_fixture_state(Vec::new())
+        },
+    );
 }
 
 /// Resolve the native AppKit button from a screenshot-space PX target, then

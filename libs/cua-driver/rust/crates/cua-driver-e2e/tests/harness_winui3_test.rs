@@ -338,7 +338,7 @@ fn harness_winui3_type_text_foreground_single_line_application_state() {
             "foreground type_text failed: {}",
             response.text()
         );
-        assert_eq!(response.structured()["path"], "key_events");
+        assert_eq!(response.structured()["route"], "global_input");
         assert_eq!(stable_text(&state_path, "txt-input"), TEXT);
         assert_eq!(stable_text(&state_path, "txt-multiline-input"), "");
 
@@ -417,8 +417,8 @@ fn harness_winui3_type_text_multiline_application_state() {
             response.text()
         );
         assert_eq!(
-            response.structured()["path"],
-            "key_events",
+            response.structured()["route"],
+            "global_input",
             "foreground multiline input must use SendInput: {}",
             response.structured()
         );

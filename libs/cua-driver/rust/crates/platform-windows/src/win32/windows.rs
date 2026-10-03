@@ -220,19 +220,12 @@ fn owner_chain_reaches_target(
 pub(crate) struct ForegroundTarget {
     hwnd: u64,
     pid: u32,
-    thread_id: u32,
     owner: Option<u64>,
 }
 
 /// Snapshot the exact target identity and owner before global input is sent.
 pub(crate) fn capture_foreground_target(target: u64) -> Option<ForegroundTarget> {
     let pid = window_owner_pid(target)?;
-    let mut observed_pid = 0;
-    let thread_id =
-        unsafe { GetWindowThreadProcessId(HWND(target as *mut _), Some(&mut observed_pid)) };
-    if thread_id == 0 || observed_pid != pid {
-        return None;
-    }
     let owner = unsafe { GetWindow(HWND(target as *mut _), GW_OWNER) }
         .ok()
         .filter(|owner| !owner.0.is_null())
@@ -240,7 +233,6 @@ pub(crate) fn capture_foreground_target(target: u64) -> Option<ForegroundTarget>
     Some(ForegroundTarget {
         hwnd: target,
         pid,
-        thread_id,
         owner,
     })
 }
@@ -280,35 +272,6 @@ pub(crate) fn foreground_matches_target_or_owned_window(
         ownership_reaches_target,
         actual_is_prior_owner: target.owner == Some(actual),
     })
-}
-
-/// Verify that the exact captured target HWND, rather than an owned popup or
-/// another same-process window, is still the foreground window.
-pub(crate) fn foreground_matches_exact_target(target: ForegroundTarget, actual: u64) -> bool {
-    let mut actual_pid = 0;
-    let actual_thread_id =
-        unsafe { GetWindowThreadProcessId(HWND(actual as *mut _), Some(&mut actual_pid)) };
-    exact_target_identity_matches(
-        target.hwnd,
-        target.pid,
-        target.thread_id,
-        actual,
-        (actual_thread_id != 0).then_some(actual_pid),
-        (actual_thread_id != 0).then_some(actual_thread_id),
-    )
-}
-
-fn exact_target_identity_matches(
-    target_hwnd: u64,
-    target_pid: u32,
-    target_thread_id: u32,
-    actual_hwnd: u64,
-    actual_pid: Option<u32>,
-    actual_thread_id: Option<u32>,
-) -> bool {
-    target_hwnd == actual_hwnd
-        && actual_pid == Some(target_pid)
-        && actual_thread_id == Some(target_thread_id)
 }
 
 fn window_info_by_handle(hwnd: u64) -> Option<WindowInfo> {
@@ -438,9 +401,9 @@ fn get_window_bounds(hwnd: HWND) -> (i32, i32, i32, i32) {
 #[cfg(test)]
 mod exact_window_tests {
     use super::{
-        exact_target_identity_matches, exact_window_from_probe, lookup_window_for_pid_with,
-        owner_chain_reaches_target, post_action_foreground_allowed, win32_first_with,
-        PidWindowLookup, PostActionForegroundRelation, WindowInfo,
+        exact_window_from_probe, lookup_window_for_pid_with, owner_chain_reaches_target,
+        post_action_foreground_allowed, win32_first_with, PidWindowLookup,
+        PostActionForegroundRelation, WindowInfo,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -528,43 +491,6 @@ mod exact_window_tests {
     fn exact_lookup_rejects_wrong_pid_or_handle() {
         assert!(exact_window_from_probe(42, 7, |_| Some(window(43, 7))).is_none());
         assert!(exact_window_from_probe(42, 7, |_| Some(window(42, 8))).is_none());
-    }
-
-    #[test]
-    fn strict_foreground_identity_rejects_owned_popup_and_stale_target() {
-        assert!(exact_target_identity_matches(
-            10,
-            42,
-            99,
-            10,
-            Some(42),
-            Some(99)
-        ));
-        assert!(!exact_target_identity_matches(
-            10,
-            42,
-            99,
-            20,
-            Some(42),
-            Some(99)
-        )); // owned popup
-        assert!(!exact_target_identity_matches(
-            10,
-            42,
-            99,
-            10,
-            Some(43),
-            Some(99)
-        )); // recycled HWND
-        assert!(!exact_target_identity_matches(
-            10,
-            42,
-            99,
-            10,
-            Some(42),
-            Some(100)
-        )); // recycled thread
-        assert!(!exact_target_identity_matches(10, 42, 99, 10, None, None)); // destroyed target
     }
 
     fn relation(

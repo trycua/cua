@@ -180,11 +180,10 @@ atomically replaced state file, including the target and leakage sentinels.
 The single-line row covers CJK, digits, and emoji; the multiline sample covers
 LF, CR, CRLF, repeated empty lines, and leading/trailing breaks. The oracle
 normalizes line endings only and preserves all other characters and blank
-lines. PID/window foreground text is bounded to 32,768 INPUT events total,
-16,384 per Unicode run, and 1,024 SendInput batches; oversized requests refuse
-before activation. Desktop-scope typing remains on its existing single-call
-path and is outside this fixture row. Pointer actions also use PX where the
-tool contract requires coordinates. Current `set_value` rows declare
+lines. Foreground delivery keeps the target in front until its thread has
+read every inserted event (a sentinel-key drain), so text after line breaks is
+not handed to the previously active window. Pointer actions also use PX where
+the tool contract requires coordinates. Current `set_value` rows declare
 background delivery and attach desktop-side-effect oracles.
 
 ## Harness E2E: macOS

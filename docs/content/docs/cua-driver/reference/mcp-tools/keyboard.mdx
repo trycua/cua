@@ -69,7 +69,7 @@ Special keys (Return, Escape, arrows, Tab) go through `press_key` / `hotkey`: th
 
 **Routing on Windows.** When the target's owning EXE or top-level window class identifies it as a XAML / WinUI3 / UWP host (modern Notepad, Calculator, Photos, Settings, etc.), the tool requires `element_token` and routes through UI Automation's `ValuePattern.SetValue`: same backend as the `set_value` tool. PostMessage WM_CHAR doesn't reach those hosts (their CoreInput dispatcher only consumes events from the system input queue), so the fallback path silently dropped chars. If you call `type_text(pid, text)` on a XAML host without `element_token`, the tool returns an actionable error pointing you at `get_window_state` first. Native ConsoleHost on Windows ARM64 is hard-refused because it can accept synthesized Unicode events without delivering them; use a process or PTY setup channel instead. Legacy Win32 apps still use the PostMessage path, preserving the no-focus-steal property.
 
-`delay_ms` (0–200, default 30) spaces successive characters on the PostMessage path so autocomplete and IME can keep up. Ignored on the UIA path (SetValue is atomic). Explicit pid/window foreground delivery rejects requests exceeding 32,768 keyboard events total, 16,384 events in one Unicode run, or 1,024 SendInput batches, before activation or input. Desktop scope retains its existing single-call path and is not subject to these limits.
+`delay_ms` (0–200, default 30) spaces successive characters on the PostMessage path so autocomplete and IME can keep up. Ignored on the UIA path (SetValue is atomic).
 
 **Windows parameters**
 

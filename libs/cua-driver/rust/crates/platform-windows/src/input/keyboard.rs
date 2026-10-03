@@ -470,26 +470,20 @@ pub fn send_key_synthesized_after_focus(
         events.push(key_input(*mvk, true));
     }
 
-    with_confirmed_foreground(
-        target,
-        "key delivery",
-        ForegroundAdmissionPolicy::TargetOrOwned,
-        focus,
-        |_| unsafe {
-            let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
-            if sent as usize != events.len() {
-                bail!(
-                    "SendInput inserted only {sent} of {} events. Windows blocked the \
+    with_confirmed_foreground(target, "key delivery", focus, || unsafe {
+        let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
+        if sent as usize != events.len() {
+            bail!(
+                "SendInput inserted only {sent} of {} events. Windows blocked the \
                  rest: the target runs at a higher integrity level than the \
                  Driver (UIPI), or the input desktop is locked or showing a \
                  secure prompt. To drive an elevated app, run the Driver \
                  elevated (the default autostart daemon is).",
-                    events.len()
-                );
-            }
-            Ok(())
-        },
-    )
+                events.len()
+            );
+        }
+        Ok(())
+    })
 }
 
 /// Foreground-delivery text entry: the `delivery_mode:"foreground"` rung for
@@ -502,17 +496,18 @@ pub fn send_key_synthesized_after_focus(
 /// or the input is blocked, it bails with the same diagnostic
 /// `send_key_synthesized` returns, so the caller gets an honest error instead
 /// of a false success. Required for VCL/LibreOffice document grids and other
-/// targets where PostMessage WM_CHAR is silently dropped. Desktop scope keeps
-/// this legacy single-SendInput behavior; explicit pid/window foreground text
-/// uses [`send_text_synthesized_after_focus`] and its bounded batch admission.
+/// targets where PostMessage WM_CHAR is silently dropped.
 pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
-    send_text_synthesized_legacy(hwnd, text)
+    send_text_synthesized_after_focus(hwnd, text, || Ok(()))
 }
 
-/// Preserve the legacy desktop-scope path: one activation and one SendInput
-/// call for the complete text. The bounded per-batch experiment is restricted
-/// to explicit pid/window foreground delivery.
-pub fn send_text_synthesized_legacy(hwnd: u64, text: &str) -> Result<()> {
+/// Foreground Unicode delivery with child focus established after exact
+/// top-level activation and before `SendInput`.
+pub fn send_text_synthesized_after_focus(
+    hwnd: u64,
+    text: &str,
+    focus: impl FnOnce() -> Result<()>,
+) -> Result<()> {
     let target = HWND(hwnd as *mut _);
     if target.0.is_null() {
         bail!("invalid target hwnd");
@@ -520,22 +515,29 @@ pub fn send_text_synthesized_legacy(hwnd: u64, text: &str) -> Result<()> {
     if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
         bail!(msg);
     }
-
+    // Build the key-event sequence. Printable codepoints go through as Unicode
+    // packets (KEYEVENTF_UNICODE, wVk=0, wScan=code unit), but line breaks are
+    // mapped to a real VK_RETURN keystroke — mirroring the background path
+    // (`post_enter_keystroke`) — because terminals and rich editors honour an
+    // Enter key event, not a raw `\r`/`\n` Unicode packet. `\r\n` collapses to
+    // a single Return (the `\r` emits the Enter; the following `\n` is silent).
     let return_vk = windows::Win32::UI::Input::KeyboardAndMouse::VK_RETURN;
-    let mut events = Vec::with_capacity(text.len() * 2);
-    let mut previous_was_cr = false;
+    let mut events: Vec<INPUT> = Vec::with_capacity(text.len() * 2);
+    let mut prev_was_cr = false;
     for ch in text.chars() {
         match ch {
-            '\n' if previous_was_cr => previous_was_cr = false,
-            '\r' | '\n' => {
+            '\n' if prev_was_cr => {
+                prev_was_cr = false;
+            }
+            '\n' | '\r' => {
                 events.push(key_input(return_vk, false));
                 events.push(key_input(return_vk, true));
-                previous_was_cr = ch == '\r';
+                prev_was_cr = ch == '\r';
             }
             _ => {
-                previous_was_cr = false;
-                let mut utf16 = [0u16; 2];
-                for unit in ch.encode_utf16(&mut utf16) {
+                prev_was_cr = false;
+                let mut buf = [0u16; 2];
+                for unit in ch.encode_utf16(&mut buf) {
                     events.push(unicode_key_input(*unit, false));
                     events.push(unicode_key_input(*unit, true));
                 }
@@ -546,509 +548,20 @@ pub fn send_text_synthesized_legacy(hwnd: u64, text: &str) -> Result<()> {
         return Ok(());
     }
 
-    with_confirmed_foreground(
-        target,
-        "text delivery",
-        ForegroundAdmissionPolicy::TargetOrOwned,
-        || Ok(()),
-        |_| unsafe {
-            let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
-            if sent as usize != events.len() {
-                bail!(
-                    "SendInput inserted only {sent} of {} key events. Windows blocked the \
-                     rest: the target runs at a higher integrity level than the Driver (UIPI), \
-                     or the input desktop is locked or showing a secure prompt.",
-                    events.len()
-                );
-            }
-            Ok(())
-        },
-    )
-}
-
-/// Foreground Unicode delivery with child focus established after exact
-/// top-level activation and before `SendInput`. Contiguous text runs and each
-/// logical Return pair are separate bounded input batches with a fresh exact
-/// foreground/editor-focus and cancellation check immediately before sending.
-pub fn send_text_synthesized_after_focus(
-    hwnd: u64,
-    text: &str,
-    focus: impl FnOnce() -> Result<()>,
-) -> Result<()> {
-    send_text_synthesized_after_focus_with_admission(hwnd, text, focus, || Ok(()), || false)
-        .map_err(anyhow::Error::new)
-}
-
-pub(crate) fn send_text_synthesized_after_focus_with_admission(
-    hwnd: u64,
-    text: &str,
-    focus: impl FnOnce() -> Result<()>,
-    verify_editor_focus: impl Fn() -> Result<()>,
-    cancelled: impl Fn() -> bool,
-) -> std::result::Result<(), ForegroundTextSendError> {
-    let target = HWND(hwnd as *mut _);
-    if target.0.is_null() {
-        return Err(ForegroundTextSendError::before_input(
-            ForegroundTextErrorCode::ForegroundUnavailable,
-            "invalid target HWND",
-        ));
-    }
-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
-        return Err(ForegroundTextSendError::before_input(
-            ForegroundTextErrorCode::ForegroundUnavailable,
-            msg,
-        ));
-    }
-    let plan = plan_foreground_text_batches(text)?;
-    if plan.is_empty() {
-        return Ok(());
-    }
-    // Lower all bounded batches before activation. The final admission checks
-    // can therefore sit immediately beside each SendInput call.
-    let input_batches: Vec<Vec<INPUT>> = plan.iter().map(foreground_text_batch_inputs).collect();
-    if cancelled() {
-        return Err(ForegroundTextSendError::before_input(
-            ForegroundTextErrorCode::Cancelled,
-            "the caller cancelled text delivery before target activation",
-        ));
-    }
-
-    let focus = move || {
-        focus().map_err(|error| {
-            ForegroundTextSendError::before_input(
-                ForegroundTextErrorCode::EditorFocusUnavailable,
-                error.to_string(),
-            )
-        })
-    };
-
-    with_confirmed_foreground(
-        target,
-        "text delivery",
-        ForegroundAdmissionPolicy::ExactTarget,
-        focus,
-        |check_foreground| {
-            let expected_focus = strict_focused_hwnd(target).ok_or_else(|| {
-                ForegroundTextSendError::before_input(
-                    ForegroundTextErrorCode::EditorFocusUnavailable,
-                    "Windows could not identify a focused HWND belonging to the exact target",
-                )
-            })?;
-            let expected_focus_addr = expected_focus.0 as usize as u64;
-            let target_addr = target.0 as usize as u64;
-            let mut admission = |batch_index: usize| {
-                verify_editor_focus().map_err(|error| BatchAdmissionFailure {
-                    code: ForegroundTextErrorCode::EditorFocusUnavailable,
-                    message: error.to_string(),
-                })?;
-
-                let actual_focus = strict_focused_hwnd(target).map(|hwnd| hwnd.0 as usize as u64);
-                if !exact_editor_focus_matches(expected_focus_addr, actual_focus) {
-                    return Err(BatchAdmissionFailure {
-                        code: ForegroundTextErrorCode::EditorFocusUnavailable,
-                        message: format!(
-                            "the exact target/editor focus changed before batch {}",
-                            batch_index + 1
-                        ),
-                    });
-                }
-                let actual_foreground = unsafe { GetForegroundWindow() }.0 as usize as u64;
-                check_foreground(actual_foreground).map_err(|failure| BatchAdmissionFailure {
-                    code: ForegroundTextErrorCode::ForegroundUnavailable,
-                    message: format!(
-                        "the original target HWND is not foreground before batch {} (actual HWND {:#x})",
-                        batch_index + 1,
-                        failure.actual_hwnd
-                    ),
-                })?;
-                if actual_foreground != target_addr {
-                    return Err(BatchAdmissionFailure {
-                        code: ForegroundTextErrorCode::ForegroundUnavailable,
-                        message: format!(
-                            "the original target HWND is not foreground before batch {}",
-                            batch_index + 1
-                        ),
-                    });
-                }
-                Ok(())
-            };
-
-            execute_foreground_text_batches(
-                &input_batches,
-                &mut admission,
-                cancelled,
-                |events| unsafe { SendInput(events, std::mem::size_of::<INPUT>() as i32) as usize },
-            )
-        },
-    )
-}
-
-/// Maximum total number of keyboard INPUT events buffered by pid/window
-/// foreground text delivery before activation.
-pub const MAX_FOREGROUND_TEXT_EVENTS: usize = 32_768;
-/// Maximum number of INPUT events in one contiguous Unicode run.
-pub const MAX_FOREGROUND_TEXT_RUN_EVENTS: usize = 16_384;
-/// Maximum number of separate SendInput batches in one pid/window request.
-pub const MAX_FOREGROUND_TEXT_BATCHES: usize = 1_024;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ForegroundTextErrorCode {
-    InputTooLarge,
-    Cancelled,
-    ForegroundUnavailable,
-    EditorFocusUnavailable,
-    SendInputRejected,
-    SendInputIncomplete,
-    PartialInputUnknown,
-}
-
-impl ForegroundTextErrorCode {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::InputTooLarge => "input_too_large",
-            Self::Cancelled => "cancelled",
-            Self::ForegroundUnavailable => "foreground_unavailable",
-            Self::EditorFocusUnavailable => "editor_focus_unavailable",
-            Self::SendInputRejected => "sendinput_rejected",
-            Self::SendInputIncomplete => "sendinput_incomplete",
-            Self::PartialInputUnknown => "partial_input_unknown",
+    with_confirmed_foreground(target, "text delivery", focus, || unsafe {
+        let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
+        if sent as usize != events.len() {
+            bail!(
+                "SendInput inserted only {sent} of {} key events. Windows blocked \
+                 the rest: the target runs at a higher integrity level than the \
+                 Driver (UIPI), or the input desktop is locked or showing a \
+                 secure prompt. To drive an elevated app, run the Driver \
+                 elevated (the default autostart daemon is).",
+                events.len()
+            );
         }
-    }
-}
-
-impl std::fmt::Display for ForegroundTextErrorCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum ForegroundTextSendError {
-    NotStarted {
-        code: ForegroundTextErrorCode,
-        message: String,
-    },
-    Partial {
-        accepted_events: usize,
-        batch_index: usize,
-        batch_count: usize,
-        cause_code: ForegroundTextErrorCode,
-        message: String,
-    },
-}
-
-impl ForegroundTextSendError {
-    fn before_input(code: ForegroundTextErrorCode, message: impl Into<String>) -> Self {
-        Self::NotStarted {
-            code,
-            message: message.into(),
-        }
-    }
-
-    fn after_input(
-        accepted_events: usize,
-        batch_index: usize,
-        batch_count: usize,
-        cause_code: ForegroundTextErrorCode,
-        message: impl Into<String>,
-    ) -> Self {
-        Self::Partial {
-            accepted_events,
-            batch_index,
-            batch_count,
-            cause_code,
-            message: message.into(),
-        }
-    }
-
-    pub fn public_code(&self) -> ForegroundTextErrorCode {
-        match self {
-            Self::NotStarted { code, .. } => *code,
-            Self::Partial { .. } => ForegroundTextErrorCode::PartialInputUnknown,
-        }
-    }
-}
-
-impl std::fmt::Display for ForegroundTextSendError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotStarted { code, message } => write!(f, "{code}: {message}"),
-            Self::Partial {
-                accepted_events,
-                batch_index,
-                batch_count,
-                cause_code,
-                message,
-            } => write!(
-                f,
-                "partial_input_unknown: SendInput accepted {accepted_events} event(s) at batch {} of {}; application delivery is unknown ({cause_code}: {message}). Input was not replayed; do not automatically retry.",
-                batch_index + 1,
-                batch_count
-            ),
-        }
-    }
-}
-
-impl std::error::Error for ForegroundTextSendError {}
-
-impl From<anyhow::Error> for ForegroundTextSendError {
-    fn from(error: anyhow::Error) -> Self {
-        Self::before_input(
-            ForegroundTextErrorCode::ForegroundUnavailable,
-            error.to_string(),
-        )
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ForegroundTextBatch<'a> {
-    UnicodeRun(&'a str),
-    Return,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct BatchAdmissionFailure {
-    code: ForegroundTextErrorCode,
-    message: String,
-}
-
-/// Plan foreground Unicode input as maximal non-newline runs and logical
-/// Return key pairs. CRLF is one logical Return; lone CR and LF are equivalent.
-/// Keeping each Rust `char` intact in its run prevents planning from splitting
-/// a UTF-16 surrogate pair across input batches.
-fn plan_foreground_text_batches(
-    text: &str,
-) -> std::result::Result<Vec<ForegroundTextBatch<'_>>, ForegroundTextSendError> {
-    let mut batches = Vec::new();
-    let mut unicode_run_start = None;
-    let mut unicode_run_events = 0usize;
-    let mut previous_was_cr = false;
-    let mut event_count = 0usize;
-
-    for (byte_index, ch) in text.char_indices() {
-        if ch == '\n' && previous_was_cr {
-            previous_was_cr = false;
-            continue;
-        }
-
-        if ch == '\r' || ch == '\n' {
-            if let Some(start) = unicode_run_start.take() {
-                push_foreground_text_batch(
-                    &mut batches,
-                    ForegroundTextBatch::UnicodeRun(&text[start..byte_index]),
-                )?;
-            }
-            unicode_run_events = 0;
-            event_count = add_foreground_text_events(event_count, 2)?;
-            push_foreground_text_batch(&mut batches, ForegroundTextBatch::Return)?;
-            previous_was_cr = ch == '\r';
-        } else {
-            unicode_run_start.get_or_insert(byte_index);
-            let added_events = ch.len_utf16() * 2;
-            unicode_run_events = unicode_run_events
-                .checked_add(added_events)
-                .filter(|count| *count <= MAX_FOREGROUND_TEXT_RUN_EVENTS)
-                .ok_or_else(|| {
-                    ForegroundTextSendError::before_input(
-                        ForegroundTextErrorCode::InputTooLarge,
-                        format!(
-                            "a foreground Unicode run exceeds the {MAX_FOREGROUND_TEXT_RUN_EVENTS}-event limit"
-                        ),
-                    )
-                })?;
-            event_count = add_foreground_text_events(event_count, added_events)?;
-            previous_was_cr = false;
-        }
-    }
-
-    if let Some(start) = unicode_run_start {
-        push_foreground_text_batch(
-            &mut batches,
-            ForegroundTextBatch::UnicodeRun(&text[start..]),
-        )?;
-    }
-    Ok(batches)
-}
-
-fn add_foreground_text_events(
-    current: usize,
-    added: usize,
-) -> std::result::Result<usize, ForegroundTextSendError> {
-    let total = current.checked_add(added).ok_or_else(|| {
-        ForegroundTextSendError::before_input(
-            ForegroundTextErrorCode::InputTooLarge,
-            "foreground text event count overflowed",
-        )
-    })?;
-    if total > MAX_FOREGROUND_TEXT_EVENTS {
-        return Err(ForegroundTextSendError::before_input(
-            ForegroundTextErrorCode::InputTooLarge,
-            format!("foreground text exceeds the {MAX_FOREGROUND_TEXT_EVENTS}-event limit"),
-        ));
-    }
-    Ok(total)
-}
-
-fn push_foreground_text_batch<'a>(
-    batches: &mut Vec<ForegroundTextBatch<'a>>,
-    batch: ForegroundTextBatch<'a>,
-) -> std::result::Result<(), ForegroundTextSendError> {
-    if batches.len() >= MAX_FOREGROUND_TEXT_BATCHES {
-        return Err(ForegroundTextSendError::before_input(
-            ForegroundTextErrorCode::InputTooLarge,
-            format!("foreground text exceeds the {MAX_FOREGROUND_TEXT_BATCHES}-batch limit"),
-        ));
-    }
-    batches.push(batch);
-    Ok(())
-}
-
-fn foreground_text_batch_inputs(batch: &ForegroundTextBatch<'_>) -> Vec<INPUT> {
-    match batch {
-        ForegroundTextBatch::UnicodeRun(text) => unicode_run_inputs(text),
-        ForegroundTextBatch::Return => {
-            let return_vk = windows::Win32::UI::Input::KeyboardAndMouse::VK_RETURN;
-            vec![key_input(return_vk, false), key_input(return_vk, true)]
-        }
-    }
-}
-
-fn unicode_run_inputs(text: &str) -> Vec<INPUT> {
-    // Planning has already capped all Unicode batches before this allocation.
-    let mut events = Vec::with_capacity(text.len() * 2);
-    for ch in text.chars() {
-        let mut buf = [0u16; 2];
-        for unit in ch.encode_utf16(&mut buf) {
-            events.push(unicode_key_input(*unit, false));
-            events.push(unicode_key_input(*unit, true));
-        }
-    }
-    events
-}
-
-fn execute_foreground_text_batches<E>(
-    batches: &[Vec<E>],
-    mut admission: impl FnMut(usize) -> std::result::Result<(), BatchAdmissionFailure>,
-    mut cancelled: impl FnMut() -> bool,
-    mut send: impl FnMut(&[E]) -> usize,
-) -> std::result::Result<(), ForegroundTextSendError> {
-    let mut accepted_events = 0usize;
-    for (batch_index, events) in batches.iter().enumerate() {
-        let failure = if cancelled() {
-            Some(BatchAdmissionFailure {
-                code: ForegroundTextErrorCode::Cancelled,
-                message: "the caller cancelled text delivery before this batch".to_owned(),
-            })
-        } else {
-            admission(batch_index).err()
-        };
-        if let Some(failure) = failure {
-            return Err(batch_failure_result(
-                failure,
-                accepted_events,
-                batch_index,
-                batches.len(),
-            ));
-        }
-        if cancelled() {
-            return Err(batch_failure_result(
-                BatchAdmissionFailure {
-                    code: ForegroundTextErrorCode::Cancelled,
-                    message: "the caller cancelled text delivery during admission for this batch"
-                        .to_owned(),
-                },
-                accepted_events,
-                batch_index,
-                batches.len(),
-            ));
-        }
-
-        let sent = send(events);
-        if sent > events.len() {
-            return Err(batch_failure_result(
-                BatchAdmissionFailure {
-                    code: ForegroundTextErrorCode::SendInputIncomplete,
-                    message: format!(
-                        "the sender reported {sent} accepted events for a {}-event batch",
-                        events.len()
-                    ),
-                },
-                accepted_events,
-                batch_index,
-                batches.len(),
-            ));
-        }
-        accepted_events += sent;
-        if sent != events.len() {
-            let failure = BatchAdmissionFailure {
-                code: if accepted_events == 0 {
-                    ForegroundTextErrorCode::SendInputRejected
-                } else {
-                    ForegroundTextErrorCode::SendInputIncomplete
-                },
-                message: format!(
-                    "the sender accepted {sent} of {} events in this batch",
-                    events.len()
-                ),
-            };
-            return Err(batch_failure_result(
-                failure,
-                accepted_events,
-                batch_index,
-                batches.len(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn batch_failure_result(
-    failure: BatchAdmissionFailure,
-    accepted_events: usize,
-    batch_index: usize,
-    batch_count: usize,
-) -> ForegroundTextSendError {
-    if accepted_events == 0 {
-        ForegroundTextSendError::before_input(failure.code, failure.message)
-    } else {
-        ForegroundTextSendError::after_input(
-            accepted_events,
-            batch_index,
-            batch_count,
-            failure.code,
-            failure.message,
-        )
-    }
-}
-
-fn strict_focused_hwnd(parent: HWND) -> Option<HWND> {
-    if parent.0.is_null() {
-        return None;
-    }
-    if let Some(descendant) = focused_descendant(parent) {
-        return Some(descendant);
-    }
-
-    let target_thread = unsafe { GetWindowThreadProcessId(parent, None) };
-    if target_thread == 0 {
-        return None;
-    }
-    let mut info = GUITHREADINFO {
-        cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
-        ..Default::default()
-    };
-    unsafe { GetGUIThreadInfo(target_thread, &mut info) }.ok()?;
-    let focused = info.hwndFocus;
-    if focused == parent || (!focused.0.is_null() && unsafe { IsChild(parent, focused) }.as_bool())
-    {
-        Some(focused)
-    } else {
-        None
-    }
-}
-
-fn exact_editor_focus_matches(expected_focus_hwnd: u64, actual_focus_hwnd: Option<u64>) -> bool {
-    actual_focus_hwnd == Some(expected_focus_hwnd)
+        Ok(())
+    })
 }
 
 fn wait_for_exact_foreground(target: HWND, timeout: Duration) -> bool {
@@ -1064,43 +577,18 @@ fn wait_for_exact_foreground(target: HWND, timeout: Duration) -> bool {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ForegroundAdmissionPolicy {
-    TargetOrOwned,
-    ExactTarget,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ForegroundAdmissionFailure {
-    actual_hwnd: u64,
-}
-
-/// Run one system-queue input transaction under the selected exact-target or
-/// target-or-owned foreground policy. The prior foreground is restored on
-/// every body/focus result after activation succeeds.
-fn with_confirmed_foreground<T, E>(
+/// Run one system-queue input transaction while `target`, or a live visible
+/// same-process window whose owner chain reaches `target`, is foreground.
+/// Foreground and optional child focus are checked against
+/// external Win32/UIA state instead of inferred from API return values or a
+/// fixed settle delay. The prior foreground is restored on every body/focus
+/// result after activation succeeds.
+fn with_confirmed_foreground<T>(
     target: HWND,
     operation: &str,
-    policy: ForegroundAdmissionPolicy,
-    focus: impl FnOnce() -> std::result::Result<(), E>,
-    body: impl FnOnce(
-        &dyn Fn(u64) -> std::result::Result<(), ForegroundAdmissionFailure>,
-    ) -> std::result::Result<T, E>,
-) -> std::result::Result<T, E>
-where
-    E: From<anyhow::Error>,
-{
-    let original_target_snapshot = if policy == ForegroundAdmissionPolicy::ExactTarget {
-        Some(
-            crate::win32::capture_foreground_target(target.0 as usize as u64).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "foreground_unavailable: could not capture the original target HWND before activation"
-                )
-            })?,
-        )
-    } else {
-        None
-    };
+    focus: impl FnOnce() -> Result<()>,
+    body: impl FnOnce() -> Result<T>,
+) -> Result<T> {
     let previous = unsafe { GetForegroundWindow() };
     let _ = unsafe { crate::input::force_foreground_assisted(target) };
     if !wait_for_exact_foreground(target, Duration::from_millis(500)) {
@@ -1108,96 +596,163 @@ where
         if !previous.0.is_null() && previous != target {
             let _ = unsafe { SetForegroundWindow(previous) };
         }
-        return Err(anyhow::anyhow!(
+        bail!(
             "foreground_unavailable: Windows did not confirm exact target HWND {:?} for {operation} \
              within 500 ms (actual foreground HWND {:?}). Windows refused the foreground \
              change, usually because another window holds the foreground lock; no input \
              was sent. Retry, or use background delivery where the target accepts it.",
             target.0,
             actual.0
-        )
-        .into());
+        );
     }
 
-    let Some(foreground_target) = original_target_snapshot
-        .or_else(|| crate::win32::capture_foreground_target(target.0 as usize as u64))
+    let Some(foreground_target) = crate::win32::capture_foreground_target(target.0 as usize as u64)
     else {
         if !previous.0.is_null() && previous != target {
             let _ = unsafe { SetForegroundWindow(previous) };
         }
-        return Err(anyhow::anyhow!(
+        bail!(
             "foreground_unavailable: exact target HWND {:?} disappeared before {operation}; \
              no input was sent",
             target.0
-        )
-        .into());
+        );
     };
 
-    let check_foreground = |actual_hwnd: u64| {
-        let admitted = match policy {
-            ForegroundAdmissionPolicy::ExactTarget => {
-                crate::win32::foreground_matches_exact_target(foreground_target, actual_hwnd)
-            }
-            ForegroundAdmissionPolicy::TargetOrOwned => {
-                crate::win32::foreground_matches_target_or_owned_window(
-                    foreground_target,
-                    actual_hwnd,
-                )
-            }
-        };
-        if !admitted {
-            return Err(ForegroundAdmissionFailure { actual_hwnd });
-        }
-        Ok(())
-    };
-
-    let result = (|| -> std::result::Result<T, E> {
-        let before_focus = unsafe { GetForegroundWindow() };
-        if let Err(failure) = check_foreground(before_focus.0 as usize as u64) {
-            return Err(anyhow::anyhow!(
-                "foreground_unavailable: original target HWND {:?} was not admitted before \
-                 preparing {operation} (actual foreground HWND {:?}); no input was sent",
-                target.0,
-                failure.actual_hwnd
-            )
-            .into());
-        }
+    let mut attachment: Option<InputQueueAttachment> = None;
+    let result = (|| {
         focus()?;
-
-        let actual = if policy == ForegroundAdmissionPolicy::TargetOrOwned {
-            let deadline = Instant::now() + Duration::from_millis(250);
-            loop {
-                let actual = unsafe { GetForegroundWindow() };
-                if check_foreground(actual.0 as usize as u64).is_ok() || Instant::now() >= deadline
-                {
-                    break actual;
-                }
-                sleep(Duration::from_millis(10));
+        let deadline = Instant::now() + Duration::from_millis(250);
+        let actual = loop {
+            let actual = unsafe { GetForegroundWindow() };
+            if crate::win32::foreground_matches_target_or_owned_window(
+                foreground_target,
+                actual.0 as usize as u64,
+            ) {
+                break actual;
             }
-        } else {
-            unsafe { GetForegroundWindow() }
+            if Instant::now() >= deadline {
+                break actual;
+            }
+            sleep(Duration::from_millis(10));
         };
-        if let Err(failure) = check_foreground(actual.0 as usize as u64) {
-            return Err(anyhow::anyhow!(
-                "foreground_unavailable: foreground admission for {operation} requires the \
-                 original target HWND {:?}; actual foreground HWND {:?}. No input was sent.",
+        if !crate::win32::foreground_matches_target_or_owned_window(
+            foreground_target,
+            actual.0 as usize as u64,
+        ) {
+            bail!(
+                "foreground_unavailable: exact target HWND {:?} or a verified same-process \
+                 owned window was not foreground while preparing {operation} \
+                 (actual foreground HWND {:?}); no input was sent",
                 target.0,
-                failure.actual_hwnd
-            )
-            .into());
+                actual.0
+            );
         }
-        body(&check_foreground)
+        // Attach before inserting anything: attaching resets the shared key
+        // state, which must not race with modifiers the body is about to send.
+        attachment = InputQueueAttachment::attach(actual);
+        body()
     })();
 
-    // Give the target message loop a bounded opportunity to consume the
-    // inserted sequence before restoring the user's prior foreground.
-    if result.is_ok() {
-        sleep(Duration::from_millis(40));
+    // Keep the target foreground until its thread has read every inserted
+    // event; restoring earlier hands the unread tail to another window (#4477).
+    match (&result, attachment.as_ref()) {
+        (Ok(_), Some(attachment)) => {
+            attachment.wait_for_drain(Duration::from_secs(2));
+        }
+        (Ok(_), None) => sleep(Duration::from_millis(40)),
+        _ => {}
     }
+    drop(attachment);
     if !previous.0.is_null() && previous != target {
         let _ = unsafe { SetForegroundWindow(previous) };
     }
     result
+}
+
+/// Unassigned virtual key used as a harmless input-drain sentinel (the same
+/// "mask key" convention AutoHotkey uses): applications do not bind it and it
+/// produces no character.
+const DRAIN_SENTINEL_VK: VIRTUAL_KEY = VIRTUAL_KEY(0xE8);
+
+/// The caller's thread attached to the foreground thread's input queue for
+/// the duration of one foreground input transaction; detaches on drop.
+struct InputQueueAttachment {
+    own_thread: u32,
+    target_thread: u32,
+}
+
+impl InputQueueAttachment {
+    fn attach(foreground: HWND) -> Option<Self> {
+        use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+        let target_thread = unsafe { GetWindowThreadProcessId(foreground, None) };
+        let own_thread = unsafe { GetCurrentThreadId() };
+        if target_thread == 0 || target_thread == own_thread {
+            return None;
+        }
+        unsafe { AttachThreadInput(own_thread, target_thread, true) }
+            .as_bool()
+            .then_some(Self {
+                own_thread,
+                target_thread,
+            })
+    }
+
+    /// Block until the foreground thread has retrieved all input inserted so
+    /// far, bounded by `timeout`. A sentinel key press is appended behind the
+    /// caller's events; while attached, `GetKeyState` reflects the shared
+    /// queue's synchronous key state, whose toggle bit flips only when the
+    /// target thread reads the sentinel key-down.
+    fn wait_for_drain(&self, timeout: Duration) -> bool {
+        use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
+        let toggled = || unsafe { GetKeyState(DRAIN_SENTINEL_VK.0 as i32) } & 1;
+        let before = toggled();
+        let sentinel = [sentinel_key_input(false), sentinel_key_input(true)];
+        let sent = unsafe { SendInput(&sentinel, std::mem::size_of::<INPUT>() as i32) };
+        if sent as usize != sentinel.len() {
+            sleep(Duration::from_millis(40));
+            return false;
+        }
+        let deadline = Instant::now() + timeout;
+        loop {
+            if toggled() != before {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                tracing::warn!(
+                    "foreground input drain: target thread did not consume the sentinel within {} ms",
+                    timeout.as_millis()
+                );
+                return false;
+            }
+            sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+impl Drop for InputQueueAttachment {
+    fn drop(&mut self) {
+        use windows::Win32::System::Threading::AttachThreadInput;
+        let _ = unsafe { AttachThreadInput(self.own_thread, self.target_thread, false) };
+    }
+}
+
+fn sentinel_key_input(up: bool) -> INPUT {
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: DRAIN_SENTINEL_VK,
+                wScan: 0,
+                dwFlags: if up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    KEYBD_EVENT_FLAGS(0)
+                },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }
 
 /// Build a single Unicode keyboard INPUT struct for one UTF-16 code unit,
@@ -1377,463 +932,5 @@ mod extended_key_tests {
             let flags = unsafe { input.Anonymous.ki.dwFlags };
             assert_ne!(flags.0 & KEYEVENTF_EXTENDEDKEY.0, 0, "{flags:?}");
         }
-    }
-}
-
-#[cfg(test)]
-mod foreground_text_batch_tests {
-    use super::*;
-
-    fn run(text: &str) -> ForegroundTextBatch<'_> {
-        ForegroundTextBatch::UnicodeRun(text)
-    }
-
-    #[test]
-    fn plans_text_runs_and_logical_returns() {
-        let cases = [
-            ("", vec![]),
-            ("single line", vec![run("single line")]),
-            (
-                "A\nB",
-                vec![run("A"), ForegroundTextBatch::Return, run("B")],
-            ),
-            (
-                "A\rB",
-                vec![run("A"), ForegroundTextBatch::Return, run("B")],
-            ),
-            (
-                "A\r\nB",
-                vec![run("A"), ForegroundTextBatch::Return, run("B")],
-            ),
-            (
-                "A\n\nB",
-                vec![
-                    run("A"),
-                    ForegroundTextBatch::Return,
-                    ForegroundTextBatch::Return,
-                    run("B"),
-                ],
-            ),
-            (
-                "\nA\n",
-                vec![
-                    ForegroundTextBatch::Return,
-                    run("A"),
-                    ForegroundTextBatch::Return,
-                ],
-            ),
-            (
-                "\u{4e2d}\u{6587}123\u{6570}",
-                vec![run("\u{4e2d}\u{6587}123\u{6570}")],
-            ),
-            ("A\u{1f642}\u{1f680}B", vec![run("A\u{1f642}\u{1f680}B")]),
-        ];
-
-        for (text, expected) in cases {
-            assert_eq!(
-                plan_foreground_text_batches(text).unwrap(),
-                expected,
-                "{text:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn unicode_utf16_units_keep_down_up_pairs_inside_one_run() {
-        let text = "A\u{1f642}B";
-        let plan = plan_foreground_text_batches(text).unwrap();
-        assert_eq!(plan.len(), 1);
-        let batch = plan[0];
-        let ForegroundTextBatch::UnicodeRun(run) = batch else {
-            panic!("expected one Unicode run");
-        };
-        let events = unicode_run_inputs(&run);
-        let expected_units = [0x0041, 0xd83d, 0xde42, 0x0042];
-        assert_eq!(events.len(), expected_units.len() * 2);
-
-        for (unit_index, expected_unit) in expected_units.into_iter().enumerate() {
-            let down = unsafe { events[unit_index * 2].Anonymous.ki };
-            let up = unsafe { events[unit_index * 2 + 1].Anonymous.ki };
-            assert_eq!(down.wScan, expected_unit);
-            assert_eq!(up.wScan, expected_unit);
-            assert_ne!(down.dwFlags.0 & KEYEVENTF_UNICODE.0, 0);
-            assert_ne!(up.dwFlags.0 & KEYEVENTF_UNICODE.0, 0);
-            assert_eq!(down.dwFlags.0 & KEYEVENTF_KEYUP.0, 0);
-            assert_ne!(up.dwFlags.0 & KEYEVENTF_KEYUP.0, 0);
-        }
-    }
-
-    #[test]
-    fn each_return_is_one_down_up_batch() {
-        let returns = plan_foreground_text_batches("\n\r\r\n").unwrap();
-        assert_eq!(returns, vec![ForegroundTextBatch::Return; 3]);
-
-        for batch in &returns {
-            let events = foreground_text_batch_inputs(batch);
-            assert_eq!(events.len(), 2);
-            let down = unsafe { events[0].Anonymous.ki };
-            let up = unsafe { events[1].Anonymous.ki };
-            let return_vk = windows::Win32::UI::Input::KeyboardAndMouse::VK_RETURN;
-            let return_scan = unsafe { MapVirtualKeyW(return_vk.0 as u32, MAPVK_VK_TO_VSC) } as u16;
-            if return_scan == 0 {
-                assert_eq!(down.wVk, return_vk);
-                assert_eq!(up.wVk, return_vk);
-            } else {
-                assert_eq!(down.wVk, VIRTUAL_KEY(0));
-                assert_eq!(up.wVk, VIRTUAL_KEY(0));
-                assert_eq!(down.wScan, return_scan);
-                assert_eq!(up.wScan, return_scan);
-                assert_ne!(down.dwFlags.0 & KEYEVENTF_SCANCODE.0, 0);
-                assert_ne!(up.dwFlags.0 & KEYEVENTF_SCANCODE.0, 0);
-            }
-            assert_eq!(down.dwFlags.0 & KEYEVENTF_KEYUP.0, 0);
-            assert_ne!(up.dwFlags.0 & KEYEVENTF_KEYUP.0, 0);
-            assert_eq!(down.dwFlags.0 & KEYEVENTF_EXTENDEDKEY.0, 0);
-            assert_eq!(up.dwFlags.0 & KEYEVENTF_EXTENDEDKEY.0, 0);
-        }
-    }
-}
-
-#[cfg(test)]
-mod foreground_text_dispatch_tests {
-    use super::*;
-    use std::cell::{Cell, RefCell};
-
-    fn batches() -> Vec<Vec<u8>> {
-        vec![vec![1, 2], vec![3, 4], vec![5, 6]]
-    }
-
-    fn admit_all(_: usize) -> std::result::Result<(), BatchAdmissionFailure> {
-        Ok(())
-    }
-
-    #[test]
-    fn each_prebuilt_batch_is_admitted_once_immediately_before_send() {
-        let trace = RefCell::new(Vec::new());
-        let result = execute_foreground_text_batches(
-            &batches(),
-            |_| {
-                trace.borrow_mut().push("admit");
-                Ok(())
-            },
-            || false,
-            |events| {
-                trace.borrow_mut().push("send");
-                events.len()
-            },
-        );
-
-        assert!(result.is_ok());
-        assert_eq!(
-            *trace.borrow(),
-            ["admit", "send", "admit", "send", "admit", "send"]
-        );
-    }
-
-    fn assert_partial(
-        error: ForegroundTextSendError,
-        expected_accepted: usize,
-        expected_batch: usize,
-        expected_count: usize,
-        expected_cause: ForegroundTextErrorCode,
-    ) {
-        match error {
-            ForegroundTextSendError::Partial {
-                accepted_events,
-                batch_index,
-                batch_count,
-                cause_code,
-                ..
-            } => {
-                assert_eq!(accepted_events, expected_accepted);
-                assert_eq!(batch_index, expected_batch);
-                assert_eq!(batch_count, expected_count);
-                assert_eq!(cause_code, expected_cause);
-            }
-            other => panic!("expected partial input error, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn first_batch_short_send_is_partial_and_stops_without_replay() {
-        let mut sends = 0;
-        let result = execute_foreground_text_batches(
-            &batches(),
-            admit_all,
-            || false,
-            |events| {
-                sends += 1;
-                if sends == 1 {
-                    1
-                } else {
-                    events.len()
-                }
-            },
-        );
-
-        assert_partial(
-            result.unwrap_err(),
-            1,
-            0,
-            3,
-            ForegroundTextErrorCode::SendInputIncomplete,
-        );
-        assert_eq!(sends, 1, "failed input must not be replayed or continued");
-    }
-
-    #[test]
-    fn later_batch_short_send_keeps_cumulative_count_and_stops() {
-        let mut sends = 0;
-        let result = execute_foreground_text_batches(
-            &batches(),
-            admit_all,
-            || false,
-            |events| {
-                sends += 1;
-                if sends == 2 {
-                    1
-                } else {
-                    events.len()
-                }
-            },
-        );
-
-        assert_partial(
-            result.unwrap_err(),
-            3,
-            1,
-            3,
-            ForegroundTextErrorCode::SendInputIncomplete,
-        );
-        assert_eq!(
-            sends, 2,
-            "later batches must not be sent after a short count"
-        );
-    }
-
-    #[test]
-    fn zero_events_accepted_in_first_batch_is_not_started() {
-        let mut sends = 0;
-        let result = execute_foreground_text_batches(
-            &batches(),
-            admit_all,
-            || false,
-            |_| {
-                sends += 1;
-                0
-            },
-        )
-        .unwrap_err();
-
-        assert!(matches!(
-            result,
-            ForegroundTextSendError::NotStarted {
-                code: ForegroundTextErrorCode::SendInputRejected,
-                ..
-            }
-        ));
-        assert_eq!(sends, 1);
-    }
-
-    #[test]
-    fn editor_focus_change_stops_remaining_batches() {
-        let mut sends = 0;
-        let result = execute_foreground_text_batches(
-            &batches(),
-            |index| {
-                if index == 1 {
-                    Err(BatchAdmissionFailure {
-                        code: ForegroundTextErrorCode::EditorFocusUnavailable,
-                        message: "the exact editor lost keyboard focus".into(),
-                    })
-                } else {
-                    Ok(())
-                }
-            },
-            || false,
-            |events| {
-                sends += 1;
-                events.len()
-            },
-        );
-
-        assert_partial(
-            result.unwrap_err(),
-            2,
-            1,
-            3,
-            ForegroundTextErrorCode::EditorFocusUnavailable,
-        );
-        assert_eq!(sends, 1, "no batch follows a failed editor admission check");
-    }
-
-    #[test]
-    fn owned_popup_or_vanished_target_stops_remaining_batches() {
-        for message in [
-            "foreground is an owned popup, not the original target",
-            "the original target HWND disappeared",
-        ] {
-            let mut sends = 0;
-            let result = execute_foreground_text_batches(
-                &batches(),
-                |index| {
-                    if index == 1 {
-                        Err(BatchAdmissionFailure {
-                            code: ForegroundTextErrorCode::ForegroundUnavailable,
-                            message: message.into(),
-                        })
-                    } else {
-                        Ok(())
-                    }
-                },
-                || false,
-                |events| {
-                    sends += 1;
-                    events.len()
-                },
-            );
-
-            assert_partial(
-                result.unwrap_err(),
-                2,
-                1,
-                3,
-                ForegroundTextErrorCode::ForegroundUnavailable,
-            );
-            assert_eq!(sends, 1, "no batch follows a failed target admission check");
-        }
-    }
-
-    #[test]
-    fn cancellation_after_a_batch_stops_without_replay() {
-        let cancelled = Cell::new(false);
-        let mut sends = 0;
-        let result = execute_foreground_text_batches(
-            &batches(),
-            admit_all,
-            || cancelled.get(),
-            |events| {
-                sends += 1;
-                cancelled.set(true);
-                events.len()
-            },
-        );
-
-        assert_partial(
-            result.unwrap_err(),
-            2,
-            1,
-            3,
-            ForegroundTextErrorCode::Cancelled,
-        );
-        assert_eq!(sends, 1, "cancellation is checked before every batch");
-    }
-
-    #[test]
-    fn cancellation_during_admission_is_rechecked_before_send() {
-        let cancelled = Cell::new(false);
-        let mut sends = 0;
-        let result = execute_foreground_text_batches(
-            &batches(),
-            |index| {
-                if index == 1 {
-                    cancelled.set(true);
-                }
-                Ok(())
-            },
-            || cancelled.get(),
-            |events| {
-                sends += 1;
-                events.len()
-            },
-        );
-
-        assert_partial(
-            result.unwrap_err(),
-            2,
-            1,
-            3,
-            ForegroundTextErrorCode::Cancelled,
-        );
-        assert_eq!(
-            sends, 1,
-            "cancellation during the admission check blocks this batch"
-        );
-    }
-
-    #[test]
-    fn cancellation_during_first_admission_sends_nothing_and_stops_remaining_batches() {
-        let cancelled = Cell::new(false);
-        let mut admissions = 0;
-        let mut sends = 0;
-        let result = execute_foreground_text_batches(
-            &batches(),
-            |index| {
-                admissions += 1;
-                assert_eq!(index, 0);
-                cancelled.set(true);
-                Ok(())
-            },
-            || cancelled.get(),
-            |events| {
-                sends += 1;
-                events.len()
-            },
-        );
-
-        assert!(matches!(
-            result,
-            Err(ForegroundTextSendError::NotStarted {
-                code: ForegroundTextErrorCode::Cancelled,
-                ..
-            })
-        ));
-        assert_eq!(admissions, 1, "remaining batches are not admitted");
-        assert_eq!(sends, 0, "no events are sent after admission cancellation");
-    }
-
-    #[test]
-    fn exact_editor_focus_rejects_sibling_and_missing_target() {
-        assert!(exact_editor_focus_matches(11, Some(11)));
-        assert!(!exact_editor_focus_matches(11, Some(12))); // changed child
-        assert!(!exact_editor_focus_matches(11, None)); // target disappeared
-    }
-
-    #[test]
-    fn oversized_run_total_and_batch_count_are_rejected_during_planning() {
-        let oversized_run = "x".repeat(MAX_FOREGROUND_TEXT_RUN_EVENTS / 2 + 1);
-        assert_eq!(
-            plan_foreground_text_batches(&oversized_run)
-                .unwrap_err()
-                .public_code(),
-            ForegroundTextErrorCode::InputTooLarge
-        );
-
-        let oversized_total = format!(
-            "{}\n{}",
-            "x".repeat(MAX_FOREGROUND_TEXT_RUN_EVENTS / 2),
-            "y".repeat(MAX_FOREGROUND_TEXT_RUN_EVENTS / 2)
-        );
-        assert_eq!(
-            plan_foreground_text_batches(&oversized_total)
-                .unwrap_err()
-                .public_code(),
-            ForegroundTextErrorCode::InputTooLarge
-        );
-
-        let oversized_batch_count = "\n".repeat(MAX_FOREGROUND_TEXT_BATCHES + 1);
-        assert_eq!(
-            plan_foreground_text_batches(&oversized_batch_count)
-                .unwrap_err()
-                .public_code(),
-            ForegroundTextErrorCode::InputTooLarge
-        );
-    }
-
-    #[test]
-    fn single_line_stays_one_unicode_batch() {
-        let plan = plan_foreground_text_batches("abc123").unwrap();
-        assert_eq!(plan, vec![ForegroundTextBatch::UnicodeRun("abc123")]);
-        assert_eq!(foreground_text_batch_inputs(&plan[0]).len(), 12);
     }
 }

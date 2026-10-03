@@ -155,6 +155,10 @@ enum Command {
         /// Default sandbox for computer tools.
         #[arg(long, env = "CUA_SANDBOX", default_value = "")]
         sandbox: String,
+        /// Gated actions (cloud, your machines, sensitive files...): `ask`
+        /// the user with Touch ID, or `never` (refuse; for servers).
+        #[arg(long, env = "CUA_MCP_APPROVALS", value_enum, default_value = "ask")]
+        approvals: McpApprovals,
     },
     /// Recorded demonstrations (skills) for agents.
     #[command(subcommand)]
@@ -663,7 +667,27 @@ enum DaemonCmd {
         /// Default sandbox for computer tools.
         #[arg(long, env = "CUA_SANDBOX", default_value = "")]
         sandbox: String,
+        /// Gated actions (cloud, your machines, sensitive files...): `ask`
+        /// the user with Touch ID, or `never` (refuse; for servers).
+        #[arg(long, env = "CUA_MCP_APPROVALS", value_enum, default_value = "ask")]
+        approvals: McpApprovals,
     },
+}
+
+/// `--approvals` of `cua mcp`.
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum McpApprovals {
+    Ask,
+    Never,
+}
+
+impl From<McpApprovals> for mcp::Approvals {
+    fn from(a: McpApprovals) -> Self {
+        match a {
+            McpApprovals::Ask => mcp::Approvals::Ask,
+            McpApprovals::Never => mcp::Approvals::Never,
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -1786,15 +1810,17 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Mcp {
             permissions,
             sandbox,
+            approvals,
         }
         | Command::Daemon(DaemonCmd::Mcp {
             permissions,
             sandbox,
+            approvals,
         }) => {
             let perms = mcp::parse_permissions(&permissions);
             // Embedded (no daemon): the account's relay machines, like the daemon.
             host::attach_relay_account(&cua, || host::daemon_relay_account(&util::cua_home()));
-            return mcp::serve_stdio(mcp::server(cua, perms, sandbox)).await;
+            return mcp::serve_stdio(mcp::server_with(cua, perms, sandbox, approvals.into())).await;
         }
         Command::Skills(SkillsCmd::Record {
             sandbox: Some(sb),
@@ -2256,7 +2282,31 @@ async fn daemon_start(
         ),
     };
     let health_runtime = runtime.clone();
-    let h = cua_daemon::server::start(runtime, cfg).await;
+    // Callers that are not the user's own Cua code are held to the approval
+    // policy here, where the capabilities run; `/mcp` serves the same
+    // server `cua mcp` does.
+    let gating = {
+        let ext = extension::get();
+        let approver = ext.and_then(|e| e.approver()).unwrap_or_else(|| {
+            Arc::new(cua_spaces::approvals::NeverApprove)
+                as Arc<dyn cua_spaces::approvals::Approver>
+        });
+        cua_daemon::server::GateOptions {
+            peer_verifier: ext.and_then(|e| e.peer_verifier()),
+            guard: Some(cua_spaces::mcp::gate::Guard::new(
+                util::cua_home(),
+                approver,
+            )),
+            mcp: Some(mcp::server_with(
+                Cua::from_runtime(runtime.clone()),
+                mcp::parse_permissions(""),
+                String::new(),
+                mcp::Approvals::Ask,
+            )),
+            ..Default::default()
+        }
+    };
+    let h = cua_daemon::server::start_with(runtime, cfg, gating).await;
     drop(starting);
     {
         use cua_telemetry::events::{self, Outcome};

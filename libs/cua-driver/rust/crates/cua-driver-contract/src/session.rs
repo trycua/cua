@@ -40,7 +40,7 @@ fn contract<I: ToolInput, O: ToolOutput>(
 fn start() -> ToolContract {
     contract::<StartSessionInput, StartSessionOutput>(
         "start_session",
-        "Optionally create or return a lifecycle session before acting. For multi-call work, prefer a short public `session` label and repeat it on every call that accepts it; an omitted value uses the authenticated transport lease's implicit session instead. This tool is optional because an ordinary action can create or reuse a named run directly. Use it to set the initial cursor theme before acting or to revive a public name after it has ended; ordinary actions never revive ended names. `capture_scope` is deprecated compatibility input; new callers select window or desktop modality per action. Idempotent.",
+        "Optional. Create or return a named session, set its initial cursor theme, or revive an ended name; ordinary actions never revive ended names. Idempotent.",
         &["session.lifecycle.start", "session.capture_scope"],
         ToolAnnotations {
             read_only: false,
@@ -82,7 +82,7 @@ fn get_state() -> ToolContract {
 fn get() -> ToolContract {
     contract::<GetSessionInput, SessionOutput>(
         "get_session",
-        "Read content-free lifecycle, cursor, recording, and idle status for one session visible to this authenticated transport. Omit `session` to inspect its implicit session.",
+        "Read one session's lifecycle, cursor, recording and idle status; omit `session` for the implicit one.",
         &["session.lifecycle.read"],
         ToolAnnotations {
             read_only: true,
@@ -96,7 +96,7 @@ fn get() -> ToolContract {
 fn list() -> ToolContract {
     contract::<ListSessionsInput, ListSessionsOutput>(
         "list_sessions",
-        "List content-free lifecycle summaries attached to this authenticated transport lease. It does not enumerate other callers' sessions.",
+        "List this connection's sessions.",
         &["session.lifecycle.list"],
         ToolAnnotations {
             read_only: true,
@@ -110,7 +110,7 @@ fn list() -> ToolContract {
 fn end() -> ToolContract {
     contract::<EndSessionInput, EndSessionOutput>(
         "end_session",
-        "End one visible lifecycle session and run its cursor, recording, configuration, and other cleanup hooks exactly once. Omit `session` to end the authenticated transport's implicit session. Idempotent.",
+        "End a session and run its cleanup (cursor, recording, config); omit `session` for the implicit one. Idempotent.",
         &["session.lifecycle.end"],
         ToolAnnotations {
             read_only: false,
@@ -128,10 +128,7 @@ mod tests {
     #[test]
     fn start_description_explains_direct_naming_and_explicit_revival() {
         let description = start().description;
-        assert!(description.contains("prefer a short public `session` label"));
-        assert!(description.contains("repeat it on every call that accepts it"));
-        assert!(description.contains("omitted value uses the authenticated transport"));
-        assert!(description.contains("revive a public name after it has ended"));
+        assert!(description.contains("revive an ended name"));
         assert!(description.contains("ordinary actions never revive ended names"));
     }
 }

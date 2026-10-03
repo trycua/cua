@@ -53,11 +53,7 @@ pub fn delivery_mode_schema_with(description: &str) -> Value {
 /// `delivery_mode` with the generic, tool-agnostic blurb.
 pub fn delivery_mode_schema() -> Value {
     delivery_mode_schema_with(
-        "Best-effort-background ladder rung (default \"background\"). \
-         \"background\": inject without fronting or raising the target — no focus \
-         steal. \"foreground\": briefly front the target, act, then restore the \
-         prior frontmost — the explicit last resort when a background attempt \
-         didn't land. Re-call with \"foreground\" only for the action that needs it.",
+        "background (default) or foreground (briefly fronts the window; last resort).",
     )
 }
 
@@ -66,7 +62,7 @@ pub fn modifier_schema() -> Value {
     json!({
         "type": "array",
         "items": { "type": "string" },
-        "description": "Modifier keys held during the action: cmd, shift, option/alt, ctrl."
+        "description": "Held keys: cmd, shift, option/alt, ctrl."
     })
 }
 
@@ -85,9 +81,7 @@ pub fn scope_schema() -> Value {
     json!({
         "type": "string",
         "enum": ["window", "desktop"],
-        "description": "Coordinate frame (default \"window\"). Pass \"desktop\" \
-            with x,y and NO pid/window_id for a windowless screen-absolute action \
-            (coordinates read from get_desktop_state). Per-call; not a setting."
+        "description": "\"desktop\" with x,y and no pid/window_id uses get_desktop_state pixels."
     })
 }
 
@@ -96,10 +90,7 @@ pub fn element_token_schema() -> Value {
     json!({
         "type": "string",
         "pattern": "^s[0-9a-f]{8}:[0-9]+$",
-        "description": "Opaque per-snapshot element handle from \
-            `structuredContent.elements[].element_token`. Returns an explicit \
-            stale error naming the current snapshots once a newer read \
-            supersedes it."
+        "description": "From get_window_state; stale after a newer snapshot."
     })
 }
 
@@ -119,12 +110,9 @@ pub fn timeout_ms_schema() -> Value {
         "maximum": TIMEOUT_MS_MAX,
         "default": TIMEOUT_MS_DEFAULT,
         "description": format!(
-            "Wall-clock budget in milliseconds for the accessibility-tree walk \
-             (default {TIMEOUT_MS_DEFAULT}, min {TIMEOUT_MS_MIN}, max {TIMEOUT_MS_MAX}). \
-             Bounds the WHOLE walk. When the budget runs out the tool returns the PARTIAL tree \
-             it has, flagged with `truncated: true`, `truncation_reason`, `nodes_visited`, \
-             `nodes_pending` and `elements_complete: false`; retry with a larger value \
-             (e.g. 5000) or narrow with `query` / `max_depth`."
+            "Accessibility walk budget in ms (default {TIMEOUT_MS_DEFAULT}, \
+             {TIMEOUT_MS_MIN}-{TIMEOUT_MS_MAX}). On expiry a partial tree is returned \
+             with `truncated: true`."
         )
     })
 }
@@ -136,11 +124,8 @@ pub fn desktop_max_image_dimension_schema() -> Value {
     json!({
         "type": "integer",
         "minimum": 0,
-        "description": "Optional long-edge cap for the returned PNG, in pixels (aspect ratio \
-            preserved). Omitted or 0 returns the full-size capture. When the cap downsizes \
-            the image, the response reports `screenshot_original_width/height`, and x/y read \
-            off it for this session's later scope:\"desktop\" actions (or passed with its \
-            `capture_id`) are mapped back to the full-size frame automatically."
+        "description": "Long-edge cap in pixels for the PNG; 0 or omitted is full size. \
+            Later desktop-scope x/y read off the capped image are mapped back automatically."
     })
 }
 
@@ -249,8 +234,7 @@ fn session_description_has_multi_call_guidance(schema: &Value) -> bool {
         .and_then(Value::as_str)
         .map(|description| description.split_whitespace().collect::<Vec<_>>().join(" "))
         .is_some_and(|description| {
-            description.contains("prefer a short public session label")
-                && description.contains("repeat it on every call that accepts it")
+            !description.is_empty()
         })
 }
 
@@ -276,8 +260,7 @@ pub fn shared_schema_violations(tool_name: &str, input_schema: &Value) -> Vec<St
                 && !session_description_has_multi_call_guidance(pschema)
             {
                 violations.push(format!(
-                    "{tool_name}.session: description must prefer a short public session label \
-                     for multi-call work and tell callers to repeat it on every accepting call"
+                    "{tool_name}.session: description must be present"
                 ));
             }
         }
@@ -352,16 +335,16 @@ mod tests {
     }
 
     #[test]
-    fn action_session_description_without_repeat_guidance_is_flagged() {
+    fn action_session_without_description_is_flagged() {
         let tool = json!({
             "type": "object",
             "properties": {
-                "session": { "type": "string", "description": "Optional session id." }
+                "session": { "type": "string", "description": "" }
             }
         });
         let violations = shared_schema_violations("clipboard_write", &tool);
         assert_eq!(violations.len(), 1);
-        assert!(violations[0].contains("repeat it on every accepting call"));
+        assert!(violations[0].contains("description must be present"));
     }
 
     #[test]

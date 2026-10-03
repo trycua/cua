@@ -304,37 +304,21 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         // Matches Swift `CheckPermissionsTool.swift` description verbatim.
         name: "check_permissions".into(),
-        description: "Report TCC permission status for Accessibility and Screen Recording. \
-            By default also raises the system permission dialogs for any missing grants — \
-            Apple's request APIs are no-ops when the grant is already active, so this is \
-            safe to call repeatedly. Pass {\"prompt\": false} for a purely read-only \
-            status check.\n\n\
-            Returns: `accessibility` + `screen_recording` (booleans from the TCC \
-            preflight APIs), `screen_recording_capturable` (a live ScreenCaptureKit \
-            probe when `prompt` is true; null on read-only calls), \
-            `direct_capture_status` (`ready`, `unavailable`, `timed_out`, `probe_failed`, \
-            `blocked_by_screen_recording`, or `not_checked`), `direct_capture_error` (a structured \
-            timeout/probe failure when applicable), `direct_capture_verification` (validated \
-            source, UTC time, and bundle identity from an explicit grant probe), and `source` \
-            (which TCC identity the \
-            booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). \
-            macOS attributes grants to the responsible process, so a standalone call \
-            from a terminal reports the terminal's grants, not the driver's. The \
-            prompt-capable ScreenCaptureKit probe never runs when `prompt` is false. \
-            Pass `probe_direct_capture:false` with `prompt:true` to register/request only \
-            the two required TCC grants before separately explaining Tahoe's direct-capture \
-            consent.".into(),
+        description: "Report Accessibility and Screen Recording permission status \
+            (`accessibility`, `screen_recording`, `direct_capture_status`, `source`). Read-only \
+            unless `prompt` is true. Grants belong to the responsible process, so from a \
+            terminal this reports the terminal's grants.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "prompt": {
                     "type": "boolean",
-                    "description": "Raise the system permission prompts for missing grants. Default false; only a trusted host setup route may set true.",
+                    "description": "Raise system prompts for missing grants. Default false; trusted host setup only.",
                     "default": false,
                 },
                 "probe_direct_capture": {
                     "type": "boolean",
-                    "description": "When prompting and Screen Recording is granted, also run the live ScreenCaptureKit probe that may raise Tahoe's direct-capture consent. Default true. Set false for a staged Accessibility/Screen Recording request.",
+                    "description": "With prompt, also run the ScreenCaptureKit probe that may raise direct-capture consent. Default true.",
                 }
             },
             "additionalProperties": false,

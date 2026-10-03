@@ -44,6 +44,38 @@ fn assert_string_enums(value: &serde_json::Value, path: &str) {
     }
 }
 
+/// The default list is what agents pay for in context: no output schemas,
+/// risk metadata, adapter inventory or compatibility/operator tools. They stay
+/// callable and are returned by `{"detail": "full"}`.
+#[test]
+fn default_tools_list_is_slim() {
+    let mut d = RawDriver::spawn().expect("spawn source-built driver for slim list test");
+    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
+    d.recv();
+    d.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}));
+    let slim = d.recv();
+    d.send(&serde_json::json!({"jsonrpc":"2.0","id":3,"method":"tools/list","params":{"detail":"full"}}));
+    let full = d.recv();
+
+    assert!(slim["result"].get("enforcement_adapters").is_none());
+    let slim_tools = slim["result"]["tools"].as_array().expect("slim tools");
+    let full_tools = full["result"]["tools"].as_array().expect("full tools");
+    for tool in slim_tools {
+        for field in ["outputSchema", "risk"] {
+            assert!(tool.get(field).is_none(), "{} advertises {field}", tool["name"]);
+        }
+    }
+    for name in ["escalate_session", "get_session_state", "page"] {
+        assert!(slim_tools.iter().all(|tool| tool["name"] != name), "{name} listed");
+        assert!(full_tools.iter().any(|tool| tool["name"] == name), "{name} missing from full");
+    }
+    let bytes = |tools: &[serde_json::Value]| serde_json::to_string(tools).unwrap().len();
+    assert!(
+        bytes(slim_tools) * 2 < bytes(full_tools),
+        "default tools/list must be under half of the full list"
+    );
+}
+
 #[test]
 fn tools_list_schema_shape() {
     //! `type_text_chars` is an accepted-but-deprecated invoke alias that stays
@@ -56,7 +88,7 @@ fn tools_list_schema_shape() {
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
 
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}));
+    d.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"detail":"full"}}));
     let list_resp = d.recv();
     let tools = list_resp["result"]["tools"]
         .as_array()
@@ -82,7 +114,8 @@ fn tools_list_schema_shape() {
                 let described = param_schema["description"]
                     .as_str()
                     .is_some_and(|text| !text.trim().is_empty());
-                if !described {
+                // Self-explanatory names stay undocumented to keep tools/list small.
+                if !described && !matches!(param.as_str(), "pid" | "x" | "y" | "target") {
                     undocumented.push(format!("{name}.{param}"));
                 }
             }

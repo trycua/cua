@@ -30,7 +30,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["pid", "text"],
             "properties": {
-                "pid":           { "type": "integer", "description": "Target process ID." },
+                "pid":           { "type": "integer" },
                 "text":          { "type": "string",  "description": "Text to type." },
                 "delay_ms":      { "type": "integer", "description": "Milliseconds between characters (default 30)." },
                 "window_id":     { "type": "integer", "description": "Window ID for element focus. Optional when element_token is supplied." },

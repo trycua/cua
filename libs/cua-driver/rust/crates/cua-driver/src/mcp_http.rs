@@ -678,7 +678,7 @@ mod tests {
             .expect("SDK adapter");
         let expected = sdk.tools_list();
         let response = dispatch(
-            br#"{"jsonrpc":"2.0","id":7,"method":"tools/list","params":{}}"#,
+            br#"{"jsonrpc":"2.0","id":7,"method":"tools/list","params":{"detail":"full"}}"#,
             &sdk,
             "http-test",
         )

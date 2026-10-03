@@ -4,6 +4,7 @@
 
 use crate::{
     CreateRequest, Discovery, Error, Result, Runtime, VERSION,
+    caller::Caller,
     convert::{self, from_dur, info_to_pb, probe_from_pb, provider_from_pb},
     passthrough,
 };
@@ -56,6 +57,43 @@ impl ServerConfig {
     }
 }
 
+/// How the daemon tells its callers apart and gates the ones that are not
+/// the user (see [`crate::caller`]). The default suits a daemon on its own:
+/// peers are the user when they run this program, nobody can be asked, and
+/// `/mcp` is the contract tools behind the gate.
+#[derive(Clone, Debug)]
+pub struct GateOptions {
+    /// Decides whether a Unix-socket peer is the user's own Cua code (see
+    /// [`crate::caller`]). `None`: the peer runs this daemon's own program.
+    pub peer_verifier: Option<Arc<dyn crate::caller::PeerVerifier>>,
+    /// Tell callers apart and apply the approval policy to those that are
+    /// not the user (default on; fixtures turn it off). &    /// where the OS gives no peer identity (Windows).
+    pub enforce_callers: bool,
+    /// Where the approval policy lives and who is asked (Touch ID in Cua
+    /// Spaces). `None`: the cua home, and nobody can be asked, so gated
+    /// actions of callers that are not the user are refused.
+    #[cfg(feature = "spaces")]
+    pub guard: Option<cua_spaces::mcp::gate::Guard>,
+    /// The server mounted at `/mcp`. `None`: the contract tools over this
+    /// daemon's Spaces. Either way it must carry the agent surface, so
+    /// every call passes the gate; one without it is replaced.
+    #[cfg(feature = "spaces")]
+    pub mcp: Option<cua_spaces::mcp::McpServer>,
+}
+
+impl Default for GateOptions {
+    fn default() -> Self {
+        Self {
+            peer_verifier: None,
+            enforce_callers: true,
+            #[cfg(feature = "spaces")]
+            guard: None,
+            #[cfg(feature = "spaces")]
+            mcp: None,
+        }
+    }
+}
+
 /// A media bridge registered by `OpenMediaBridge`.
 #[derive(Clone, Debug)]
 pub(crate) struct Bridge {
@@ -66,7 +104,16 @@ pub(crate) struct Bridge {
 
 pub(crate) struct Shared {
     pub runtime: Runtime,
+    /// The loopback token in the discovery file: any process of the user can
+    /// read it, so it is the agent tier (see [`crate::caller`]).
     pub token: String,
+    /// The token only verified callers are handed (in memory, never on
+    /// disk): the user tier.
+    pub user_token: String,
+    pub gate: crate::gate::Gate,
+    /// The server at `/mcp`.
+    #[cfg(feature = "spaces")]
+    pub http_mcp: cua_spaces::mcp::McpServer,
     pub info: Mutex<pb::GetInfoResponse>,
     pub bridges: Mutex<HashMap<String, Bridge>>,
     pub bridge_ttl: Duration,
@@ -240,6 +287,15 @@ impl Drop for DaemonHandle {
 
 /// Starts the daemon listeners and returns once they accept connections.
 pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandle> {
+    start_with(runtime, config, GateOptions::default()).await
+}
+
+/// [`start`] with how callers are told apart and gated.
+pub async fn start_with(
+    runtime: Runtime,
+    config: ServerConfig,
+    gating: GateOptions,
+) -> Result<DaemonHandle> {
     cua_spacesd_client::transport::ensure_crypto_provider();
     if config.socket_path.is_none() && config.loopback.is_none() {
         return Err(Error::InvalidArgument(
@@ -289,7 +345,39 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
     let own = std::env::current_exe()
         .ok()
         .and_then(|e| crate::identity::of(&e));
+    // Callers are told apart by the Unix socket's peer, so a daemon with no
+    // socket has no identity to go by (loopback only: Windows, embedded
+    // fixtures): only `/mcp` is gated there.
+    let enforce = gating.enforce_callers && cfg!(unix) && config.socket_path.is_some();
+    #[cfg(feature = "spaces")]
+    let (gate, http_mcp) = {
+        let guard = gating.guard.clone().unwrap_or_else(|| {
+            cua_spaces::mcp::gate::Guard::new(
+                cua_home::cua_home(),
+                Arc::new(cua_spaces::approvals::NeverApprove),
+            )
+        });
+        let mut mcp = cua_spaces::mcp::McpServer::new(runtime.spaces().clone());
+        if let Some(broker) = runtime.session_broker() {
+            mcp = mcp.with_session_broker(broker);
+        }
+        let mcp = mcp.with_agent_surface(guard);
+        // A server handed in must be the agent surface: `/mcp` is never
+        // served without the gate.
+        let http = gating
+            .mcp
+            .clone()
+            .filter(|m| m.has_agent_surface())
+            .unwrap_or_else(|| mcp.clone());
+        (crate::gate::Gate { enforce, mcp }, http)
+    };
+    #[cfg(not(feature = "spaces"))]
+    let gate = crate::gate::Gate { enforce };
     let shared = Arc::new(Shared {
+        gate,
+        #[cfg(feature = "spaces")]
+        http_mcp,
+        user_token: crate::random_token(),
         #[cfg(feature = "spaces")]
         host_spaces,
         runtime,
@@ -332,7 +420,7 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
         loopback_url = Some(url);
         let app = app(shared.clone(), true);
         let rx = shared.shutdown.subscribe();
-        tasks.push(tokio::spawn(accept_loop(listener, app, rx)));
+        tasks.push(tokio::spawn(accept_loop(listener, app, rx, None)));
     }
     #[cfg_attr(not(unix), allow(unused_mut))]
     let mut socket_path: Option<PathBuf> = None;
@@ -356,7 +444,13 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
         socket_path = Some(path.clone());
         let app = app(shared.clone(), false);
         let rx = shared.shutdown.subscribe();
-        tasks.push(tokio::spawn(accept_loop(listener, app, rx)));
+        let verifier = enforce.then(|| {
+            gating
+                .peer_verifier
+                .clone()
+                .unwrap_or_else(crate::caller::default_verifier)
+        });
+        tasks.push(tokio::spawn(accept_loop(listener, app, rx, verifier)));
     }
     #[cfg(not(unix))]
     if config.socket_path.is_some() && config.loopback.is_none() {
@@ -417,7 +511,17 @@ type BoxedApp = tower::util::BoxCloneSyncService<
 trait Accept: Send + 'static {
     type Io: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static;
     fn accept_io(&self) -> impl std::future::Future<Output = std::io::Result<Self::Io>> + Send;
+    /// Who the OS says is on the other end, for listeners that can tell
+    /// (the Unix socket). `None`: the request's bearer token decides.
+    fn peer(_io: &Self::Io, _verifier: &dyn crate::caller::PeerVerifier) -> Option<Caller> {
+        None
+    }
 }
+
+/// The caller a Unix-socket connection was verified as, carried on each of
+/// its requests.
+#[derive(Clone)]
+struct PeerCaller(Caller);
 
 impl Accept for tokio::net::TcpListener {
     type Io = tokio::net::TcpStream;
@@ -434,9 +538,18 @@ impl Accept for tokio::net::UnixListener {
     async fn accept_io(&self) -> std::io::Result<Self::Io> {
         Ok(self.accept().await?.0)
     }
+    fn peer(io: &Self::Io, verifier: &dyn crate::caller::PeerVerifier) -> Option<Caller> {
+        use std::os::fd::AsRawFd;
+        Some(verifier.verify(io.as_raw_fd()))
+    }
 }
 
-async fn accept_loop<L: Accept>(listener: L, app: BoxedApp, mut shutdown: watch::Receiver<bool>) {
+async fn accept_loop<L: Accept>(
+    listener: L,
+    app: BoxedApp,
+    mut shutdown: watch::Receiver<bool>,
+    verifier: Option<Arc<dyn crate::caller::PeerVerifier>>,
+) {
     use hyper_util::{
         rt::{TokioExecutor, TokioIo},
         server::conn::auto::Builder,
@@ -448,7 +561,26 @@ async fn accept_loop<L: Accept>(listener: L, app: BoxedApp, mut shutdown: watch:
             _ = shutdown.changed() => break,
             accepted = listener.accept_io() => {
                 let Ok(stream) = accepted else { continue };
-                let svc = TowerToHyperService::new(app.clone());
+                // Decided once, from the kernel's view of the peer, before
+                // it sends a byte.
+                let peer = verifier.as_deref().and_then(|v| L::peer(&stream, v));
+                let inner = app.clone();
+                let svc = TowerToHyperService::new(tower::service_fn(
+                    move |mut req: Request<hyper::body::Incoming>| {
+                        if let Some(c) = &peer {
+                            req.extensions_mut().insert(PeerCaller(c.clone()));
+                        }
+                        let mut inner = inner.clone();
+                        async move {
+                            match ServiceExt::<Request<hyper::body::Incoming>>::ready(&mut inner)
+                                .await
+                            {
+                                Ok(s) => s.call(req).await,
+                                Err(e) => match e {},
+                            }
+                        }
+                    },
+                ));
                 conns.spawn(async move {
                     let _ = Builder::new(TokioExecutor::new())
                         .serve_connection_with_upgrades(TokioIo::new(stream), svc)
@@ -497,34 +629,45 @@ fn app(shared: Arc<Shared>, require_token: bool) -> BoxedApp {
         )
         .with_state(shared.clone())
         .merge(grpc);
-    // The Spaces MCP server over streamable HTTP. The listener's own auth
-    // (loopback bearer, or the 0600 socket) already guards it.
+    // The Spaces MCP server over streamable HTTP: the agent surface, the
+    // same tool list and the same approval gate as `cua mcp`. Whoever
+    // reaches it (the loopback bearer, or the 0600 socket) is an agent: it
+    // has no way to ask the user itself, so a gated call is put to the
+    // daemon's approver, and refused when there is none.
     #[cfg(feature = "spaces")]
-    let router = {
-        let mut mcp = cua_spaces::mcp::McpServer::new(shared.runtime.spaces().clone());
-        if let Some(broker) = shared.runtime.session_broker() {
-            mcp = mcp.with_session_broker(broker);
-        }
-        router.merge(cua_spaces::mcp::http::router(mcp, None))
-    };
+    let router = router.merge(cua_spaces::mcp::http::router(shared.http_mcp.clone(), None));
     // tonic-web answers every non-gRPC-Web HTTP/1.1 request with 400, so
     // only gRPC-Web goes through it; native gRPC (h2c), WebSocket upgrades
     // and plain HTTP reach the router directly.
     let web = tower::ServiceBuilder::new()
         .layer(tonic_web::GrpcWebLayer::new())
         .service(router.clone());
-    let token = shared.token.clone();
+    let tokens = (shared.token.clone(), shared.user_token.clone());
+    let enforce = shared.gate.enforce;
     let authed = tower::service_fn(move |req: Request<hyper::body::Incoming>| {
         let mut web = web.clone();
         let mut router = router.clone();
-        let token = token.clone();
+        let tokens = tokens.clone();
         let busy = Busy::new(shared.clone());
         async move {
             let _busy = busy;
-            let req = req.map(AxumBody::new);
-            if require_token && !authorized(&req, &token) {
-                return Ok::<_, std::convert::Infallible>(unauthorized(&req));
+            let mut req = req.map(AxumBody::new);
+            // Who this is: the OS's word about a socket peer, else the
+            // tier of the token presented (see `crate::caller`).
+            let mut caller = req
+                .extensions()
+                .get::<PeerCaller>()
+                .map(|p| p.0.clone())
+                .unwrap_or(Caller::User);
+            if require_token {
+                match authorized(&req, &tokens) {
+                    Some(Tier::User) => {}
+                    Some(Tier::Agent) if enforce => caller = Caller::Agent("loopback".into()),
+                    Some(Tier::Agent) => {}
+                    None => return Ok::<_, std::convert::Infallible>(unauthorized(&req)),
+                }
             }
+            req.extensions_mut().insert(caller);
             let grpc_web = req
                 .headers()
                 .get(http::header::CONTENT_TYPE)
@@ -562,18 +705,35 @@ fn app(shared: Arc<Shared>, require_token: bool) -> BoxedApp {
     tower::util::BoxCloneSyncService::new(svc)
 }
 
-fn authorized(req: &Request<AxumBody>, token: &str) -> bool {
+/// Which of the two loopback tokens a request presented.
+enum Tier {
+    /// The in-memory token handed to verified callers.
+    User,
+    /// The token in the discovery file.
+    Agent,
+}
+
+/// The tier of the bearer token in `req`, `None` when it is neither.
+fn authorized(req: &Request<AxumBody>, (agent, user): &(String, String)) -> Option<Tier> {
     let path = req.uri().path();
     // Ticket-authenticated route (browsers cannot set headers).
     if path == "/v1/bridge/media" {
-        return true;
+        return Some(Tier::Agent);
     }
-    let expected = format!("Bearer {token}");
     let presented = req
         .headers()
         .get(http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
-    presented.is_some_and(|p| constant_time_eq(p.as_bytes(), expected.as_bytes()))
+        .and_then(|v| v.to_str().ok())?;
+    // Both are compared whatever the first says, so timing tells nothing.
+    let is_user = constant_time_eq(presented.as_bytes(), format!("Bearer {user}").as_bytes());
+    let is_agent = constant_time_eq(presented.as_bytes(), format!("Bearer {agent}").as_bytes());
+    if is_user {
+        Some(Tier::User)
+    } else if is_agent {
+        Some(Tier::Agent)
+    } else {
+        None
+    }
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
@@ -610,6 +770,30 @@ pub(crate) struct Svc(pub(crate) Arc<Shared>);
 impl Svc {
     pub(crate) fn rt(&self) -> &Runtime {
         &self.0.runtime
+    }
+
+    /// The loopback token `caller` is handed: the user tier for verified
+    /// callers, the discovery-file (agent) tier for the rest.
+    pub(crate) fn token_for(&self, caller: &Caller) -> String {
+        if self.0.gate.enforce && !caller.is_agent() {
+            self.0.user_token.clone()
+        } else {
+            self.0.token.clone()
+        }
+    }
+
+    /// Lets the caller of `req` do what `tool` does, or refuses.
+    pub(crate) async fn gate<T>(
+        &self,
+        req: &tonic::Request<T>,
+        tool: &str,
+        args: serde_json::Value,
+    ) -> std::result::Result<(), Status> {
+        self.0
+            .gate
+            .check(&crate::gate::caller_of(req), tool, args)
+            .await
+            .map_err(st)
     }
 
     /// The env connection and WebSocket headers a media bridge for `name`
@@ -693,6 +877,38 @@ impl SandboxService for Svc {
         &self,
         req: tonic::Request<pb::CreateSandboxRequest>,
     ) -> R<pb::CreateSandboxResponse> {
+        {
+            let r = req.get_ref();
+            // `location` (or the deprecated `url` of a machine) decides
+            // where it runs; a pool is the cloud's.
+            #[allow(deprecated)]
+            let on = if !r.location.is_empty() {
+                r.location.clone()
+            } else if !r.url.is_empty() {
+                format!("direct:{}", r.url)
+            } else {
+                match pb::SandboxProvider::try_from(r.provider).unwrap_or_default() {
+                    pb::SandboxProvider::Fleet => "cloud".into(),
+                    pb::SandboxProvider::Direct => "direct:".into(),
+                    pb::SandboxProvider::Contrib => "contrib".into(),
+                    pb::SandboxProvider::Local => "local".into(),
+                    pb::SandboxProvider::Unspecified
+                        if !r.fleet_runtime.is_empty()
+                            || r.fleet_replicas > 0
+                            || r.fleet_warm.is_some() =>
+                    {
+                        "cloud".into()
+                    }
+                    pb::SandboxProvider::Unspecified => String::new(),
+                }
+            };
+            self.gate(
+                &req,
+                "sandbox_create",
+                serde_json::json!({"on": on, "pool": r.pool}),
+            )
+            .await?;
+        }
         let r = req.into_inner();
         let non_empty = |s: String| (!s.is_empty()).then_some(s);
         let wait_for = r
@@ -986,16 +1202,15 @@ impl SandboxService for Svc {
         &self,
         req: tonic::Request<pb::GetServiceEndpointRequest>,
     ) -> R<pb::GetServiceEndpointResponse> {
+        let caller = crate::gate::caller_of(&req);
         let r = req.into_inner();
         // Fails with NotFound for an unknown sandbox or service.
         self.rt()
             .service_endpoint(&r.name, &r.service)
             .await
             .map_err(st)?;
-        let (base, token) = {
-            let info = self.0.info.lock().unwrap();
-            (info.loopback_url.clone(), info.loopback_token.clone())
-        };
+        let base = self.0.info.lock().unwrap().loopback_url.clone();
+        let token = self.token_for(&caller);
         if base.is_empty() {
             return Err(st(Error::Unsupported(
                 "the service passthrough needs the daemon's loopback listener".into(),
@@ -1018,6 +1233,7 @@ impl SandboxService for Svc {
         &self,
         req: tonic::Request<pb::GetEnvEndpointRequest>,
     ) -> R<pb::GetEnvEndpointResponse> {
+        let caller = crate::gate::caller_of(&req);
         let r = req.into_inner();
         let a = self
             .rt()
@@ -1025,10 +1241,8 @@ impl SandboxService for Svc {
             .await
             .map_err(st)?;
         let caps = a.client.capabilities().await.map_err(|e| st(e.into()))?;
-        let (base, token) = {
-            let info = self.0.info.lock().unwrap();
-            (info.loopback_url.clone(), info.loopback_token.clone())
-        };
+        let base = self.0.info.lock().unwrap().loopback_url.clone();
+        let token = self.token_for(&caller);
         if base.is_empty() {
             return Err(st(Error::Unsupported(
                 "the env passthrough needs the daemon's loopback listener".into(),
@@ -1113,8 +1327,10 @@ impl RuntimeService for Svc {
 
 #[tonic::async_trait]
 impl DaemonService for Svc {
-    async fn get_info(&self, _: tonic::Request<pb::GetInfoRequest>) -> R<pb::GetInfoResponse> {
-        ok(self.0.info.lock().unwrap().clone())
+    async fn get_info(&self, req: tonic::Request<pb::GetInfoRequest>) -> R<pb::GetInfoResponse> {
+        let mut info = self.0.info.lock().unwrap().clone();
+        info.loopback_token = self.token_for(&crate::gate::caller_of(&req));
+        ok(info)
     }
 
     async fn open_media_bridge(
@@ -1183,7 +1399,13 @@ impl DaemonService for Svc {
         })
     }
 
-    async fn shutdown(&self, _: tonic::Request<pb::ShutdownRequest>) -> R<pb::ShutdownResponse> {
+    async fn shutdown(&self, req: tonic::Request<pb::ShutdownRequest>) -> R<pb::ShutdownResponse> {
+        // The daemon's own controls are the user's.
+        if self.0.gate.restricts(&crate::gate::caller_of(&req)) {
+            return Err(st(Error::ApprovalDenied(
+                "only the Cua app or CLI can stop the daemon".into(),
+            )));
+        }
         let tx = self.0.shutdown.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(100)).await;

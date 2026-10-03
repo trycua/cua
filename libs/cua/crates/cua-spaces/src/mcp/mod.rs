@@ -16,7 +16,9 @@
 /// the user, the in-Space agent bridge as the run's agent).
 mod tools;
 
+pub mod gate;
 pub mod stdio;
+pub mod surface;
 
 #[cfg(feature = "mcp-http")]
 pub mod http;
@@ -167,6 +169,19 @@ pub struct McpServer {
     /// keeps the tool fail-closed (it returns a consent requirement and
     /// delivers nothing).
     broker: Option<Arc<dyn crate::teleport_broker::SessionBroker>>,
+    /// The agent surface (see [`surface`]): the small hand-written tool list,
+    /// the approval gate and the identity the Volume sees. `None` serves the
+    /// full contract (daemon, SDK and in-Space agents).
+    agent: Option<AgentSurface>,
+}
+
+#[derive(Clone)]
+struct AgentSurface {
+    guard: gate::Guard,
+    /// The calling agent's name (from `clientInfo`): the Volume principal.
+    client: Arc<std::sync::Mutex<String>>,
+    /// The Space tools that name none act on (`cua mcp --sandbox`).
+    default_space: String,
 }
 
 impl std::fmt::Debug for McpServer {
@@ -189,6 +204,7 @@ impl McpServer {
             name: SERVER_NAME,
             instructions: INSTRUCTIONS,
             broker: None,
+            agent: None,
         }
     }
 
@@ -201,6 +217,7 @@ impl McpServer {
             name: SERVER_NAME,
             instructions: INSTRUCTIONS,
             broker: None,
+            agent: None,
         }
     }
 
@@ -213,6 +230,32 @@ impl McpServer {
         broker: Arc<dyn crate::teleport_broker::SessionBroker>,
     ) -> Self {
         self.broker = Some(broker);
+        self
+    }
+
+    /// Serves the agent surface: a small tool list ([`surface`]), every call
+    /// checked by `guard` (the user's approval policy), and Volume calls made
+    /// as the calling agent rather than as the user.
+    pub fn with_agent_surface(mut self, guard: gate::Guard) -> Self {
+        self.agent = Some(AgentSurface {
+            guard,
+            client: Arc::new(std::sync::Mutex::new("agent".to_string())),
+            default_space: String::new(),
+        });
+        self.instructions = surface::INSTRUCTIONS;
+        self
+    }
+
+    /// Whether this server serves the agent surface (and so the gate).
+    pub fn has_agent_surface(&self) -> bool {
+        self.agent.is_some()
+    }
+
+    /// The Space an agent-surface call acts on when it names none.
+    pub fn with_default_space(mut self, space: impl Into<String>) -> Self {
+        if let Some(a) = self.agent.as_mut() {
+            a.default_space = space.into();
+        }
         self
     }
 
@@ -255,6 +298,17 @@ impl McpServer {
 
     /// `tools/list` result: the contract tools, then the extensions'.
     pub fn tools_list(&self) -> Value {
+        if self.agent.is_some() {
+            let tools: Vec<Value> = surface::tools()
+                .into_iter()
+                .filter(|t| {
+                    let name = t["name"].as_str().unwrap_or_default();
+                    matches!(name, "more" | "approvals")
+                        || surface::underlying(name).iter().any(|u| self.knows(u))
+                })
+                .collect();
+            return json!({ "tools": tools });
+        }
         let mut tools: Vec<Value> = cua_spaces_contract::tools()
             .into_iter()
             .filter(|t| self.exposes(t.name))
@@ -310,6 +364,194 @@ impl McpServer {
         ToolOutcome::error(&crate::Error::NotFound(format!("tool {name}")))
     }
 
+    /// Whether `space` (an id or a name) is one of the user's own machines.
+    /// Fails closed when the Spaces cannot be listed.
+    async fn is_machine(&self, space: &str) -> bool {
+        if space.is_empty() || space.starts_with("local:") || space.starts_with("cloud:") {
+            return false;
+        }
+        if space.starts_with("relay:") || space.starts_with("direct:") {
+            return true;
+        }
+        let out = self.call("list_spaces", json!({})).await;
+        let Some(rows) = out
+            .first_text()
+            .filter(|_| !out.is_error)
+            .and_then(|t| serde_json::from_str::<Vec<Value>>(t).ok())
+        else {
+            return true;
+        };
+        rows.iter()
+            .find(|r| r["id"] == space || r["name"] == space)
+            .and_then(|r| r["id"].as_str())
+            .is_some_and(|id| id.starts_with("relay:") || id.starts_with("direct:"))
+    }
+
+    /// The id of the Space called `name` (ids are returned as they are).
+    async fn space_id(&self, name: &str) -> Option<String> {
+        let out = self.call("list_spaces", json!({})).await;
+        let rows = out
+            .first_text()
+            .filter(|_| !out.is_error)
+            .and_then(|t| serde_json::from_str::<Vec<Value>>(t).ok())?;
+        rows.iter()
+            .find(|r| r["name"] == name)
+            .and_then(|r| r["id"].as_str().map(str::to_string))
+    }
+
+    /// One `tools/call` on the agent surface: routes a facade tool to the tool
+    /// it stands for, applies the approval gate, then runs it.
+    async fn invoke_agent(&self, agent: &AgentSurface, name: &str, args: Value) -> ToolOutcome {
+        let client = agent.client.lock().unwrap().clone();
+        match name {
+            "approvals" => {
+                let loaded = agent.guard.loaded();
+                let p = loaded.policy;
+                return ToolOutcome::json(&json!({
+                    "notice": loaded.notice,
+                    "ask_for_approval": p.rows().iter().map(|r| json!({"id": r.id, "title": r.title, "needs_approval": r.require})).collect::<Vec<_>>(),
+                    "always_asks": crate::approvals::always().iter().map(|a| a.title).collect::<Vec<_>>(),
+                }));
+            }
+            "more" => return self.more(agent, args).await,
+            _ => {}
+        }
+        let (tool, mut args) = match surface::route(name, &args) {
+            Some(Ok(routed)) => routed,
+            Some(Err(e)) => return ToolOutcome::error(&e),
+            None => (name.to_string(), args),
+        };
+        let tool = cua_spaces_contract::canonical(&tool).to_string();
+        if !self.knows(&tool) {
+            return ToolOutcome::error(&crate::Error::NotFound(format!("tool {name}")));
+        }
+        // The tools that take a sandbox ref get the id of the Space an agent
+        // names by its display name.
+        if let Some(key) = gate::sandbox_key(&tool)
+            && let Some(named) = args[key]
+                .as_str()
+                .filter(|n| !n.is_empty() && !n.contains(':'))
+            && let Some(id) = self.space_id(named).await
+        {
+            args[key] = json!(id);
+        }
+        if let Err((kind, message)) = self.enforce(agent, &client, &tool, &args).await {
+            return ToolOutcome::error_message(kind, message);
+        }
+        if surface::is_volume_data_tool(&tool)
+            && let Some(o) = args.as_object_mut()
+        {
+            // The calling agent sees its own home and `public/`, never the
+            // whole volume as the user, and cannot act as another agent.
+            o.insert("as_agent".into(), json!(client));
+            o.remove("in_space");
+        }
+        self.call_any(&tool, args).await
+    }
+
+    /// The gate for one call of `tool` by the agent `client`: `Err` is the
+    /// tool error to return (`forbidden` or `approval_denied`).
+    async fn enforce(
+        &self,
+        agent: &AgentSurface,
+        client: &str,
+        tool: &str,
+        args: &Value,
+    ) -> Result<(), (&'static str, String)> {
+        agent
+            .guard
+            .enforce(
+                client,
+                gate::classify(tool, args),
+                &agent.default_space,
+                |space| async move { self.is_machine(&space).await },
+            )
+            .await
+    }
+
+    /// Checks the gate for a call without running it (the daemon asks this
+    /// before the operations it serves to callers it does not trust). `Ok`:
+    /// the call may run. Needs the agent surface; without one nothing is
+    /// gated and this is `Ok`.
+    pub async fn check(&self, client: &str, tool: &str, args: &Value) -> Result<(), ToolOutcome> {
+        let Some(agent) = &self.agent else {
+            return Ok(());
+        };
+        let tool = cua_spaces_contract::canonical(tool);
+        self.enforce(agent, client, tool, args)
+            .await
+            .map_err(|(kind, message)| ToolOutcome::error_message(kind, message))
+    }
+
+    /// Runs `name` on the agent surface as the agent `client`, gate and
+    /// Volume identity included: what a call from a caller the daemon does
+    /// not trust goes through.
+    pub async fn call_as_agent(&self, client: &str, name: &str, args: Value) -> ToolOutcome {
+        let Some(agent) = &self.agent else {
+            return ToolOutcome::error_message(
+                "forbidden",
+                "this server has no agent surface to run the call on",
+            );
+        };
+        *agent.client.lock().unwrap() = surface::client_identity(client);
+        self.invoke_agent(agent, name, args).await
+    }
+
+    /// `more`: list the rarely used tools, describe one, or call one.
+    async fn more(&self, agent: &AgentSurface, args: Value) -> ToolOutcome {
+        let name = args["name"].as_str().unwrap_or_default();
+        if name.is_empty() {
+            let mut lines = vec![];
+            for t in surface::ADVANCED {
+                if !self.knows(t) {
+                    continue;
+                }
+                lines.push(format!("{t}: {}", self.summary_of(t)));
+            }
+            return ToolOutcome::text(lines.join("\n"));
+        }
+        if !surface::ADVANCED.contains(&name) || !self.knows(name) {
+            return ToolOutcome::error(&crate::Error::NotFound(format!(
+                "more tool {name}; call more with no name to list them"
+            )));
+        }
+        match args.get("arguments").filter(|a| !a.is_null()) {
+            Some(call) => {
+                // The same checks as any call: the name is only a route.
+                let args = call.clone();
+                Box::pin(self.invoke_agent(agent, name, args)).await
+            }
+            None => ToolOutcome::json(&self.describe(name)),
+        }
+    }
+
+    fn describe(&self, name: &str) -> Value {
+        if let Some(t) = cua_spaces_contract::tool(name) {
+            return json!({"name": t.name, "description": t.mcp_description(), "inputSchema": t.input_schema});
+        }
+        for e in &self.extensions {
+            if let Some(t) = e
+                .tools()
+                .into_iter()
+                .find(|t| t["name"].as_str() == Some(name))
+            {
+                return t;
+            }
+        }
+        json!({"name": name})
+    }
+
+    /// The first sentence of a tool's description.
+    fn summary_of(&self, name: &str) -> String {
+        let d = self.describe(name);
+        let text = d["description"].as_str().unwrap_or_default();
+        let text = text.split("\n\n").next().unwrap_or(text);
+        match text.find(". ") {
+            Some(i) => text[..=i].to_string(),
+            None => text.to_string(),
+        }
+    }
+
     /// Handles one JSON-RPC message (or batch). Returns the response, or
     /// `None` for a notification.
     pub async fn handle(&self, message: Value) -> Option<Value> {
@@ -343,6 +585,10 @@ impl McpServer {
         let id = id?; // notifications get no response
         let result = match method {
             "initialize" => {
+                if let Some(agent) = &self.agent {
+                    let client = params["clientInfo"]["name"].as_str().unwrap_or("agent");
+                    *agent.client.lock().unwrap() = surface::client_identity(client);
+                }
                 let asked = params
                     .get("protocolVersion")
                     .and_then(Value::as_str)
@@ -365,6 +611,19 @@ impl McpServer {
                 let Some(name) = params.get("name").and_then(Value::as_str) else {
                     return Some(error(id, codes::INVALID_PARAMS, "tools/call needs a name"));
                 };
+                let args = params.get("arguments").cloned().unwrap_or(json!({}));
+                if let Some(agent) = &self.agent {
+                    if !surface::is_facade(name) && !self.knows(name) {
+                        return Some(error(
+                            id,
+                            codes::METHOD_NOT_FOUND,
+                            &format!("unknown tool {name}"),
+                        ));
+                    }
+                    return Some(
+                        json!({"jsonrpc": "2.0", "id": id, "result": self.invoke_agent(agent, name, args).await.to_result()}),
+                    );
+                }
                 if !self.knows(name) {
                     return Some(error(
                         id,
@@ -372,7 +631,6 @@ impl McpServer {
                         &format!("unknown tool {name}"),
                     ));
                 }
-                let args = params.get("arguments").cloned().unwrap_or(json!({}));
                 self.call_any(name, args).await.to_result()
             }
             other => {

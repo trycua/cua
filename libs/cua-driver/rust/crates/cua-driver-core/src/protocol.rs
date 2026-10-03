@@ -17,6 +17,16 @@ pub struct Request {
 }
 
 impl Request {
+    /// `tools/list` accepts `{"detail": "full"}` to return every field,
+    /// including output schemas and compatibility tools.
+    pub fn wants_full_tools_list(&self) -> bool {
+        self.params
+            .as_ref()
+            .and_then(|params| params.get("detail"))
+            .and_then(Value::as_str)
+            == Some("full")
+    }
+
     pub fn is_notification(&self) -> bool {
         self.id.is_none()
     }
@@ -363,37 +373,33 @@ pub fn initialize_result() -> Value {
 fn agent_instructions() -> String {
     let (tree_kind, platform_skill_pointer) = if cfg!(target_os = "macos") {
         (
-            "AX (Accessibility)",
-            "MACOS.md (no-foreground contract, AXMenuBar navigation, SkyLight click dispatch)",
+            "AX",
+            "MACOS.md",
         )
     } else if cfg!(target_os = "windows") {
         (
-            "UIA (UI Automation)",
-            "WINDOWS.md (UIA tree, UWP/ApplicationFrameHost hosting, Session 0 isolation)",
+            "UIA",
+            "WINDOWS.md",
         )
     } else {
         (
             "AT-SPI",
-            "LINUX.md (X11/Wayland status, AT-SPI bus, BETA-level support)",
+            "LINUX.md",
         )
     };
 
     format!(
-        r#"cua-driver: cross-platform background computer-use automation.
+        r#"cua-driver: background GUI automation. It has no shell.
 
-For non-GUI outcomes, prefer a client-provided app API/SDK, headless/background interface, CLI, or filesystem operation and read the result back in that semantic domain. This server has no shell.
+Prefer an app API, CLI or file operation for non-GUI outcomes. For GUI outcomes use the narrowest route first: `set_window_frame` plus `list_windows` for geometry, `browser_*` for page content, clipboard tools for the clipboard; then background `element_token` ({tree_kind}), background pixels, foreground delivery. Never advance on transport success alone.
 
-On continuation/recent-work, when available, call `history_status`; if ready, make one bounded initial `history_query` before broad discovery; otherwise continue.
+Per turn: `launch_app`, `get_window_state(pid, window_id)` for fresh tokens, act, then `verify_state(pid, window_id, expect)`. `unknown` is not success; `include_screenshot:true` lets you judge visually.
 
-For app/window outcomes, use the narrowest semantic Cua route first: `set_window_frame` plus `list_windows` readback for geometry, typed browser tools for supported page content, and clipboard tools for clipboard state. Then climb through background `element_token` ({tree_kind}), background pixels, foreground delivery, and desktop fallback. Never advance on transport success alone.
+Sessions: `start_session` is optional. Repeat one short `session` label on every call; unnamed calls use the connection's implicit session. Only `start_session` revives an ended name.
 
-Workflow per turn:
-0. `start_session` is optional. For multi-call work, prefer a short `session` label and repeat it on every call that accepts it. Unnamed calls use the transport's implicit session. Only `start_session` revives an ended name; `end_session` explicitly cleans up.
-1. `launch_app`, then `get_window_state(pid, window_id)` to refresh element indices.
-2. Act with the fresh index.
-3. `verify_state(pid, window_id, expect)` checks bounded postconditions. `unknown` is not success; `include_screenshot:true` lets the multimodal agent judge visual evidence.
+To continue recent work, call `history_status`; if ready, make one bounded `history_query` before broad discovery.
 
-Read `skill://cua-driver/SKILL.md` via `skills/get` or `resources/read`. Hosts control activation/consent. When activated, follow SKILL.md and {platform_skill_pointer}."#
+Read `skill://cua-driver/SKILL.md` (`skills/get` or `resources/read`) and {platform_skill_pointer}."#
     )
 }
 
@@ -486,17 +492,14 @@ mod agent_instruction_tests {
         let instructions = agent_instructions();
         assert!(instructions.contains("verify_state"));
         assert!(instructions.contains("`unknown` is not success"));
-        assert!(instructions.contains("multimodal agent"));
-        assert!(instructions.contains("client-provided app API/SDK"));
-        assert!(instructions.contains("headless/background interface"));
-        assert!(instructions.contains("read the result back in that semantic domain"));
-        assert!(instructions.contains("narrowest semantic Cua route first"));
-        assert!(instructions.contains("`set_window_frame` plus `list_windows` readback"));
-        assert!(instructions.contains("typed browser tools for supported page content"));
-        assert!(instructions.contains("has no shell"));
+        assert!(instructions.contains("judge visually"));
+        assert!(instructions.contains("non-GUI outcomes"));
+        assert!(instructions.contains("narrowest route first"));
+        assert!(instructions.contains("`set_window_frame` plus `list_windows`"));
+        assert!(instructions.contains("`browser_*` for page content"));
+        assert!(instructions.contains("no shell"));
         assert!(
-            instructions.find("client-provided app API/SDK")
-                < instructions.find("background `element_token`"),
+            instructions.find("non-GUI outcomes") < instructions.find("background `element_token`"),
             "semantic/headless operations must precede native UI dispatch"
         );
         assert!(
@@ -513,11 +516,9 @@ mod agent_instruction_tests {
             .expect("initialize result should carry agent instructions");
 
         assert!(instructions.contains("`start_session` is optional"));
-        assert!(instructions.contains("prefer a short `session` label"));
-        assert!(instructions.contains("repeat it on every call that accepts it"));
-        assert!(instructions.contains("transport's implicit session"));
+        assert!(instructions.contains("Repeat one short `session` label on every call"));
+        assert!(instructions.contains("implicit session"));
         assert!(instructions.contains("Only `start_session` revives an ended name"));
-        assert!(instructions.contains("`end_session` explicitly cleans up"));
         assert!(
             !instructions.contains("`start_session(session)` once"),
             "initialize instructions must not require explicit session setup"
@@ -531,16 +532,13 @@ mod agent_instruction_tests {
             .expect("initialize result should carry agent instructions")
             .to_owned();
 
-        assert!(instructions.contains("continuation/recent-work"));
+        assert!(instructions.contains("continue recent work"));
         let status = instructions.find("call `history_status`").unwrap();
-        let bounded_query = instructions
-            .find("one bounded initial `history_query`")
-            .unwrap();
+        let bounded_query = instructions.find("one bounded `history_query`").unwrap();
         let discovery = instructions.find("broad discovery").unwrap();
         assert!(status < bounded_query);
         assert!(bounded_query < discovery);
         assert!(instructions.contains("if ready"));
-        assert!(instructions.contains("otherwise continue"));
         assert!(instructions.split_whitespace().count() <= 200);
     }
 }

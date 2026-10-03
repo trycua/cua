@@ -35,25 +35,16 @@ const VERIFY_STABLE: Duration = Duration::from_millis(100);
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "bring_to_front".into(),
-        description: "Persistently activate an app and leave it in the foreground. Most input \
-             does not need this; use it only for a focus-proxy surface that must remain \
-             foreground across interactions. With window_id, success means the exact ordinary \
-             macOS window was independently verified as the frontmost process's focused window \
-             and the front window of that process on the display it sits on. \
-             `exact_window_effect.frontmost_ordinary` additionally reports whether it is first \
-             in the global WindowServer layer-0 order; another application (an always-raised \
-             utility window, another display's front window) can hold that spot without the \
-             requested window losing keyboard focus, so it is reported and not required. \
-             Request acceptance alone is reported as a partial \
-             result, never as activation. This DOES steal foreground and does NOT restore the \
-             previously frontmost application."
+        description: "Activate an app and leave it frontmost (steals focus, does not restore). \
+            Most input does not need this. With window_id, success means that window is verified \
+            focused; a merely accepted request is reported as partial."
             .into(),
         input_schema: json!({
             "type": "object",
             "required": ["pid"],
             "properties": {
-                "pid": { "type": "integer", "description": "Process ID of the app to activate." },
-                "window_id": { "type": "integer", "description": "CGWindowID to verify as the focused, frontmost window. Omit to activate the app only." }
+                "pid": { "type": "integer" },
+                "window_id": { "type": "integer", "description": "Window to verify as focused; omit to activate the app only." }
             },
             "additionalProperties": false,
         }),

@@ -74,7 +74,14 @@ async fn world(t: Topology) -> (World, Arc<Cua>) {
                 discovery_path: Some(dirs.path().join("daemon.json")),
                 bridge_ticket_ttl: Duration::from_secs(30),
             };
-            let h = server::start(runtime, cfg).await.unwrap();
+            // This suite is about transports, not about who may ask: a client
+            // by URL and token would otherwise be an agent to the gate (see
+            // cua-daemon's caller_gate tests).
+            let gating = server::GateOptions {
+                enforce_callers: false,
+                ..Default::default()
+            };
+            let h = server::start_with(runtime, cfg, gating).await.unwrap();
             let cua = match t {
                 Topology::DaemonSocket => Cua::connect(
                     Some(h.socket_path.as_ref().unwrap().display().to_string()),

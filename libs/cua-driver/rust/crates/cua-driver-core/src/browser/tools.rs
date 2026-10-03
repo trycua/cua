@@ -81,31 +81,28 @@ fn schema_delivery_mode() -> Value {
         "type": "string",
         "enum": ["background", "foreground"],
         "default": "background",
-        "description": "background (default) refuses trusted input where it would activate the browser window (Linux Chromium). foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox)."
+        "description": "background (default) refuses input that would activate the browser window (Linux Chromium); foreground accepts that."
     })
 }
 
 fn schema_target_id() -> Value {
     json!({
         "type": "string",
-        "description": "Opaque browser target id minted by get_browser_state \
-            (session-scoped; never a CDP id)."
+        "description": "From get_browser_state."
     })
 }
 
 fn schema_tab_id() -> Value {
     json!({
         "type": "string",
-        "description": "Opaque tab id from get_browser_state (session-scoped)."
+        "description": "From get_browser_state."
     })
 }
 
 fn schema_ref() -> Value {
     json!({
         "type": "string",
-        "description": "Page element ref in the p<snapshot>:<index> namespace from \
-            get_browser_state. Refs are invalidated by navigation and by newer \
-            snapshots of the same tab."
+        "description": "Page ref from get_browser_state; invalid after navigation or a newer snapshot."
     })
 }
 
@@ -267,17 +264,11 @@ impl GetBrowserStateTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         let def = ToolDef {
             name: "get_browser_state".into(),
-            description: "Read-only browser inspection. Mode 1 (bind): pass pid + \
-                window_id of a native browser window to classify it, correlate it to \
-                a CDP target (exact-or-refuse), and mint a session-scoped target id \
-                plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The \
-                dom_refs_v1 compatibility format returns composed DOM refs. \
-                semantic_v2 joins accessibility, DOM, layout, and viewport state; \
-                ranks visible content before retained/offscreen state; and returns a \
-                semantic outline, typed action refs, content refs, scoped reads, and \
-                opaque continuation. Never performs setup — a missing \
-                endpoint is a structured browser_requires_setup refusal pointing at \
-                browser_prepare."
+            description: "Read-only browser inspection. Bind: pass pid + window_id of a native \
+                browser window to get a target_id and tab_ids. Snapshot: pass target_id + \
+                tab_id; snapshot_format semantic_v2 returns an outline with action refs, \
+                dom_refs_v1 (default) returns DOM refs. A missing DevTools endpoint is refused \
+                with browser_requires_setup; call browser_prepare."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -290,24 +281,24 @@ impl GetBrowserStateTool {
                     "snapshot_format": {
                         "type": "string",
                         "enum": ["dom_refs_v1", "semantic_v2"],
-                        "description": "Versioned snapshot contract. dom_refs_v1 remains the compatibility default."
+                        "description": "Default dom_refs_v1."
                     },
                     "scope_ref": {
                         "type": "string",
-                        "description": "Current semantic/content ref whose subtree should be observed."
+                        "description": "Observe only this ref's subtree."
                     },
                     "query": {
                         "type": "string",
-                        "description": "Read-only semantic match over role, accessible name, and visible text."
+                        "description": "Match role, name and visible text."
                     },
                     "continuation": {
                         "type": "string",
-                        "description": "Opaque continuation minted by an earlier semantic_v2 response."
+                        "description": "Continuation from an earlier semantic_v2 response."
                     },
                     "include_screenshot": {
                         "type": "boolean",
                         "default": false,
-                        "description": "Capture the exact tab viewport as PNG through CDP without selecting the tab or foregrounding its native window. The request refuses if capture cannot be completed."
+                        "description": "Also capture the tab viewport PNG without foregrounding."
                     },
                 },
                 "additionalProperties": true
@@ -607,48 +598,35 @@ impl BrowserPrepareTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         let def = ToolDef {
             name: "browser_prepare".into(),
-            description: "Explicitly prepare an owned DevTools endpoint for a browser. \
-                pid is required for an existing process or existing-profile attachment, \
-                and optional only for allow_launch=true with an isolated profile. Existing \
-                endpoints are detected without side effects. Acting setup \
-                for an isolated profile follows the runtime permission mode and optional \
-                capability manifest. It requires allow_launch=true, launches a separate browser, and never \
-                copies, modifies, or terminates the requested user profile. Without pid, only a \
-                platform-attested system Chrome/Edge installation (or a root-owned package \
-                payload on Linux) is eligible; redirects and user-controlled locations fail closed. Existing-profile \
-                attachment is explicit and follows the runtime's immutable permission mode: \
-                standard requires an explicit --grant existing-profile launch grant or an \
-                embedding authorization host, bounded requires a launch-approved exact resource \
-                manifest, and unrestricted requires explicit trusted startup risk acceptance. \
-                Ordinary MCP transport approval never proves profile authorization. On proven platforms, an \
-                authorized request also permits one bounded exact-window setup: \
-                open the recognized browser product's fixed remote-debugging page, toggle \
-                its uniquely matched per-instance checkbox, prove the PID-owned loopback \
-                endpoint, and close the temporary tab. Every visible effect is reported; \
-                ambiguity is refused."
+            description: "Prepare a DevTools endpoint for a browser. Existing endpoints are \
+                detected without side effects. With allow_launch=true and an isolated `profile` \
+                it launches a separate browser (pid optional); it never copies, modifies or \
+                terminates a user profile. `strategy.kind=existing_profile` (pid + window_id) \
+                attaches to the user's running profile and needs explicit profile authorization \
+                from the runtime permission mode; transport approval alone is not enough."
                 .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "Browser process id to prepare. Required except for a driver-owned isolated_new/isolated_named launch with allow_launch=true." },
-                    "window_id": { "type": "integer", "description": "Exact native window approval anchor; required for strategy.kind=existing_profile." },
+                    "pid": { "type": "integer", "description": "Browser process id; optional only for an isolated launch." },
+                    "window_id": { "type": "integer", "description": "Native window ID; required for existing_profile." },
                     "allow_launch": {
                         "type": "boolean",
-                        "description": "Allow a separate driver-owned isolated Chromium process to be launched (default false)."
+                        "description": "Allow launching a separate isolated Chromium (default false)."
                     },
                     "profile": {
                         "type": "object",
-                        "description": "Driver-owned isolated Chromium profile to launch with allow_launch=true. mode=isolated_new creates a fresh throwaway profile; mode=isolated_named reuses the named driver-owned profile. Never an existing user profile.",
+                        "description": "Isolated profile to launch: isolated_new is throwaway, isolated_named reuses a driver-owned one.",
                         "properties": {
                             "mode": { "type": "string", "enum": ["isolated_new", "isolated_named"] },
-                            "name": { "type": "string", "description": "Required only for isolated_named; 1-64 path-safe ASCII characters." }
+                            "name": { "type": "string", "description": "For isolated_named: 1-64 path-safe ASCII characters." }
                         },
                         "required": ["mode"],
                         "additionalProperties": false
                     },
                     "strategy": {
                         "type": "object",
-                        "description": "Attach to an already-running browser instead of launching one. kind=existing_profile attaches to the user's running profile at pid/window_id and requires explicit profile authorization.",
+                        "description": "Attach to a running browser instead of launching one.",
                         "properties": {
                             "kind": { "type": "string", "enum": ["existing_profile"] }
                         },
@@ -767,16 +745,15 @@ impl BrowserNavigateTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         let def = ToolDef {
             name: "browser_navigate".into(),
-            description: "Navigate one tab of an exactly-bound browser target to a \
-                new URL (http/https/about only). Refused for heuristic bindings. \
-                Navigation invalidates all p<snapshot>:<index> refs for the tab."
+            description: "Navigate a bound tab to an http, https or about URL. Invalidates the \
+                tab's refs."
                 .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "target_id": schema_target_id(),
                     "tab_id": schema_tab_id(),
-                    "url": { "type": "string", "description": "Destination URL (http:, https:, or about:)." },
+                    "url": { "type": "string", "description": "Destination URL." },
                     "session": schema_session(),
                 },
                 "required": ["target_id", "tab_id", "url"],
@@ -902,17 +879,9 @@ impl BrowserClickTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         let def = ToolDef {
             name: "browser_click".into(),
-            description: "Click a page element (by ref) or viewport coordinates in an \
-                exactly-bound tab. Default route is trusted hardware-like input \
-                (Input.dispatchMouseEvent), and refuses where that route cannot \
-                preserve standalone-browser background posture unless \
-                delivery_mode=\"foreground\" accepts that the browser window may \
-                activate (Linux Chromium; for example a browser inside a sandbox). \
-                input_route=\"dom_event\" (synthetic \
-                el.click(), ref required) is used only when explicitly requested; \
-                it proves dispatch, not control activation, because trust-gated \
-                controls may ignore synthetic events. \
-                Refused for heuristic bindings."
+            description: "Click a page ref or viewport x,y in a bound tab with trusted CDP input. \
+                input_route=dom_event sends a synthetic click (ref required) that proves \
+                dispatch, not activation."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -921,18 +890,13 @@ impl BrowserClickTool {
                     "tab_id": schema_tab_id(),
                     "session": schema_session(),
                     "ref": schema_ref(),
-                    "x": { "type": "number", "description": "Viewport x (CSS px) — alternative to ref." },
-                    "y": { "type": "number", "description": "Viewport y (CSS px) — alternative to ref." },
+                    "x": { "type": "number", "description": "Viewport x in CSS px, instead of ref." },
+                    "y": { "type": "number", "description": "Viewport y in CSS px." },
                     "delivery_mode": schema_delivery_mode(),
                     "input_route": {
                         "type": "string",
                         "enum": ["trusted", "dom_event"],
-                        "description": "\"trusted\" (default): Input.dispatchMouseEvent. \
-                            It refuses rather than foregrounding a standalone browser. \
-                            \"dom_event\": synthetic full-background DOM click, only \
-                            when explicitly requested. Dispatch does not prove the \
-                            control activated; refresh page state and verify the \
-                            expected postcondition."
+                        "description": "trusted (default) or a synthetic dom_event click; verify the result."
                     },
                 },
                 "required": ["target_id", "tab_id"],
@@ -1520,13 +1484,8 @@ impl BrowserTypeTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         let def = ToolDef {
             name: "browser_type".into(),
-            description: "Type text into an exactly-bound tab via the Input domain. \
-                mode=\"insert_text\" (default) uses Input.insertText; \
-                mode=\"keystrokes\" dispatches per-character key events. Both insert \
-                at the caret, so typing into a field that already holds text appends \
-                to it; pass replace=true to set the field instead, or to clear it by \
-                typing an empty string. Pass a ref to an editable element from the \
-                latest snapshot. A ref is required; heuristic bindings are refused."
+            description: "Type text into an editable ref of a bound tab. Inserts at the caret \
+                (appends); replace=true replaces the content, and empty text clears it."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -1539,17 +1498,11 @@ impl BrowserTypeTool {
                     "mode": {
                         "type": "string",
                         "enum": ["insert_text", "keystrokes"],
-                        "description": "insert_text (default): bulk Input.insertText. \
-                            keystrokes: per-character Input.dispatchKeyEvent."
+                        "description": "insert_text (default) or per-character keystrokes."
                     },
                     "replace": {
                         "type": "boolean",
-                        "description": "false (default): insert at the caret, appending \
-                            to whatever the field already holds. true: select the \
-                            element's whole content first so the text replaces it — \
-                            with an empty text this clears the field. Replacement goes \
-                            through the selection, so beforeinput/input still fire and \
-                            framework state stays consistent."
+                        "description": "Replace the field content instead of appending."
                     },
                 },
                 "required": ["target_id", "tab_id", "ref", "text"],
@@ -2104,21 +2057,21 @@ impl BrowserDialogTool {
         Self {
             def: ToolDef {
                 name: "browser_dialog".into(),
-                description: "Inspect or resolve a page-owned JavaScript alert, confirm, prompt, or beforeunload dialog on one exactly-bound tab. This never handles browser permission UI, extension UI, native dialogs, or file pickers. Inspect returns an opaque dialog_id; accept/dismiss require that exact current id. Resolution defaults to background delivery; Linux callers must explicitly request foreground delivery because Chromium's native modal cannot be resolved there without changing foreground posture.".into(),
+                description: "Inspect, accept or dismiss a page JavaScript alert, confirm, prompt or beforeunload dialog (not permission, extension or native dialogs). Inspect returns the dialog_id that accept/dismiss require.".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
                         "target_id": schema_target_id(),
                         "tab_id": schema_tab_id(),
                         "session": schema_session(),
-                        "action": { "type": "string", "enum": ["inspect", "accept", "dismiss"], "description": "inspect returns the current dialog and its dialog_id; accept or dismiss resolves that exact dialog." },
-                        "dialog_id": { "type": "string", "description": "Opaque current dialog generation returned by action=inspect." },
-                        "prompt_text": { "type": "string", "description": "Sensitive response text, valid only when accepting a prompt dialog." },
+                        "action": { "type": "string", "enum": ["inspect", "accept", "dismiss"], "description": "inspect, then accept or dismiss that dialog_id." },
+                        "dialog_id": { "type": "string", "description": "From action=inspect." },
+                        "prompt_text": { "type": "string", "description": "Response text when accepting a prompt (sensitive)." },
                         "delivery_mode": {
                             "type": "string",
                             "enum": ["background", "foreground"],
                             "default": "background",
-                            "description": "Requested foreground posture for accept/dismiss. Linux Chromium requires foreground; inspect is read-only."
+                            "description": "Linux Chromium requires foreground for accept/dismiss."
                         }
                     },
                     "required": ["target_id", "tab_id", "action"],
@@ -2318,7 +2271,7 @@ impl BrowserSetInputFilesTool {
         Self {
             def: ToolDef {
                 name: "browser_set_input_files".into(),
-                description: "Assign one or more explicit absolute local files to an exact live <input type=file> ref through CDP. This bypasses native file pickers, rejects symlinks and non-regular files, and never returns local paths.".into(),
+                description: "Assign local files to an <input type=file> ref through CDP, bypassing the file picker. Rejects symlinks and non-regular files.".into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -2328,8 +2281,8 @@ impl BrowserSetInputFilesTool {
                         "ref": schema_ref(),
                         "files": {
                             "type": "array", "minItems": 1, "maxItems": 32,
-                            "description": "Absolute paths of 1 to 32 local regular files to assign to the input.",
-                            "items": { "type": "string", "description": "Absolute path to one local regular file." }
+                            "description": "1-32 absolute file paths.",
+                            "items": { "type": "string" }
                         }
                     },
                     "required": ["target_id", "tab_id", "ref", "files"],

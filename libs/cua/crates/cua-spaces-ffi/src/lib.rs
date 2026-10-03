@@ -20,12 +20,14 @@
 
 mod app_core;
 mod app_core_types;
+mod approvals;
 pub mod media_decode;
 mod teleport;
 mod teleport_app;
 
 pub use app_core::*;
 pub use app_core_types::*;
+pub use approvals::*;
 pub use teleport::*;
 pub use teleport_app::*;
 

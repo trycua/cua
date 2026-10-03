@@ -403,6 +403,31 @@ struct SnapshotTests {
         try assertSnapshot(SettingsView(model: m), "settings", size: CGSize(width: 520, height: 640))
     }
 
+    /// Settings → Permissions on a throwaway policy: the defaults, then
+    /// with a row turned off (the fake approval accepts).
+    @Test func permissions() async throws {
+        let m = ApprovalsTests().model()
+        try assertSnapshot(PermissionsSettingsView(model: m), "permissions", size: CGSize(width: 520, height: 880))
+        await m.set(m.view.rows[0], to: false)
+        try assertSnapshot(PermissionsSettingsView(model: m), "permissions-off", size: CGSize(width: 520, height: 880))
+    }
+
+    /// Settings → Permissions after the settings file was edited outside Cua:
+    /// the notice, with every row asking.
+    @Test func permissionsTampered() async throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cua-approvals-snap-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let m = ApprovalsModel.fixture(home: home.path)
+        await m.set(m.view.rows[0], to: false)
+        let file = home.appendingPathComponent("approvals.json")
+        let text = try String(contentsOf: file, encoding: .utf8)
+        try text.replacingOccurrences(of: "\"host_files\": true", with: "\"host_files\": false")
+            .write(to: file, atomically: true, encoding: .utf8)
+        m.reload()
+        try assertSnapshot(PermissionsSettingsView(model: m), "permissions-notice", size: CGSize(width: 520, height: 940))
+    }
+
     /// Launch at login waiting for approval in System Settings (a fake
     /// login item; the Mac's own is never touched).
     @Test func settingsLoginItemApproval() async throws {

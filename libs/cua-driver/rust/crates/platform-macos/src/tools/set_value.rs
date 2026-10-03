@@ -46,34 +46,24 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "set_value".into(),
         description:
-            "Set a value on a UI element. Two modes depending on element role:\n\
-             \n\
-             - **AXPopUpButton / select dropdown**: finds the child option whose \
-             title or value matches `value` (case-insensitive) and AXPresses it \
-             directly — the native macOS popup menu is never opened, so focus \
-             is never stolen. Use this for HTML <select> elements in Safari or \
-             any native NSPopUpButton.\n\
-             \n\
-             - **All other elements**: writes AXValue directly (sliders, steppers, \
-             date pickers, native text fields that expose settable AXValue).\n\
-             \n\
-             For free-form text entry into web inputs, prefer `type_text_chars` \
-             which synthesises key events — AXValue writes are ignored by WebKit."
+            "Set an element's value: picks the matching option of a popup/select (no menu opens, \
+             no focus steal) or writes AXValue (sliders, steppers, native fields). For web text \
+             inputs use type_text_chars; WebKit ignores AXValue writes."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["pid", "value"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid": { "type": "integer", "description": "Target process ID." },
+                "session": { "type": "string", "description": "Session label." },
+                "pid": { "type": "integer" },
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID. Omit when element_token is supplied (the token carries it)."
+                    "description": "Window ID. Omit with element_token."
                 },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "value": {
                     "type": "string",
-                    "description": "New value. AX will coerce to the element's native type."
+                    "description": "New value (option title for popups)."
                 }
             },
             "additionalProperties": false

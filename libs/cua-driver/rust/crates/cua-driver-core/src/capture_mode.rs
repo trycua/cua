@@ -24,12 +24,7 @@ pub fn capture_mode_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "string",
         "enum": ["ax", "vision"],
-        "description": "DEPRECATED and ignored. get_window_state always returns \
-            BOTH the element tree and a screenshot — ground on both. The modality \
-            is chosen at action time by how you address the target: an element ax \
-            action (element_token) or an element px action (x,y). \
-            Any value (including the old \"som\"/\"screenshot\" aliases) is \
-            accepted but has no effect."
+        "description": "Deprecated; ignored."
     })
 }
 
@@ -46,7 +41,6 @@ mod tests {
         assert!(modes.iter().any(|m| m == "vision"));
         // Description must signal it's a no-op so nobody relies on it.
         let desc = schema["description"].as_str().unwrap();
-        assert!(desc.contains("DEPRECATED"), "must flag deprecation: {desc}");
-        assert!(desc.contains("both"), "must say both are returned: {desc}");
+        assert!(desc.contains("Deprecated"), "must flag deprecation: {desc}");
     }
 }

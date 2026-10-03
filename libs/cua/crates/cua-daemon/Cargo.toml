@@ -79,7 +79,11 @@ tempfile = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
 cua-host = { workspace = true, features = ["testing"] }
 cua-spaces = { path = "../cua-spaces", features = ["mcp-client"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }

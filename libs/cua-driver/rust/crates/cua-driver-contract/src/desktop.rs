@@ -97,7 +97,7 @@ fn get_window_state() -> ToolContract {
 fn clipboard_read() -> ToolContract {
     let mut contract = contract::<ClipboardReadInput, ClipboardReadOutput>(
         "clipboard_read",
-        "List available system clipboard types and optionally return privacy-sensitive plain text. Clipboard content is never retained in telemetry.",
+        "List clipboard types and optionally return its plain text (sensitive).",
         &["clipboard.read", "clipboard.types"],
         ToolAnnotations {
             read_only: true,
@@ -114,7 +114,7 @@ fn clipboard_read() -> ToolContract {
 fn clipboard_write() -> ToolContract {
     let mut contract = contract::<ClipboardWriteInput, ClipboardWriteOutput>(
         "clipboard_write",
-        "Replace the system clipboard with exactly one value: plain text, an image from an absolute local path, or a file URL from an absolute local path. Returns the available types for read-back before paste.",
+        "Replace the clipboard with exactly one of text, an image path or a file path. Returns the resulting types for read-back.",
         &["clipboard.write", "clipboard.write.text", "clipboard.write.image", "clipboard.write.file_url", "clipboard.types"],
         ToolAnnotations {
             read_only: false,
@@ -155,7 +155,7 @@ fn contract<I: ToolInput, O: ToolOutput>(
 fn get_desktop_state() -> ToolContract {
     contract::<GetDesktopStateInput, DesktopStateOutput>(
         "get_desktop_state",
-        "Capture the complete primary display at native resolution for a desktop-scope GUI loop.",
+        "Screenshot the primary display (desktop-scope GUI loop).",
         &["screen.capture", "screen.dimensions"],
         ToolAnnotations {
             read_only: true,
@@ -170,7 +170,7 @@ fn get_desktop_state() -> ToolContract {
 fn get_screen_size() -> ToolContract {
     contract::<GetScreenSizeInput, ScreenSizeOutput>(
         "get_screen_size",
-        "Return the primary display dimensions and scale factor in the platform's desktop coordinate space.",
+        "Primary display size and scale factor.",
         &["screen.dimensions"],
         ToolAnnotations {
             read_only: true,
@@ -215,7 +215,7 @@ fn move_cursor() -> ToolContract {
 fn set_window_frame() -> ToolContract {
     contract::<SetWindowFrameInput, ActionResult>(
         "set_window_frame",
-        "Set one exact top-level window's frame in the desktop-coordinate space reported by list_windows and verify the resulting geometry through an independent readback.",
+        "Set a top-level window's frame in list_windows coordinates and verify it by readback.",
         &["window.frame.set"],
         ToolAnnotations {
             read_only: false,
@@ -230,7 +230,7 @@ fn set_window_frame() -> ToolContract {
 fn invoke_menu() -> ToolContract {
     contract::<InvokeMenuInput, ActionResult>(
         "invoke_menu",
-        "Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. Missing, ambiguous, disabled, or structurally mismatched segments fail closed; this tool never falls back to pixels.",
+        "Invoke an application menu item by exact path (e.g. File > Save As...) through accessibility; fails closed on a missing, ambiguous or disabled segment, never falls back to pixels.",
         &["menu.path.invoke", "accessibility.menu.native"],
         ToolAnnotations {
             read_only: false,
@@ -245,7 +245,7 @@ fn invoke_menu() -> ToolContract {
 fn click() -> ToolContract {
     contract::<ClickInput, ActionResult>(
         "click",
-        "Click coordinates or a snapshot-bound element with an explicit target and delivery mode.",
+        "Click coordinates or a snapshot element, with an explicit target and delivery mode.",
         &[
             "input.pointer.click",
             "input.pointer.click.left",

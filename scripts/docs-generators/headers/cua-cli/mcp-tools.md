@@ -1,1 +1,1 @@
-`cua mcp` (and `cua daemon mcp`, the same server backed by the cua daemon) serves these tools over stdio. See [MCP server](/cua-cli/guides/mcp-server) for client setup.
+`cua mcp` (and `cua daemon mcp`, the same server backed by the cua daemon) serves over stdio a short list of tools, most with an `action` (see [MCP server](/cua-cli/guides/mcp-server#what-the-agent-sees)). Every tool below still works when called by name, listed or not; the actions that reach your machines, cloud account or files ask you first. See [MCP server](/cua-cli/guides/mcp-server) for client setup.

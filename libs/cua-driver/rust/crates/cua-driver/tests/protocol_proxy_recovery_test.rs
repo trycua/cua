@@ -254,7 +254,7 @@ impl Client {
     }
 
     fn call(&mut self, name: &str, arguments: Value) {
-        let inventory = self.request("tools/list", json!({}));
+        let inventory = self.request("tools/list", json!({"detail": "full"}));
         let schema = inventory["result"]["tools"]
             .as_array()
             .expect("advertised tools")

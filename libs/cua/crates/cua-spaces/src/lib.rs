@@ -57,6 +57,7 @@
 #![recursion_limit = "256"]
 
 pub mod app_icon;
+pub mod approvals;
 /// A hash-chained audit log (the share audit).
 pub mod audit;
 #[cfg(feature = "mcp-client")]

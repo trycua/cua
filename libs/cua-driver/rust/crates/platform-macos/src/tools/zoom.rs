@@ -18,24 +18,19 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "zoom".into(),
-        description: "Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot \
-            pixel coordinates, with 20% padding added on each side. The output image is at most \
-            500 px wide.\n\n\
-            After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates \
-            back to full-window space. Coordinate actions return `screenshot_context_missing` \
-            when no current snapshot contains a screenshot owned by this session. \
-            `from_zoom` actions return `zoom_context_missing` when the zoom was never created or \
-            was replaced; call `get_window_state`, then `zoom`, again on the same connection.".into(),
+        description: "Capture a JPEG crop (max 500 px wide, 20% padding) of window region \
+            (x1,y1)-(x2,y2) in screenshot pixels. Then pass `from_zoom: true` to click/drag to \
+            use coordinates read off the crop.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["window_id", "x1", "y1", "x2", "y2"],
             "properties": {
-                "window_id": { "type": "integer", "description": "CGWindowID from list_windows." },
-                "pid":       { "type": "integer", "description": "Optional target pid. When omitted, the driver resolves the unique current snapshot for this session and window." },
-                "x1": { "type": "number", "description": "Left edge of region in screenshot pixels." },
-                "y1": { "type": "number", "description": "Top edge of region in screenshot pixels." },
-                "x2": { "type": "number", "description": "Right edge of region in screenshot pixels." },
-                "y2": { "type": "number", "description": "Bottom edge of region in screenshot pixels." }
+                "window_id": { "type": "integer", "description": "Window ID from list_windows." },
+                "pid":       { "type": "integer", "description": "Target pid; inferred from the current snapshot if omitted." },
+                "x1": { "type": "number", "description": "Left edge." },
+                "y1": { "type": "number", "description": "Top edge." },
+                "x2": { "type": "number", "description": "Right edge." },
+                "y2": { "type": "number", "description": "Bottom edge." }
             },
             "additionalProperties": false
         }),

@@ -1,0 +1,667 @@
+//! The approval gate of the agent surface.
+//!
+//! [`classify`] says which [`Cap`] a tool call exercises (or that it is not
+//! for agents at all); [`Guard`] asks the user ([`Approver`], Touch ID)
+//! when the [`Policy`] in the cua home says that capability needs it. The
+//! policy is read on every call, so a change in Settings applies at once.
+
+use crate::approvals::{Approver, Cap, Loaded, Policy, PolicySeal};
+use serde_json::Value;
+use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+
+/// What a call needs before it runs.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Need {
+    /// The user's approval for `Cap`, shown as `String`.
+    Cap(Cap, String),
+    /// The user's approval for `Cap` when this Space is one of the user's
+    /// own machines (`relay:` / `direct:`).
+    OnMachine {
+        /// The Space argument.
+        space: String,
+        /// What the call does, for the prompt.
+        what: String,
+    },
+    /// Never available to an agent.
+    Forbidden(String),
+}
+
+fn str_of<'a>(a: &'a Value, k: &str) -> &'a str {
+    a.get(k).and_then(Value::as_str).unwrap_or("")
+}
+
+fn non_empty(a: &Value, k: &str) -> bool {
+    match a.get(k) {
+        Some(Value::Array(v)) => !v.is_empty(),
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(Value::Null) | None => false,
+        Some(_) => true,
+    }
+}
+
+/// The location Spaces are created in when a call names none: the user's
+/// `default.on` setting (`local` unless they changed it).
+fn default_location() -> String {
+    cua_sandbox_core::settings::Settings::load()
+        .ok()
+        .and_then(|s| s.default_on().ok())
+        .map(|(on, _)| on.to_string())
+        .unwrap_or_default()
+}
+
+/// Where a `create_space` / `sandbox_create` call puts the new Space.
+fn placement(a: &Value, default_on: &dyn Fn() -> String) -> Option<Cap> {
+    if non_empty(a, "pool") {
+        return Some(Cap::Cloud);
+    }
+    let named = str_of(a, "on").trim();
+    let default;
+    let on = if named.is_empty() {
+        default = default_on();
+        default.as_str()
+    } else {
+        named
+    };
+    match on {
+        "" | "local" => None,
+        "cloud" | "aws" | "gcp" | "modal" => Some(Cap::Cloud),
+        o if o.starts_with("cloud:") => Some(Cap::Cloud),
+        // `host:<machine>`, a machine's name, or `direct:`: the user's own.
+        _ => Some(Cap::RemoteExec),
+    }
+}
+
+/// The argument that names the sandbox for the tools that take a sandbox ref
+/// (`sandbox` for the computer tools, `name` for the sandbox tools): they
+/// know sandbox refs, not Space names. `None` for the tools that take
+/// `space` (the runtime resolves names itself).
+pub fn sandbox_key(tool: &str) -> Option<&'static str> {
+    if tool.starts_with("computer_") && !tool.starts_with("computer_access_") {
+        Some("sandbox")
+    } else if (tool.starts_with("sandbox_") && tool != "sandbox_create" && tool != "sandbox_list")
+        || tool == "teleport_browser_session"
+    {
+        Some("name")
+    } else {
+        None
+    }
+}
+
+/// The Space argument of a tool.
+fn space_of(tool: &str, a: &Value) -> String {
+    str_of(a, sandbox_key(tool).unwrap_or("space")).to_string()
+}
+
+/// What `tool(args)` needs. Empty: it is free.
+pub fn classify(tool: &str, a: &Value) -> Vec<Need> {
+    classify_with(tool, a, &default_location)
+}
+
+/// [`classify`] with the default location given (the user's `default.on`).
+pub fn classify_with(tool: &str, a: &Value, default_on: &dyn Fn() -> String) -> Vec<Need> {
+    let mut out = vec![];
+    let on_machine = |out: &mut Vec<Need>, what: &str| {
+        out.push(Need::OnMachine {
+            space: space_of(tool, a),
+            what: what.to_string(),
+        })
+    };
+    match tool {
+        t if crate::mcp::surface::USER_ONLY.contains(&t) => out.push(Need::Forbidden(format!(
+            "{t} is for you, not agents: approve and grant access in the Cua app."
+        ))),
+        "cloud_connect" => out.push(Need::Cap(Cap::Cloud, "connect a cloud account".into())),
+        "cloud_sweep" => out.push(Need::Cap(
+            Cap::Cloud,
+            "delete Cua resources in your cloud".into(),
+        )),
+        "create_space" | "sandbox_create" => {
+            if let Some(cap) = placement(a, default_on) {
+                let what = if cap == Cap::Cloud {
+                    "create a cloud Space (it costs money)"
+                } else {
+                    "create a Space on one of your machines"
+                };
+                out.push(Need::Cap(cap, what.into()));
+            }
+        }
+        "add_space" => out.push(Need::Cap(Cap::Machines, "add a machine as a Space".into())),
+        "relay_register_space" => out.push(Need::Cap(
+            Cap::Machines,
+            "attach a Space to your account".into(),
+        )),
+        "upload" | "send_file" => {
+            if sensitive_path(str_of(a, "path"), &homes()) {
+                out.push(Need::Cap(
+                    Cap::HostFiles,
+                    format!("send {} from this Mac into a Space", str_of(a, "path")),
+                ));
+            }
+            on_machine(&mut out, "write files on one of your machines");
+        }
+        "download" => {
+            let dest = str_of(a, "dest");
+            if !dest.is_empty() && protected_dest(dest, &homes()) {
+                out.push(Need::Forbidden(format!(
+                    "download into {dest} is not allowed: it holds settings, keys or startup items."
+                )));
+            }
+            on_machine(&mut out, "read files on one of your machines");
+        }
+        "space_bash" => on_machine(&mut out, "run a command on one of your machines"),
+        "space_write" => on_machine(&mut out, "write a file on one of your machines"),
+        "call_tool" => on_machine(&mut out, "use one of your machines"),
+        "agent_start" => {
+            if non_empty(a, "env_from_host") {
+                out.push(Need::Cap(
+                    Cap::ApiKeys,
+                    "give an agent your API keys".into(),
+                ));
+            }
+            on_machine(&mut out, "run an agent on one of your machines");
+        }
+        "persistent_agent_create" => {
+            if non_empty(a, "env_from_host") {
+                out.push(Need::Cap(
+                    Cap::ApiKeys,
+                    "give an agent your API keys".into(),
+                ));
+            }
+            on_machine(&mut out, "run an agent on one of your machines");
+        }
+        "agent_message" => on_machine(&mut out, "steer an agent on one of your machines"),
+        "sandbox_open_browser" => on_machine(&mut out, "open a browser on one of your machines"),
+        t if t.starts_with("computer_") && !t.starts_with("computer_access_") => {
+            on_machine(&mut out, "control one of your machines")
+        }
+        "routine_add" => out.push(Need::Cap(
+            Cap::Routines,
+            "schedule a routine that runs on its own".into(),
+        )),
+        "routine_set_enabled" if a.get("enabled").and_then(Value::as_bool) == Some(true) => {
+            out.push(Need::Cap(Cap::Routines, "turn a routine on".into()))
+        }
+        "volume_storage_set" => out.push(Need::Cap(
+            Cap::Storage,
+            "change where your Volume is stored".into(),
+        )),
+        "volume_mount" | "volume_unmount" => out.push(Need::Cap(
+            Cap::Storage,
+            "mount or unmount your Volume".into(),
+        )),
+        "hotspot_start" => out.push(Need::Cap(
+            Cap::Network,
+            "share this Mac's network with a Space".into(),
+        )),
+        "open_space_viewer" | "show_space_pip" | "stream_space_window" => out.push(Need::Cap(
+            Cap::Display,
+            "show a Space on your screen".into(),
+        )),
+        _ => {}
+    }
+    out
+}
+
+/// What an agent is told when `cap` was not approved: which Settings row
+/// the user can use, and not to find another way.
+pub fn denied_message(why: &str, cap: Cap) -> String {
+    format!(
+        "{why}. \"{}\" needs your approval (Settings \u{2192} Permissions \u{2192} {}). Tell the user; do not retry another way.",
+        cap.title(),
+        cap.title()
+    )
+}
+
+/// `home` and the cua home, as the path checks need them.
+pub struct Homes {
+    /// The user's home directory.
+    pub home: PathBuf,
+    /// The cua home.
+    pub cua: PathBuf,
+}
+
+fn homes() -> Homes {
+    Homes {
+        home: std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default(),
+        cua: cua_home::cua_home(),
+    }
+}
+
+/// `path` as an absolute, lexically normalised path, with symlinks resolved
+/// as far as the path exists.
+fn resolve(path: &str, h: &Homes) -> PathBuf {
+    let p = if path == "~" {
+        h.home.clone()
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        h.home.join(rest)
+    } else {
+        PathBuf::from(path)
+    };
+    let p = if p.is_absolute() {
+        p
+    } else {
+        std::env::current_dir().unwrap_or_default().join(p)
+    };
+    let mut norm = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::ParentDir => {
+                norm.pop();
+            }
+            Component::CurDir => {}
+            other => norm.push(other),
+        }
+    }
+    // Resolve symlinks of the longest existing prefix.
+    let mut existing = norm.clone();
+    let mut rest = vec![];
+    while !existing.exists() {
+        match existing.file_name() {
+            Some(n) => rest.push(n.to_os_string()),
+            None => break,
+        }
+        if !existing.pop() {
+            break;
+        }
+    }
+    let mut real = existing.canonicalize().unwrap_or(existing);
+    for r in rest.into_iter().rev() {
+        real.push(r);
+    }
+    real
+}
+
+const SECRET_DIRS: &[&str] = &[
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".azure",
+    ".kube",
+    ".docker",
+    ".netrc",
+    ".git-credentials",
+    ".npmrc",
+    ".pypirc",
+    ".cua",
+    ".claude",
+    ".codex",
+    ".mozilla",
+    ".config/gcloud",
+    ".config/google-chrome",
+    ".config/chromium",
+    "Library/Keychains",
+    "Library/Cookies",
+    "Library/Safari",
+    "Library/Application Support/Google",
+    "Library/Application Support/Firefox",
+    "Library/Application Support/Chromium",
+    "Library/Application Support/BraveSoftware",
+    "Library/Application Support/Microsoft Edge",
+    "Library/Application Support/Arc",
+];
+
+fn related(p: &Path, root: &Path) -> bool {
+    p.starts_with(root) || root.starts_with(p)
+}
+
+/// Whether sending `path` into a Space could carry a secret: the path is a
+/// credentials folder or file, is inside one, or is a folder that holds one
+/// (the home directory itself, say).
+pub fn sensitive_path(path: &str, h: &Homes) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    let p = resolve(path, h);
+    if related(&p, &resolve(&h.cua.to_string_lossy(), h)) {
+        return true;
+    }
+    SECRET_DIRS
+        .iter()
+        .any(|d| related(&p, &resolve(&h.home.join(d).to_string_lossy(), h)))
+}
+
+/// Whether a download into `dest` could replace settings, keys or startup
+/// items.
+pub fn protected_dest(dest: &str, h: &Homes) -> bool {
+    let p = resolve(dest, h);
+    if p == resolve(&h.home.to_string_lossy(), h) {
+        return true;
+    }
+    let below = |root: PathBuf| p.starts_with(resolve(&root.to_string_lossy(), h));
+    if below(h.cua.clone()) {
+        return true;
+    }
+    const USER: &[&str] = &[
+        ".cua",
+        ".ssh",
+        ".aws",
+        ".gnupg",
+        ".config",
+        ".kube",
+        ".docker",
+        ".claude",
+        ".codex",
+        "Library/LaunchAgents",
+        "Library/Keychains",
+        "Library/Application Support",
+        "Library/Preferences",
+    ];
+    if USER.iter().any(|d| below(h.home.join(d))) {
+        return true;
+    }
+    [
+        "/etc",
+        "/usr",
+        "/bin",
+        "/sbin",
+        "/System",
+        "/Library",
+        "/private/etc",
+    ]
+    .iter()
+    .any(|d| p.starts_with(d))
+}
+
+/// Asks the user when the policy in `home` says `cap` needs it.
+#[derive(Clone)]
+pub struct Guard {
+    home: PathBuf,
+    approver: Arc<dyn Approver>,
+    /// The seal that vouches for the policy file; `None` uses the one the
+    /// process registered ([`crate::approvals::register_seal`]).
+    seal: Option<Arc<dyn PolicySeal>>,
+}
+
+impl std::fmt::Debug for Guard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Guard").field("home", &self.home).finish()
+    }
+}
+
+impl Guard {
+    /// A guard reading `<home>/approvals.json` and asking `approver`.
+    pub fn new(home: PathBuf, approver: Arc<dyn Approver>) -> Self {
+        Guard {
+            home,
+            approver,
+            seal: None,
+        }
+    }
+
+    /// The same, with an explicit seal (fixtures and tests).
+    pub fn with_seal(mut self, seal: Arc<dyn PolicySeal>) -> Self {
+        self.seal = Some(seal);
+        self
+    }
+
+    /// The cua home the policy lives in.
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+
+    /// The current policy, and why it is the strict one when the stored
+    /// settings could not be trusted.
+    pub fn loaded(&self) -> Loaded {
+        let registered;
+        let seal = match &self.seal {
+            Some(s) => Some(s.as_ref()),
+            None => {
+                registered = crate::approvals::registered_seal();
+                registered.as_deref()
+            }
+        };
+        Policy::load_with(&self.home, seal)
+    }
+
+    /// The current policy.
+    pub fn policy(&self) -> Policy {
+        self.loaded().policy
+    }
+
+    /// Confirms `cap` for `what`, or says why not.
+    pub async fn require(&self, who: &str, cap: Cap, what: &str) -> Result<(), String> {
+        if !self.policy().requires(cap) {
+            return Ok(());
+        }
+        let approver = self.approver.clone();
+        let reason = format!("{who} wants to {what}");
+        tokio::task::spawn_blocking(move || approver.confirm(&reason))
+            .await
+            .map_err(|e| format!("approval task: {e}"))?
+            .map_err(|e| format!("not approved: {e}"))
+    }
+
+    /// Runs `needs` for the calling agent `who`: refuses what is forbidden,
+    /// and asks for each capability the policy gates. `Err((kind, message))`
+    /// is the tool error to return. `is_machine` says whether a Space is one
+    /// of the user's own machines; `default_space` stands in for a call that
+    /// names none.
+    pub async fn enforce<F, Fut>(
+        &self,
+        who: &str,
+        needs: Vec<Need>,
+        default_space: &str,
+        is_machine: F,
+    ) -> Result<(), (&'static str, String)>
+    where
+        F: Fn(String) -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
+        for need in needs {
+            let (cap, what) = match need {
+                Need::Forbidden(why) => return Err(("forbidden", why)),
+                Need::Cap(cap, what) => (cap, what),
+                Need::OnMachine { space, what } => {
+                    let space = if space.is_empty() {
+                        default_space.to_string()
+                    } else {
+                        space
+                    };
+                    if !is_machine(space).await {
+                        continue;
+                    }
+                    (Cap::RemoteExec, what)
+                }
+            };
+            if let Err(why) = self.require(who, cap, &what).await {
+                return Err(("approval_denied", denied_message(&why, cap)));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn homes() -> (tempfile::TempDir, Homes) {
+        let d = tempfile::tempdir().unwrap();
+        let home = d.path().canonicalize().unwrap();
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        std::fs::create_dir_all(home.join("proj")).unwrap();
+        let h = Homes {
+            cua: home.join(".cua"),
+            home,
+        };
+        (d, h)
+    }
+
+    #[test]
+    fn secret_paths_are_sensitive_and_projects_are_not() {
+        let (_d, h) = homes();
+        let p = |s: &str| h.home.join(s).to_string_lossy().to_string();
+        assert!(sensitive_path(&p(".ssh/id_ed25519"), &h));
+        assert!(sensitive_path(&p(".ssh"), &h));
+        assert!(sensitive_path(&p(".cua/spaces-credentials.json"), &h));
+        assert!(
+            sensitive_path(&h.home.to_string_lossy(), &h),
+            "the home holds them"
+        );
+        assert!(sensitive_path(&p("proj/../.ssh/id"), &h), "dot-dot");
+        assert!(!sensitive_path(&p("proj/main.py"), &h));
+        assert!(!sensitive_path(&p("proj"), &h));
+        assert!(!sensitive_path("", &h));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_into_secrets_is_sensitive() {
+        let (_d, h) = homes();
+        let link = h.home.join("proj/innocent");
+        std::os::unix::fs::symlink(h.home.join(".ssh"), &link).unwrap();
+        assert!(sensitive_path(&link.to_string_lossy(), &h));
+    }
+
+    #[test]
+    fn downloads_cannot_land_in_settings() {
+        let (_d, h) = homes();
+        let p = |s: &str| h.home.join(s).to_string_lossy().to_string();
+        assert!(protected_dest(&p(".cua"), &h));
+        assert!(protected_dest(&p(".cua/volume"), &h));
+        assert!(protected_dest(&p(".ssh"), &h));
+        assert!(protected_dest(&p("Library/LaunchAgents"), &h));
+        assert!(protected_dest(&h.home.to_string_lossy(), &h));
+        assert!(protected_dest("/etc", &h));
+        assert!(!protected_dest(&p("proj/out"), &h));
+        assert!(!protected_dest(&p("Downloads"), &h));
+    }
+
+    fn caps(tool: &str, a: Value) -> Vec<Cap> {
+        classify_with(tool, &a, &String::new)
+            .into_iter()
+            .filter_map(|n| match n {
+                Need::Cap(c, _) => Some(c),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn placement_decides_cloud_and_machines() {
+        assert!(caps("create_space", json!({})).is_empty());
+        assert!(caps("create_space", json!({"on": "local"})).is_empty());
+        assert_eq!(caps("create_space", json!({"on": "cloud"})), [Cap::Cloud]);
+        assert_eq!(caps("create_space", json!({"on": "aws"})), [Cap::Cloud]);
+        assert_eq!(caps("sandbox_create", json!({"pool": "p"})), [Cap::Cloud]);
+        assert_eq!(
+            caps("create_space", json!({"on": "host:mac-mini"})),
+            [Cap::RemoteExec]
+        );
+        assert_eq!(caps("cloud_sweep", json!({})), [Cap::Cloud]);
+    }
+
+    #[test]
+    fn the_users_default_location_counts_when_a_call_names_none() {
+        let cloud = || "cloud".to_string();
+        let n = classify_with("create_space", &json!({}), &cloud);
+        assert!(matches!(n[0], Need::Cap(Cap::Cloud, _)), "{n:?}");
+        let n = classify_with("create_space", &json!({"on": "local"}), &cloud);
+        assert!(n.is_empty(), "an explicit local wins: {n:?}");
+    }
+
+    #[test]
+    fn capabilities_map_to_their_tools() {
+        assert_eq!(caps("add_space", json!({"url": "x"})), [Cap::Machines]);
+        assert_eq!(caps("relay_register_space", json!({})), [Cap::Machines]);
+        assert_eq!(caps("routine_add", json!({})), [Cap::Routines]);
+        assert!(caps("routine_set_enabled", json!({"enabled": false})).is_empty());
+        assert_eq!(
+            caps("routine_set_enabled", json!({"enabled": true})),
+            [Cap::Routines]
+        );
+        assert_eq!(caps("volume_storage_set", json!({})), [Cap::Storage]);
+        assert_eq!(caps("hotspot_start", json!({})), [Cap::Network]);
+        assert_eq!(caps("show_space_pip", json!({})), [Cap::Display]);
+        assert_eq!(
+            caps(
+                "agent_start",
+                json!({"env_from_host": ["ANTHROPIC_API_KEY"]})
+            ),
+            [Cap::ApiKeys]
+        );
+        assert!(caps("agent_start", json!({"env_from_host": []})).is_empty());
+        assert!(caps("list_spaces", json!({})).is_empty());
+        assert!(caps("space_bash", json!({"space": "local:x"})).is_empty());
+    }
+
+    #[test]
+    fn machine_scoped_tools_name_their_space() {
+        let n = classify("computer_click", &json!({"sandbox": "relay:mini"}));
+        assert_eq!(
+            n,
+            [Need::OnMachine {
+                space: "relay:mini".into(),
+                what: "control one of your machines".into()
+            }]
+        );
+        let n = classify("space_bash", &json!({"space": "mini"}));
+        assert!(matches!(&n[0], Need::OnMachine { space, .. } if space == "mini"));
+        assert!(classify("computer_access_grant", &json!({})).is_empty());
+    }
+
+    #[test]
+    fn approving_your_own_request_is_not_for_agents() {
+        for t in [
+            "volume_approve",
+            "volume_deny",
+            "volume_grant",
+            "volume_revoke",
+            "volume_grants",
+            "volume_requests",
+        ] {
+            assert!(
+                matches!(classify(t, &json!({}))[0], Need::Forbidden(_)),
+                "{t}"
+            );
+        }
+    }
+
+    struct Deny;
+    impl Approver for Deny {
+        fn confirm(&self, _: &str) -> Result<(), String> {
+            Err("declined".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn the_policy_decides_whether_the_user_is_asked() {
+        let d = tempfile::tempdir().unwrap();
+        let seal = Arc::new(crate::approvals::MemorySeal::default());
+        let g = Guard::new(d.path().to_path_buf(), Arc::new(Deny)).with_seal(seal.clone());
+        assert!(
+            g.require("agent", Cap::Cloud, "x").await.is_err(),
+            "default: asks"
+        );
+        assert!(
+            g.require("agent", Cap::Machines, "x").await.is_ok(),
+            "default: free"
+        );
+        Policy::store_unprompted(
+            d.path(),
+            &[(Cap::Cloud, false), (Cap::Machines, true)],
+            &*seal,
+        )
+        .unwrap();
+        assert!(
+            g.require("agent", Cap::Cloud, "x").await.is_ok(),
+            "turned off: free"
+        );
+        assert!(g.require("agent", Cap::Machines, "x").await.is_err());
+        // A hand edit loosens nothing: everything asks.
+        let path = crate::approvals::path_in(d.path());
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(
+            &path,
+            text.replace("\"cloud\": false", "\"cloud\": true")
+                .replace("\"machines\": true", "\"machines\": false"),
+        )
+        .unwrap();
+        assert!(g.require("agent", Cap::Display, "x").await.is_err());
+        assert!(g.loaded().notice.is_some());
+    }
+}

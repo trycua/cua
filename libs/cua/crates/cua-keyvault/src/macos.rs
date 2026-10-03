@@ -511,3 +511,209 @@ fn parent_pid(pid: i32) -> Option<i32> {
         (n == size).then_some(info.pbi_ppid as i32)
     }
 }
+
+// ---------------------------------------------------------------------------
+// A secret only named programs read without a prompt
+// ---------------------------------------------------------------------------
+
+type OSStatus = i32;
+
+#[link(name = "Security", kind = "framework")]
+unsafe extern "C" {
+    fn SecAccessCreate(
+        descriptor: CFStringRef,
+        trusted_list: *const std::ffi::c_void,
+        access: *mut *const std::ffi::c_void,
+    ) -> OSStatus;
+    fn SecTrustedApplicationCreateFromPath(
+        path: *const libc::c_char,
+        app: *mut *const std::ffi::c_void,
+    ) -> OSStatus;
+    fn SecKeychainItemSetAccess(
+        item: *const std::ffi::c_void,
+        access: *const std::ffi::c_void,
+    ) -> OSStatus;
+    fn SecKeychainGetUserInteractionAllowed(state: *mut u8) -> OSStatus;
+    fn SecKeychainSetUserInteractionAllowed(state: u8) -> OSStatus;
+}
+
+/// Turns user interaction off for its lifetime (a read the access list does
+/// not allow then fails instead of showing the user a prompt).
+struct NoPrompts(u8);
+
+impl NoPrompts {
+    fn new() -> Self {
+        let mut prev = 1u8;
+        // SAFETY: both calls take plain values and an out-pointer to a byte.
+        unsafe {
+            SecKeychainGetUserInteractionAllowed(&mut prev);
+            SecKeychainSetUserInteractionAllowed(0);
+        }
+        NoPrompts(prev)
+    }
+}
+
+impl Drop for NoPrompts {
+    fn drop(&mut self) {
+        // SAFETY: restores the value read in `new`.
+        unsafe {
+            SecKeychainSetUserInteractionAllowed(self.0);
+        }
+    }
+}
+
+/// A small secret in a Keychain generic-password item whose access list
+/// names only the given programs (this process and the paths passed to
+/// [`AclSecret::write`]). Those programs read it with no prompt (the access
+/// is by code signature, so an unsigned or different program is not one of
+/// them); any other reader would make macOS ask the user, which these calls
+/// never allow: [`AclSecret::read`] fails instead. This is the dedicated
+/// item the permission settings are sealed with, not the login keychain's
+/// shared prompts.
+pub struct AclSecret {
+    keychain_path: Option<PathBuf>,
+    service: String,
+}
+
+impl AclSecret {
+    /// `keychain_path`: `None` is the user's default keychain (refused in
+    /// tests); `Some(path)` a throwaway keychain file.
+    pub fn new(service: &str, keychain_path: Option<PathBuf>) -> Self {
+        Self {
+            keychain_path,
+            service: service.to_string(),
+        }
+    }
+
+    fn open(&self) -> Result<SecKeychain> {
+        match &self.keychain_path {
+            Some(p) => SecKeychain::open(p).map_err(|e| Error::Os(format!("open keychain: {e}"))),
+            None => {
+                if crate::host_effects_forbidden() {
+                    return Err(Error::HostEffectsRefused(
+                        "the default (login) keychain is never used in tests".into(),
+                    ));
+                }
+                SecKeychain::default().map_err(|e| Error::Os(format!("default keychain: {e}")))
+            }
+        }
+    }
+
+    /// The secret of `account`; `None` when there is none.
+    pub fn read(&self, account: &str) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        let kc = self.open()?;
+        let _quiet = NoPrompts::new();
+        match find_generic_password(Some(&[kc]), &self.service, account) {
+            Ok((pw, _)) => Ok(Some(Zeroizing::new(pw.as_ref().to_vec()))),
+            // errSecItemNotFound
+            Err(e) if e.code() == -25300 => Ok(None),
+            Err(e) => Err(Error::Os(format!("read the sealed secret: {e}"))),
+        }
+    }
+
+    /// Stores `secret` for `account`. A new item gets an access list of this
+    /// program and `also_trusted` (paths of the other programs that read it).
+    pub fn write(&self, account: &str, secret: &[u8], also_trusted: &[PathBuf]) -> Result<()> {
+        let kc = self.open()?;
+        let _quiet = NoPrompts::new();
+        let existed =
+            find_generic_password(Some(std::slice::from_ref(&kc)), &self.service, account).is_ok();
+        kc.set_generic_password(&self.service, account, secret)
+            .map_err(|e| Error::Os(format!("store the sealed secret: {e}")))?;
+        if existed {
+            return Ok(());
+        }
+        let (_, item) = find_generic_password(Some(&[kc]), &self.service, account)
+            .map_err(|e| Error::Os(format!("find the new item: {e}")))?;
+        let mut apps: Vec<CFType> = vec![];
+        let mut add = |path: Option<&std::ffi::CStr>| -> Result<()> {
+            let mut app: *const std::ffi::c_void = std::ptr::null();
+            // SAFETY: a null path means this process; the out-pointer is valid.
+            let rc = unsafe {
+                SecTrustedApplicationCreateFromPath(
+                    path.map_or(std::ptr::null(), |p| p.as_ptr()),
+                    &mut app,
+                )
+            };
+            if rc != 0 || app.is_null() {
+                return Err(Error::Os(format!("trusted application: OSStatus {rc}")));
+            }
+            // SAFETY: Create rule: we own `app`.
+            apps.push(unsafe { CFType::wrap_under_create_rule(app) });
+            Ok(())
+        };
+        add(None)?;
+        for p in also_trusted.iter().filter(|p| p.exists()) {
+            if let Ok(c) = std::ffi::CString::new(p.to_string_lossy().as_bytes()) {
+                // A program that cannot be named is simply not trusted.
+                let _ = add(Some(&c));
+            }
+        }
+        let list = CFArray::from_CFTypes(&apps);
+        let desc = CFString::new("Cua permission settings seal");
+        let mut access: *const std::ffi::c_void = std::ptr::null();
+        // SAFETY: descriptor and list are live CF objects; out-pointer valid.
+        let rc = unsafe {
+            SecAccessCreate(
+                desc.as_concrete_TypeRef(),
+                list.as_concrete_TypeRef().cast(),
+                &mut access,
+            )
+        };
+        if rc != 0 || access.is_null() {
+            return Err(Error::Os(format!("access list: OSStatus {rc}")));
+        }
+        // SAFETY: Create rule: we own `access`; the item is live.
+        let access = unsafe { CFType::wrap_under_create_rule(access) };
+        // SAFETY: both are live CF objects.
+        let rc = unsafe {
+            SecKeychainItemSetAccess(
+                item.as_concrete_TypeRef().cast(),
+                access.as_concrete_TypeRef().cast(),
+            )
+        };
+        if rc != 0 {
+            return Err(Error::Os(format!("restrict the item: OSStatus {rc}")));
+        }
+        Ok(())
+    }
+}
+
+/// Creates a throwaway keychain file at `path` (tests and fixtures; it is not
+/// added to any search list).
+pub fn create_throwaway_keychain(path: &std::path::Path) -> Result<()> {
+    security_framework::os::macos::keychain::CreateOptions::new()
+        .password("throwaway")
+        .create(path)
+        .map(|_| ())
+        .map_err(|e| Error::Os(format!("create keychain: {e}")))
+}
+
+#[cfg(test)]
+mod acl_tests {
+    use super::*;
+    use security_framework::os::macos::keychain::CreateOptions;
+
+    // Creates a keychain file, which can make macOS show prompts: run it on
+    // purpose with `--ignored`.
+    #[test]
+    #[ignore = "creates a throwaway keychain; macOS may prompt"]
+    fn a_secret_round_trips_in_a_throwaway_keychain() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("throwaway.keychain");
+        CreateOptions::new()
+            .password("throwaway")
+            .create(&path)
+            .unwrap();
+        let s = AclSecret::new("Cua Test Seal", Some(path.clone()));
+        assert!(s.read("a").unwrap().is_none());
+        s.write("a", b"one", &[std::env::current_exe().unwrap()])
+            .unwrap();
+        assert_eq!(s.read("a").unwrap().unwrap().as_slice(), b"one");
+        s.write("a", b"two", &[]).unwrap();
+        assert_eq!(s.read("a").unwrap().unwrap().as_slice(), b"two");
+        assert!(s.read("b").unwrap().is_none());
+        // Without a path the default keychain is refused in tests.
+        assert!(AclSecret::new("Cua Test Seal", None).read("a").is_err());
+    }
+}

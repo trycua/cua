@@ -100,20 +100,35 @@ async fn mcp_serves_sandbox_computer_and_skills_tools() {
         .iter()
         .map(|t| t["name"].as_str().unwrap().to_string())
         .collect();
+    // The agent surface: a few tools with actions, not one tool per call.
+    assert!(names.len() <= 24, "{names:?}");
     for want in [
-        // The Spaces contract (one server with the sandbox tools).
-        "add_space",
+        "list_spaces",
+        "create_space",
+        "space",
         "space_bash",
-        "send_file",
-        "sandbox_list",
-        "computer_screenshot",
-        "computer_window_list",
-        "computer_get_accessibility_tree",
-        "skills_list",
+        "space_files",
+        "computer",
+        "window",
+        "images",
+        "approvals",
+        "more",
     ] {
         assert!(
             names.contains(&want.to_string()),
             "{want} missing: {names:?}"
+        );
+    }
+    for hidden in [
+        "add_space",
+        "sandbox_list",
+        "computer_screenshot",
+        "volume_approve",
+        "skills_list",
+    ] {
+        assert!(
+            !names.contains(&hidden.to_string()),
+            "{hidden} is not listed"
         );
     }
     assert!(tools["result"]["tools"][0]["inputSchema"]["type"] == "object");
@@ -221,12 +236,11 @@ async fn mcp_serves_sandbox_computer_and_skills_tools() {
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
+    assert!(names.contains(&"computer"), "{names:?}");
+    // `window` stays (its read-only actions are permitted); nothing that
+    // writes does.
     assert!(
-        names.contains(&"computer_screenshot") && names.contains(&"sandbox_get"),
-        "{names:?}"
-    );
-    assert!(
-        !names.contains(&"computer_click") && !names.contains(&"sandbox_delete"),
+        !names.contains(&"space_bash") && !names.contains(&"space") && !names.contains(&"images"),
         "{names:?}"
     );
     let denied = m
@@ -238,13 +252,24 @@ async fn mcp_serves_sandbox_computer_and_skills_tools() {
     // Unknown or not-permitted tools are "method not found" (the Spaces
     // server's convention, which its typed client maps).
     assert_eq!(denied["error"]["code"], -32601);
+    // The same call through the agent-surface tool is refused too.
+    let denied = m
+        .call(
+            "tools/call",
+            json!({"name": "window", "arguments": {"action": "close", "window_id": "w"}}),
+        )
+        .await;
+    assert!(
+        denied["error"].is_object() || denied["result"]["isError"] == true,
+        "{denied}"
+    );
     m.close().await;
 
     // `cua daemon mcp` serves the same tools.
     let mut m = Mcp::start(&h, &["--embedded", "daemon", "mcp"]);
     let tools = m.call("tools/list", json!({})).await;
     let n = tools["result"]["tools"].as_array().unwrap().len();
-    assert!(n > 31 + 40, "{n}");
+    assert!((15..=24).contains(&n), "{n}");
     m.close().await;
 }
 
@@ -284,8 +309,12 @@ async fn daemon_mcp_starts_the_daemon_and_serves_its_spaces_runtime() {
     let mut h = Home::new();
     // Teleport and agents never read the real home.
     let host = h.dir.path().join("host-home").display().to_string();
+    // The daemon this test starts is the `cua` under test, never an
+    // installed one.
     h.set("CUA_SPACES_TELEPORT_HOME", host)
-        .set("CUA_SPACES_AGENT_CREDENTIALS_HOME", "none");
+        .set("CUA_SPACES_AGENT_CREDENTIALS_HOME", "none")
+        .set("CUA_BIN", env!("CARGO_BIN_EXE_cua"))
+        .set("CUA_SPACES_CLI", env!("CARGO_BIN_EXE_cua"));
     let _guard = DaemonGuard(&h);
     let mut m = Mcp::start(&h, &["daemon", "mcp"]);
     let init = m.call("initialize", json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}})).await;
@@ -302,15 +331,88 @@ async fn daemon_mcp_starts_the_daemon_and_serves_its_spaces_runtime() {
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    for t in cua_spaces::contract::tools() {
-        assert!(names.contains(&t.name), "{} missing", t.name);
+    for want in [
+        "space",
+        "space_bash",
+        "space_files",
+        "computer",
+        "volume",
+        "more",
+    ] {
+        assert!(names.contains(&want), "{want} missing: {names:?}");
     }
-    assert!(names.contains(&"computer_screenshot"));
 
+    // The daemon's own `/mcp` is the same server: the same tool list, and
+    // the same gate. An agent that reads the discovery file and talks HTTP
+    // gets nothing more than one that talks stdio.
+    {
+        let loopback = discovery["loopback_url"].as_str().unwrap();
+        let token = discovery["token"].as_str().unwrap();
+        let http = reqwest::Client::new();
+        let post = |body: Value| {
+            let http = http.clone();
+            let url = format!("{loopback}/mcp");
+            let token = token.to_string();
+            async move {
+                http.post(url)
+                    .bearer_auth(token)
+                    .json(&body)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap()
+            }
+        };
+        let listed = post(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})).await;
+        let http_names: Vec<&str> = listed["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(http_names, names, "/mcp lists what `cua mcp` lists");
+        for call in [
+            json!({"name": "cloud_connect", "arguments": {"provider": "aws"}}),
+            json!({"name": "more", "arguments": {"name": "cloud_connect", "arguments": {"provider": "aws"}}}),
+        ] {
+            let r =
+                post(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": call}))
+                    .await;
+            assert_eq!(
+                r["result"]["structuredContent"]["error"]["kind"], "approval_denied",
+                "{r}"
+            );
+        }
+    }
+
+    // Connecting a cloud account is gated by default: this build cannot ask
+    // the user, so it is refused.
+    let r = m.tool("cloud_connect", json!({"provider": "aws"})).await;
+    assert_eq!(r["isError"], true, "{r}");
+    assert_eq!(
+        r["structuredContent"]["error"]["kind"], "approval_denied",
+        "{r}"
+    );
+    // A process of the same user writing the settings file by hand changes
+    // nothing: only a file sealed by the Cua Spaces app counts, and this
+    // build has no seal, so every setting is its default.
+    std::fs::write(
+        h.cua_home().join("approvals.json"),
+        r#"{"require":{"cloud":false,"host_files":false,"api_keys":false}}"#,
+    )
+    .unwrap();
+    let r = m.tool("cloud_connect", json!({"provider": "aws"})).await;
+    assert_eq!(
+        r["structuredContent"]["error"]["kind"], "approval_denied",
+        "a hand-written settings file loosens nothing: {r}"
+    );
+    // Adding a machine is the user's own business by default.
     let r = m
         .tool(
-            "add_space",
-            json!({"url": d.url(), "token": TOKEN, "name": "stdio"}),
+            "space",
+            json!({"action": "add", "url": d.url(), "token": TOKEN, "name": "stdio"}),
         )
         .await;
     assert_eq!(r["isError"], false, "{r}");

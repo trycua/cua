@@ -98,7 +98,10 @@ Both SDKs retain a generic tool call so runtime-discovered and
 platform-specific tools remain usable. The generated manifest records tool
 platforms, capabilities, annotations, input schemas, and experimental success
 schemas. The live MCP `tools/list` response advertises these successful-result
-schemas as `outputSchema`; all action tools share the closed `ActionResult`
+schemas as `outputSchema` only for `tools/list` with `{"detail": "full"}`; the
+default list omits `outputSchema`, `risk`, the enforcement-adapter inventory,
+and deprecated or operator-only tools (they stay callable by name) to keep agent
+context small. All action tools share the closed `ActionResult`
 schema even when their richer runtime input is not part of the portable SDK
 manifest.
 

@@ -101,6 +101,7 @@ impl From<cua_daemon::Error> for CuaError {
             E::Timeout(_) => CuaError::Timeout(m),
             E::Fleet(_) => CuaError::Fleet(m),
             E::FleetAdmissionDenied(_) => CuaError::FleetAdmissionDenied(m),
+            E::ApprovalDenied(_) => CuaError::PermissionDenied(m),
             E::CloudCreditExhausted(_) => CuaError::CloudCreditExhausted(m),
             E::Cloud(c) => CuaError::Cloud(c),
             E::Runtime(_) => CuaError::Runtime(m),

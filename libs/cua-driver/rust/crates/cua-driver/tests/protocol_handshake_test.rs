@@ -23,7 +23,7 @@ fn all_expected_tools_registered() {
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
 
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}));
+    d.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"detail":"full"}}));
     let resp = d.recv();
     let tools = resp["result"]["tools"].as_array().expect("tools array");
     let names: std::collections::HashSet<&str> =

@@ -635,13 +635,6 @@ export enum ActionTarget_Tags {
     Window = "Window",
     Desktop = "Desktop"
 }
-/**
- * Exact capture/input target selected independently for each action.
- *
- * `display_id="primary"` is the portable desktop target in this release.
- * Platforms that cannot address another display reject it explicitly rather
- * than silently changing coordinate spaces.
- */
 export const ActionTarget = (() => {
 
     type Window__interface = {
@@ -717,13 +710,6 @@ inner: {displayId: string }): Desktop_ {
     });
 
 })();
-/**
- * Exact capture/input target selected independently for each action.
- *
- * `display_id="primary"` is the portable desktop target in this release.
- * Platforms that cannot address another display reject it explicitly rather
- * than silently changing coordinate spaces.
- */
 export type ActionTarget = InstanceType<
     typeof ActionTarget['Window' | 'Desktop']
 >;
@@ -1093,13 +1079,11 @@ const FfiConverterTypeClickInput = (() => {
 
 export type ClipboardReadInput = {
     /**
-     * Return plain-text clipboard content in addition to the available types.
-     * Clipboard content is privacy-sensitive and is never retained in telemetry.
+     * Also return the plain text.
      */
     includeText: boolean,
     /**
-     * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * Session label.
      */
     session?: string
 }
@@ -1211,8 +1195,7 @@ export type ClipboardWriteInput = {
      */
     filePath?: string,
     /**
-     * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * Session label.
      */
     session?: string
 }
@@ -1709,18 +1692,13 @@ export type DragInput = {
     fromY: number,
     toX: number,
     toY: number,
-    /**
-     * Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
-     * primary desktop (`kind="desktop"`, `display_id="primary"`).
-     */
     target?: ActionTarget,
     /**
-     * Deprecated flat desktop target retained for wire compatibility.
+     * Deprecated; use `target`.
      */
     scope?: DesktopScope,
     /**
-     * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * Session label.
      */
     session?: string,
     durationMs?: bigint,
@@ -1891,11 +1869,7 @@ const FfiConverterTypeElementSelector = (() => {
 export type ElementPredicate = {
     selector: ElementSelector,
     /**
-     * Assert that at least one trusted element matches the selector.
-     *
-     * Element walks are not yet exhaustive on every platform, so absence
-     * cannot be proven. `false` is rejected instead of returning an
-     * indefinitely-unknown predicate.
+     * True: some element matches. False is rejected (absence cannot be proven).
      */
     exists?: boolean,
     valueEquals?: string,
@@ -1952,8 +1926,7 @@ const FfiConverterTypeElementPredicate = (() => {
 
 export type EndSessionInput = {
     /**
-     * Optional public label to end. When omitted, end the caller's attached
-     * implicit session.
+     * Session to end; omit for the implicit session.
      */
     session?: string
 }
@@ -2135,7 +2108,7 @@ const FfiConverterTypeEscalateSessionInput = (() => {
 
 export type GetAgentCursorStateInput = {
     /**
-     * Public label of the session whose cursor to inspect.
+     * Session whose cursor to inspect.
      */
     session: string
 }
@@ -2236,8 +2209,7 @@ const FfiConverterTypeGetAgentCursorStateOutput = (() => {
 
 export type GetCursorPositionInput = {
     /**
-     * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * Session label.
      */
     session?: string
 }
@@ -2279,8 +2251,7 @@ const FfiConverterTypeGetCursorPositionInput = (() => {
 
 export type GetDesktopStateInput = {
     /**
-     * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * Session label.
      */
     session?: string,
     /**
@@ -2339,8 +2310,7 @@ const FfiConverterTypeGetDesktopStateInput = (() => {
 
 export type GetScreenSizeInput = {
     /**
-     * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * Session label.
      */
     session?: string
 }
@@ -2561,18 +2531,13 @@ const FfiConverterTypeGetWindowStateInput = (() => {
 
 export type HotkeyInput = {
     keys: Array<string>,
-    /**
-     * Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
-     * primary desktop (`kind="desktop"`, `display_id="primary"`).
-     */
     target?: ActionTarget,
     /**
-     * Deprecated flat desktop target retained for wire compatibility.
+     * Deprecated; use `target`.
      */
     scope?: DesktopScope,
     /**
-     * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * Session label.
      */
     session?: string
 }
@@ -2622,27 +2587,23 @@ const FfiConverterTypeHotkeyInput = (() => {
 })();
 
 /**
- * Exact, immediate-child application menu path to resolve and invoke through
- * the operating system's accessibility API. Path labels are matched after
- * trimming surrounding whitespace and otherwise remain case-sensitive.
+ * Menu item to invoke by exact, case-sensitive label path.
  */
 export type InvokeMenuInput = {
     /**
-     * Process ID of the application that owns the menu.
+     * Process ID.
      */
     pid: number,
     /**
-     * Window ID from list_windows whose menu is invoked.
+     * Window ID from list_windows.
      */
     windowId: bigint,
     /**
-     * Menu labels from the top-level menu to the item, e.g. `["File", "Save As..."]`
-     * (1 to 16 labels).
+     * Labels from the top menu to the item, e.g. `["File", "Save As..."]`.
      */
     path: Array<string>,
     /**
-     * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * Session label.
      */
     session?: string
 }
@@ -2767,8 +2728,7 @@ const FfiConverterTypeListAppsOutput = (() => {
 
 export type ListSessionsInput = {
     /**
-     * Maximum number of content-free summaries to return (default 50, max
-     * 100). Ordinary agent transports are scoped to their own lease.
+     * Maximum summaries to return (default 50, max 100).
      */
     limit?: number,
     /**
@@ -3270,18 +3230,13 @@ export type MoveCursorInput = {
      * Destination Y, in the same space as `x`.
      */
     y: number,
-    /**
-     * Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
-     * primary desktop (`kind="desktop"`, `display_id="primary"`).
-     */
     target?: ActionTarget,
     /**
-     * Deprecated flat desktop target retained for wire compatibility.
+     * Deprecated; use `target`.
      */
     scope?: DesktopScope,
     /**
-     * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * Session label.
      */
     session?: string
 }
@@ -4409,18 +4364,13 @@ const FfiConverterTypePredicateOutcome = (() => {
 
 export type PressKeyInput = {
     key: string,
-    /**
-     * Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
-     * primary desktop (`kind="desktop"`, `display_id="primary"`).
-     */
     target?: ActionTarget,
     /**
-     * Deprecated flat desktop target retained for wire compatibility.
+     * Deprecated; use `target`.
      */
     scope?: DesktopScope,
     /**
-     * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * Session label.
      */
     session?: string,
     modifiers?: Array<string>
@@ -4541,18 +4491,13 @@ export type ScrollInput = {
     x: number,
     y: number,
     direction: ScrollDirection,
-    /**
-     * Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
-     * primary desktop (`kind="desktop"`, `display_id="primary"`).
-     */
     target?: ActionTarget,
     /**
-     * Deprecated flat desktop target retained for wire compatibility.
+     * Deprecated; use `target`.
      */
     scope?: DesktopScope,
     /**
-     * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * Session label.
      */
     session?: string,
     by?: ScrollBy,
@@ -4752,7 +4697,7 @@ const FfiConverterTypeSessionStateOutput = (() => {
 
 export type SetAgentCursorEnabledInput = {
     /**
-     * Public label of the session that owns the cursor.
+     * Session that owns the cursor.
      */
     session: string,
     /**
@@ -4844,51 +4789,43 @@ const FfiConverterTypeSetAgentCursorEnabledOutput = (() => {
 
 export type SetAgentCursorMotionInput = {
     /**
-     * Public label of the session that owns the cursor. Omitted or null motion fields keep
-     * their current value.
+     * Session that owns the cursor. Omitted fields keep their current value.
      */
     session: string,
     /**
-     * Path control-point offset from the start, as a fraction of the distance. Clamped to
-     * 0..1 (default 0.3).
+     * Path start control-point offset, fraction of distance, 0..1 (default 0.3).
      */
     startHandle?: number,
     /**
-     * Path control-point offset from the end, as a fraction of the distance. Clamped to 0..1
-     * (default 0.3).
+     * Path end control-point offset, 0..1 (default 0.3).
      */
     endHandle?: number,
     /**
-     * Sideways arc deflection as a fraction of the distance. Clamped to 0..1 (default 0.25).
+     * Sideways arc size, 0..1 (default 0.25).
      */
     arcSize?: number,
     /**
-     * Arc asymmetry: positive puts the apex near the destination, negative near the start.
-     * Clamped to -1..1 (default 0).
+     * Arc apex position, -1 (start) to 1 (destination); default 0.
      */
     arcFlow?: number,
     /**
-     * Post-arrival spring damping: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1
-     * (default 0.72).
+     * Arrival spring damping, 0.3 (bouncy) to 1 (critical); default 0.72.
      */
     spring?: number,
     /**
-     * Fixed glide duration in milliseconds. 0 (the default) uses speed-based timing. Clamped
-     * to 0..5000.
+     * Fixed glide duration in ms, 0..5000; 0 (default) is speed-based.
      */
     glideDurationMs?: number,
     /**
-     * Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).
+     * Pause after a click animation in ms, 0..5000 (default 80).
      */
     dwellAfterClickMs?: number,
     /**
-     * Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to
-     * 0..60000 (default 15000).
+     * Hide after this many idle ms, 0..60000; 0 never (default 15000).
      */
     idleHideMs?: number,
     /**
-     * Minimum turning radius of the glide path, in points; smaller turns tighter. Clamped to
-     * 1..1000 (default 80).
+     * Minimum glide turning radius in points, 1..1000 (default 80).
      */
     turnRadius?: number
 }
@@ -5000,7 +4937,7 @@ const FfiConverterTypeSetAgentCursorMotionOutput = (() => {
 
 export type SetAgentCursorThemeInput = {
     /**
-     * Public label of the session that owns the cursor.
+     * Session that owns the cursor.
      */
     session: string,
     /**
@@ -5008,8 +4945,7 @@ export type SetAgentCursorThemeInput = {
      */
     themeId: string,
     /**
-     * Theme animation policy: `on` uses the theme's reduced-motion frames, `off` always
-     * animates, `auto` (default) leaves the choice to the host.
+     * `on` uses reduced-motion frames, `off` always animates, `auto` (default) defers to the host.
      */
     reducedMotion: CursorReducedMotion
 }
@@ -5124,8 +5060,7 @@ export type SetWindowFrameInput = {
      */
     height: number,
     /**
-     * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * Session label.
      */
     session?: string
 }
@@ -5228,19 +5163,15 @@ const FfiConverterTypeSnapshotImage = (() => {
 
 export type StartSessionInput = {
     /**
-     * Optional stable public label for this run (e.g. "research-run-1").
-     * When omitted, the authenticated transport lease's implicit session is
-     * created or returned.
+     * Session label (e.g. "research-run-1"); omit for the implicit session.
      */
     session?: string,
     /**
-     * Deprecated compatibility policy. New callers select window or desktop
-     * modality on each action instead of storing it on the session.
+     * Deprecated; select window or desktop per action.
      */
     captureScope?: CaptureScope,
     /**
-     * Optional initial cursor theme. The host applies it before the cursor is
-     * first made visible, avoiding a flash of the default theme.
+     * Initial cursor theme, applied before the cursor first shows.
      */
     cursorTheme?: CursorThemeSelection
 }
@@ -5424,18 +5355,13 @@ const FfiConverterTypeStatePredicate = (() => {
 
 export type TypeTextInput = {
     text: string,
-    /**
-     * Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
-     * primary desktop (`kind="desktop"`, `display_id="primary"`).
-     */
     target?: ActionTarget,
     /**
-     * Deprecated flat desktop target retained for wire compatibility.
+     * Deprecated; use `target`.
      */
     scope?: DesktopScope,
     /**
-     * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     * Session label.
      */
     session?: string
 }
@@ -5486,11 +5412,11 @@ const FfiConverterTypeTypeTextInput = (() => {
 
 export type VerifyStateInput = {
     /**
-     * Exact process whose window may be observed.
+     * Process ID.
      */
     pid: bigint,
     /**
-     * Exact native window identifier.
+     * Window ID.
      */
     windowId: bigint,
     /**
@@ -5498,9 +5424,8 @@ export type VerifyStateInput = {
      */
     expect: Array<StatePredicate>,
     /**
-     * For multi-call work, prefer a short public session label and repeat it on every call that
-     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session. This
-     * field never selects capture modality or authorization.
+     * Session label. This field never selects
+     * capture modality or authorization.
      */
     session?: string,
     /**
@@ -5508,12 +5433,11 @@ export type VerifyStateInput = {
      */
     timeoutMs?: bigint,
     /**
-     * Consecutive satisfied samples required before returning success.
+     * Consecutive satisfied samples required (default 2).
      */
     stableSamples?: bigint,
     /**
-     * Return the final window screenshot as image content for a multimodal
-     * caller. The driver does not interpret that image.
+     * Return the final window screenshot.
      */
     includeScreenshot?: boolean
 }

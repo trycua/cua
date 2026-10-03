@@ -6560,6 +6560,8 @@ pub struct AppHostSummaryInput {
     pub mode: Option<String>,
     /// Relay presence.
     pub online: Option<bool>,
+    /// Relay sharing is paused while signed out.
+    pub paused_signed_out: bool,
 }
 
 /// The host setup form: what both shells send to host setup.
@@ -6717,6 +6719,42 @@ pub struct AppHostState {
     pub spaces_audit: Vec<AppHostSpacesAudit>,
     /// Set when the Spaces audit does not verify.
     pub spaces_audit_error: Option<String>,
+    /// Relay sharing is paused until the owner signs in again (the host
+    /// left the relay; its setup stays).
+    pub paused_signed_out: bool,
+    /// The account this machine is registered to (relay mode): its id.
+    pub owner: Option<String>,
+    /// The owner's email, when the relay gave one.
+    pub owner_email: Option<String>,
+    /// Who is signed in to Cua in this app (`None`: nobody, or the shell
+    /// does not say). The shell fills it; the host does not know.
+    pub account: Option<AppHostAccount>,
+}
+
+/// The account signed in to Cua in the app, as far as "This machine"
+/// needs it.
+pub type AppHostAccount = core::host::HostAccount;
+#[uniffi::remote(Record)]
+pub struct AppHostAccount {
+    /// The account id (the session's `sub`).
+    pub id: Option<String>,
+    /// Its email.
+    pub email: Option<String>,
+    /// What the app shows for it (a display name, else the email).
+    pub display: Option<String>,
+}
+
+/// What the app does with the host when the account it is signed in to
+/// changes (launch, sign-in, sign-out, an expired session).
+pub type AppHostAccountStep = core::host::HostAccountStep;
+#[uniffi::remote(Enum)]
+pub enum AppHostAccountStep {
+    /// Nothing to do.
+    Keep,
+    /// Pause relay sharing (signed out, or signed in to another account).
+    Pause,
+    /// Resume the paused relay sharing (its owner is signed in again).
+    Resume,
 }
 
 /// What a "This machine" button does.
@@ -6739,6 +6777,8 @@ pub enum AppHostActionId {
     ProvideSpaces,
     /// Stop creating Spaces for your other devices.
     StopProvidingSpaces,
+    /// Sign in to Cua (relay sharing paused while signed out resumes).
+    SignIn,
 }
 
 /// A settings change a host action asks for (`None` keeps a value).
@@ -6796,6 +6836,11 @@ pub struct AppHostAction {
     pub destructive: bool,
     /// Ask this first; the action runs only when the user confirms.
     pub confirm: Option<AppHostConfirm>,
+    /// Can be pressed now (Resume sharing is not while nothing is on to
+    /// share).
+    pub enabled: bool,
+    /// The tooltip, when it says something the label does not.
+    pub help: Option<String>,
 }
 
 /// A row under "Recent access".
@@ -6842,6 +6887,11 @@ pub struct AppHostPanelView {
     pub title: String,
     /// One line: how it is shared, or that it is not.
     pub summary: String,
+    /// Why relay sharing is paused, one line over the page (signed out, or
+    /// signed in to another account).
+    pub notice: Option<String>,
+    /// The notice's button ("Sign In").
+    pub notice_action: Option<AppHostAction>,
     /// Set up for access.
     pub configured: bool,
     /// Name, Access, Service.

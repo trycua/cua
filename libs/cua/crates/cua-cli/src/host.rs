@@ -932,6 +932,13 @@ fn render(s: &HostStatus, out: &mut dyn Write) {
         return;
     }
     let name = s.name.clone().unwrap_or_default();
+    if s.paused_signed_out {
+        line(
+            out,
+            "Relay sharing is paused: the Cua app on this machine is signed out. \
+             Sign in to it again (or run `cua host start`) to share it.",
+        );
+    }
     match s.mode.as_deref() {
         Some("relay") => line(
             out,

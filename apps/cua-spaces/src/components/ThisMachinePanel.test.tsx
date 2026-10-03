@@ -163,8 +163,8 @@ describe("ThisMachinePanel: a spare machine", () => {
     const desktop = await screen.findByRole("switch", { name: /Share this desktop/ });
     expect(desktop).not.toBeChecked();
     expect(screen.getByRole("switch", { name: /Provide Spaces/ })).toBeChecked();
-    // The only setting on cannot be turned off.
-    expect(screen.getByRole("switch", { name: /Provide Spaces/ })).toBeDisabled();
+    // Both may be off (sharing then stops), so the only one on can go off.
+    expect(screen.getByRole("switch", { name: /Provide Spaces/ })).not.toBeDisabled();
     expect(screen.getByText(/2 macOS VMs \(Apple’s license allows two per Mac\)/)).toBeInTheDocument();
     expect(screen.getByText("None yet")).toBeInTheDocument();
     // No desktop, so no screen permissions to grant.

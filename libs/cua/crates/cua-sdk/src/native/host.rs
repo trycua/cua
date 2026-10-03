@@ -342,6 +342,16 @@ pub struct HostStatus {
     /// Set when the Spaces audit does not verify.
     #[uniffi(default = None)]
     pub spaces_audit_error: Option<String>,
+    /// Relay sharing is paused until the owner signs in again
+    /// ([`Host::pause_signed_out`]).
+    #[uniffi(default = false)]
+    pub paused_signed_out: bool,
+    /// The account this machine is registered to (relay mode): its id.
+    #[uniffi(default = None)]
+    pub owner: Option<String>,
+    /// The owner's email, when the relay gave one.
+    #[uniffi(default = None)]
+    pub owner_email: Option<String>,
 }
 
 /// One access to this machine.
@@ -426,6 +436,9 @@ impl From<cua_host::HostStatus> for HostStatus {
                 })
                 .collect(),
             spaces_audit_error: s.spaces_audit_error,
+            paused_signed_out: s.paused_signed_out,
+            owner: s.owner,
+            owner_email: s.owner_email,
         }
     }
 }
@@ -602,6 +615,28 @@ impl Host {
     pub async fn start_sharing(&self) -> Result<HostStatus> {
         let home = self.home.clone();
         run(async move { Ok(cua_host::Host::new(home).start_sharing().await?.into()) }).await
+    }
+
+    /// Pause relay sharing while nobody is signed in to the owner's
+    /// account: the host leaves the relay and stays off it (also across a
+    /// restart) with its setup kept. Direct mode is left alone.
+    pub async fn pause_signed_out(&self) -> Result<HostStatus> {
+        let home = self.home.clone();
+        run(async move { Ok(cua_host::Host::new(home).pause_signed_out().await?.into()) }).await
+    }
+
+    /// Resume relay sharing paused by [`Host::pause_signed_out`] once
+    /// `account` (the signed-in account's id or email) is signed in; refused
+    /// when it is not the machine's owner.
+    pub async fn resume_signed_in(&self, account: String) -> Result<HostStatus> {
+        let home = self.home.clone();
+        run(async move {
+            Ok(cua_host::Host::new(home)
+                .resume_signed_in(&account)
+                .await?
+                .into())
+        })
+        .await
     }
 
     /// Unregister, uninstall the service and delete the host state.

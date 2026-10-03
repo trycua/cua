@@ -200,6 +200,8 @@ final class GatedHost: HostRunning, @unchecked Sendable {
     private let lock = NSLock()
 
     func status() async throws -> HostStatus { try await inner.status() }
+    func pauseSignedOut() async throws -> HostStatus { try await inner.pauseSignedOut() }
+    func resumeSignedIn(account: String) async throws -> HostStatus { try await inner.resumeSignedIn(account: account) }
 
     func setupRequest(request: AppHostSetupRequest, accountToken: String?) async throws -> HostStatus {
         let (shouldHold, ready) = lock.withLock { () -> (Bool, [CheckedContinuation<Void, Never>]) in

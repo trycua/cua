@@ -1091,6 +1091,7 @@ struct ParityTests {
         case .hideDesktop: "hide-desktop"
         case .provideSpaces: "provide-spaces"
         case .stopProvidingSpaces: "stop-providing-spaces"
+        case .signIn: "sign-in"
         }
     }
 

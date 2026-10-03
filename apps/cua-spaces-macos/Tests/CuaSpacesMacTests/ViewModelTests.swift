@@ -302,7 +302,7 @@ struct ViewModelTests {
         await h.submit()
         var panel = h.panel
         #expect(panel.toggles.map(\.on) == [false, true])
-        #expect(panel.toggles.map(\.enabled) == [true, false], "the last setting on stays on")
+        #expect(panel.toggles.map(\.enabled) == [true, true], "both may be off")
         #expect(panel.limits?.contains("Apple\u{2019}s license allows two per Mac") == true)
         #expect(panel.providedEmpty == "None yet")
         #expect(panel.permissions.isEmpty, "no desktop, no screen permissions")

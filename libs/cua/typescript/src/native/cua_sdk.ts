@@ -20588,10 +20588,11 @@ export interface LoginAttemptLike {
  * Waits for the user, stores the session and returns who signed in.
  * Only the first call waits; later calls fail.
  *
- * A device that already enrolled (it has a device key) then
- * re-registers with the relay (`CUA_RELAY_URL`, else relay.cua.ai), so
- * the fresh sign-in enrolls or re-verifies it without an approval.
- * That step is best effort and never fails the sign-in.
+ * This device then registers with the relay (the one `cua` uses:
+ * `CUA_RELAY_URL`, else this machine's host setup, else relay.cua.ai),
+ * creating its device key on first use, so the fresh sign-in enrolls
+ * or re-verifies it without an approval. That step is best effort and
+ * never fails the sign-in.
  */
     wait(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<AuthIdentity>;
 }
@@ -20703,10 +20704,11 @@ private constructor(pointer: UniffiHandle) {
  * Waits for the user, stores the session and returns who signed in.
  * Only the first call waits; later calls fail.
  *
- * A device that already enrolled (it has a device key) then
- * re-registers with the relay (`CUA_RELAY_URL`, else relay.cua.ai), so
- * the fresh sign-in enrolls or re-verifies it without an approval.
- * That step is best effort and never fails the sign-in.
+ * This device then registers with the relay (the one `cua` uses:
+ * `CUA_RELAY_URL`, else this machine's host setup, else relay.cua.ai),
+ * creating its device key on first use, so the fresh sign-in enrolls
+ * or re-verifies it without an approval. That step is best effort and
+ * never fails the sign-in.
  */
     async wait(asyncOpts_?: { signal: AbortSignal }): Promise<AuthIdentity> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -21296,9 +21298,10 @@ export interface AuthLike {
  */
     beginLogin(flow: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<LoginAttemptLike>;
 /**
- * This device on `relay_url` (`None` = `CUA_RELAY_URL`, else
+ * This device on `relay_url` (`None` = the relay `cua` uses:
+ * `CUA_RELAY_URL`, else this machine's host setup, else
  * `https://relay.cua.ai`) as the signed-in account, shown as `name`
- * (default: the host name).
+ * (default: this computer's name).
  */
     devices(relayUrl: string | undefined, name: string | undefined) /*throws*/: DevicesLike;
 /**
@@ -21408,9 +21411,10 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * This device on `relay_url` (`None` = `CUA_RELAY_URL`, else
+ * This device on `relay_url` (`None` = the relay `cua` uses:
+ * `CUA_RELAY_URL`, else this machine's host setup, else
  * `https://relay.cua.ai`) as the signed-in account, shown as `name`
- * (default: the host name).
+ * (default: this computer's name).
  */
     devices(relayUrl: string | undefined, name: string | undefined): DevicesLike /*throws*/ {
     return FfiConverterTypeDevices.lift(uniffiCaller.rustCallWithError(
@@ -35918,8 +35922,9 @@ export class Relay extends UniffiAbstractObject implements RelayLike {
     readonly [destructorGuardSymbol]: UniffiGcObject;
     readonly [pointerLiteralSymbol]: UniffiHandle;
 /**
- * A relay (`None` = `CUA_RELAY_URL`, else `https://relay.cua.ai`) seen
- * as the account behind `account_token` (a cua.ai access token).
+ * A relay (`None` = the relay `cua` uses: `CUA_RELAY_URL`, else this
+ * machine's host setup, else `https://relay.cua.ai`) seen as the
+ * account behind `account_token` (a cua.ai access token).
  */
     constructor(relayUrl: string | undefined, accountToken: string) /*throws*/ {
         super();
@@ -36887,7 +36892,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_auth_begin_login() !== 55109) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_auth_begin_login");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_auth_devices() !== 24953) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_auth_devices() !== 36673) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_auth_devices");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_auth_logout() !== 38806) {
@@ -37130,7 +37135,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_loginattempt_user_code() !== 37591) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_loginattempt_user_code");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_loginattempt_wait() !== 2942) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_loginattempt_wait() !== 16950) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_loginattempt_wait");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_mcpclient_call_tool() !== 44958) {
@@ -37229,7 +37234,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_presenceview_upsert() !== 29196) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_presenceview_upsert");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_constructor_relay_new() !== 59964) {
+    if (nativeModule().uniffi_cua_sdk_checksum_constructor_relay_new() !== 19970) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_constructor_relay_new");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_relay_connect() !== 37946) {

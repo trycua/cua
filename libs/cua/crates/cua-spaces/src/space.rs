@@ -503,6 +503,11 @@ pub struct SpaceInfo {
     /// for other Spaces.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub cloud_delete: String,
+    /// A relay machine the relay says cannot be reached now: `offline`
+    /// (its driver is not connected) or `not sharing` (its owner stopped
+    /// sharing it). Empty when reachable, and for other Spaces.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub status: String,
 }
 
 impl SpaceInfo {
@@ -535,6 +540,7 @@ impl SpaceInfo {
             cloud: record.cloud.clone(),
             cloud_place: record.cloud_place.clone(),
             cloud_delete: record.cloud_delete.clone(),
+            status: String::new(),
         })
     }
 }

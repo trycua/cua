@@ -94,7 +94,8 @@ struct Args {
     /// Account mode: require enrolled client devices (`on` / `off`).
     #[arg(long, env = "CUA_RELAY_DEVICE_ENROLLMENT", default_value = "on")]
     device_enrollment: String,
-    /// Days a device enrollment lasts before one approval re-verifies it.
+    /// Days a device enrollment lasts without use (each session renews it)
+    /// before a fresh sign-in or one approval re-verifies it.
     #[arg(long, env = "CUA_RELAY_DEVICE_TTL_DAYS", default_value_t = 30)]
     device_ttl_days: u64,
     /// Days after the first start with device enrollment during which
@@ -111,6 +112,13 @@ struct Args {
         default_value_t = 600
     )]
     device_bootstrap_max_auth_age_secs: u64,
+    /// Strict enrollment: a fresh sign-in enrolls only an account's first
+    /// device, a re-key of a machine it already has, or (verified email) a
+    /// sign-in proving MFA; any other new device needs an approval from an
+    /// enrolled device. Off by default: a fresh sign-in enrolls any device
+    /// of the account.
+    #[arg(long, env = "CUA_RELAY_DEVICE_REQUIRE_APPROVAL")]
+    device_require_approval: bool,
     /// Devices and audit log file (default: `<state file>.devices.json`).
     #[arg(long, env = "CUA_RELAY_DEVICES_FILE")]
     devices_file: Option<std::path::PathBuf>,
@@ -217,6 +225,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             ttl_secs: args.device_ttl_days.max(1) * 86_400,
             grace_secs: args.device_grace_days * 86_400,
             bootstrap_max_auth_age_secs: args.device_bootstrap_max_auth_age_secs,
+            require_approval: args.device_require_approval,
             ..cua_relay::devices::DevicePolicy::default()
         },
         devices_file: args.devices_file,

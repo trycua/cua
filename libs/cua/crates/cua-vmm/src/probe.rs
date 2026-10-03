@@ -139,24 +139,33 @@ fn unreachable_error_for(
     exe: Option<&std::path::Path>,
 ) -> VmmError {
     if cfg!(target_os = "macos") {
+        // macOS asks once per boot, on this Mac's own screen, the first time
+        // the app reaches the local network, and lists the app under Local
+        // Network only after it has asked. Someone using this Mac from
+        // another device may never see the prompt, so say all three ways.
         let bundle = exe.and_then(app_bundle);
-        let (who, allow) = match &bundle {
-            Some((name, path)) => (
-                format!("{name} ({})", path.display()),
-                format!("turn on {name} there"),
+        let hint = match &bundle {
+            Some((name, path)) => format!(
+                "{name} ({}) cannot reach the VM at {addr} ({error}). macOS blocks {name}'s \
+                 local network connections until they are allowed: on this Mac's screen macOS \
+                 asks \"Allow \"{name}\" to find devices on local networks?\"; click Allow \
+                 there. If {name} is listed under System Settings > Privacy & Security > Local \
+                 Network, turn it on; if it isn't listed, quit and reopen {name} on this Mac \
+                 (macOS asks again). Then try again",
+                path.display()
             ),
-            None => (
-                "cua".to_string(),
-                "turn on the app that started cua (for example your terminal) there".to_string(),
+            None => format!(
+                "cua cannot reach the VM at {addr} ({error}). macOS blocks an app's local \
+                 network connections until they are allowed: on this Mac's screen macOS asks \
+                 whether the app that started cua (for example your terminal) may find devices \
+                 on local networks; click Allow there. If that app is listed under System \
+                 Settings > Privacy & Security > Local Network, turn it on; if it isn't \
+                 listed, quit and reopen it on this Mac (macOS asks again). Then try again"
             ),
         };
         VmmError::Missing {
             what: "Local Network access".into(),
-            hint: format!(
-                "{who} cannot reach the VM at {addr} ({error}). macOS blocks an app's local \
-                 network connections until they are allowed: open System Settings > Privacy & \
-                 Security > Local Network, {allow}, then try again"
-            ),
+            hint,
         }
     } else {
         VmmError::Missing {
@@ -370,7 +379,19 @@ mod tests {
                 "{text}"
             );
             assert!(
-                text.contains("Privacy & Security > Local Network, turn on Cua Spaces there"),
+                text.contains(
+                    "on this Mac's screen macOS asks \"Allow \"Cua Spaces\" to find devices on local networks?\"; click Allow there"
+                ),
+                "{text}"
+            );
+            assert!(
+                text.contains(
+                    "If Cua Spaces is listed under System Settings > Privacy & Security > Local Network, turn it on"
+                ),
+                "{text}"
+            );
+            assert!(
+                text.contains("if it isn't listed, quit and reopen Cua Spaces on this Mac (macOS asks again). Then try again"),
                 "{text}"
             );
             // Outside a bundle (a terminal's `cua`) it says what to allow.

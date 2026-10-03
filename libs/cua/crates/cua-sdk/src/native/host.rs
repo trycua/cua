@@ -113,13 +113,12 @@ pub struct Relay {
 
 #[uniffi::export]
 impl Relay {
-    /// A relay (`None` = `CUA_RELAY_URL`, else `https://relay.cua.ai`) seen
-    /// as the account behind `account_token` (a cua.ai access token).
+    /// A relay (`None` = the relay `cua` uses: `CUA_RELAY_URL`, else this
+    /// machine's host setup, else `https://relay.cua.ai`) seen as the
+    /// account behind `account_token` (a cua.ai access token).
     #[uniffi::constructor]
     pub fn new(relay_url: Option<String>, account_token: String) -> Result<Arc<Self>> {
-        let url = relay_url
-            .filter(|u| !u.trim().is_empty())
-            .unwrap_or_else(cua_host::relay_url_from_env);
+        let url = cua_host::relay_url_for(relay_url.as_deref(), &cua_daemon::cua_home());
         Ok(Arc::new(Self {
             client: cua_host::RelayClient::new(&url)?,
             account_token,
@@ -752,13 +751,13 @@ pub struct Devices {
 
 #[uniffi::export]
 impl Auth {
-    /// This device on `relay_url` (`None` = `CUA_RELAY_URL`, else
+    /// This device on `relay_url` (`None` = the relay `cua` uses:
+    /// `CUA_RELAY_URL`, else this machine's host setup, else
     /// `https://relay.cua.ai`) as the signed-in account, shown as `name`
-    /// (default: the host name).
+    /// (default: this computer's name).
     pub fn devices(&self, relay_url: Option<String>, name: Option<String>) -> Result<Arc<Devices>> {
-        let url = relay_url
-            .filter(|u| !u.trim().is_empty())
-            .unwrap_or_else(cua_host::relay_url_from_env);
+        let home = cua_daemon::cua_home();
+        let url = cua_host::relay_url_for(relay_url.as_deref(), &home);
         let session = self.session();
         let tokens = Arc::new(SessionTokens(session.clone()));
         let auth = cua_host::DeviceAuth::new(
@@ -767,7 +766,8 @@ impl Auth {
             Arc::new(session.store().clone()),
             name.filter(|n| !n.trim().is_empty())
                 .unwrap_or_else(cua_host::device_name),
-        )?;
+        )?
+        .with_pending_file(cua_host::device_pending_file(&home));
         Ok(Arc::new(Devices {
             auth: Arc::new(auth),
             tokens,

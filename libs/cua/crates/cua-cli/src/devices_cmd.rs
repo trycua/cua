@@ -2,8 +2,8 @@
 //! relay. A device that lists or reaches your machines through the relay is
 //! enrolled once with a second factor (a fresh sign-in, or an approval from
 //! an enrolled device) and re-verified after the relay's TTL. A new key of
-//! the same machine replaces its old record. Hosting never enrolls a
-//! device.
+//! the same machine replaces its old record. Hosting alone never enrolls a
+//! device; `cua auth login` does (see [`after_login`]).
 
 use crate::auth;
 use crate::util::{self, line};
@@ -132,9 +132,10 @@ pub fn device_auth(relay_url: &str) -> Result<Arc<DeviceAuth>, CuaError> {
     named_device_auth(relay_url, None)
 }
 
-/// [`device_auth`] shown as `name` (default: the host name).
+/// [`device_auth`] shown as `name` (default: this computer's name). It
+/// remembers the code it shows in `~/.cua/device-pending.json`.
 fn named_device_auth(relay_url: &str, name: Option<&str>) -> Result<Arc<DeviceAuth>, CuaError> {
-    DeviceAuth::new(
+    let auth = DeviceAuth::new(
         relay_url,
         Arc::new(crate::host::SessionTokens),
         Arc::new(auth::Store::from_env()),
@@ -143,14 +144,16 @@ fn named_device_auth(relay_url: &str, name: Option<&str>) -> Result<Arc<DeviceAu
             .map(str::to_string)
             .unwrap_or_else(cua_host::device_name),
     )
-    .map(Arc::new)
-    .map_err(crate::host::host_err)
+    .map_err(crate::host::host_err)?;
+    Ok(Arc::new(auth.with_pending_file(
+        cua_host::device_pending_file(&util::cua_home()),
+    )))
 }
 
-/// After `cua auth login`: a device that already has a key re-registers,
-/// so the fresh sign-in enrolls (or re-verifies) it without an approval.
-/// Best effort: a relay that is down, slow or refuses never fails the
-/// login, and a device that never enrolled stays unregistered.
+/// After `cua auth login`: registers this device (creating its key on a
+/// new device), so the fresh sign-in enrolls (or re-verifies) it without an
+/// approval, and says how that went. Best effort: a relay that is down,
+/// slow or refuses never fails the login.
 pub async fn after_login(home: &Path, out: &mut dyn Write) {
     let Ok(auth) = device_auth(&crate::host::relay_url(None, home)) else {
         return;
@@ -163,7 +166,7 @@ pub async fn after_login(home: &Path, out: &mut dyn Write) {
     // `cua_device_enroll`: enrolled by this sign-in (`rekey` when it
     // replaced the machine's other key), or failed; nothing otherwise.
     let enrolled = match &result {
-        Ok(Ok(Some(r))) if r.device.state == DeviceState::Enrolled => Some((
+        Ok(Ok(r)) if r.device.state == DeviceState::Enrolled => Some((
             if r.superseded.is_empty() {
                 "sign_in"
             } else {
@@ -178,7 +181,7 @@ pub async fn after_login(home: &Path, out: &mut dyn Write) {
         cua_telemetry::capture(e);
     }
     match result {
-        Ok(Ok(Some(r))) if r.device.state == DeviceState::Enrolled => line(
+        Ok(Ok(r)) if r.device.state == DeviceState::Enrolled => line(
             out,
             format!(
                 "This device ({}) is enrolled until {}.",
@@ -186,19 +189,48 @@ pub async fn after_login(home: &Path, out: &mut dyn Write) {
                 when(r.device.enrolled_until)
             ),
         ),
-        Ok(Ok(Some(r))) => {
+        Ok(Ok(r)) => {
             if let Some(code) = r.code {
                 line(
                     out,
                     format!(
-                        "This device is waiting for approval: approve it from an enrolled device with `cua devices approve {code}`."
+                        "This device is waiting for approval (code {code}): approve it from an enrolled device with `cua devices approve {code}` or in the Cua Spaces app."
                     ),
                 );
             }
         }
-        // Not enrolled before, or the relay is unreachable: `cua devices
-        // enroll` says more.
-        Ok(Ok(None)) | Ok(Err(_)) | Err(_) => {}
+        Ok(Err(e)) => line(
+            out,
+            format!(
+                "Signed in, but this device could not be enrolled yet ({e}); run `cua devices enroll`."
+            ),
+        ),
+        Err(_) => line(
+            out,
+            "Signed in, but the relay did not answer in time to enroll this device; run `cua devices enroll`.",
+        ),
+    }
+}
+
+/// Where the relay says this device stands, from opening a session: its
+/// state, or `None` when the relay does not know it.
+async fn relay_state(auth: &DeviceAuth) -> Result<Option<DeviceState>, cua_host::Error> {
+    match auth.session().await {
+        Ok(_) => Ok(Some(DeviceState::Enrolled)),
+        Err(cua_host::Error::NotFound(_)) => Ok(None),
+        Err(e) => cua_host::device::refused_state(&e).map(Some).ok_or(e),
+    }
+}
+
+/// `cua devices approve` without `--yes` needs a terminal to ask in.
+fn approve_needs_terminal(cmd: &DevicesCmd, interactive: bool) -> Option<CuaError> {
+    match cmd {
+        DevicesCmd::Approve { yes: false, .. } if !interactive => Some(CuaError::InvalidArgument(
+            "`cua devices approve` needs --yes when not run in a terminal (it cannot ask \
+                 for confirmation): approving lets that device list and reach your machines"
+                .into(),
+        )),
+        _ => None,
     }
 }
 
@@ -242,6 +274,17 @@ pub async fn run_with(
                     .and_then(|l| l.into_iter().find(|d| &d.id == id)),
                 None => None,
             };
+            // Listing needs an enrolled device: otherwise ask the relay
+            // where this device stands (waiting, re-verification due,
+            // revoked, or unknown to it).
+            let state = match (&id, &this) {
+                (_, Some(d)) => Ok(Some(d.state)),
+                (Some(_), None) => relay_state(auth).await,
+                (None, None) => Ok(None),
+            };
+            let pending = auth
+                .pending_code()
+                .filter(|_| matches!(state, Ok(Some(DeviceState::Pending))));
             if json {
                 line(
                     out,
@@ -249,6 +292,9 @@ pub async fn run_with(
                         "relay": auth.relay_url(),
                         "device_id": id,
                         "device": this.as_ref().map(view_json),
+                        "state": state.as_ref().ok().cloned().flatten(),
+                        "code": pending.as_ref().map(|p| p.code.clone()),
+                        "code_expires": pending.as_ref().map(|p| p.expires_at),
                     })
                     .to_string(),
                 );
@@ -262,19 +308,48 @@ pub async fn run_with(
                     );
                     return Ok(1);
                 }
-                (Some(id), None) => line(
-                    out,
-                    format!(
-                        "This device ({id}) is not registered on {}.",
-                        auth.relay_url()
+                (Some(id), None) => match state {
+                    Ok(None) => line(
+                        out,
+                        format!(
+                            "This device ({id}) is not registered on {} (run `cua devices enroll`).",
+                            auth.relay_url()
+                        ),
                     ),
-                ),
+                    Ok(Some(s)) => line(
+                        out,
+                        format!(
+                            "This device ({id}): {}",
+                            state_label(&DeviceView {
+                                state: s,
+                                ..Default::default()
+                            })
+                        ),
+                    ),
+                    Err(e) => line(
+                        out,
+                        format!(
+                            "This device ({id}): could not check with {} ({e}).",
+                            auth.relay_url()
+                        ),
+                    ),
+                },
                 (Some(_), Some(d)) => {
                     line(out, format!("{} ({}): {}", d.name, d.id, state_label(d)));
                     if d.state == DeviceState::Enrolled {
                         line(out, format!("  re-verify by {}", when(d.enrolled_until)));
                     }
                 }
+            }
+            if let Some(p) = pending {
+                line(
+                    out,
+                    format!(
+                        "  approve it from an enrolled device: `cua devices approve {}` (code expires {})",
+                        p.code,
+                        when(Some(p.expires_at))
+                    ),
+                );
             }
         }
         DevicesCmd::Enroll { wait, .. } => {
@@ -316,7 +391,13 @@ pub async fn run_with(
                 line(out, format!("  cua devices approve {code}"));
                 line(
                     out,
-                    "(or approve it in the Cua Spaces app). The code expires in 10 minutes.",
+                    format!(
+                        "(or approve it in the Cua Spaces app). The code expires {}.",
+                        r.device
+                            .code_expires
+                            .map(|t| format!("at {}", when(Some(t))))
+                            .unwrap_or_else(|| "in 10 minutes".into())
+                    ),
                 );
                 line(
                     out,
@@ -474,6 +555,9 @@ pub async fn run(
         DevicesCmd::Enroll { name, .. } => name.clone(),
         _ => None,
     };
+    if let Some(e) = approve_needs_terminal(&cmd, util::interactive()) {
+        return Err(e);
+    }
     let auth = named_device_auth(&url, name.as_deref())?;
     run_with(
         cmd,
@@ -690,5 +774,80 @@ mod tests {
         .await
         .unwrap_err();
         assert!(e.to_string().contains("approve by id"), "{e}");
+    }
+
+    #[test]
+    fn approve_without_yes_needs_a_terminal() {
+        let approve = |yes| DevicesCmd::Approve {
+            code: Some("K7QX-M2RP".into()),
+            device: None,
+            yes,
+            relay: None,
+        };
+        let e = approve_needs_terminal(&approve(false), false).unwrap();
+        assert!(matches!(e, CuaError::InvalidArgument(_)), "{e:?}");
+        assert!(
+            e.to_string()
+                .contains("needs --yes when not run in a terminal"),
+            "{e}"
+        );
+        assert!(approve_needs_terminal(&approve(true), false).is_none());
+        assert!(approve_needs_terminal(&approve(false), true).is_none());
+        assert!(approve_needs_terminal(&DevicesCmd::Ls { relay: None }, false).is_none());
+    }
+
+    #[tokio::test]
+    async fn status_tells_waiting_from_not_registered() {
+        let relay = FakeRelay::start().await;
+        relay.add_account("acct", "user-1", Some("ada@example.com"));
+        relay.require_devices(true);
+        relay.fresh_sign_in("user-1");
+        let laptop = device(&relay, "laptop");
+        laptop.enroll().await.unwrap();
+        relay.stale_sign_in("user-1");
+        let dir = tempfile::tempdir().unwrap();
+        let phone = device(&relay, "phone").with_pending_file(dir.path().join("pending.json"));
+        let enrolled = phone.enroll().await.unwrap();
+        let code = enrolled.code.unwrap();
+        let status = || DevicesCmd::Status { relay: None };
+        let text = run_text(status(), &phone, false).await.unwrap();
+        assert!(text.contains("waiting for approval"), "{text}");
+        assert!(!text.contains("not registered"), "{text}");
+        assert!(
+            text.contains(&format!("cua devices approve {code}")),
+            "{text}"
+        );
+        // `enroll` shows the same code again.
+        let text = run_text(
+            DevicesCmd::Enroll {
+                name: None,
+                wait: false,
+                relay: None,
+            },
+            &phone,
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(text.contains(&code), "{text}");
+        // Revoked shows as such.
+        let phone_id = phone.device_id().unwrap().unwrap();
+        laptop.approve(Some(&code), None).await.unwrap();
+        laptop.revoke(&phone_id).await.unwrap();
+        let text = run_text(status(), &phone, false).await.unwrap();
+        assert!(text.contains("revoked"), "{text}");
+        // A key the relay never saw is not registered.
+        let slot = MemoryKeySlot::default();
+        let (_, pkcs8) = cua_host::DeviceKey::generate().unwrap();
+        cua_host::KeySlot::save(&slot, &pkcs8).unwrap();
+        let unknown = DeviceAuth::new(
+            &relay.url,
+            Arc::new(StaticToken("acct".into())),
+            Arc::new(slot),
+            "unknown",
+        )
+        .unwrap();
+        let text = run_text(status(), &unknown, false).await.unwrap();
+        assert!(text.contains("is not registered on"), "{text}");
     }
 }

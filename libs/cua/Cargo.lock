@@ -2655,6 +2655,7 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite 0.29.0",
  "tonic",
+ "tonic-web",
  "tracing",
  "url",
 ]

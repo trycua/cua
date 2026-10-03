@@ -124,8 +124,9 @@ pub struct Machine {
     /// Connected to the relay now.
     #[serde(default)]
     pub online: bool,
-    /// Accepting clients (false after "Stop sharing").
-    #[serde(default)]
+    /// Accepting clients (false after "Stop sharing"). A relay that does
+    /// not send it predates "Stop sharing", so its machines are sharing.
+    #[serde(default = "sharing_default")]
     pub sharing: bool,
     /// spacesd version reported at connect.
     #[serde(default)]
@@ -794,6 +795,10 @@ fn is_loopback_host(url: &url::Url) -> bool {
         Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
         None => false,
     }
+}
+
+fn sharing_default() -> bool {
+    true
 }
 
 #[cfg(test)]

@@ -142,6 +142,10 @@ public final class HostModel {
         "Sign in to Cua in your browser to continue. Setup finishes on its own after that."
     /// Called whenever the state changes (the roster's entry follows it).
     public var onChange: (() -> Void)?
+    /// Asks macOS for Local Network access once this Mac provides Spaces
+    /// (see `LocalNetworkPermissionRequesting`); nil in fixtures and tests.
+    public var localNetwork: LocalNetworkPermissionRequesting?
+    private var askedLocalNetwork = false
 
     public init(host: HostRunning?) {
         self.host = host
@@ -154,6 +158,13 @@ public final class HostModel {
 
     func apply(_ status: HostStatus) {
         state = appHostState(status: status)
+        // Setup that provides Spaces, launch on a Mac that already does, or
+        // Spaces turned on: ask now, while someone is at this Mac, not when
+        // the first Space boots (see `LocalNetworkPermissionRequesting`).
+        if let state, state.configured, state.provideSpaces, !askedLocalNetwork, let localNetwork {
+            askedLocalNetwork = true
+            localNetwork.request()
+        }
         onChange?()
     }
 

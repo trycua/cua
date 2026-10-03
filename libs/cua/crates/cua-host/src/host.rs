@@ -588,6 +588,43 @@ pub(crate) fn hostname() -> String {
         .unwrap_or_else(|| "this machine".into())
 }
 
+/// The name a person knows this machine by, for display and as the default
+/// relay machine / device name: `CUA_HOST_NAME` if set, then on macOS the
+/// Sharing "Computer Name" ("cua's Mac Studio"), else the host name with a
+/// trailing `.local` / `.localdomain` dropped ("Mac.localdomain" -> "Mac").
+pub(crate) fn friendly_name() -> String {
+    if let Ok(v) = std::env::var("CUA_HOST_NAME")
+        && !v.trim().is_empty()
+    {
+        return v.trim().to_string();
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(name) = std::process::Command::new("/usr/sbin/scutil")
+        .args(["--get", "ComputerName"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        return name;
+    }
+    strip_local_suffix(&hostname())
+}
+
+/// Drops an mDNS / resolver suffix from a host name; keeps the name when
+/// nothing would be left.
+fn strip_local_suffix(host: &str) -> String {
+    let host = host.trim();
+    let lower = host.to_ascii_lowercase();
+    for suffix in [".localdomain", ".local"] {
+        if lower.ends_with(suffix) && host.len() > suffix.len() {
+            return host[..host.len() - suffix.len()].to_string();
+        }
+    }
+    host.to_string()
+}
+
 /// The LAN address a direct client would use for an unspecified bind.
 fn lan_ip() -> Option<std::net::IpAddr> {
     // No packet is sent: connecting a UDP socket only picks a route.
@@ -825,7 +862,7 @@ impl Host {
             .name
             .clone()
             .filter(|n| !n.trim().is_empty())
-            .unwrap_or_else(hostname);
+            .unwrap_or_else(friendly_name);
         if !opts.share_desktop && !opts.provide_spaces {
             return Err(Error::InvalidArgument(
                 "with neither the desktop nor Spaces there is nothing to share; turn on \
@@ -1179,6 +1216,13 @@ impl Host {
     /// the driver reports granted (asked afresh on each status, so a grant
     /// shows without restarting anything). All of them when it cannot say.
     fn missing_permissions(&self, config: &HostConfig) -> Vec<PermissionHint> {
+        // Screen Recording and Accessibility let people you share with see
+        // and control this desktop. A machine that only provides Spaces
+        // (a spare Mac) keeps its desktop private and runs Spaces in VMs,
+        // so it needs neither.
+        if !config.share_desktop {
+            return vec![];
+        }
         let hints = permission_hints(std::env::consts::OS, &config.driver_bin);
         if hints.is_empty() {
             return hints;
@@ -1395,6 +1439,20 @@ impl Host {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn strip_local_suffix_drops_mdns_and_localdomain() {
+        use super::strip_local_suffix;
+        assert_eq!(strip_local_suffix("Mac.localdomain"), "Mac");
+        assert_eq!(
+            strip_local_suffix("Dillons-MacBook-Pro-2.local"),
+            "Dillons-MacBook-Pro-2"
+        );
+        assert_eq!(strip_local_suffix("box.LOCAL"), "box");
+        assert_eq!(strip_local_suffix("build.example.com"), "build.example.com");
+        assert_eq!(strip_local_suffix(".local"), ".local");
+        assert_eq!(strip_local_suffix("  ci  "), "ci");
+    }
+
     use super::*;
 
     #[test]

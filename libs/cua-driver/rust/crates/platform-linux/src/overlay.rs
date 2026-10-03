@@ -134,8 +134,8 @@ fn should_start_x11_overlay(wayland_display_present: bool) -> bool {
     !wayland_display_present
 }
 
-/// Set while the X11 owner thread is running its render loop over a mapped
-/// overlay window; only then can a desktop capture ask it to hide.
+/// Set while the X11 owner thread is running its render loop; only then can a
+/// desktop capture ask it to hide a visible overlay.
 static X11_OVERLAY_LIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Whether an X11 overlay window exists that a desktop capture must hide.
@@ -1099,12 +1099,12 @@ fn clear_x11_overlay_input_shape(
 }
 
 #[cfg(target_os = "linux")]
-fn map_x11_overlay_with_empty_input(
+fn prepare_x11_overlay_with_empty_input(
     conn: &impl x11rb::connection::Connection,
     win: u32,
 ) -> anyhow::Result<()> {
     use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
-    use x11rb::protocol::xproto::{ClipOrdering, ConnectionExt as XprotoConnectionExt};
+    use x11rb::protocol::xproto::ClipOrdering;
 
     // Check both safety-critical shapes before mapping. If either request is
     // rejected, the full-root overlay must remain unmapped rather than falling
@@ -1120,7 +1120,6 @@ fn map_x11_overlay_with_empty_input(
         &[],
     )?
     .check()?;
-    conn.map_window(win)?.check()?;
     conn.flush()?;
     Ok(())
 }
@@ -1284,13 +1283,15 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     )
     .ok();
 
-    // Start with empty input AND bounding regions before mapping. The empty
+    // Start with empty input AND bounding regions while unmapped. The empty
     // input region makes the window click-through. The empty bounding region
     // prevents a zero-filled full-screen window from appearing opaque black on
     // bare/non-composited X servers before the first cursor command paints a
     // real visible shape. ShapeMask with a None pixmap would reset either
     // region to the full window; an empty rectangle list expresses emptiness.
-    if let Err(e) = map_x11_overlay_with_empty_input(&conn, win) {
+    // An empty bounding shape alone does not protect root captures while
+    // GNOME starts compositing; keep the idle window unmapped until paint.
+    if let Err(e) = prepare_x11_overlay_with_empty_input(&conn, win) {
         tracing::warn!(
             "X11 overlay: cannot establish click-through input shape; overlay remains unmapped: {e}"
         );
@@ -1316,6 +1317,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         root,
         depth,
         gc_id,
+        mapped: std::cell::Cell::new(false),
     };
 
     // Render at ~60 Hz only while pixels can change. Quiescent cursors use
@@ -1329,7 +1331,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let mut maintenance_deadline = last_tick + X11_EVENT_POLL_INTERVAL;
     let mut last_pinned: Option<u64> = None;
     let mut last_compositor_poll = last_tick;
-    // Constructed after the geometry query and the window map, so the cache can
+    // Constructed after the geometry query and window setup, so the cache can
     // never be primed against a placeholder geometry. This window has painted
     // nothing yet and its bounding shape is still empty, so its first root read
     // sees no pixels of ours. (A previous overlay instance torn down moments
@@ -1531,7 +1533,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         if let Some(generation) = crate::overlay_capture::CAPTURE_HOLD.unanswered_request() {
             use crate::overlay_capture::{HiddenOverlay, HoldAnswer};
             let answer = if overlay_shaped {
-                match blank_x11_overlay_shape(&conn, win, true) {
+                match blank_x11_overlay_shape(&conn, &paint_target, true) {
                     Ok(()) => {
                         overlay_shaped = false;
                         HoldAnswer::Hidden(HiddenOverlay {
@@ -1810,7 +1812,7 @@ struct X11PaintTile {
     pixmap: tiny_skia::Pixmap,
 }
 
-/// Loop-constant X11 handles the paint path needs. Bundled so the per-frame
+/// Owner-thread X11 handles and mapping state. Bundled so the per-frame
 /// paint entry point keeps a reviewable argument list as the compositing
 /// inputs grow.
 #[cfg(target_os = "linux")]
@@ -1819,6 +1821,7 @@ struct X11PaintTarget {
     root: u32,
     depth: u8,
     gc_id: u32,
+    mapped: std::cell::Cell<bool>,
 }
 
 /// One rect of screen the overlay painted over: the desktop pixels that were
@@ -2604,17 +2607,20 @@ fn composite_x11_tiles(
 #[cfg(target_os = "linux")]
 fn blank_x11_overlay_shape(
     conn: &impl x11rb::connection::Connection,
-    win: u32,
+    target: &X11PaintTarget,
     checked_requests: bool,
 ) -> anyhow::Result<()> {
     use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK, SO};
-    use x11rb::protocol::xproto::ClipOrdering;
+    use x11rb::protocol::xproto::{ClipOrdering, ConnectionExt as XprotoConnectionExt};
+
+    conn.unmap_window(target.win)?.check()?;
+    target.mapped.set(false);
 
     let cookie = conn.shape_rectangles(
         SO::SET,
         SK::BOUNDING,
         ClipOrdering::UNSORTED,
-        win,
+        target.win,
         0,
         0,
         &[],
@@ -2675,7 +2681,7 @@ fn paint_x11_tiles(
             // would recontaminate the region we are waiting on and bake our own
             // cursor into the first save-under.
             if backdrop.take_resync_blanking() {
-                blank_x11_overlay_shape(conn, target.win, checked_requests)?;
+                blank_x11_overlay_shape(conn, target, checked_requests)?;
             }
             return Ok(X11PaintOutcome::Deferred);
         }
@@ -2758,6 +2764,20 @@ fn paint_x11_tiles(
     )?;
     if checked_requests {
         shape_cookie.check()?;
+    }
+
+    // Keep empty frames unmapped: some compositors capture a newly mapped
+    // full-root window as black even when its bounding shape is empty.
+    // Map after shaping and before upload, since an unmapped window need not
+    // retain pixels. Only transitions need a mapping request or round trip.
+    let should_map = !visible_shape.is_empty();
+    if should_map != target.mapped.get() {
+        if should_map {
+            conn.map_window(target.win)?.check()?;
+        } else {
+            conn.unmap_window(target.win)?.check()?;
+        }
+        target.mapped.set(should_map);
     }
 
     // Phase D — upload. A composited buffer covers the whole tile rect; pixels
@@ -3049,8 +3069,8 @@ mod tests {
         use x11rb::protocol::randr::ConnectionExt as RandrConnectionExt;
         use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK};
         use x11rb::protocol::xproto::{
-            AtomEnum, ConnectionExt as XprotoConnectionExt, CreateWindowAux, EventMask, MapState,
-            Window, WindowClass,
+            AtomEnum, ConnectionExt as XprotoConnectionExt, CreateWindowAux, EventMask,
+            ImageFormat, MapState, Window, WindowClass,
         };
 
         fn find_named_window(
@@ -3092,7 +3112,15 @@ mod tests {
             let deadline = Instant::now() + Duration::from_secs(3);
             while Instant::now() < deadline {
                 let shape = conn.shape_get_rectangles(overlay, SK::BOUNDING)?.reply()?;
-                if shape.rectangles.is_empty() == should_be_empty {
+                let attributes = conn.get_window_attributes(overlay)?.reply()?;
+                let expected_map_state = if should_be_empty {
+                    MapState::UNMAPPED
+                } else {
+                    MapState::VIEWABLE
+                };
+                if shape.rectangles.is_empty() == should_be_empty
+                    && attributes.map_state == expected_map_state
+                {
                     return Ok(());
                 }
                 std::thread::sleep(Duration::from_millis(10));
@@ -3106,11 +3134,13 @@ mod tests {
             overlay: Window,
             target: Window,
             phase: &str,
+            expected_map_state: MapState,
         ) -> anyhow::Result<()> {
             let attributes = conn.get_window_attributes(overlay)?.reply()?;
             anyhow::ensure!(
-                attributes.map_state == MapState::VIEWABLE,
-                "overlay was not mapped during {phase}"
+                attributes.map_state == expected_map_state,
+                "unexpected overlay map state during {phase}: {:?}",
+                attributes.map_state
             );
             let input = conn.shape_get_rectangles(overlay, SK::INPUT)?.reply()?;
             anyhow::ensure!(
@@ -3171,11 +3201,22 @@ mod tests {
             0,
             WindowClass::INPUT_OUTPUT,
             root_visual,
-            &CreateWindowAux::new().event_mask(EventMask::BUTTON_PRESS),
+            &CreateWindowAux::new()
+                .background_pixel(0x33cc66)
+                .event_mask(EventMask::BUTTON_PRESS),
         )?
         .check()?;
         conn.map_window(target)?.check()?;
         conn.flush()?;
+
+        let desktop_before = conn
+            .get_image(ImageFormat::Z_PIXMAP, root, 0, 0, 32, 32, u32::MAX)?
+            .reply()?
+            .data;
+        anyhow::ensure!(
+            desktop_before.iter().any(|byte| *byte != 0),
+            "fixture desktop must not be black"
+        );
 
         let cursor_id = "issue-1819-live-shape-probe";
         let cfg = CursorConfig {
@@ -3188,7 +3229,22 @@ mod tests {
         let title = format!("Cua.AgentCursorOverlay.{cursor_id}");
         let overlay = find_named_window(&conn, root, title.as_bytes())?;
         wait_for_bounding_shape(&conn, overlay, true, "daemon startup")?;
-        assert_click_through(&conn, root, overlay, target, "daemon startup")?;
+        let desktop_after = conn
+            .get_image(ImageFormat::Z_PIXMAP, root, 0, 0, 32, 32, u32::MAX)?
+            .reply()?
+            .data;
+        assert_eq!(
+            desktop_after, desktop_before,
+            "idle overlay changed root capture pixels"
+        );
+        assert_click_through(
+            &conn,
+            root,
+            overlay,
+            target,
+            "daemon startup",
+            MapState::UNMAPPED,
+        )?;
 
         send_command(OverlayCommand::SetEnabled(true));
         send_command(OverlayCommand::SnapTo {
@@ -3197,7 +3253,14 @@ mod tests {
             heading_radians: None,
         });
         wait_for_bounding_shape(&conn, overlay, false, "cursor show")?;
-        assert_click_through(&conn, root, overlay, target, "cursor show")?;
+        assert_click_through(
+            &conn,
+            root,
+            overlay,
+            target,
+            "cursor show",
+            MapState::VIEWABLE,
+        )?;
 
         send_command(OverlayCommand::MoveTo {
             x: 240.0,
@@ -3206,11 +3269,25 @@ mod tests {
         });
         wait_for_cursor_move_from(160.0, 160.0, "cursor move")?;
         wait_for_bounding_shape(&conn, overlay, false, "cursor move")?;
-        assert_click_through(&conn, root, overlay, target, "cursor move")?;
+        assert_click_through(
+            &conn,
+            root,
+            overlay,
+            target,
+            "cursor move",
+            MapState::VIEWABLE,
+        )?;
 
         send_command(OverlayCommand::SetEnabled(false));
         wait_for_bounding_shape(&conn, overlay, true, "cursor hide")?;
-        assert_click_through(&conn, root, overlay, target, "cursor hide")?;
+        assert_click_through(
+            &conn,
+            root,
+            overlay,
+            target,
+            "cursor hide",
+            MapState::UNMAPPED,
+        )?;
 
         send_command(OverlayCommand::SetEnabled(true));
         send_command(OverlayCommand::SnapTo {
@@ -3254,7 +3331,14 @@ mod tests {
             geometry.width, geometry.height
         );
         wait_for_bounding_shape(&conn, overlay, false, "RandR repair")?;
-        assert_click_through(&conn, root, overlay, target, "RandR repair")?;
+        assert_click_through(
+            &conn,
+            root,
+            overlay,
+            target,
+            "RandR repair",
+            MapState::VIEWABLE,
+        )?;
         Ok(())
     }
 
@@ -3516,7 +3600,8 @@ mod tests {
         assert_x11_button_press_target(&conn, root, overlay)?;
 
         conn.unmap_window(overlay)?.check()?;
-        map_x11_overlay_with_empty_input(&conn, overlay)?;
+        prepare_x11_overlay_with_empty_input(&conn, overlay)?;
+        conn.map_window(overlay)?.check()?;
         let click_through_input = conn.shape_get_rectangles(overlay, SK::INPUT)?.reply()?;
         assert!(
             click_through_input.rectangles.is_empty(),
@@ -3574,7 +3659,7 @@ mod tests {
 
         let missing_window = conn.generate_id()?;
         assert!(
-            map_x11_overlay_with_empty_input(&conn, missing_window).is_err(),
+            prepare_x11_overlay_with_empty_input(&conn, missing_window).is_err(),
             "a rejected input-shape request must abort before mapping"
         );
         assert!(

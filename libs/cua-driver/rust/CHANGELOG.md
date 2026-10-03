@@ -6,6 +6,28 @@
 
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.
 
+## [0.33.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.33.0...cua-driver-rs-v0.33.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **cua-driver:** close remaining Claude cleanup safety gaps ([eb13682](https://github.com/trycua/cua/commit/eb136826b46adb68209ef72881bb469fad23c660))
+* **cua-driver:** drain Windows foreground input before restoring focus ([#4500](https://github.com/trycua/cua/issues/4500)) ([c8edda0](https://github.com/trycua/cua/commit/c8edda06be53e13a759c69de125ce37189023954)), closes [#4477](https://github.com/trycua/cua/issues/4477)
+* **cua-driver:** fail safely when Claude ownership cannot be inspected ([f7ff44a](https://github.com/trycua/cua/commit/f7ff44aba1e8807e82860cd90825f4c77fa3e6c1))
+* **cua-driver:** keep idle X11 cursor overlays unmapped ([#4529](https://github.com/trycua/cua/issues/4529)) ([5e13eb7](https://github.com/trycua/cua/commit/5e13eb7777172587fa32ce2af1d78d7572b77f1a))
+* **cua-driver:** keep the CLI fallback inside the ownership check ([762c223](https://github.com/trycua/cua/commit/762c223918d8bbfa11cce77320810e0c7ddb670d))
+* **cua-driver:** keep the uninstaller parseable by bash 3.2 ([25c6cb1](https://github.com/trycua/cua/commit/25c6cb16eb9a2a4e35c25199bc358247185d3d6d))
+* **cua-driver:** let verify_state read label-less display text on macOS ([#4531](https://github.com/trycua/cua/issues/4531)) ([15c6c24](https://github.com/trycua/cua/commit/15c6c24e23184f8e0388440ec52f3e4ee2fb58f3)), closes [#4526](https://github.com/trycua/cua/issues/4526)
+* **cua-driver:** make Claude MCP cleanup path-owned ([cf31fc1](https://github.com/trycua/cua/commit/cf31fc1e0a616b8237337f4f363d591208fd8515))
+* **cua-driver:** make the macOS background drag refusal explicit ([#4533](https://github.com/trycua/cua/issues/4533)) ([61ec8ac](https://github.com/trycua/cua/commit/61ec8ac1d80df191bccd7fc9e9275123a809b2f7)), closes [#4524](https://github.com/trycua/cua/issues/4524)
+* **cua-driver:** make Windows MCP removal guidance ownership-safe ([4b2589c](https://github.com/trycua/cua/commit/4b2589cd87c3f139e55ef9b8e86a00654a6b3ba2))
+* **cua-driver:** omit AX-less AppKit helper windows from macOS list_windows ([#4534](https://github.com/trycua/cua/issues/4534)) ([4635c06](https://github.com/trycua/cua/commit/4635c066808ba662c1d82a394592f707b4ad09ae)), closes [#4525](https://github.com/trycua/cua/issues/4525)
+* **cua-driver:** preserve foreign dangling launcher ([c1800a0](https://github.com/trycua/cua/commit/c1800a06618a338eca0d2e1d136b67e40d258f8e))
+* **cua-driver:** reject relative MCP commands as ownership evidence ([abc786c](https://github.com/trycua/cua/commit/abc786ca428222ef1e429f3a9e255a9953cb841c))
+* **cua-driver:** remove UTF-8 BOM from Windows uninstaller ([e309dc1](https://github.com/trycua/cua/commit/e309dc15e8c92a4e7adbfce0aaa2aee5f1582540))
+* **cua-driver:** scrub the Claude MCP registration the CLI actually creates ([558ddf0](https://github.com/trycua/cua/commit/558ddf0141c952337e0f4d3c2455474ce28e3adb))
+* **cua-driver:** tie Claude MCP cleanup to actual release removal ([ff770f5](https://github.com/trycua/cua/commit/ff770f5d5211a5a5898a5a569cb84e4736000777))
+
 ## [0.33.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.32.0...cua-driver-rs-v0.33.0) (2026-10-03)
 
 

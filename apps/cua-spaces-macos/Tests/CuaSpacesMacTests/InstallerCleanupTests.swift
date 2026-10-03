@@ -102,3 +102,26 @@ struct InstallerCleanupTests {
         #expect(volumes.calls == ["eject /Volumes/Cua Spaces", "trash \(Self.dmg)"])
     }
 }
+
+/// The Trash question waits for the first run, so it never covers onboarding.
+@MainActor
+@Suite("Installer cleanup after onboarding")
+struct InstallerCleanupOnboardingTests {
+    @Test func asksAtOnceWhenOnboardingIsDone() {
+        let onboarding = OnboardingModel(statePath: nil)
+        onboarding.finish()
+        var asked = 0
+        AppDelegate.afterOnboarding(onboarding) { asked += 1 }
+        #expect(asked == 1)
+    }
+
+    @Test func waitsForTheFirstRunToFinish() async {
+        let onboarding = OnboardingModel(statePath: nil)
+        var asked = 0
+        AppDelegate.afterOnboarding(onboarding) { asked += 1 }
+        #expect(asked == 0, "not while onboarding is showing")
+        onboarding.finish()
+        for _ in 0..<50 where asked == 0 { try? await Task.sleep(for: .milliseconds(10)) }
+        #expect(asked == 1)
+    }
+}

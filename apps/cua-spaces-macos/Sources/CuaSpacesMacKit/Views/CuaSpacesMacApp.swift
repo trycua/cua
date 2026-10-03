@@ -192,14 +192,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cleanUpInstaller(Self.model, ask: !Self.launchedAtLogin)
     }
 
-    /// After a drag install: ejects the disk image the app came from, then
-    /// (unless it was opened at login) offers to move the .dmg to the Trash.
+    /// After a drag install: ejects the disk image the app came from at
+    /// once, then (unless it was opened at login) offers to move the .dmg to
+    /// the Trash once the first run is done, so the question never covers
+    /// onboarding.
     func cleanUpInstaller(_ model: AppModel, ask: Bool) {
         guard let cleanup = InstallerCleanup.forThisApp() else { return }
         Task.detached(priority: .utility) {
             let offered = cleanup.ejectLeftovers()
             guard ask, !offered.isEmpty else { return }
-            await MainActor.run { Self.offerTrash(offered, cleanup, model) }
+            await MainActor.run {
+                Self.afterOnboarding(model.onboarding) { Self.offerTrash(offered, cleanup, model) }
+            }
+        }
+    }
+
+    /// Runs `action` once onboarding is complete: now when it already is,
+    /// otherwise when the first run finishes.
+    static func afterOnboarding(_ onboarding: OnboardingModel, _ action: @escaping @MainActor () -> Void) {
+        guard !onboarding.completed else { return action() }
+        withObservationTracking { _ = onboarding.completed } onChange: {
+            DispatchQueue.main.async { afterOnboarding(onboarding, action) }
         }
     }
 

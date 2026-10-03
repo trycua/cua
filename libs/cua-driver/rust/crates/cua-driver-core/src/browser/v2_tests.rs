@@ -2651,13 +2651,19 @@ async fn insert_text_trailing_newline_presses_enter_on_a_single_line_field() {
     assert_eq!(s["requested_chars"], 8, "{s}");
     assert_eq!(s["delivered_chars"], 8, "{s}");
     assert!(
-        result.content.iter().any(|c| matches!(c, Content::Text { text, .. } if text.contains("pressed Enter"))),
+        result
+            .content
+            .iter()
+            .any(|c| matches!(c, Content::Text { text, .. } if text.contains("pressed Enter"))),
         "the summary must say Enter was pressed: {result:?}"
     );
 
     let inserts = recorded_calls(&f, "Input.insertText");
     assert_eq!(inserts.len(), 1);
-    assert_eq!(inserts[0].1["text"], "Buy milk", "the newline must not go through insertText");
+    assert_eq!(
+        inserts[0].1["text"], "Buy milk",
+        "the newline must not go through insertText"
+    );
 
     let events = recorded_calls(&f, "Input.dispatchKeyEvent");
     assert_eq!(events.len(), 3, "{events:?}");
@@ -2666,7 +2672,9 @@ async fn insert_text_trailing_newline_presses_enter_on_a_single_line_field() {
     assert_eq!(events[1].1["text"], "\r");
     assert_eq!(events[1].1["unmodifiedText"], "\r");
     enter_event(&events[2].1, "keyUp");
-    assert!(events.iter().all(|(sess, _)| sess.as_deref().unwrap().starts_with("tab-sess-")));
+    assert!(events
+        .iter()
+        .all(|(sess, _)| sess.as_deref().unwrap().starts_with("tab-sess-")));
 }
 
 #[tokio::test]
@@ -2761,8 +2769,9 @@ async fn a_failed_enter_after_insert_text_is_reported_not_counted() {
             "text": "hi\n", "session": SESSION
         }))
         .await;
-    assert_eq!(result.is_error, Some(true), "{result:?}");
-    let refusal = &structured(&result)["refusal"];
+    let s = structured(&result);
+    assert_eq!(s["status"], "refused", "{s}");
+    let refusal = &s["refusal"];
     assert_eq!(refusal["code"], "browser_input_incomplete", "{refusal}");
     assert_eq!(refusal["detail"]["requested_chars"], 2);
     assert_eq!(refusal["detail"]["delivered_chars"], 2);

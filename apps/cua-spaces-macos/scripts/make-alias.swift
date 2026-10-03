@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Writes a Finder alias to a folder and gives it a custom icon. package-dmg.sh
-// uses it for the disk image's Applications link: a symlink cannot carry its
-// own icon, an alias file can (Finder resolves it by path on any Mac).
-//
-//   swift scripts/make-alias.swift /Applications "<stage>/Applications" Support/dmg/applications.icns
 import AppKit
 
 let args = CommandLine.arguments

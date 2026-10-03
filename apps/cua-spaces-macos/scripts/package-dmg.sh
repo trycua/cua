@@ -6,12 +6,6 @@
 # into a compressed, read-only disk image with an Applications link, then
 # signs the image. install.sh mounts it and copies the one .app it finds.
 #
-# The window is the spaces.cua.ai hero with the blue Cua Spaces key missing
-# (Support/dmg, drawn by scripts/dmg-art): the app, whose icon is that key,
-# sits on the left, and the Applications alias, whose icon is the key's
-# outline, sits where the key was. dmgbuild (pinned below, installed into a
-# throwaway venv) writes the window layout; scripts/dmg-settings.py holds it.
-#
 #   scripts/package-dmg.sh --app "path/Cua Spaces.app" --out cua-spaces-0.2.0-darwin-universal.dmg
 #       [--sign IDENTITY]
 #
@@ -27,7 +21,7 @@ while [ $# -gt 0 ]; do
     --app) app="$2"; shift ;;
     --out) out="$2"; shift ;;
     --sign) identity="$2"; shift ;;
-    -h | --help) sed -n '5,21p' "$0"; exit 0 ;;
+    -h | --help) sed -n '5,14p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -48,7 +42,6 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 python3 -m venv "$work/venv"
 "$work/venv/bin/pip" install --quiet --disable-pip-version-check "dmgbuild==$dmgbuild_version"
-# the alias with its icon; dmgbuild copies it (and the app) in with ditto, which keeps the icon
 swift "$here/make-alias.swift" /Applications "$work/Applications" "$art/applications.icns"
 mkdir -p "$(dirname "$out")"
 rm -f "$out"

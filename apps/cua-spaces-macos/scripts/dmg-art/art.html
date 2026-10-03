@@ -1,20 +1,6 @@
 <!doctype html>
 <!-- SPDX-License-Identifier: FSL-1.1-MIT -->
 <!-- Copyright (c) 2026 Cua AI, Inc. -->
-<!--
-  The DMG art and the app icon, drawn from the spaces.cua.ai hero (FloatHero:
-  the same sky, sprites, positions and legend homography, minus the copy).
-  render.sh screenshots it with headless Chrome:
-    #bg     the Finder window background: the hero in the top-left 720x480 (the window),
-            and more sky out to 2560x1440, because Finder never scales or tiles the
-            picture and people can still resize the window (render.sh also takes it at 2x)
-    #icon   the app icon, 1024x1024: the blue Cua Spaces key on a tile of the sky
-    #alias  the Applications alias icon, 1024x1024: that key's outline with a faint
-            Applications glyph where its legend sits, on transparent
-  The key sits at the same place, angle and size in #icon and #alias, so in
-  Finder the app icon is visibly the shape of the Applications target.
-  The sprites in src/ come from the site (trycua/cloud src/spaces-site/public/img/float).
--->
 <meta charset="utf-8">
 <style>
   html, body { margin: 0; background: transparent; overflow: hidden; }
@@ -31,25 +17,14 @@
 </style>
 <div class="stage" id="stage"></div>
 <script>
-  // Window and icon geometry; dmg-settings.py positions the icons to match.
   const WIN = { w: 720, h: 480 };
-  const CANVAS = { w: 2560, h: 1440 }; // what a resized window can show
-  // Icon centres from dmg-settings.py. Finder centres each label about 92 points below its icon
-  // and draws it black in light mode, white in dark; on this sky either would vanish, so a
-  // mid-grey pill (readable under both, opaque so stars stay behind it) sits where each label lands.
+  const CANVAS = { w: 2560, h: 1440 };
   const APP = { x: 173, y: 240, label: 65 }, APPS = { x: 566, y: 147, label: 68 };
-  // measured in Finder on macOS 26: label text is centred 0.75 left of the icon, its capitals 91.25 below
   const LABEL_DX = -0.75, LABEL_DY = 91.25;
-  // The alias draws its outline ALIAS_DY lower in its icon (18 points at 144) and sits 18 points
-  // higher, so the outline stays put while its label comes up to the gap the app's label has
-  // under the app's tile (measured in Finder: 23.5 points each).
   const ALIAS_DY = 128;
-  // Likewise 6 points left in its icon and 6 right in the window: the tilted key's front edge
-  // leans right, so its label centres on that edge rather than on the outline's bounding box.
   const ALIAS_DX = -43;
-  const ICON = 1024, TILE = 824, KEY = 640; // Apple's 1024 grid: an 824 tile, and the key's width on it
+  const ICON = 1024, TILE = 824, KEY = 640;
 
-  // From FloatHero (spaces.cua.ai): sprite sizes, outlines, legend quads and the wide layout.
   const SPR = {
     "product-1": { w: 486, h: 470, outline: [[110,65],[309,8],[327,10],[341,20],[359,52],[414,165],[445,238],[461,280],[476,326],[476,345],[465,357],[421,375],[328,406],[187,449],[143,461],[125,461],[116,456],[109,447],[84,388],[19,218],[8,184],[11,164],[27,140],[51,109],[82,78],[104,67]], quad: [[105,78],[325,22],[415,215],[165,268]] },
     "product-2": { w: 494, h: 481, quad: [[100,92],[300,15],[408,222],[185,298]] },
@@ -75,12 +50,10 @@
     spaces: '<img src="src/spaces-tray-template.svg" style="opacity:.8;mix-blend-mode:multiply">',
     driver: '<img src="src/cua-driver-cursor.svg" style="opacity:.88">',
     lume: '<img src="src/lume-icon-white.svg" style="opacity:.88">',
-    // a three-stroke Applications "A", drawn here rather than taken from macOS
     apps: '<svg viewBox="0 0 100 100" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round" opacity=".55"><path d="M58,14L24,78M42,14L76,78M16,60H84M20,86L28,72"/></svg>',
   };
-  const TARGET = "product-1"; // the Cua Spaces key: gone from the background, it is the app icon
+  const TARGET = "product-1";
 
-  // the site's seeded stars: 56 over the hero (seed 7), then the same density out to the canvas
   const rng = (e) => () => ((e = (e * 16807) % 2147483647) - 1) / 2147483646;
   const starAt = (t, x, y) => ({ x, y, d: 1.2 + t() * 1.1, o: .55 + t() ** 2 * .45 });
   const STARS = (() => {
@@ -92,7 +65,6 @@
     }
     return out;
   })();
-  // a few far keys drifting off beyond the window
   const EXTRA_KEYS = [
     { src: "far-1", x: 905, y: 130, w: 40, rot: 10 }, { src: "far-3", x: 1190, y: 430, w: 34, rot: -6 },
     { src: "far-2", x: 965, y: 655, w: 30, rot: 14 }, { src: "far-4", x: 1510, y: 250, w: 36, rot: -12 },
@@ -102,7 +74,6 @@
     { src: "far-1", x: 2380, y: 880, w: 36, rot: 4 }, { src: "near-3", x: 1150, y: 1330, w: 190, rot: 0 },
   ];
 
-  // the site's homography(): map a 100x100 box onto a quad
   function homography(q, t = 100) {
     const [[n, r], [i, a], [o, s], [c, l]] = q;
     const u = i - o, d = c - o, f = a - s, p = l - s, m = n - i + o - c, h = r - a + s - l, g = u * p - d * f;
@@ -116,14 +87,12 @@
   };
   const sprite = (src, w, legend) => `<img class="sprite" src="src/${src}.webp">` + (legend ? legendAt(src, w, LEGEND[legend]) : "");
   const sky = `<div class="sky"><img src="src/space-1920.webp"></div>`;
-  // a sprite of width w centred on (x, y), rotated like the hero's
   const item = (src, x, y, w, rot, { legend, z = 0, soft = false } = {}) => {
     const h = w * SPR[src].h / SPR[src].w;
     return `<div class="item" style="left:${x - w / 2}px;top:${y - h / 2}px;width:${w}px;height:${h}px;z-index:${z}">
       <div class="in" style="transform:rotate(${rot}deg)${soft ? ";opacity:.72" : ""}">${sprite(src, w, legend)}</div></div>`;
   };
 
-  // Apple's tile is a continuous-corner squircle; a superellipse (n = 5) matches it closely
   function squircle(size, inset, n = 5) {
     const r = size / 2 - inset, c = size / 2, pts = [];
     for (let i = 0; i < 360; i++) {
@@ -133,7 +102,6 @@
     return `M${pts.join("L")}Z`;
   }
 
-  // the key as it sits on the icon grid: centred, at its hero angle
   function iconKey(inner, dy = 0, dx = 0) {
     const T = LAYOUT.find((e) => e.src === TARGET), sp = SPR[TARGET], h = KEY * sp.h / sp.w;
     return `<div class="item" style="left:${(ICON - KEY) / 2 + dx}px;top:${(ICON - h) / 2 + dy}px;width:${KEY}px;height:${h}px">
@@ -142,11 +110,9 @@
 
   const stage = document.getElementById("stage"), mode = location.hash.slice(1) || "bg";
 
-  // The label pills and a trail of star-like dots from the app to Applications.
   function guides() {
     const pill = (c) => { const w = c.label + 22, h = 20, x = c.x + LABEL_DX - w / 2, y = c.y + LABEL_DY - h / 2;
       return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="#5b5954" stroke="#fff" stroke-opacity=".22"/>`; };
-    // a cubic from the app's right edge to the slot's left, threading between the keys
     const P = [[250, 234], [318, 180], [415, 204], [494, 192]];
     const at = (t) => [0, 1].map((i) => (1 - t) ** 3 * P[0][i] + 3 * (1 - t) ** 2 * t * P[1][i] + 3 * (1 - t) * t * t * P[2][i] + t ** 3 * P[3][i]);
     let dots = "", n = 26;

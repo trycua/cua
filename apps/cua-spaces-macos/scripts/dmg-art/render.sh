@@ -26,7 +26,6 @@ done
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# shot MODE WIDTH HEIGHT SCALE OUT
 shot() {
   "$chrome" --headless=new --disable-gpu --hide-scrollbars --allow-file-access-from-files \
     --default-background-color=00000000 --force-device-scale-factor="$4" \
@@ -35,7 +34,6 @@ shot() {
   [ -s "$5" ] || { echo "Chrome did not render #$1" >&2; exit 1; }
 }
 
-# icns NAME SOURCE_1024_PNG OUT
 icns() {
   local set="$work/$1.iconset" s
   mkdir -p "$set"
@@ -47,7 +45,6 @@ icns() {
 }
 
 mkdir -p "$support/dmg"
-# 2560x1440: the window shows the top-left 720x480, the rest is for resized windows
 shot bg 2560 1440 1 "$support/dmg/background.png"
 shot bg 2560 1440 2 "$support/dmg/background@2x.png"
 shot icon 1024 1024 1 "$work/icon.png"

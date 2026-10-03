@@ -775,6 +775,24 @@ where
                         .into_http::<R>();
                         return Box::pin(async move { Ok(response) });
                     }
+                    if grant.host_only && !HOST_ONLY_GRPC_METHODS.contains(&path.as_str()) {
+                        self.auth.record_access(
+                            "relay",
+                            &who,
+                            &format!("refused {} (desktop not shared)", grpc_service(&path)),
+                        );
+                        tracing::debug!(%path, %who, "refused: this machine does not share its desktop");
+                        let response = crate::error::status(
+                            tonic::Code::PermissionDenied,
+                            cua_proto::env::v1::ErrorReason::PermissionDenied,
+                            format!(
+                                "this machine does not share its desktop (it only provides Spaces): \
+                                 {who} cannot call {path}"
+                            ),
+                        )
+                        .into_http::<R>();
+                        return Box::pin(async move { Ok(response) });
+                    }
                     self.auth.record_access("relay", &who, grpc_service(&path));
                     let viewer = Arc::new(grant.viewer_grant());
                     req.extensions_mut().insert(CallerIdentity {

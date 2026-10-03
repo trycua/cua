@@ -102,8 +102,8 @@ impl ExternalAuthenticator for Relay {
                 color: String::new(),
                 kind: 1,
             },
-            view_only: v == "viewer",
-            host_only: false,
+            view_only: v == "viewer" || v == "viewer-nodesktop",
+            host_only: v == "viewer-nodesktop" || v == "editor-nodesktop",
             account: None,
         }))
     }
@@ -228,6 +228,71 @@ async fn view_only_shares_are_refused_everything_but_watching() {
             && e.body.what == "refused ProcessService (view-only share)"),
         "{e:?}"
     );
+}
+
+/// A view-only share honors the host's desktop sharing setting: with the
+/// desktop off it reaches no stream call; with it on it does.
+#[tokio::test]
+async fn view_only_shares_need_desktop_sharing_on() {
+    let (r, ctx, _d) = server(Some("s3cret"), true);
+    ctx.auth().set_external(std::sync::Arc::new(Relay));
+    let call = |who: &'static str, path: &str| {
+        let mut req = grpc(path, None);
+        req.headers_mut()
+            .insert("x-test-relay", http::HeaderValue::from_static(who));
+        req
+    };
+    let status = |resp: &http::Response<Body>| {
+        resp.headers()
+            .get("grpc-status")
+            .map(|v| v.to_str().unwrap().to_owned())
+    };
+    let stream = "/cua.env.v1.StreamService/OpenMedia";
+
+    // Desktop off: refused, with the daemon's disabled-desktop message.
+    let resp = r
+        .clone()
+        .oneshot(call("viewer-nodesktop", stream))
+        .await
+        .unwrap();
+    assert_eq!(status(&resp).as_deref(), Some("7"));
+    let message = percent_decode(
+        resp.headers()
+            .get("grpc-message")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+    );
+    assert!(
+        message.starts_with("this machine does not share its desktop"),
+        "{message}"
+    );
+    // The capabilities probe still answers.
+    let resp = r
+        .clone()
+        .oneshot(call("viewer-nodesktop", CAPS))
+        .await
+        .unwrap();
+    assert_ne!(status(&resp).as_deref(), Some("7"));
+
+    // Desktop on: allowed (the call reaches the service).
+    let resp = r.clone().oneshot(call("viewer", stream)).await.unwrap();
+    assert_ne!(status(&resp).as_deref(), Some("7"));
+
+    // Owner (full access) is unchanged: reaches any service with desktop on,
+    // and the existing host-only restriction applies with it off.
+    let resp = r
+        .clone()
+        .oneshot(call("1", "/cua.env.v1.ProcessService/List"))
+        .await
+        .unwrap();
+    assert_ne!(status(&resp).as_deref(), Some("7"));
+    let resp = r
+        .clone()
+        .oneshot(call("editor-nodesktop", "/cua.env.v1.ProcessService/List"))
+        .await
+        .unwrap();
+    assert_eq!(status(&resp).as_deref(), Some("7"));
 }
 
 fn percent_decode(s: &str) -> String {

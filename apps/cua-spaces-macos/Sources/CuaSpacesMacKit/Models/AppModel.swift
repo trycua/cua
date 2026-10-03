@@ -652,6 +652,13 @@ public final class AppModel {
             identity = who ?? account.identity()
             host.identity = identity
             devices.signedIn = identity != nil
+            // Activation funnel: the first run records `signed_in` on its
+            // sign-in page; a sign-in from the main window (first run done or
+            // not showing, so its state is on Welcome) records it here.
+            if onboarding.state.step == .welcome, let who = identity, !who.isEmpty,
+               who != onboarding.state.identity {
+                telemetry?.record([.step(step: "signed_in", ok: true)])
+            }
             onboarding.send(.signedIn(identity: identity ?? ""))
             signIn = .idle
         } catch {

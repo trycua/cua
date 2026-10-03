@@ -15,6 +15,7 @@ pub mod hyprland;
 pub mod hyprland_capture;
 mod hyprland_compatibility;
 pub mod hyprland_input;
+pub mod kwin_capture;
 pub mod kwin_helper;
 pub mod overlay;
 pub mod persistent_vptr;
@@ -1097,6 +1098,9 @@ pub fn screenshot_dispatch_with_pid(xid: u64, pid: u32) -> anyhow::Result<Vec<u8
 }
 
 fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
+    if is_wayland() && kwin_capture::knows_window(xid) {
+        return kwin_capture::capture(xid, pid);
+    }
     if is_wayland() && hyprland::is_session() {
         return hyprland::capture(xid, pid).map_err(|error| {
             tracing::debug!("Hyprland target capture refused: {error:#}");
@@ -1554,6 +1558,15 @@ pub fn with_target_foreground<T>(
     body: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     let _target_guard = bind_foreground_target(pid, window_id);
+    if kwin_capture::knows_window(window_id) {
+        anyhow::ensure!(
+            kwin_capture::list_windows()?
+                .iter()
+                .any(|window| { window.xid == window_id && window.pid == Some(pid) }),
+            "foreground_unavailable: KWin window {window_id} no longer belongs to pid {pid}"
+        );
+        return kwin_helper::with_focused_window(pid, window_id, body);
+    }
     if let Some(window) = sway_ipc::window_for_id(window_id) {
         if window.pid != pid {
             anyhow::bail!(
@@ -3331,6 +3344,10 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
                     Vec::new()
                 }
             };
+        }
+        match kwin_capture::list_windows() {
+            Ok(ws) => return listed_windows(apply_pid_filter(ws, filter_pid)),
+            Err(error) => tracing::debug!("KWin window enumeration unavailable: {error:#}"),
         }
         if let Some(ws) = kwin_helper::list_window_infos() {
             return listed_windows(apply_pid_filter(ws, filter_pid));

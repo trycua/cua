@@ -1112,6 +1112,9 @@ impl Tool for GetWindowStateTool {
             Some(v) => v,
             None => {
                 let chosen = tokio::task::spawn_blocking(move || {
+                    if crate::wayland::is_wayland() {
+                        return pid_fallback_window_resolver()(i64::from(pid));
+                    }
                     if let Some(popup) = crate::input::mapped_popup_windows()
                         .into_iter()
                         .rev()
@@ -6589,6 +6592,15 @@ impl Tool for ClickTool {
                 return refusal;
             }
 
+            if crate::wayland::wayland_input_enabled()
+                && !crate::wayland::is_inject_mode()
+                && !delivery.is_foreground()
+            {
+                return crate::input::delivery::background_unavailable_error(
+                    crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                );
+            }
+
             // The AX route was unavailable. Fall back to a real MPX pointer
             // click at the element (no focus steal), then to a target-addressed
             // X11 event for toolkits that accept it.
@@ -6601,6 +6613,23 @@ impl Tool for ClickTool {
                         "modified element clicks are unavailable on native Wayland: \
                          the pointer route cannot carry keyboard modifier state"
                     );
+                }
+                if crate::wayland::wayland_input_enabled() {
+                    if crate::wayland::is_inject_mode() {
+                        crate::wayland::inject_click(pid, xid2, lx, ly, count as u32, button)?;
+                        return Ok(PointerRoute::Wayland);
+                    }
+                    let (_, sx, sy) = placement
+                        .ok_or_else(|| anyhow::anyhow!("element screen bounds unavailable"))?;
+                    crate::wayland::with_target_foreground(pid, xid2, || {
+                        crate::wayland::click_focused(
+                            sx.round() as i32,
+                            sy.round() as i32,
+                            count as u32,
+                            button,
+                        )
+                    })?;
+                    return Ok(PointerRoute::Wayland);
                 }
                 // An explicit X11 foreground request needs the real XTest path
                 // even for a plain click. Some native widgets (notably GTK

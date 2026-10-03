@@ -121,11 +121,11 @@
       "variant": "vm",
       "summary": "Windows VM with cua-spacesd and cua-driver.",
       "spacesd": true,
-      "digest": "sha256:75a56a0e6b63010e40f5507ec9ddc8953f592185e009bdcad3d543996a0a8941",
+      "digest": "sha256:761d17ca781376de27aef27b95958350f3a70f3e4748867a30aa88b2bf33eba9",
       "sizes": {
-        "digest": "sha256:75a56a0e6b63010e40f5507ec9ddc8953f592185e009bdcad3d543996a0a8941",
+        "digest": "sha256:761d17ca781376de27aef27b95958350f3a70f3e4748867a30aa88b2bf33eba9",
         "platforms": [
-          { "arch": "amd64", "manifest": "sha256:79e718fc3d58c4c962c2f3ee89ac63c4bc729d751e825b142ff416cb4dfe96cd", "download": 5982139872, "unpacked": 6045564928, "disk": 68719476736 }
+          { "arch": "amd64", "manifest": "sha256:7c7f19b3d780d38576c00d8cb58ebffa395f921e434bd8f78920a0ca7102576d", "download": 6972612754, "unpacked": 7039680512, "disk": 68719476736 }
         ]
       },
       "browsers": ["edge"],
@@ -253,11 +253,11 @@
       "variant": "vm",
       "summary": "Omarchy edge (Arch, Hyprland) VM with Omarchy's cua-driver and Hyprland input plugin, plus cua-spacesd.",
       "spacesd": true,
-      "digest": "sha256:40c26f8f43ae9bbd8d53d7ddf4e0fb1405613ef389ea52145e8bc6d4bcfaf267",
+      "digest": "sha256:87f653232b0925cddb42cb4c4dbbb27dee4a4f5168b7bf969f9c7a3414a22ccb",
       "sizes": {
-        "digest": "sha256:40c26f8f43ae9bbd8d53d7ddf4e0fb1405613ef389ea52145e8bc6d4bcfaf267",
+        "digest": "sha256:87f653232b0925cddb42cb4c4dbbb27dee4a4f5168b7bf969f9c7a3414a22ccb",
         "platforms": [
-          { "arch": "amd64", "manifest": "sha256:4c44d0fe1b0380ca8e136f1a6f75fe247f6e3e1ea51a16e424caf009c583aa7b", "download": 1619795385, "unpacked": 1637548032, "disk": 21474836480 }
+          { "arch": "amd64", "manifest": "sha256:749773ac8cd042a369de33d5b8589515b2c680d11129076c16e69adeabb23936", "download": 1636879228, "unpacked": 1654587392, "disk": 21474836480 }
         ]
       },
       "browsers": ["chromium"],
@@ -276,11 +276,11 @@
       "variant": "vm",
       "summary": "The containerDisk the Omarchy VM boots. Resolved from omarchy:edge; not offered on its own.",
       "spacesd": true,
-      "digest": "sha256:9749065a6a87c80388f24bab8c13246018ec122ea471f5eab9d4615eb14307a1",
+      "digest": "sha256:dc8f6e480fde039a2503f60d06a349cb2490161b732d0ff5221647b8aba56914",
       "sizes": {
-        "digest": "sha256:9749065a6a87c80388f24bab8c13246018ec122ea471f5eab9d4615eb14307a1",
+        "digest": "sha256:dc8f6e480fde039a2503f60d06a349cb2490161b732d0ff5221647b8aba56914",
         "platforms": [
-          { "arch": "amd64", "manifest": "sha256:4c44d0fe1b0380ca8e136f1a6f75fe247f6e3e1ea51a16e424caf009c583aa7b", "download": 1619795385, "unpacked": 1637548032, "disk": 21474836480 }
+          { "arch": "amd64", "manifest": "sha256:749773ac8cd042a369de33d5b8589515b2c680d11129076c16e69adeabb23936", "download": 1636879228, "unpacked": 1654587392, "disk": 21474836480 }
         ]
       },
       "browsers": ["chromium"],

@@ -2050,7 +2050,10 @@ impl BrowserTypeTool {
                 mode=\"keystrokes\" dispatches per-character key events. Both insert \
                 at the caret, so typing into a field that already holds text appends \
                 to it; pass replace=true to set the field instead, or to clear it by \
-                typing an empty string. Pass a ref to an editable element from the \
+                typing an empty string. On a single-line input, a trailing newline \
+                is pressed as a real Enter (key, code, keyCode 13) after the text and \
+                the result reports enter_pressed; a textarea or contenteditable keeps \
+                it as content. Pass a ref to an editable element from the \
                 latest snapshot. A ref is required; heuristic bindings are refused."
                 .into(),
             input_schema: json!({
@@ -2059,7 +2062,7 @@ impl BrowserTypeTool {
                     "target_id": schema_target_id(),
                     "tab_id": schema_tab_id(),
                     "session": schema_session(),
-                    "text": { "type": "string", "description": "Text to type." },
+                    "text": { "type": "string", "description": "Text to type. End it with \\n to press Enter after the text on a single-line input." },
                     "ref": schema_ref(),
                     "mode": {
                         "type": "string",

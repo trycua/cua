@@ -153,6 +153,11 @@ pub const ERROR_KINDS: &[&str] = &[
     "insufficient_disk",
     "requires_cua_app",
     "cancelled",
+    // An agent run: cua_spaces `Error::Agent`, a run that recorded a
+    // failure, a run whose process went away mid-turn.
+    "agent",
+    "agent_failed",
+    "agent_crashed",
     "other",
 ];
 pub const DURATIONS: &[&str] = &[
@@ -405,6 +410,30 @@ pub const HARNESSES: &[&str] = &[
     "openclaw",
     "other",
 ];
+/// Where an agent run was started from: a Spaces tool call (the MCP
+/// `agent_start`, the SDKs' `Space.agent_start`, the Spaces app), the
+/// `cua agent` CLI, the SDKs' sandbox `Agents.run`, a persistent agent's
+/// turn, a routine firing.
+pub const AGENT_ENTRIES: &[&str] = &[
+    "spaces_tool",
+    "cli",
+    "sdk",
+    "persistent",
+    "routine",
+    "other",
+];
+/// The products that start agent runs on a host install. Never `spacesd`:
+/// a Space is not an install, so runs are counted where they are started.
+pub const AGENT_PRODUCTS: &[&str] = &[
+    "cli",
+    "daemon",
+    "sdk_rust",
+    "sdk_python",
+    "sdk_typescript",
+    "sdk_swift",
+    "sdk_kotlin",
+    "spaces_app",
+];
 /// cua-bench dataset names (`cua_bench/registry.json`) or `custom`.
 pub const TASKSETS: &[&str] = &[
     "cua-bench-basic",
@@ -492,6 +521,21 @@ const DURATION: Prop = p(
     "Duration, bucketed.",
 );
 const LOCATION: Prop = p("location", Kind::Enum(LOCATIONS), "Where the sandbox runs.");
+const AGENT_HARNESS: Prop = p(
+    "harness",
+    Kind::Enum(HARNESSES),
+    "cua-agents harness id (claude-code, openai-codex, ...), else other.",
+);
+const AGENT_LOCATION: Prop = p(
+    "location",
+    Kind::Enum(LOCATIONS),
+    "Where the Space runs: local, cloud, relay (a machine of the account) or direct (added by address).",
+);
+const AGENT_ENTRY: Prop = p(
+    "entry",
+    Kind::Enum(AGENT_ENTRIES),
+    "Where the run was started from: spaces_tool, cli, sdk, persistent or routine.",
+);
 const CALLER_KIND: Prop = p(
     "caller_kind",
     Kind::Enum(CALLER_KINDS),
@@ -535,6 +579,7 @@ pub mod event {
     pub const SPACES_FEATURE_USED: &str = "cua_spaces_feature_used";
     pub const STREAM_STATS: &str = "cua_stream_stats";
     pub const ONBOARDING_STEP: &str = "cua_onboarding_step";
+    pub const AGENT_RUN_STARTED: &str = "cua_agent_run_started";
     pub const AGENT_RUN_COMPLETED: &str = "cua_agent_run_completed";
     pub const BENCH_RUN_COMPLETED: &str = "cua_bench_run_completed";
     pub const DAEMON_STARTED: &str = "cua_daemon_started";
@@ -789,19 +834,35 @@ pub const EVENTS: &[EventSpec] = &[
         purpose: "Install and onboarding funnel: where people drop off.",
     },
     EventSpec {
-        name: event::AGENT_RUN_COMPLETED,
+        name: event::AGENT_RUN_STARTED,
         version: 1,
         tier: Tier::Usage,
         sample_rate: 1.0,
-        products: CLIENTS,
+        products: AGENT_PRODUCTS,
         props: &[
-            p("harness", Kind::Enum(HARNESSES), "cua-agents harness id."),
-            LOCATION,
+            AGENT_HARNESS,
+            AGENT_LOCATION,
+            AGENT_ENTRY,
+            OUTCOME,
+            ERROR_KIND,
+        ],
+        purpose: "Agent runs started per harness, Space location and entry point, and how often a start fails.",
+    },
+    EventSpec {
+        name: event::AGENT_RUN_COMPLETED,
+        version: 2,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: AGENT_PRODUCTS,
+        props: &[
+            AGENT_HARNESS,
+            AGENT_LOCATION,
+            AGENT_ENTRY,
             OUTCOME,
             ERROR_KIND,
             DURATION,
         ],
-        purpose: "Which coding-agent harnesses run in sandboxes and how reliably.",
+        purpose: "Activation (first agent run) and which coding-agent harnesses finish their first turn, and how reliably. Sent once per run, by the install that started it.",
     },
     EventSpec {
         name: event::BENCH_RUN_COMPLETED,

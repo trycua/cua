@@ -1410,7 +1410,7 @@ impl Sandbox {
     /// results; runs outlive this handle.
     pub async fn agents(&self) -> Result<Arc<super::Agents>> {
         let guest = self.spacesd(None).await?;
-        super::Agents::over(guest.client.clone()).await
+        super::Agents::over(guest.client.clone(), &self.info.location).await
     }
 
     /// A named service (for example `"server"` or `"env"`).

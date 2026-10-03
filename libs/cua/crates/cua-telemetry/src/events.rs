@@ -640,10 +640,39 @@ pub fn onboarding_step(step: &str, outcome: Outcome) -> Option<Event> {
     })
 }
 
-/// `cua_agent_run_completed`.
+/// Where an agent run was started from ([`schema::AGENT_ENTRIES`]), else
+/// `other`.
+pub fn agent_entry(entry: &str) -> &'static str {
+    pick(schema::AGENT_ENTRIES, entry, "other")
+}
+
+/// `cua_agent_run_started`: a run was started (`Outcome::Ok`) or its start
+/// failed (`Outcome::Error` with the error variant). `on` is a location word
+/// or a Space id (`local:dev`; only the location word before `:` is kept).
+pub fn agent_run_started(
+    harness_id: &str,
+    on: &str,
+    entry: &str,
+    outcome: Outcome,
+    error_variant: Option<&str>,
+) -> Event {
+    Event::new(event::AGENT_RUN_STARTED)
+        .s("harness", harness(harness_id))
+        .s("location", location(on))
+        .s("entry", agent_entry(entry))
+        .s("outcome", outcome.as_str())
+        .s(
+            "error_kind",
+            error_variant.map(error_kind).unwrap_or("none"),
+        )
+}
+
+/// `cua_agent_run_completed`: a run's first turn ended (or the run failed,
+/// crashed or was stopped first).
 pub fn agent_run_completed(
     harness_id: &str,
     on: &str,
+    entry: &str,
     outcome: Outcome,
     error_variant: Option<&str>,
     elapsed: Duration,
@@ -651,12 +680,33 @@ pub fn agent_run_completed(
     Event::new(event::AGENT_RUN_COMPLETED)
         .s("harness", harness(harness_id))
         .s("location", location(on))
+        .s("entry", agent_entry(entry))
         .s("outcome", outcome.as_str())
         .s(
             "error_kind",
             error_variant.map(error_kind).unwrap_or("none"),
         )
         .s("duration_bucket", duration_bucket(elapsed))
+}
+
+/// How an agent run ended, from its published status (`cua_agents`
+/// `RunStatus::as_str`), the ACP stop reason of its last turn and whether
+/// it recorded an error. None while it still runs (or cannot be read).
+pub fn agent_run_end(
+    status: &str,
+    stop_reason: Option<&str>,
+    recorded_error: bool,
+) -> Option<(Outcome, Option<&'static str>)> {
+    match status.trim() {
+        "idle" if stop_reason.is_some_and(|r| r.trim() == "cancelled") => {
+            Some((Outcome::Cancelled, None))
+        }
+        "idle" if recorded_error => Some((Outcome::Error, Some("AgentFailed"))),
+        "idle" => Some((Outcome::Ok, None)),
+        "failed" => Some((Outcome::Error, Some("AgentFailed"))),
+        "crashed" => Some((Outcome::Error, Some("AgentCrashed"))),
+        _ => None,
+    }
 }
 
 /// `cua_bench_run_completed`.

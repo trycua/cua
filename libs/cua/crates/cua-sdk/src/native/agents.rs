@@ -376,12 +376,44 @@ pub struct AgentArtifact {
 #[derive(uniffi::Object)]
 pub struct Agents {
     inner: ca::Agents,
+    /// The sandbox's location word (`local`, `cloud`, ...), for telemetry.
+    location: String,
 }
 
 impl Agents {
-    pub(crate) async fn over(guest: cua_spacesd_client::SpacesdClient) -> Result<Arc<Agents>> {
+    pub(crate) async fn over(
+        guest: cua_spacesd_client::SpacesdClient,
+        location: &str,
+    ) -> Result<Arc<Agents>> {
         let inner = run(async move { Ok(ca::Agents::new(guest).await?) }).await?;
-        Ok(Arc::new(Agents { inner }))
+        Ok(Arc::new(Agents {
+            inner,
+            location: location.to_string(),
+        }))
+    }
+}
+
+// Agent-run telemetry (`cua_telemetry::agent_runs`): this install records
+// the runs it starts, and the end of each once, when any status read here
+// (or by another Cua program of this install) first sees it.
+
+/// Where a run was started from: the `cua agent` CLI or an SDK.
+fn entry() -> &'static str {
+    if cua_telemetry::global().product() == "cli" {
+        "cli"
+    } else {
+        "sdk"
+    }
+}
+
+/// Records the end of `info` if this install started it and it ended.
+fn observe(info: &ca::RunInfo) {
+    if let Some((outcome, variant)) = cua_telemetry::events::agent_run_end(
+        info.status.as_str(),
+        info.stop_reason.as_deref(),
+        info.error.is_some(),
+    ) {
+        cua_telemetry::global().agent_run_finished(&info.run_id, outcome, variant);
     }
 }
 
@@ -480,14 +512,42 @@ impl Agents {
         options: Option<AgentRunOptions>,
     ) -> Result<Arc<AgentRun>> {
         let inner = self.inner.clone();
-        let opts = run_options(options.unwrap_or_default())?;
-        let started = run(async move { Ok(inner.start(&harness, &prompt, opts).await?) }).await?;
+        let opts = match run_options(options.unwrap_or_default()) {
+            Ok(o) => o,
+            Err(e) => {
+                cua_telemetry::global().agent_run_start_failed(
+                    &harness,
+                    &self.location,
+                    entry(),
+                    Some(e.variant()),
+                );
+                return Err(e);
+            }
+        };
+        let h = harness.clone();
+        let started = run(async move { Ok(inner.start(&h, &prompt, opts).await?) }).await;
+        let started = match started {
+            Ok(s) => s,
+            Err(e) => {
+                cua_telemetry::global().agent_run_start_failed(
+                    &harness,
+                    &self.location,
+                    entry(),
+                    Some(e.variant()),
+                );
+                return Err(e);
+            }
+        };
+        cua_telemetry::global().agent_run_started(
+            &started.run_id,
+            &started.harness,
+            &self.location,
+            entry(),
+        );
         Ok(Arc::new(AgentRun {
             inner: self.inner.clone(),
             run_id: started.run_id,
             harness: started.harness,
-            started: std::time::Instant::now(),
-            recorded: Default::default(),
         }))
     }
 
@@ -496,19 +556,23 @@ impl Agents {
         let inner = self.inner.clone();
         let id = run_id.clone();
         let info = run(async move { Ok(inner.status(&id).await?) }).await?;
+        observe(&info);
         Ok(Arc::new(AgentRun {
             inner: self.inner.clone(),
             run_id,
             harness: info.harness.unwrap_or_default(),
-            started: std::time::Instant::now(),
-            recorded: Default::default(),
         }))
     }
 
     /// Every run in the sandbox, newest first.
     pub async fn list(&self) -> Result<Vec<AgentRunInfo>> {
         let inner = self.inner.clone();
-        run(async move { Ok(inner.list().await?.into_iter().map(Into::into).collect()) }).await
+        run(async move {
+            let runs = inner.list().await?;
+            runs.iter().for_each(observe);
+            Ok(runs.into_iter().map(Into::into).collect())
+        })
+        .await
     }
 
     /// Installs harnesses or apps (`["claude-code", "blender"]`: harness
@@ -539,11 +603,6 @@ pub struct AgentRun {
     inner: ca::Agents,
     run_id: String,
     harness: String,
-    /// When this handle was made (the duration bucket of
-    /// `cua_agent_run_completed`).
-    started: std::time::Instant,
-    /// `cua_agent_run_completed` was recorded for this handle.
-    recorded: std::sync::atomic::AtomicBool,
 }
 
 #[uniffi::export]
@@ -558,7 +617,12 @@ impl AgentRun {
 
     pub async fn status(&self) -> Result<AgentRunInfo> {
         let (a, id) = (self.inner.clone(), self.run_id.clone());
-        run(async move { Ok(a.status(&id).await?.into()) }).await
+        run(async move {
+            let info = a.status(&id).await?;
+            observe(&info);
+            Ok(info.into())
+        })
+        .await
     }
 
     /// Events after `cursor` (0: from the start), at most `max`.
@@ -591,13 +655,37 @@ impl AgentRun {
     /// Stops the run and verifies its process is gone.
     pub async fn stop(&self) -> Result<AgentRunInfo> {
         let (a, id) = (self.inner.clone(), self.run_id.clone());
-        run(async move { Ok(a.stop(&id).await?.into()) }).await
+        run(async move {
+            // An end it already reached is not a cancel.
+            if cua_telemetry::global().agent_run_pending(&id)
+                && let Ok(info) = a.status(&id).await
+            {
+                observe(&info);
+            }
+            let info = a.stop(&id).await?;
+            cua_telemetry::global().agent_run_finished(
+                &id,
+                cua_telemetry::Outcome::Cancelled,
+                None,
+            );
+            Ok(info.into())
+        })
+        .await
     }
 
     /// The last turn's outcome.
     pub async fn result(&self) -> Result<AgentRunResult> {
         let (a, id) = (self.inner.clone(), self.run_id.clone());
-        run(async move { Ok(a.result(&id).await?.into()) }).await
+        run(async move {
+            let r = a.result(&id).await?;
+            if r.status != ca::RunStatus::Running
+                && let Ok(info) = a.status(&id).await
+            {
+                observe(&info);
+            }
+            Ok(r.into())
+        })
+        .await
     }
 
     /// Waits until no turn is running (at most `timeout_ms`), then returns
@@ -605,32 +693,15 @@ impl AgentRun {
     pub async fn wait(&self, timeout_ms: Option<u64>) -> Result<AgentRunResult> {
         let (a, id) = (self.inner.clone(), self.run_id.clone());
         let t = Duration::from_millis(timeout_ms.unwrap_or(30 * 60 * 1000));
-        let r: Result<AgentRunResult> = run(async move { Ok(a.wait(&id, t).await?.into()) }).await;
-        // Once per handle: the harness id (cua-agents catalog, else
-        // `other`), outcome, error category and a duration bucket.
-        if !self
-            .recorded
-            .swap(true, std::sync::atomic::Ordering::SeqCst)
-        {
-            let (outcome, variant) = match &r {
-                Ok(res) if res.error.is_none() => (cua_telemetry::Outcome::Ok, None),
-                Ok(_) => (cua_telemetry::Outcome::Error, None),
-                Err(e) => (cua_telemetry::Outcome::Error, Some(e.variant())),
-            };
-            cua_telemetry::capture(cua_telemetry::events::agent_run_completed(
-                &self.harness,
-                "",
-                outcome,
-                variant,
-                self.started.elapsed(),
-            ));
-            // Activation: the first agent run that finished cleanly on
-            // this install.
-            if outcome == cua_telemetry::Outcome::Ok {
-                cua_telemetry::global().capture_step("first_agent_run", outcome);
+        run(async move {
+            let r = a.wait(&id, t).await?;
+            // `wait` returns once the run is not running: read that status.
+            if let Ok(info) = a.status(&id).await {
+                observe(&info);
             }
-        }
-        r
+            Ok(r.into())
+        })
+        .await
     }
 
     /// Files the run created or changed in its working directory.
@@ -661,6 +732,7 @@ impl AgentRun {
 impl SpacesdClient {
     /// Coding agents in this guest.
     pub async fn agents(&self) -> Result<Arc<Agents>> {
-        Agents::over(self.client.clone()).await
+        // A bare spacesd client: where it runs is not known here.
+        Agents::over(self.client.clone(), "other").await
     }
 }

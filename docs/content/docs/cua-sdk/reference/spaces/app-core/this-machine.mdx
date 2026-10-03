@@ -75,6 +75,14 @@ Returned by [`app_host_permission_rows`](#app_host_permission_rows).
 | `text` | `String` |  | "Ada · Files". |
 | `at_ms` / `atMs` | `i64` |  | Epoch ms (each shell shows it relative, natively). |
 
+## `AppHostAccount` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `Option<String>` |  | The account id (the session's `sub`). |
+| `email` | `Option<String>` |  | Its email. |
+| `display` | `Option<String>` |  | What the app shows for it (a display name, else the email). |
+
 ## `AppHostAction` record
 
 | Field | Type | Default | Description |
@@ -83,6 +91,8 @@ Returned by [`app_host_permission_rows`](#app_host_permission_rows).
 | `label` | `String` |  | Label. |
 | `destructive` | `bool` |  | Drawn as destructive. |
 | `confirm` | [`Option<AppHostConfirm>`](#apphostconfirm-record) |  | Ask this first; the action runs only when the user confirms. |
+| `enabled` | `bool` |  | Can be pressed now (Resume sharing is not while nothing is on to share). |
+| `help` | `Option<String>` |  | The tooltip, when it says something the label does not. |
 
 ## `AppHostClient` record
 
@@ -174,13 +184,18 @@ Returned by [`app_host_panel`](#app_host_panel).
 | --- | --- | --- | --- |
 | `title` | `String` |  | "This machine". |
 | `summary` | `String` |  | One line: how it is shared, or that it is not. |
+| `notice` | `Option<String>` |  | Why relay sharing is paused, one line over the page (signed out, or signed in to another account). |
+| `notice_action` / `noticeAction` | [`Option<AppHostAction>`](#apphostaction-record) |  | The notice's button ("Sign In"). |
 | `configured` | `bool` |  | Set up for access. |
 | `facts` | [`Vec<AppFact>`](/cua-sdk/reference/spaces/app-core/window#appfact-record) |  | Name, Access, Service. |
 | `clients_title` / `clientsTitle` | `Option<String>` |  | "Connected now" (configured only). |
 | `clients` | `Vec<String>` |  | One line per client. |
 | `clients_empty` / `clientsEmpty` | `Option<String>` |  | "Nobody" when nobody is connected. |
 | `recent_title` / `recentTitle` | `Option<String>` |  | "Recent access" (configured, when the log has any). |
-| `recent` | [`Vec<AppHostAccessRow>`](#apphostaccessrow-record) |  | Who reached this machine recently, newest first. |
+| `recent` | [`Vec<AppHostAccessRow>`](#apphostaccessrow-record) |  | Who reached this machine recently, newest first: the first `LOG_PREVIEW_ROWS` of `Self.recent_all`. |
+| `recent_more` / `recentMore` | `Option<String>` |  | "Show All…" when `recent_all` has more than `recent` shows. |
+| `recent_all` / `recentAll` | [`Vec<AppHostAccessRow>`](#apphostaccessrow-record) |  | Every recent access (connections, refusals, other people's thumbnails), repeats collapsed: the "Show All" sheet. |
+| `recent_with_background` / `recentWithBackground` | [`Vec<AppHostAccessRow>`](#apphostaccessrow-record) |  | The same with background probes and the owner's thumbnails too (the sheet's "Include background activity"). |
 | `access_warning` / `accessWarning` | `Option<String>` |  | Set when the access log does not verify. |
 | `toggles` | [`Vec<AppHostToggle>`](#apphosttoggle-record) |  | The two settings (configured only). |
 | `limits` | `Option<String>` |  | The limits, one line ("Up to 4 Spaces \u&#123;b7&#125; 2 macOS VMs"), while providing Spaces. |
@@ -188,7 +203,9 @@ Returned by [`app_host_panel`](#app_host_panel).
 | `provided` | [`Vec<AppHostAccessRow>`](#apphostaccessrow-record) |  | One row per Space this machine provides. |
 | `provided_empty` / `providedEmpty` | `Option<String>` |  | "None yet" when it provides none. |
 | `activity_title` / `activityTitle` | `Option<String>` |  | "Spaces activity" (when the audit has any). |
-| `activity` | [`Vec<AppHostAccessRow>`](#apphostaccessrow-record) |  | Remote creates, deletes and refusals, newest first. |
+| `activity` | [`Vec<AppHostAccessRow>`](#apphostaccessrow-record) |  | Remote creates, deletes and refusals, newest first: the first `LOG_PREVIEW_ROWS` of `Self.activity_all`. |
+| `activity_more` / `activityMore` | `Option<String>` |  | "Show All…" when `activity_all` has more than `activity` shows. |
+| `activity_all` / `activityAll` | [`Vec<AppHostAccessRow>`](#apphostaccessrow-record) |  | The whole Spaces activity, repeats collapsed. |
 | `activity_warning` / `activityWarning` | `Option<String>` |  | Set when the Spaces audit does not verify. |
 | `permissions_title` / `permissionsTitle` | `Option<String>` |  | Heading over the permission rows, when any is left to grant. |
 | `permissions` | [`Vec<AppPermissionRow>`](#apppermissionrow-record) |  | Panes still to grant. |
@@ -290,6 +307,10 @@ Returned by [`app_host_state`](#app_host_state), [`app_host_state_from_json`](#a
 | `provided_spaces` / `providedSpaces` | [`Vec<AppHostProvidedSpace>`](#apphostprovidedspace-record) |  | The Spaces this machine provides now. |
 | `spaces_audit` / `spacesAudit` | [`Vec<AppHostSpacesAudit>`](#apphostspacesaudit-record) |  | Remote creates, deletes and refusals, and settings changes, newest first. |
 | `spaces_audit_error` / `spacesAuditError` | `Option<String>` |  | Set when the Spaces audit does not verify. |
+| `paused_signed_out` / `pausedSignedOut` | `bool` |  | Relay sharing is paused until the owner signs in again (the host left the relay; its setup stays). |
+| `owner` | `Option<String>` |  | The account this machine is registered to (relay mode): its id. |
+| `owner_email` / `ownerEmail` | `Option<String>` |  | The owner's email, when the relay gave one. |
+| `account` | [`Option<AppHostAccount>`](#apphostaccount-record) |  | Who is signed in to Cua in this app (`None`: nobody, or the shell does not say). The shell fills it; the host does not know. |
 
 ## `AppHostToggle` record
 
@@ -301,6 +322,35 @@ Returned by [`app_host_state`](#app_host_state), [`app_host_state_from_json`](#a
 | `on` | `bool` |  | On now. |
 | `enabled` | `bool` |  | Can be flipped (the last setting on cannot be turned off; Spaces need the relay). |
 | `action` | [`AppHostActionId`](#apphostactionid-enum) |  | What flipping it runs. |
+
+## `AppHostAccountStep` enum
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+.keep
+.pause
+.resume
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+AppHostAccountStep::Keep
+AppHostAccountStep::Pause
+AppHostAccountStep::Resume
+```
+
+</Tab>
+</Tabs>
+
+| Variant | Description |
+| --- | --- |
+| `Keep` | Nothing to do. |
+| `Pause` | Pause relay sharing (signed out, or signed in to another account). |
+| `Resume` | Resume the paused relay sharing (its owner is signed in again). |
 
 ## `AppHostActionId` enum
 
@@ -316,6 +366,7 @@ Returned by [`app_host_state`](#app_host_state), [`app_host_state_from_json`](#a
 .hideDesktop
 .provideSpaces
 .stopProvidingSpaces
+.signIn
 ```
 
 </Tab>
@@ -330,6 +381,7 @@ AppHostActionId::ShareDesktop
 AppHostActionId::HideDesktop
 AppHostActionId::ProvideSpaces
 AppHostActionId::StopProvidingSpaces
+AppHostActionId::SignIn
 ```
 
 </Tab>
@@ -345,6 +397,7 @@ AppHostActionId::StopProvidingSpaces
 | `HideDesktop` | Stop sharing this machine's own desktop (Spaces keep running). |
 | `ProvideSpaces` | Create Spaces for your other devices. |
 | `StopProvidingSpaces` | Stop creating Spaces for your other devices. |
+| `SignIn` | Sign in to Cua (relay sharing paused while signed out resumes). |
 
 ## `AppHostFormAction` enum
 
@@ -392,6 +445,62 @@ AppHostFormAction::Failed { error: String }
 | `SetProfile` | What the machine is for: `desktop` or `spare`. Fields: `profile: String` |
 | `Submit` | "Set up for access" pressed (ignored unless it can submit). |
 | `Failed` | Setup failed. Fields: `error: String` |
+
+## `app_host_account_key`
+
+The account id (else email) host resume names the signed-in account by.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appHostAccountKey(account: AppHostAccount) -> String
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_host_account_key(account: AppHostAccount) -> String
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `account` | [`AppHostAccount`](#apphostaccount-record) | required |
+
+**Returns** `String`
+
+## `app_host_account_step`
+
+What to do with the host when the signed-in account changes (`None`:
+nobody is signed in; never pass `None` for "could not tell").
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appHostAccountStep(state: AppHostState, account: AppHostAccount?) -> AppHostAccountStep
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_host_account_step(state: AppHostState, account: Option<AppHostAccount>) -> AppHostAccountStep
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `state` | [`AppHostState`](#apphoststate-record) | required |
+| `account` | [`Option<AppHostAccount>`](#apphostaccount-record) | required |
+
+**Returns** [`AppHostAccountStep`](#apphostaccountstep-enum)
 
 ## `app_host_arch`
 

@@ -77,20 +77,33 @@ state of this work.
   60 s) that the machine verifies with the relay's key
   (`/.well-known/jwks.json`, also sent on the join handshake).
 - **Device enrollment.** A device that lists or reaches an account's
-  machines holds a P-256 key (OS keychain, or a `0600` file) and is enrolled
-  with a second factor: a fresh interactive sign-in (`auth_time` at most 10
-  minutes old; for any device after the account's first, also a verified
-  email), or approval from an enrolled device by one-time code or device
-  id. Devices report a machine id (a hash of the host's hardware or install
-  identity, stored keyed per account): when a new key of the same machine
-  enrolls, it replaces the machine's older records (revoked as superseded,
-  audited as `device_rekeyed`, left out of listings), so switching builds or
-  losing a key does not leave duplicates. The machine id never enrolls
-  anything on its own. Enrollment lasts 30 days, then one approval or fresh
-  sign-in re-verifies it. Per session the device signs a timestamp
+  machines holds a P-256 key (OS keychain, or a `0600` file) and is
+  enrolled by a fresh interactive sign-in (`auth_time` at most 10 minutes
+  old, plus proof of the device key) or by approval from an enrolled device
+  (one-time code or device id). By default a fresh sign-in enrolls any
+  device of the account, the way signing in adds a device to a tailnet:
+  whoever can complete the account's sign-in already is the account, so the
+  defences sit at sign-in (the identity provider's MFA) and in what a
+  stolen credential cannot do here -- a refreshed or long-lived token never
+  enrolls, a token without the device key opens no session, every
+  enrollment is audited with how it happened (a new device by sign-in is
+  `device_enrolled` / `bootstrap:fresh-sign-in`, "new device of the
+  account"), and any enrolled device revokes another at once.
+  `CUA_RELAY_DEVICE_REQUIRE_APPROVAL=true` restores the strict policy: a
+  fresh sign-in then enrolls only the account's first device, a re-key of a
+  machine it already has, or (verified email) a sign-in proving MFA; other
+  new devices wait for an approval. Devices report a machine id (a hash of
+  the host's hardware or install identity, stored keyed per account): when
+  a new key of the same machine enrolls, it replaces the machine's older
+  records (revoked as superseded, audited as `device_rekeyed`, left out of
+  listings), so switching builds or losing a key does not leave duplicates.
+  The machine id never enrolls anything on its own. Enrollment lasts 30
+  days and slides while the device is in use (each session moves the end to
+  30 days from then); a device unused for 30 days needs a fresh sign-in or
+  one approval again. Per session the device signs a timestamp
   (`POST /v1/devices/session`) and sends the token as `x-cua-device-session`.
-  For 14 days after enrollment is first turned on, devices signed in from
-  before keep access, flagged and audited.
+  During a migration grace period (`CUA_RELAY_DEVICE_GRACE_DAYS`, none by
+  default), devices signed in from before keep access, flagged and audited.
 - **Audit.** Every enrollment change, device session, machine access, share
   change, registration and sharing stop is recorded in the account's audit
   log (`GET /v1/audit`, `cua devices audit`), bounded and persisted with the
@@ -211,9 +224,10 @@ register machines: `CUA_RELAY_TOKENS`/`CUA_RELAY_TOKEN_FILE` or
 | `CUA_RELAY_DEVICES_FILE` | next to the state file | Devices and audit log (`machines.json` gives `machines.devices.json`; in memory without a state file). Its audit hash-chain key (S9) is generated alongside it, 0600, at `<devices file>.audit-key`; back this file up with the devices file, or the chain from before a restore stops verifying (a fresh key generates rather than fail closed, since a lost audit key must not mean a lost relay). |
 | `CUA_RELAY_MAX_MACHINES_PER_ACCOUNT` | `32` | Machines one account may register. |
 | `CUA_RELAY_DEVICE_ENROLLMENT` | `on` | Require enrolled client devices (`on` / `off`). |
-| `CUA_RELAY_DEVICE_TTL_DAYS` | `30` | Days an enrollment lasts. |
+| `CUA_RELAY_DEVICE_TTL_DAYS` | `30` | Days an enrollment lasts without use (each device session renews it). |
 | `CUA_RELAY_DEVICE_GRACE_DAYS` | `0` (ended) | Days unenrolled devices keep access after enrollment is first on. Set this only for a time-boxed rollout window (S3): a stolen account token alone reaches every machine while it is open. |
 | `CUA_RELAY_DEVICE_BOOTSTRAP_MAX_AUTH_AGE_SECS` | `600` | Max sign-in age that enrolls a device without an approval. |
+| `CUA_RELAY_DEVICE_REQUIRE_APPROVAL` | off | Strict enrollment: a fresh sign-in enrolls only an account's first device, a re-key of a known machine, or (verified email) a sign-in proving MFA; other new devices need an approval from an enrolled device. |
 | `CUA_RELAY_TOKENS` | unset | Static mode: comma-separated registration tokens. |
 | `CUA_RELAY_TOKEN_FILE` | unset | Static mode: one token per line (`#` comments). |
 | `CUA_RELAY_MAX_MACHINES_PER_TOKEN` | `16` | Static mode: machines per registration token. |

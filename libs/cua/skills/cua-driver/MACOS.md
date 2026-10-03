@@ -443,6 +443,10 @@ application, resolves each immediate child from live AX state, uses only
 on a best-effort basis.
 It refuses missing, duplicate, disabled, or non-actionable segments and never
 falls back to pixels.
+When a path fails after the tool already opened a menu, it cancels that menu
+and the refusal says whether any menu window it opened is still on screen. If
+the refusal says the menu may still be open, press `escape` on the window
+before other input.
 
 ```bash
 cua-driver invoke_menu \
@@ -506,6 +510,7 @@ starting point for new browser workflows.
 | macOS system-alert beep on `press_key` with no visible change | Target window is minimized; Return / Space / Tab commits don't establish real renderer focus on minimized windows | AX-click a clickable equivalent (Go button, Submit button, checkbox) instead of pressing the key; see "Keyboard commits on minimized windows" under the Browser section                                                             |
 | `Accessibility permission not granted`                        | TCC not granted                                                                                                   | Stop; tell user to grant in System Settings                                                                                                                                                                                         |
 | `Screen Recording permission not granted`                     | TCC not granted for capture                                                                                       | Screenshots and pixel actions are unavailable. If the task is AX-completable, use `get_window_state({include_screenshot:false})` and `element_token` actions; otherwise stop and ask the user to run `cua-driver permissions grant` |
+| `AX action failed: ... returned -25200` (or -25205, -25206)   | The app may have acted anyway: some AppKit controls return these after a press they performed                     | Re-read with `get_window_state` before retrying; a second press on a checkbox toggles it back. A radio button or checkbox whose AXValue settles on the pressed state is reported as performed, naming the error                     |
 
 ## Example end-to-end task (macOS)
 

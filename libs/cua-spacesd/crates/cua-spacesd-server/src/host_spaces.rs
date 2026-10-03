@@ -122,6 +122,28 @@ struct HostSpacesImpl {
     policy_file: Arc<PathBuf>,
 }
 
+// Keep the JSON readable as ASCII gRPC metadata without losing Unicode names.
+struct AsciiJsonFormatter;
+
+impl serde_json::ser::Formatter for AsciiJsonFormatter {
+    fn write_string_fragment<W: ?Sized + std::io::Write>(
+        &mut self,
+        writer: &mut W,
+        fragment: &str,
+    ) -> std::io::Result<()> {
+        for ch in fragment.chars() {
+            if ch.is_ascii() {
+                writer.write_all(&[ch as u8])?;
+            } else {
+                for unit in ch.encode_utf16(&mut [0; 2]) {
+                    write!(writer, "\\u{unit:04x}")?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The verified caller as the daemon receives it.
 fn caller_json<T>(req: &Request<T>) -> Result<String, Status> {
     let who = caller(req);
@@ -148,7 +170,11 @@ fn caller_json<T>(req: &Request<T>) -> Result<String, Status> {
             ))
         }
     };
-    Ok(value.to_string())
+    let mut bytes = Vec::new();
+    let mut serializer = serde_json::Serializer::with_formatter(&mut bytes, AsciiJsonFormatter);
+    serde::Serialize::serialize(&value, &mut serializer)
+        .map_err(|_| Status::internal("caller metadata JSON"))?;
+    String::from_utf8(bytes).map_err(|_| Status::internal("caller metadata UTF-8"))
 }
 
 /// One start of the host's daemon at a time (concurrent creates wait for
@@ -469,6 +495,47 @@ mod tests {
             caller_json(&anonymous).unwrap_err().code(),
             Code::Unauthenticated
         );
+    }
+
+    #[test]
+    fn caller_metadata_round_trips_unicode_and_json_escapes() {
+        for name in [
+            "Ada",
+            "Jos\u{e9} P\u{e9}rez",
+            "\u{65e5}\u{672c}\u{8a9e}",
+            "\u{1f680}",
+            "quote\" slash\\ newline\n",
+        ] {
+            let relayed = req(CallerIdentity {
+                asserted: true,
+                account: Some(RelayCaller {
+                    account: "ada".into(),
+                    email: Some("ada@example.com".into()),
+                    name: Some(name.into()),
+                    role: "owner".into(),
+                }),
+                ..Default::default()
+            });
+            let json = caller_json(&relayed).unwrap();
+            let forwarded = with_caller((), &json, Some(Duration::from_secs(60))).unwrap();
+            let text = forwarded
+                .metadata()
+                .get(CALLER_METADATA)
+                .unwrap()
+                .to_str()
+                .unwrap();
+            assert!(text.is_ascii());
+            let value: serde_json::Value = serde_json::from_str(text).unwrap();
+            assert_eq!(value["name"], name);
+            assert_eq!(value["account"], "ada");
+            assert_eq!(value["email"], "ada@example.com");
+            assert_eq!(value["role"], "owner");
+            assert_eq!(value["via"], "relay");
+            if name.is_ascii() {
+                assert_eq!(text, value.to_string());
+            }
+            assert!(forwarded.metadata().contains_key("grpc-timeout"));
+        }
     }
 
     #[test]

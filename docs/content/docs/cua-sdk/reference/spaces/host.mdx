@@ -364,7 +364,7 @@ The signed-in account's view of a cua-relay.
 
 | Method | Description |
 | --- | --- |
-| [`new`](#relaynew) | A relay (`None` = `CUA_RELAY_URL`, else `https://relay.cua.ai`) seen as the account behind `account_token` (a cua.ai access token). |
+| [`new`](#relaynew) | A relay (`None` = the relay `cua` uses: `CUA_RELAY_URL`, else this machine's host setup, else `https://relay.cua.ai`) seen as the account behind `account_token` (a cua.ai access token). |
 | [`connect`](#relayconnect) | Connects to a machine's spacesd through `<relay>/m/<id>`, with the account token as bearer (the relay swaps it for its signed identity). |
 | [`machine`](#relaymachine) | One machine. |
 | [`machines`](#relaymachines) | Machines the account owns or that are shared with it. |
@@ -377,8 +377,9 @@ The signed-in account's view of a cua-relay.
 
 ### `Relay.new`
 
-A relay (`None` = `CUA_RELAY_URL`, else `https://relay.cua.ai`) seen
-as the account behind `account_token` (a cua.ai access token).
+A relay (`None` = the relay `cua` uses: `CUA_RELAY_URL`, else this
+machine's host setup, else `https://relay.cua.ai`) seen as the
+account behind `account_token` (a cua.ai access token).
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">

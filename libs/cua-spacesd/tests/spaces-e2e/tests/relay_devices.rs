@@ -38,13 +38,14 @@ async fn relay(issuer: &FakeIssuer) -> String {
     url
 }
 
-/// Relay device policy (S4) this suite pins: a fresh sign-in on an account
-/// with a verified email enrolls a brand-new additional device (another
-/// machine) without an approval (cua-relay 4f62b9c91). When the relay
-/// requires an approval or MFA for those again, set this to `false`: the
-/// asserts that read it expect `Pending` and approve by code instead. The
-/// first device and a same-machine re-key stay approval-free either way.
-const FRESH_SIGN_IN_ENROLLS_A_NEW_MACHINE: bool = false;
+/// Relay device policy this suite pins: by default a fresh sign-in enrolls
+/// a brand-new additional device (another machine) of the account without
+/// an approval, whether or not the email is verified or the token proves
+/// MFA. Under the relay's strict policy (`DevicePolicy::require_approval`,
+/// `CUA_RELAY_DEVICE_REQUIRE_APPROVAL`) set this to `false`: the asserts
+/// that read it expect `Pending` and approve by code instead. The first
+/// device and a same-machine re-key stay approval-free either way.
+const FRESH_SIGN_IN_ENROLLS_A_NEW_MACHINE: bool = true;
 
 /// A device with a fresh key on the machine `machine` (the machine id it
 /// reports; never this host's, so the suite neither reads the host's

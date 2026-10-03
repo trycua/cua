@@ -20,7 +20,7 @@ use cua_sandbox_core::{
     RuntimeError,
 };
 use cua_spaces::Spaces;
-use cua_spaces::host_spaces::{HostCaller, HostSpacesServer};
+use cua_spaces::host_spaces::{HostCaller, HostSpacesServer, to_status};
 use cua_spacesd_client::testing::{MockAuth, MockServer};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -34,6 +34,8 @@ struct FakeRuntime {
     paused: Mutex<std::collections::BTreeSet<String>>,
     /// Starts never finish (a boot a cancel cuts off).
     hang: std::sync::atomic::AtomicBool,
+    /// Starts fail with this (a container engine that does not answer).
+    fail: Mutex<Option<String>>,
 }
 
 #[async_trait]
@@ -42,6 +44,9 @@ impl LocalRuntime for FakeRuntime {
         "fake".into()
     }
     async fn start(&self, spec: &LocalStartSpec) -> Result<LocalInstance, RuntimeError> {
+        if let Some(e) = self.fail.lock().unwrap().clone() {
+            return Err(RuntimeError::Other(e));
+        }
         self.started.lock().unwrap().push(spec.clone());
         self.running.lock().unwrap().insert(spec.name.clone(), true);
         if self.hang.load(std::sync::atomic::Ordering::SeqCst) {
@@ -167,6 +172,7 @@ async fn runtime_fixture(
         running: Mutex::default(),
         paused: Mutex::default(),
         hang: Default::default(),
+        fail: Mutex::default(),
     });
     let spaces = Spaces::builder()
         .home(&home)
@@ -360,6 +366,33 @@ async fn the_host_creates_attaches_lists_and_deletes_with_an_audit() {
     );
     assert_eq!(status.spaces_audit.len(), 6);
     assert_eq!(actions[3].1, "<bob@example.com> (bob)");
+}
+
+/// An image whose cua-spacesd predates relay_attach: the create fails
+/// saying the image is too old to be reached from other devices and needs
+/// republishing, and leaves nothing behind.
+#[tokio::test]
+async fn an_image_too_old_for_the_relay_says_so_and_is_removed() {
+    let f = fixture(HostProfile::Spare).await;
+    f.env.state.unadvertise(&["relay_attach"]);
+    let attach = f.register("ada-token", "space-ada00001").await;
+    let e = f
+        .create(&ada(), "linux", attach)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains("too old to be reached from your other devices"),
+        "{e}"
+    );
+    assert!(e.contains("needs republishing"), "{e}");
+    assert!(e.contains("trycua/linux"), "names the image: {e}");
+    assert_eq!(
+        f.rt.deleted.lock().unwrap().len(),
+        1,
+        "the Space is deleted"
+    );
+    assert!(f.server.get(&ada()).await.unwrap().spaces.is_empty());
 }
 
 #[tokio::test]
@@ -922,4 +955,275 @@ async fn an_offline_machine_set_up_for_spaces_is_listed_by_name() {
     let hosts = spaces.hosts().await.unwrap();
     let names: Vec<(&str, bool)> = hosts.iter().map(|h| (h.name.as_str(), h.online)).collect();
     assert_eq!(names, [("Studio", false)]);
+}
+
+/// The host fixture's `HostSpacesServer` as the host's daemon serves it
+/// (every call as ada, the owner: the fake relay does not assert callers).
+struct HostSvc(Arc<HostSpacesServer>);
+
+#[tonic::async_trait]
+impl pb::host_spaces_service_server::HostSpacesService for HostSvc {
+    async fn get_host_spaces(
+        &self,
+        _req: tonic::Request<pb::GetHostSpacesRequest>,
+    ) -> Result<tonic::Response<pb::GetHostSpacesResponse>, tonic::Status> {
+        let r = self.0.get(&ada()).await;
+        r.map(tonic::Response::new).map_err(|e| to_status(&e))
+    }
+    async fn create_host_space(
+        &self,
+        req: tonic::Request<pb::CreateHostSpaceRequest>,
+    ) -> Result<tonic::Response<pb::CreateHostSpaceResponse>, tonic::Status> {
+        let r = self.0.create(&ada(), req.into_inner()).await;
+        r.map(|s| tonic::Response::new(pb::CreateHostSpaceResponse { space: Some(s) }))
+            .map_err(|e| to_status(&e))
+    }
+    async fn delete_host_space(
+        &self,
+        req: tonic::Request<pb::DeleteHostSpaceRequest>,
+    ) -> Result<tonic::Response<pb::DeleteHostSpaceResponse>, tonic::Status> {
+        let r = self.0.delete(&ada(), &req.into_inner().space).await;
+        r.map(|message| tonic::Response::new(pb::DeleteHostSpaceResponse { message }))
+            .map_err(|e| to_status(&e))
+    }
+    async fn cancel_host_space(
+        &self,
+        req: tonic::Request<pb::CancelHostSpaceRequest>,
+    ) -> Result<tonic::Response<pb::CancelHostSpaceResponse>, tonic::Status> {
+        let r = self.0.cancel(&ada(), &req.into_inner().space).await;
+        r.map(|message| tonic::Response::new(pb::CancelHostSpaceResponse { message }))
+            .map_err(|e| to_status(&e))
+    }
+    async fn set_host_space_power(
+        &self,
+        req: tonic::Request<pb::SetHostSpacePowerRequest>,
+    ) -> Result<tonic::Response<pb::SetHostSpacePowerResponse>, tonic::Status> {
+        let r = req.into_inner();
+        let r = self.0.set_power(&ada(), &r.space, r.on).await;
+        r.map(tonic::Response::new).map_err(|e| to_status(&e))
+    }
+    async fn delete_cloud_space(
+        &self,
+        req: tonic::Request<pb::DeleteCloudSpaceRequest>,
+    ) -> Result<tonic::Response<pb::DeleteCloudSpaceResponse>, tonic::Status> {
+        let r = self.0.delete_cloud(&ada(), &req.into_inner().space).await;
+        r.map(|message| tonic::Response::new(pb::DeleteCloudSpaceResponse { message }))
+            .map_err(|e| to_status(&e))
+    }
+}
+
+/// The client half: the spare host is online on the fake relay (its driver
+/// the mock spacesd, advertising host_spaces; its HostSpacesService the
+/// fixture's server, over gRPC-Web), and `spaces` is another of ada's
+/// devices, signed in to the relay. Returns the host's machine id.
+async fn client_fixture(f: &Fixture) -> (String, Spaces, tempfile::TempDir) {
+    let relay = cua_host::RelayClient::new(&f.relay.url).unwrap();
+    let host = relay
+        .machines("ada-token")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|m| m.name == "Mac mini (spare)")
+        .expect("the host is on the relay")
+        .id;
+    f.relay.set_online(&host, true, "1.0.0");
+    f.env.state.advertise(&["host_spaces"]);
+    f.relay.tunnel(&host, &f.env.url());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let svc =
+        pb::host_spaces_service_server::HostSpacesServiceServer::new(HostSvc(f.server.clone()));
+    tokio::spawn(
+        tonic::transport::Server::builder()
+            .accept_http1(true)
+            .layer(tonic_web::GrpcWebLayer::new())
+            .add_service(svc)
+            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
+    );
+    f.relay.tunnel_service(
+        &host,
+        "/cua.env.v1.HostSpacesService/",
+        &format!("http://{addr}"),
+    );
+    let other = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder()
+        .home(other.path())
+        .relay(cua_spaces::RelayAccount::new(
+            &f.relay.url,
+            Arc::new(StaticToken("ada-token".into())),
+        ))
+        .build();
+    (host, spaces, other)
+}
+
+/// The relay machines of ada's account a host provides (its Spaces).
+async fn provided_machines(f: &Fixture) -> Vec<String> {
+    cua_host::RelayClient::new(&f.relay.url)
+        .unwrap()
+        .machines("ada-token")
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|m| m.host.is_some())
+        .map(|m| m.id)
+        .collect()
+}
+
+fn on_host(name: &str) -> cua_spaces::SpaceCreate {
+    cua_spaces::SpaceCreate {
+        image: Some("linux".into()),
+        on: Some(cua_sandbox_core::placement::On::Host(name.into())),
+        ..Default::default()
+    }
+}
+
+/// A create the host fails before the Space exists (its container engine
+/// does not answer) leaves no relay machine behind: the client removes the
+/// one it registered, so no ghost Space lists forever.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_create_the_host_fails_leaves_no_relay_space_behind() {
+    let f = fixture(HostProfile::Spare).await;
+    let (_host, spaces, _other) = client_fixture(&f).await;
+    *f.rt.fail.lock().unwrap() = Some("the Docker engine did not answer ping".into());
+    let e = spaces
+        .create(on_host("Mac mini (spare)"))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("did not answer ping"), "{e}");
+    assert!(provided_machines(&f).await.is_empty(), "no ghost Space");
+    assert!(
+        !spaces
+            .list()
+            .unwrap()
+            .iter()
+            .any(|s| s.id.starts_with("relay:space-")),
+        "nothing lists"
+    );
+}
+
+/// A Space's relay entry whose Space the host does not have (left by an
+/// older client, or the host was set up again) deletes as a stale entry;
+/// one whose host left the relay too. `relay-unregister` takes one off the
+/// relay instead of calling it a host.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stale_relay_space_is_removed_by_delete_or_relay_unregister() {
+    let f = fixture(HostProfile::Spare).await;
+    let (host, spaces, _other) = client_fixture(&f).await;
+    let relay = cua_host::RelayClient::new(&f.relay.url).unwrap();
+    let register = |id: &'static str, host: String| {
+        let relay = relay.clone();
+        async move {
+            relay
+                .register(
+                    "ada-token",
+                    &cua_host::relay::RegisterRequest {
+                        id: id.into(),
+                        name: "dogfood-linux".into(),
+                        allow: vec![],
+                        host: Some(host),
+                        meta: Default::default(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+    };
+
+    // The host answers "not a Space this host provides".
+    register("space-d8e2e32864eda9c7", host.clone()).await;
+    let msg = spaces.delete("relay:space-d8e2e32864eda9c7").await.unwrap();
+    assert!(msg.contains("stale entry"), "{msg}");
+    assert!(msg.contains("Mac mini (spare)"), "names the host: {msg}");
+    assert!(provided_machines(&f).await.is_empty());
+
+    // By the bare machine id, `relay-unregister` removes it (not "a host").
+    register("space-00000000000000a1", host.clone()).await;
+    assert!(
+        spaces
+            .relay_unregister("space-00000000000000a1")
+            .await
+            .unwrap()
+    );
+    assert!(provided_machines(&f).await.is_empty());
+    // A host itself is still refused, and says how.
+    let e = spaces
+        .relay_unregister(&format!("relay:{host}"))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("cua host remove"), "{e}");
+
+    // Its host left the relay (removed, set up again as a new machine).
+    register("space-00000000000000a2", host.clone()).await;
+    relay.delete("ada-token", &host).await.unwrap();
+    let msg = spaces.delete("relay:space-00000000000000a2").await.unwrap();
+    assert!(msg.contains("stale entry"), "{msg}");
+    assert!(msg.contains("no longer on the relay"), "{msg}");
+    assert!(provided_machines(&f).await.is_empty());
+}
+
+/// A host that stopped sharing says so (and how to resume) instead of
+/// "has no cua-spacesd", for a create on it and for any call to it; the
+/// list marks it, and an offline machine, in text and JSON.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_host_that_stopped_sharing_says_so_and_lists_its_state() {
+    let f = fixture(HostProfile::Spare).await;
+    let (host, spaces, _other) = client_fixture(&f).await;
+    let relay = cua_host::RelayClient::new(&f.relay.url).unwrap();
+    relay.stop_sharing("ada-token", &host).await.unwrap();
+
+    let e = spaces
+        .create(on_host("Mac mini (spare)"))
+        .await
+        .unwrap_err();
+    let text = e.to_string();
+    assert!(
+        text.contains(
+            "Mac mini (spare) stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("has no cua-spacesd"), "{text}");
+    assert_eq!(e.tag(), "permission_denied");
+    assert!(provided_machines(&f).await.is_empty(), "nothing registered");
+
+    // Any other call to it, through the relay's refusal.
+    let e = spaces
+        .space(&format!("relay:{host}"))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("stopped sharing: ask its owner"), "{e}");
+    assert!(!e.contains("has no cua-spacesd"), "{e}");
+
+    let _ = spaces.relay_machines().await.unwrap();
+    let row = spaces
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.id == format!("relay:{host}"))
+        .unwrap();
+    assert_eq!(row.status, "not sharing");
+    assert_eq!(serde_json::to_value(&row).unwrap()["status"], "not sharing");
+    f.relay.set_online(&host, false, "1.0.0");
+    let _ = spaces.relay_machines().await.unwrap();
+    let row = spaces
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.id == format!("relay:{host}"))
+        .unwrap();
+    assert_eq!(row.status, "offline");
+    relay.start_sharing("ada-token", &host).await.unwrap();
+    f.relay.set_online(&host, true, "1.0.0");
+    let _ = spaces.relay_machines().await.unwrap();
+    let row = spaces
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.id == format!("relay:{host}"))
+        .unwrap();
+    assert_eq!(row.status, "");
+    assert!(serde_json::to_value(&row).unwrap().get("status").is_none());
 }

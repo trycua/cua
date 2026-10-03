@@ -4,8 +4,13 @@
 //!
 //! * **Which Lume.** [`LumeSource`] (`cua config set runtime.lume`, the
 //!   apps' Settings): `auto` (the default) uses a Lume already on this Mac
-//!   and the built-in one otherwise; `builtin` always the built-in one;
-//!   `system` only the one on this Mac, and never downloads anything.
+//!   when it is at least [`MIN_VERSION`] and the built-in one otherwise;
+//!   `builtin` always the built-in one; `system` only the one on this Mac
+//!   (whatever its version), and never downloads anything.
+//! * **Old servers.** A `lume serve` already answering that is older than
+//!   [`MIN_VERSION`] is never stopped (it may be a user's LaunchAgent):
+//!   `auto` and `builtin` run a current Lume on the next free port instead
+//!   ([`super::LumeRuntime::ensure_serving`]).
 //! * **Pinned and verified.** [`VERSION`] from the trycua/cua release, its
 //!   SHA-256 checked before anything is unpacked, then `codesign --verify`
 //!   and the Developer ID team ([`TEAM_ID`]) checked before it is used. A
@@ -40,7 +45,8 @@ pub const SETTING_ENV: &str = "CUA_RUNTIME_LUME";
 /// Which Lume macOS Spaces run on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LumeSource {
-    /// This Mac's Lume when there is one, else the built-in one.
+    /// This Mac's Lume when there is one at least [`MIN_VERSION`], else
+    /// the built-in one.
     #[default]
     Auto,
     /// Always the built-in one.
@@ -122,13 +128,200 @@ pub fn installed() -> Option<PathBuf> {
 const VERIFIED: &str = ".verified";
 
 /// The Lume to run for `source`: this Mac's own (`system`, or `auto` when
-/// it has one), else the built-in one when installed.
+/// it has one at least [`MIN_VERSION`]), else the built-in one when
+/// installed.
 pub fn resolve(source: LumeSource) -> Option<PathBuf> {
     let system = || host::which("lume").filter(|p| !p.starts_with(root()));
     match source {
         LumeSource::System => system(),
         LumeSource::Builtin => installed(),
-        LumeSource::Auto => system().or_else(installed),
+        LumeSource::Auto => system()
+            .filter(|p| system_binary_usable(source, binary_version(p).as_deref()))
+            .or_else(installed),
+    }
+}
+
+/// The oldest Lume cua runs macOS Spaces on. Lume 0.6.0 is the first
+/// release with what cua's client relies on (forced and bounded stop for
+/// detached VMs, running without a VNC listener, GPU passthrough), and a
+/// real 0.5.3 `lume serve` hung booting the macOS 26 image ("stopped while
+/// booting") where 0.6.0 boots it. It is the pin today; it only moves when
+/// cua starts needing something newer, not with every pin.
+pub const MIN_VERSION: &str = "0.6.0";
+
+/// The first `x.y.z` in `text` (`lume --version` prints `0.6.0`; a
+/// `v0.6.0` or `lume 0.6.0-beta` is read the same way).
+pub fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
+    text.split(|c: char| c.is_whitespace() || c == 'v' || c == '-' || c == '+')
+        .find_map(|word| {
+            let mut parts = word.split('.');
+            let v = (
+                parts.next()?.parse().ok()?,
+                parts.next()?.parse().ok()?,
+                parts.next()?.parse().ok()?,
+            );
+            parts.next().is_none().then_some(v)
+        })
+}
+
+/// Whether `version` is at least [`MIN_VERSION`] (an unreadable one is not).
+pub fn new_enough(version: &str) -> bool {
+    match (parse_version(version), parse_version(MIN_VERSION)) {
+        (Some(v), Some(min)) => v >= min,
+        _ => false,
+    }
+}
+
+/// The version `GET /lume/host/status` reports, when it means something:
+/// every Lume up to 0.6.0 answered a fixed placeholder `1.0.0` there.
+pub fn reported_version(status_version: Option<&str>) -> Option<String> {
+    status_version
+        .filter(|v| v.trim() != "1.0.0" && parse_version(v).is_some())
+        .map(|v| v.trim().to_string())
+}
+
+/// What to do with a `lume serve` that already answers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ServerVerdict {
+    /// New enough, or its version cannot be told (a remote `LUME_API`,
+    /// another user's process): use it, as before.
+    Use,
+    /// Too old, but `runtime.lume` is `system`: use it and say so.
+    UseOld(String),
+    /// Too old: run a current Lume on another port instead. The old server
+    /// is never stopped (it may be a user's own LaunchAgent).
+    Avoid(String),
+}
+
+/// The verdict for a server of `version` under `source`.
+pub fn judge_server(source: LumeSource, version: Option<&str>) -> ServerVerdict {
+    match version {
+        None => ServerVerdict::Use,
+        Some(v) if new_enough(v) => ServerVerdict::Use,
+        Some(v) if source == LumeSource::System => ServerVerdict::UseOld(v.to_string()),
+        Some(v) => ServerVerdict::Avoid(v.to_string()),
+    }
+}
+
+/// Whether this Mac's `lume` (of `version`, `None` when `--version` said
+/// nothing) may run Spaces: always for `system`, else only when new enough.
+pub fn system_binary_usable(source: LumeSource, version: Option<&str>) -> bool {
+    source == LumeSource::System || version.is_some_and(new_enough)
+}
+
+/// The ports tried, in order, for a current Lume when the configured one
+/// is taken by an old server: the next nine. Fixed, so every cua process
+/// on this Mac finds the same one.
+pub fn fallback_ports(port: u16) -> impl Iterator<Item = u16> {
+    (1..=9u16).filter_map(move |d| port.checked_add(d))
+}
+
+/// `url` with its port replaced by `port`.
+pub fn with_port(url: &str, port: u16) -> String {
+    let url = url.trim_end_matches('/');
+    match url.rsplit_once(':') {
+        Some((head, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => {
+            format!("{head}:{port}")
+        }
+        _ => format!("{url}:{port}"),
+    }
+}
+
+/// Whether `url` is a server on this Mac.
+pub fn is_loopback(url: &str) -> bool {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let host = rest.split('/').next().unwrap_or("");
+    let host = match host.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(""),
+        None => host.rsplit_once(':').map_or(host, |(h, _)| h),
+    };
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
+}
+
+/// `bin --version` (cached per binary and modification time; bounded to
+/// five seconds).
+pub fn binary_version(bin: &Path) -> Option<String> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    /// Binary -> (its modification time, its version).
+    type Seen = HashMap<PathBuf, (Option<std::time::SystemTime>, Option<String>)>;
+    static SEEN: Mutex<Option<Seen>> = Mutex::new(None);
+    let bin = std::fs::canonicalize(bin).unwrap_or_else(|_| bin.to_path_buf());
+    let mtime = std::fs::metadata(&bin).and_then(|m| m.modified()).ok();
+    if let Some((t, v)) = SEEN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(HashMap::new)
+        .get(&bin)
+        && *t == mtime
+    {
+        return v.clone();
+    }
+    let v = run_version(&bin);
+    SEEN.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(HashMap::new)
+        .insert(bin, (mtime, v.clone()));
+    v
+}
+
+fn run_version(bin: &Path) -> Option<String> {
+    use std::io::Read as _;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(bin)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(25))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let mut out = String::new();
+    child.stdout.take()?.read_to_string(&mut out).ok()?;
+    parse_version(&out).map(|(a, b, c)| format!("{a}.{b}.{c}"))
+}
+
+/// The executable of this user's process listening on TCP `port` on this
+/// Mac (`lsof`, then `proc_pidpath`); `None` when there is none or it
+/// belongs to someone else.
+pub fn serving_binary(port: u16) -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("/usr/sbin/lsof")
+            .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-t"])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        let pid: i32 = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .find_map(|l| l.trim().parse().ok())?;
+        let mut buf = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+        // SAFETY: `buf` is writable for its full length, which is passed.
+        let n = unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
+        if n <= 0 {
+            return None;
+        }
+        buf.truncate(n as usize);
+        Some(PathBuf::from(String::from_utf8_lossy(&buf).into_owned()))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = port;
+        None
     }
 }
 
@@ -305,6 +498,75 @@ mod tests {
         assert_eq!(LumeSource::from_config(&p), LumeSource::System);
         assert!(!LumeSource::System.allows_builtin());
         assert!(LumeSource::Auto.allows_builtin());
+    }
+
+    #[test]
+    fn versions_parse_and_compare_against_the_minimum() {
+        assert_eq!(parse_version("0.6.0\n"), Some((0, 6, 0)));
+        assert_eq!(parse_version("lume v0.5.3"), Some((0, 5, 3)));
+        assert_eq!(parse_version("0.7.1-beta.2"), Some((0, 7, 1)));
+        assert_eq!(parse_version("Error: unknown option"), None);
+        assert_eq!(parse_version("1.2"), None);
+        assert!(!new_enough("0.5.3"));
+        assert!(new_enough("0.6.0"));
+        assert!(new_enough("0.10.0"), "numeric, not lexical");
+        assert!(new_enough("1.0.0"));
+        assert!(!new_enough("garbage"));
+        assert!(new_enough(VERSION), "the pinned Lume is always new enough");
+    }
+
+    #[test]
+    fn host_status_s_placeholder_version_says_nothing() {
+        assert_eq!(reported_version(Some("1.0.0")), None);
+        assert_eq!(reported_version(None), None);
+        assert_eq!(reported_version(Some("nope")), None);
+        assert_eq!(reported_version(Some("0.6.1")), Some("0.6.1".into()));
+    }
+
+    #[test]
+    fn an_old_server_is_avoided_unless_system_is_chosen() {
+        use ServerVerdict::*;
+        for s in [LumeSource::Auto, LumeSource::Builtin] {
+            assert_eq!(judge_server(s, Some("0.5.3")), Avoid("0.5.3".into()));
+            assert_eq!(judge_server(s, Some("0.6.0")), Use);
+            assert_eq!(judge_server(s, None), Use, "unknown: as before");
+        }
+        assert_eq!(
+            judge_server(LumeSource::System, Some("0.5.3")),
+            UseOld("0.5.3".into())
+        );
+        assert_eq!(judge_server(LumeSource::System, Some("0.6.0")), Use);
+    }
+
+    #[test]
+    fn auto_uses_this_mac_s_lume_only_when_new_enough() {
+        assert!(!system_binary_usable(LumeSource::Auto, Some("0.5.3")));
+        assert!(!system_binary_usable(LumeSource::Auto, None));
+        assert!(system_binary_usable(LumeSource::Auto, Some("0.6.0")));
+        assert!(system_binary_usable(LumeSource::System, Some("0.5.3")));
+        assert!(system_binary_usable(LumeSource::System, None));
+    }
+
+    #[test]
+    fn fallback_ports_and_urls() {
+        assert_eq!(
+            fallback_ports(7777).collect::<Vec<_>>(),
+            (7778..=7786).collect::<Vec<_>>()
+        );
+        assert_eq!(fallback_ports(u16::MAX).count(), 0);
+        assert_eq!(
+            with_port("http://127.0.0.1:7777", 7778),
+            "http://127.0.0.1:7778"
+        );
+        assert_eq!(
+            with_port("http://127.0.0.1:7777/", 7779),
+            "http://127.0.0.1:7779"
+        );
+        assert_eq!(with_port("http://localhost", 7778), "http://localhost:7778");
+        assert!(is_loopback("http://127.0.0.1:7777"));
+        assert!(is_loopback("http://localhost:7777/"));
+        assert!(is_loopback("http://[::1]:7777"));
+        assert!(!is_loopback("http://10.0.0.5:7777"));
     }
 
     #[test]

@@ -284,6 +284,15 @@ impl MockState {
             .extend(names.iter().map(|n| n.to_string()));
     }
 
+    /// Stop advertising features [`Self::advertise`] added (a driver that
+    /// predates them).
+    pub fn unadvertise(&self, names: &[&str]) {
+        self.extra_features
+            .lock()
+            .unwrap()
+            .retain(|f| !names.contains(&f.as_str()));
+    }
+
     /// Report `key` as this mock guest's sealed-delivery public key (S1).
     pub fn set_machine_seal_public_key(&self, key: [u8; 32]) {
         *self.machine_seal_public_key.lock().unwrap() = key.to_vec();

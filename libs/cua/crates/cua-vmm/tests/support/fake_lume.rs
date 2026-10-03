@@ -36,6 +36,9 @@ pub struct FakeLume {
     /// `POST /lume/vms/:name/run` never answers (a boot a cancelled create
     /// cut off).
     pub hang_run: bool,
+    /// A booted VM stops on its own before it gets an address (the guest
+    /// crashed: "stopped while booting").
+    pub boot_fails: bool,
 }
 
 fn not_found(name: &str) -> (u16, Value) {
@@ -61,8 +64,14 @@ fn handle(st: &mut FakeLume, method: &str, path: &str, body: Value) -> (u16, Val
             st.vms.insert(new, vm);
             (200, json!({ "message": "cloned" }))
         }
-        ("GET", _) => match st.vms.get(name) {
-            Some(vm) => (200, vm.clone()),
+        ("GET", _) => match st.vms.get_mut(name) {
+            Some(vm) => {
+                let seen = vm.clone();
+                if vm.get("crashing").is_some() {
+                    vm["status"] = json!("stopped");
+                }
+                (200, seen)
+            }
             None => not_found(name),
         },
         ("PATCH", _) => {
@@ -91,7 +100,12 @@ fn handle(st: &mut FakeLume, method: &str, path: &str, body: Value) -> (u16, Val
                 return not_found(name);
             };
             vm["status"] = json!("running");
-            vm["ipAddress"] = json!("192.0.2.10");
+            if st.boot_fails {
+                // Seen running once, then stopped, never with an address.
+                vm["crashing"] = json!(true);
+            } else {
+                vm["ipAddress"] = json!("192.0.2.10");
+            }
             (202, json!({ "message": "starting" }))
         }
         ("POST", p) if p.ends_with("/stop") => {

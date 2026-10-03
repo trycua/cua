@@ -23,15 +23,23 @@ fn now() -> u64 {
 }
 
 async fn start(issuer: &FakeIssuer, grace_secs: u64) -> String {
+    start_with(
+        issuer,
+        DevicePolicy {
+            grace_secs,
+            ..DevicePolicy::default()
+        },
+    )
+    .await
+}
+
+async fn start_with(issuer: &FakeIssuer, device_policy: DevicePolicy) -> String {
     let relay = Relay::new(RelayConfig {
         oidc: Some(Arc::new(OidcValidator::with_jwks(
             OidcConfig::new(ISSUER),
             issuer.jwks(),
         ))),
-        device_policy: DevicePolicy {
-            grace_secs,
-            ..DevicePolicy::default()
-        },
+        device_policy,
         ..RelayConfig::default()
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -716,26 +724,15 @@ async fn a_fresh_sign_in_enrolls_this_device_and_replaces_its_old_key() {
         .collect();
     assert_eq!(ids, std::slice::from_ref(&signed.id));
 
-    // A brand-new machine, from a session that does not prove a second
-    // factor: a verified email is no longer enough on its own once the
-    // account has a strong enrolled device (S4). It waits for approval.
+    // A brand-new machine, from the same fresh sign-in (no MFA proof):
+    // enrolled at once by default, keeping both machines.
     let laptop = Device::new();
     let r = laptop
         .register_on(&base, &again, true, Some("linux-machine-id-hash"))
         .await;
-    assert_eq!(r["device"]["state"], "pending");
-    assert!(r["code"].is_string());
-
-    // The same sign-in, now proving MFA (Keycloak `amr`), enrolls it at
-    // once and keeps both machines.
-    issuer.set_amr("ada", &["otp"]);
-    let mfa_signed_in = issuer.token("ada", Some("ada@example.com"), "cua-relay", 300);
-    let r = laptop
-        .register_on(&base, &mfa_signed_in, true, Some("linux-machine-id-hash"))
-        .await;
     assert_eq!(r["device"]["state"], "enrolled");
+    assert!(r["code"].is_null());
     assert_eq!(r["superseded"], json!([]));
-    issuer.set_amr("ada", &[]);
 
     // The audit log says how each device got in.
     let audit: Value = get(&base, "/v1/audit", &again, Some(&s_new))
@@ -746,12 +743,26 @@ async fn a_fresh_sign_in_enrolls_this_device_and_replaces_its_old_key() {
     let events = audit["events"].as_array().unwrap();
     let by_sign_in: Vec<_> = events
         .iter()
-        .filter(|e| e["kind"] == "device_enrolled" && e["detail"] == "enrolled by fresh sign-in")
+        .filter(|e| {
+            e["kind"] == "device_enrolled"
+                && e["detail"]
+                    .as_str()
+                    .is_some_and(|d| d.starts_with("enrolled by fresh sign-in"))
+        })
         .map(|e| e["device"].as_str().unwrap().to_owned())
         .collect();
     assert_eq!(
         by_sign_in,
         [unsigned.id.clone(), signed.id.clone(), laptop.id.clone()]
+    );
+    let new_device = events
+        .iter()
+        .find(|e| e["kind"] == "device_enrolled" && e["device"] == laptop.id.as_str())
+        .unwrap();
+    assert_eq!(new_device["subject"], "bootstrap:fresh-sign-in");
+    assert_eq!(
+        new_device["detail"],
+        "enrolled by fresh sign-in (new device of the account)"
     );
     let rekeyed = events
         .iter()
@@ -761,10 +772,45 @@ async fn a_fresh_sign_in_enrolls_this_device_and_replaces_its_old_key() {
     assert_eq!(rekeyed["subject"], unsigned.id.as_str());
 }
 
+/// The dogfood case: a social login whose email the issuer does not mark
+/// verified, no `amr`. A fresh sign-in on a second machine enrolls it; a
+/// long-lived session still shows a code.
 #[tokio::test]
-async fn an_unverified_email_needs_an_approval_for_further_devices() {
+async fn a_fresh_sign_in_enrolls_further_devices_of_an_unverified_email() {
     let issuer = FakeIssuer::new(ISSUER);
     let base = start(&issuer, 0).await;
+    issuer.set_auth_time("eve", now() as i64);
+    let unverified = issuer.token_with("eve", Some("eve@example.com"), false, "cua-relay", 300);
+    let first = Device::new();
+    let r = first.register(&base, &unverified, true).await;
+    assert_eq!(r["device"]["state"], "enrolled");
+    let second = Device::new();
+    let r = second.register(&base, &unverified, true).await;
+    assert_eq!(r["device"]["state"], "enrolled");
+    assert_eq!(r["device"]["enrolled_by"], "bootstrap:fresh-sign-in");
+    assert!(r["code"].is_null());
+    assert!(second.session(&base, &unverified).await.is_ok());
+    issuer.set_auth_time("eve", now() as i64 - 3600);
+    let stale = issuer.token_with("eve", Some("eve@example.com"), false, "cua-relay", 300);
+    let third = Device::new();
+    let r = third.register(&base, &stale, true).await;
+    assert_eq!(r["device"]["state"], "pending");
+    assert!(r["code"].is_string());
+}
+
+/// The strict policy (`CUA_RELAY_DEVICE_REQUIRE_APPROVAL`).
+#[tokio::test]
+async fn strict_an_unverified_email_needs_an_approval_for_further_devices() {
+    let issuer = FakeIssuer::new(ISSUER);
+    let base = start_with(
+        &issuer,
+        DevicePolicy {
+            grace_secs: 0,
+            require_approval: true,
+            ..DevicePolicy::default()
+        },
+    )
+    .await;
     issuer.set_auth_time("eve", now() as i64);
     let unverified = issuer.token_with("eve", Some("eve@example.com"), false, "cua-relay", 300);
     // The account's first device still enrolls by a fresh sign-in.

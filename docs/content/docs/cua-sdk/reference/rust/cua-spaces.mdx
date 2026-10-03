@@ -472,6 +472,7 @@ pub struct HostCaller {
 impl HostCaller {
   fn local() -> Self;
   fn from_metadata(value: Option<&str>) -> Result<Self>;
+  fn from_grpc_metadata(metadata: &MetadataMap) -> Result<Self>;
   fn label(&self) -> String;
   fn is_owner(&self) -> bool;
   fn may_create(&self) -> bool;
@@ -1597,6 +1598,7 @@ pub struct SpaceInfo {
   pub cloud: String,
   pub cloud_place: String,
   pub cloud_delete: String,
+  pub status: String,
 }
 ```
 

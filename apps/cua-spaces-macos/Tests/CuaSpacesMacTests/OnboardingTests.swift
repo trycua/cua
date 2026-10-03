@@ -51,10 +51,10 @@ struct TempInstall {
     }
 
     /// The SDK's installer (the app core's) over these paths only.
-    func installer(bundled: Bool = true) -> AppCliInstaller {
+    func installer(bundled: Bool = true, pathEnv: String = "/usr/bin:/bin") -> AppCliInstaller {
         AppCliInstaller.withPaths(bundled: bundled ? cua.path : nil,
                                   binDir: home.appendingPathComponent(".local/bin").path,
-                                  pathEnv: "/usr/bin:/bin",
+                                  pathEnv: pathEnv,
                                   profile: home.appendingPathComponent(".zshrc").path)
     }
 
@@ -107,10 +107,36 @@ struct OnboardingTests {
         o.send(.driveContinue)
         o.send(.modeChosen(mode: .client))
         #expect(o.view.summary.first { $0.label == "cua command" }?.value == target)
+        #expect(o.cliShadowedBy == nil, "nothing else on PATH")
         // A second launch finds it current and writes nothing new.
         let again = OnboardingModel(statePath: nil, cli: tmp.installer())
         await again.installCliSilently()
         #expect(again.cliPlan?.upToDate == true && again.state.cliTarget == target)
+    }
+
+    /// Another `cua` earlier on PATH (a stale Python cua-cli, say): Done
+    /// still shows the installed path and notes the one that runs first.
+    @Test func anotherCuaEarlierOnPathIsNotedOnDone() async throws {
+        let tmp = try TempInstall()
+        defer { tmp.remove() }
+        let stale = tmp.root.appendingPathComponent("stale/bin")
+        try FileManager.default.createDirectory(at: stale, withIntermediateDirectories: true)
+        let other = stale.appendingPathComponent("cua")
+        try Data("#!/bin/sh\necho \"cua-cli 0.1.0 (python)\"\n".utf8).write(to: other)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: other.path)
+        let binDir = tmp.home.appendingPathComponent(".local/bin").path
+        let o = OnboardingModel(statePath: nil,
+                                cli: tmp.installer(pathEnv: "\(stale.path):\(binDir):/usr/bin:/bin"))
+        #expect(o.cliShadowedBy == nil, "nothing installed yet")
+        await o.installCliSilently()
+        let target = tmp.home.appendingPathComponent(".local/bin/cua").path
+        #expect(o.state.cliTarget == target)
+        #expect(o.cliShadowedBy == other.path)
+        o.send(.start)
+        toMode(o)
+        o.send(.modeChosen(mode: .client))
+        #expect(o.view.step == .done)
+        #expect(o.view.summary.first { $0.label == "cua command" }?.value == target, "Done shows the installed path")
     }
 
     @Test func withoutABundledCliNothingIsInstalled() async throws {
@@ -178,6 +204,34 @@ struct OnboardingTests {
         #expect(l.view.usage?.help == "Set by env DO_NOT_TRACK")
         l.setShareUsage(true)
         #expect(l.view.usage?.on == false)
+    }
+
+    /// Sign-in skipped, then "Set up for access": the This machine step's
+    /// own HostModel signs in inline through the app's sign-in (wired by
+    /// AppModel), then finishes setup with the new session's token.
+    @Test func skippedSignInSignsInInlineFromThisMachineThenFinishes() async {
+        let host = FakeHost()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-mac-tests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let o = OnboardingModel(statePath: nil, host: host)
+        let account = FixtureAccount()
+        let app = AppModel(backend: FixtureSpacesBackend(),
+                           keyvault: KeyvaultModel(client: nil, clock: { fixtureNow }),
+                           onboarding: o, settingsPath: dir.appendingPathComponent("settings.json").path,
+                           account: account, telemetry: FixtureTelemetry())
+        o.accountToken = { _ in account.identity() == nil ? nil : "tok-signed-in" }
+        o.send(.start)
+        toMode(o)
+        #expect(o.host.identity == nil)
+        o.host.openForm()
+        await o.setUpHost()
+        #expect(app.identity == "you@example.com", "the app's sign-in ran")
+        #expect(o.host.identity == "you@example.com")
+        #expect(host.requests.count == 1)
+        #expect(host.requests.first?.1 == "tok-signed-in")
+        #expect(o.host.formView?.error == nil)
+        #expect(o.view.step == .done)
+        #expect(o.state.mode == .host)
     }
 
     @Test func hostSetupRunsWithTheAccountTokenThenFinishes() async {

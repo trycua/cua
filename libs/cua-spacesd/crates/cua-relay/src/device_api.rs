@@ -59,7 +59,7 @@ impl Gate {
 
 /// The error an unenrolled device gets once the grace period is over.
 pub const NOT_ENROLLED: &str =
-    "this device is not enrolled for your cua.ai account: run `cua devices enroll` (or approve it from the Cua Spaces app on an enrolled device)";
+    "this device is not enrolled for your cua.ai account: sign in again (`cua auth login`) to enroll it, run `cua devices enroll`, or approve it from the Cua Spaces app on an enrolled device";
 
 /// Checks the device behind an account request: an enrolled device's live
 /// session, else (during the grace period) a flagged pass, else an error.

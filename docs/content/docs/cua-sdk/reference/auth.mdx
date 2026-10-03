@@ -26,7 +26,7 @@ Returned by [`Cua.auth`](/cua-sdk/reference/cua#cua).
 | --- | --- |
 | [`access_token`](#authaccess_token) | A valid access token (refreshed when it expires within a minute, or when `force`). |
 | [`begin_login`](#authbegin_login) | Starts a sign-in. |
-| [`devices`](#authdevices) | This device on `relay_url` (`None` = `CUA_RELAY_URL`, else `https://relay.cua.ai`) as the signed-in account, shown as `name` (default: the host name). |
+| [`devices`](#authdevices) | This device on `relay_url` (`None` = the relay `cua` uses: `CUA_RELAY_URL`, else this machine's host setup, else `https://relay.cua.ai`) as the signed-in account, shown as `name` (default: this computer's name). |
 | [`logout`](#authlogout) | Revokes (best effort) and removes the session. |
 | [`status`](#authstatus) | The stored session (no network). |
 
@@ -132,9 +132,10 @@ pub async fn begin_login(&self, flow: Option<String>) -> Result<Arc<LoginAttempt
 
 ### `Auth.devices`
 
-This device on `relay_url` (`None` = `CUA_RELAY_URL`, else
+This device on `relay_url` (`None` = the relay `cua` uses:
+`CUA_RELAY_URL`, else this machine's host setup, else
 `https://relay.cua.ai`) as the signed-in account, shown as `name`
-(default: the host name).
+(default: this computer's name).
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -295,10 +296,11 @@ Returned by [`Auth.begin_login`](#authbegin_login).
 Waits for the user, stores the session and returns who signed in.
 Only the first call waits; later calls fail.
 
-A device that already enrolled (it has a device key) then
-re-registers with the relay (`CUA_RELAY_URL`, else relay.cua.ai), so
-the fresh sign-in enrolls or re-verifies it without an approval.
-That step is best effort and never fails the sign-in.
+This device then registers with the relay (the one `cua` uses:
+`CUA_RELAY_URL`, else this machine's host setup, else relay.cua.ai),
+creating its device key on first use, so the fresh sign-in enrolls
+or re-verifies it without an approval. That step is best effort and
+never fails the sign-in.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">

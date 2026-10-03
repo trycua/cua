@@ -40,7 +40,18 @@ public final class LiveDevices: DevicesRunning, @unchecked Sendable {
     public func enroll() async throws -> DeviceEnrollment { try await inner.enroll() }
     public func checkEnrolled() async -> Bool { await inner.checkEnrolled() }
     public func approve(code: String?, deviceId: String?) async throws {
-        _ = try await inner.approve(code: code, deviceId: deviceId)
+        try Self.requireEnrolled(try await inner.approve(code: code, deviceId: deviceId))
+    }
+
+    /// Only say "approved" when the relay says the device is enrolled:
+    /// anything else would leave the other device waiting while this one
+    /// reads success.
+    static func requireEnrolled(_ device: RelayDevice) throws {
+        guard device.state == "enrolled" else {
+            throw CuaError.Runtime(
+                message: "The relay did not enroll \(device.name) (\(device.id)): it is \(device.state). "
+                    + "Ask that device for a new code and try again.")
+        }
     }
     public func rename(id: String, name: String) async throws { _ = try await inner.rename(id: id, name: name) }
     public func revoke(id: String) async throws { _ = try await inner.revoke(id: id) }

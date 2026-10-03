@@ -1033,7 +1033,7 @@ extension Server {
                 vmCount: runningVMs.count,
                 maxVMs: maxVMs,
                 availableSlots: max(0, maxVMs - runningVMs.count),
-                version: "1.0.0"  // Could be derived from build info
+                version: Lume.Version.current
             )
 
             return try .json(response)

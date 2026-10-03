@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.4.0...cua-spacesd-v0.4.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **cua-spacesd:** preserve Unicode host caller metadata ([#4501](https://github.com/trycua/cua/issues/4501)) ([a6912c9](https://github.com/trycua/cua/commit/a6912c941aae1324ec7703b4c4282afc43896231))
+
 ## [0.4.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.3.0...cua-spacesd-v0.4.0) (2026-10-03)
 
 

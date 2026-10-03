@@ -457,6 +457,9 @@ def _bootstrap_command(config: ComparisonConfig, codex_version: str) -> str:
     script = f"""
 set -eu
 cd {shlex.quote(REMOTE_WORKSPACE)}
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --no-install-recommends python3-dev
 python3 -m venv .fleet-venv
 .fleet-venv/bin/python -m pip install --disable-pip-version-check -e {shlex.quote(f"{REMOTE_RUNTIME}[fleet]")}
 if ! command -v codex >/dev/null 2>&1 || ! codex --version | grep -Fqx {shlex.quote(f"codex-cli {codex_version}")}; then

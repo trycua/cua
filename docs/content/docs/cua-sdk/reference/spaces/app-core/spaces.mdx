@@ -378,7 +378,7 @@ AppNoticeKind::Create
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `label` | `String` |  | The button's label. |
-| `on` | `String` |  | The "Run on" entry it picks (`host:<machine id>`). |
+| `on` | `String` |  | The "Run on" entry it picks (`host:<machine id>`; the wizard's `ChoosePlacement`). |
 
 ## `app_hosted_rows`
 
@@ -555,9 +555,9 @@ Returned by [`app_space_detail`](#app_space_detail), [`app_space_detail_for`](#a
 | `sections` | `Vec<String>` |  | The sections under the facts, in order (Stream, Agents, Teleport). |
 | `credit_notice` / `creditNotice` | [`Option<AppCreditNotice>`](/cua-sdk/reference/spaces/app-core/billing#appcreditnotice-record) |  | A cloud Space refused for want of credit: one line and "Add credit" (the website billing page). |
 | `power_error` / `powerError` | `Option<String>` |  | Why turning it off or on failed, shown inline under the preview. |
-| `access` | [`Option<AppMachineAccessNotice>`](/cua-sdk/reference/spaces/app-core/devices#appmachineaccessnotice-record) | `None` | Signed in, but this device is not enrolled: a machine reached through the relay is listed with its Connect greyed out under this line and its one action. |
-| `desktop_note` / `desktopNote` | `Option<String>` | `None` | One of your machines that does not share its desktop: the line shown in place of its desktop, Stream, Agents and Teleport. |
-| `new_space` / `newSpace` | [`Option<AppNewSpaceOn>`](#appnewspaceon-record) | `None` | With `desktop_note`, when the machine provides Spaces: "New Space on &lt;name&gt;…". |
+| `access` | [`Option<AppMachineAccessNotice>`](/cua-sdk/reference/spaces/app-core/devices#appmachineaccessnotice-record) |  | Signed in, but this device is not enrolled: a machine reached through the relay is listed with its Connect greyed out under this line and its one action (`detail_for`). |
+| `desktop_note` / `desktopNote` | `Option<String>` |  | One of your machines that does not share its desktop: the line shown in place of its desktop, Stream, Agents and Teleport (`desktop_note`). |
+| `new_space` / `newSpace` | [`Option<AppNewSpaceOn>`](#appnewspaceon-record) |  | With `Self.desktop_note`, when the machine provides Spaces: "New Space on &lt;name&gt;…", which opens New Space on it. |
 
 ## `AppSpaceProgress` record
 

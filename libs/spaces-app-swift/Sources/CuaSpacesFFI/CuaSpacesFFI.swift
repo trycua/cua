@@ -8392,11 +8392,11 @@ public struct AppDesktopCover: Equatable, Hashable {
         /**
          * The button shows greyed out (Connect while this device is not
          * enrolled).
-         */buttonDisabled: Bool = false,
+         */buttonDisabled: Bool,
         /**
          * The one action above a greyed-out Connect ("Enroll This Mac…"): the
          * shell opens the enroll sheet.
-         */action: String? = nil) {
+         */action: String?) {
         self.kind = kind
         self.text = text
         self.button = button
@@ -8484,7 +8484,8 @@ public struct AppDesktopCoverInput: Equatable, Hashable {
      */
     public var stream: AppStreamPhase
     /**
-     * The detail's `access`: Connect greyed out under this notice.
+     * The detail's `access`: this device is signed in but not enrolled,
+     * so Connect shows greyed out under this notice and its action.
      */
     public var access: AppMachineAccessNotice?
 
@@ -8507,8 +8508,9 @@ public struct AppDesktopCoverInput: Equatable, Hashable {
          * The shell's stream session.
          */stream: AppStreamPhase,
         /**
-         * The detail's `access`: Connect greyed out under this notice.
-         */access: AppMachineAccessNotice? = nil) {
+         * The detail's `access`: this device is signed in but not enrolled,
+         * so Connect shows greyed out under this notice and its action.
+         */access: AppMachineAccessNotice?) {
         self.canStream = canStream
         self.previewText = previewText
         self.autoConnect = autoConnect
@@ -17840,7 +17842,8 @@ public struct AppNewSpaceOn: Equatable, Hashable {
      */
     public var label: String
     /**
-     * The "Run on" entry it picks (`host:<machine id>`).
+     * The "Run on" entry it picks (`host:<machine id>`; the wizard's
+     * `ChoosePlacement`).
      */
     public var on: String
 
@@ -17851,7 +17854,8 @@ public struct AppNewSpaceOn: Equatable, Hashable {
          * The button's label.
          */label: String,
         /**
-         * The "Run on" entry it picks (`host:<machine id>`).
+         * The "Run on" entry it picks (`host:<machine id>`; the wizard's
+         * `ChoosePlacement`).
          */on: String) {
         self.label = label
         self.on = on
@@ -27621,17 +27625,18 @@ public struct AppSpaceDetail: Equatable, Hashable {
     /**
      * Signed in, but this device is not enrolled: a machine reached
      * through the relay is listed with its Connect greyed out under this
-     * line and its one action.
+     * line and its one action ([`detail_for`]).
      */
     public var access: AppMachineAccessNotice?
     /**
-     * One of your machines that does not share its desktop: the line shown
-     * in place of its desktop, Stream, Agents and Teleport.
+     * One of your machines that does not share its desktop: the line
+     * shown in place of its desktop, Stream, Agents and Teleport
+     * ([`desktop_note`]).
      */
     public var desktopNote: String?
     /**
-     * With `desktop_note`, when the machine provides Spaces: "New Space on
-     * <name>…".
+     * With [`Self::desktop_note`], when the machine provides Spaces:
+     * "New Space on <name>…", which opens New Space on it.
      */
     public var newSpace: AppNewSpaceOn?
 
@@ -27692,16 +27697,17 @@ public struct AppSpaceDetail: Equatable, Hashable {
         /**
          * Signed in, but this device is not enrolled: a machine reached
          * through the relay is listed with its Connect greyed out under this
-         * line and its one action.
-         */access: AppMachineAccessNotice? = nil,
+         * line and its one action ([`detail_for`]).
+         */access: AppMachineAccessNotice?,
         /**
-         * One of your machines that does not share its desktop: the line shown
-         * in place of its desktop, Stream, Agents and Teleport.
-         */desktopNote: String? = nil,
+         * One of your machines that does not share its desktop: the line
+         * shown in place of its desktop, Stream, Agents and Teleport
+         * ([`desktop_note`]).
+         */desktopNote: String?,
         /**
-         * With `desktop_note`, when the machine provides Spaces: "New Space on
-         * <name>…".
-         */newSpace: AppNewSpaceOn? = nil) {
+         * With [`Self::desktop_note`], when the machine provides Spaces:
+         * "New Space on <name>…", which opens New Space on it.
+         */newSpace: AppNewSpaceOn?) {
         self.id = id
         self.title = title
         self.facts = facts

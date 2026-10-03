@@ -880,6 +880,17 @@ pub struct AppSpaceUsage {
     pub disk_limited: bool,
 }
 
+/// "New Space on <machine>…": New Space with "Run on" set to that machine.
+pub type AppNewSpaceOn = core::spaces::sidebar::NewSpaceOn;
+#[uniffi::remote(Record)]
+pub struct AppNewSpaceOn {
+    /// The button's label.
+    pub label: String,
+    /// The "Run on" entry it picks (`host:<machine id>`; the wizard's
+    /// `ChoosePlacement`).
+    pub on: String,
+}
+
 /// The selected Space's detail.
 pub type AppSpaceDetail = core::spaces::sidebar::SpaceDetail;
 #[uniffi::remote(Record)]
@@ -921,43 +932,15 @@ pub struct AppSpaceDetail {
     pub power_error: Option<String>,
     /// Signed in, but this device is not enrolled: a machine reached
     /// through the relay is listed with its Connect greyed out under this
-    /// line and its one action.
-    #[uniffi(default = None)]
+    /// line and its one action ([`detail_for`]).
     pub access: Option<AppMachineAccessNotice>,
-    /// One of your machines that does not share its desktop: the line shown
-    /// in place of its desktop, Stream, Agents and Teleport.
-    #[uniffi(default = None)]
+    /// One of your machines that does not share its desktop: the line
+    /// shown in place of its desktop, Stream, Agents and Teleport
+    /// ([`desktop_note`]).
     pub desktop_note: Option<String>,
-    /// With `desktop_note`, when the machine provides Spaces: "New Space on
-    /// <name>…".
-    #[uniffi(default = None)]
+    /// With [`Self::desktop_note`], when the machine provides Spaces:
+    /// "New Space on <name>…", which opens New Space on it.
     pub new_space: Option<AppNewSpaceOn>,
-}
-
-/// "New Space on <machine>…": New Space with "Run on" set to that machine.
-pub type AppNewSpaceOn = core::spaces::sidebar::NewSpaceOn;
-#[uniffi::remote(Record)]
-pub struct AppNewSpaceOn {
-    /// The button's label.
-    pub label: String,
-    /// The "Run on" entry it picks (`host:<machine id>`).
-    pub on: String,
-}
-
-/// Why this device cannot open the account's machines (signed in, not
-/// enrolled): the line above a greyed-out Connect, the Status word and the
-/// one action (the enroll sheet).
-pub type AppMachineAccessNotice = core::devices::MachineAccessNotice;
-#[uniffi::remote(Record)]
-pub struct AppMachineAccessNotice {
-    /// This device's enrollment.
-    pub kind: AppEnrollmentKind,
-    /// The machine's Status: "Not enrolled", "Waiting for approval", ...
-    pub status: String,
-    /// The line above the disabled Connect.
-    pub text: String,
-    /// The action's label; it opens the enroll sheet.
-    pub action_label: String,
 }
 
 /// Where the shell's stream session stands.
@@ -992,8 +975,8 @@ pub struct AppDesktopCoverInput {
     pub connect_requested: bool,
     /// The shell's stream session.
     pub stream: AppStreamPhase,
-    /// The detail's `access`: Connect greyed out under this notice.
-    #[uniffi(default = None)]
+    /// The detail's `access`: this device is signed in but not enrolled,
+    /// so Connect shows greyed out under this notice and its action.
     pub access: Option<AppMachineAccessNotice>,
 }
 
@@ -1031,11 +1014,9 @@ pub struct AppDesktopCover {
     pub retry: bool,
     /// The button shows greyed out (Connect while this device is not
     /// enrolled).
-    #[uniffi(default = false)]
     pub button_disabled: bool,
     /// The one action above a greyed-out Connect ("Enroll This Mac…"): the
     /// shell opens the enroll sheet.
-    #[uniffi(default = None)]
     pub action: Option<String>,
 }
 
@@ -7419,6 +7400,23 @@ pub enum AppEnrollmentKind {
     Due,
     /// Revoked.
     Revoked,
+}
+
+/// Why this device cannot open the account's machines (signed in, but not
+/// enrolled): the one line above a machine's greyed-out Connect, its
+/// status word and the one action that fixes it (the enroll sheet, which
+/// offers a fresh sign-in or an approval from an enrolled device).
+pub type AppMachineAccessNotice = core::devices::MachineAccessNotice;
+#[uniffi::remote(Record)]
+pub struct AppMachineAccessNotice {
+    /// This device's enrollment.
+    pub kind: AppEnrollmentKind,
+    /// The machine's Status: "Not enrolled", "Waiting for approval", ...
+    pub status: String,
+    /// The line above the disabled Connect.
+    pub text: String,
+    /// The action's label; it opens the enroll sheet.
+    pub action_label: String,
 }
 
 /// Settings → Devices' first section: this device.

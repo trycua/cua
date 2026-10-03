@@ -410,6 +410,36 @@ pub fn app_hosted_rows(spaces: Vec<AppSpace>, machine_space_id: String, selected
 
 **Returns** [`Vec<AppSidebarRow>`](#appsidebarrow-record)
 
+## `app_without_this_relay_machine`
+
+The roster without this machine's own relay entry (`this_machine_id`
+is `HostStatus.machine_id`): it is "This machine", not one of "My
+machines". Matched by id, never by name.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appWithoutThisRelayMachine(spaces: [AppSpace], thisMachineId: String?) -> [AppSpace]
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_without_this_relay_machine(spaces: Vec<AppSpace>, this_machine_id: Option<String>) -> Vec<AppSpace>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `spaces` | [`Vec<AppSpace>`](#appspace-record) | required |
+| `this_machine_id` | `Option<String>` | required |
+
+**Returns** [`Vec<AppSpace>`](#appspace-record)
+
 ## `AppRemoteWindow` record
 
 | Field | Type | Default | Description |
@@ -487,7 +517,7 @@ Returned by [`app_sidebar`](#app_sidebar).
 
 ## `AppSpace` record
 
-Returned by [`app_creates_compose`](/cua-sdk/reference/spaces/app-core/creates#app_creates_compose), [`app_rows_to_spaces`](#app_rows_to_spaces), [`app_spaces_from_json`](#app_spaces_from_json), [`app_this_machine_space`](#app_this_machine_space), [`app_with_this_machine`](/cua-sdk/reference/spaces/app-core/this-machine#app_with_this_machine).
+Returned by [`app_creates_compose`](/cua-sdk/reference/spaces/app-core/creates#app_creates_compose), [`app_rows_to_spaces`](#app_rows_to_spaces), [`app_spaces_from_json`](#app_spaces_from_json), [`app_this_machine_space`](#app_this_machine_space), [`app_with_this_machine`](/cua-sdk/reference/spaces/app-core/this-machine#app_with_this_machine), [`app_without_this_relay_machine`](#app_without_this_relay_machine).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |

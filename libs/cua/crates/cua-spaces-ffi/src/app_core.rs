@@ -161,6 +161,17 @@ pub fn app_machine_access_notice(
     core::devices::machine_access_notice(kind, pending_code.as_deref())
 }
 
+/// The roster without this machine's own relay entry (`this_machine_id`
+/// is `HostStatus.machine_id`): it is "This machine", not one of "My
+/// machines". Matched by id, never by name.
+#[uniffi::export]
+pub fn app_without_this_relay_machine(
+    spaces: Vec<AppSpace>,
+    this_machine_id: Option<String>,
+) -> Vec<AppSpace> {
+    core::spaces::sidebar::without_this_relay_machine(&spaces, this_machine_id.as_deref())
+}
+
 /// The Spaces one of your machines provides (`machine_space_id` is its
 /// `relay:<id>`), as sidebar rows.
 #[uniffi::export]

@@ -520,6 +520,22 @@ pub fn desktop_note(space: &Space) -> Option<String> {
     })
 }
 
+/// The roster without this machine's own relay entry
+/// (`relay:<this_machine_id>`, listed once it shares its desktop or
+/// provides Spaces): this machine has its own place ("This machine"), not
+/// one under "My machines". Matched by this install's relay machine id,
+/// never by name, so another machine of the same name stays; the Spaces it
+/// provides stay too.
+pub fn without_this_relay_machine(spaces: &[Space], this_machine_id: Option<&str>) -> Vec<Space> {
+    let Some(own) = this_machine_id
+        .filter(|id| !id.is_empty())
+        .map(|id| format!("relay:{id}"))
+    else {
+        return spaces.to_vec();
+    };
+    spaces.iter().filter(|s| s.id != own).cloned().collect()
+}
+
 /// The Spaces one of your machines provides, as sidebar rows (its detail
 /// lists them under New Space).
 pub fn hosted_rows(spaces: &[Space], machine_space_id: &str, selected_id: &str) -> Vec<SidebarRow> {
@@ -1289,6 +1305,28 @@ mod tests {
         let direct =
             super::super::row_to_space(&local_row("direct:10.0.0.5:3211", None, None, None), 0);
         assert_eq!(shares_desktop(&direct), None);
+    }
+
+    /// This machine's own relay entry is dropped by id; another machine
+    /// of the same name and the Spaces this machine provides stay.
+    #[test]
+    fn this_machine_is_not_one_of_your_machines() {
+        let mut own = machine(SHARED, true);
+        own.id = "relay:aaaa01".into();
+        own.name = "Dana's MacBook Pro".into();
+        let mut twin = own.clone();
+        twin.id = "relay:bbbb02".into();
+        let mut provided = machine(SHARED, true);
+        provided.id = "relay:s1".into();
+        provided.host = Some("aaaa01".into());
+        let spaces = vec![own, twin, provided];
+        let ids = |v: Vec<Space>| v.into_iter().map(|s| s.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(without_this_relay_machine(&spaces, Some("aaaa01"))),
+            ["relay:bbbb02", "relay:s1"]
+        );
+        assert_eq!(ids(without_this_relay_machine(&spaces, None)).len(), 3);
+        assert_eq!(ids(without_this_relay_machine(&spaces, Some(""))).len(), 3);
     }
 
     /// The Spaces a machine provides, for its detail.

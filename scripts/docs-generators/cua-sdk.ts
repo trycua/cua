@@ -754,6 +754,7 @@ export const PAGES: PageSpec[] = [
       'AppNoticeKind',
       'AppNewSpaceOn',
       'app_hosted_rows',
+      'app_without_this_relay_machine',
     ],
     prefixes: ['AppRoster', 'app_roster_', 'AppSidebar', 'app_sidebar', 'AppSpace', 'app_space', 'AppRemoteWindow'],
     spaces: true,

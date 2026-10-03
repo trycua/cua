@@ -26,25 +26,21 @@ impl AccountTokens for Counting {
     }
 }
 
-/// This machine's own relay registration (it shares its desktop or
-/// provides Spaces) is not listed among "your machines": it is matched by
-/// this install's relay machine id, so another machine with the same name
-/// (or a renamed one) still lists.
+/// This install's relay machine id comes from its host setup, so apps can
+/// tell this machine's own relay entry from another machine of the same
+/// name. The listing itself still has both (`cua spaces ls` on the host).
 #[tokio::test]
-async fn this_machine_is_not_one_of_your_machines() {
+async fn this_relay_machine_id_names_this_install() {
     let relay = FakeRelay::start().await;
     relay.add_account("owner-token", "user-1", Some("ada@example.com"));
     let client = cua_host::RelayClient::new(&relay.url).unwrap();
-    for (id, name) in [
-        ("aaaa000000000001", "Dana's MacBook Pro"),
-        ("bbbb000000000002", "Dana's MacBook Pro"),
-    ] {
+    for id in ["aaaa000000000001", "bbbb000000000002"] {
         client
             .register(
                 "owner-token",
                 &cua_host::relay::RegisterRequest {
                     id: id.into(),
-                    name: name.into(),
+                    name: "Dana's MacBook Pro".into(),
                     allow: vec![],
                     host: None,
                     meta: Default::default(),
@@ -54,6 +50,16 @@ async fn this_machine_is_not_one_of_your_machines() {
             .unwrap();
     }
     let home = tempfile::tempdir().unwrap();
+    let spaces = || {
+        Spaces::builder()
+            .home(home.path())
+            .relay(RelayAccount::new(
+                &relay.url,
+                Arc::new(StaticToken("owner-token".into())),
+            ))
+            .build()
+    };
+    assert_eq!(spaces().this_relay_machine_id(), None);
     // `cua host setup` in relay mode wrote this install's machine id.
     std::fs::create_dir_all(home.path().join("host")).unwrap();
     std::fs::write(
@@ -68,39 +74,12 @@ async fn this_machine_is_not_one_of_your_machines() {
         .to_string(),
     )
     .unwrap();
-    let spaces = Spaces::builder()
-        .home(home.path())
-        .relay(RelayAccount::new(
-            &relay.url,
-            Arc::new(StaticToken("owner-token".into())),
-        ))
-        .build();
+    let spaces = spaces();
     assert_eq!(
         spaces.this_relay_machine_id().as_deref(),
         Some("aaaa000000000001")
     );
-    let ids: Vec<String> = spaces
-        .list_all()
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|s| s.id)
-        .collect();
-    assert_eq!(
-        ids,
-        ["relay:bbbb000000000002"],
-        "the other Mac of the same name stays"
-    );
-    // Without a host setup every machine lists.
-    let other = tempfile::tempdir().unwrap();
-    let plain = Spaces::builder()
-        .home(other.path())
-        .relay(RelayAccount::new(
-            &relay.url,
-            Arc::new(StaticToken("owner-token".into())),
-        ))
-        .build();
-    assert_eq!(plain.list_all().await.unwrap().len(), 2);
+    assert_eq!(spaces.list_all().await.unwrap().len(), 2);
 }
 
 #[tokio::test]

@@ -27,12 +27,15 @@ enum MachinesFixture {
                     cloud: nil, cloudPlace: nil, cloudDelete: nil)
     }
 
+    /// This Mac's relay machine id (its host setup).
+    static let thisMacId = "0123abcd4567"
+
     static let notEnrolledError =
         "this device is not enrolled for your cua.ai account: run `cua devices enroll` (or approve it from the Cua Spaces app on an enrolled device)"
 
     /// The account's machines. `reachable` false: this Mac cannot open them
     /// (not enrolled), so the probe failed. `includeSelf`: this Mac's own
-    /// relay registration, as the SDK listed it before the fix.
+    /// relay entry, which the relay lists once it shares its desktop.
     static func rows(reachable: Bool = true, includeSelf: Bool = false) -> [AppSpaceRow] {
         let err = reachable ? nil : notEnrolledError
         func f(_ x: [String]) -> [String] { reachable ? x : [] }
@@ -47,13 +50,27 @@ enum MachinesFixture {
         out.append(row("relay:m-dana-2", "Dana's MacBook Pro", os: .macos, features: f(shared),
                        reachable: reachable, error: err))
         if includeSelf {
-            out.append(row("relay:m-self", "Dana's MacBook Pro", os: .macos, features: f(shared),
+            out.append(row("relay:\(thisMacId)", "Dana's MacBook Pro", os: .macos, features: f(shared),
                            reachable: reachable, error: err))
         }
         return out
     }
 
     enum Enrollment { case enrolled, never, pending, expired }
+
+    /// This Mac set up as a host on the relay (sharing its desktop).
+    static var relayHost: HostStatus {
+        var s = FixtureHost.unconfigured
+        s.configured = true
+        s.mode = "relay"
+        s.machineId = thisMacId
+        s.name = "Dana's MacBook Pro"
+        s.sharing = true
+        s.serviceInstalled = true
+        s.serviceRunning = true
+        s.online = true
+        return s
+    }
 
     static func devices(_ e: Enrollment) -> DevicesSnapshot {
         var s = FixtureDevices.sample(now: now)
@@ -76,14 +93,15 @@ enum MachinesFixture {
         return s
     }
 
-    static func model(rows: [AppSpaceRow], enrollment: Enrollment) async -> AppModel {
+    static func model(rows: [AppSpaceRow], enrollment: Enrollment, hostSetUp: Bool = false) async -> AppModel {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-machines-\(UUID().uuidString)")
         let fixture = FixtureDevices(snapshot: devices(enrollment))
         let m = AppModel(backend: FixtureSpacesBackend(rows: rows),
                          keyvault: KeyvaultModel(client: nil, clock: { fixtureNow }),
                          onboarding: OnboardingModel(statePath: dir.appendingPathComponent("o.json").path),
                          settingsPath: dir.appendingPathComponent("settings.json").path,
-                         host: FixtureHost(), account: FixtureAccount(), telemetry: FixtureTelemetry(),
+                         host: hostSetUp ? FixtureHost(status: relayHost) : FixtureHost(),
+                         account: FixtureAccount(), telemetry: FixtureTelemetry(),
                          devices: fixture, presence: FixturePresence())
         m.onboarding.finish()
         await m.choose(row: "auto-connect", option: "off")
@@ -194,6 +212,21 @@ struct MachineAccessTests {
         #expect(LiveSpacesBackend.supportedFeatures(capabilitiesJson: json) == ["host_spaces", "files"])
         #expect(LiveSpacesBackend.supportedFeatures(capabilitiesJson: nil) == nil)
         #expect(LiveSpacesBackend.supportedFeatures(capabilitiesJson: "nope") == nil)
+    }
+
+    /// Sharing its desktop lists this Mac on the relay too: it stays
+    /// "This machine" and is not repeated under My machines, while another
+    /// Mac of the same name stays.
+    @Test func thisMacIsNotOneOfMyMachines() async throws {
+        let m = await MachinesFixture.model(rows: MachinesFixture.rows(includeSelf: true), enrollment: .enrolled,
+                                            hostSetUp: true)
+        #expect(m.sidebar.thisMachine != nil)
+        let mine = try #require(m.sidebar.sections.first { $0.title == "My machines" })
+        let ids = mine.rows.map(\.id)
+        #expect(!ids.contains("relay:\(MachinesFixture.thisMacId)"))
+        #expect(ids.contains("relay:m-dana-2"))
+        try SnapshotTests().assertSnapshot(Sidebar(model: m).frame(width: 260), "sidebar-without-this-mac",
+                                           size: CGSize(width: 260, height: 600))
     }
 
     // MARK: - Snapshots

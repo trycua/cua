@@ -311,8 +311,10 @@ public final class AppModel {
     /// the registry's Spaces.
     func recompose() {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
-        let spaces = host.host == nil ? registrySpaces
-            : appWithThisMachine(spaces: registrySpaces, status: host.summaryInput, nowMs: now)
+        // This Mac's own relay entry is "This machine", not one of "My machines".
+        let listed = appWithoutThisRelayMachine(spaces: registrySpaces, thisMachineId: host.machineId)
+        let spaces = host.host == nil ? listed
+            : appWithThisMachine(spaces: listed, status: host.summaryInput, nowMs: now)
         send(.syncSpaces(spaces: appCreatesCompose(spaces: spaces, state: creates)))
     }
 

@@ -61962,6 +61962,19 @@ public func appWithThisMachine(spaces: [AppSpace], status: AppHostSummaryInput?,
 })
 }
 /**
+ * The roster without this machine's own relay entry (`this_machine_id`
+ * is `HostStatus.machine_id`): it is "This machine", not one of "My
+ * machines". Matched by id, never by name.
+ */
+public func appWithoutThisRelayMachine(spaces: [AppSpace], thisMachineId: String?) -> [AppSpace]  {
+    return try!  FfiConverterSequenceTypeAppSpace.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_without_this_relay_machine(
+        FfiConverterSequenceTypeAppSpace.lower(spaces),
+        FfiConverterOptionString.lower(thisMachineId),$0
+    )
+})
+}
+/**
  * A wizard action from JSON (fixtures, parity).
  */
 public func appWizardActionFromJson(json: String)throws  -> AppWizardAction  {
@@ -63155,6 +63168,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_with_this_machine() != 39840) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_without_this_relay_machine() != 34054) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_wizard_action_from_json() != 28909) {

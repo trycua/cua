@@ -1098,6 +1098,19 @@ fi
             release_metadata,
         )
 
+    def test_installer_compatibility_never_cancels_a_superseded_caller(
+        self,
+    ) -> None:
+        # A cancelled call fails the caller's required `validate` check, and
+        # a failed duplicate on the same head commit blocks the merge.
+        for path in (
+            ".github/workflows/ci-cua-driver-installer-compat.yml",
+            ".github/workflows/ci-release-metadata.yml",
+        ):
+            workflow = self.read(path)
+            self.assertNotIn("\nconcurrency:", workflow, path)
+            self.assertNotIn("cancel-in-progress: true", workflow, path)
+
     def test_lume_uses_the_same_draft_finalizer(self) -> None:
         workflow = self.read(".github/workflows/cd-swift-lume.yml")
 

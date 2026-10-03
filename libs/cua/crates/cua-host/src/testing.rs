@@ -67,6 +67,11 @@ struct State_ {
     /// Enrollment rules of a relay before sign-in enrollment for every
     /// device and re-keying.
     legacy: bool,
+    /// Statuses the next machine registrations answer with, in order
+    /// (a relay mid-deploy, a proxy in front of it).
+    fail_register: std::collections::VecDeque<u16>,
+    /// Machine registrations received (including refused ones).
+    register_calls: usize,
 }
 
 impl State_ {
@@ -233,6 +238,11 @@ async fn register(
     Json(body): Json<serde_json::Value>,
 ) -> Response {
     let mut st = s.lock().unwrap();
+    st.register_calls += 1;
+    if let Some(code) = st.fail_register.pop_front() {
+        let status = StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        return err(status, "the fake relay failed this registration");
+    }
     let Some(Caller::Account(who)) = caller(&st, &headers) else {
         return err(StatusCode::UNAUTHORIZED, "account token required");
     };
@@ -880,6 +890,21 @@ impl FakeRelay {
             .machines
             .get(id)
             .map(|r| r.machine.clone())
+    }
+
+    /// The next machine registrations answer with `statuses`, in order,
+    /// before the relay registers normally again.
+    pub fn fail_registrations(&self, statuses: &[u16]) {
+        self.state
+            .lock()
+            .unwrap()
+            .fail_register
+            .extend(statuses.iter().copied());
+    }
+
+    /// Machine registrations received so far (refused ones too).
+    pub fn register_calls(&self) -> usize {
+        self.state.lock().unwrap().register_calls
     }
 
     /// Refuses account calls to the machine API without an enrolled

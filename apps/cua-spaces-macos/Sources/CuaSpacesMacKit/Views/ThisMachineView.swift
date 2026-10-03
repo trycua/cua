@@ -241,6 +241,9 @@ struct HostFormView: View {
                             Task { await host.submit() }
                         }
                     }
+                    if showsFailure, let progress = host.progress {
+                        HostSetupProgressView(text: progress)
+                    }
                 }
                 if buttons {
                     Section {
@@ -291,6 +294,22 @@ struct HostFormView: View {
 /// A failed "Set up for access": a small warning symbol and a short title,
 /// one secondary line saying what to do, Retry, and the raw error under a
 /// collapsed Details (selectable, with Copy).
+/// What a running "Set up for access" waits for (the inline sign-in).
+struct HostSetupProgressView: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            ProgressView().controlSize(.small)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityIdentifier("host-setup-progress")
+    }
+}
+
 struct HostSetupFailureView: View {
     let failure: HostSetupFailure
     /// The retry is running: Retry shows progress and is disabled.
@@ -310,7 +329,7 @@ struct HostSetupFailureView: View {
                 Button(action: retry) {
                     HStack(spacing: 6) {
                         if retrying { ProgressView().controlSize(.small) }
-                        Text(retrying ? HostSetupFailure.retryingLabel : HostSetupFailure.retryLabel)
+                        Text(retrying ? HostSetupFailure.retryingLabel : failure.actionLabel)
                     }
                 }
                 .controlSize(.small)

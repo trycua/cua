@@ -10,6 +10,34 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// Where a host setup stopped (see [`Host::setup_staged`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetupStage {
+    /// Checking the request and this machine (GUI session, address).
+    Preflight,
+    /// Getting the account's token (relay mode).
+    Token,
+    /// Registering with the relay.
+    Register,
+    /// Getting cua-spacesd (download or local copy).
+    Download,
+    /// Installing and starting the host service.
+    Service,
+}
+
+impl SetupStage {
+    /// The stage as usage data and logs spell it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Preflight => "preflight",
+            Self::Token => "token",
+            Self::Register => "register",
+            Self::Download => "download",
+            Self::Service => "service",
+        }
+    }
+}
+
 /// How clients reach this machine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostMode {
@@ -752,6 +780,29 @@ impl Host {
         opts: SetupOptions,
         tokens: &dyn AccountTokens,
     ) -> Result<HostStatus> {
+        self.setup_staged(opts, tokens).await.map_err(|(_, e)| e)
+    }
+
+    /// [`Host::setup`], saying on failure which stage stopped it (usage
+    /// data and the apps' messages tell "not signed in" from "the relay
+    /// refused the account" from "the download failed").
+    pub async fn setup_staged(
+        &self,
+        opts: SetupOptions,
+        tokens: &dyn AccountTokens,
+    ) -> std::result::Result<HostStatus, (SetupStage, Error)> {
+        let mut stage = SetupStage::Preflight;
+        self.setup_inner(opts, tokens, &mut stage)
+            .await
+            .map_err(|e| (stage, e))
+    }
+
+    async fn setup_inner(
+        &self,
+        opts: SetupOptions,
+        tokens: &dyn AccountTokens,
+        stage: &mut SetupStage,
+    ) -> Result<HostStatus> {
         let runner = match &self.manager {
             Some(m) => m.kind(),
             None => opts.runner.resolve(),
@@ -801,7 +852,9 @@ impl Host {
         match &opts.mode {
             HostMode::Relay { url } => {
                 let relay = RelayClient::new(url)?;
+                *stage = SetupStage::Token;
                 let token = tokens.access_token().await?;
+                *stage = SetupStage::Register;
                 let id = load_or_create_machine_id(&self.paths.machine_id)?;
                 // Re-running setup proves it is this machine with its current
                 // machine token; the account session is used only for this
@@ -868,6 +921,7 @@ impl Host {
                 write_json(&self.paths.policy(), &policy)?;
             }
         }
+        *stage = SetupStage::Download;
         let source = driver::locate(opts.driver_bin.as_deref())?;
         match &source {
             DriverSource::Download(url) => tracing::info!(%url, "downloading cua-spacesd"),
@@ -877,6 +931,7 @@ impl Host {
             DriverSource::Local(_) => {}
         }
         driver::install_to(&source, &config.driver_bin).await?;
+        *stage = SetupStage::Service;
         write_json(&self.paths.config(), &config)?;
         let manager = self.manager(runner);
         manager.install(&self.service_spec(&config))?;

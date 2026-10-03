@@ -344,6 +344,19 @@ pub const HOST_MODES: &[&str] = &["relay", "direct", "unknown"];
 /// What a host machine is for: share its desktop, or only run Spaces for
 /// the account's other devices.
 pub const HOST_PROFILES: &[&str] = &["desktop", "spare", "both", "unknown"];
+/// The account token a relay host setup was given: one that looked valid,
+/// one already past its expiry, none (signed out, or the app could not get
+/// one), or none needed (direct mode).
+pub const HOST_TOKEN_STATES: &[&str] = &["provided", "expired", "missing", "not_needed"];
+/// Where a failed host setup stopped; `none` when it succeeded.
+pub const HOST_SETUP_STAGES: &[&str] = &[
+    "none",
+    "preflight",
+    "token",
+    "register",
+    "download",
+    "service",
+];
 /// Keyvault actions (the Keyvault broker in `cua daemon`).
 pub const KEYVAULT_ACTIONS: &[&str] = &["setup", "unlock", "lock", "import", "site_login"];
 /// How the Keyvault was set up or unlocked.
@@ -1030,7 +1043,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::HOST_SETUP,
-        version: 1,
+        version: 2,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: CLIENTS,
@@ -1043,6 +1056,26 @@ pub const EVENTS: &[EventSpec] = &[
             ),
             OUTCOME,
             ERROR_KIND,
+            p(
+                "signed_in",
+                Kind::Bool,
+                "A Cua account session is stored on this machine (no network, no keychain read).",
+            ),
+            p(
+                "token_state",
+                Kind::Enum(HOST_TOKEN_STATES),
+                "Whether the setup got an account token and whether it had expired. Never the token.",
+            ),
+            p(
+                "failed_stage",
+                Kind::Enum(HOST_SETUP_STAGES),
+                "Where a failed setup stopped (token, relay registration, download, service).",
+            ),
+            p(
+                "http_status",
+                Kind::Count { max: 599 },
+                "The HTTP status the relay or download answered a failure with; 0 when none.",
+            ),
         ],
         purpose: "Host Spaces adoption: machines set up for access, and by which profile.",
     },

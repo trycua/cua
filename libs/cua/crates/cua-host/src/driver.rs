@@ -250,6 +250,9 @@ fn allowed_download_url(url: &url::Url) -> bool {
 #[derive(Debug)]
 struct FetchError {
     missing: bool,
+    /// Worth trying again: no connection, a timeout, a dropped transfer,
+    /// or a 5xx / 429 from the server or its CDN.
+    transient: bool,
     message: String,
 }
 
@@ -257,10 +260,35 @@ impl FetchError {
     fn other(message: String) -> Self {
         Self {
             missing: false,
+            transient: false,
+            message,
+        }
+    }
+
+    fn network(message: String, e: &reqwest::Error) -> Self {
+        Self {
+            missing: false,
+            transient: e.is_connect() || e.is_timeout() || e.is_body() || e.is_request(),
+            message,
+        }
+    }
+
+    fn status(message: String, status: reqwest::StatusCode) -> Self {
+        Self {
+            missing: is_missing(status),
+            transient: status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS,
             message,
         }
     }
 }
+
+/// Times a download is tried again after a transient failure.
+const FETCH_RETRIES: u32 = 3;
+/// The first wait before trying again (doubling each time).
+#[cfg(not(test))]
+const FETCH_RETRY_BASE: std::time::Duration = std::time::Duration::from_secs(1);
+#[cfg(test)]
+const FETCH_RETRY_BASE: std::time::Duration = std::time::Duration::from_millis(5);
 
 impl From<FetchError> for Error {
     fn from(e: FetchError) -> Self {
@@ -298,6 +326,22 @@ pub async fn download_verified(url: &str) -> Result<Vec<u8>> {
 }
 
 async fn fetch_verified(url: &str) -> std::result::Result<Vec<u8>, FetchError> {
+    let mut delay = FETCH_RETRY_BASE;
+    let mut attempt = 0;
+    loop {
+        match fetch_verified_once(url).await {
+            Err(e) if e.transient && attempt < FETCH_RETRIES => {
+                attempt += 1;
+                tracing::warn!(attempt, "download failed, retrying: {}", e.message);
+                tokio::time::sleep(delay).await;
+                delay *= 2;
+            }
+            r => return r,
+        }
+    }
+}
+
+async fn fetch_verified_once(url: &str) -> std::result::Result<Vec<u8>, FetchError> {
     let parsed = url::Url::parse(url).map_err(|e| FetchError::other(format!("{url}: {e}")))?;
     if !allowed_download_url(&parsed) {
         return Err(FetchError::other(format!(
@@ -310,12 +354,12 @@ async fn fetch_verified(url: &str) -> std::result::Result<Vec<u8>, FetchError> {
         .get(url)
         .send()
         .await
-        .map_err(|e| FetchError::other(format!("{url}: {e}")))?;
+        .map_err(|e| FetchError::network(format!("{url}: {e}"), &e))?;
     if !resp.status().is_success() {
-        return Err(FetchError {
-            missing: is_missing(resp.status()),
-            message: format!("{url}: HTTP {}", resp.status()),
-        });
+        return Err(FetchError::status(
+            format!("{url}: HTTP {}", resp.status()),
+            resp.status(),
+        ));
     }
     if resp
         .content_length()
@@ -326,7 +370,7 @@ async fn fetch_verified(url: &str) -> std::result::Result<Vec<u8>, FetchError> {
     let bytes = resp
         .bytes()
         .await
-        .map_err(|e| FetchError::other(format!("{url}: {e}")))?;
+        .map_err(|e| FetchError::network(format!("{url}: {e}"), &e))?;
     if bytes.len() > MAX_ARCHIVE_BYTES {
         return Err(FetchError::other(format!("{url}: archive too large")));
     }
@@ -335,20 +379,20 @@ async fn fetch_verified(url: &str) -> std::result::Result<Vec<u8>, FetchError> {
         .get(&sum_url)
         .send()
         .await
-        .map_err(|e| FetchError::other(format!("{sum_url}: {e}")))?;
+        .map_err(|e| FetchError::network(format!("{sum_url}: {e}"), &e))?;
     if !r.status().is_success() {
-        return Err(FetchError {
-            missing: is_missing(r.status()),
-            message: format!(
+        return Err(FetchError::status(
+            format!(
                 "{sum_url}: HTTP {} (a published checksum is required)",
                 r.status()
             ),
-        });
+            r.status(),
+        ));
     }
     let text = r
         .text()
         .await
-        .map_err(|e| FetchError::other(format!("{sum_url}: {e}")))?;
+        .map_err(|e| FetchError::network(format!("{sum_url}: {e}"), &e))?;
     let expected = text
         .split_whitespace()
         .next()
@@ -937,5 +981,92 @@ mod tests {
         assert_eq!(got[0].version_string(), "0.2.3");
         assert_eq!(parse_version("v0.2.0"), Some((0, 2, 0)));
         assert_eq!(parse_version("0.2.0-rc.1"), None);
+    }
+
+    /// A CDN that answers 503 (or drops the connection) a couple of times
+    /// is tried again; a 404 is not (the release fallback handles it), and
+    /// a server that keeps failing gives up after the retries.
+    #[tokio::test]
+    async fn downloads_retry_transient_failures_but_not_missing_files() {
+        use axum::{Router, http::StatusCode, routing::get};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let archive = tar_gz(binary_name(), b"driver-bytes");
+        let sum = format!(
+            "{}  a.tar.gz\n",
+            hex::encode(sha2::Sha256::digest(&archive))
+        );
+        let (flaky, down, gone) = (
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let app = Router::new()
+            .route(
+                "/flaky/a.tar.gz",
+                get({
+                    let (n, body) = (flaky.clone(), archive.clone());
+                    move || async move {
+                        if n.fetch_add(1, Ordering::SeqCst) < 2 {
+                            (StatusCode::SERVICE_UNAVAILABLE, Vec::new())
+                        } else {
+                            (StatusCode::OK, body)
+                        }
+                    }
+                }),
+            )
+            .route("/flaky/a.tar.gz.sha256", get(move || async move { sum }))
+            .route(
+                "/down/a.tar.gz",
+                get({
+                    let n = down.clone();
+                    move || async move {
+                        n.fetch_add(1, Ordering::SeqCst);
+                        StatusCode::BAD_GATEWAY
+                    }
+                }),
+            )
+            .route(
+                "/gone/a.tar.gz",
+                get({
+                    let n = gone.clone();
+                    move || async move {
+                        n.fetch_add(1, Ordering::SeqCst);
+                        StatusCode::NOT_FOUND
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        assert_eq!(
+            download_verified(&format!("{base}/flaky/a.tar.gz"))
+                .await
+                .unwrap(),
+            archive
+        );
+        assert_eq!(flaky.load(Ordering::SeqCst), 3);
+
+        let err = download_verified(&format!("{base}/down/a.tar.gz"))
+            .await
+            .unwrap_err();
+        assert_eq!(down.load(Ordering::SeqCst), 1 + FETCH_RETRIES as usize);
+        assert_eq!(err.http_status(), Some(502), "{err}");
+
+        let err = download_verified(&format!("{base}/gone/a.tar.gz"))
+            .await
+            .unwrap_err();
+        assert_eq!(gone.load(Ordering::SeqCst), 1);
+        assert_eq!(err.http_status(), Some(404), "{err}");
+
+        // Nothing listening: refused at once, tried again, then given up.
+        let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = closed.local_addr().unwrap();
+        drop(closed);
+        let err = download_verified(&format!("http://{addr}/a.tar.gz"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.http_status(), None, "{err}");
     }
 }

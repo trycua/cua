@@ -2530,14 +2530,37 @@ impl Spaces {
         {
             return Ok(t.clone());
         }
+        // A Space whose capture failed is not asked again until its
+        // backoff passes (a host that does not share its desktop refuses
+        // every capture; asking each refresh only fills its access log).
+        if let Some(f) = cache.backing_off(&id, std::time::Instant::now()) {
+            return cached.ok_or_else(|| thumbnail_failure(&f));
+        }
         match self.capture_thumbnail(&id).await {
             Ok(t) => Ok(t),
             Err(e) => cached.ok_or(e),
         }
     }
 
-    /// Captures and caches the Space's thumbnail now.
+    /// Captures and caches the Space's thumbnail now; a failure starts the
+    /// Space's backoff ([`crate::thumbnails::ThumbnailCache::fail`]).
     async fn capture_thumbnail(&self, id: &str) -> Result<crate::thumbnails::Thumbnail> {
+        let result = self.capture_thumbnail_once(id).await;
+        if let Err(e) = &result {
+            let denied = matches!(
+                e,
+                Error::Env(cua_spacesd_client::Error::PermissionDenied(_))
+                    | Error::Env(cua_spacesd_client::Error::FeatureUnsupported { .. })
+                    | Error::CapabilityMissing { .. }
+            );
+            self.inner
+                .thumbnails
+                .fail(id, std::time::Instant::now(), denied, e.to_string());
+        }
+        result
+    }
+
+    async fn capture_thumbnail_once(&self, id: &str) -> Result<crate::thumbnails::Thumbnail> {
         use crate::thumbnails::{MAX_DIMENSION, QUALITY, Thumbnail};
         let space = self.space(id).await?;
         let shot = space
@@ -2582,7 +2605,13 @@ impl Spaces {
         let mut captured = 0;
         for info in spaces {
             let off = matches!(info.power_state.as_str(), "suspended" | "stopped");
-            if off || info.spacesd_version.is_empty() || !cache.due(&info.id, now) {
+            if off
+                || info.spacesd_version.is_empty()
+                || !cache.due(&info.id, now)
+                || cache
+                    .backing_off(&info.id, std::time::Instant::now())
+                    .is_some()
+            {
                 continue;
             }
             match tokio::time::timeout(Duration::from_secs(10), self.capture_thumbnail(&info.id))
@@ -2875,6 +2904,21 @@ pub fn sized_pool_key(
         key["memory_mb"] = m.into();
     }
     format!("{image}\n{key}")
+}
+
+/// The error a thumbnail request gets while the Space's capture backs off
+/// (and nothing is cached).
+fn thumbnail_failure(f: &crate::thumbnails::CaptureFailure) -> Error {
+    let details = cua_spacesd_client::ErrorDetails {
+        code: if f.denied { 7 } else { 14 },
+        message: format!("{} (not retried for a while)", f.message),
+        metadata: Default::default(),
+    };
+    if f.denied {
+        Error::Env(cua_spacesd_client::Error::PermissionDenied(details))
+    } else {
+        Error::Env(cua_spacesd_client::Error::Transport(details.message))
+    }
 }
 
 #[cfg(test)]

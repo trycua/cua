@@ -61,7 +61,8 @@ async fn token_calls_are_recorded_and_refusals_are_not() {
     assert_eq!(e.len(), 1, "{e:?}");
     assert_eq!(e[0].body.via, "token");
     assert_eq!(e[0].body.who, "token");
-    assert_eq!(e[0].body.what, "SystemService");
+    // A capabilities probe is background, by its route.
+    assert_eq!(e[0].body.what, "SystemService/GetCapabilities (background)");
     let text = std::fs::read_to_string(ctx.config().access_log_path()).unwrap();
     assert!(!text.contains("s3cret"), "never the credential");
 
@@ -293,6 +294,49 @@ async fn view_only_shares_need_desktop_sharing_on() {
         .await
         .unwrap();
     assert_eq!(status(&resp).as_deref(), Some("7"));
+}
+
+/// Background calls are classified by their route on the host: probes,
+/// status and presence are tagged `(background)`; a stream, a shell or
+/// files are recorded by service; a screenshot waits for its handler.
+/// Nothing the caller sends changes that.
+#[tokio::test]
+async fn calls_are_classified_by_route_not_by_the_caller() {
+    let (r, ctx, _d) = server(Some("s3cret"), true);
+    ctx.auth().set_external(std::sync::Arc::new(Relay));
+    let call = |path: &str| {
+        let mut req = grpc(path, None);
+        req.headers_mut()
+            .insert("x-test-relay", http::HeaderValue::from_static("1"));
+        // A client claiming its call is background changes nothing.
+        req.headers_mut().insert(
+            "x-cua-purpose",
+            http::HeaderValue::from_static("background"),
+        );
+        req
+    };
+    for path in [
+        "/cua.env.v1.SystemService/Health",
+        "/cua.env.v1.PresenceService/UpdateCursor",
+        "/cua.env.v1.HostSpacesService/GetHostSpaces",
+        "/cua.env.v1.StreamService/OpenMedia",
+        "/cua.env.v1.ProcessService/StartProcess",
+        "/cua.env.v1.ComputerService/Screenshot",
+    ] {
+        r.clone().oneshot(call(path)).await.unwrap();
+    }
+    let what: Vec<String> = entries(&ctx).into_iter().map(|e| e.body.what).collect();
+    assert_eq!(
+        what,
+        [
+            "SystemService/Health (background)",
+            "PresenceService/UpdateCursor (background)",
+            "HostSpacesService/GetHostSpaces (background)",
+            "StreamService",
+            "ProcessService",
+        ],
+        "the screenshot is recorded by its handler, with its size"
+    );
 }
 
 fn percent_decode(s: &str) -> String {

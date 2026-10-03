@@ -117,6 +117,45 @@ async fn relay_setup_registers_writes_policy_and_installs_the_service() {
     assert_eq!(status.online, Some(true));
     assert_eq!(status.clients.len(), 1);
 
+    // A relay client this machine logged only background probes and
+    // thumbnails from (an app polling it) is not connected now; one that
+    // opened something is.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let log = host.paths().access_log();
+    std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+    crate::access::write_log(
+        &log,
+        &[
+            (
+                now - 2_000,
+                "relay",
+                "friend@example.com (user-2)",
+                "SystemService/Health (background)",
+            ),
+            (
+                now - 1_000,
+                "relay",
+                "friend@example.com (user-2)",
+                "ComputerService/Screenshot (thumbnail)",
+            ),
+        ],
+    );
+    assert!(host.status().await.unwrap().clients.is_empty());
+    crate::access::write_log(
+        &log,
+        &[(
+            now - 1_000,
+            "relay",
+            "friend@example.com (user-2)",
+            "StreamService",
+        )],
+    );
+    assert_eq!(host.status().await.unwrap().clients.len(), 1);
+    std::fs::remove_file(&log).unwrap();
+
     // Stop sharing: relay cuts clients, policy refuses, service keeps running.
     let status = host.stop_sharing().await.unwrap();
     assert!(!status.sharing);
@@ -333,6 +372,35 @@ async fn status_shows_recent_access_and_who_is_connected_in_direct_mode() {
     let text = std::fs::read_to_string(host.paths().access_log()).unwrap();
     std::fs::write(host.paths().access_log(), text.replace("Bob", "Eve")).unwrap();
     assert!(host.status().await.unwrap().access_log_error.is_some());
+
+    // Background probes and thumbnails, however recent, are not a
+    // connection; they stay in the log.
+    crate::access::write_log(
+        &host.paths().access_log(),
+        &[
+            (
+                now - 9_000,
+                "relay",
+                "Mac mini (acct-1)",
+                "SystemService/Health (background)",
+            ),
+            (
+                now - 8_000,
+                "relay",
+                "Mac mini (acct-1)",
+                "ComputerService/Screenshot (thumbnail)",
+            ),
+            (
+                now - 7_000,
+                "token",
+                "token",
+                "SystemService/GetCapabilities (background)",
+            ),
+        ],
+    );
+    let status = host.status().await.unwrap();
+    assert!(status.clients.is_empty(), "{:?}", status.clients);
+    assert_eq!(status.recent_access.len(), 3);
 }
 
 /// Every file under `dir`, recursively.

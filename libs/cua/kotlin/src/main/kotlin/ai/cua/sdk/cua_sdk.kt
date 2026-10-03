@@ -3036,7 +3036,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_auth_status() != 29264.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_auth_devices() != 24953.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_auth_devices() != 36673.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_loginattempt_method() != 60787.toShort()) {
@@ -3051,7 +3051,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_loginattempt_user_code() != 37591.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_loginattempt_wait() != 2942.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_loginattempt_wait() != 16950.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_cua_agent_setup() != 50422.toShort()) {
@@ -4077,7 +4077,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_constructor_host_new() != 62533.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_constructor_relay_new() != 59964.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_constructor_relay_new() != 19970.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_constructor_presenceview_new() != 9981.toShort()) {
@@ -6840,9 +6840,10 @@ public interface AuthInterface {
     fun `status`(): AuthStatus
 
     /**
-     * This device on `relay_url` (`None` = `CUA_RELAY_URL`, else
+     * This device on `relay_url` (`None` = the relay `cua` uses:
+     * `CUA_RELAY_URL`, else this machine's host setup, else
      * `https://relay.cua.ai`) as the signed-in account, shown as `name`
-     * (default: the host name).
+     * (default: this computer's name).
      */
     fun `devices`(`relayUrl`: kotlin.String?, `name`: kotlin.String?): Devices
 
@@ -7042,9 +7043,10 @@ open class Auth: Disposable, AutoCloseable, AuthInterface
 
 
     /**
-     * This device on `relay_url` (`None` = `CUA_RELAY_URL`, else
+     * This device on `relay_url` (`None` = the relay `cua` uses:
+     * `CUA_RELAY_URL`, else this machine's host setup, else
      * `https://relay.cua.ai`) as the signed-in account, shown as `name`
-     * (default: the host name).
+     * (default: this computer's name).
      */
     @Throws(CuaException::class)override fun `devices`(`relayUrl`: kotlin.String?, `name`: kotlin.String?): Devices {
             return FfiConverterTypeDevices.lift(
@@ -11308,10 +11310,11 @@ public interface LoginAttemptInterface {
      * Waits for the user, stores the session and returns who signed in.
      * Only the first call waits; later calls fail.
      *
-     * A device that already enrolled (it has a device key) then
-     * re-registers with the relay (`CUA_RELAY_URL`, else relay.cua.ai), so
-     * the fresh sign-in enrolls or re-verifies it without an approval.
-     * That step is best effort and never fails the sign-in.
+     * This device then registers with the relay (the one `cua` uses:
+     * `CUA_RELAY_URL`, else this machine's host setup, else relay.cua.ai),
+     * creating its device key on first use, so the fresh sign-in enrolls
+     * or re-verifies it without an approval. That step is best effort and
+     * never fails the sign-in.
      */
     suspend fun `wait`(): AuthIdentity
 
@@ -11486,10 +11489,11 @@ open class LoginAttempt: Disposable, AutoCloseable, LoginAttemptInterface
      * Waits for the user, stores the session and returns who signed in.
      * Only the first call waits; later calls fail.
      *
-     * A device that already enrolled (it has a device key) then
-     * re-registers with the relay (`CUA_RELAY_URL`, else relay.cua.ai), so
-     * the fresh sign-in enrolls or re-verifies it without an approval.
-     * That step is best effort and never fails the sign-in.
+     * This device then registers with the relay (the one `cua` uses:
+     * `CUA_RELAY_URL`, else this machine's host setup, else relay.cua.ai),
+     * creating its device key on first use, so the fresh sign-in enrolls
+     * or re-verifies it without an approval. That step is best effort and
+     * never fails the sign-in.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -13472,8 +13476,9 @@ open class Relay: Disposable, AutoCloseable, RelayInterface
         this.cleanable = null
     }
     /**
-     * A relay (`None` = `CUA_RELAY_URL`, else `https://relay.cua.ai`) seen
-     * as the account behind `account_token` (a cua.ai access token).
+     * A relay (`None` = the relay `cua` uses: `CUA_RELAY_URL`, else this
+     * machine's host setup, else `https://relay.cua.ai`) seen as the
+     * account behind `account_token` (a cua.ai access token).
      */
     constructor(`relayUrl`: kotlin.String?, `accountToken`: kotlin.String) :
         this(UniffiWithHandle,

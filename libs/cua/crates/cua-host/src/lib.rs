@@ -48,7 +48,7 @@ pub mod testing;
 #[cfg(test)]
 mod tests;
 
-pub use device::{DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot};
+pub use device::{DeviceAuth, DeviceKey, FileKeySlot, KeySlot, MemoryKeySlot, PendingCode};
 pub use host::SetupStage;
 pub use host::{
     DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,
@@ -65,9 +65,42 @@ pub use relay::{
 };
 pub use service::{RunnerKind, ServiceManager, ServiceSpec, ServiceState};
 
-/// The default display name of this device (its host name).
+/// The default display name of this device: the macOS Computer Name, else
+/// the host name without a `.local` / `.localdomain` suffix.
 pub fn device_name() -> String {
-    host::hostname()
+    host::friendly_name()
+}
+
+/// The relay this machine talks to: `flag` (e.g. `--relay`), else
+/// `CUA_RELAY_URL`, else the relay this machine is set up with
+/// (`<home>/host/config.json`), else the default relay. The CLI and the
+/// app resolve it the same way, so both enroll and approve devices on one
+/// relay.
+pub fn relay_url_for(flag: Option<&str>, home: &std::path::Path) -> String {
+    flag.map(str::trim)
+        .filter(|u| !u.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var("CUA_RELAY_URL")
+                .ok()
+                .map(|u| u.trim().to_string())
+                .filter(|u| !u.is_empty())
+        })
+        .or_else(|| {
+            Host::new(home)
+                .config()
+                .ok()
+                .flatten()?
+                .relay_url
+                .filter(|u| !u.trim().is_empty())
+        })
+        .unwrap_or_else(relay_url_from_env)
+}
+
+/// Where this device remembers the one-time code it last showed (see
+/// [`device::PendingCode`]).
+pub fn device_pending_file(home: &std::path::Path) -> std::path::PathBuf {
+    home.join("device-pending.json")
 }
 
 /// The operating system a device reports when it registers (`macos`,

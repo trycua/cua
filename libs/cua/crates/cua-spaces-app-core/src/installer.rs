@@ -177,8 +177,18 @@ impl CliInstaller {
     pub async fn plan(&self) -> CliInstallPlan {
         let target = self.target();
         let installed = target.symlink_metadata().is_ok();
+        let installed_version = if installed {
+            cli_version(&target).await
+        } else {
+            None
+        };
+        // Up to date only when `target` is the bundled CLI and runs as it:
+        // another `cua` there (an old Python cua-cli from `uv tool`, say)
+        // or one that no longer starts gets replaced.
         let up_to_date = match (&self.bundled, installed) {
-            (Some(src), true) => same_file(src, &target),
+            (Some(src), true) => {
+                same_file(src, &target) && installed_version.as_deref().is_some_and(is_cua_cli)
+            }
             _ => false,
         };
         let on_path = path_contains(&self.path_env, &self.bin_dir);
@@ -208,11 +218,7 @@ impl CliInstaller {
             method: self.bundled.as_ref().map(|_| self.method()),
             installed,
             up_to_date,
-            installed_version: if installed {
-                cli_version(&target).await
-            } else {
-                None
-            },
+            installed_version,
             bundled_version: match &self.bundled {
                 Some(src) => cli_version(src).await,
                 None => None,
@@ -259,6 +265,18 @@ impl CliInstaller {
             let _ = std::fs::remove_file(&staging);
             format!("cannot install {}: {e}", target.display())
         })?;
+        // What is there now must run as this CLI before the app shows it as
+        // "the cua command".
+        let version = cli_version(&target).await;
+        if !version.as_deref().is_some_and(is_cua_cli) {
+            return Err(format!(
+                "installed {} but it does not run as the cua CLI (`cua --version` printed {})",
+                target.display(),
+                version
+                    .as_deref()
+                    .map_or("nothing".into(), |v| format!("{v:?}"))
+            ));
+        }
         if request.modify_path && !path_contains(&self.path_env, &self.bin_dir) {
             self.add_to_path()?;
         }
@@ -364,6 +382,24 @@ fn on_path_before(path_env: &str, bin_dir: &Path) -> bool {
     true
 }
 
+/// Whether a `cua --version` line is the Rust cua CLI's: `cua <semver>`
+/// (an optional suffix such as a build or commit may follow).
+pub fn is_cua_cli(version_line: &str) -> bool {
+    let mut words = version_line.split_whitespace();
+    if words.next() != Some("cua") {
+        return false;
+    }
+    let Some(v) = words.next() else {
+        return false;
+    };
+    let core = v.split(['-', '+']).next().unwrap_or_default();
+    let parts: Vec<&str> = core.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// `ETXTBSY` ("text file busy") on Linux and macOS.
 const ETXTBSY: i32 = 26;
 
@@ -424,6 +460,17 @@ mod tests {
     }
 
     #[test]
+    fn only_the_rust_cli_version_counts_as_cua() {
+        assert!(is_cua_cli("cua 0.4.0"));
+        assert!(is_cua_cli("cua 1.2.3-rc.1 (abc123)"));
+        assert!(!is_cua_cli("cua-cli 0.1.9"));
+        assert!(!is_cua_cli("cua, version 0.1.9"));
+        assert!(!is_cua_cli("cua 0.4"));
+        assert!(!is_cua_cli("Traceback (most recent call last):"));
+        assert!(!is_cua_cli(""));
+    }
+
+    #[test]
     fn path_contains_matches_whole_entries() {
         let env = std::env::join_paths(["/usr/bin", "/h/.local/bin"]).unwrap();
         let env = env.to_string_lossy();
@@ -469,6 +516,27 @@ mod tests {
             rc.contains(PATH_MARKER) && rc.contains(".local/bin"),
             "{rc}"
         );
+        // A foreign `cua` at the target (an old Python cua-cli) is not up
+        // to date: the next install replaces it.
+        std::fs::remove_file(home.join(".local/bin/cua")).unwrap();
+        std::fs::write(
+            home.join(".local/bin/cua"),
+            "#!/bin/sh\necho 'cua, version 0.1.9'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(
+            home.join(".local/bin/cua"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let plan = cli.plan().await;
+        assert!(plan.installed && !plan.up_to_date, "{plan:?}");
+        let done = cli.install(&CliInstallRequest::default()).await.unwrap();
+        assert!(done.up_to_date, "{done:?}");
+        assert_eq!(done.installed_version.as_deref(), Some("cua 1.2.3"));
+        // A bundled CLI that does not run as cua is not reported installed.
+        std::fs::write(&cua, "#!/bin/sh\nexit 1\n").unwrap();
+        assert!(cli.install(&CliInstallRequest::default()).await.is_err());
         // Without a bundled CLI there is nothing to install.
         let none = CliInstaller {
             bundled: None,

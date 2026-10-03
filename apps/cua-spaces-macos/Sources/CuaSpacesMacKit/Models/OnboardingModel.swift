@@ -127,6 +127,14 @@ public final class OnboardingModel {
         if let installed { send(.cliInstalled(target: installed.target)) }
     }
 
+    /// Another `cua` that comes first on PATH (an old Python cua-cli, say),
+    /// so typing `cua` runs it rather than the installed path Done shows:
+    /// Done notes it under "cua command".
+    public var cliShadowedBy: String? {
+        guard state.cliTarget != nil, let other = cliPlan?.shadowedBy, !other.isEmpty else { return nil }
+        return other
+    }
+
     // MARK: - Where it shows up
 
     /// A presentation card was picked: the flow shows it and the app saves

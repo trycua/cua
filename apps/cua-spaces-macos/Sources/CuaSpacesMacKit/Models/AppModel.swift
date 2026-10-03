@@ -202,6 +202,10 @@ public final class AppModel {
             if case .failed = self.signIn { return false }
             return self.identity != nil
         }
+        // Onboarding's This machine step has its own HostModel: give it the
+        // same inline sign-in, or a skipped sign-in fails setup with "Not
+        // signed in" instead of opening the browser and carrying on.
+        self.onboarding.host.signIn = self.host.signIn
         // A row takes a window drop by the core's rule (the notch tiles' too).
         dropTargets.isDropTarget = { [weak self] id in
             self?.spaces.first { $0.id == id }.map { appSpaceAcceptsDrop(space: $0) } ?? false
@@ -666,6 +670,7 @@ public final class AppModel {
             guard case .waiting = signIn else { return }
             identity = who ?? account.identity()
             host.identity = identity
+            onboarding.host.identity = identity
             devices.signedIn = identity != nil
             // Activation funnel: the first run records `signed_in` on its
             // sign-in page; a sign-in from the main window (first run done or
@@ -687,6 +692,7 @@ public final class AppModel {
         try? await account?.signOut()
         identity = nil
         host.identity = nil
+        onboarding.host.identity = nil
         devices.signedIn = false
         await devices.refresh()
         signIn = .idle

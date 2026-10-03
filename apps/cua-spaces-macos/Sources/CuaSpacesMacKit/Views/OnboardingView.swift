@@ -265,6 +265,12 @@ public struct OnboardingView: View {
                         }
                     }
                 }
+                if let other = onboarding.cliShadowedBy {
+                    Text("Another \(Text("cua").monospaced()) at \(other) comes first on PATH.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("onboarding-cli-shadowed")
+                }
                 if !onboarding.hostPermissions.isEmpty {
                     Text(copy.permissionsTitle).font(.headline).padding(.top, 8)
                     PermissionRows(rows: onboarding.hostPermissions, openLabel: copy.openSettings)

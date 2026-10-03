@@ -9,7 +9,10 @@
 //! sign-in enrollment for every device and re-keying); with
 //! [`FakeRelay::require_devices`] the machine API refuses account calls
 //! without an enrolled device's session, as the real relay does after its
-//! grace period. Requests to `/m/<id>/…` are recorded and answered 502.
+//! grace period. Requests to `/m/<id>/…` are recorded; a machine that
+//! stopped sharing refuses them as the real relay does, gRPC-Web requests
+//! to a machine given a [`FakeRelay::tunnel`] are forwarded to it, and the
+//! rest are answered 502.
 
 use crate::relay::{ConnectedClient, Identity, Machine};
 use axum::extract::{Path, State};
@@ -72,6 +75,9 @@ struct State_ {
     fail_register: std::collections::VecDeque<u16>,
     /// Machine registrations received (including refused ones).
     register_calls: usize,
+    /// machine id → `(path prefix, base URL)` its `/m/<id>/…` gRPC-Web
+    /// requests go to (the longest matching prefix wins).
+    tunnels: BTreeMap<String, Vec<(String, String)>>,
 }
 
 impl State_ {
@@ -499,10 +505,10 @@ async fn device_register(
         && if st.legacy {
             !has_enrolled && (fresh || !st.require_devices)
         } else {
-            // A fresh sign-in enrolls any device of an account with a
-            // (verified) email; the grace period only the first.
-            (fresh && (who.email.is_some() || !has_enrolled))
-                || (!has_enrolled && !st.require_devices)
+            // As cua-relay's default policy: a fresh sign-in enrolls any
+            // device of the account (verified email or not); the grace
+            // period only the first.
+            fresh || (!has_enrolled && !st.require_devices)
         };
     let machine = body["machine_id"]
         .as_str()
@@ -751,7 +757,35 @@ async fn audit(State(s): State<S>, headers: HeaderMap) -> Response {
     Json(serde_json::json!({ "events": events })).into_response()
 }
 
-async fn proxied(State(s): State<S>, uri: axum::http::Uri, headers: HeaderMap) -> Response {
+async fn proxied(
+    State(s): State<S>,
+    method: axum::http::Method,
+    uri: axum::http::Uri,
+    headers: HeaderMap,
+    payload: axum::body::Bytes,
+) -> Response {
+    let (target, refused) = proxied_record(&s, &uri, &headers);
+    if let Some(r) = refused {
+        return r;
+    }
+    if let Some(target) = target
+        && headers
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.starts_with("application/grpc-web"))
+    {
+        return forward(&target, method, &uri, &headers, payload).await;
+    }
+    err(StatusCode::BAD_GATEWAY, "the fake relay does not tunnel")
+}
+
+/// Records a `/m/…` request; the machine's tunnel target, or the relay's
+/// refusal.
+fn proxied_record(
+    s: &S,
+    uri: &axum::http::Uri,
+    headers: &HeaderMap,
+) -> (Option<String>, Option<Response>) {
     let session = headers
         .get(crate::relay::DEVICE_SESSION_HEADER)
         .and_then(|v| v.to_str().ok())
@@ -764,8 +798,8 @@ async fn proxied(State(s): State<S>, uri: axum::http::Uri, headers: HeaderMap) -
         .and_then(|rest| rest.split('/').next())
         .filter(|id| st.machines.contains_key(*id))
         .map(str::to_string);
-    if let (Some(machine), Some(Caller::Account(who))) = (machine, caller(&st, &headers)) {
-        let device = st.device_of(&headers, &who);
+    if let (Some(machine), Some(Caller::Account(who))) = (machine, caller(&st, headers)) {
+        let device = st.device_of(headers, &who);
         let event = match &device {
             Some(d) => serde_json::json!({
                 "ts": now_secs(), "kind": "machine_access", "device": d, "machine": machine, "detail": "owner",
@@ -787,7 +821,79 @@ async fn proxied(State(s): State<S>, uri: axum::http::Uri, headers: HeaderMap) -
         }
     }
     st.proxied.push((uri.path().to_string(), session));
-    err(StatusCode::BAD_GATEWAY, "the fake relay does not tunnel")
+    let id = uri
+        .path()
+        .strip_prefix("/m/")
+        .and_then(|rest| rest.split('/').next())
+        .unwrap_or("")
+        .to_string();
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let is_health = uri.path().ends_with("/health");
+    // As the real relay: a machine that stopped sharing refuses everything
+    // but its health check (a gRPC caller gets a gRPC status).
+    if st.machines.get(&id).is_some_and(|r| !r.machine.sharing) && !is_health {
+        let message = "the host stopped sharing this machine";
+        if content_type.starts_with("application/grpc") {
+            let r = Response::builder()
+                .status(StatusCode::OK)
+                .header(axum::http::header::CONTENT_TYPE, content_type)
+                .header("grpc-status", "7")
+                .header("grpc-message", message)
+                .body(axum::body::Body::empty())
+                .expect("refusal");
+            return (None, Some(r));
+        }
+        return (None, Some((StatusCode::FORBIDDEN, message).into_response()));
+    }
+    let rest = uri.path().strip_prefix(&format!("/m/{id}")).unwrap_or("");
+    let target = st.tunnels.get(&id).and_then(|routes| {
+        routes
+            .iter()
+            .filter(|(prefix, _)| rest.starts_with(prefix.as_str()))
+            .max_by_key(|(prefix, _)| prefix.len())
+            .map(|(_, target)| target.clone())
+    });
+    (target, None)
+}
+
+/// One gRPC-Web request passed through to `target`, without the
+/// `/m/<id>` prefix.
+async fn forward(
+    target: &str,
+    method: axum::http::Method,
+    uri: &axum::http::Uri,
+    headers: &HeaderMap,
+    payload: axum::body::Bytes,
+) -> Response {
+    let path = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
+    let path = path
+        .strip_prefix("/m/")
+        .and_then(|rest| rest.find('/').map(|i| &rest[i..]))
+        .unwrap_or(path);
+    let url = format!("{}{path}", target.trim_end_matches('/'));
+    let mut req = reqwest::Client::new().request(method, url).body(payload);
+    for (k, v) in headers {
+        if k != axum::http::header::HOST && k != axum::http::header::CONTENT_LENGTH {
+            req = req.header(k, v);
+        }
+    }
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => return err(StatusCode::BAD_GATEWAY, &e.to_string()),
+    };
+    let mut out = Response::builder().status(resp.status());
+    for (k, v) in resp.headers() {
+        if k != axum::http::header::CONTENT_LENGTH && k != axum::http::header::TRANSFER_ENCODING {
+            out = out.header(k, v);
+        }
+    }
+    let bytes = resp.bytes().await.unwrap_or_default();
+    out.body(axum::body::Body::from(bytes))
+        .unwrap_or_else(|e| err(StatusCode::BAD_GATEWAY, &e.to_string()))
 }
 
 impl FakeRelay {
@@ -965,6 +1071,26 @@ impl FakeRelay {
     /// `(path, device session)` of the `/m/…` requests received so far.
     pub fn proxied(&self) -> Vec<(String, Option<String>)> {
         self.state.lock().unwrap().proxied.clone()
+    }
+
+    /// Forwards the gRPC-Web requests to `/m/<id>/…` to `target` (a mock
+    /// cua-spacesd), without the `/m/<id>` prefix, as if the machine's
+    /// driver were connected.
+    pub fn tunnel(&self, id: &str, target: &str) {
+        self.tunnel_service(id, "", target);
+    }
+
+    /// As [`FakeRelay::tunnel`], for the requests whose path (after
+    /// `/m/<id>`) starts with `prefix` only, such as
+    /// `/cua.env.v1.HostSpacesService/`.
+    pub fn tunnel_service(&self, id: &str, prefix: &str, target: &str) {
+        self.state
+            .lock()
+            .unwrap()
+            .tunnels
+            .entry(id.to_string())
+            .or_default()
+            .push((prefix.to_string(), target.to_string()));
     }
 
     /// The current machine token of `id`.

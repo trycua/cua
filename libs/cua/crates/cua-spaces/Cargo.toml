@@ -101,6 +101,7 @@ cua-fleet = { workspace = true, features = ["testing"] }
 cua-proto = { workspace = true, features = ["client", "server", "serde"] }
 tonic = { workspace = true, default-features = false, features = ["codegen", "server", "router", "channel"] }
 tokio-stream = { workspace = true, features = ["net"] }
+tonic-web.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }

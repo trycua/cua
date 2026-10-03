@@ -166,6 +166,9 @@ pub async fn login(opts: &LoginOptions, out: &mut dyn Write) -> Result<i32, CuaE
         None => cua_auth::Flow::Auto,
     };
     let s = session();
+    // Fail before the user approves anything when the session could not be
+    // saved afterwards (the macOS login keychain from an SSH session).
+    s.store().check_writable().map_err(auth_err)?;
     let pending = s.begin_login(flow).await.map_err(auth_err)?;
     if let Some(note) = &pending.note {
         line(out, format!("{}.", note.trim_end_matches('.')));

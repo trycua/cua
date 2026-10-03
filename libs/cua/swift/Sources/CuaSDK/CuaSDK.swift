@@ -2012,9 +2012,10 @@ public protocol AuthProtocol: AnyObject, Sendable {
     func status() throws  -> AuthStatus
 
     /**
-     * This device on `relay_url` (`None` = `CUA_RELAY_URL`, else
+     * This device on `relay_url` (`None` = the relay `cua` uses:
+     * `CUA_RELAY_URL`, else this machine's host setup, else
      * `https://relay.cua.ai`) as the signed-in account, shown as `name`
-     * (default: the host name).
+     * (default: this computer's name).
      */
     func devices(relayUrl: String?, name: String?) throws  -> Devices
 
@@ -2150,9 +2151,10 @@ open func status()throws  -> AuthStatus  {
 }
 
     /**
-     * This device on `relay_url` (`None` = `CUA_RELAY_URL`, else
+     * This device on `relay_url` (`None` = the relay `cua` uses:
+     * `CUA_RELAY_URL`, else this machine's host setup, else
      * `https://relay.cua.ai`) as the signed-in account, shown as `name`
-     * (default: the host name).
+     * (default: this computer's name).
      */
 open func devices(relayUrl: String?, name: String?)throws  -> Devices  {
     return try  FfiConverterTypeDevices_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
@@ -5010,10 +5012,11 @@ public protocol LoginAttemptProtocol: AnyObject, Sendable {
      * Waits for the user, stores the session and returns who signed in.
      * Only the first call waits; later calls fail.
      *
-     * A device that already enrolled (it has a device key) then
-     * re-registers with the relay (`CUA_RELAY_URL`, else relay.cua.ai), so
-     * the fresh sign-in enrolls or re-verifies it without an approval.
-     * That step is best effort and never fails the sign-in.
+     * This device then registers with the relay (the one `cua` uses:
+     * `CUA_RELAY_URL`, else this machine's host setup, else relay.cua.ai),
+     * creating its device key on first use, so the fresh sign-in enrolls
+     * or re-verifies it without an approval. That step is best effort and
+     * never fails the sign-in.
      */
     func wait() async throws  -> AuthIdentity
 
@@ -5122,10 +5125,11 @@ open func userCode() -> String?  {
      * Waits for the user, stores the session and returns who signed in.
      * Only the first call waits; later calls fail.
      *
-     * A device that already enrolled (it has a device key) then
-     * re-registers with the relay (`CUA_RELAY_URL`, else relay.cua.ai), so
-     * the fresh sign-in enrolls or re-verifies it without an approval.
-     * That step is best effort and never fails the sign-in.
+     * This device then registers with the relay (the one `cua` uses:
+     * `CUA_RELAY_URL`, else this machine's host setup, else relay.cua.ai),
+     * creating its device key on first use, so the fresh sign-in enrolls
+     * or re-verifies it without an approval. That step is best effort and
+     * never fails the sign-in.
      */
 open func wait()async throws  -> AuthIdentity  {
     return
@@ -6381,8 +6385,9 @@ open class Relay: RelayProtocol, @unchecked Sendable {
         return try! rustCall { uniffi_cua_sdk_fn_clone_relay(self.handle, $0) }
     }
     /**
-     * A relay (`None` = `CUA_RELAY_URL`, else `https://relay.cua.ai`) seen
-     * as the account behind `account_token` (a cua.ai access token).
+     * A relay (`None` = the relay `cua` uses: `CUA_RELAY_URL`, else this
+     * machine's host setup, else `https://relay.cua.ai`) seen as the
+     * account behind `account_token` (a cua.ai access token).
      */
 public convenience init(relayUrl: String?, accountToken: String)throws  {
     let handle =
@@ -40013,7 +40018,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_auth_status() != 29264) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_auth_devices() != 24953) {
+    if (uniffi_cua_sdk_checksum_method_auth_devices() != 36673) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_loginattempt_method() != 60787) {
@@ -40028,7 +40033,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_loginattempt_user_code() != 37591) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_loginattempt_wait() != 2942) {
+    if (uniffi_cua_sdk_checksum_method_loginattempt_wait() != 16950) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_cua_agent_setup() != 50422) {
@@ -41054,7 +41059,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_constructor_host_new() != 62533) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_constructor_relay_new() != 59964) {
+    if (uniffi_cua_sdk_checksum_constructor_relay_new() != 19970) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_constructor_presenceview_new() != 9981) {

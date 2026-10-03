@@ -523,12 +523,32 @@ impl Spaces {
     /// removed (and with it every share). A host (`relay:<id>`) is removed
     /// with `cua host remove` on that machine instead.
     pub async fn relay_unregister(&self, space: &str) -> Result<bool> {
-        let id = self.resolve(space)?;
+        let id = match self.resolve(space) {
+            // A bare relay machine id (`space-…`) is known once the
+            // directory was listed.
+            Err(Error::NotFound(_)) if self.relay_account().is_some() => {
+                let _ = self.relay_machines().await;
+                self.resolve(space)?
+            }
+            other => other?,
+        };
         let canonical = id.to_string();
-        if matches!(id, SpaceId::Relay { .. }) {
-            return Err(Error::invalid(format!(
-                "{canonical} is a host; remove it with `cua host remove` on that machine"
-            )));
+        if let SpaceId::Relay { machine_id } = &id {
+            // A Space a host provides (or a stale entry of one) is your
+            // account's registration, not a host: take it off the relay.
+            let provided = self
+                .relay_row(machine_id)
+                .await
+                .filter(|m| m.role == "owner" && m.host.as_deref().is_some_and(|h| !h.is_empty()));
+            if provided.is_none() {
+                return Err(Error::invalid(format!(
+                    "{canonical} is a host; remove it with `cua host remove` on that machine"
+                )));
+            }
+            self.remove_relay_machine(machine_id).await?;
+            let _ = self.inner.registry.remove(&canonical);
+            self.audit_share("detach", &canonical, &format!("machine={machine_id}"));
+            return Ok(true);
         }
         let Some(machine) = self.share_machine(&canonical, &id) else {
             return Ok(false);

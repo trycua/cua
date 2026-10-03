@@ -659,7 +659,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_auth_begin_login() != 55109:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_auth_devices() != 24953:
+    if lib.uniffi_cua_sdk_checksum_method_auth_devices() != 36673:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_auth_logout() != 38806:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -821,7 +821,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_loginattempt_user_code() != 37591:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_loginattempt_wait() != 2942:
+    if lib.uniffi_cua_sdk_checksum_method_loginattempt_wait() != 16950:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_mcpclient_call_tool() != 44958:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -887,7 +887,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_presenceview_upsert() != 29196:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_constructor_relay_new() != 59964:
+    if lib.uniffi_cua_sdk_checksum_constructor_relay_new() != 19970:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_relay_connect() != 37946:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -23971,10 +23971,11 @@ class LoginAttemptProtocol(typing.Protocol):
         Waits for the user, stores the session and returns who signed in.
         Only the first call waits; later calls fail.
 
-        A device that already enrolled (it has a device key) then
-        re-registers with the relay (`CUA_RELAY_URL`, else relay.cua.ai), so
-        the fresh sign-in enrolls or re-verifies it without an approval.
-        That step is best effort and never fails the sign-in.
+        This device then registers with the relay (the one `cua` uses:
+        `CUA_RELAY_URL`, else this machine's host setup, else relay.cua.ai),
+        creating its device key on first use, so the fresh sign-in enrolls
+        or re-verifies it without an approval. That step is best effort and
+        never fails the sign-in.
 """
         raise NotImplementedError
 
@@ -24077,10 +24078,11 @@ class LoginAttempt(LoginAttemptProtocol):
         Waits for the user, stores the session and returns who signed in.
         Only the first call waits; later calls fail.
 
-        A device that already enrolled (it has a device key) then
-        re-registers with the relay (`CUA_RELAY_URL`, else relay.cua.ai), so
-        the fresh sign-in enrolls or re-verifies it without an approval.
-        That step is best effort and never fails the sign-in.
+        This device then registers with the relay (the one `cua` uses:
+        `CUA_RELAY_URL`, else this machine's host setup, else relay.cua.ai),
+        creating its device key on first use, so the fresh sign-in enrolls
+        or re-verifies it without an approval. That step is best effort and
+        never fails the sign-in.
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -24459,9 +24461,10 @@ class AuthProtocol(typing.Protocol):
         raise NotImplementedError
     def devices(self, relay_url: typing.Optional[str],name: typing.Optional[str]) -> Devices:
         """
-        This device on `relay_url` (`None` = `CUA_RELAY_URL`, else
+        This device on `relay_url` (`None` = the relay `cua` uses:
+        `CUA_RELAY_URL`, else this machine's host setup, else
         `https://relay.cua.ai`) as the signed-in account, shown as `name`
-        (default: the host name).
+        (default: this computer's name).
 """
         raise NotImplementedError
     async def logout(self, ) -> bool:
@@ -24554,9 +24557,10 @@ class Auth(AuthProtocol):
         )
     def devices(self, relay_url: typing.Optional[str],name: typing.Optional[str]) -> Devices:
         """
-        This device on `relay_url` (`None` = `CUA_RELAY_URL`, else
+        This device on `relay_url` (`None` = the relay `cua` uses:
+        `CUA_RELAY_URL`, else this machine's host setup, else
         `https://relay.cua.ai`) as the signed-in account, shown as `name`
-        (default: the host name).
+        (default: this computer's name).
 """
 
         _UniffiFfiConverterOptionalString.check_lower(relay_url)
@@ -36099,8 +36103,9 @@ class Relay(RelayProtocol):
     _handle: ctypes.c_uint64
     def __init__(self, relay_url: typing.Optional[str],account_token: str):
         """
-        A relay (`None` = `CUA_RELAY_URL`, else `https://relay.cua.ai`) seen
-        as the account behind `account_token` (a cua.ai access token).
+        A relay (`None` = the relay `cua` uses: `CUA_RELAY_URL`, else this
+        machine's host setup, else `https://relay.cua.ai`) seen as the
+        account behind `account_token` (a cua.ai access token).
 """
 
         _UniffiFfiConverterOptionalString.check_lower(relay_url)

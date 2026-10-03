@@ -780,6 +780,7 @@ impl HostSpacesServer {
         }
         .await;
         if let Err(e) = attached {
+            let e = too_old_for_the_relay(e, &image);
             let _ = self.spaces.delete(&info.id).await;
             self.audit(
                 "failed",
@@ -1243,6 +1244,51 @@ pub(crate) async fn forget_provided(spaces: &Spaces, space: &str) {
         tracing::warn!("provided spaces: {e}");
     }
     let _ = provided::audit(&dir, "delete", "local", &record.relay_machine, space);
+}
+
+/// A Space whose cua-spacesd predates `relay_attach` cannot join the relay,
+/// so nothing off this machine can reach it: say that, and that the image
+/// (not the caller) has to change. The catalog and the image labels do not
+/// say which cua-spacesd an image carries, so this is known only once the
+/// Space is up.
+fn too_old_for_the_relay(e: Error, image: &str) -> Error {
+    match e {
+        Error::CapabilityMissing {
+            space,
+            feature,
+            limitation,
+        } if feature == RELAY_ATTACH_FEATURE => {
+            let why = if limitation.is_empty() {
+                String::new()
+            } else {
+                format!(" ({limitation})")
+            };
+            Error::CapabilityMissing {
+                space,
+                feature,
+                limitation: format!(
+                    "this image's cua-spacesd is too old to be reached from your other devices{why}; \
+                     {image} needs republishing with a current cua-spacesd. Update the image (or \
+                     choose another one) and create the Space again"
+                ),
+            }
+        }
+        e => e,
+    }
+}
+
+/// A machine whose owner stopped sharing it ("Stop sharing" in the app,
+/// `cua host stop`): the relay refuses every call to it until they resume.
+pub(crate) fn stopped_sharing(name: &str) -> Error {
+    Error::Relay(cua_host::Error::PermissionDenied(format!(
+        "{name} stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"
+    )))
+}
+
+/// Whether a failed connection is the relay refusing a machine that
+/// stopped sharing.
+pub(crate) fn is_stopped_sharing(reason: &str) -> bool {
+    reason.contains("stopped sharing this machine")
 }
 
 fn now_ms() -> u64 {
@@ -1721,6 +1767,13 @@ impl Spaces {
                 ),
             ));
         }
+        if !m.sharing {
+            return Err(stopped_sharing(if m.name.is_empty() {
+                &m.id
+            } else {
+                &m.name
+            }));
+        }
         if m.role == "viewer" {
             return Err(Error::Relay(cua_host::Error::PermissionDenied(format!(
                 "{} is shared with you to watch only; ask its owner to share it as an editor",
@@ -1857,8 +1910,15 @@ impl Spaces {
         }
         .await;
         if let Err(e) = created {
-            // Nothing runs for it: take the machine off the relay again.
-            let _ = client.delete(&token, &machine).await;
+            // Nothing runs for it: take the machine off the relay again, or
+            // it lists as a Space forever (with a fresh token and device
+            // session: the host may have taken long to fail).
+            if let Err(gone) = self.remove_relay_machine(&machine).await {
+                tracing::warn!(
+                    machine,
+                    "relay machine of the failed create not removed: {gone}"
+                );
+            }
             return Err(e);
         }
         // Its driver dials out on its own: wait (bounded) until the relay
@@ -2050,15 +2110,23 @@ impl Spaces {
         let relay = self.relay()?;
         let token = relay.tokens.access_token().await?;
         let client = relay.client().await?;
-        let host = client.machine(&token, host_id).await.map_err(|e| match e {
-            cua_host::Error::NotFound(_) => Error::NotFound(format!(
-                "the host of relay:{} (machine {host_id}) is no longer on the relay",
-                machine.id
-            )),
-            other => other.into(),
-        })?;
+        let host = match client.machine(&token, host_id).await {
+            Ok(h) => h,
+            // Its host is gone (removed, or set up again as a new machine):
+            // nothing provides the Space any more, only its relay entry is
+            // left.
+            Err(cua_host::Error::NotFound(_)) => {
+                self.remove_relay_machine(&machine.id).await?;
+                return Ok(format!(
+                    "Removed relay:{}: a stale entry (its host, machine {host_id}, is no longer \
+                     on the relay).",
+                    machine.id
+                ));
+            }
+            Err(e) => return Err(e.into()),
+        };
         let space = self.host_space(&host).await?;
-        let message = space
+        let deleted = space
             .spacesd()?
             .host_spaces()
             .delete_host_space(pb::DeleteHostSpaceRequest {
@@ -2066,12 +2134,44 @@ impl Spaces {
             })
             .await
             .map(|r| r.into_inner().message)
-            .map_err(|e| from_host(cua_spacesd_client::Error::from(e)))?;
+            .map_err(|e| from_host(cua_spacesd_client::Error::from(e)));
+        let message = match deleted {
+            Ok(m) => m,
+            // The host has no such Space (a create that failed before it
+            // existed, or the host was set up again): only the relay entry
+            // is left.
+            Err(Error::NotFound(_)) => {
+                self.remove_relay_machine(&machine.id).await?;
+                return Ok(format!(
+                    "Removed relay:{}: a stale entry ({} no longer has this Space).",
+                    machine.id,
+                    if host.name.is_empty() {
+                        &host.id
+                    } else {
+                        &host.name
+                    }
+                ));
+            }
+            Err(e) => return Err(e),
+        };
         match client.delete(&token, &machine.id).await {
             Ok(()) | Err(cua_host::Error::NotFound(_)) => {}
             Err(e) => tracing::warn!(machine = %machine.id, "relay machine not removed: {e}"),
         }
         Ok(message)
+    }
+
+    /// Removes relay machine `machine` as the signed-in account, with a
+    /// fresh token and device session; one already gone counts as removed.
+    pub(crate) async fn remove_relay_machine(&self, machine: &str) -> Result<()> {
+        let relay = self.relay()?;
+        let token = relay.tokens.access_token().await?;
+        match relay.client().await?.delete(&token, machine).await {
+            Ok(()) | Err(cua_host::Error::NotFound(_)) => {}
+            Err(e) => return Err(e.into()),
+        }
+        let _ = self.relay_machines().await;
+        Ok(())
     }
 
     /// Turns a Space a host provides off or on, on that host

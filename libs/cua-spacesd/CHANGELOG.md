@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.4.1...cua-spacesd-v0.5.0) (2026-10-03)
+
+
+### Features
+
+* **spaces-macos:** list your machines before this Mac is enrolled, and explain machines that keep their desktop private ([#4511](https://github.com/trycua/cua/issues/4511)) ([379085c](https://github.com/trycua/cua/commit/379085c5e267451db8d52989f47bd9fb85ab38ef))
+
+
+### Bug Fixes
+
+* **cua-sdk:** remove a deleted Space's stale relay machine record ([#4510](https://github.com/trycua/cua/issues/4510)) ([5526f71](https://github.com/trycua/cua/commit/5526f71b7b70464a748157ef9d293181e2bfbb85))
+* **spacesd:** honor desktop sharing setting for view-only shares ([#4532](https://github.com/trycua/cua/issues/4532)) ([32c5813](https://github.com/trycua/cua/commit/32c58137936b4d2ba052ab76fffbe1a0cfeaf509))
+
 ## [0.4.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.4.0...cua-spacesd-v0.4.1) (2026-10-03)
 
 

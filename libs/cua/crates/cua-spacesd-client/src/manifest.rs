@@ -65,6 +65,11 @@ pub struct Manifest {
     /// Features that may be missing (a warning, not a failure). A trailing
     /// `*` matches a prefix ("teleport.*").
     pub features_optional: Vec<String>,
+    /// Features that do not apply to this image (a benchmark guest has no
+    /// use for a Cua Volume mount, say). The doctor skips their checks as
+    /// `not_applicable` instead of exercising them. A trailing `*` matches
+    /// a prefix. A feature that is also required stays required.
+    pub features_not_applicable: Vec<String>,
     /// Attribute values a feature must report, by feature name and then
     /// attribute (`{"presence.cursor_shape": {"hit_test": "atspi"}}`). The
     /// doctor fails when the feature is unsupported or reports another
@@ -459,9 +464,19 @@ impl Manifest {
         self.features_optional.iter().any(|p| matches(p, feature))
     }
 
+    /// Whether `feature` is listed as not applicable to this image (and is
+    /// not also required, which wins).
+    pub fn not_applicable(&self, feature: &str) -> bool {
+        !self.requires(feature)
+            && self
+                .features_not_applicable
+                .iter()
+                .any(|p| matches(p, feature))
+    }
+
     /// Whether `feature` is listed at all.
     pub fn lists(&self, feature: &str) -> bool {
-        self.requires(feature) || self.allows(feature)
+        self.requires(feature) || self.allows(feature) || self.not_applicable(feature)
     }
 
     /// Budget for the A/V skew under `runtime` (a runtime name from the
@@ -516,6 +531,25 @@ mod tests {
         assert_eq!(none.severity(&["manifest:units"]), Severity::Info);
         assert_eq!(none.severity(&["feature:a11y"]), Severity::Info);
         assert_eq!(none.severity(&["core"]), Severity::Required);
+    }
+
+    #[test]
+    fn not_applicable_features_are_listed_and_required_wins() {
+        let loaded = Loaded::parse(
+            br#"{"schema_version":1,"name":"bench","features_required":["driver"],
+                 "features_optional":["teleport.*"],
+                 "features_not_applicable":["volume.mount","driver","audio.*"]}"#,
+            "m",
+        );
+        let m = &loaded.manifest;
+        assert!(m.not_applicable("volume.mount"));
+        assert!(m.not_applicable("audio.opus"));
+        assert!(m.lists("volume.mount"));
+        // A required feature can't be waved off.
+        assert!(!m.not_applicable("driver"));
+        assert!(m.requires("driver"));
+        // Images that don't say keep today's behaviour.
+        assert!(!sample().manifest.not_applicable("volume.mount"));
     }
 
     #[test]

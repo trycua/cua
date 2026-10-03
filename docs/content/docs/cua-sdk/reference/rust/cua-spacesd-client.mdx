@@ -734,6 +734,7 @@ pub struct Manifest {
   pub spacesd: SpacesdClaim,
   pub features_required: Vec<String>,
   pub features_optional: Vec<String>,
+  pub features_not_applicable: Vec<String>,
   pub feature_attributes: BTreeMap<String, BTreeMap<String, String>>,
   pub codecs_required: Vec<String>,
   pub auth_modes: Vec<String>,
@@ -760,6 +761,7 @@ impl Manifest {
   fn is_named(&self, name: &str) -> bool;
   fn requires(&self, feature: &str) -> bool;
   fn allows(&self, feature: &str) -> bool;
+  fn not_applicable(&self, feature: &str) -> bool;
   fn lists(&self, feature: &str) -> bool;
   fn av_skew_budget(&self, runtime: &str) -> u32;
 }

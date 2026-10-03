@@ -377,7 +377,10 @@ jobs:
   # their promoted floating tag records (so an unchanged rebuild moves nothing).
   changes:
     needs: [meta, release]
-    if: needs.meta.outputs.publish == 'true'
+    # !cancelled(): with spacesd_source=release the spacesd job is skipped, and a
+    # skipped ancestor would otherwise skip every job below it (publish=true then
+    # pushes nothing while the run still reports success).
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.meta.outputs.publish == 'true' }}
     runs-on: ubuntu-latest
     outputs:
       tiers: ${{ steps.changes.outputs.tiers }}
@@ -417,7 +420,7 @@ jobs:
   # doctored bytes as dated, immutable per-arch children (release step push/<arch>).
   push:
     needs: [meta, release, changes]
-    if: needs.changes.outputs.tiers != '[]'
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.tiers != '[]' }}
     strategy:
       fail-fast: true
       matrix:
@@ -476,6 +479,7 @@ jobs:
   # verify, promote).
   publish:
     needs: [meta, changes, push]
+    if: ${{ !cancelled() && needs.push.result == 'success' }}
     strategy:
       # One tier at a time: both push to the image-doctor-ledger branch. (A
       # concurrency group would cancel a third pending job; ledger_push also

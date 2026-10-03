@@ -23,6 +23,8 @@ final class ScriptedHost: HostRunning, @unchecked Sendable {
     func status() async throws -> HostStatus { try await inner.status() }
     func stopSharing() async throws -> HostStatus { try await inner.stopSharing() }
     func startSharing() async throws -> HostStatus { try await inner.startSharing() }
+    func pauseSignedOut() async throws -> HostStatus { try await inner.pauseSignedOut() }
+    func resumeSignedIn(account: String) async throws -> HostStatus { try await inner.resumeSignedIn(account: account) }
     func remove() async throws { try await inner.remove() }
     func configure(change: HostSettingsChange) async throws -> HostStatus { try await inner.configure(change: change) }
 }

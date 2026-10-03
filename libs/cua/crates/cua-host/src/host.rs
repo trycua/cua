@@ -280,6 +280,13 @@ pub struct HostConfig {
     /// mode on its direct address).
     #[serde(default)]
     pub provide_spaces: bool,
+    /// Relay sharing is paused because nobody is signed in to the owner's
+    /// account on this machine (see [`Host::pause_signed_out`]): the
+    /// service is uninstalled so it neither runs nor starts at login, and
+    /// the setup (machine token, policy, this file) stays so
+    /// [`Host::resume_signed_in`] can bring it back.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub paused_signed_out: bool,
 }
 
 /// A macOS privacy pane the user must grant the driver in.
@@ -402,6 +409,16 @@ pub struct HostStatus {
     /// Set when the Spaces audit does not verify.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spaces_audit_error: Option<String>,
+    /// Relay sharing is paused until the owner signs in again
+    /// ([`Host::pause_signed_out`]).
+    #[serde(default)]
+    pub paused_signed_out: bool,
+    /// The account this machine is registered to (relay mode): its id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    /// The owner's email, when the relay gave one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_email: Option<String>,
 }
 
 /// Files under `<home>/host`.
@@ -1077,12 +1094,10 @@ impl Host {
         let desktop = change.share_desktop.unwrap_or(config.share_desktop);
         let provide = change.provide_spaces.unwrap_or(config.provide_spaces);
         let relay = config.mode == "relay";
-        if !desktop && !provide {
-            return Err(Error::InvalidArgument(
-                "with neither the desktop nor Spaces there is nothing to share; use `cua host stop` to pause, or turn one on"
-                    .into(),
-            ));
-        }
+        // Both off is a valid choice: there is nothing to share, so sharing
+        // stops (below) and the setup stays; turning one on again and
+        // Resume sharing (`cua host start`) share again.
+        let nothing = !desktop && !provide;
         if let Some(m) = change.max_macos_vms
             && m > crate::provided::MACOS_VM_LICENSE_LIMIT
         {
@@ -1120,8 +1135,14 @@ impl Host {
         // A service that should run but is down (a start that failed
         // before) starts again too, so trying the change again repairs it.
         let down = config.sharing && !self.manager_for_config(&config).state().running;
-        let restart =
-            down || desktop != config.share_desktop || (!relay && provide != config.provide_spaces);
+        // Paused while signed out: the service stays uninstalled (a new
+        // plist would start it again at login); resuming installs it with
+        // these settings.
+        let restart = !config.paused_signed_out
+            && !nothing
+            && (down
+                || desktop != config.share_desktop
+                || (!relay && provide != config.provide_spaces));
         config.share_desktop = desktop;
         config.provide_spaces = provide;
         if let Some(mut p) = policy {
@@ -1152,6 +1173,11 @@ impl Host {
             if config.sharing {
                 manager.start()?;
             }
+        }
+        if nothing && config.sharing {
+            // Stop advertising: the relay lists it as not sharing (other
+            // devices say it shares neither its desktop nor Spaces).
+            return self.stop_sharing().await;
         }
         self.status().await
     }
@@ -1192,11 +1218,20 @@ impl Host {
         if config.mode == "direct" {
             status.sharing = config.sharing && status.service.running;
         }
+        if config.mode == "relay"
+            && let Some(p) = policy.as_ref()
+        {
+            status.owner = Some(p.owner.clone()).filter(|o| !o.is_empty());
+            status.owner_email = p.owner_email.clone();
+        }
+        status.paused_signed_out = config.paused_signed_out;
         if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id) {
             match self.relay_machine(url, id).await {
                 Ok(m) => {
                     status.online = Some(m.online);
-                    status.sharing = m.sharing;
+                    // Paused: nobody can reach it, whatever the relay's
+                    // sharing switch says.
+                    status.sharing = m.sharing && !config.paused_signed_out;
                     status.clients = m.clients;
                     if !m.allow.is_empty() {
                         status.allow = m.allow;
@@ -1316,14 +1351,24 @@ impl Host {
         self.status().await
     }
 
-    /// Undoes [`Host::stop_sharing`].
+    /// Undoes [`Host::stop_sharing`]. Refused while neither the desktop
+    /// nor Spaces is on: there is nothing to share.
     pub async fn start_sharing(&self) -> Result<HostStatus> {
         let mut config = self.require_config()?;
+        if !config.share_desktop && !config.provide_spaces {
+            return Err(Error::InvalidArgument(
+                "there is nothing to share: turn on the desktop or Spaces first \
+                 (`cua host config --desktop on` or `--provide-spaces on`)"
+                    .into(),
+            ));
+        }
         match (&config.relay_url, &config.machine_id) {
             (Some(url), Some(id)) => {
                 let token = read_secret(&self.paths.machine_token())?;
                 RelayClient::new(url)?.start_sharing(&token, id).await?;
                 self.set_policy_sharing(true)?;
+                // An explicit start (`cua host start`) ends a pause too.
+                config.paused_signed_out = false;
                 // The service stays up while sharing is stopped; one that
                 // went down (a failed start) is started again here.
                 let manager = self.manager_for_config(&config);
@@ -1338,6 +1383,79 @@ impl Host {
         }
         config.sharing = true;
         write_json(&self.paths.config(), &config)?;
+        self.status().await
+    }
+
+    /// Pauses relay sharing because nobody is signed in to the owner's
+    /// account here (signed out, or a session that can no longer refresh):
+    /// the driver's policy refuses relayed clients, and the service is
+    /// stopped and uninstalled, so this machine leaves the relay (offline
+    /// for the account) and does not join it again at login. The setup
+    /// stays (machine token, policy, config) for
+    /// [`Host::resume_signed_in`]. Direct mode, and a machine that is not
+    /// set up, are left alone: they do not use the account.
+    pub async fn pause_signed_out(&self) -> Result<HostStatus> {
+        let Some(mut config) = self.config()? else {
+            return self.status().await;
+        };
+        if config.mode != "relay" {
+            return self.status().await;
+        }
+        // The flag first: a settings change racing this one never installs
+        // the service again.
+        config.paused_signed_out = true;
+        write_json(&self.paths.config(), &config)?;
+        // Even if something starts the driver anyway, it refuses relayed
+        // clients. `config.sharing` keeps the owner's own choice.
+        self.set_policy_sharing(false)?;
+        self.manager_for_config(&config).uninstall()?;
+        let _ = crate::provided::audit(
+            &self.paths.dir,
+            "config",
+            "local",
+            &config.name,
+            "relay sharing paused: signed out",
+        );
+        self.status().await
+    }
+
+    /// Undoes [`Host::pause_signed_out`] once the owner is signed in again:
+    /// `account` is the signed-in account's id (or email). Another account
+    /// is refused: it cannot use this registration, and sharing the old
+    /// account's machine under it would be wrong; remove the host setup and
+    /// set it up again for that account. Sharing comes back as the owner
+    /// left it (stopped stays stopped, but online).
+    pub async fn resume_signed_in(&self, account: &str) -> Result<HostStatus> {
+        let mut config = self.require_config()?;
+        if !config.paused_signed_out {
+            return self.status().await;
+        }
+        let policy = self.policy()?;
+        if let Some(p) = &policy
+            && !owned_by(p, account)
+        {
+            return Err(Error::InvalidArgument(
+                "this machine is shared with another Cua account; remove the host setup \
+                 and set it up again to share it with this one"
+                    .into(),
+            ));
+        }
+        if let Some(mut p) = policy {
+            p.sharing = config.sharing;
+            write_json(&self.paths.policy(), &p)?;
+        }
+        config.paused_signed_out = false;
+        write_json(&self.paths.config(), &config)?;
+        let manager = self.manager_for_config(&config);
+        manager.install(&self.service_spec(&config))?;
+        manager.start()?;
+        let _ = crate::provided::audit(
+            &self.paths.dir,
+            "config",
+            "local",
+            &config.name,
+            "relay sharing resumed: signed in",
+        );
         self.status().await
     }
 
@@ -1446,6 +1564,20 @@ impl Host {
             None => Ok(()),
         }
     }
+}
+
+/// `account` (an id, or an email) is the policy's owner. An empty
+/// `account` or owner says nothing, and is taken as the owner.
+pub fn owned_by(policy: &HostPolicy, account: &str) -> bool {
+    let account = account.trim();
+    if account.is_empty() || policy.owner.is_empty() {
+        return true;
+    }
+    policy.owner == account
+        || policy
+            .owner_email
+            .as_deref()
+            .is_some_and(|e| e.eq_ignore_ascii_case(account))
 }
 
 #[cfg(test)]

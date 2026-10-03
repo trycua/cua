@@ -395,6 +395,36 @@ struct SnapshotTests {
         try assertSnapshot(ThisMachineView(host: m.host), "this-machine", size: CGSize(width: 640, height: 520))
     }
 
+    /// Relay sharing and the sign-in: shared with your account; paused
+    /// while signed out (one line and Sign In); both settings off (Resume
+    /// sharing disabled).
+    @Test func thisMachineAndTheSignIn() async throws {
+        let account = FakeAccountTokens()
+        account.token = "tok-ada"
+        let who = HostSignInSharingTests.Box(HostSignInSharingTests.ada)
+        let h = HostModel(host: FixtureHost())
+        account.wire(h)
+        h.currentAccount = { who.value }
+        h.openForm()
+        h.send(.setName(name: "Studio"))
+        await h.submit()
+        await h.reconcileAccount()
+        try assertSnapshot(ThisMachineView(host: h), "this-machine-shared-with-account", size: CGSize(width: 640, height: 520))
+        account.token = nil
+        who.value = nil
+        await h.reconcileAccount()
+        #expect(h.panel.notice != nil)
+        try assertSnapshot(ThisMachineView(host: h), "this-machine-signed-out", size: CGSize(width: 640, height: 520))
+
+        let off = HostModel(host: FixtureHost())
+        off.openForm()
+        off.send(.setName(name: "Studio"))
+        await off.submit()
+        await off.run(.hideDesktop)
+        #expect(off.panel.actions.first?.enabled == false)
+        try assertSnapshot(ThisMachineView(host: off), "this-machine-nothing-shared", size: CGSize(width: 640, height: 520))
+    }
+
     @Test func settings() async throws {
         let m = try await model()
         // With Storage (the Cua Volume experiment on), as recorded.

@@ -29,6 +29,8 @@ final class FakeHost: HostRunning, @unchecked Sendable {
     func status() async throws -> HostStatus { FixtureHost.unconfigured }
     func stopSharing() async throws -> HostStatus { FixtureHost.unconfigured }
     func startSharing() async throws -> HostStatus { FixtureHost.unconfigured }
+    func pauseSignedOut() async throws -> HostStatus { FixtureHost.unconfigured }
+    func resumeSignedIn(account: String) async throws -> HostStatus { FixtureHost.unconfigured }
     func remove() async throws {}
     func configure(change: HostSettingsChange) async throws -> HostStatus { FixtureHost.unconfigured }
 }

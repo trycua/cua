@@ -931,9 +931,19 @@ uint64_t uniffi_cua_sdk_fn_constructor_host_new(RustBuffer cua_home, RustCallSta
 uint64_t uniffi_cua_sdk_fn_method_host_configure(uint64_t ptr, RustBuffer change
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_PAUSE_SIGNED_OUT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_PAUSE_SIGNED_OUT
+uint64_t uniffi_cua_sdk_fn_method_host_pause_signed_out(uint64_t ptr
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_REMOVE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_REMOVE
 uint64_t uniffi_cua_sdk_fn_method_host_remove(uint64_t ptr
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_RESUME_SIGNED_IN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_RESUME_SIGNED_IN
+uint64_t uniffi_cua_sdk_fn_method_host_resume_signed_in(uint64_t ptr, RustBuffer account
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_SETUP
@@ -4015,9 +4025,21 @@ uint16_t uniffi_cua_sdk_checksum_method_host_configure(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_PAUSE_SIGNED_OUT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_PAUSE_SIGNED_OUT
+uint16_t uniffi_cua_sdk_checksum_method_host_pause_signed_out(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_REMOVE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_REMOVE
 uint16_t uniffi_cua_sdk_checksum_method_host_remove(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_RESUME_SIGNED_IN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_RESUME_SIGNED_IN
+uint16_t uniffi_cua_sdk_checksum_method_host_resume_signed_in(void
 
 );
 #endif

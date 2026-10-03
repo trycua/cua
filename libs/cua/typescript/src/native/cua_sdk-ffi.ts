@@ -1373,8 +1373,18 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_host_pause_signed_out": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_host_remove": {
       args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_host_resume_signed_in": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -3573,7 +3583,17 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_host_pause_signed_out": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_host_remove": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_host_resume_signed_in": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -5371,7 +5391,9 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_guestdisplay_via(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_constructor_host_new(cuaHome: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_method_host_configure(uniffiSelf: bigint, change: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_host_pause_signed_out(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_host_remove(uniffiSelf: bigint): bigint;
+    uniffi_cua_sdk_fn_method_host_resume_signed_in(uniffiSelf: bigint, account: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_host_setup(uniffiSelf: bigint, options: Uint8Array, accountToken: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_host_start_sharing(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_host_status(uniffiSelf: bigint): bigint;
@@ -5811,7 +5833,9 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_guestdisplay_via(): number;
     uniffi_cua_sdk_checksum_constructor_host_new(): number;
     uniffi_cua_sdk_checksum_method_host_configure(): number;
+    uniffi_cua_sdk_checksum_method_host_pause_signed_out(): number;
     uniffi_cua_sdk_checksum_method_host_remove(): number;
+    uniffi_cua_sdk_checksum_method_host_resume_signed_in(): number;
     uniffi_cua_sdk_checksum_method_host_setup(): number;
     uniffi_cua_sdk_checksum_method_host_start_sharing(): number;
     uniffi_cua_sdk_checksum_method_host_status(): number;

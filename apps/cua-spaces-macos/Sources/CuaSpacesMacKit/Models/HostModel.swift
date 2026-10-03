@@ -14,6 +14,12 @@ public protocol HostRunning: AnyObject, Sendable {
     func setupRequest(request: AppHostSetupRequest, accountToken: String?) async throws -> HostStatus
     func stopSharing() async throws -> HostStatus
     func startSharing() async throws -> HostStatus
+    /// Relay sharing off while nobody is signed in: the host leaves the
+    /// relay (and stays off it across restarts); its setup stays.
+    func pauseSignedOut() async throws -> HostStatus
+    /// Relay sharing back once `account` (id, else email) is signed in;
+    /// refused for an account that does not own the machine.
+    func resumeSignedIn(account: String) async throws -> HostStatus
     func remove() async throws
     /// Changes what this machine shares: its desktop, and Spaces for your
     /// other devices.
@@ -34,6 +40,10 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
     public init(status: HostStatus? = nil) {
         current = status ?? FixtureHost.unconfigured
     }
+
+    /// The account a fixture relay host is registered to.
+    public var owner = "user-1"
+    public var ownerEmail = "ada@example.com"
 
     public static let unconfigured = HostStatus(
         configured: false, mode: nil, relayUrl: nil, directUrl: nil, envTokenPath: nil, machineId: nil,
@@ -64,7 +74,8 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
             error: nil,
             shareDesktop: request.shareDesktop ?? !spare,
             provideSpaces: request.provideSpaces ?? spare,
-            maxSpaces: 4, maxMacosVms: 2)
+            maxSpaces: 4, maxMacosVms: 2,
+            owner: relay ? owner : nil, ownerEmail: relay ? ownerEmail : nil)
         return current
     }
 
@@ -76,6 +87,11 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
         }
         if let d = change.shareDesktop { current.shareDesktop = d }
         if let p = change.provideSpaces { current.provideSpaces = p }
+        // Both off: nothing to share, so sharing stops (as the host does).
+        if !current.shareDesktop && !current.provideSpaces {
+            current.sharing = false
+            current.clients = []
+        }
         return current
     }
 
@@ -89,6 +105,33 @@ public final class FixtureHost: HostRunning, @unchecked Sendable {
     public func startSharing() async throws -> HostStatus {
         calls.append("start")
         current.sharing = true
+        current.pausedSignedOut = false
+        return current
+    }
+
+    public func pauseSignedOut() async throws -> HostStatus {
+        calls.append("pause")
+        guard current.configured, current.mode == "relay" else { return current }
+        current.pausedSignedOut = true
+        current.sharing = false
+        current.online = false
+        current.clients = []
+        current.serviceInstalled = false
+        current.serviceRunning = false
+        return current
+    }
+
+    public func resumeSignedIn(account: String) async throws -> HostStatus {
+        calls.append("resume:\(account)")
+        guard current.pausedSignedOut else { return current }
+        guard account == owner || account.caseInsensitiveCompare(ownerEmail) == .orderedSame else {
+            throw CuaError.InvalidArgument(message: "this machine is shared with another Cua account")
+        }
+        current.pausedSignedOut = false
+        current.sharing = true
+        current.online = true
+        current.serviceInstalled = true
+        current.serviceRunning = true
         return current
     }
 
@@ -131,6 +174,15 @@ public final class HostModel {
     /// looks valid). nil when no one is signed in; throws when it could not
     /// be read or refreshed (offline, the vault), which is not "signed out".
     public var accountToken: ((_ forceRefresh: Bool) async throws -> String?)?
+    /// The signed-in account's id, email and display name, read without the
+    /// network (nil: nobody, as far as the local session says).
+    public var currentAccount: (() -> AppHostAccount?)?
+    /// The account the page was last checked against (nil: signed out or
+    /// not checked yet); the page's "Shared with" and its paused notice.
+    public private(set) var account: AppHostAccount?
+    /// When relay sharing last followed the sign-in.
+    private var accountCheckedAt: Date?
+    private var reconciling = false
     /// Signs in to Cua (opens the browser and waits): true once signed in.
     /// "Set up for access" runs it inline when relay setup has no account,
     /// then carries on by itself.
@@ -161,7 +213,9 @@ public final class HostModel {
     public var summaryInput: AppHostSummaryInput? { state.map { appHostSummaryInput(state: $0) } }
 
     func apply(_ status: HostStatus) {
-        state = appHostState(status: status)
+        var next = appHostState(status: status)
+        next.account = account
+        state = next
         machineId = status.machineId
         // Setup that provides Spaces, launch on a Mac that already does, or
         // Spaces turned on: ask now, while someone is at this Mac, not when
@@ -281,11 +335,85 @@ public final class HostModel {
         }
     }
 
+    // MARK: - Relay sharing follows the sign-in
+
+    /// Relay sharing needs a signed-in owner (the core's `account_step`):
+    /// nobody signed in (signed out, or a session that can no longer
+    /// refresh), or another account, pauses it; the owner signing in again
+    /// resumes it. Not knowing (offline, the credential vault) changes
+    /// nothing. Run at launch, after a sign-in or sign-out, and every
+    /// `interval` from the app's refresh.
+    public func reconcileAccount(ifOlderThan interval: TimeInterval = 0) async {
+        guard let host, accountToken != nil, !reconciling else { return }
+        if interval > 0, let at = accountCheckedAt, Date().timeIntervalSince(at) < interval { return }
+        reconciling = true
+        defer { reconciling = false }
+        let signedIn: AppHostAccount?
+        do {
+            signedIn = try await readToken(forceRefresh: false) == nil ? nil
+                : (currentAccount?() ?? AppHostAccount(id: nil, email: nil, display: identity))
+        } catch {
+            return
+        }
+        accountCheckedAt = Date()
+        account = signedIn
+        if state == nil {
+            await refresh()
+        } else if var s = state {
+            s.account = signedIn
+            state = s
+        }
+        guard let state else { return }
+        do {
+            switch appHostAccountStep(state: state, account: signedIn) {
+            case .keep: break
+            case .pause:
+                apply(try await host.pauseSignedOut())
+                actionFailure = nil
+            case .resume:
+                if let signedIn { apply(try await host.resumeSignedIn(account: appHostAccountKey(account: signedIn))) }
+                actionFailure = nil
+            }
+        } catch {
+            actionFailure = HostSetupFailure.presenting(LiveSpacesBackend.words(error))
+            failedAction = .resumeSharing
+        }
+    }
+
+    /// Sign In on the paused page, and Resume sharing while signed out:
+    /// the inline sign-in, then sharing follows it. False when it did not
+    /// finish.
+    private func signInThenReconcile() async -> Bool {
+        // Offline (the token could not be read) is not "signed out": no
+        // sign-in then; the reconcile leaves sharing as it is.
+        let signedOut: Bool
+        do { signedOut = try await readToken(forceRefresh: false) == nil } catch { signedOut = false }
+        if signedOut {
+            guard let signIn else { return false }
+            progress = Self.signInProgress
+            let done = await signIn()
+            progress = nil
+            guard done else { return false }
+        }
+        await reconcileAccount()
+        return true
+    }
+
     // MARK: - Page buttons
 
     public func run(_ id: AppHostActionId) async {
         if id == .setUp {
             openForm()
+            return
+        }
+        // Sharing over the relay needs a signed-in owner: Sign In, and
+        // Resume while paused or signed out, sign in first (inline).
+        if id == .signIn || (id == .resumeSharing && needsSignInToShare) {
+            guard !busy else { return }
+            busy = true
+            defer { busy = false }
+            actionFailure = nil
+            _ = await signInThenReconcile()
             return
         }
         guard let host, !busy else { return }
@@ -304,6 +432,13 @@ public final class HostModel {
             // service is offline), not the state before the button.
             await refresh()
         }
+    }
+
+    /// Resume sharing must sign in first: relay sharing paused while
+    /// signed out, or relay mode with nobody signed in.
+    private var needsSignInToShare: Bool {
+        guard accountToken != nil, let state, state.mode == "relay" else { return false }
+        return state.pausedSignedOut || account == nil && accountCheckedAt != nil
     }
 
     /// Runs the failed button again.
@@ -325,7 +460,7 @@ public final class HostModel {
         case .remove:
             try await host.remove()
             apply(try await host.status())
-        case .setUp, .shareDesktop, .hideDesktop, .provideSpaces, .stopProvidingSpaces: break
+        case .setUp, .signIn, .shareDesktop, .hideDesktop, .provideSpaces, .stopProvidingSpaces: break
         }
     }
 }

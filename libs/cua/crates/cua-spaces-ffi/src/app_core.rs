@@ -399,6 +399,22 @@ pub fn app_host_panel(state: Option<AppHostState>) -> AppHostPanelView {
     core::host::panel(state.as_ref())
 }
 
+/// What to do with the host when the signed-in account changes (`None`:
+/// nobody is signed in; never pass `None` for "could not tell").
+#[uniffi::export]
+pub fn app_host_account_step(
+    state: AppHostState,
+    account: Option<AppHostAccount>,
+) -> AppHostAccountStep {
+    core::host::account_step(&state, account.as_ref())
+}
+
+/// The account id (else email) host resume names the signed-in account by.
+#[uniffi::export]
+pub fn app_host_account_key(account: AppHostAccount) -> String {
+    account.key()
+}
+
 /// Permission panes still to grant, as rows.
 #[uniffi::export]
 pub fn app_host_permission_rows(permissions: Vec<AppHostPermissionInput>) -> Vec<AppPermissionRow> {
@@ -510,6 +526,10 @@ pub fn app_host_state(status: cua_sdk::HostStatus) -> AppHostState {
             })
             .collect(),
         spaces_audit_error: status.spaces_audit_error,
+        paused_signed_out: status.paused_signed_out,
+        owner: status.owner,
+        owner_email: status.owner_email,
+        account: None,
     }
 }
 

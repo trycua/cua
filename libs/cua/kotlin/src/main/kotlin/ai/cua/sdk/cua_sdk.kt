@@ -1035,7 +1035,11 @@ external fun uniffi_cua_sdk_checksum_method_devices_snapshot(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_host_configure(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_host_pause_signed_out(
+): Short
 external fun uniffi_cua_sdk_checksum_method_host_remove(
+): Short
+external fun uniffi_cua_sdk_checksum_method_host_resume_signed_in(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_host_setup(
 ): Short
@@ -1883,7 +1887,11 @@ external fun uniffi_cua_sdk_fn_constructor_host_new(`cuaHome`: RustBuffer.ByValu
 ): Long
 external fun uniffi_cua_sdk_fn_method_host_configure(`ptr`: Long,`change`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_host_pause_signed_out(`ptr`: Long,
+): Long
 external fun uniffi_cua_sdk_fn_method_host_remove(`ptr`: Long,
+): Long
+external fun uniffi_cua_sdk_fn_method_host_resume_signed_in(`ptr`: Long,`account`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_host_setup(`ptr`: Long,`options`: RustBuffer.ByValue,`accountToken`: RustBuffer.ByValue,
 ): Long
@@ -3213,7 +3221,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_host_configure() != 36828.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_host_pause_signed_out() != 3338.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_host_remove() != 63746.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_host_resume_signed_in() != 8436.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_host_setup() != 765.toShort()) {
@@ -10428,9 +10442,23 @@ public interface HostInterface {
     suspend fun `configure`(`change`: HostSettingsChange): HostStatus
 
     /**
+     * Pause relay sharing while nobody is signed in to the owner's
+     * account: the host leaves the relay and stays off it (also across a
+     * restart) with its setup kept. Direct mode is left alone.
+     */
+    suspend fun `pauseSignedOut`(): HostStatus
+
+    /**
      * Unregister, uninstall the service and delete the host state.
      */
     suspend fun `remove`()
+
+    /**
+     * Resume relay sharing paused by [`Host::pause_signed_out`] once
+     * `account` (the signed-in account's id or email) is signed in; refused
+     * when it is not the machine's owner.
+     */
+    suspend fun `resumeSignedIn`(`account`: kotlin.String): HostStatus
 
     /**
      * Installs and starts the host service (relay mode needs
@@ -10594,6 +10622,32 @@ open class Host: Disposable, AutoCloseable, HostInterface
 
 
     /**
+     * Pause relay sharing while nobody is signed in to the owner's
+     * account: the host leaves the relay and stays off it (also across a
+     * restart) with its setup kept. Direct mode is left alone.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `pauseSignedOut`() : HostStatus {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_host_pause_signed_out(
+                uniffiHandle,
+
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeHostStatus.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Unregister, uninstall the service and delete the host state.
      */
     @Throws(CuaException::class)
@@ -10612,6 +10666,32 @@ open class Host: Disposable, AutoCloseable, HostInterface
         // lift function
         { Unit },
 
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Resume relay sharing paused by [`Host::pause_signed_out`] once
+     * `account` (the signed-in account's id or email) is signed in; refused
+     * when it is not the machine's owner.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `resumeSignedIn`(`account`: kotlin.String) : HostStatus {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_host_resume_signed_in(
+                uniffiHandle,
+                FfiConverterString.lower(`account`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeHostStatus.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -30218,6 +30298,22 @@ data class HostStatus (
      * Set when the Spaces audit does not verify.
      */
     var `spacesAuditError`: kotlin.String? = null
+    ,
+    /**
+     * Relay sharing is paused until the owner signs in again
+     * ([`Host::pause_signed_out`]).
+     */
+    var `pausedSignedOut`: kotlin.Boolean = false
+    ,
+    /**
+     * The account this machine is registered to (relay mode): its id.
+     */
+    var `owner`: kotlin.String? = null
+    ,
+    /**
+     * The owner's email, when the relay gave one.
+     */
+    var `ownerEmail`: kotlin.String? = null
 
 ){
 
@@ -30259,6 +30355,9 @@ public object FfiConverterTypeHostStatus: FfiConverterRustBuffer<HostStatus> {
             FfiConverterSequenceTypeHostProvidedSpace.read(buf),
             FfiConverterSequenceTypeHostSpacesAuditRecord.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -30287,7 +30386,10 @@ public object FfiConverterTypeHostStatus: FfiConverterRustBuffer<HostStatus> {
             FfiConverterUInt.allocationSize(value.`maxMacosVms`) +
             FfiConverterSequenceTypeHostProvidedSpace.allocationSize(value.`providedSpaces`) +
             FfiConverterSequenceTypeHostSpacesAuditRecord.allocationSize(value.`spacesAudit`) +
-            FfiConverterOptionalString.allocationSize(value.`spacesAuditError`)
+            FfiConverterOptionalString.allocationSize(value.`spacesAuditError`) +
+            FfiConverterBoolean.allocationSize(value.`pausedSignedOut`) +
+            FfiConverterOptionalString.allocationSize(value.`owner`) +
+            FfiConverterOptionalString.allocationSize(value.`ownerEmail`)
     )
 
     override fun write(value: HostStatus, buf: ByteBuffer) {
@@ -30316,6 +30418,9 @@ public object FfiConverterTypeHostStatus: FfiConverterRustBuffer<HostStatus> {
             FfiConverterSequenceTypeHostProvidedSpace.write(value.`providedSpaces`, buf)
             FfiConverterSequenceTypeHostSpacesAuditRecord.write(value.`spacesAudit`, buf)
             FfiConverterOptionalString.write(value.`spacesAuditError`, buf)
+            FfiConverterBoolean.write(value.`pausedSignedOut`, buf)
+            FfiConverterOptionalString.write(value.`owner`, buf)
+            FfiConverterOptionalString.write(value.`ownerEmail`, buf)
     }
 }
 

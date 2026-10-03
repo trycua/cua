@@ -1036,6 +1036,12 @@ impl Sandboxes {
         }
         let options = self.resolve_fleet_template(options).await?;
         let options = self.build_image(options).await?;
+        let preexisting = match (&options.provider, options.name.as_deref()) {
+            (ProviderKind::Local, Some(name)) if !name.is_empty() => {
+                self.local_name_in_use(name).await
+            }
+            _ => false,
+        };
         let sandbox = match options.provider {
             ProviderKind::Fleet => self.create_fleet(&options).await?,
             ProviderKind::Local => self.create_local(&options).await?,
@@ -1064,7 +1070,9 @@ impl Sandboxes {
         if let Err(e) = ready {
             // A failed create releases what it made (a named sandbox's claim
             // too), unless the caller keeps it to debug.
-            if sandbox.ephemeral || !options.keep_on_failure {
+            if preexisting {
+                tracing::warn!(sandbox = %sandbox.id(), "readiness failed; pre-existing sandbox retained");
+            } else if sandbox.ephemeral || !options.keep_on_failure {
                 let id = sandbox.id();
                 if let Err(d) = sandbox.clone().delete().await {
                     tracing::warn!(sandbox = %id, error = %d, "could not delete a sandbox that failed readiness");

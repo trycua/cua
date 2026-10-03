@@ -1809,3 +1809,32 @@ async fn a_cancelled_local_create_deletes_only_what_it_made() {
     assert!(matches!(r, Err(Error::Cancelled(m)) if m.contains("existed before")));
     assert!(rt.instances.lock().unwrap().contains_key("theirs"));
 }
+
+/// Readiness failure preserves an observed existing VM, while a newly created
+/// VM still receives baseline cleanup. Both state and backend effects are local.
+#[tokio::test]
+async fn local_readiness_cleanup_distinguishes_existing_from_new() {
+    for existing in [true, false] {
+        let state = tempfile::tempdir().unwrap();
+        let rt = Arc::new(FakeRuntime::default());
+        let name = "cua-e2e-readiness";
+        if existing {
+            rt.instances
+                .lock()
+                .unwrap()
+                .insert(name.into(), InstanceStatus::Running);
+        }
+        let sbx = Sandboxes::builder()
+            .local(rt.clone())
+            .state_dir(state.path())
+            .build();
+        let mut opts = CreateOptions::new(ProviderKind::Local, IMAGE)
+            .name(name)
+            .wait_for(Probe::Tcp(45678));
+        opts.ready_timeout = Duration::from_millis(20);
+        let err = sbx.create(opts).await.unwrap_err();
+        assert!(matches!(err, Error::Timeout(_)), "{err:?}");
+        assert_eq!(rt.instances.lock().unwrap().contains_key(name), existing);
+        assert_eq!(sbx.state().load(name).is_some(), existing);
+    }
+}

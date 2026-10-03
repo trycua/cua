@@ -882,6 +882,7 @@ fn harness_wpf_type_text_foreground_single_line_application_state() {
         let snap = snapshot(&mut driver, pid, wid);
         let idx = ax::element_index_by_id(snap.tree_text(), "txt-input")
             .expect("txt-input not in WPF snapshot");
+        driver.start_behavior_recording();
         let response = driver.call(
             "type_text",
             serde_json::json!({

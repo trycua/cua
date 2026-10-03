@@ -323,6 +323,7 @@ fn harness_winui3_type_text_foreground_single_line_application_state() {
         );
         let idx = element_index_by_id(snap.text(), "txt-input")
             .expect("txt-input not in WinUI3 snapshot");
+        driver.start_behavior_recording();
         let response = driver.call(
             "type_text",
             serde_json::json!({

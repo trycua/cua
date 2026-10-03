@@ -1,9 +1,6 @@
 name: Cua Driver Benchmark
 
 on:
-  push:
-    branches:
-      - cua-driver-bench-fleet-orchestration
   workflow_dispatch:
     inputs:
       baseline_ref:
@@ -29,10 +26,6 @@ jobs:
   benchmark:
     name: Fleet Linux/X11 benchmark
     runs-on: ubuntu-latest
-    env:
-      BENCHMARK_BASELINE_REF: ${{ github.event_name == 'push' && 'main' || inputs.baseline_ref }}
-      BENCHMARK_CANDIDATE_REF: ${{ github.event_name == 'push' && 'main' || inputs.candidate_ref }}
-      BENCHMARK_TASKS: ${{ github.event_name == 'push' && 'CDB-S01' || inputs.tasks }}
     steps:
       - name: Check out benchmark repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -62,7 +55,7 @@ jobs:
           GH_TOKEN: ${{ secrets.CDB_TASK_PACK_GH_TOKEN }}
           TASK_PACK_REPOSITORY: ${{ vars.CDB_TASK_PACK_REPOSITORY }}
           TASK_PACK_REF: ${{ vars.CDB_TASK_PACK_REF }}
-          REQUESTED_TASKS: ${{ env.BENCHMARK_TASKS }}
+          REQUESTED_TASKS: ${{ inputs.tasks }}
         run: |
           set -euo pipefail
           source_dir="$RUNNER_TEMP/cua-driver-bench-task-pack-source"
@@ -123,8 +116,8 @@ jobs:
       - name: Resolve refs
         id: refs
         env:
-          BASELINE_REF: ${{ env.BENCHMARK_BASELINE_REF }}
-          CANDIDATE_REF: ${{ env.BENCHMARK_CANDIDATE_REF }}
+          BASELINE_REF: ${{ inputs.baseline_ref }}
+          CANDIDATE_REF: ${{ inputs.candidate_ref }}
         run: |
           set -euo pipefail
           source_repo="$RUNNER_TEMP/cua-driver-source.git"
@@ -152,7 +145,7 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/cua-driver-builds/baseline-target
           DRIVER_SOURCE: ${{ steps.refs.outputs.baseline_dir }}
-          DRIVER_REF: ${{ env.BENCHMARK_BASELINE_REF }}
+          DRIVER_REF: ${{ inputs.baseline_ref }}
           DRIVER_SHA: ${{ steps.refs.outputs.baseline_sha }}
           RELEASE_DIR: ${{ github.workspace }}/benchmarks/cua-driver-bench/cua-drivers/0.0.1
           RELEASE_VERSION: 0.0.1
@@ -212,7 +205,7 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/cua-driver-builds/candidate-target
           DRIVER_SOURCE: ${{ steps.refs.outputs.candidate_dir }}
-          DRIVER_REF: ${{ env.BENCHMARK_CANDIDATE_REF }}
+          DRIVER_REF: ${{ inputs.candidate_ref }}
           DRIVER_SHA: ${{ steps.refs.outputs.candidate_sha }}
           RELEASE_DIR: ${{ github.workspace }}/benchmarks/cua-driver-bench/cua-drivers/0.0.2
           RELEASE_VERSION: 0.0.2
@@ -280,7 +273,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
           OPENAI_FLEET_BASE_URL: ${{ vars.OPENAI_FLEET_BASE_URL }}
-          REQUESTED_TASKS: ${{ env.BENCHMARK_TASKS }}
+          REQUESTED_TASKS: ${{ inputs.tasks }}
           TASKS_ROOT: ${{ steps.task_pack.outputs.tasks_root }}
         run: |
           set -euo pipefail
@@ -374,11 +367,11 @@ jobs:
       - name: Write summary
         if: ${{ always() }}
         env:
-          BASELINE_REF: ${{ env.BENCHMARK_BASELINE_REF }}
+          BASELINE_REF: ${{ inputs.baseline_ref }}
           BASELINE_SHA: ${{ steps.refs.outputs.baseline_sha }}
-          CANDIDATE_REF: ${{ env.BENCHMARK_CANDIDATE_REF }}
+          CANDIDATE_REF: ${{ inputs.candidate_ref }}
           CANDIDATE_SHA: ${{ steps.refs.outputs.candidate_sha }}
-          REQUESTED_TASKS: ${{ env.BENCHMARK_TASKS }}
+          REQUESTED_TASKS: ${{ inputs.tasks }}
           BENCHMARK_OUTCOME: ${{ steps.benchmark.outcome }}
           S3_URI: ${{ steps.publish.outputs.s3_uri }}
           REPORT_URL: ${{ steps.publish.outputs.report_url }}

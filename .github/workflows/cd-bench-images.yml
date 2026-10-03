@@ -54,6 +54,22 @@ on:
         description: "Verify and promote this already-staged stamp (lock.json) instead of building (needs push=true)"
         type: string
         default: ""
+  # cd-images-spacesd-release.yml (bench=osworld push=true) on every
+  # cua-spacesd release.
+  workflow_call:
+    inputs:
+      bench:
+        type: string
+        default: web
+      push:
+        type: boolean
+        default: false
+      amd64_runner:
+        type: string
+        default: ubuntu-24.04
+      promote_stamp:
+        type: string
+        default: ""
 
 concurrency:
   group: cd-bench-images-${{ github.ref }}-${{ inputs.bench || 'pr' }}
@@ -80,7 +96,8 @@ jobs:
           for f in scripts/bench-images/*.sh libs/images/bench/*/vm/*.sh; do bash -n "$f"; done
 
   meta:
-    if: github.event_name == 'workflow_dispatch'
+    # A dispatch, or a call (which sees its caller's event).
+    if: github.event_name != 'pull_request'
     needs: checks
     runs-on: ubuntu-latest
     outputs:

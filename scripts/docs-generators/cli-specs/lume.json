@@ -1701,7 +1701,7 @@
    "flags": [
     {
      "default_value": false,
-     "help": "Apply the update by re-running the official installer",
+     "help": "Apply the update while preserving the current background-service choice",
      "name": "apply"
     },
     {

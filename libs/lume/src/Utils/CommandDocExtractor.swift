@@ -853,7 +853,7 @@ enum CommandDocExtractor {
             arguments: [],
             options: [],
             flags: [
-                FlagDoc(name: "apply", shortName: nil, help: "Apply the update by re-running the official installer", defaultValue: false),
+                FlagDoc(name: "apply", shortName: nil, help: "Apply the update while preserving the current background-service choice", defaultValue: false),
                 FlagDoc(name: "json", shortName: nil, help: "Emit the structured update-state payload as JSON", defaultValue: false),
             ],
             subcommands: [],

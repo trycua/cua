@@ -9,7 +9,7 @@ Each recipe gives a third-party agent its own desktop instead of yours. The
 cloud recipes need [cloud credentials](/cua-sdk/guides/cloud#credentials), and
 Python `>=3.11,<3.14` with [`uv`](https://docs.astral.sh/uv/) for the scripts,
 which pin `cua-sandbox==0.9.0`. Your controller owns the sandbox and must
-release it. The Cursor recipe runs in a Space on a machine you own.
+release it.
 
 ## OpenAI Agents API
 
@@ -42,72 +42,45 @@ interactive.
 ## Cursor Cloud Agents
 
 Cursor's self-hosted Team Pool worker can run in a Linux Space on your Mac or
-on another machine you own. Cursor Cloud Agents in that pool then edit files
-and run commands in the Space. You need a Cursor Enterprise plan with
-Self-Hosted Machines allowed by a team admin, and a Cursor service-account API
-key. See Cursor's [Self-Hosted Machines](https://cursor.com/docs/cloud-agent/self-hosted)
-and [Team Pools](https://cursor.com/docs/cloud-agent/self-hosted/pool) docs.
+on a machine you set up with
+[`cua host setup --provide-spaces`](/start-here/host-spaces-on-your-spare-mac)
+(add `--on "<machine>"` and use the id `create` prints). It needs Cursor
+Enterprise with [Self-Hosted Machines](https://cursor.com/docs/cloud-agent/self-hosted)
+allowed and a service-account API key. Create the Space, install the Cursor
+CLI, clone the repository the pool serves, and copy the key in as a file so it
+never appears on a command line:
 
-Create the Space:
-
-```bash test="cli-shape" id="cursor-worker-space"
+```bash test="cli-shape" id="cursor-worker-setup"
 cua spaces create linux --name cursor-worker --cpus 4 --memory-mb 8192
-```
-
-To run it on another machine instead, set that machine up with
-[`cua host setup --provide-spaces`](/start-here/host-spaces-on-your-spare-mac),
-add `--on "<machine>"`, and use the `relay:<machine>` id that `create` prints
-in place of `cursor-worker` below.
-
-Install the Cursor CLI in the Space, and clone the repository the pool serves
-(the Space needs credentials that can read it):
-
-```bash test="cli-shape" id="cursor-worker-install"
 cua sb exec cursor-worker 'curl https://cursor.com/install -fsS | bash'
 cua sb exec cursor-worker 'git clone https://github.com/<owner>/<repo>.git ~/repo'
-```
-
-Copy the service-account key into the Space as a file only its user can read,
-so the key never appears on a command line:
-
-```bash test="cli-shape" id="cursor-worker-key"
 (umask 077; printf '%s' "$CURSOR_API_KEY" > cursor-api-key)
 cua sb cp cursor-api-key cursor-worker:/home/cua/.cursor-api-key
-cua sb exec cursor-worker 'chmod 600 ~/.cursor-api-key'
 rm cursor-api-key
 ```
 
-The worker exits after an hour without work (`--idle-release-timeout`,
-default 3600 seconds), so run it in a loop that starts it again. Save this as
-`cursor-worker.sh`, with your pool name:
+The worker exits after an idle hour (`--idle-release-timeout`), so
+`cursor-worker.sh` restarts it:
 
 ```sh title="cursor-worker.sh" skip="placeholder"
 #!/bin/sh
-cd "$HOME/repo" || exit 1
+chmod 600 ~/.cursor-api-key; cd ~/repo || exit 1
 while true; do
-  CURSOR_API_KEY="$(cat "$HOME/.cursor-api-key")" \
-    "$HOME/.local/bin/agent" worker --pool <pool> start
+  CURSOR_API_KEY="$(cat ~/.cursor-api-key)" ~/.local/bin/agent worker --pool <pool> start
   sleep 5
 done
 ```
 
-Copy it in and start it in the background:
+Start it in the background:
 
 ```bash test="cli-shape" id="cursor-worker-start"
 cua sb cp cursor-worker.sh cursor-worker:/home/cua/cursor-worker.sh
 cua sb exec cursor-worker 'nohup sh ~/cursor-worker.sh > ~/cursor-worker.log 2>&1 &'
-cua sb exec cursor-worker 'tail ~/cursor-worker.log'
 ```
 
-The worker connects out to Cursor over HTTPS, so nothing in the Space accepts
-incoming connections. It takes work while the Space and the machine running
-it are on. If the Space restarts, run the `nohup` command again. One worker
-serves one agent at a time; for more agents at once, set up more Spaces the
-same way. To remove the worker, delete the Space:
-
-```bash test="cli-shape" id="cursor-worker-delete"
-cua spaces delete cursor-worker
-```
+The worker connects out to Cursor; the Space accepts no incoming connections.
+After a Space restart, run the `nohup` line again. One worker serves one agent
+at a time. `cua spaces delete cursor-worker` removes it.
 
 ## OpenClaw
 

@@ -218,6 +218,19 @@ class PinsTests(unittest.TestCase):
         warnings = [line for line in out.getvalue().splitlines() if line.startswith("::warning")]
         self.assertEqual(len(warnings), 2)  # one per OS
 
+    def test_refresh_keeps_stdout_for_the_summary(self) -> None:
+        # pins-pr.sh parses apply's stdout as JSON: record-image-sizes.py's
+        # progress lines must not land there (they once skipped the parity
+        # goldens and left the pins PR red).
+        script = os.path.join(self.tmp, "record-image-sizes.py")
+        with open(script, "w") as fh:
+            fh.write("import sys\nprint('record-image-sizes: %d image(s) measured' % sys.argv[1:].count('--ref'))\n")
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            image_pins.refresh_sizes(["ghcr.io/trycua/linux:24.04"], script=script)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("record-image-sizes: 1 image(s) measured", err.getvalue())
+
     def test_parse_results(self) -> None:
         self.assertEqual(
             image_pins.parse_results("linux=success, omarchy=failure,windows=skipped"),
@@ -319,6 +332,30 @@ class ReleaseWiringTests(unittest.TestCase):
         self.assertIn('scripts/images/pins-pr.sh "$VERSION"', pins)
         self.assertTrue(os.access(os.path.join(ROOT, "scripts/images/pins-pr.sh"), os.X_OK))
         self.assertTrue(os.access(os.path.join(ROOT, "scripts/images/release-macos.sh"), os.X_OK))
+
+    def test_pins_pr_regenerates_everything_the_catalog_feeds(self) -> None:
+        with open(os.path.join(ROOT, "scripts/images/pins-pr.sh")) as fh:
+            script = fh.read()
+        # The summary is parsed strictly, outside a conditional that would
+        # swallow a jq failure.
+        self.assertRegex(script, r"(?m)^moved=\"\$\(jq -e '\.moved \| length'")
+        self.assertIn("UPDATE_PARITY=1 cargo test --locked -p cua-spaces-app-core --test parity", script)
+        # Docs: the generators the docs check routes the change to.
+        self.assertIn("scripts/docs-generators/runner.ts --changed-files-file", script)
+        self.assertIn("libs/cua/crates/cua-spaces-app-core/parity/golden docs/content)", script)
+        self.assertIn('git add -A -- "${FILES[@]}"', script)
+
+    def test_docs_generators_fed_by_the_catalog_write_where_pins_pr_stages(self) -> None:
+        with open(os.path.join(ROOT, "scripts/docs-generators/config.json")) as fh:
+            generators = json.load(fh)["generators"]
+        fed = {
+            k: g for k, g in generators.items()
+            if g.get("enabled") and {"libs/images/sandbox-images.json", "libs/images/README.md"} & set(g.get("watchPaths", []))
+        }
+        self.assertIn("sandbox", fed)
+        for key, g in fed.items():
+            self.assertTrue(g["docsOutputPath"].startswith("docs/content/"), key)
+            self.assertFalse(g.get("buildCommand"), f"{key} needs a build pins-pr.sh does not run")
 
     def test_macos_command_refreshes_this_workflow(self) -> None:
         with open(os.path.join(ROOT, "scripts/images/release-macos.sh")) as fh:

@@ -17,6 +17,9 @@ def test_sync_lume_release_docs_updates_every_generated_marker(tmp_path: Path):
     (tmp_path / config).parent.mkdir(parents=True)
     shutil.copy(REPO_ROOT / config, tmp_path / config)
     shutil.copytree(REPO_ROOT / DOCS, tmp_path / DOCS)
+    spec = "scripts/docs-generators/cli-specs/lume.json"
+    (tmp_path / spec).parent.mkdir(parents=True)
+    shutil.copy(REPO_ROOT / spec, tmp_path / spec)
 
     sync_lume_release_docs(tmp_path)
 
@@ -26,3 +29,6 @@ def test_sync_lume_release_docs_updates_every_generated_marker(tmp_path: Path):
     for relative in paths:
         assert "Version: 9.9.9" in (tmp_path / relative).read_text()
     assert "Documented against Lume **9.9.9**." in (tmp_path / DOCS / "http-api.mdx").read_text()
+    # The generator's CLI spec records the documented version; a release
+    # that leaves it behind fails the Lume reference check.
+    assert '\n "version": "9.9.9"\n' in (tmp_path / spec).read_text()

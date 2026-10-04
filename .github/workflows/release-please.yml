@@ -259,7 +259,8 @@ jobs:
             elif [[ "$LUME" == "true" ]]; then
               python3 .github/scripts/sync_lume_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product lume
-              git add docs/content/docs/lume/reference
+              git add docs/content/docs/lume/reference \
+                scripts/docs-generators/cli-specs/lume.json
               COMMIT_MESSAGE="chore(lume): synchronize release documentation"
             elif [[ "$SPACESD" == "true" ]]; then
               # Release Please bumps the workspace version in Cargo.toml; the

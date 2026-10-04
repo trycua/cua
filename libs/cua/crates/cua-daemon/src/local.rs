@@ -13,12 +13,11 @@
 //!
 //! A bare, `vm:` or `container:` OCI ref is resolved first by the one
 //! resolver ([`cua_image::resolve`]: the variant the backend runs, pinned by
-//! digest), so any Fleet or canonical image ref runs on the right backend:
-//! a KubeVirt containerDisk boots under QEMU for the architecture the image
-//! offers (the host's when it has one), a Lume image under Lume, a rootfs as
-//! a container, and an image no local backend runs fails with
-//! [`RuntimeError::UnsupportedImage`]. `fleet:<pool-or-template>` images are
-//! resolved one layer up, in `cua_sandbox_core::fleet_local`.
+//! digest), so any canonical image ref runs on the right backend: a
+//! containerDisk boots under QEMU for the architecture the image offers
+//! (the host's when it has one), a Lume image under Lume, a rootfs as a
+//! container, and an image no local backend runs fails with
+//! [`RuntimeError::UnsupportedImage`].
 //!
 //! Operations on an existing instance find its backend by asking each one
 //! (container, QEMU, Lume) for the instance's status.
@@ -587,8 +586,8 @@ impl LocalRuntime for VmmLocal {
 
     async fn build_image(
         &self,
-        spec: &cua_fleet::BuildSpec,
-        creds: Option<&cua_fleet::RegistryCredentials>,
+        spec: &cua_sandbox_core::BuildSpec,
+        creds: Option<&cua_sandbox_core::RegistryCredentials>,
     ) -> RuntimeResult<String> {
         let from = spec.from.trim();
         let (prefix, rest) = match from.split_once(':') {
@@ -610,11 +609,11 @@ impl LocalRuntime for VmmLocal {
         let files = spec
             .files
             .iter()
-            .map(cua_fleet::builds::local_build_file)
+            .map(cua_sandbox_core::build::local_build_file)
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| RuntimeError::Other(e.to_string()))?;
-        let recipe = cua_fleet::builds::build_recipe(spec, &pinned, files, None);
-        let tag = cua_fleet::builds::build_name(&recipe);
+        let recipe = cua_sandbox_core::build::build_recipe(spec, &pinned, files, None);
+        let tag = cua_sandbox_core::build::build_name(&recipe);
         let reference = format!("{LOCAL_BUILD_REPO}:{tag}");
         let ledger = cua_vmm::container::ledger::PullLedger::default();
         if rt.docker().inspect_image(&reference).await.is_ok() {
@@ -662,7 +661,7 @@ impl LocalRuntime for VmmLocal {
         );
         let budget = spec
             .timeout
-            .unwrap_or(cua_fleet::builds::DEFAULT_BUILD_TIMEOUT);
+            .unwrap_or(cua_sandbox_core::build::DEFAULT_BUILD_TIMEOUT);
         let built = tokio::time::timeout(budget, build).await;
         // The build directory is scratch either way.
         let _ = std::fs::remove_dir_all(&out);

@@ -1,9 +1,8 @@
-//! `cua auth`, `cua wif-token` against a fake OIDC issuer, a fake GitHub
-//! OIDC endpoint and the fake Fleet API.
+//! `cua auth`, `cua wif-token` against a fake OIDC issuer and a fake GitHub
+//! OIDC endpoint.
 
 mod common;
 use common::*;
-use cua_fleet::testing::FakeFleet;
 use serde_json::json;
 use std::sync::{
     Arc,
@@ -72,16 +71,11 @@ async fn fake_issuer() -> FakeHttp {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn device_login_session_drives_fleet_then_refresh_and_logout() {
+async fn device_login_session_then_refresh_and_logout() {
     let issuer = fake_issuer().await;
-    let fake = FakeFleet::new();
-    fake.add_namespace("team-a");
-    fake.add_namespace("team-b");
-    let fleet = cua_daemon::fixtures::start_fleet_http(fake.clone()).await;
     let mut h = Home::new();
     h.set("CUA_OIDC_ISSUER", &issuer.url)
-        .set("CUA_OIDC_POLL_UNIT_MS", "5")
-        .set("CUA_FLEET_BASE_URL", &fleet.base_url);
+        .set("CUA_OIDC_POLL_UNIT_MS", "5");
 
     let o = h.run(&["auth", "status"]).await;
     assert_eq!(o.code, 1);
@@ -117,16 +111,12 @@ async fn device_login_session_drives_fleet_then_refresh_and_logout() {
     o.ok();
     assert!(o.stdout.contains("Access token expires"), "{o:?}");
 
-    // whoami with no env credentials uses the session token against Fleet.
+    // whoami with no env credentials uses the session token.
     let o = h.run(&["--json", "auth", "whoami"]).await;
     o.ok();
     let v = o.json();
     assert_eq!(v["source"], "cua auth login session");
     assert_eq!(v["user"], "tester");
-    assert_eq!(v["namespaces"], 2);
-    let access = creds["access_token"].as_str().unwrap();
-    assert!(fake.requests().iter().any(|r| r.path == "/api/namespaces"
-        && r.header("authorization") == Some(&format!("Bearer {access}"))));
 
     // An expired session refreshes and persists the new token.
     let mut expired = creds.clone();
@@ -156,11 +146,7 @@ async fn device_login_session_drives_fleet_then_refresh_and_logout() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn whoami_reports_client_credentials_and_workload_tokens() {
     let issuer = fake_issuer().await;
-    let fake = FakeFleet::new();
-    fake.add_namespace("ns1");
-    let fleet = cua_daemon::fixtures::start_fleet_http(fake.clone()).await;
     let mut h = Home::new();
-    h.set("CUA_FLEET_BASE_URL", &fleet.base_url);
 
     let o = h.run(&["auth", "whoami"]).await;
     assert_eq!(o.code, 1);
@@ -172,7 +158,6 @@ async fn whoami_reports_client_credentials_and_workload_tokens() {
     let o = h.run(&["auth", "whoami"]).await;
     o.ok();
     assert!(o.stdout.contains("client credentials (ukey-test)"), "{o:?}");
-    assert!(o.stdout.contains("Namespaces: 1"), "{o:?}");
     assert!(!o.stdout.contains("s3cret") && !o.stderr.contains("s3cret"));
     let cc = issuer
         .requests()
@@ -184,36 +169,22 @@ async fn whoami_reports_client_credentials_and_workload_tokens() {
     let o = h.run(&["--json", "auth", "whoami"]).await;
     o.ok();
     assert_eq!(o.json()["source"], "FLEETS_TOKEN");
-    assert!(
-        fake.requests()
-            .iter()
-            .any(|r| r.header("authorization") == Some("Bearer workload-token"))
-    );
 }
 
+/// Fleet user API keys were Cua Cloud's, which has closed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fleet_user_api_keys() {
-    let fake = FakeFleet::new();
-    let fleet = cua_daemon::fixtures::start_fleet_http(fake.clone()).await;
+async fn fleet_user_api_keys_say_cua_cloud_has_closed() {
     let mut h = Home::new();
-    h.set("CUA_FLEET_BASE_URL", &fleet.base_url)
-        .set("FLEETS_TOKEN", "t");
-    let o = h.run(&["auth", "keys", "ls"]).await;
-    o.ok();
-    assert!(o.stdout.contains("No API keys."));
-    let o = h
-        .run(&["auth", "keys", "create", "ci", "--scope", "sandboxes"])
-        .await;
-    o.ok();
-    assert!(o.stdout.contains("CUA_CLIENT_ID=ukey-fake1"), "{o:?}");
-    assert!(o.stdout.contains("CUA_CLIENT_SECRET=secret-1"), "{o:?}");
-    let o = h.run(&["--json", "auth", "keys", "ls"]).await;
-    o.ok();
-    assert_eq!(o.json()[0]["name"], "ci");
-    h.run(&["auth", "keys", "rm", "key-1"]).await.ok();
-    assert!(fake.user_keys().is_empty());
-    let o = h.run(&["auth", "keys", "rm", "key-1"]).await;
-    assert_ne!(o.code, 0);
+    h.set("FLEETS_TOKEN", "t");
+    for args in [
+        &["auth", "keys", "ls"][..],
+        &["auth", "keys", "create", "ci", "--scope", "sandboxes"],
+        &["auth", "keys", "rm", "key-1"],
+    ] {
+        let o = h.run(args).await;
+        assert_eq!(o.code, 4, "{args:?}: {o:?}");
+        assert!(o.stderr.contains("Cua Cloud has closed"), "{o:?}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

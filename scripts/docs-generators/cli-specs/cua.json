@@ -186,7 +186,7 @@
      "usage": "cua auth status [OPTIONS]"
     },
     {
-     "abstract": "The active Fleet identity, verified against Fleet",
+     "abstract": "The active Cua account identity",
      "after_help": "Examples:\n  cua auth whoami",
      "aliases": [],
      "arguments": [],
@@ -200,7 +200,7 @@
      "usage": "cua auth whoami [OPTIONS]"
     },
     {
-     "abstract": "Fleet user API keys (client credentials)",
+     "abstract": "Fleet user API keys (Cua Cloud, closed: every subcommand says so)",
      "aliases": [],
      "arguments": [],
      "flags": [],
@@ -6662,7 +6662,7 @@
    "usage": "cua wif-token [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "Fleet: managed pools behind `cua sandbox create` without `--pool`",
+   "abstract": "Fleet: managed pools of Cua Cloud, which has closed (every subcommand says so)",
    "aliases": [],
    "arguments": [],
    "flags": [],
@@ -12702,7 +12702,7 @@
   },
   {
    "code": 4,
-   "meaning": "Not supported, or not configured (for example no Fleet credentials)"
+   "meaning": "Not supported, or not configured (for example Cua Cloud, which has closed)"
   },
   {
    "code": 5,
@@ -12710,7 +12710,7 @@
   },
   {
    "code": 6,
-   "meaning": "Unauthenticated or permission denied (by Cua, Fleet or your cloud account)"
+   "meaning": "Unauthenticated or permission denied (by Cua or your cloud account)"
   },
   {
    "code": 7,

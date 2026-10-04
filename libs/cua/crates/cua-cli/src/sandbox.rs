@@ -1638,20 +1638,6 @@ async fn create(
             eprintln!("  {p}");
         }
     }
-    if on == On::Cloud && a.pool.is_none() && cua.mode() == cua_sdk::CuaMode::Embedded {
-        let ttl = a.claim_ttl.unwrap_or_else(|| {
-            cua_sandbox_core::settings::auto_pool_config()
-                .claim_ttl
-                .as_secs() as u32
-        });
-        eprintln!(
-            "note: no cua daemon holds this sandbox, so it expires {} from now unless you run \
-             `cua sb keep-alive {}` (or start `cua daemon start` and `cua sb connect {}`)",
-            humantime::format_duration(std::time::Duration::from_secs(u64::from(ttl))),
-            i.id,
-            i.id
-        );
-    }
     if compat {
         print(
             out,
@@ -1826,28 +1812,6 @@ pub async fn run(
                         for (k, p) in s {
                             line(out, format!("Service:  {k} ({p})"));
                         }
-                    }
-                }
-                Err(CuaError::NotFound(missing)) => {
-                    // Not a sandbox: maybe a cloud pool. A name that is
-                    // neither stays "not found" (a local name must not
-                    // surface a Fleet error, e.g. without cloud access).
-                    let p = match fleet_pool(&name).await {
-                        Ok(p) => p,
-                        Err(_) => return Err(CuaError::NotFound(missing)),
-                    };
-                    if json {
-                        line(out, p.to_string());
-                    } else {
-                        line(out, format!("Name:     {name} (dedicated cloud capacity)"));
-                        line(
-                            out,
-                            format!(
-                                "Replicas: {} ready / {} desired",
-                                p["status"]["readyReplicas"].as_u64().unwrap_or(0),
-                                p["spec"]["replicas"].as_u64().unwrap_or(0)
-                            ),
-                        );
                     }
                 }
                 Err(e) => return Err(e),
@@ -2111,47 +2075,13 @@ fn sh_argv(line: &str) -> Vec<String> {
     vec!["/bin/sh".into(), "-c".into(), line.into()]
 }
 
-async fn fleet_pool(name: &str) -> Result<serde_json::Value, CuaError> {
-    let (c, _) = auth::fleet_client()
-        .await
-        .map_err(|_| CuaError::NotFound(format!("no sandbox named {name}")))?;
-    let h = c.get_pool(name).await.map_err(auth::fleet_err)?;
-    Ok(serde_json::to_value(&h.pool)?)
-}
-
-/// suspend / resume / restart by sandbox name, falling back to a Fleet
-/// pool of that name (as the former CLI did).
+/// suspend / resume / restart by sandbox name.
 async fn lifecycle(cua: &Arc<Cua>, name: &str, op: &str) -> Result<(), CuaError> {
-    match cua.sandboxes().by_name(name.to_string()).await {
-        Ok(sb) => match op {
-            "suspend" => sb.suspend().await,
-            "resume" => sb.resume().await,
-            _ => sb.restart().await,
-        },
-        Err(CuaError::NotFound(m)) => {
-            let Ok((c, _)) = auth::fleet_client().await else {
-                return Err(CuaError::NotFound(m));
-            };
-            let mut h = c
-                .get_pool(name)
-                .await
-                .map_err(|e| match auth::fleet_err(e) {
-                    CuaError::NotFound(_) => CuaError::NotFound(m.clone()),
-                    e => e,
-                })?;
-            let reps: &[u32] = match op {
-                "suspend" => &[0],
-                "resume" => &[1],
-                _ => &[0, 1],
-            };
-            for r in reps {
-                c.set_pool_replicas(&mut h, *r)
-                    .await
-                    .map_err(auth::fleet_err)?;
-            }
-            Ok(())
-        }
-        Err(e) => Err(e),
+    let sb = cua.sandboxes().by_name(name.to_string()).await?;
+    match op {
+        "suspend" => sb.suspend().await,
+        "resume" => sb.resume().await,
+        _ => sb.restart().await,
     }
 }
 
@@ -2207,83 +2137,8 @@ fn portable_row(r: &mut serde_json::Value) {
     );
 }
 
-/// Adds `pool`, `managed` and `expires_in_seconds` to Fleet rows (live
-/// claim `shutdownTime`). Best effort.
-async fn annotate_fleet(rows: &mut [serde_json::Value]) {
-    let fleet_rows: Vec<usize> = rows
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| r["location"] == "cloud")
-        .map(|(i, _)| i)
-        .collect();
-    if fleet_rows.is_empty() {
-        return;
-    }
-    let mut by_pool: std::collections::BTreeMap<String, Vec<usize>> = Default::default();
-    for i in fleet_rows {
-        let name = rows[i]["name"].as_str().unwrap_or_default().to_string();
-        let pool = rows[i]["namespace"]
-            .as_str()
-            .map(str::to_string)
-            .or_else(|| state_of(&name).and_then(|s| s["pool_name"].as_str().map(str::to_string)));
-        if let Some(p) = pool {
-            rows[i]["pool"] = serde_json::Value::String(p.clone());
-            rows[i]["managed"] = serde_json::Value::Bool(p.starts_with("cua-auto-"));
-            by_pool.entry(p).or_default().push(i);
-        }
-    }
-    let Ok((c, _)) = auth::fleet_client().await else {
-        return;
-    };
-    let now = std::time::SystemTime::now();
-    for (pool, idx) in by_pool {
-        let Ok(claims) = c.list_claims(&pool).await else {
-            continue;
-        };
-        // The pool's runtime says the kind and engine of its sandboxes.
-        let runtime = match c.get_pool(&pool).await {
-            Ok(p) => c.pool_runtime(&p.pool).await,
-            Err(_) => None,
-        };
-        let placement = match runtime {
-            Some(cua_fleet::RuntimeKind::Gvisor) => Some(("container", "gvisor")),
-            Some(cua_fleet::RuntimeKind::Kubevirt) => Some(("vm", "kubevirt")),
-            _ => None,
-        };
-        for i in idx {
-            if let Some((kind, runtime)) = placement {
-                if rows[i]["kind"].as_str().is_none_or(str::is_empty) {
-                    rows[i]["kind"] = serde_json::Value::String(kind.into());
-                }
-                if rows[i]["runtime"].as_str().is_none_or(str::is_empty) {
-                    rows[i]["runtime"] = serde_json::Value::String(runtime.into());
-                }
-            }
-            let name = rows[i]["name"].as_str().unwrap_or_default().to_string();
-            let Some(cl) = claims.iter().find(|c| c.metadata.name == name) else {
-                let suspended = rows[i]["state"] == "suspended" || rows[i]["status"] == "suspended";
-                if !suspended {
-                    rows[i]["state"] = serde_json::Value::String("expired".into());
-                    rows[i]["status"] = serde_json::Value::String("expired".into());
-                }
-                continue;
-            };
-            if let Some(t) = cl
-                .spec
-                .lifecycle
-                .as_ref()
-                .and_then(|l| l.shutdown_time.as_deref())
-                .and_then(|t| humantime::parse_rfc3339_weak(t).ok())
-            {
-                let left = t.duration_since(now).map(|d| d.as_secs()).unwrap_or(0);
-                rows[i]["expires_in_seconds"] = serde_json::Value::from(left);
-            }
-        }
-    }
-}
-
 /// Every sandbox this machine knows, of every provider (local, direct and
-/// the Fleet claims it holds); no live Fleet listing (`cua do ls`).
+/// records of Cua Cloud sandboxes) (`cua do ls`).
 pub async fn list_known(cua: &Arc<Cua>) -> Result<Vec<SandboxInfo>, CuaError> {
     cua.sandboxes().list_known(None).await
 }
@@ -2296,7 +2151,8 @@ async fn ls(
     json: bool,
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
-    // Known sandboxes of the filter; live cloud sandboxes unless local only.
+    // Known sandboxes of the filter (Cua Cloud has closed: cloud rows are
+    // the records of earlier cloud sandboxes).
     let known = if cloud {
         Some("cloud")
     } else if local {
@@ -2312,32 +2168,11 @@ async fn ls(
         .map(info_json)
         .collect();
     let mut warnings: Vec<String> = vec![];
-    // The default listing never reads the OS credential vault to find out
-    // whether a session exists (the session marker says so).
-    if cloud || (known.is_none() && auth::fleet_maybe_configured()) {
-        let live = tokio::time::timeout(cua_daemon::LIST_CLOUD_TIMEOUT, fleet_claims()).await;
-        match live {
-            Ok(Ok(claims)) => {
-                // Known Fleet sandboxes already listed stay once.
-                for c in claims {
-                    if !rows.iter().any(|r| r["id"] == c["id"]) {
-                        rows.push(c);
-                    }
-                }
-            }
-            // No Fleet credentials: nothing to list in the cloud.
-            Ok(Err(CuaError::ProviderNotConfigured(_))) if !cloud => {}
-            Ok(Err(e)) => warnings.push(format!("cloud sandboxes not listed: {e}")),
-            Err(_) => warnings.push(format!(
-                "cloud sandboxes not listed: Fleet did not answer within {}s",
-                cua_daemon::LIST_CLOUD_TIMEOUT.as_secs()
-            )),
-        }
-    }
-    if warnings.is_empty() {
-        // Remaining TTLs of cloud rows (bounded like the listing).
-        let _ =
-            tokio::time::timeout(cua_daemon::LIST_CLOUD_TIMEOUT, annotate_fleet(&mut rows)).await;
+    if cloud {
+        warnings.push(format!(
+            "cloud sandboxes not listed: {}",
+            cua_sandbox_core::CLOUD_CLOSED
+        ));
     }
     for r in rows.iter_mut() {
         portable_row(r);
@@ -2656,39 +2491,6 @@ async fn port_forward(
     Ok(0)
 }
 
-/// Every Fleet claim in the account's namespaces (live, read-only).
-async fn fleet_claims() -> Result<Vec<serde_json::Value>, CuaError> {
-    let (c, _) = auth::fleet_client().await?;
-    let sdk = c.sdk();
-    let nss = sdk
-        .clone()
-        .list_namespaces()
-        .await
-        .map_err(|e| auth::fleet_err(cua_fleet::Error::Sdk(e)))?;
-    let mut out = vec![];
-    for ns in nss {
-        let claims = match c.list_claims(&ns.name).await.map_err(auth::fleet_err) {
-            Ok(c) => c,
-            Err(CuaError::PermissionDenied(_)) => continue,
-            Err(e) => return Err(e),
-        };
-        for cl in claims {
-            let v = serde_json::to_value(&cl)?;
-            out.push(serde_json::json!({
-                "id": format!("cloud:{}", v["metadata"]["name"].as_str().unwrap_or_default()),
-                "name": v["metadata"]["name"],
-                "location": "cloud",
-                "kind": "",
-                "runtime": "",
-                "runtime_type": format!("fleet/{}", ns.name),
-                "status": v["status"]["phase"].as_str().unwrap_or("unknown").to_lowercase(),
-                "namespace": ns.name,
-            }));
-        }
-    }
-    Ok(out)
-}
-
 /// Web display services of images without cua-spacesd, in preference order
 /// (`cua sb view --service` picks one explicitly).
 pub const LEGACY_DISPLAY_SERVICES: [&str; 3] = ["novnc", "display", "web"];
@@ -2912,7 +2714,7 @@ pub async fn viewer_link(
 }
 
 /// A browser URL for a web service of the sandbox (no credentials): the
-/// loopback port locally, a signed service URL (1 h) on Fleet. With no
+/// loopback port locally. With no
 /// `service`, the first of the legacy display services an image declares
 /// (`novnc`, `display`, `web`).
 pub async fn service_page_url(
@@ -2935,32 +2737,7 @@ pub async fn service_page_url(
             })?,
     };
     match i.location.as_str() {
-        "cloud" => {
-            let ep = i
-                .endpoints
-                .values()
-                .next()
-                .cloned()
-                .ok_or_else(|| CuaError::NotFound(format!("no Fleet endpoint for {name}")))?;
-            let ns = ep
-                .split("/api/svc/")
-                .nth(1)
-                .and_then(|r| r.split('/').next())
-                .ok_or_else(|| CuaError::Internal(format!("unexpected Fleet endpoint {ep}")))?
-                .to_string();
-            let (c, _) = auth::fleet_client().await?;
-            let bound = c.attach_claim(&ns, name).await.map_err(auth::fleet_err)?;
-            let s = c
-                .create_signed_service_url(
-                    &bound,
-                    &svc,
-                    Some("cua sb view".into()),
-                    std::time::Duration::from_secs(3600),
-                )
-                .await
-                .map_err(auth::fleet_err)?;
-            Ok((s.url, None))
-        }
+        "cloud" => Err(auth::cloud_closed()),
         _ => {
             if let Some(u) = i.endpoints.get(&svc) {
                 return Ok((u.clone(), None));

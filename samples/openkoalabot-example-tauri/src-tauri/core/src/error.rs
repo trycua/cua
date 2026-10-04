@@ -10,9 +10,6 @@ pub enum Error {
     /// teleport refused, timeout, transport, ...).
     #[error(transparent)]
     Spaces(#[from] cua_spaces::Error),
-    /// Cua Cloud could not be configured (credentials; see `cua auth login`).
-    #[error("Cua Cloud: {0}")]
-    Cloud(#[from] cua_fleet::Error),
     /// Local I/O.
     #[error("io: {0}")]
     Io(#[from] std::io::Error),

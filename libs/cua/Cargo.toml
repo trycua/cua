@@ -8,7 +8,6 @@ members = [
     # App icons cached once for every UI (memory LRU over $CUA_HOME/cache/icons).
     "crates/cua-icon-cache",
     "crates/cua-spacesd-client",
-    "crates/cua-fleet",
     "crates/cua-sandbox-core",
     "crates/cua-vmm",
     "crates/cua-image",
@@ -151,7 +150,6 @@ cua-proto = { path = "crates/cua-proto", version = "0.1.0" }
 cua-home = { path = "crates/cua-home", version = "0.1.0" }
 cua-icon-cache = { path = "crates/cua-icon-cache", version = "0.1.0" }
 cua-spacesd-client = { path = "crates/cua-spacesd-client", version = "0.1.0" }
-cua-fleet = { path = "crates/cua-fleet", version = "0.1.0" }
 cua-image = { path = "crates/cua-image", version = "0.1.0" }
 cua-vmm = { path = "crates/cua-vmm", version = "0.1.0", default-features = false }
 cua-disk = { path = "crates/cua-disk", version = "0.1.0" }
@@ -176,10 +174,6 @@ cua-media-protocol = { path = "crates/cua-media-protocol" }
 cua-media-transport = { path = "crates/cua-media-transport" }
 cua-media-codec = { path = "crates/cua-media-codec", default-features = false }
 cua-media-client = { path = "crates/cua-media-client", default-features = false }
-
-# Fleet SDK (read-only Copybara mirror under libs/fleet; never edited here).
-cyclops-sdk = { path = "../fleet/sdk" }
-cyclops-sdk-schema = { path = "../fleet/sdk-schema" }
 
 # SHA-256 over multi-GiB transfers is unusably slow unoptimised; keep test
 # builds fast without making every dependency release-mode.

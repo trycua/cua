@@ -47,8 +47,8 @@ cua-media-codec = { workspace = true, features = ["openh264", "opus"] }
 serde_json.workspace = true
 cua-sandbox-core = { workspace = true, features = ["testing"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }
-cua-fleet = { workspace = true, features = ["testing"] }
 cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
+cua-auth.workspace = true
 tempfile.workspace = true
 # The teleport fixture encrypts a cookie the way a real Chromium Safe
 # Storage item would, to exercise the structured Electron capture path

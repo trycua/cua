@@ -5,9 +5,9 @@ Each fence carries exactly one disposition in its meta string (fumadocs and
 rehype-pretty-code ignore unknown attributes)::
 
     ```python test="docs" id="images-base"        # runs in lane `docs`; stable id
-    ```python test="docs,fleet" id="omarchy"      # runs in several lanes
+    ```python test="docs,container" id="omarchy"  # runs in several lanes
     ```python test="docs" session="images"        # cumulative with earlier blocks
-    ```python test="docs" prelude="fakefleet"     # hidden harness setup
+    ```python test="docs" prelude="spacesd"       # hidden harness setup
     ```text output                                # program output / not code
     ```bash skip="host-install"                   # reason from the allowlist
 
@@ -56,11 +56,8 @@ BASELINE = REPO / "docs" / "code-block-baseline.json"
 # Guides with self-contained runnable blocks; `--strict` (and the suite's
 # test_guides_are_tagged) fails if one loses its tags. The Omarchy noVNC and
 # Minecraft flows only have fragments or in-guest shell steps; their behaviour
-# is covered by the SDK scenario tests instead. The Fleets quickstart downloads
-# its example from docs/public/scripts (a pinned, published cua-sandbox).
+# is covered by the SDK scenario tests instead.
 GUIDES = [
-    "fleets/guides/terraform.mdx",
-    "fleets/guides/capacity-and-claims.mdx",
     "cua-sdk/guides/agent-frameworks.mdx",
     "cua-sdk/guides/images.mdx",
     "cua-sdk/reference/sandbox/index.mdx",
@@ -232,6 +229,28 @@ def _block(f: Fence) -> Block:
 
 def all_blocks(docs: Path = DOCS) -> list[Block]:
     return [_block(f) for f in all_fences(docs) if "test" in f.attrs]
+
+
+# Cua Cloud has closed: blocks on the Fleets pages, in the `fleet` lane, or
+# set up against the fake Fleet API (prelude `fakefleet`) have nothing to run
+# against. The e2e runners and the coverage join leave them out.
+CLOSED_PAGES = ("fleets/",)
+CLOSED_LANES = {"fleet"}
+CLOSED_PRELUDES = {"fakefleet"}
+
+
+def needs_cloud(b: Block) -> bool:
+    preludes = {p.strip() for p in b.prelude.split(",")}
+    return (
+        b.guide.startswith(CLOSED_PAGES)
+        or bool(CLOSED_LANES & set(b.lanes))
+        or bool(CLOSED_PRELUDES & preludes)
+    )
+
+
+def runnable_blocks(docs: Path = DOCS) -> list[Block]:
+    """The test= blocks the e2e runners run (all_blocks minus needs_cloud)."""
+    return [b for b in all_blocks(docs) if not needs_cloud(b)]
 
 
 # ---------------------------------------------------------------- policy

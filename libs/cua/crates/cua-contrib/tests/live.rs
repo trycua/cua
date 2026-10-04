@@ -38,7 +38,7 @@ async fn round_trip(provider: Arc<dyn Provider>) {
     let name = format!("cua-e2e-{word}-{:08x}", rand_u32());
     let mut o = CreateOptions::new(ProviderKind::Contrib, IMAGE).name(&name);
     o.contrib = Some(word.into());
-    o.fleet.ttl_seconds_after_created = Some(30 * 60);
+    o.ttl_seconds = Some(30 * 60);
     o.ready_timeout = Duration::from_secs(30 * 60);
     let created = sbx.create(o).await;
     let result = async {

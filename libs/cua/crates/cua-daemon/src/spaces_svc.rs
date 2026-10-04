@@ -230,50 +230,9 @@ mod imp {
 
         async fn claim_fleet_space(
             &self,
-            req: tonic::Request<pb::ClaimFleetSpaceRequest>,
+            _req: tonic::Request<pb::ClaimFleetSpaceRequest>,
         ) -> R<pb::ClaimFleetSpaceResponse> {
-            let r = req.into_inner();
-            let runtime = match opt(r.runtime) {
-                Some(v) => {
-                    match cua_spaces::fleet_runtime::parse_runtime(&v).map_err(|e| st(e.into()))? {
-                        cua_spaces::contract::inputs::FleetRuntime::Gvisor => Runtime::Gvisor,
-                        cua_spaces::contract::inputs::FleetRuntime::Kubevirt => Runtime::Kubevirt,
-                    }
-                }
-                None => Runtime::Auto,
-            };
-            let created = self
-                .spaces()
-                .create(cua_spaces::SpaceCreate {
-                    on: Some(On::Cloud),
-                    image: opt(r.image),
-                    runtime,
-                    name: opt(r.name),
-                    wait: r.wait,
-                    reuse: r.reuse,
-                    command: (!r.command.is_empty()).then_some(r.command),
-                    env: r.env.into_iter().collect(),
-                    services: ports(r.services).map_err(st)?,
-                    spacesd: r.spacesd,
-                    ..Default::default()
-                })
-                .await
-                .map_err(|e| st(e.into()))?;
-            match created {
-                cua_spaces::SpaceCreated::Ready { info, reused } => {
-                    ok(pb::ClaimFleetSpaceResponse {
-                        space: Some(record(self.spaces(), &info.id).map_err(st)?),
-                        pending_json: String::new(),
-                        reused,
-                    })
-                }
-                cua_spaces::SpaceCreated::Starting(pending) => ok(pb::ClaimFleetSpaceResponse {
-                    space: None,
-                    pending_json: serde_json::to_string(&pending)
-                        .map_err(|e| st(Error::Internal(e.to_string())))?,
-                    reused: false,
-                }),
-            }
+            Err(st(cua_spaces::Error::CloudClosed.into()))
         }
 
         async fn provision_local_space(

@@ -96,7 +96,7 @@ export interface PageSpec {
 /**
  * The public crate set: `cua-sdk` (the Rust host API, the same objects the
  * UniFFI bindings expose) plus the crates Rust hosts use directly next to it
- * (`cua-spacesd-client`, `cua-fleet`, `cua-sandbox-core`, `cua-spaces`; see
+ * (`cua-spacesd-client`, `cua-sandbox-core`, `cua-spaces`; see
  * rust/index.mdx for the stability tiers).
  */
 export const PAGES: PageSpec[] = [
@@ -113,14 +113,6 @@ export const PAGES: PageSpec[] = [
     crate: 'cua-spacesd-client',
     title: 'cua-spacesd-client',
     description: 'The async cua-spacesd client crate (native gRPC or gRPC-Web).',
-    sources: [],
-    fallback: true,
-  },
-  {
-    slug: 'cua-fleet',
-    crate: 'cua-fleet',
-    title: 'cua-fleet',
-    description: 'The Fleet (cloud sandboxes) crate: pools, claims, builds and claim secrets.',
     sources: [],
     fallback: true,
   },

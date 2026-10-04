@@ -100,7 +100,7 @@ impl DaemonExtension for CuaSpacesDaemon {
         // widens anyone's access.
         let drive_presence: Arc<dyn cua_volume::Presence> =
             Arc::new(drive::KeyvaultPresence(self.presence()));
-        let drive = drive::open(cx.home, cx.fleet, drive_presence);
+        let drive = drive::open(cx.home, cx.account, drive_presence);
         let sessions = Arc::new(match self.fake_host(cx) {
             Some(h) => crate::teleport::AppSessions::with_host(h),
             None => crate::teleport::AppSessions::builtin(),

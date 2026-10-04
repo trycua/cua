@@ -27,7 +27,6 @@ cua-keyvault.workspace = true
 # Persistent-agent adoption counts (fixed words only).
 cua-telemetry.workspace = true
 cua-daemon = { workspace = true, features = ["server", "client", "spaces"] }
-cua-fleet.workspace = true
 cua-auth.workspace = true
 cua-teleport.workspace = true
 cua-chromium-storage.workspace = true

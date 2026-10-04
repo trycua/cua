@@ -32,10 +32,10 @@ through its accessors.
 | [`auto`](#cuaauto) | The default topology: the `cua daemon` this machine runs when one accepts connections (so the CLI, MCP clients and apps share sandboxes and Spaces), else the runtime in this process with `config`. |
 | [`connect`](#cuaconnect) | Connects to a running `cua daemon`. |
 | [`embedded`](#cuaembedded) | Runs the SDK runtime in this process. |
-| [`fleet`](#cuafleet) | Fleet pools, templates, claims and images. |
+| [`fleet`](#cuafleet) | Fleet (Cua Cloud, closed: its calls fail with that message) and the account's billing, with this SDK's account credentials (in daemon mode, from this process's settings and environment). |
 | [`info`](#cuainfo) | SDK (and daemon) identity. |
 | [`shutdown_daemon`](#cuashutdown_daemon) | Asks a connected daemon to stop (daemon mode only). |
-| [`spacesd`](#cuaspacesd) | Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a Fleet service URL or a relay URL) without a sandbox. |
+| [`spacesd`](#cuaspacesd) | Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a relay URL) without a sandbox. |
 
 | Accessor | Returns | Description |
 | --- | --- | --- |
@@ -43,7 +43,7 @@ through its accessors.
 | `auth()` | [`Auth`](/cua-sdk/reference/auth#auth) | Sign-in and the shared session (`CUA_OIDC_ISSUER`, `CUA_CREDENTIAL_STORE`, `CUA_HOME` apply). |
 | `local()` | [`Local`](/cua-sdk/reference/local#local) | Local runtimes (doctor and setup) and local images. |
 | `mode()` | [`CuaMode`](#cuamode-enum) | Topology. |
-| `sandboxes()` | [`Sandboxes`](/cua-sdk/reference/sandbox#sandboxes) | Sandboxes (Fleet, local, direct). |
+| `sandboxes()` | [`Sandboxes`](/cua-sdk/reference/sandbox#sandboxes) | Sandboxes (local, direct, providers). |
 | `spaces()` | [`Spaces`](/cua-sdk/reference/spaces#spaces) | Spaces: the registry and every Space primitive. |
 
 ### `Cua.auto`
@@ -268,9 +268,9 @@ println(cua.mode())
 
 ### `Cua.fleet`
 
-Fleet pools, templates, claims and images. Always talks to Fleet
-from this process with this SDK's credentials (in daemon mode, from
-the environment).
+Fleet (Cua Cloud, closed: its calls fail with that message) and the
+account's billing, with this SDK's account credentials (in daemon
+mode, from this process's settings and environment).
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -406,8 +406,8 @@ pub async fn shutdown_daemon(&self) -> Result<(), CuaError>
 
 ### `Cua.spacesd`
 
-Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
-Fleet service URL or a relay URL) without a sandbox.
+Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+relay URL) without a sandbox.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -468,12 +468,13 @@ Configuration of an embedded SDK runtime.
 | `spaces_home` / `spacesHome` | `Option<String>` | `None` | Spaces registry directory (default `$CUA_HOME` or `~/.cua`). |
 | `teleport_home` / `teleportHome` | `Option<String>` | `None` | Teleport reads app sessions under this home directory with no host side effects (tests, CI). Default: the real host. |
 | `fleet_from_session` / `fleetFromSession` | `bool` | `false` | When the settings and environment carry no Fleet credentials, use the signed-in session (`Cua.auth()`, `cua auth login`) from the shared credential store, refreshed as needed. |
-| `fleet_pool_home` / `fleetPoolHome` | `Option<String>` | `None` | Where managed Fleet pools keep their name cache and machine-wide GC lock (default: `$CUA_HOME` or `~/.cua`, or next to `state_dir`). |
+| `fleet_pool_home` / `fleetPoolHome` | `Option<String>` | `None` | Unused: managed Fleet pools (Cua Cloud, closed) kept their name cache here. |
 
 ## `FleetSettings` record
 
-Fleet credentials and endpoints. Unset fields fall back to the
-environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
+Cua account credentials and endpoints (Cua Cloud, closed, used them for
+sandboxes; the account's billing still does). Unset fields fall back to
+the environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
 `CUA_CLIENT_SECRET`, `FLEETS_TOKEN`) when `CuaConfig.fleet_from_env`.
 
 | Field | Type | Default | Description |

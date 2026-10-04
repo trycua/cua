@@ -15,7 +15,7 @@
 //! |---|---|
 //! | [`Sandboxes`] / [`Sandbox`] / [`Service`] / [`PortForward`] | daemon-agnostic sandboxes (Fleet, local, direct) |
 //! | [`SpacesdClient`] / [`SpacesdProcess`] / [`MediaSession`] | cua-spacesd (`cua.env.v1`), including a JSON escape hatch |
-//! | [`Fleet`] | pools, templates, claims, images (cyclops-sdk) |
+//! | [`Fleet`] | Cua Cloud (closed: its calls say so) and the account's billing status |
 //! | [`Local`] | local runtimes and images (cua-vmm, cua-image) |
 //! | [`Spaces`] / [`Space`] / [`SpaceStreamSession`] / [`SpacePresence`] | Spaces: registry, Fleet/local/direct Spaces, exec, files, services, streams, presence, teleport, hotspot, agents |
 //! | `Teleport` (feature `teleport`) | move a desktop app session from this machine into a sandbox (cua-teleport) |

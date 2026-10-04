@@ -1,5 +1,5 @@
-// The shared sandbox model (SandboxSpec + PoolOptions) and the one pool
-// writer against the fixtures' fake Fleet (loopback only).
+// The shared sandbox model (SandboxSpec + PoolOptions) and the pool writer
+// (Cua Cloud, closed: it says so).
 import Foundation
 import Testing
 
@@ -32,43 +32,22 @@ import Testing
         #expect(CuaError.NotFound(message: "x").ambiguousCandidates.isEmpty)
     }
 
-    @Test(.enabled(if: Fixtures.binary() != nil, "cua-test-fixtures is not built"))
-    func applyMismatchReconcileExport() async throws {
-        let fx = try #require(try Fixtures.start())
-        defer { fx.stop() }
+    @Test func poolApplySaysCuaCloudHasClosed() async throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("cua-swift-pool-\(UUID().uuidString)")
         let cua = try Cua.embedded(
             stateDir: dir.path,
-            fleet: FleetSettings(
-                baseUrl: fx.fields["fleet_base_url"],
-                token: fx.fields["fleet_token"]),
+            fleet: FleetSettings(baseUrl: "http://127.0.0.1:9", token: "t"),
             fleetFromEnv: false)
         let fleet = try cua.fleet()
-        let name = "cua-e2e-swift-apply"
-        let spec = SandboxSpec(
-            image: "ghcr.io/trycua/cua-e2e-swift@sha256:0123",
-            command: ["python", "-m", "srv"], services: ["mcp": 8765], cpu: 2, memoryMb: 2048)
-        let pool = try await Pool.apply(
-            fleet, name: name, spec: spec,
-            options: PoolOptions(runtime: "gvisor", warm: true, idleTtlSeconds: 3600))
-        #expect(pool.name == name)
-        #expect(pool.replicas == 1)
-
-        try await fleet.checkPoolSpec(pool: name, spec: spec)
-        let other = SandboxSpec(command: ["node", "srv.js"], cpu: 4)
+        let spec = SandboxSpec(image: "ghcr.io/trycua/cua-e2e-swift@sha256:0123")
         do {
-            try await fleet.checkPoolSpec(pool: name, spec: other)
-            Issue.record("expected PoolSpecMismatch")
-        } catch CuaError.PoolSpecMismatch(let message) {
-            #expect(message.contains("cpu: pool has 2, requested 4"))
+            _ = try await Pool.apply(
+                fleet, name: "cua-e2e-swift-apply", spec: spec,
+                options: PoolOptions(runtime: "gvisor"))
+            Issue.record("expected the closure")
+        } catch CuaError.Fleet(let message) {
+            #expect(message.contains("Cua Cloud has closed"))
         }
-        try await fleet.applyPoolTemplate(pool: name, spec: other)
-        try await fleet.checkPoolSpec(pool: name, spec: other)
-        let exported = try await fleet.exportPool(name: name)
-        #expect(exported.runtime == "gvisor")
-        #expect(exported.spec.command == ["node", "srv.js"])
-        #expect(exported.terraform.contains("resource \"fleets_pool\" \"cua_e2e_swift_apply\""))
-        try await fleet.deletePool(name: name)
     }
 }

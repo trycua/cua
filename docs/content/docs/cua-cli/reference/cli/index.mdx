@@ -92,7 +92,7 @@ Managed Fleet pools behind `cua sandbox create`. [Reference](/cua-cli/reference/
 
 | Command | Description | Subcommands |
 | --- | --- | --- |
-| <span id="cua-fleet-pools"></span><span id="cua-fleet-pools-ls"></span><span id="cua-fleet-pools-gc"></span><span id="cua-fleet-pool"></span><span id="cua-fleet-pool-export"></span>[`cua fleet`](/cua-cli/reference/cli/fleet#cua-fleet) | Fleet: managed pools behind `cua sandbox create` without `--pool`. | [`pools`](/cua-cli/reference/cli/fleet#cua-fleet-pools), [`pools ls`](/cua-cli/reference/cli/fleet#cua-fleet-pools-ls), [`pools gc`](/cua-cli/reference/cli/fleet#cua-fleet-pools-gc), [`pool`](/cua-cli/reference/cli/fleet#cua-fleet-pool), [`pool export`](/cua-cli/reference/cli/fleet#cua-fleet-pool-export) |
+| <span id="cua-fleet-pools"></span><span id="cua-fleet-pools-ls"></span><span id="cua-fleet-pools-gc"></span><span id="cua-fleet-pool"></span><span id="cua-fleet-pool-export"></span>[`cua fleet`](/cua-cli/reference/cli/fleet#cua-fleet) | Fleet: managed pools of Cua Cloud, which has closed (every subcommand says so). | [`pools`](/cua-cli/reference/cli/fleet#cua-fleet-pools), [`pools ls`](/cua-cli/reference/cli/fleet#cua-fleet-pools-ls), [`pools gc`](/cua-cli/reference/cli/fleet#cua-fleet-pools-gc), [`pool`](/cua-cli/reference/cli/fleet#cua-fleet-pool), [`pool export`](/cua-cli/reference/cli/fleet#cua-fleet-pool-export) |
 
 ### `cua mcp`
 
@@ -260,8 +260,8 @@ Accepted by every command, before or after the subcommand.
 | `1` | Failure, or `cua do` reported an error. |
 | `2` | Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`, `cloud:NAME`). |
 | `3` | Not found: sandbox, window, skill or image (or an image not published yet). |
-| `4` | Not supported, or not configured (for example no Fleet credentials). |
+| `4` | Not supported, or not configured (for example Cua Cloud, which has closed). |
 | `5` | No cua-spacesd answered, or a transport failure. |
-| `6` | Unauthenticated or permission denied (by Cua, Fleet or your cloud account). |
+| `6` | Unauthenticated or permission denied (by Cua or your cloud account). |
 | `7` | Not enough free disk space (see `cua cache`). |
 | `130` | Cancelled (Ctrl-C during a create): what it made was removed. |

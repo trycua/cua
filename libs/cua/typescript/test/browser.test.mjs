@@ -41,6 +41,7 @@ test(
     await assert.rejects(cua.spacesd(fx.env_url, "wrong"), (e) =>
       sdk.CuaError.Unauthenticated.instanceOf(e),
     )
-    assert.throws(() => cua.fleet(), (e) => sdk.CuaError.ProviderNotConfigured.instanceOf(e))
+    // Cua Cloud has closed.
+    await assert.rejects(cua.fleet().listPools("ns"), (e) => sdk.CuaError.Fleet.instanceOf(e))
   },
 )

@@ -105,8 +105,7 @@ impl Endpoint {
         Ok(Self { base: url, kind })
     }
 
-    /// The Fleet gateway URL for `<sandbox>-<service>` in `namespace`, the
-    /// same route `cyclops-sdk`'s `service_request` uses.
+    /// The Fleet gateway URL for `<sandbox>-<service>` in `namespace`.
     pub fn fleet_service(
         fleet_base_url: &str,
         namespace: &str,

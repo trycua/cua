@@ -1,19 +1,19 @@
-#![allow(deprecated)] // `apply_pool` sets up the fake pools
 //! Unified sandbox refs through the SDK, embedded and through the daemon:
 //! qualified ids (`local:`, `cloud:`, `direct:`) that round-trip, a typed
 //! `AmbiguousSandbox` for a bare name in two locations, narrowing, and the
-//! legacy spellings. In-memory fakes only (a fake local runtime, FakeFleet,
-//! a loopback MockServer spacesd); nothing touches host apps or `~/.cua`.
+//! legacy spellings. The cloud sandbox is the record an earlier Cua Cloud
+//! create left (Cua Cloud has closed). In-memory fakes only (a fake local
+//! runtime, a loopback MockServer spacesd); nothing touches host apps or
+//! `~/.cua`.
 
 use async_trait::async_trait;
 use cua_daemon::{
     Runtime, RuntimeConfig, fixtures,
     server::{self, ServerConfig},
 };
-use cua_fleet::testing::FakeFleet;
 use cua_sandbox_core::{
     InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec, LocalSummary,
-    RuntimeError, RuntimeResult,
+    RuntimeError, RuntimeResult, StateStore,
 };
 use cua_sdk::{
     Cua, CuaError, SandboxCreateOptions, ambiguous_sandbox_candidates, parse_sandbox_ref,
@@ -116,19 +116,10 @@ fn cloud(name: &str) -> SandboxCreateOptions {
 
 async fn suite(daemon: bool) {
     let env = fixtures::start_env(None, None).await;
-    let fake = FakeFleet::new();
-    fake.client()
-        .apply_pool(&cua_fleet::PoolSpec::new(
-            POOL,
-            "ghcr.io/trycua/cua-desktop-linux:test",
-        ))
-        .await
-        .unwrap();
     let dirs = tempfile::tempdir().unwrap();
     let runtime = Runtime::new(RuntimeConfig {
         state_dir: Some(dirs.path().join("sandboxes")),
         spaces_home: Some(dirs.path().join("cua")),
-        fleet_client: Some(fake.client()),
         local: Some(Arc::new(Instances::default())),
         env_probe_timeout: Some(Duration::from_secs(2)),
         ..Default::default()
@@ -163,12 +154,24 @@ async fn suite(daemon: bool) {
     assert_eq!(lb.info().location, "local");
     let only = sbx.get("box".into()).await.unwrap();
     assert_eq!(only.id, "local:box", "a unique bare name resolves");
+    // A cloud sandbox of the same name an earlier Cua Cloud create
+    // recorded (its record replaces the local one's; the local runtime
+    // still lists the instance).
+    StateStore::new(dirs.path().join("sandboxes"))
+        .save_fleet_claim("box", POOL)
+        .unwrap();
 
-    let cb = sbx.create(cloud("box")).await.unwrap();
-    assert_eq!(cb.id(), "cloud:box");
-    assert_eq!(cb.info().location, "cloud");
+    // Cua Cloud has closed: a cloud create says so.
+    match sbx.create(cloud("other")).await {
+        Err(CuaError::Fleet(m)) => assert!(m.contains("Cua Cloud has closed"), "{m}"),
+        Err(e) => panic!("{e:?}"),
+        Ok(_) => panic!("a cloud sandbox was created"),
+    }
+    let cb = sbx.get("cloud:box".into()).await.unwrap();
+    assert_eq!(cb.id, "cloud:box");
+    assert_eq!(cb.location, "cloud");
     assert!(
-        !cb.id().contains(POOL),
+        !cb.id.contains(POOL),
         "pools and namespaces never show in ids"
     );
 
@@ -186,11 +189,16 @@ async fn suite(daemon: bool) {
         Err(CuaError::AmbiguousSandbox(_))
     ));
 
-    // Qualified refs and narrowing pick one; ids round-trip.
-    for id in [lb.id(), cb.id()] {
+    // Qualified refs and narrowing pick one; ids round-trip. The cloud
+    // record cannot be connected to.
+    for id in [lb.id(), cb.id.clone()] {
         assert_eq!(sbx.get(id.clone()).await.unwrap().id, id);
-        assert_eq!(sbx.connect(id.clone()).await.unwrap().id(), id);
     }
+    assert_eq!(sbx.connect(lb.id()).await.unwrap().id(), lb.id());
+    assert!(matches!(
+        sbx.connect(cb.id.clone()).await,
+        Err(CuaError::Fleet(_))
+    ));
     let narrowed = qualify_sandbox_ref("box".into(), Some(false)).unwrap();
     assert_eq!(narrowed, "cloud:box");
     assert_eq!(sbx.get(narrowed).await.unwrap().id, "cloud:box");
@@ -231,40 +239,6 @@ async fn suite(daemon: bool) {
     assert!(ids.contains(&"local:box".to_string()), "{ids:?}");
     assert!(ids.contains(&"cloud:box".to_string()), "{ids:?}");
 
-    // A cloud claim this machine did not create is reachable by its ref.
-    fake.client()
-        .claim(
-            &fake.client().get_pool(POOL).await.unwrap().pool,
-            cua_fleet::ClaimOptions {
-                name: Some("elsewhere".into()),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        sbx.connect("elsewhere".into()).await.unwrap().id(),
-        "cloud:elsewhere"
-    );
-
-    // Cloud names are unique across the account's pools.
-    fake.client()
-        .apply_pool(&cua_fleet::PoolSpec::new(
-            "cua-e2e-refs-2",
-            "ghcr.io/trycua/cua-desktop-linux:test",
-        ))
-        .await
-        .unwrap();
-    let mut other_pool = cloud("box");
-    other_pool.pool = Some("cua-e2e-refs-2".into());
-    let Err(err) = sbx.create(other_pool).await else {
-        panic!("a second cloud:box was created")
-    };
-    assert!(
-        matches!(&err, CuaError::InvalidArgument(m) if m.contains("cloud:box")),
-        "{err:?}"
-    );
-
     // A direct machine's id is its address.
     let url = env.url.clone();
     let authority = url.trim_start_matches("http://").to_string();
@@ -285,10 +259,9 @@ async fn suite(daemon: bool) {
     );
 
     // Delete by ref: the other location's sandbox of the same name stays.
-    sbx.delete("local:box".into()).await.unwrap();
-    assert_eq!(sbx.get("box".into()).await.unwrap().id, "cloud:box");
     sbx.delete("cloud:box".into()).await.unwrap();
-    sbx.delete("cloud:elsewhere".into()).await.unwrap();
+    assert_eq!(sbx.get("box".into()).await.unwrap().id, "local:box");
+    sbx.delete("local:box".into()).await.unwrap();
     sbx.delete(d.id()).await.unwrap();
     assert!(matches!(
         sbx.get("box".into()).await,

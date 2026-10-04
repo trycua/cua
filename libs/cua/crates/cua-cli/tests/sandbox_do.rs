@@ -1,11 +1,9 @@
-#![allow(deprecated)] // also exercises the deprecated `apply_pool` wrapper
 //! `cua sandbox` and `cua do` against the mock spacesd (direct
-//! sandboxes) and the fake Fleet API.
+//! sandboxes); Cua Cloud (closed) fails with its message.
 
 mod common;
 use common::*;
 use cua_daemon::fixtures;
-use cua_fleet::testing::FakeFleet;
 use serde_json::json;
 
 async fn direct(h: &Home, url: &str, name: &str) {
@@ -165,48 +163,23 @@ async fn launch_validates_arguments() {
         .run(&["--embedded", "sb", "launch", "linux", "--memory", "lots"])
         .await;
     assert_eq!(o.code, 2, "{o:?}");
-    // Fleet without credentials.
+    // Fleet pools were Cua Cloud's, which has closed.
     let o = h
         .run(&["--embedded", "sb", "launch", "--pool", "p", "--name", "x"])
         .await;
     assert_eq!(o.code, 4, "{o:?}");
+    assert!(o.stderr.contains("Cua Cloud has closed"), "{o:?}");
 }
 
+/// A record of a Cua Cloud sandbox stays listed, says Cua Cloud has closed
+/// when used, and `sb rm` removes it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fleet_pool_launch_list_suspend_and_release() {
-    let fake = FakeFleet::new();
-    let fleet = fixtures::start_fleet_http(fake.clone()).await;
-    fake.client()
-        .apply_pool(&cua_fleet::PoolSpec::new(
-            "smoke-pool",
-            "ghcr.io/trycua/cua-desktop-linux:test",
-        ))
-        .await
+async fn cloud_records_are_listed_refused_and_removable() {
+    let h = Home::new();
+    cua_sandbox_core::StateStore::new(h.cua_home().join("sandboxes"))
+        .save_fleet_claim("claim-1", "smoke-pool")
         .unwrap();
-    let mut h = Home::new();
-    h.set("CUA_FLEET_BASE_URL", &fleet.base_url)
-        .set("FLEETS_TOKEN", "fake-fleet-token");
-
-    let o = h
-        .run(&[
-            "--embedded",
-            "--json",
-            "sb",
-            "launch",
-            "--pool",
-            "smoke-pool",
-            "--name",
-            "claim-1",
-        ])
-        .await;
-    o.ok();
-    assert_eq!(o.json(), json!({"name": "claim-1", "status": "ready"}));
-    assert!(fake.exists("claim", "smoke-pool", "claim-1"));
-
-    // Live Fleet listing (the Python CLI could not list Fleet sandboxes).
-    let o = h
-        .run(&["--embedded", "--json", "sb", "ls", "--cloud"])
-        .await;
+    let o = h.run(&["--embedded", "--json", "sb", "ls"]).await;
     o.ok();
     let rows = o.json();
     assert!(
@@ -216,30 +189,24 @@ async fn fleet_pool_launch_list_suspend_and_release() {
             .any(|r| r["name"] == "claim-1" && r["location"] == "cloud"),
         "{rows}"
     );
-
-    // `sb suspend <pool>` (used by the scheduled smoke) scales the pool.
-    h.run(&["--embedded", "sb", "suspend", "smoke-pool"])
-        .await
-        .ok();
-    let pool = fake.object("pool", "smoke-pool", "smoke-pool").unwrap();
-    assert_eq!(pool["spec"]["replicas"], 0);
-    h.run(&["--embedded", "sb", "resume", "smoke-pool"])
-        .await
-        .ok();
-    assert_eq!(
-        fake.object("pool", "smoke-pool", "smoke-pool").unwrap()["spec"]["replicas"],
-        1
-    );
-    let o = h.run(&["--embedded", "sb", "info", "smoke-pool"]).await;
-    o.ok();
-    assert!(o.stdout.contains("(dedicated cloud capacity)"), "{o:?}");
-
+    let o = h
+        .run(&["--embedded", "sb", "exec", "claim-1", "true"])
+        .await;
+    assert_eq!(o.code, 4, "{o:?}");
+    assert!(o.stderr.contains("Cua Cloud has closed"), "{o:?}");
     h.run(&["--embedded", "sb", "delete", "claim-1", "--force"])
         .await
         .ok();
-    assert!(!fake.exists("claim", "smoke-pool", "claim-1"));
-    let o = h.run(&["--embedded", "sb", "suspend", "nope"]).await;
-    assert_eq!(o.code, 3, "{o:?}");
+    let o = h.run(&["--embedded", "--json", "sb", "ls"]).await;
+    o.ok();
+    assert!(
+        !o.json()
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["name"] == "claim-1"),
+        "{o:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -668,36 +635,9 @@ async fn sandbox_mcp_tools_call_and_content() {
 /// here; it counts its reads).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn default_ls_reads_a_keychain_session_only_with_the_marker() {
-    let fake = FakeFleet::new();
-    let fleet = fixtures::start_fleet_http(fake.clone()).await;
-    fake.client()
-        .apply_pool(&cua_fleet::PoolSpec::new(
-            "marker-pool",
-            "ghcr.io/trycua/cua-desktop-linux:test",
-        ))
-        .await
-        .unwrap();
-    // Another machine holds the claim: only a live Fleet listing shows it.
-    let mut other = Home::new();
-    other
-        .set("CUA_FLEET_BASE_URL", &fleet.base_url)
-        .set("FLEETS_TOKEN", "fake-fleet-token");
-    other
-        .run(&[
-            "--embedded",
-            "sb",
-            "launch",
-            "--pool",
-            "marker-pool",
-            "--name",
-            "held-elsewhere",
-        ])
-        .await
-        .ok();
-
     let vault = tempfile::tempdir().unwrap();
     let mut h = Home::new();
-    h.set("CUA_FLEET_BASE_URL", &fleet.base_url).set(
+    h.set(
         "CUA_CREDENTIAL_STORE",
         format!("test-keychain:{}", vault.path().display()),
     );
@@ -714,41 +654,8 @@ async fn default_ls_reads_a_keychain_session_only_with_the_marker() {
             .and_then(|s| s.trim().parse::<u64>().ok())
             .unwrap_or(0)
     };
-    let names = |o: &Out| -> Vec<String> {
-        o.json()
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|r| r["name"].as_str().unwrap_or_default().to_string())
-            .collect()
-    };
-
-    // No marker: the vault is never probed and no cloud rows are listed.
+    // No marker: the vault is never probed.
     let o = h.run(&["--embedded", "--json", "sb", "ls"]).await;
     o.ok();
-    assert!(!names(&o).contains(&"held-elsewhere".to_string()), "{o:?}");
     assert_eq!(reads(), 0, "the vault was read without a marker");
-
-    // An explicit cloud listing reads the session and writes the marker.
-    let o = h
-        .run(&["--embedded", "--json", "sb", "ls", "--cloud"])
-        .await;
-    o.ok();
-    assert!(names(&o).contains(&"held-elsewhere".to_string()), "{o:?}");
-    let marker = std::fs::read_to_string(h.cua_home().join("session.json")).unwrap();
-    assert!(marker.contains("\"keychain\"") && !marker.contains("fake-fleet-token"));
-
-    // With the marker, the default listing includes the cloud rows.
-    let before = reads();
-    let o = h.run(&["--embedded", "--json", "sb", "ls"]).await;
-    o.ok();
-    let rows = o.json();
-    let row = rows
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|r| r["name"] == "held-elsewhere")
-        .unwrap_or_else(|| panic!("{rows}"));
-    assert_eq!(row["location"], "cloud");
-    assert!(reads() > before);
 }

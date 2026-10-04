@@ -300,16 +300,6 @@ pub struct Container {
 }
 
 impl Container {
-    pub(crate) fn from_core(s: cua_sandbox_core::Sidecar) -> Self {
-        Self {
-            image: s.image,
-            command: s.command,
-            env: s.env.into_iter().collect(),
-            ports: s.ports,
-            name: Some(s.name),
-        }
-    }
-
     pub(crate) fn to_core(&self) -> cua_sandbox_core::Sidecar {
         let mut s = cua_sandbox_core::Sidecar::new(self.image.clone());
         if let Some(n) = self.name.clone().filter(|n| !n.is_empty()) {

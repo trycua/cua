@@ -1,14 +1,8 @@
-//! P2 sandbox parity over fake providers: sidecars, registry credentials,
-//! remote image builds and warm capacity for canonical images. Nothing here
-//! starts a container or reaches a registry (the fake Fleet installs an
-//! offline image inspector; every test uses a temp state dir).
-//!
-//! Cloud remote builds need `cua-fleet/fleet-remote-builds` (Fleet's
-//! builder does not run them yet); without it they check the "not deployed
-//! yet" error instead.
+//! Sandbox parity over a fake local runtime: sidecars, registry
+//! credentials, image builds and the guest network. Nothing here starts a
+//! container or reaches a registry (every test uses a temp state dir).
 
 use async_trait::async_trait;
-use cua_fleet::{REMOTE_BUILDS_SUPPORTED, testing::FakeFleet};
 use cua_sandbox_core::{
     BuildSpec, CreateOptions, Error, ImageLayer, InstanceStatus, LocalEndpoints, LocalInstance,
     LocalRuntime, LocalStartSpec, LocalSummary, NetworkMode, ProviderKind, RegistryCredentials,
@@ -89,14 +83,6 @@ fn redis() -> Sidecar {
 }
 
 const ROOTFS: &str = "docker.io/library/python:3.12-slim";
-
-fn fleet(fake: &FakeFleet, dir: &std::path::Path) -> Sandboxes {
-    cua_fleet::testing::set_image_variant(ROOTFS, cua_fleet::ImageVariant::Rootfs);
-    Sandboxes::builder()
-        .fleet(fake.client())
-        .state_dir(dir)
-        .build()
-}
 
 #[tokio::test]
 async fn local_start_carries_sidecars_credentials_and_sidecar_services() {
@@ -195,46 +181,16 @@ async fn local_image_layers_build_locally_then_run_the_built_image() {
 }
 
 #[tokio::test]
-async fn cloud_vm_images_carry_sidecars_addressed_by_name() {
-    let dir = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    let disk = "ghcr.io/trycua/linux:24.04-disk";
-    cua_fleet::testing::set_image_variant(disk, cua_fleet::ImageVariant::ContainerDisk);
-    let sbx = fleet(&fake, dir.path());
-    let db = Sidecar {
-        name: "db".into(),
-        ..redis()
-    };
-    let sb = sbx
-        .create(
-            CreateOptions::new(ProviderKind::Fleet, disk)
-                .sidecar(db)
-                .service("db", 6379),
-        )
-        .await
-        .unwrap();
-    let pool = sb.fleet_sandbox().unwrap().namespace.clone();
-    let vm = fake.object("template", &pool, &pool).unwrap()["spec"]["vmTemplate"].clone();
-    assert_eq!(vm["runtime"], "kubevirt");
-    assert_eq!(vm["sidecars"][0]["name"], "db");
-    assert_eq!(vm["sidecars"][0]["ports"], serde_json::json!([6379]));
-    assert_eq!(sb.services().get("db"), Some(&6379));
-    sb.delete().await.unwrap();
-}
-
-#[tokio::test]
 async fn reserved_names_and_bad_sidecars_fail_before_anything_starts() {
     let dir = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
     let rt = Arc::new(Recorder::default());
     let sbx = Sandboxes::builder()
         .local(rt.clone())
-        .fleet(fake.client())
         .state_dir(dir.path())
         .build();
-    cua_fleet::testing::set_image_variant(ROOTFS, cua_fleet::ImageVariant::Rootfs);
-    for provider in [ProviderKind::Local, ProviderKind::Fleet] {
-        for reserved in cua_fleet::RESERVED_SERVICE_NAMES {
+    {
+        let provider = ProviderKind::Local;
+        for reserved in cua_sandbox_core::sidecar::RESERVED_SERVICE_NAMES {
             let mut o = CreateOptions::new(provider, ROOTFS)
                 .sidecar(redis())
                 .service(reserved, 8080);
@@ -255,136 +211,15 @@ async fn reserved_names_and_bad_sidecars_fail_before_anything_starts() {
         let free = CreateOptions::new(ProviderKind::Local, ROOTFS).service("main", 8080);
         sbx.create(free).await.unwrap().delete().await.unwrap();
     }
-    assert!(fake.all_namespaces().is_empty(), "nothing was created");
     assert_eq!(
         rt.specs.lock().unwrap().len(),
-        2,
-        "only the free sandboxes started"
+        1,
+        "only the free sandbox started"
     );
 }
 
 #[tokio::test]
-async fn cloud_sidecars_and_private_images() {
-    let dir = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    let sbx = fleet(&fake, dir.path());
-    let private = "ghcr.io/me/private:1";
-    cua_fleet::testing::set_image_variant(private, cua_fleet::ImageVariant::Rootfs);
-    let mut o = CreateOptions::new(ProviderKind::Fleet, private)
-        .sidecar(redis())
-        .service("db", 6379);
-    o.registry_credentials = Some(RegistryCredentials::new("me", "tok"));
-    let sb = sbx.create(o).await.unwrap();
-    let pool = sb.fleet_sandbox().unwrap().namespace.clone();
-    let t = fake.object("template", &pool, &pool).unwrap();
-    let vm = &t["spec"]["vmTemplate"];
-    assert_eq!(vm["sidecars"][0]["image"], "redis:7-alpine");
-    let secret = cua_fleet::registry_secret_name("ghcr.io", "me");
-    assert_eq!(vm["imagePullSecret"], secret.as_str());
-    assert!(fake.exists("secret", &pool, &secret));
-    let services: Vec<_> = vm["services"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|s| {
-            (
-                s["name"].as_str().unwrap().to_string(),
-                s["targetPort"].as_u64().unwrap(),
-            )
-        })
-        .collect();
-    assert!(services.contains(&("db".into(), 6379)), "{services:?}");
-    assert_eq!(sb.services().get("db"), Some(&6379));
-    sb.delete().await.unwrap();
-}
-
-#[tokio::test]
-async fn canonical_images_start_warm_by_default_and_others_do_not() {
-    let dir = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    let sbx = fleet(&fake, dir.path());
-    let canonical = "ghcr.io/trycua/linux:24.04";
-    cua_fleet::testing::set_image_variant(canonical, cua_fleet::ImageVariant::Rootfs);
-    let initial = |sb: &cua_sandbox_core::Sandbox| {
-        let pool = sb.fleet_sandbox().unwrap().namespace.clone();
-        fake.object("pool", &pool, &pool).unwrap()["spec"]["autoscaling"]["initialPoolSize"]
-            .as_u64()
-    };
-    let sb = sbx
-        .create(CreateOptions::new(ProviderKind::Fleet, canonical))
-        .await
-        .unwrap();
-    assert_eq!(initial(&sb), Some(1), "canonical: warm by default");
-    sb.delete().await.unwrap();
-    let sb = sbx
-        .create(CreateOptions::new(ProviderKind::Fleet, ROOTFS))
-        .await
-        .unwrap();
-    assert_eq!(initial(&sb), Some(0), "other images stay cold");
-    sb.delete().await.unwrap();
-    // An explicit choice wins either way (a different pool shape, so a new
-    // pool whose creation shows it).
-    let mut o = CreateOptions::new(ProviderKind::Fleet, canonical);
-    o.fleet.warm = Some(false);
-    o.cpus = 3;
-    let sb = sbx.create(o).await.unwrap();
-    assert_eq!(initial(&sb), Some(0));
-    sb.delete().await.unwrap();
-    assert_eq!(
-        CreateOptions::new(ProviderKind::Fleet, "linux").default_warm(),
-        Some(true),
-        "the alias is canonical too"
-    );
-    assert_eq!(
-        CreateOptions::new(ProviderKind::Fleet, ROOTFS).default_warm(),
-        None
-    );
-}
-
-#[tokio::test]
-async fn cloud_image_layers_build_remotely_then_run_the_built_image() {
-    let dir = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    let sbx = fleet(&fake, dir.path());
-    let mut o = CreateOptions::new(ProviderKind::Fleet, ROOTFS);
-    o.fleet.runtime = Some(cua_fleet::RuntimeKind::Gvisor);
-    o.build = Some(BuildSpec {
-        layers: vec![ImageLayer::PipInstall {
-            packages: vec!["mcp".into()],
-        }],
-        ..Default::default()
-    });
-    let result = sbx.create(o.clone()).await;
-    if !REMOTE_BUILDS_SUPPORTED {
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("not deployed yet"), "{err}");
-        return;
-    }
-    let sb = result.unwrap();
-    let pool = sb.fleet_sandbox().unwrap().namespace.clone();
-    let t = fake.object("template", &pool, &pool).unwrap();
-    let image = t["spec"]["vmTemplate"]["containerDiskImage"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert!(image.starts_with("registry.fleet.test/builds/"), "{image}");
-    assert!(image.contains("@sha256:"), "{image}");
-    sb.delete().await.unwrap();
-    // The same layers again: no second build.
-    let builds = || {
-        fake.requests()
-            .iter()
-            .filter(|r| r.method == "POST" && r.path.ends_with("/images"))
-            .count()
-    };
-    assert_eq!(builds(), 1);
-    let sb = sbx.create(o).await.unwrap();
-    assert_eq!(builds(), 1);
-    sb.delete().await.unwrap();
-}
-
-#[tokio::test]
-async fn network_none_reaches_the_local_runtime_and_the_cloud_refuses_it() {
+async fn network_none_reaches_the_local_runtime() {
     assert_eq!(NetworkMode::parse("").unwrap(), NetworkMode::Default);
     assert_eq!(NetworkMode::parse("Default").unwrap(), NetworkMode::Default);
     assert_eq!(NetworkMode::parse(" none ").unwrap(), NetworkMode::None);
@@ -411,16 +246,5 @@ async fn network_none_reaches_the_local_runtime_and_the_cloud_refuses_it() {
     assert!(
         specs[1].restrict_network,
         "network=none restricts the guest"
-    );
-
-    let fake = FakeFleet::new();
-    let dir = tempfile::tempdir().unwrap();
-    let sbx = fleet(&fake, dir.path());
-    let mut o = CreateOptions::new(ProviderKind::Fleet, "ghcr.io/trycua/linux:latest");
-    o.network = NetworkMode::None;
-    let err = sbx.create(o).await.unwrap_err();
-    assert!(
-        matches!(&err, Error::Unsupported { op, .. } if op.contains("network=\"none\"")),
-        "{err}"
     );
 }

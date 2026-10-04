@@ -1,3 +1,0 @@
-All
-  Leaf query=data.authz_base.allow source=registered:authz-base
-  Leaf query=data.authz_usage.allow source=multi["registered:authz","registered:authz-usage"]

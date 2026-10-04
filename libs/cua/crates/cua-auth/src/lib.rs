@@ -77,6 +77,7 @@ pub enum Error {
 /// Result alias.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+pub mod account;
 #[cfg(target_os = "macos")]
 mod macos_keychain;
 

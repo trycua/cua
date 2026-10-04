@@ -2,12 +2,13 @@
 
 use super::{Fleet, Sandboxes, SpacesdClient, run, runtime};
 use crate::{CuaError, Result};
+use cua_auth::account::AccountApi;
 use cua_daemon::{Runtime, RuntimeConfig, client::DaemonAddress, client::DaemonClient};
-use cua_fleet::FleetConfig;
 use std::{path::PathBuf, sync::Arc};
 
-/// Fleet credentials and endpoints. Unset fields fall back to the
-/// environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
+/// Cua account credentials and endpoints (Cua Cloud, closed, used them for
+/// sandboxes; the account's billing still does). Unset fields fall back to
+/// the environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
 /// `CUA_CLIENT_SECRET`, `FLEETS_TOKEN`) when `CuaConfig.fleet_from_env`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
 pub struct FleetSettings {
@@ -55,8 +56,8 @@ pub struct CuaConfig {
     /// shared credential store, refreshed as needed.
     #[uniffi(default = false)]
     pub fleet_from_session: bool,
-    /// Where managed Fleet pools keep their name cache and machine-wide GC
-    /// lock (default: `$CUA_HOME` or `~/.cua`, or next to `state_dir`).
+    /// Unused: managed Fleet pools (Cua Cloud, closed) kept their name
+    /// cache here.
     #[uniffi(default = None)]
     pub fleet_pool_home: Option<String>,
 }
@@ -77,32 +78,49 @@ impl Default for CuaConfig {
 }
 
 impl CuaConfig {
-    pub(crate) fn fleet_config(&self) -> FleetConfig {
-        let mut c = if self.fleet_from_env {
-            FleetConfig::from_env()
+    /// The Cua account API from the settings over the environment (when
+    /// `fleet_from_env`), else the signed-in session (when
+    /// `fleet_from_session`). `None`: no account.
+    pub(crate) fn account(&self) -> Option<AccountApi> {
+        const VARS: [&str; 5] = [
+            "CUA_FLEET_BASE_URL",
+            "CUA_TOKEN_URL",
+            "CUA_CLIENT_ID",
+            "CUA_CLIENT_SECRET",
+            "FLEETS_TOKEN",
+        ];
+        let mut vars: std::collections::HashMap<&str, String> = if self.fleet_from_env {
+            VARS.iter()
+                .filter_map(|k| std::env::var(k).ok().map(|v| (*k, v)))
+                .collect()
         } else {
-            FleetConfig::default()
+            Default::default()
         };
         if let Some(f) = &self.fleet {
-            let set = |dst: &mut String, v: &Option<String>| {
+            for (k, v) in [
+                ("CUA_FLEET_BASE_URL", &f.base_url),
+                ("CUA_TOKEN_URL", &f.token_url),
+                ("CUA_CLIENT_ID", &f.client_id),
+                ("CUA_CLIENT_SECRET", &f.client_secret),
+                ("FLEETS_TOKEN", &f.token),
+            ] {
                 if let Some(v) = v.as_ref().filter(|v| !v.is_empty()) {
-                    *dst = v.trim_end_matches('/').to_string();
+                    vars.insert(k, v.clone());
                 }
-            };
-            set(&mut c.base_url, &f.base_url);
-            set(&mut c.token_url, &f.token_url);
-            let opt = |v: &Option<String>| v.clone().filter(|v| !v.is_empty());
-            if let Some(v) = opt(&f.client_id) {
-                c.client_id = Some(v);
-            }
-            if let Some(v) = opt(&f.client_secret) {
-                c.client_secret = Some(v);
-            }
-            if let Some(v) = opt(&f.token) {
-                c.fleet_token = Some(v);
             }
         }
-        c
+        let get = |k: &str| vars.get(k).cloned();
+        AccountApi::from_lookup(&get).or_else(|| {
+            if !self.fleet_from_session {
+                return None;
+            }
+            let session = cua_auth::Session::from_env();
+            session.credentials().ok().flatten()?;
+            Some(AccountApi::new(
+                &AccountApi::base_url_from_lookup(&get),
+                Arc::new(session),
+            ))
+        })
     }
 }
 
@@ -196,24 +214,9 @@ impl Cua {
     /// reading the credential store when `fleet_from_session` is set.
     #[uniffi::constructor]
     pub fn embedded(config: CuaConfig) -> Result<Arc<Self>> {
-        let fleet = config.fleet_config();
-        let fleet_client = if config.fleet_from_session {
-            cua_daemon::session::session_fleet_client(&fleet)
-        } else {
-            None
-        };
         let rc = RuntimeConfig {
             state_dir: config.state_dir.clone().map(PathBuf::from),
-            fleet: Some(fleet),
-            fleet_client,
-            auto_pools: config.fleet_pool_home.as_ref().map(|h| {
-                let mut c = cua_sandbox_core::settings::auto_pool_config();
-                c.home = PathBuf::from(h);
-                c
-            }),
-            // Session users get an injected (refreshing) client; still pin
-            // managed-pool images to digests.
-            resolve_image_digests: Some(true),
+            account: config.account(),
             local: None,
             vmm: Some(Arc::new(cua_daemon::local::VmmLocal::default())),
             env_probe_timeout: config.env_probe_timeout_ms.map(super::millis),
@@ -327,50 +330,32 @@ impl Cua {
         .await
     }
 
-    /// Sandboxes (Fleet, local, direct).
+    /// Sandboxes (local, direct, providers).
     pub fn sandboxes(&self) -> Arc<Sandboxes> {
         Arc::new(Sandboxes {
             backend: self.backend.clone(),
         })
     }
 
-    /// Fleet pools, templates, claims and images. Always talks to Fleet
-    /// from this process with this SDK's credentials (in daemon mode, from
-    /// the environment).
+    /// Fleet (Cua Cloud, closed: its calls fail with that message) and the
+    /// account's billing, with this SDK's account credentials (in daemon
+    /// mode, from this process's settings and environment).
     pub fn fleet(&self) -> Result<Arc<Fleet>> {
-        let (client, pools) = match &self.backend {
-            Backend::Embedded(rt) => (rt.fleet()?.clone(), rt.pools()?.clone()),
-            Backend::Daemon(_) => {
-                let cfg = self.config.fleet_config();
-                let _guard = runtime().enter();
-                // No credentials in the settings or environment: the
-                // signed-in session, when the config asks for it (the apps).
-                let client = if cfg.has_auth() {
-                    cua_fleet::FleetClient::connect(cfg)?
-                } else {
-                    self.config
-                        .fleet_from_session
-                        .then(|| cua_daemon::session::session_fleet_client(&cfg))
-                        .flatten()
-                        .ok_or_else(|| {
-                            CuaError::ProviderNotConfigured(cua_fleet::MISSING_CREDENTIALS.into())
-                        })?
-                };
-                // Listing and GC talk to Fleet directly; the cache and GC
-                // lock are the same files the daemon's manager uses.
-                let mut auto = cua_sandbox_core::settings::auto_pool_config();
-                if let Some(dir) = &self.config.state_dir {
-                    auto = auto.with_state_dir(std::path::Path::new(dir));
-                }
-                let pools = cua_fleet::PoolManager::new(client.clone(), auto);
-                (client, pools)
-            }
-        };
-        Ok(Arc::new(Fleet { client, pools }))
+        let account = match &self.backend {
+            Backend::Embedded(rt) => rt.account().cloned(),
+            Backend::Daemon(_) => self.config.account(),
+        }
+        .ok_or_else(|| {
+            CuaError::ProviderNotConfigured(
+                "no Cua account: run `cua auth login` or set CUA_CLIENT_ID/CUA_CLIENT_SECRET"
+                    .into(),
+            )
+        })?;
+        Ok(Arc::new(Fleet { account }))
     }
 
-    /// Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
-    /// Fleet service URL or a relay URL) without a sandbox.
+    /// Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+    /// relay URL) without a sandbox.
     pub async fn spacesd(&self, url: String, token: Option<String>) -> Result<Arc<SpacesdClient>> {
         let backend = self.backend.clone();
         run(async move {
@@ -456,9 +441,12 @@ mod tests {
             }),
             ..Default::default()
         };
-        let f = cfg.fleet_config();
-        assert_eq!(f.base_url, "https://fleet.example");
-        assert_eq!(f.fleet_token.as_deref(), Some("t"));
-        assert!(f.has_auth());
+        let a = cfg.account().expect("a token is an account");
+        assert_eq!(a.base_url(), "https://fleet.example");
+        let none = CuaConfig {
+            fleet_from_env: false,
+            ..Default::default()
+        };
+        assert!(none.account().is_none());
     }
 }

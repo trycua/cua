@@ -65,26 +65,17 @@ pub fn unreported_feature_limitation(version: &str, feature: &str) -> String {
 
 /// How a declared service is reached.
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum ServiceSource {
     /// A sandbox service (local loopback or any other sandbox route).
     Sandbox(cua_sandbox_core::Service),
-    /// A Fleet claim's service, through the gateway.
-    Fleet {
-        /// Client (mints the gateway bearer).
-        fleet: cua_fleet::FleetClient,
-        /// The claim.
-        bound: cua_fleet::BoundSandbox,
-        /// Service name.
-        service: String,
-    },
     /// A fixed URL and headers (a Space added by its MCP URL, or a `cua
     /// daemon` passthrough).
     Url(ServiceEndpoint),
 }
 
 /// A service a Space declares (an MCP server, a web app, ...), reachable
-/// through a protocol-transparent pipe: loopback locally, the Fleet gateway
-/// on Fleet, or a URL.
+/// through a protocol-transparent pipe: loopback locally, or a URL.
 #[derive(Clone)]
 pub struct SpaceService {
     /// How requests reach it.
@@ -102,25 +93,10 @@ impl std::fmt::Debug for SpaceService {
 }
 
 impl SpaceService {
-    /// Where the service is reachable from this process (URL and headers,
-    /// freshly minted for Fleet).
+    /// Where the service is reachable from this process (URL and headers).
     pub async fn endpoint(&self) -> Result<ServiceEndpoint> {
         match &self.source {
             ServiceSource::Sandbox(s) => Ok(s.endpoint().await?),
-            ServiceSource::Fleet {
-                fleet,
-                bound,
-                service,
-            } => {
-                let token = fleet.access_token(false).await?;
-                Ok(ServiceEndpoint {
-                    url: fleet.service_url(bound, service)?,
-                    headers: vec![
-                        ("authorization".into(), format!("Bearer {token}")),
-                        ("x-cua-fleet-claim".into(), bound.claim.clone()),
-                    ],
-                })
-            }
             ServiceSource::Url(e) => Ok(e.clone()),
         }
     }
@@ -131,14 +107,10 @@ impl SpaceService {
     }
 }
 
-/// Media / tunnel WebSockets through the Fleet gateway need the gateway's own
-/// credentials next to the ticket.
+/// Media / tunnel WebSockets through a gateway need its own credentials
+/// next to the ticket.
 #[derive(Clone)]
 pub(crate) enum Gateway {
-    Fleet {
-        fleet: cua_fleet::FleetClient,
-        claim: String,
-    },
     /// Fixed headers (a `cua daemon` env passthrough: its loopback bearer).
     Headers(Vec<(String, String)>),
 }
@@ -441,30 +413,10 @@ impl Space {
     }
 
     /// Headers a WebSocket to this Space's spacesd needs besides its
-    /// ticket (the Fleet gateway's bearer and claim).
+    /// ticket (a gateway's own credentials).
     pub async fn websocket_headers(&self) -> Result<Vec<(String, String)>> {
         match &self.inner.gateway {
             None => Ok(vec![]),
-            Some(Gateway::Fleet { fleet, claim }) => {
-                let bearer = fleet.access_token(false).await?;
-                let mut h = vec![
-                    (
-                        cua_proto::metadata::AUTHORIZATION.into(),
-                        format!("Bearer {bearer}"),
-                    ),
-                    ("x-cua-fleet-claim".into(), claim.clone()),
-                ];
-                // The gateway consumes `authorization`; the env token rides
-                // in its own header (MEDIA.md: tickets still authenticate
-                // the socket, this lets a gateway-side check pass too).
-                if let Some(t) = self.inner.token.as_deref().filter(|t| !t.is_empty()) {
-                    h.push((
-                        cua_proto::metadata::ENV_AUTHORIZATION.into(),
-                        format!("Bearer {t}"),
-                    ));
-                }
-                Ok(h)
-            }
             Some(Gateway::Headers(h)) => Ok(h.clone()),
         }
     }

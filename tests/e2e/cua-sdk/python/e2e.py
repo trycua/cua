@@ -41,19 +41,6 @@ os.environ["CUA_E2E_RUN"] = RUN
 
 HOST_ARCH = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "amd64"
 
-# The legacy public Fleet image the guides use (computer-server on 8000, no
-# spacesd). Pinned by digest exactly as in the guides.
-LEGACY_FLEET_IMAGE = os.environ.get(
-    "CUA_E2E_FLEET_IMAGE",
-    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
-    "@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d",
-)
-# Same image, gVisor rootfs tag (cheap and fast on Fleet).
-LEGACY_FLEET_ROOTFS = os.environ.get(
-    "CUA_E2E_FLEET_ROOTFS",
-    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-main-809e3f81",
-)
-
 
 def desktop_image() -> str:
     return os.environ.get("CUA_E2E_DESKTOP_IMAGE", f"cua-e2e-local/linux:docker-local-{HOST_ARCH}")
@@ -84,26 +71,6 @@ def name(what: str) -> str:
 # ---------------------------------------------------------------- lanes
 
 
-# Fleet pools have no env/secret field yet, so the spacesd token reaches a
-# gVisor pod through an entrypoint override (the image reads
-# /etc/cua/env-token). KubeVirt containerDisk guests have no such hook.
-KUBEVIRT_ENV_SKIP = (
-    "KubeVirt spacesd lane needs a per-claim secret field (cloud PR): no way to "
-    "deliver the env token to a containerDisk guest yet"
-)
-
-
-def env_token_command(token: str) -> list[str]:
-    """Pod command for a gVisor pool of the spacesd image that installs
-    ``token`` as the driver's token before the normal entrypoint."""
-    return [
-        "/bin/sh",
-        "-c",
-        f"mkdir -p /etc/cua && printf %s {token} >/etc/cua/env-token && "
-        "exec /opt/cua/desktop/entrypoint.sh",
-    ]
-
-
 def lane_enabled(lane: str) -> Optional[str]:
     """``None`` when ``lane`` can run here, else the skip reason."""
     flag = lambda v: os.environ.get(v) == "1"  # noqa: E731
@@ -117,22 +84,6 @@ def lane_enabled(lane: str) -> Optional[str]:
         return None if flag("CUA_E2E_QEMU") else "set CUA_E2E_QEMU=1 for the QEMU lane"
     if lane == "lume":
         return None if flag("CUA_E2E_LUME") else "set CUA_E2E_LUME=1 for the Lume lane"
-    if lane == "fleet":
-        if not flag("CUA_E2E_FLEET"):
-            return "set CUA_E2E_FLEET=1 for live Fleet"
-        if not (os.environ.get("FLEETS_TOKEN") or os.environ.get("CUA_CLIENT_ID")):
-            return "no Fleet credentials (CUA_CLIENT_ID/SECRET or FLEETS_TOKEN)"
-        return None
-    if lane == "fleet-env":
-        why = lane_enabled("fleet")
-        if why:
-            return why
-        if not os.environ.get("CUA_E2E_FLEET_ENV_IMAGE"):
-            return (
-                "CUA_E2E_FLEET_ENV_IMAGE is unset: no linux (spacesd) image "
-                "in a registry Fleet can pull"
-            )
-        return None
     if lane == "docs":
         return None
     if lane == "contrib":
@@ -142,12 +93,6 @@ def lane_enabled(lane: str) -> Optional[str]:
         if why and os.environ.get("CUA_CONTRIB_REQUIRE") == "1":
             raise RuntimeError(f"contrib lane required: {why}")
         return why
-    if lane == "cua-sandbox":
-        return (
-            None
-            if flag("CUA_E2E_CUA_SANDBOX")
-            else "set CUA_E2E_CUA_SANDBOX=1 (after the cua-sandbox wrapper merge)"
-        )
     raise ValueError(f"unknown lane {lane}")
 
 
@@ -405,32 +350,6 @@ async def env_smoke(env: "cua.SpacesdClient", *, desktop: bool, mock: bool = Fal
             cursor=(round(pos.x), round(pos.y)),
         )
     return summary
-
-
-# ---------------------------------------------------------------- legacy computer-server (/cmd)
-
-
-def parse_cmd_sse(body: bytes) -> dict:
-    """computer-server's ``POST /cmd`` answers with one SSE ``data:`` frame."""
-    for line in body.decode(errors="replace").splitlines():
-        if line.startswith("data: "):
-            return json.loads(line[6:])
-    raise AssertionError(f"no data frame in /cmd response: {body[:200]!r}")
-
-
-async def legacy_cmd(
-    sb: "cua.Sandbox", service: str, command: str, params: Optional[dict] = None
-) -> dict:
-    body = json.dumps({"command": command, "params": params or {}}).encode()
-    resp = await sb.service(service).request("POST", "/cmd", body, 120_000)
-    assert 200 <= resp.status < 300, (resp.status, resp.body[:300])
-    payload = parse_cmd_sse(resp.body)
-    assert payload.get("success", True), payload
-    return payload
-
-
-def fleet_client(tmp: Path) -> "cua.Cua":
-    return cua.embedded(state_dir=str(tmp))
 
 
 @contextlib.contextmanager

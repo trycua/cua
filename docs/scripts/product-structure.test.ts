@@ -38,6 +38,9 @@ const LANDING_EXAMPLE_KEYS = ['title', 'href', 'alt'];
 // Pages allowed at the root besides the product folders.
 const ROOT_PAGES = new Set(['index.mdx', 'docs-for-agents.mdx']);
 const GENERATED_MARKER = /AUTO-GENERATED|\{\/\*\s*GENERATED:[\w-]+:start\s*\*\/\}/;
+// Reference folders whose generator was removed with its source (libs/fleet).
+// Their last generated pages stay as static pages until the product's docs go.
+const FROZEN_REFERENCE = new Set(['fleets']);
 
 type Meta = { title?: string; root?: boolean; pages?: string[] };
 
@@ -162,7 +165,7 @@ for (const [dir, title] of PRODUCTS) {
     assert.deepEqual(extra, [], `${dir} has files outside its sections`);
   });
 
-  test(`${title} Reference holds only generated pages covered by docs:check`, () => {
+  test(`${title} Reference holds only generated pages covered by docs:check`, { skip: FROZEN_REFERENCE.has(dir) }, () => {
     const config = JSON.parse(
       readFileSync(path.join(repo, 'scripts/docs-generators/config.json'), 'utf8')
     ) as { generators: Record<string, { enabled: boolean; docsOutputPath: string; outputs: Array<{ outputFile: string }> }> };

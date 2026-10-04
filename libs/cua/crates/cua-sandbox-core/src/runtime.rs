@@ -426,14 +426,14 @@ pub trait LocalRuntime: Send + Sync {
 
     /// Builds `spec` (image layers on the container image `spec.from`)
     /// into this machine's container engine and returns the reference to
-    /// run (`container:<ref>`). Cached by the same content hash as remote
-    /// builds (`cua-b-<hash>`), so an identical spec is not built again.
+    /// run (`container:<ref>`). Cached by content hash (`cua-b-<hash>`), so
+    /// an identical spec is not built again.
     /// VM images cannot take container layers
     /// ([`RuntimeError::UnsupportedImage`]).
     async fn build_image(
         &self,
-        spec: &cua_fleet::BuildSpec,
-        creds: Option<&cua_fleet::RegistryCredentials>,
+        spec: &crate::BuildSpec,
+        creds: Option<&crate::RegistryCredentials>,
     ) -> RuntimeResult<String> {
         let _ = (spec, creds);
         Err(RuntimeError::Unsupported {

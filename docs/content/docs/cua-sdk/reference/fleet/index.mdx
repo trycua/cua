@@ -18,52 +18,49 @@ Python programs usually use the high-level API instead: [`cua_sandbox.Pool`](/cu
 
 ## `Fleet`
 
-Fleet control plane.
+Fleet control plane (Cua Cloud, closed) and the account's billing.
 
 Returned by [`Cua.fleet`](/cua-sdk/reference/cua#cuafleet).
 
 | Method | Description |
 | --- | --- |
-| [`apply`](#fleetapply) | Reconciles pool `name` (= namespace = template) to run `spec` with `options`: the one pool writer (rolls a new pool back if the template fails). |
-| [`apply_pool`](#fleetapply_pool) | Deprecated: use `Fleet.apply`. |
-| [`apply_pool_template`](#fleetapply_pool_template) | Lays the set fields of `spec` over pool `pool`'s template and writes it (the pool's capacity is kept; a no-op when nothing differs). |
-| [`billing_status`](#fleetbilling_status) | The account's Cua Cloud billing: its credit, card and the website billing page. |
-| [`check_pool_spec`](#fleetcheck_pool_spec) | Compares the set fields of `spec` with pool `pool`'s template: `PoolSpecMismatch` (with a readable diff) when they differ. |
-| [`delete_pool`](#fleetdelete_pool) | Deletes a pool, its namespace and its same-named template. |
-| [`export_pool`](#fleetexport_pool) | Reads pool `name` back as the shared model, with its `fleets_pool` Terraform block. |
+| [`apply`](#fleetapply) | Reconciles a pool. |
+| [`apply_pool`](#fleetapply_pool) | Deprecated pool writer. |
+| [`apply_pool_template`](#fleetapply_pool_template) | Writes a spec over a pool's template. |
+| [`billing_status`](#fleetbilling_status) | The account's billing: its credit, card and the website billing page. |
+| [`check_pool_spec`](#fleetcheck_pool_spec) | Compares a spec with a pool's template. |
+| [`delete_pool`](#fleetdelete_pool) | Deletes a pool. |
+| [`export_pool`](#fleetexport_pool) | Reads a pool back. |
 | [`get_pool`](#fleetget_pool) | Looks up a pool. |
-| [`list_pools`](#fleetlist_pools) | Lists pools in a namespace. |
-| [`list_templates`](#fleetlist_templates) | Lists templates in a namespace as JSON resources. |
-| [`pool_image_info`](#fleetpool_image_info) | The image pool `name`'s template runs, as a claim on it reports it (`Sandbox.image_info`): pinned by the resolver (cached per pool), or the template reference with empty `pinned_ref`/`digest` when the registry cannot be read. |
-| [`set_pool_replicas`](#fleetset_pool_replicas) | Sets warm replicas (0 suspends). |
-| [`usage_pricing`](#fleetusage_pricing) | This account's Cua Cloud rates (`GET /api/config`), reused for five minutes. |
-| [`wait_pool_ready`](#fleetwait_pool_ready) | Waits for at least one ready replica. |
-| [`acquire`](/cua-sdk/reference/fleet/claims#fleetacquire) | Claims a sandbox from a pool and waits for it to bind. |
-| [`acquire_with`](/cua-sdk/reference/fleet/claims#fleetacquire_with) | `Fleet.acquire` with claim options, including a per-claim env token (bounded wait for its delivery; `ClaimSecretsNotDelivered` releases the claim). |
+| [`list_pools`](#fleetlist_pools) | Lists pools. |
+| [`list_templates`](#fleetlist_templates) | Lists templates. |
+| [`pool_image_info`](#fleetpool_image_info) | The image a pool's template runs. |
+| [`set_pool_replicas`](#fleetset_pool_replicas) | Sets warm replicas. |
+| [`usage_pricing`](#fleetusage_pricing) | This account's Cua Cloud rates. |
+| [`wait_pool_ready`](#fleetwait_pool_ready) | Waits for a ready replica. |
+| [`acquire`](/cua-sdk/reference/fleet/claims#fleetacquire) | Claims a sandbox from a pool. |
+| [`acquire_with`](/cua-sdk/reference/fleet/claims#fleetacquire_with) | Claims a sandbox with options. |
 | [`attach_claim`](/cua-sdk/reference/fleet/claims#fleetattach_claim) | Waits for a named claim to bind. |
-| [`claim`](/cua-sdk/reference/fleet/claims#fleetclaim) | Creates a claim without waiting. |
-| [`create_image`](/cua-sdk/reference/fleet/images#fleetcreate_image) | Creates an image resource (remote build) from a JSON manifest. |
-| [`create_signed_service_url`](/cua-sdk/reference/fleet/claims#fleetcreate_signed_service_url) | Mints a signed, shareable service URL. |
+| [`claim`](/cua-sdk/reference/fleet/claims#fleetclaim) | Creates a claim. |
+| [`create_image`](/cua-sdk/reference/fleet/images#fleetcreate_image) | Creates an image resource. |
+| [`create_signed_service_url`](/cua-sdk/reference/fleet/claims#fleetcreate_signed_service_url) | Mints a signed service URL. |
 | [`delete_image`](/cua-sdk/reference/fleet/images#fleetdelete_image) | Deletes an image resource. |
-| [`get_image`](/cua-sdk/reference/fleet/images#fleetget_image) | Gets an image resource (JSON). |
-| [`keep_alive`](/cua-sdk/reference/fleet/claims#fleetkeep_alive) | Extends a claim's lease; returns the RFC 3339 shutdown time. |
-| [`list_claims`](/cua-sdk/reference/fleet/claims#fleetlist_claims) | Lists claims in a namespace. |
-| [`list_images`](/cua-sdk/reference/fleet/images#fleetlist_images) | Lists image resources (JSON) in a namespace. |
-| [`release`](/cua-sdk/reference/fleet/claims#fleetrelease) | Releases a claim (missing claims are fine). |
-| [`service_url`](/cua-sdk/reference/fleet/claims#fleetservice_url) | The gateway URL of a sandbox service (needs the Fleet bearer). |
+| [`get_image`](/cua-sdk/reference/fleet/images#fleetget_image) | Gets an image resource. |
+| [`keep_alive`](/cua-sdk/reference/fleet/claims#fleetkeep_alive) | Extends a claim's lease. |
+| [`list_claims`](/cua-sdk/reference/fleet/claims#fleetlist_claims) | Lists claims. |
+| [`list_images`](/cua-sdk/reference/fleet/images#fleetlist_images) | Lists image resources. |
+| [`release`](/cua-sdk/reference/fleet/claims#fleetrelease) | Releases a claim. |
+| [`service_url`](/cua-sdk/reference/fleet/claims#fleetservice_url) | The gateway URL of a sandbox service. |
 
 | Accessor | Returns | Description |
 | --- | --- | --- |
-| `base_url()` | `String` | Fleet API base URL. |
+| `base_url()` | `String` | The Cua account API base URL. |
 | `ephemeral_pool_name()` | `String` | A random ephemeral pool name (`cua-eph-<hex>`). |
-| `pools()` | [`FleetPools`](#fleetpools) | Managed pools (list, gc). |
+| `pools()` | [`FleetPools`](#fleetpools) | Managed pools (Cua Cloud, closed). |
 
 ### `Fleet.apply`
 
-Reconciles pool `name` (= namespace = template) to run `spec` with
-`options`: the one pool writer (rolls a new pool back if the
-template fails). The image is pinned to the variant the runtime
-runs; `spec.registry_secret` is written as the pool's pull Secret.
+Reconciles a pool. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -114,8 +111,7 @@ pub async fn apply(&self, name: String, spec: SandboxSpec, options: PoolOptions)
 
 ### `Fleet.apply_pool`
 
-Deprecated: use `Fleet.apply`. Reconciles a pool and its template
-from the flat spec (converted to `SandboxSpec` + `PoolOptions`).
+Deprecated pool writer. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -164,8 +160,7 @@ pub async fn apply_pool(&self, spec: FleetPoolSpec) -> Result<FleetPool, CuaErro
 
 ### `Fleet.apply_pool_template`
 
-Lays the set fields of `spec` over pool `pool`'s template and writes
-it (the pool's capacity is kept; a no-op when nothing differs).
+Writes a spec over a pool's template. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -215,8 +210,8 @@ pub async fn apply_pool_template(&self, pool: String, spec: SandboxSpec) -> Resu
 
 ### `Fleet.billing_status`
 
-The account's Cua Cloud billing: its credit, card and the website
-billing page. A Fleet without billing answers `billing_enabled:
+The account's billing: its credit, card and the website billing
+page. An account API without billing answers `billing_enabled:
 false`.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
@@ -262,8 +257,7 @@ pub async fn billing_status(&self) -> Result<FleetBillingStatus, CuaError>
 
 ### `Fleet.check_pool_spec`
 
-Compares the set fields of `spec` with pool `pool`'s template:
-`PoolSpecMismatch` (with a readable diff) when they differ.
+Compares a spec with a pool's template. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -309,11 +303,11 @@ pub async fn check_pool_spec(&self, pool: String, spec: SandboxSpec) -> Result<(
 | `pool` | `String` | required |
 | `spec` | [`SandboxSpec`](#sandboxspec-record) | required |
 
-**Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors) ([`PoolSpecMismatch`](/cua-sdk/reference/errors#poolspecmismatch))
+**Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Fleet.delete_pool`
 
-Deletes a pool, its namespace and its same-named template.
+Deletes a pool. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -362,8 +356,7 @@ pub async fn delete_pool(&self, name: String) -> Result<(), CuaError>
 
 ### `Fleet.export_pool`
 
-Reads pool `name` back as the shared model, with its `fleets_pool`
-Terraform block.
+Reads a pool back. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -412,7 +405,7 @@ pub async fn export_pool(&self, name: String) -> Result<FleetPoolExport, CuaErro
 
 ### `Fleet.get_pool`
 
-Looks up a pool.
+Looks up a pool. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -461,7 +454,7 @@ pub async fn get_pool(&self, name: String) -> Result<FleetPool, CuaError>
 
 ### `Fleet.list_pools`
 
-Lists pools in a namespace.
+Lists pools. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -510,7 +503,7 @@ pub async fn list_pools(&self, namespace: String) -> Result<Vec<FleetPool>, CuaE
 
 ### `Fleet.list_templates`
 
-Lists templates in a namespace as JSON resources.
+Lists templates. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -559,10 +552,7 @@ pub async fn list_templates(&self, namespace: String) -> Result<Vec<String>, Cua
 
 ### `Fleet.pool_image_info`
 
-The image pool `name`'s template runs, as a claim on it reports it
-(`Sandbox.image_info`): pinned by the resolver (cached per pool), or
-the template reference with empty `pinned_ref`/`digest` when the
-registry cannot be read. `None` when the template names no image.
+The image a pool's template runs. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -611,7 +601,7 @@ pub async fn pool_image_info(&self, name: String) -> Result<Option<ImageInfo>, C
 
 ### `Fleet.set_pool_replicas`
 
-Sets warm replicas (0 suspends).
+Sets warm replicas. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -661,9 +651,7 @@ pub async fn set_pool_replicas(&self, name: String, replicas: u32) -> Result<Fle
 
 ### `Fleet.usage_pricing`
 
-This account's Cua Cloud rates (`GET /api/config`), reused for five
-minutes. `None` when Fleet answers without rates: show no price
-rather than a guess.
+This account's Cua Cloud rates. Cua Cloud has closed: `None`.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -708,7 +696,7 @@ pub async fn usage_pricing(&self) -> Result<Option<FleetUsagePricing>, CuaError>
 
 ### `Fleet.wait_pool_ready`
 
-Waits for at least one ready replica.
+Waits for a ready replica. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -758,20 +746,19 @@ pub async fn wait_pool_ready(&self, name: String, timeout_ms: u32) -> Result<Fle
 
 ## `FleetPools`
 
-Managed pools: what `Sandboxes.create` without a pool uses.
+Managed pools (Cua Cloud, closed).
 
 Returned by [`Fleet.pools`](#fleet).
 
 | Method | Description |
 | --- | --- |
-| [`gc`](#fleetpoolsgc) | Deletes managed pools idle for `idle_seconds` (default 1800) and stuck Pending/Failed managed claims past their TTL. |
-| [`gc_pools`](#fleetpoolsgc_pools) | `FleetPools.gc` restricted to the named managed pools: each is deleted (with its namespace) once it has no claims and has been idle for `idle_seconds` (default 0, i.e. now). |
+| [`gc`](#fleetpoolsgc) | Deletes idle managed pools. |
+| [`gc_pools`](#fleetpoolsgc_pools) | Deletes the named managed pools. |
 | [`list`](#fleetpoolslist) | This account's managed pools. |
 
 ### `FleetPools.gc`
 
-Deletes managed pools idle for `idle_seconds` (default 1800) and
-stuck Pending/Failed managed claims past their TTL.
+Deletes idle managed pools. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -820,11 +807,7 @@ pub async fn gc(&self, idle_seconds: Option<u32>) -> Result<FleetGcReport, CuaEr
 
 ### `FleetPools.gc_pools`
 
-`FleetPools.gc` restricted to the named managed pools: each is
-deleted (with its namespace) once it has no claims and has been idle
-for `idle_seconds` (default 0, i.e. now). Pools with live claims are
-kept, so a pool another process is using survives. Tests use this to
-remove the pools they created.
+Deletes the named managed pools. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -874,7 +857,7 @@ pub async fn gc_pools(&self, names: Vec<String>, idle_seconds: Option<u32>) -> R
 
 ### `FleetPools.list`
 
-This account's managed pools.
+This account's managed pools. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">

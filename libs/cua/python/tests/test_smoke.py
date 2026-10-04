@@ -128,31 +128,23 @@ def test_embedded(fixtures, tmp_path):
     run(exercise(c, fixtures))
 
 
-def test_embedded_fleet_through_fake_api(fixtures, tmp_path):
+def test_cua_cloud_says_it_has_closed(tmp_path):
     c = cua.embedded(
         state_dir=str(tmp_path / "sbx"),
         fleet_from_env=False,
-        fleet=cua.FleetSettings(base_url=fixtures["fleet_base_url"], token=fixtures["fleet_token"]),
+        fleet=cua.FleetSettings(base_url="http://127.0.0.1:9", token="t"),
     )
 
     async def body():
         fleet = c.fleet()
-        pool = await fleet.apply_pool(
-            cua.FleetPoolSpec(name="cua-e2e-py", image="img:test", runtime="gvisor")
-        )
-        assert pool.name == "cua-e2e-py"
-        sb = await c.sandboxes().create(
-            cua.SandboxCreateOptions(
-                on="cloud", pool="cua-e2e-py", name="cua-e2e-py-claim"
+        with pytest.raises(cua.CuaError.Fleet, match="Cua Cloud has closed"):
+            await fleet.apply_pool(
+                cua.FleetPoolSpec(name="cua-e2e-py", image="img:test", runtime="gvisor")
             )
-        )
-        assert sb.location() == "cloud"
-        # The claim's env service is the fixture's cua-spacesd (through the
-        # fake gateway), which speaks gRPC, not plain HTTP.
-        out = await (await sb.spacesd(5_000)).sh("echo claim", None)
-        assert bytes(out.stdout) == b"claim\n"
-        await sb.delete()
-        await fleet.delete_pool("cua-e2e-py")
+        with pytest.raises(cua.CuaError.Fleet, match="Cua Cloud has closed"):
+            await c.sandboxes().create(
+                cua.SandboxCreateOptions(on="cloud", image="img:test", name="cua-e2e-py-claim")
+            )
 
     run(body())
 

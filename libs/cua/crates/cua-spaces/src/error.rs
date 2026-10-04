@@ -44,7 +44,7 @@ pub enum Error {
         /// The driver's own limitation text, if any.
         limitation: String,
     },
-    /// A host-side prerequisite (Fleet credentials, a local runtime, an
+    /// A host-side prerequisite (a local runtime, an
     /// operator display, app-session providers) is not configured.
     #[error("{what} is not available on this host: {why}")]
     HostCapabilityMissing {
@@ -83,9 +83,10 @@ pub enum Error {
     /// spacesd RPC failure.
     #[error(transparent)]
     Env(#[from] cua_spacesd_client::Error),
-    /// Fleet control-plane failure.
-    #[error(transparent)]
-    Fleet(#[from] cua_fleet::Error),
+    /// Cua Cloud has closed ([`cua_sandbox_core::CLOUD_CLOSED`]): the call
+    /// needed a cloud Space.
+    #[error("{}", cua_sandbox_core::CLOUD_CLOSED)]
+    CloudClosed,
     /// Sandbox lifecycle failure.
     #[error(transparent)]
     Sandbox(cua_sandbox_core::Error),
@@ -162,9 +163,7 @@ impl Error {
                 cua_spacesd_client::Error::Unauthenticated(_) => "unauthenticated",
                 _ => "env",
             },
-            Error::Fleet(cua_fleet::Error::AdmissionDenied { .. }) => "fleet_admission_denied",
-            Error::Fleet(cua_fleet::Error::CreditExhausted { .. }) => "cloud_credit_exhausted",
-            Error::Fleet(_) => "fleet",
+            Error::CloudClosed => "fleet",
             Error::Sandbox(cua_sandbox_core::Error::AmbiguousSandbox { .. }) => "ambiguous_sandbox",
             Error::Sandbox(cua_sandbox_core::Error::NotFound(_)) => "not_found",
             Error::Sandbox(cua_sandbox_core::Error::InvalidPlacement(_)) => "invalid_placement",
@@ -236,18 +235,18 @@ impl From<cua_sandbox_core::Error> for Error {
                 }
             }
             cua_sandbox_core::Error::Env(e) => Error::Env(e),
-            cua_sandbox_core::Error::Fleet(e) => Error::Fleet(e),
+            cua_sandbox_core::Error::CloudClosed => Error::CloudClosed,
             cua_sandbox_core::Error::NotFound(n) => Error::NotFound(n),
             cua_sandbox_core::Error::Mcp(e) => Error::Mcp(e),
             cua_sandbox_core::Error::Cloud(m) => Error::extension("cloud", m),
             // A refusal is the caller's to fix, not a runtime failure.
             cua_sandbox_core::Error::InvalidArgument(m) => Error::InvalidArgument(m),
             cua_sandbox_core::Error::Cancelled(m) => Error::Cancelled(m),
+            cua_sandbox_core::Error::ProviderNotConfigured(
+                cua_sandbox_core::ProviderKind::Fleet,
+            ) => Error::CloudClosed,
             cua_sandbox_core::Error::ProviderNotConfigured(p) => Error::host(
-                match p {
-                    cua_sandbox_core::ProviderKind::Fleet => cua_spaces_contract::host::FLEET,
-                    _ => cua_spaces_contract::host::LOCAL_RUNTIME,
-                },
+                cua_spaces_contract::host::LOCAL_RUNTIME,
                 format!("the {p:?} provider is not configured"),
             ),
             other => Error::Sandbox(other),
@@ -295,16 +294,7 @@ mod tests {
             Error::Stream("x".into()),
             Error::Env(cua_spacesd_client::Error::Unauthenticated(details())),
             Error::Env(cua_spacesd_client::Error::Transport("x".into())),
-            Error::Fleet(cua_fleet::Error::Timeout("x".into())),
-            Error::Fleet(cua_fleet::Error::AdmissionDenied {
-                operation: "create template".into(),
-                status: 403,
-                message: "x".into(),
-            }),
-            Error::Fleet(cua_fleet::Error::CreditExhausted {
-                message: "x".into(),
-                billing_url: "https://x".into(),
-            }),
+            Error::CloudClosed,
             Error::Sandbox(cua_sandbox_core::Error::AmbiguousSandbox {
                 name: "x".into(),
                 candidates: vec![],

@@ -50,8 +50,7 @@ impl std::error::Error for ChannelError {
     }
 }
 
-/// Header carrying the Fleet claim for gateway correlation (same as
-/// `cyclops-sdk`'s `service_request`).
+/// Header carrying the Fleet claim for gateway correlation.
 pub const FLEET_CLAIM_HEADER: &str = "x-cua-fleet-claim";
 
 /// Header carrying the spacesd token when `authorization` is taken by
@@ -483,7 +482,7 @@ impl HeaderInjector {
     }
 }
 
-/// Same validation `cyclops-sdk` applies before sending `X-Cua-Fleet-Claim`.
+/// The validation the Fleet gateway expected of `X-Cua-Fleet-Claim`.
 fn valid_claim(claim: &str) -> bool {
     !claim.is_empty()
         && claim.len() <= 128

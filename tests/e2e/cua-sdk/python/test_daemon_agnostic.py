@@ -73,42 +73,6 @@ async def _plain_local(
     assert name not in [s.name for s in await sbx.list("local")]
 
 
-@pytest.mark.e2e("daemon-agnostic", "hermetic")
-def test_agnostic_fake_fleet_and_direct(fixtures, fake_fleet):
-    async def body():
-        pool = e2e.name("agnostic")
-        fleet = fake_fleet.fleet()
-        await fleet.apply_pool(
-            cua.FleetPoolSpec(name=pool, image="img:plain", services={"server": 8000})
-        )
-        sb = None
-        try:
-            sb = await fake_fleet.sandboxes().create(
-                cua.SandboxCreateOptions(on="cloud", pool=pool, name=f"{pool}-c")
-            )
-            # NOTE: sb.services() reports the create options' default
-            # {"env": 3211}, not the pool's services (SDK bug, see report);
-            # env() correctly consults the bound sandbox's services.
-            resp = await sb.service("server").request("GET", "/status", None, 5_000)
-            assert resp.status == 200
-            with pytest.raises(cua.CuaError.SpacesdNotAvailable):
-                await sb.spacesd(2_000)
-        finally:
-            if sb is not None:
-                await sb.delete()
-            await fleet.delete_pool(pool)
-
-        # Direct URL where no spacesd answers (the fake Fleet API).
-        d = await fake_fleet.sandboxes().connect_url(
-            fixtures["fleet_base_url"], "t", e2e.name("nodriver")
-        )
-        with pytest.raises(cua.CuaError.SpacesdNotAvailable):
-            await d.spacesd(2_000)
-        await d.delete()
-
-    e2e.run_async(body(), timeout=120)
-
-
 @pytest.mark.e2e("daemon-agnostic", "container")
 def test_agnostic_container_ssh_only(local_cua):
     image = e2e.plain_image("ubuntu-server")
@@ -138,54 +102,6 @@ def test_agnostic_qemu_ssh_only(local_cua):
     e2e.run_async(
         _plain_local(local_cua, f"vm:{disk}", 22, b"SSH-2.0", "qemu-ssh", 1024), timeout=900
     )
-
-
-@pytest.mark.e2e("daemon-agnostic", "fleet")
-def test_agnostic_fleet_legacy_image(live_fleet):
-    """The public legacy image has computer-server, not spacesd."""
-
-    async def body():
-        pool = e2e.name("agnostic")
-        fleet = live_fleet.fleet()
-        sb = None
-        try:
-            await fleet.apply_pool(
-                cua.FleetPoolSpec(
-                    name=pool,
-                    image=e2e.LEGACY_FLEET_ROOTFS,
-                    runtime="gvisor",
-                    services={"server": 8000},
-                    cpu=1,
-                    memory_mb=2048,
-                    ttl_seconds_after_created=3600,
-                )
-            )
-            sb = await live_fleet.sandboxes().create(
-                cua.SandboxCreateOptions(
-                    on="cloud",
-                    pool=pool,
-                    name=f"{pool}-c",
-                    ready_timeout_ms=900_000,
-                )
-            )
-            resp = await e2e.poll(
-                "server /status",
-                lambda: _ok(sb.service("server").request("GET", "/status", None, 30_000)),
-                attempts=60,
-                delay=5,
-            )
-            assert resp.status == 200
-            with pytest.raises(cua.CuaError.SpacesdNotAvailable):
-                await sb.spacesd(10_000)
-        finally:
-            if sb is not None:
-                await sb.delete()
-            try:
-                await fleet.delete_pool(pool)
-            except cua.CuaError.NotFound:
-                pass
-
-    e2e.run_async(body(), timeout=1500)
 
 
 def _banner(addr: str, banner: bytes):
@@ -225,8 +141,3 @@ def test_tcp_probe_implies_listening(local_cua):
             await sb.delete()
 
     e2e.run_async(body(), timeout=300)
-
-
-async def _ok(fut):
-    r = await fut
-    return r if r.status == 200 else None

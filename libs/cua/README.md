@@ -9,7 +9,7 @@ sandboxes (`libs/cua-spacesd`). Architecture overview:
  Python / Node / Swift / Kotlin / wasm
         |  UniFFI (cua-sdk is the only #[uniffi::export] crate)
  +------+------------------------------------------------------------+
- | cua-sdk -- cua-sandbox-core -- cua-vmm / cua-image / cua-fleet     |
+ | cua-sdk -- cua-sandbox-core -- cua-vmm / cua-image                 |
  |    |              +-- cua-spacesd-client (client) -- cua-proto (generated)    |
  |    +-- cua-spaces, cua-teleport, cua-daemon (same runtime on a UDS) |
  +------------------------------+-------------------------------------+
@@ -69,10 +69,8 @@ let info = sb.info(); // id, phase, location, services, expires_at_unix, provide
   `sidecars` and `sc` are reserved. Local ones share the sandbox's network
   namespace and need `runtime: Some("runc".into())` where gVisor would run; the cloud runs
   them on gVisor and KubeVirt. `registry_secret` pulls a private image.
-- Cloud `command`, `env` and args run on both runtimes (`processMode: Run`,
-  sent whenever they are set). `build` adds layers locally; cloud remote
-  builds wait on the cloud builder (`cua-fleet` feature `fleet-remote-builds`)
-  and fail with a clear error until then.
+- `build` adds layers locally. Cua Cloud (`"cloud"`) has closed: cloud
+  creates and refs fail with `CuaError::Fleet` saying so.
 - `Image.linux()` and the CLI alias `linux` resolve to
   `ghcr.io/trycua/linux:24.04` (`windows:2022`, `macos:26`) through one
   resolver, `cua_image::resolve`, which picks the variant a backend runs.
@@ -85,7 +83,6 @@ Docs: [Sandboxes](https://cua.ai/docs/cua-sdk).
 |---|---|
 | `cua-proto` | `proto/` codegen: prost messages and tonic clients and servers for `cua.env.v1` and `cua.daemon.v1`. Also the descriptor set, well-known constants (ports, metadata keys, HTTP paths) and the client-stream fallback registry. |
 | `cua-spacesd-client` | Ergonomic spacesd client: reconnect, keepalive, chunked transfer, gRPC vs gRPC-Web, auth, and the Fleet gateway adapter. |
-| `cua-fleet` | Fleet pools, templates, claims and images over `libs/fleet/sdk` (cyclops-sdk, a read-only mirror this crate path-depends on). Auto-managed pools and the one runtime/image pairing check. |
 | `cua-vmm` | Local runtimes: Lume, QEMU and OCI containers (gVisor when available). |
 | `cua-image` | OCI pull and push, containerDisk and rootfs formats, `ImageSpec`, local builder. |
 | `cua-sandbox-core` | One daemon-agnostic `Sandbox` over the `local`, `cloud` and `direct` locations, and the placement model (`on`, `kind`, `runtime`) and user defaults (`cua config`); cua-sandbox-compatible state files (`~/.cua/sandboxes`). |
@@ -96,7 +93,7 @@ Docs: [Sandboxes](https://cua.ai/docs/cua-sdk).
 | `cua-teleport` | Teleport SEND: export providers, keychain read, approval gate, upload over `TeleportService` (`cua teleport push`). See its [README](crates/cua-teleport/README.md). Receive lives in cua-spacesd. |
 | `cua-teleport-bundle` | Effect-free bundle format and per-app layout data shared by sender and receiver. |
 | `cua-host` | Unattended access (`cua host`): installs cua-spacesd as a per-OS service that joins a cua-relay as your account or serves on a direct ip:port, plus the relay machine-directory client. |
-| `cua-auth` | Sign in to Cua (browser PKCE with a loopback redirect, device-code fallback), refresh, and the credential store shared by the CLI, SDK, daemon and Spaces app. |
+| `cua-auth` | Sign in to Cua (browser PKCE with a loopback redirect, device-code fallback), refresh, the credential store shared by the CLI, SDK, daemon and Spaces app, and the account API client (billing status). |
 | `cua-agent-setup` | Agent onboarding: detect AI coding agents, install the bundled skills (`skills/`, synced by `scripts/sync-skills.sh`) and configure the cua MCP server (`cua agents`). See its [README](crates/cua-agent-setup/README.md). |
 | `cua-media-protocol`, `cua-media-transport`, `cua-media-codec` | Media plane shared with cua-spacesd: wire v2 types, framing (RVD2 video, RAU2 audio, QUIC), encoder probing/selection and Opus. |
 | `cua-media-client`, `cua-viewer`, `cua-logging` | Media client state and decode, the native proxy-window viewer, shared file logging. |

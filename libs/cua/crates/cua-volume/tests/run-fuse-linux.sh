@@ -10,7 +10,7 @@
 #   tests/run-fuse-linux.sh
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LIBS="$(cd "$HERE/../../../.." && pwd)" # libs (the workspace reaches libs/fleet)
+LIBS="$(cd "$HERE/../../../.." && pwd)" # libs (the workspace reaches sibling libs)
 IMAGE="${RUST_IMAGE:-rust:1.97.1-bookworm}"
 docker run --rm --memory=6g --memory-swap=6g --cpus=4 \
     --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined \

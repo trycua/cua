@@ -161,19 +161,19 @@ application
 ```
 
 Fleet's Rust SDK contains behavior that would otherwise be repeated in every
-language. For example, [`client.rs`](../../fleet/sdk/src/client.rs) owns client
-configuration and namespace lifecycle locks. [`transport.rs`](../../fleet/sdk/src/transport.rs)
+language. For example, `client.rs` owns client
+configuration and namespace lifecycle locks. `transport.rs`
 owns OAuth token caching and refresh. The pool, claim, and service modules own
 polling, request construction, validation, and lifecycle rules.
 
-The host language supplies an [`HttpClient`](../../fleet/sdk/src/transport.rs)
+The host language supplies an `HttpClient`
 callback. This lets Python, Swift, Kotlin, Ruby, or TypeScript use a suitable
 HTTP implementation while Rust keeps the product behavior. UniFFI therefore
 replaces substantial duplicated implementations, and the shared library is the
 component the language API is meant to call.
 
 Fleet also has a mature checked-in generation path for Python, Kotlin, Swift,
-and Ruby. Its [`generate-sdk-bindings.sh`](../../fleet/scripts/generate-sdk-bindings.sh)
+and Ruby. Its `generate-sdk-bindings.sh`
 script pins UniFFI through the Rust workspace, generates into temporary roots,
 tracks owned files, and checks drift.
 

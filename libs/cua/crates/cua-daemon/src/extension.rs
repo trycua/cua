@@ -19,7 +19,6 @@ use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use cua_fleet::FleetClient;
 use cua_spaces::SpacesBuilder;
 
 /// What an extension sees of the runtime being built.
@@ -30,8 +29,8 @@ pub struct ExtensionContext<'a> {
     /// Whether `home` was set explicitly (tests and fixtures) rather than
     /// defaulted.
     pub home_explicit: bool,
-    /// The Fleet client, when configured.
-    pub fleet: Option<&'a FleetClient>,
+    /// The Cua account API, when this runtime has an account.
+    pub account: Option<&'a cua_auth::account::AccountApi>,
     /// A fixture home standing in for the host's app data
     /// (`RuntimeConfig::teleport_home`): nothing may read the real machine.
     pub teleport_home: Option<&'a Path>,

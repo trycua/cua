@@ -106,12 +106,12 @@ mod s3 {
         }
     }
 
-    /// The Fleet client's bearer (the signed-in account, or client
+    /// The Cua account's bearer (the signed-in account, or client
     /// credentials).
-    pub struct FleetTokens(pub cua_fleet::FleetClient);
+    pub struct AccountTokens(pub cua_auth::account::AccountApi);
 
     #[async_trait::async_trait]
-    impl TokenSource for FleetTokens {
+    impl TokenSource for AccountTokens {
         async fn token(&self) -> Result<String> {
             self.0
                 .access_token(false)
@@ -121,11 +121,12 @@ mod s3 {
     }
 }
 
-/// The backend `config` names, for a runtime whose Fleet client is `fleet`.
+/// The backend `config` names, for a runtime whose Cua account is
+/// `account`.
 pub fn backend(
     config: &DriveConfig,
     home: &Path,
-    fleet: Option<&cua_fleet::FleetClient>,
+    account: Option<&cua_auth::account::AccountApi>,
 ) -> Arc<dyn cua_volume::Backend> {
     let data = cua_volume::state_dir(home).join("data");
     match config.backend {
@@ -153,14 +154,14 @@ pub fn backend(
         #[cfg(feature = "s3")]
         BackendKind::Cloud => {
             use cua_volume::s3::{CloudBackend, CloudVendor, VendRequest};
-            let Some(fleet) = fleet else {
+            let Some(account) = account else {
                 return Arc::new(cua_volume::backend::Unavailable(
                     "the drive is set to cloud but this runtime is not signed in to Cua (`cua auth login`)".into(),
                 ));
             };
             let vendor = CloudVendor::new(
-                &fleet.config().base_url,
-                Arc::new(s3::FleetTokens(fleet.clone())),
+                account.base_url(),
+                Arc::new(s3::AccountTokens(account.clone())),
                 VendRequest {
                     principal: "user".into(),
                     space: None,
@@ -174,7 +175,7 @@ pub fn backend(
         }
         #[cfg(not(feature = "s3"))]
         other => {
-            let _ = fleet;
+            let _ = account;
             Arc::new(cua_volume::backend::Unavailable(format!(
                 "the drive is set to {} but this build has no S3 support; use the `cua` daemon",
                 other.as_str()
@@ -200,11 +201,11 @@ pub fn keys() -> Arc<dyn cua_volume::service::KeyStore> {
 /// audit under `<home>/volume`, and `presence` for widening access.
 pub fn open(
     home: &Path,
-    fleet: Option<&cua_fleet::FleetClient>,
+    account: Option<&cua_auth::account::AccountApi>,
     presence: Arc<dyn Presence>,
 ) -> Drive {
     let backend: Arc<dyn cua_volume::Backend> = match DriveConfig::load(home) {
-        Ok(config) => backend(&config, home, fleet),
+        Ok(config) => backend(&config, home, account),
         Err(e) => {
             tracing::warn!(error = %e, "drive: config unreadable; the drive refuses every call");
             Arc::new(cua_volume::backend::Unavailable(format!(

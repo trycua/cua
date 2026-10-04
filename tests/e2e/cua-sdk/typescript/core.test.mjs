@@ -16,13 +16,6 @@ before(async () => {
 })
 after(async () => fx?.stop())
 
-const fakeFleet = () =>
-  cua.embedded({
-    stateDir: e.tmpState(),
-    fleetFromEnv: false,
-    fleet: cua.FleetSettings.create({ baseUrl: fx.fleet_base_url, token: fx.fleet_token }),
-  })
-
 // ------------------------------------------------------------ direct-connect
 
 async function direct(c, url, token, mock) {
@@ -82,25 +75,6 @@ async function plainLocal(c, image, port, banner, what, memoryMb) {
   assert.ok(!(await sbx.list("local")).some((s) => s.name === nm))
 }
 
-e.e2eTest("daemon-agnostic", "hermetic", "fake Fleet pool without env + direct URL without a driver", async () => {
-  const c = fakeFleet()
-  const fleet = c.fleet()
-  const pool = e.name("agnostic")
-  await e.applyPool(fleet, { name: pool, image: "img:plain", services: { server: 8000 } })
-  let sb
-  try {
-    sb = await c.sandboxes().create(cua.SandboxCreateOptions.create({ on: "cloud", pool, name: `${pool}-c` }))
-    assert.equal((await sb.service("server").request("GET", "/status", undefined, 5000)).status, 200)
-    await assert.rejects(sb.spacesd(2000), (err) => e.isErr(err, "SpacesdNotAvailable"))
-  } finally {
-    await sb?.delete_()
-    await fleet.deletePool(pool)
-  }
-  const d = await c.sandboxes().connectUrl(fx.fleet_base_url, "t", e.name("nodriver"))
-  await assert.rejects(d.spacesd(2000), (err) => e.isErr(err, "SpacesdNotAvailable"))
-  await d.delete_()
-})
-
 e.e2eTest("daemon-agnostic", "container", "plain ubuntu-server (sshd only)", async () => {
   e.requireImage(e.plainImage("ubuntu-server"))
   await plainLocal(e.embeddedLocal(e.tmpState()), `container:${e.plainImage("ubuntu-server")}`, 22, "SSH-2.0", "plain-ssh", 512)
@@ -116,28 +90,6 @@ e.e2eTest("daemon-agnostic", "qemu", "plain ubuntu-server disk under QEMU", asyn
   if (!existsSync(disk)) e.skip(`missing ${disk}`)
   await plainLocal(e.embeddedLocal(e.tmpState()), `vm:${disk}`, 22, "SSH-2.0", "qemu-ssh", 1024)
 }, { timeout: 900_000 })
-
-e.e2eTest("daemon-agnostic", "fleet", "legacy computer-server image on Fleet (no spacesd)", async () => {
-  const c = cua.embedded({ stateDir: e.tmpState() })
-  const fleet = c.fleet()
-  const pool = e.name("agnostic")
-  let sb
-  try {
-    await e.applyPool(fleet, {
-      name: pool, image: e.LEGACY_FLEET_ROOTFS, runtime: "gvisor", services: { server: 8000 },
-      cpu: 1, memoryMb: 2048, ttlSecondsAfterCreated: 3600,
-    })
-    sb = await c.sandboxes().create(cua.SandboxCreateOptions.create({
-      on: "cloud", pool, name: `${pool}-c`, readyTimeoutMs: 900_000,
-    }))
-    await e.poll("server /status", async () => (await sb.service("server").request("GET", "/status", undefined, 30_000)).status === 200,
-      { attempts: 60, delayMs: 5000 })
-    await assert.rejects(sb.spacesd(10_000), (err) => e.isErr(err, "SpacesdNotAvailable"))
-  } finally {
-    await sb?.delete_()
-    await fleet.deletePool(pool).catch(() => {})
-  }
-}, { timeout: 1_500_000 })
 
 // ------------------------------------------------------------ daemon-vs-embedded
 

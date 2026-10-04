@@ -17,7 +17,6 @@ on:
       - "libs/cua/VERSION"
       - "libs/cua/python/pyproject.toml"
       - "libs/cua/typescript/package.json"
-      - "libs/typescript/fleet/package.json"
       - ".github/workflows/docs-page-tests.yml"
   workflow_dispatch:
 

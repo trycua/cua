@@ -41,7 +41,6 @@ cua-vmm = { path = "../cua-vmm" }
 cua-sandbox-core.workspace = true
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 pbjson-types.workspace = true
-cua-fleet.workspace = true
 humantime.workspace = true
 # `cua host …` (unattended access) and `cua spaces ls` (registry + relay machines).
 cua-host.workspace = true
@@ -85,7 +84,6 @@ axum.workspace = true
 cua-host = { workspace = true, features = ["testing"] }
 cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
 cua-spacesd-client = { workspace = true, features = ["testing"] }
-cua-fleet = { workspace = true, features = ["testing"] }
 cua-sandbox-core = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 # Drives the interactive onboarding prompts through a real PTY.

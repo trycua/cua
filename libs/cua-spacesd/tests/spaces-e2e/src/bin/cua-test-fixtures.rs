@@ -8,7 +8,6 @@
 //!
 //! ```json
 //! {"env_url":"http://127.0.0.1:…","env_token":"fixture-token",
-//!  "fleet_base_url":"http://127.0.0.1:…","fleet_token":"fake-fleet-token",
 //!  "registry_mirror":"*=http://127.0.0.1:…",
 //!  "spaces_url":"http://127.0.0.1:…","spaces_token":"…",
 //!  "spaces_guest_home":"/tmp/…","spaces_downloads":"/tmp/…",
@@ -17,9 +16,7 @@
 //! ```
 //!
 //! The env URL is a `MockServer` (simulated processes, in-memory files, a
-//! scripted `/media` socket). The fake Fleet routes every claim's `env`
-//! service to a second `MockServer`, so cloud sandboxes have a spacesd.
-//! `registry_mirror` (a `CUA_REGISTRY_MIRRORS` value) serves the manifests
+//! scripted `/media` socket). `registry_mirror` (a `CUA_REGISTRY_MIRRORS` value) serves the manifests
 //! of `fixtures::sample_registry()`. The Spaces URL is a real cua-spacesd server
 //! core in this process (`cua_spaces_e2e`), reporting Linux like the docs'
 //! Spaces, confined before the line is printed: its child processes see a temp `HOME`, and Downloads and the
@@ -77,17 +74,9 @@ fn refuse_when_stale() {
 async fn main() {
     refuse_when_stale();
     let env = fixtures::start_env(Some(TOKEN), None).await;
-    // Every fake cloud claim's `env` service reaches this MockServer spacesd
-    // (its own instance, token-less: it accepts the token the SDK installs).
-    let claim_spacesd = fixtures::start_env(None, None).await;
     // Image manifests for `CUA_REGISTRY_MIRRORS`: resolving the docs' images
     // needs no network (and no Docker Hub rate limit).
     let registry = fixtures::start_registry_http(fixtures::sample_registry()).await;
-    let fleet = fixtures::start_fleet_http_with_spacesd(
-        cua_fleet::testing::FakeFleet::new(),
-        claim_spacesd.url.clone(),
-    )
-    .await;
     // The docs' Spaces are Linux sandboxes: report Linux on Linux and macOS
     // hosts, so the teleport catalog and plans match what the pages show. A
     // Windows host has no /bin/sh for a Linux Space's shell, so there the
@@ -103,8 +92,6 @@ async fn main() {
     let line = serde_json::json!({
         "env_url": env.url,
         "env_token": TOKEN,
-        "fleet_base_url": fleet.base_url,
-        "fleet_token": fixtures::FAKE_FLEET_TOKEN,
         "registry_mirror": registry.mirror(),
         "spaces_url": driver.url,
         "spaces_token": cua_spaces_e2e::TOKEN,
@@ -141,7 +128,7 @@ async fn main() {
     }
     #[cfg(unix)]
     daemon.stop().await;
-    drop((env, claim_spacesd, registry, fleet, driver, host_home));
+    drop((env, registry, driver, host_home));
 }
 
 /// A cua daemon server core with a test-only Keyvault (see the module docs).

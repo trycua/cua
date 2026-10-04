@@ -27,13 +27,11 @@ orientation aid, not a package registry. Release targets come from
 [`.github/workflows/release-bump-version.yml`](.github/workflows/release-bump-version.yml),
 and test ownership comes from CI plus the component guides.
 
-Two boundaries to keep in mind:
+One boundary to keep in mind:
 
 - `libs/cua-spacesd` is server-only (it runs inside the sandbox). Client
   code, including wire formats and media clients, lives in `libs/cua`, and the
   driver depends on it, never the reverse. CI enforces this.
-- `libs/fleet` is a read-only mirror of the Fleet SDK. `libs/cua` depends on it
-  by path; never edit it here.
 
 ## Common Setup
 

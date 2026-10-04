@@ -191,31 +191,6 @@ jobs:
           ))
           PY
 
-      - name: Exercise example startup boundary without credentials
-        shell: bash
-        run: |
-          set -euo pipefail
-          PYTHONPATH=wheel-smoke python - <<'PY'
-          import os
-          from pathlib import Path
-          import subprocess
-          import sys
-
-          environment = os.environ.copy()
-          environment.pop("CUA_CLIENT_ID", None)
-          environment.pop("CUA_CLIENT_SECRET", None)
-          result = subprocess.run(
-              [sys.executable, "libs/fleet/sdk-bindings/examples/python/live_app_controlled.py"],
-              env=environment,
-              capture_output=True,
-              text=True,
-          )
-          assert result.returncode != 0, result.stdout
-          assert "KeyError: 'CUA_CLIENT_ID'" in result.stderr, result.stderr
-          native_errors = ("ModuleNotFoundError", "cannot open shared object", "Library not loaded")
-          assert not any(error in result.stderr for error in native_errors), result.stderr
-          PY
-
       - uses: actions/upload-artifact@v4
         with:
           name: cua-fleet-${{ matrix.platform }}

@@ -162,7 +162,6 @@
       "generatorScript": "scripts/docs-generators/sandbox.ts",
       "watchPaths": [
         "libs/cua/python/pyproject.toml",
-        "libs/typescript/fleet/package.json",
         "libs/cua-driver/hyprland-plugin/packaging/release/profiles/omarchy-stable-20260910.json",
         "scripts/docs-generators/sandbox-facts.json",
         "scripts/docs-generators/sandbox-facts.schema.json",
@@ -546,7 +545,6 @@
       "generatorScript": "scripts/docs-generators/rust-crates.ts",
       "watchPaths": [
         "libs/cua/crates/cua-spacesd-client/src/**",
-        "libs/cua/crates/cua-fleet/src/**",
         "libs/cua/crates/cua-sandbox-core/src/**",
         "libs/cua/crates/cua-spaces/src/**",
         "libs/cua/crates/*/Cargo.toml",
@@ -602,11 +600,6 @@
         {
           "type": "reference",
           "outputFile": "cua-spacesd-client.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "cua-fleet.mdx",
           "extractCommand": null
         },
         {
@@ -724,103 +717,6 @@
       ],
       "enabled": true,
       "notes": "Renders the cua.env.v1 (cua-spacesd) and cua.daemon.v1 (cua daemon) contracts from a buf FileDescriptorSet (JSON, with SourceCodeInfo). gRPC-Web fallbacks, metadata keys and the protocol revision come from cua-proto's lib.rs. Needs buf on PATH (CI pins 1.73.0) or BUF=/path/to/buf."
-    },
-    "fleet": {
-      "name": "Cua Fleets (REST resources, SDK handle, Terraform)",
-      "language": "rust",
-      "sourcePath": "libs/cua/crates/cua-fleet",
-      "docsOutputPath": "docs/content/docs/fleets/reference",
-      "generatorScript": "scripts/docs-generators/fleet.ts",
-      "watchPaths": [
-        "libs/cua/crates/cua-fleet/**",
-        "libs/cua/crates/cua-image/schema/**",
-        "libs/cua/crates/cua-sdk/src/native/fleet.rs",
-        "libs/cua/crates/cua-daemon/src/lib.rs",
-        "libs/cua/VERSION",
-        "libs/fleet/sdk/src/**",
-        "libs/fleet/sdk-schema/src/**",
-        "libs/fleet/backend/docs/swagger.json",
-        "libs/fleet/terraform-provider-fleets/main.go",
-        "libs/fleet/terraform-provider-fleets/docs/**",
-        "libs/fleet/terraform-provider-fleets/internal/provider/**",
-        "docs/content/docs/cua-sdk/reference/api/fleet.mdx",
-        "docs/content/docs/fleets/guides/**",
-        "scripts/docs-generators/fleet-descriptions.json",
-        "scripts/docs-generators/fleet.test.ts",
-        "scripts/docs-generators/lib/**"
-      ],
-      "buildCommand": "cargo run -q --locked -p cua-fleet --example fleet-docs-dump",
-      "buildDirectory": "libs/cua",
-      "extractionMethod": "source-and-dump",
-      "outputs": [
-        {
-          "type": "reference",
-          "outputFile": "index.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "pool.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "template.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "claim.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "sandbox.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "secret.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "service-url.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "image.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "namespace.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "api-key.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "terraform.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "reference",
-          "outputFile": "errors.mdx",
-          "extractCommand": null
-        },
-        {
-          "type": "nav",
-          "outputFile": "meta.json",
-          "extractCommand": null
-        }
-      ],
-      "enabled": true,
-      "notes": "No OpenAPI covers the Fleet resources (Kubernetes custom resources behind the gateway's /api/k8s proxy), so each fact comes from the nearest authoritative artifact: object fields from the osgym.cua.ai CRDs (cyclops-sdk-schema, via the cua-fleet fleet-docs-dump example) and cua-image's checked-in Image schema; REST routes, methods and statuses from the Fleet Rust client (libs/fleet/sdk/src); other endpoints and error responses from the gateway swagger; SDK rows from the UniFFI Fleet handle, linked to the Cua SDK reference; Terraform from the provider's generated schema, CRD mapping and registry docs; the Terraform example from the tested guide block main-tf. fleet-descriptions.json holds public descriptions for fields whose read-only source text describes Fleet internals. FLEET_DOCS_DUMP=<file> skips the cargo build."
     },
     "spaces": {
       "name": "Cua Spaces (MCP contract)",

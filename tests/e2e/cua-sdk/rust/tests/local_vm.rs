@@ -172,9 +172,9 @@ async fn local_lume_reference_image() {
 
 /// The canonical containerDisk through `Sandboxes.create(local)` with no
 /// token and no manual steps: the SDK mints a per-sandbox token, cua-vmm
-/// delivers it through the NoCloud seed as the Fleet claim-token contract
-/// (root 0600 `/run/cua/env-token` on a private tmpfs, spacesd in
-/// await-token-file mode, token-sync mirroring it for the driver's user),
+/// delivers it through the NoCloud seed (root 0600 `/run/cua/env-token` on a
+/// private tmpfs, spacesd in await-token-file mode, token-sync mirroring it
+/// for the driver's user),
 /// and `sb.spacesd()` runs a command and takes a screenshot.
 /// `CUA_E2E_QEMU_CANONICAL_IMAGE` overrides the image.
 #[tokio::test]
@@ -225,8 +225,8 @@ async fn local_qemu_canonical_disk_gets_an_env_token() {
                 let env = wait_env(&sb, 600).await?;
                 let summary = env_smoke(&env, true, false).await?;
                 eprintln!("canonical disk env smoke: {summary}");
-                // The Fleet contract inside the guest: a private mount at
-                // /run/cua and the driver user's 0600 copy.
+                // Inside the guest: a private mount at /run/cua and the
+                // driver user's 0600 copy.
                 let mount = sh_ok(&env, "findmnt -no FSTYPE,OPTIONS /run/cua").await?;
                 assert!(mount.starts_with("tmpfs"), "/run/cua: {mount}");
                 let copy = sh_ok(&env, "stat -c '%U %a' /run/cua-env/env-token").await?;

@@ -2810,19 +2810,19 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_func_locations() != 62174.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_func_fleet_check_runtime() != 18168.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_func_fleet_check_runtime() != 42391.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_func_fleet_generate_claim_token() != 46314.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_func_fleet_image_variant() != 30093.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_func_fleet_image_variant() != 35019.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_func_fleet_resolve_runtime() != 15632.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_func_fleet_resolve_runtime() != 9436.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_func_fleet_size_limits() != 53900.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_func_fleet_size_limits() != 19571.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_func_canonical_image() != 8955.toShort()) {
@@ -3068,7 +3068,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_cua_auth() != 19106.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_cua_fleet() != 40955.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_cua_fleet() != 64152.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_cua_info() != 11159.toShort()) {
@@ -3080,7 +3080,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_cua_mode() != 63626.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_cua_sandboxes() != 8394.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_cua_sandboxes() != 4520.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_cua_shutdown_daemon() != 57559.toShort()) {
@@ -3089,106 +3089,106 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_cua_spaces() != 35262.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_cua_spacesd() != 28670.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_cua_spacesd() != 62689.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_acquire() != 16535.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_acquire() != 39166.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_acquire_with() != 8432.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_acquire_with() != 1499.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_apply() != 23134.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_apply() != 41633.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_apply_pool() != 43781.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_apply_pool() != 3527.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_apply_pool_template() != 43651.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_apply_pool_template() != 55758.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_attach_claim() != 27491.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_attach_claim() != 4432.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_base_url() != 7166.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_base_url() != 25728.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_billing_status() != 50128.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_billing_status() != 25349.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_check_pool_spec() != 58799.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_check_pool_spec() != 33863.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_claim() != 33116.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_claim() != 10574.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_create_image() != 53686.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_create_image() != 41649.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url() != 1809.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url() != 12383.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_delete_image() != 54232.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_delete_image() != 24865.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_delete_pool() != 41031.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_delete_pool() != 32232.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_fleet_ephemeral_pool_name() != 51788.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_export_pool() != 36800.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_export_pool() != 48067.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_get_image() != 26535.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_get_image() != 64152.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_get_pool() != 27007.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_get_pool() != 65404.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_keep_alive() != 21850.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_keep_alive() != 28579.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_list_claims() != 30494.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_list_claims() != 13959.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_list_images() != 5380.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_list_images() != 28202.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_list_pools() != 19148.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_list_pools() != 9257.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_list_templates() != 27819.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_list_templates() != 48624.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_pool_image_info() != 2800.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_pool_image_info() != 3932.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_pools() != 34094.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_pools() != 32741.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_release() != 34855.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_release() != 21293.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_service_url() != 49169.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_service_url() != 15288.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas() != 32806.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas() != 36702.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_usage_pricing() != 25347.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_usage_pricing() != 20174.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready() != 64422.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready() != 9597.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleetpools_gc() != 4829.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleetpools_gc() != 22670.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleetpools_gc_pools() != 3481.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleetpools_gc_pools() != 4009.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_fleetpools_list() != 61403.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_fleetpools_list() != 24325.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_devices_approve() != 49147.toShort()) {
@@ -7229,9 +7229,9 @@ public interface CuaInterface {
     fun `auth`(): Auth
 
     /**
-     * Fleet pools, templates, claims and images. Always talks to Fleet
-     * from this process with this SDK's credentials (in daemon mode, from
-     * the environment).
+     * Fleet (Cua Cloud, closed: its calls fail with that message) and the
+     * account's billing, with this SDK's account credentials (in daemon
+     * mode, from this process's settings and environment).
      */
     fun `fleet`(): Fleet
 
@@ -7252,7 +7252,7 @@ public interface CuaInterface {
     fun `mode`(): CuaMode
 
     /**
-     * Sandboxes (Fleet, local, direct).
+     * Sandboxes (local, direct, providers).
      */
     fun `sandboxes`(): Sandboxes
 
@@ -7267,8 +7267,8 @@ public interface CuaInterface {
     fun `spaces`(): Spaces
 
     /**
-     * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
-     * Fleet service URL or a relay URL) without a sandbox.
+     * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+     * relay URL) without a sandbox.
      */
     suspend fun `spacesd`(`url`: kotlin.String, `token`: kotlin.String?): SpacesdClient
 
@@ -7412,9 +7412,9 @@ open class Cua: Disposable, AutoCloseable, CuaInterface
 
 
     /**
-     * Fleet pools, templates, claims and images. Always talks to Fleet
-     * from this process with this SDK's credentials (in daemon mode, from
-     * the environment).
+     * Fleet (Cua Cloud, closed: its calls fail with that message) and the
+     * account's billing, with this SDK's account credentials (in daemon
+     * mode, from this process's settings and environment).
      */
     @Throws(CuaException::class)override fun `fleet`(): Fleet {
             return FfiConverterTypeFleet.lift(
@@ -7488,7 +7488,7 @@ open class Cua: Disposable, AutoCloseable, CuaInterface
 
 
     /**
-     * Sandboxes (Fleet, local, direct).
+     * Sandboxes (local, direct, providers).
      */override fun `sandboxes`(): Sandboxes {
             return FfiConverterTypeSandboxes.lift(
     callWithHandle {
@@ -7545,8 +7545,8 @@ open class Cua: Disposable, AutoCloseable, CuaInterface
 
 
     /**
-     * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
-     * Fleet service URL or a relay URL) without a sandbox.
+     * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+     * relay URL) without a sandbox.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8280,88 +8280,79 @@ public object FfiConverterTypeDevices: FfiConverter<Devices, Long> {
 
 
 /**
- * Fleet control plane.
+ * Fleet control plane (Cua Cloud, closed) and the account's billing.
  */
 public interface FleetInterface {
 
     /**
-     * Claims a sandbox from a pool and waits for it to bind. A claim named
-     * `name` that already exists is reattached.
+     * Claims a sandbox from a pool. Cua Cloud has closed.
      */
     suspend fun `acquire`(`pool`: kotlin.String, `name`: kotlin.String?, `ttlSeconds`: kotlin.UInt?): FleetSandbox
 
     /**
-     * [`Fleet::acquire`] with claim options, including a per-claim env
-     * token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
-     * releases the claim).
+     * Claims a sandbox with options. Cua Cloud has closed.
      */
     suspend fun `acquireWith`(`pool`: kotlin.String, `options`: FleetClaimOptions): FleetSandbox
 
     /**
-     * Reconciles pool `name` (= namespace = template) to run `spec` with
-     * `options`: the one pool writer (rolls a new pool back if the
-     * template fails). The image is pinned to the variant the runtime
-     * runs; `spec.registry_secret` is written as the pool's pull Secret.
+     * Reconciles a pool. Cua Cloud has closed.
      */
     suspend fun `apply`(`name`: kotlin.String, `spec`: SandboxSpec, `options`: PoolOptions): FleetPool
 
     /**
-     * Deprecated: use [`Fleet::apply`]. Reconciles a pool and its template
-     * from the flat spec (converted to [`SandboxSpec`] + [`PoolOptions`]).
+     * Deprecated pool writer. Cua Cloud has closed.
      */
     suspend fun `applyPool`(`spec`: FleetPoolSpec): FleetPool
 
     /**
-     * Lays the set fields of `spec` over pool `pool`'s template and writes
-     * it (the pool's capacity is kept; a no-op when nothing differs).
+     * Writes a spec over a pool's template. Cua Cloud has closed.
      */
     suspend fun `applyPoolTemplate`(`pool`: kotlin.String, `spec`: SandboxSpec)
 
     /**
-     * Waits for a named claim to bind.
+     * Waits for a named claim to bind. Cua Cloud has closed.
      */
     suspend fun `attachClaim`(`namespace`: kotlin.String, `name`: kotlin.String): FleetSandbox
 
     /**
-     * Fleet API base URL.
+     * The Cua account API base URL.
      */
     fun `baseUrl`(): kotlin.String
 
     /**
-     * The account's Cua Cloud billing: its credit, card and the website
-     * billing page. A Fleet without billing answers `billing_enabled:
+     * The account's billing: its credit, card and the website billing
+     * page. An account API without billing answers `billing_enabled:
      * false`.
      */
     suspend fun `billingStatus`(): FleetBillingStatus
 
     /**
-     * Compares the set fields of `spec` with pool `pool`'s template:
-     * `PoolSpecMismatch` (with a readable diff) when they differ.
+     * Compares a spec with a pool's template. Cua Cloud has closed.
      */
     suspend fun `checkPoolSpec`(`pool`: kotlin.String, `spec`: SandboxSpec)
 
     /**
-     * Creates a claim without waiting.
+     * Creates a claim. Cua Cloud has closed.
      */
     suspend fun `claim`(`pool`: kotlin.String, `name`: kotlin.String?, `ttlSeconds`: kotlin.UInt?): FleetClaim
 
     /**
-     * Creates an image resource (remote build) from a JSON manifest.
+     * Creates an image resource. Cua Cloud has closed.
      */
     suspend fun `createImage`(`namespace`: kotlin.String, `manifestJson`: kotlin.String): kotlin.String
 
     /**
-     * Mints a signed, shareable service URL.
+     * Mints a signed service URL. Cua Cloud has closed.
      */
     suspend fun `createSignedServiceUrl`(`sandbox`: FleetSandbox, `service`: kotlin.String, `label`: kotlin.String?, `expiresInSeconds`: kotlin.UInt): FleetSignedUrl
 
     /**
-     * Deletes an image resource.
+     * Deletes an image resource. Cua Cloud has closed.
      */
     suspend fun `deleteImage`(`namespace`: kotlin.String, `name`: kotlin.String)
 
     /**
-     * Deletes a pool, its namespace and its same-named template.
+     * Deletes a pool. Cua Cloud has closed.
      */
     suspend fun `deletePool`(`name`: kotlin.String)
 
@@ -8371,83 +8362,77 @@ public interface FleetInterface {
     fun `ephemeralPoolName`(): kotlin.String
 
     /**
-     * Reads pool `name` back as the shared model, with its `fleets_pool`
-     * Terraform block.
+     * Reads a pool back. Cua Cloud has closed.
      */
     suspend fun `exportPool`(`name`: kotlin.String): FleetPoolExport
 
     /**
-     * Gets an image resource (JSON).
+     * Gets an image resource. Cua Cloud has closed.
      */
     suspend fun `getImage`(`namespace`: kotlin.String, `name`: kotlin.String): kotlin.String
 
     /**
-     * Looks up a pool.
+     * Looks up a pool. Cua Cloud has closed.
      */
     suspend fun `getPool`(`name`: kotlin.String): FleetPool
 
     /**
-     * Extends a claim's lease; returns the RFC 3339 shutdown time.
+     * Extends a claim's lease. Cua Cloud has closed.
      */
     suspend fun `keepAlive`(`namespace`: kotlin.String, `name`: kotlin.String, `seconds`: kotlin.UInt): kotlin.String
 
     /**
-     * Lists claims in a namespace.
+     * Lists claims. Cua Cloud has closed.
      */
     suspend fun `listClaims`(`namespace`: kotlin.String): List<FleetClaim>
 
     /**
-     * Lists image resources (JSON) in a namespace.
+     * Lists image resources. Cua Cloud has closed.
      */
     suspend fun `listImages`(`namespace`: kotlin.String): List<kotlin.String>
 
     /**
-     * Lists pools in a namespace.
+     * Lists pools. Cua Cloud has closed.
      */
     suspend fun `listPools`(`namespace`: kotlin.String): List<FleetPool>
 
     /**
-     * Lists templates in a namespace as JSON resources.
+     * Lists templates. Cua Cloud has closed.
      */
     suspend fun `listTemplates`(`namespace`: kotlin.String): List<kotlin.String>
 
     /**
-     * The image pool `name`'s template runs, as a claim on it reports it
-     * (`Sandbox.image_info`): pinned by the resolver (cached per pool), or
-     * the template reference with empty `pinned_ref`/`digest` when the
-     * registry cannot be read. `None` when the template names no image.
+     * The image a pool's template runs. Cua Cloud has closed.
      */
     suspend fun `poolImageInfo`(`name`: kotlin.String): ImageInfo?
 
     /**
-     * Managed pools (list, gc).
+     * Managed pools (Cua Cloud, closed).
      */
     fun `pools`(): FleetPools
 
     /**
-     * Releases a claim (missing claims are fine).
+     * Releases a claim. Cua Cloud has closed.
      */
     suspend fun `release`(`namespace`: kotlin.String, `name`: kotlin.String)
 
     /**
-     * The gateway URL of a sandbox service (needs the Fleet bearer).
+     * The gateway URL of a sandbox service. Cua Cloud has closed.
      */
     fun `serviceUrl`(`sandbox`: FleetSandbox, `service`: kotlin.String): kotlin.String
 
     /**
-     * Sets warm replicas (0 suspends).
+     * Sets warm replicas. Cua Cloud has closed.
      */
     suspend fun `setPoolReplicas`(`name`: kotlin.String, `replicas`: kotlin.UInt): FleetPool
 
     /**
-     * This account's Cua Cloud rates (`GET /api/config`), reused for five
-     * minutes. `None` when Fleet answers without rates: show no price
-     * rather than a guess.
+     * This account's Cua Cloud rates. Cua Cloud has closed: `None`.
      */
     suspend fun `usagePricing`(): FleetUsagePricing?
 
     /**
-     * Waits for at least one ready replica.
+     * Waits for a ready replica. Cua Cloud has closed.
      */
     suspend fun `waitPoolReady`(`name`: kotlin.String, `timeoutMs`: kotlin.UInt): FleetPool
 
@@ -8455,7 +8440,7 @@ public interface FleetInterface {
 }
 
 /**
- * Fleet control plane.
+ * Fleet control plane (Cua Cloud, closed) and the account's billing.
  */
 open class Fleet: Disposable, AutoCloseable, FleetInterface
 {
@@ -8555,8 +8540,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Claims a sandbox from a pool and waits for it to bind. A claim named
-     * `name` that already exists is reattached.
+     * Claims a sandbox from a pool. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8580,9 +8564,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * [`Fleet::acquire`] with claim options, including a per-claim env
-     * token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
-     * releases the claim).
+     * Claims a sandbox with options. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8606,10 +8588,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Reconciles pool `name` (= namespace = template) to run `spec` with
-     * `options`: the one pool writer (rolls a new pool back if the
-     * template fails). The image is pinned to the variant the runtime
-     * runs; `spec.registry_secret` is written as the pool's pull Secret.
+     * Reconciles a pool. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8633,8 +8612,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Deprecated: use [`Fleet::apply`]. Reconciles a pool and its template
-     * from the flat spec (converted to [`SandboxSpec`] + [`PoolOptions`]).
+     * Deprecated pool writer. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8658,8 +8636,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Lays the set fields of `spec` over pool `pool`'s template and writes
-     * it (the pool's capacity is kept; a no-op when nothing differs).
+     * Writes a spec over a pool's template. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8684,7 +8661,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Waits for a named claim to bind.
+     * Waits for a named claim to bind. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8708,7 +8685,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Fleet API base URL.
+     * The Cua account API base URL.
      */override fun `baseUrl`(): kotlin.String {
             return FfiConverterString.lift(
     callWithHandle {
@@ -8724,8 +8701,8 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * The account's Cua Cloud billing: its credit, card and the website
-     * billing page. A Fleet without billing answers `billing_enabled:
+     * The account's billing: its credit, card and the website billing
+     * page. An account API without billing answers `billing_enabled:
      * false`.
      */
     @Throws(CuaException::class)
@@ -8750,8 +8727,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Compares the set fields of `spec` with pool `pool`'s template:
-     * `PoolSpecMismatch` (with a readable diff) when they differ.
+     * Compares a spec with a pool's template. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8776,7 +8752,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Creates a claim without waiting.
+     * Creates a claim. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8800,7 +8776,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Creates an image resource (remote build) from a JSON manifest.
+     * Creates an image resource. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8824,7 +8800,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Mints a signed, shareable service URL.
+     * Mints a signed service URL. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8848,7 +8824,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Deletes an image resource.
+     * Deletes an image resource. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8873,7 +8849,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Deletes a pool, its namespace and its same-named template.
+     * Deletes a pool. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8914,8 +8890,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Reads pool `name` back as the shared model, with its `fleets_pool`
-     * Terraform block.
+     * Reads a pool back. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8939,7 +8914,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Gets an image resource (JSON).
+     * Gets an image resource. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8963,7 +8938,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Looks up a pool.
+     * Looks up a pool. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -8987,7 +8962,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Extends a claim's lease; returns the RFC 3339 shutdown time.
+     * Extends a claim's lease. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -9011,7 +8986,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Lists claims in a namespace.
+     * Lists claims. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -9035,7 +9010,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Lists image resources (JSON) in a namespace.
+     * Lists image resources. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -9059,7 +9034,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Lists pools in a namespace.
+     * Lists pools. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -9083,7 +9058,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Lists templates in a namespace as JSON resources.
+     * Lists templates. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -9107,10 +9082,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * The image pool `name`'s template runs, as a claim on it reports it
-     * (`Sandbox.image_info`): pinned by the resolver (cached per pool), or
-     * the template reference with empty `pinned_ref`/`digest` when the
-     * registry cannot be read. `None` when the template names no image.
+     * The image a pool's template runs. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -9134,7 +9106,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Managed pools (list, gc).
+     * Managed pools (Cua Cloud, closed).
      */override fun `pools`(): FleetPools {
             return FfiConverterTypeFleetPools.lift(
     callWithHandle {
@@ -9150,7 +9122,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Releases a claim (missing claims are fine).
+     * Releases a claim. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -9175,7 +9147,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * The gateway URL of a sandbox service (needs the Fleet bearer).
+     * The gateway URL of a sandbox service. Cua Cloud has closed.
      */
     @Throws(CuaException::class)override fun `serviceUrl`(`sandbox`: FleetSandbox, `service`: kotlin.String): kotlin.String {
             return FfiConverterString.lift(
@@ -9192,7 +9164,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Sets warm replicas (0 suspends).
+     * Sets warm replicas. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -9216,9 +9188,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * This account's Cua Cloud rates (`GET /api/config`), reused for five
-     * minutes. `None` when Fleet answers without rates: show no price
-     * rather than a guess.
+     * This account's Cua Cloud rates. Cua Cloud has closed: `None`.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -9242,7 +9212,7 @@ open class Fleet: Disposable, AutoCloseable, FleetInterface
 
 
     /**
-     * Waits for at least one ready replica.
+     * Waits for a ready replica. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -9399,27 +9369,22 @@ public object FfiConverterTypeFleet: FfiConverter<Fleet, Long> {
 
 
 /**
- * Managed pools: what `Sandboxes.create` without a pool uses.
+ * Managed pools (Cua Cloud, closed).
  */
 public interface FleetPoolsInterface {
 
     /**
-     * Deletes managed pools idle for `idle_seconds` (default 1800) and
-     * stuck Pending/Failed managed claims past their TTL.
+     * Deletes idle managed pools. Cua Cloud has closed.
      */
     suspend fun `gc`(`idleSeconds`: kotlin.UInt?): FleetGcReport
 
     /**
-     * [`FleetPools::gc`] restricted to the named managed pools: each is
-     * deleted (with its namespace) once it has no claims and has been idle
-     * for `idle_seconds` (default 0, i.e. now). Pools with live claims are
-     * kept, so a pool another process is using survives. Tests use this to
-     * remove the pools they created.
+     * Deletes the named managed pools. Cua Cloud has closed.
      */
     suspend fun `gcPools`(`names`: List<kotlin.String>, `idleSeconds`: kotlin.UInt?): FleetGcReport
 
     /**
-     * This account's managed pools.
+     * This account's managed pools. Cua Cloud has closed.
      */
     suspend fun `list`(): List<FleetManagedPool>
 
@@ -9427,7 +9392,7 @@ public interface FleetPoolsInterface {
 }
 
 /**
- * Managed pools: what `Sandboxes.create` without a pool uses.
+ * Managed pools (Cua Cloud, closed).
  */
 open class FleetPools: Disposable, AutoCloseable, FleetPoolsInterface
 {
@@ -9527,8 +9492,7 @@ open class FleetPools: Disposable, AutoCloseable, FleetPoolsInterface
 
 
     /**
-     * Deletes managed pools idle for `idle_seconds` (default 1800) and
-     * stuck Pending/Failed managed claims past their TTL.
+     * Deletes idle managed pools. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -9552,11 +9516,7 @@ open class FleetPools: Disposable, AutoCloseable, FleetPoolsInterface
 
 
     /**
-     * [`FleetPools::gc`] restricted to the named managed pools: each is
-     * deleted (with its namespace) once it has no claims and has been idle
-     * for `idle_seconds` (default 0, i.e. now). Pools with live claims are
-     * kept, so a pool another process is using survives. Tests use this to
-     * remove the pools they created.
+     * Deletes the named managed pools. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -9580,7 +9540,7 @@ open class FleetPools: Disposable, AutoCloseable, FleetPoolsInterface
 
 
     /**
-     * This account's managed pools.
+     * This account's managed pools. Cua Cloud has closed.
      */
     @Throws(CuaException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
@@ -26271,8 +26231,8 @@ data class CuaConfig (
     var `fleetFromSession`: kotlin.Boolean = false
     ,
     /**
-     * Where managed Fleet pools keep their name cache and machine-wide GC
-     * lock (default: `$CUA_HOME` or `~/.cua`, or next to `state_dir`).
+     * Unused: managed Fleet pools (Cua Cloud, closed) kept their name
+     * cache here.
      */
     var `fleetPoolHome`: kotlin.String? = null
 
@@ -29260,8 +29220,9 @@ public object FfiConverterTypeFleetSandbox: FfiConverterRustBuffer<FleetSandbox>
 
 
 /**
- * Fleet credentials and endpoints. Unset fields fall back to the
- * environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
+ * Cua account credentials and endpoints (Cua Cloud, closed, used them for
+ * sandboxes; the account's billing still does). Unset fields fall back to
+ * the environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
  * `CUA_CLIENT_SECRET`, `FLEETS_TOKEN`) when `CuaConfig.fleet_from_env`.
  */
 data class FleetSettings (
@@ -29380,9 +29341,7 @@ public object FfiConverterTypeFleetSignedUrl: FfiConverterRustBuffer<FleetSigned
 
 
 /**
- * The everyday sizes of a cloud sandbox, which the Cua apps offer
- * (`cua_fleet::CLOUD_DEFAULT_RANGE_CPUS`,
- * `cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB`).
+ * The everyday sizes of a cloud sandbox, which the Cua apps offered.
  */
 data class FleetSizeLimits (
     /**
@@ -43808,10 +43767,8 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
 
 
         /**
-         * [`fleet_resolve_runtime`] with the image variant already known
-         * (`variant` as [`fleet_image_variant`] returns it); `None` means the
-         * manifest could not be read (an unset runtime then falls back to the
-         * reference). Pure (no registry read).
+         * [`fleet_resolve_runtime`] with the image variant already known. Cua
+         * Cloud has closed.
          */
     @Throws(CuaException::class) fun `fleetCheckRuntime`(`runtime`: kotlin.String?, `image`: kotlin.String, `variant`: kotlin.String?): kotlin.String {
             return FfiConverterString.lift(
@@ -43838,10 +43795,8 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
 
 
         /**
-         * The variant of an image from its registry documents (`manifest`: an
-         * image manifest or index, `config`: the platform manifest's config blob):
-         * `container-disk`, `rootfs` or `other`. Pure (no registry read). A macOS
-         * image raises `Unsupported`.
+         * The Fleet variant of an image from its registry documents. Cua Cloud
+         * has closed.
          */
     @Throws(CuaException::class) fun `fleetImageVariant`(`manifest`: kotlin.String, `config`: kotlin.String?): kotlin.String {
             return FfiConverterString.lift(
@@ -43855,19 +43810,7 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
 
 
         /**
-         * The Fleet runtime for `image`: `runtime` (`kubevirt`, `gvisor`) when
-         * given, else the one the image needs. What the image is
-         * comes from its registry manifest (read with docker, ghcr and ECR
-         * credentials): a KubeVirt containerDisk (a `/disk/disk.img` layer or
-         * trycua containerDisk media types) runs on `kubevirt`, a container rootfs
-         * on `gvisor`. When the manifest cannot be read and no runtime is given,
-         * the runtime is guessed from the reference with a warning (a `docker-`
-         * tag runs on `gvisor`, anything else on `kubevirt`). Raises
-         * `InvalidArgument` only for a runtime the image cannot run on, and
-         * `Unsupported` for a macOS image or runtime `macos` (Fleet does not offer
-         * macOS in this SDK). Blocks
-         * while the registry is read (at most 20 s; `CUA_FLEET_IMAGE_INSPECT=0`
-         * skips it). The one copy of this rule; cua-sandbox calls it.
+         * The Fleet runtime for `image`. Cua Cloud has closed.
          */
     @Throws(CuaException::class) fun `fleetResolveRuntime`(`runtime`: kotlin.String?, `image`: kotlin.String): kotlin.String {
             return FfiConverterString.lift(
@@ -43882,9 +43825,7 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
 
         /**
          * The everyday sizes of a cloud sandbox (1-8 vCPUs, 1-32 GiB), which the
-         * Cua apps offer. The SDK does not enforce them: it accepts up to 64 vCPUs
-         * and 512 MiB to 512 GiB, and Fleet decides what an account may run (a
-         * size over the account's limits fails with `FleetAdmissionDenied`).
+         * Cua apps offered.
          */ fun `fleetSizeLimits`(): FleetSizeLimits {
             return FfiConverterTypeFleetSizeLimits.lift(
     uniffiRustCall() { _status ->

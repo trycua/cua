@@ -83,8 +83,8 @@ def test_listing_and_lookup_use_refs(tmp_path):
 
     async def go():
         sbx = c.sandboxes()
-        # A cloud ref needs Fleet; a bare name searches what is configured.
-        with pytest.raises(cua.CuaError.ProviderNotConfigured):
+        # Cua Cloud has closed; a bare name searches what is configured.
+        with pytest.raises(cua.CuaError.Fleet):
             await sbx.get("cloud:nope")
         with pytest.raises(cua.CuaError.NotFound):
             await sbx.get("nope")

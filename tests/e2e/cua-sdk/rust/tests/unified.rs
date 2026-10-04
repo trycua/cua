@@ -7,10 +7,7 @@ use std::net::TcpStream;
 use std::sync::Arc;
 use std::time::Duration;
 
-use cua_sdk_e2e::cua::{
-    CloudOptions, HttpHeader, ReadinessProbe, Sandbox, SandboxCreateOptions,
-    SandboxPhase,
-};
+use cua_sdk_e2e::cua::{HttpHeader, ReadinessProbe, Sandbox, SandboxCreateOptions, SandboxPhase};
 use cua_sdk_e2e::*;
 
 const MIN: Duration = Duration::from_secs(60);
@@ -165,74 +162,16 @@ async fn mcp_through_service(sb: &Arc<Sandbox>, env_expected: bool) -> Res {
 }
 
 #[tokio::test]
-async fn unified_api_fake_fleet_and_daemon_public_url() {
+async fn unified_api_daemon_public_url() {
     e2e(
         "unified-sandbox-api",
         "hermetic",
-        "fake Fleet command/services/URLs + daemon public URL",
+        "daemon public URL of a direct spacesd",
         5 * MIN,
         None,
         || async {
             let fx = Fixtures::start()?;
-            let c = embedded_fleet(Some((&fx.fleet_base_url, &fx.fleet_token)));
-            let sb = c
-                .sandboxes()
-                .create(SandboxCreateOptions {
-                    image: "registry.example/mcp:docker-e2e".into(),
-                    command: Some(vec!["python".into(), "/srv.py".into()]),
-                    services: HashMap::from([("mcp".to_string(), 8765u16)]),
-                    runtime: Some("gvisor".into()),
-                    cloud: Some(CloudOptions {
-                        max_pool_size: Some(2),
-                        ..Default::default()
-                    }),
-                    ready_timeout_ms: Some(120_000),
-                    ..SandboxCreateOptions::new("cloud", "")
-                })
-                .await?;
-            let pool = sb
-                .info()
-                .provider_details
-                .get("pool")
-                .cloned()
-                .unwrap_or_default();
-            let res = async {
-                let info = sb.info();
-                assert_eq!(
-                    (info.location.as_str(), info.phase),
-                    ("cloud", SandboxPhase::Ready)
-                );
-                assert!(pool.starts_with("cua-auto-"), "{pool}");
-                let url = sb.service("mcp".into())?.url().await?;
-                assert!(url.starts_with("https://signed.fleet.test/"), "{url}");
-                let p = sb.public_url("mcp".into(), Some(600), None).await?;
-                assert!(p.url.starts_with("https://signed.fleet.test/"));
-                assert!(p.provider_details.contains_key("claim"));
-                let r = sb
-                    .service("mcp".into())?
-                    .request(
-                        "POST".into(),
-                        "/mcp".into(),
-                        Some(b"{}".to_vec()),
-                        Some(30_000),
-                        Some(vec![hdr("accept", ACCEPT), hdr("mcp-session-id", "s")]),
-                    )
-                    .await?;
-                assert_eq!(r.status, 200);
-                let fwd = sb.forward(8765).await?;
-                let (status, _, body) = http("GET", &format!("{}/x", fwd.url().unwrap()), &[], "")?;
-                fwd.close().await?;
-                assert_eq!(status, 200);
-                assert!(body.contains("-mcp/x"), "{body}");
-                Res::Ok(())
-            }
-            .await;
-            sb.delete().await?;
-            if !pool.is_empty() {
-                c.fleet()?.pools().gc_pools(vec![pool], Some(0)).await?;
-            }
-            res?;
-
+            let c = embedded_local();
             // Local public URL of a direct spacesd, served by the daemon.
             let d = Daemon::start()?;
             let direct = d

@@ -1,15 +1,13 @@
-#![allow(deprecated)] // also exercises the deprecated `apply_pool` wrapper
 //! One suite, three topologies: embedded, daemon over the Unix socket, and
 //! daemon over loopback + token. Everything runs against in-process fakes
-//! (`MockServer` spacesd with a scripted `/media` socket, `FakeFleet`);
-//! nothing touches host apps. Every wait loop is bounded.
+//! (`MockServer` spacesd with a scripted `/media` socket); nothing touches
+//! host apps. Every wait loop is bounded.
 
 use cua_daemon::{
     Runtime, RuntimeConfig,
     fixtures::{self, SpacesdFixture},
     server::{self, DaemonHandle, ServerConfig},
 };
-use cua_fleet::testing::FakeFleet;
 use cua_sdk::{
     AudioPacket, AudioSink, Cua, CuaError, CuaMode, FrameSink, MediaEvent, MediaOpenOptions,
     MediaSession, ProcessEventKind, ReadinessProbe, SandboxCreateOptions, SpacesdCommand,
@@ -22,12 +20,9 @@ use std::{
 };
 
 const TOKEN: &str = "env-token";
-const POOL: &str = "cua-e2e-gw";
 
 struct World {
     env: SpacesdFixture,
-    gw: SpacesdFixture,
-    fake: FakeFleet,
     _dirs: tempfile::TempDir,
     daemon: Option<DaemonHandle>,
 }
@@ -47,14 +42,11 @@ async fn world(t: Topology) -> (World, Arc<Cua>) {
     env.mock
         .state
         .advertise(&[cua_spacesd_client::TUNNEL_FORWARD_FEATURE]);
-    let gw = fixtures::start_env(None, Some(fixtures::fake_gateway(POOL, POOL))).await;
-    let fake = FakeFleet::new();
     let dirs = tempfile::tempdir().unwrap();
     let runtime = Runtime::new(RuntimeConfig {
         state_dir: Some(dirs.path().join("sandboxes")),
         // Never the real ~/.cua registry.
         spaces_home: Some(dirs.path().join("cua")),
-        fleet_client: Some(fake.client_with_base(&gw.url)),
         env_probe_timeout: Some(Duration::from_secs(5)),
         ..Default::default()
     })
@@ -89,8 +81,6 @@ async fn world(t: Topology) -> (World, Arc<Cua>) {
     (
         World {
             env,
-            gw,
-            fake,
             _dirs: dirs,
             daemon,
         },
@@ -459,202 +449,15 @@ async fn suite(t: Topology) {
         "{t:?}"
     );
 
-    // ----------------------------------------------------------- fleet
-    // An explicit, user-owned pool (the gateway fixture knows its name).
-    w.fake
-        .client()
-        .apply_pool(&cua_fleet::PoolSpec::new(
-            POOL,
-            "ghcr.io/trycua/cua-desktop-linux:test",
-        ))
-        .await
-        .unwrap();
-    let mut o = direct("", POOL, None);
+    // ----------------------------------------------------------- cloud
+    // Cua Cloud has closed: a cloud create says so, in every topology.
+    let mut o = direct("", "gone", None);
     o.on = Some("cloud".into());
-    o.pool = Some(POOL.into());
     o.image = "ghcr.io/trycua/cua-desktop-linux:test".into();
-    let fsb = sbx.create(o).await.unwrap();
-    assert_eq!(fsb.location(), "cloud");
-    assert!(w.fake.exists("pool", POOL, POOL));
-    let fenv = fsb.spacesd(Some(5_000)).await.unwrap();
-    // Embedded: gRPC-Web through the gateway. Daemon: native gRPC to the
-    // daemon, which speaks gRPC-Web upstream.
-    let expected = if matches!(t, Topology::Embedded) {
-        "grpc-web"
-    } else {
-        "grpc"
-    };
-    assert_eq!(fenv.transport(), expected);
-    let out = fenv.run(cmd("echo", &["gw"])).await.unwrap();
-    assert_eq!(out.stdout, b"gw\n");
-    let svc = fsb.service("env".into()).unwrap();
-    // Cloud: signed service URLs, no Fleet vocabulary outside the details.
-    let signed = svc.url().await.unwrap();
-    assert!(signed.starts_with("https://signed.fleet.test/"), "{signed}");
-    assert_eq!(svc.url().await.unwrap(), signed, "reused until near expiry");
-    let p = fsb.public_url("env".into(), Some(600), None).await.unwrap();
-    // The same from the service handle.
-    let sp = svc.public_url(Some(600), None).await.unwrap();
-    assert!(sp.url.starts_with("https://signed.fleet.test/"), "{sp:?}");
-    assert_eq!(sp.service, "env");
-    assert!(p.url.starts_with("https://signed.fleet.test/"), "{p:?}");
-    assert_eq!(p.service, "env");
-    assert_eq!(
-        p.provider_details.get("claim").map(String::as_str),
-        Some(POOL)
-    );
-    let finfo = fsb.info();
-    assert_eq!(finfo.location, "cloud");
-    // Listing: the default includes live cloud claims; `Local` never does,
-    // and `Fleet` lists only cloud ones.
-    let all = sbx.list_with_warnings(None).await.unwrap();
-    assert!(all.warnings.is_empty(), "{all:?}");
-    assert!(
-        all.sandboxes
-            .iter()
-            .any(|s| s.name == finfo.name && s.location == "cloud"),
-        "{all:?}"
-    );
-    assert!(
-        !sbx.list(Some("local".into()))
-            .await
-            .unwrap()
-            .iter()
-            .any(|s| s.location == "cloud")
-    );
-    let cloud = sbx.list(Some("cloud".into())).await.unwrap();
-    assert!(cloud.iter().all(|s| s.location == "cloud") && !cloud.is_empty());
-    // Deprecated alias.
-    assert_eq!(sbx.list_all().await.unwrap().len(), all.sandboxes.len());
-    assert_eq!(finfo.phase, cua_sdk::SandboxPhase::Ready);
-    assert_eq!(
-        finfo.provider_details.get("pool").map(String::as_str),
-        Some(POOL)
-    );
-    let hdr = |n: &str, v: &str| cua_sdk::HttpHeader {
-        name: n.into(),
-        value: v.into(),
-    };
-    // Service requests go straight to the gateway (the pipe itself is
-    // tested in tests/mcp.rs): the route carries the Fleet bearer and claim.
-    let ep = svc.endpoint().await.unwrap();
-    if matches!(t, Topology::Embedded) {
-        assert!(ep.url.ends_with("-env"), "{ep:?}");
-        assert!(
-            ep.headers
-                .iter()
-                .any(|h| h.name == "x-cua-fleet-claim" && h.value == POOL)
-        );
-    } else {
-        assert!(
-            ep.url.ends_with("/v1/sandboxes/cloud:cua-e2e-gw/svc/env"),
-            "daemon passthrough: {ep:?}"
-        );
-    }
-    // The gateway owns authorization.
-    assert!(matches!(
-        svc.request(
-            "GET".into(),
-            "/status".into(),
-            None,
-            Some(5_000),
-            Some(vec![hdr("authorization", "Bearer x")]),
-        )
-        .await,
-        Err(CuaError::InvalidArgument(_))
-    ));
-    // Fleet media carries the Fleet bearer and claim upstream.
-    let fsink = Arc::new(Collect::default());
-    let fs = fenv
-        .open_media(
-            MediaOpenOptions {
-                display: None,
-                window_handle: None,
-                max_fps: 0,
-                max_dimension: 0,
-                audio: false,
-                disable_video: false,
-                request_json: None,
-            },
-            fsink.clone(),
-        )
-        .await
-        .unwrap();
-    eventually("fleet frames", || fsink.frames.lock().unwrap().len() >= 2).await;
-    fs.close().await.unwrap();
-    {
-        let m = w.gw.media.lock().unwrap();
-        assert_eq!(
-            m.last_authorization.as_deref(),
-            Some("Bearer fake-fleet-token")
-        );
-        assert_eq!(m.last_claim.as_deref(), Some(POOL));
-    }
-    fsb.delete().await.unwrap();
-    assert!(
-        !w.fake.exists("claim", POOL, POOL),
-        "claim released on delete"
-    );
-    assert!(w.fake.exists("pool", POOL, POOL), "explicit pools stay");
-
-    // Managed pool (no `pool`): same API in every topology; the runtime
-    // (in daemon mode, the daemon) holds the claim and its heartbeat.
-    let mut o = direct("", "", None);
-    o.on = Some("cloud".into());
-    o.name = None;
-    o.image = "ghcr.io/trycua/cua-desktop-linux:test".into();
-    // The runtime defaults from the image's manifest (a fixture here).
-    cua_fleet::testing::set_image_variant(&o.image, cua_fleet::ImageVariant::ContainerDisk);
-    o.warm = Some(true);
-    o.max_pool_size = Some(3);
-    o.fleet_ttl_seconds = Some(120);
-    let msb = sbx.create(o).await.unwrap();
-    assert!(msb.is_ephemeral());
-    let managed: Vec<String> = w
-        .fake
-        .all_namespaces()
-        .into_iter()
-        .filter(|n| n.starts_with("cua-auto-"))
-        .collect();
-    assert_eq!(managed.len(), 1, "{managed:?}");
-    let mp = &managed[0];
-    let pool = w.fake.object("pool", mp, mp).unwrap();
-    assert_eq!(pool["spec"]["replicas"], 1);
-    assert_eq!(pool["spec"]["autoscaling"]["maxPoolSize"], 3);
-    let claims = w.fake.names("claim", mp);
-    assert_eq!(claims.len(), 1);
-    let claim = w.fake.object("claim", mp, &claims[0]).unwrap();
-    assert_eq!(claim["spec"]["ttlSecondsAfterCreated"], 120);
-    msb.delete().await.unwrap();
-    assert!(w.fake.names("claim", mp).is_empty(), "claim released");
-    assert!(w.fake.exists("pool", mp, mp), "managed pool kept for reuse");
-
-    // Fleet's per-account size cap refuses a bigger sandbox: the caller
-    // gets the typed denial with Fleet's own message, in every topology.
-    w.fake.faults.lock().unwrap().size_cap = Some((8, 32 * 1024));
-    let mut big = direct("", "", None);
-    big.on = Some("cloud".into());
-    big.name = None;
-    big.image = "ghcr.io/trycua/cua-desktop-linux:test".into();
-    big.cpus = Some(16);
-    big.memory_mb = Some(64 * 1024);
-    match sbx.create(big).await {
-        Err(CuaError::FleetAdmissionDenied(m)) => {
-            assert!(m.contains(cua_fleet::testing::SIZE_LIMIT_MESSAGE), "{m}");
-        }
-        Err(e) => panic!("{t:?}: expected FleetAdmissionDenied, got {e:?}"),
-        Ok(_) => panic!("{t:?}: a 16 vCPU sandbox was admitted over the size cap"),
-    }
-    w.fake.faults.lock().unwrap().size_cap = None;
-    if matches!(t, Topology::Embedded) {
-        let pools = cua.fleet().unwrap().pools();
-        let listed = pools.list().await.unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(&listed[0].name, mp);
-        assert!(listed[0].managed);
-        let r = pools.gc(Some(0)).await.unwrap();
-        assert_eq!(r.deleted_pools, vec![mp.clone()]);
-        assert!(!w.fake.exists("pool", mp, mp));
+    match sbx.create(o).await {
+        Err(CuaError::Fleet(m)) => assert!(m.contains("Cua Cloud has closed"), "{t:?}: {m}"),
+        Err(e) => panic!("{t:?}: expected the closure, got {e:?}"),
+        Ok(_) => panic!("{t:?}: a cloud sandbox was created"),
     }
 
     // ---------------------------------------------------------- errors

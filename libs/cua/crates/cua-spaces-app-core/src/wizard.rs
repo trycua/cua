@@ -947,13 +947,11 @@ fn default_memory_gb(image: &SandboxImage) -> u32 {
 pub const STEPS: [&str; 4] = ["System", "Resources", "Options", "Summary"];
 /// Memory slider bounds, GB (local).
 pub const MEMORY_GB_RANGE: (u32, u32) = (2, 16);
-/// vCPU slider bounds for Cua Cloud: the everyday range,
-/// `cua_fleet::CLOUD_DEFAULT_RANGE_CPUS` (a cua-sdk test keeps them equal).
-/// The SDK accepts more (up to 64); Fleet decides what an account may run.
+/// vCPU slider bounds for Cua Cloud: the everyday range, what the SDK's
+/// `fleet_size_limits` returns (a cua-spaces-ffi test keeps them equal).
 pub const CLOUD_CPU_RANGE: (u32, u32) = (1, 8);
-/// Memory slider bounds for Cua Cloud, GB: the everyday range,
-/// `cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB` (1-32 GB); desktops start
-/// at 2.
+/// Memory slider bounds for Cua Cloud, GB: the everyday range (1-32 GB,
+/// `fleet_size_limits`); desktops start at 2.
 pub const CLOUD_MEMORY_GB_RANGE: (u32, u32) = (2, 32);
 
 /// Cua Cloud rates for this account (the SDK's `Fleet.usage_pricing()`,

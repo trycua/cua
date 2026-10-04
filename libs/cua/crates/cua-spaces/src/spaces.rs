@@ -2168,14 +2168,16 @@ impl Spaces {
         if expect_env {
             create = create.wait_for(Probe::Tcp(cua_proto::SPACESD_DEFAULT_PORT));
         }
-        let started = tokio::time::Instant::now();
+        let started = std::time::Instant::now();
         // Cancel-safe: dropped (a cancelled create), it stops and deletes
         // what it made (its own token never fires; the create's does).
-        let created = self
-            .inner
-            .sandboxes
-            .create_cancellable(create, cua_sandbox_core::CancellationToken::new())
-            .await;
+        let (created, image_ready) = cua_sandbox_core::progress::past(
+            cua_sandbox_core::progress::Phase::Pulling,
+            self.inner
+                .sandboxes
+                .create_cancellable(create, cua_sandbox_core::CancellationToken::new()),
+        )
+        .await;
         if let Err(e) = created {
             // A start that failed after the instance existed (a readiness
             // probe that never passed) leaves a running VM no registry
@@ -2197,14 +2199,7 @@ impl Spaces {
             token: Some(token),
             ..Default::default()
         };
-        // A chosen timeout governs the whole wait; the default budget caps
-        // the handshake at SPACESD_READY_TIMEOUT.
-        let mut remaining = timeout
-            .saturating_sub(started.elapsed())
-            .max(Duration::from_secs(10));
-        if opts.timeout.is_none() {
-            remaining = remaining.min(cua_sandbox_core::SPACESD_READY_TIMEOUT);
-        }
+        let remaining = connect_budget(opts.timeout, image_ready.unwrap_or(started));
         cua_sandbox_core::progress::report(cua_sandbox_core::progress::Progress::phase(
             cua_sandbox_core::progress::Phase::Connecting,
         ));
@@ -2799,6 +2794,20 @@ impl Drop for UndoOnDrop {
     }
 }
 
+/// How long a new local Space's cua-spacesd has to accept the connection
+/// once its sandbox is ready. A chosen `timeout` is counted from `clock`
+/// (when the image was present), with at least 10 s left; the default gives
+/// the handshake [`cua_sandbox_core::SPACESD_READY_TIMEOUT`] however long
+/// the boot took.
+fn connect_budget(timeout: Option<Duration>, clock: std::time::Instant) -> Duration {
+    match timeout {
+        Some(t) => t
+            .saturating_sub(clock.elapsed())
+            .max(Duration::from_secs(10)),
+        None => cua_sandbox_core::SPACESD_READY_TIMEOUT,
+    }
+}
+
 fn strip_runtime_prefix(image: &str) -> &str {
     for prefix in ["container:", "docker:", "vm:", "disk:", "lume:"] {
         if let Some(rest) = image.strip_prefix(prefix) {
@@ -2896,6 +2905,31 @@ fn thumbnail_failure(f: &crate::thumbnails::CaptureFailure) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_connect_budget_does_not_depend_on_the_boot() {
+        let now = std::time::Instant::now();
+        assert_eq!(
+            connect_budget(None, now),
+            cua_sandbox_core::SPACESD_READY_TIMEOUT
+        );
+        if let Some(long_ago) = now.checked_sub(Duration::from_secs(900)) {
+            assert_eq!(
+                connect_budget(None, long_ago),
+                cua_sandbox_core::SPACESD_READY_TIMEOUT
+            );
+        }
+    }
+
+    #[test]
+    fn a_chosen_connect_budget_counts_from_the_image_being_present() {
+        let t = Duration::from_secs(600);
+        let left = connect_budget(Some(t), std::time::Instant::now());
+        assert!(left > Duration::from_secs(590), "{left:?}");
+        if let Some(spent) = std::time::Instant::now().checked_sub(Duration::from_secs(900)) {
+            assert_eq!(connect_budget(Some(t), spent), Duration::from_secs(10));
+        }
+    }
 
     #[test]
     fn a_pinned_cloud_image_carries_its_digest_a_tag_none() {

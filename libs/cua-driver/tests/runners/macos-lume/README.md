@@ -113,7 +113,7 @@ printf '%s  %s\n' "$HOMEBREW_INSTALL_SHA256" "$HOMEBREW_INSTALLER" \
 /bin/bash "$HOMEBREW_INSTALLER"
 
 eval "$(/opt/homebrew/bin/brew shellenv)"
-brew install node ffmpeg jq rust
+brew install node ffmpeg jq rust python-tk
 
 printf '\n%s\n' 'eval "$(/opt/homebrew/bin/brew shellenv)"' \
   >> "$HOME/.zprofile"
@@ -133,7 +133,13 @@ npm --version
 ffmpeg -version | head -1
 ffprobe -version | head -1
 jq --version
+python3 -c 'import tkinter; print(tkinter.Tcl().eval("info patchlevel"))'
 ```
+
+`python3` must resolve to Homebrew's Python with Tk 8.6 or later. Apple's
+Command Line Tools Python ships Tk 8.5.9, which renders the Tk canvas fixture
+too poorly for its OCR row to read the labels. The runner refuses an older or
+missing Tk instead of skipping the Tk rows.
 
 Keep autologin, sleep prevention, and screen-lock prevention enabled. Add only
 the maintainer host's public SSH key to `~/.ssh/authorized_keys`; never copy a

@@ -266,6 +266,49 @@ def test_seed_guide_keeps_the_login_keychain_searchable() -> None:
     assert '"$HOME/Library/Keychains/login.keychain-db"' in text
 
 
+def _fake_python_with_tk(tmp_path: Path, patchlevel: str | None) -> Path:
+    fake_bin = tmp_path / "bin"
+    real = shutil.which("python3")
+    if patchlevel is None:
+        body = 'case "$*" in *tkinter*) exit 1 ;; esac\nexec "$TEST_REAL_PYTHON" "$@"\n'
+    else:
+        body = (
+            f'case "$*" in *tkinter*) echo {patchlevel}; exit 0 ;; esac\n'
+            'exec "$TEST_REAL_PYTHON" "$@"\n'
+        )
+    _write_executable(fake_bin / "python3", body)
+    assert real is not None
+    return fake_bin
+
+
+@pytest.mark.parametrize(
+    ("patchlevel", "message"),
+    [(None, "no usable tkinter"), ("8.5.9", "uses Tk 8.5.9")],
+)
+def test_lume_runner_refuses_missing_or_legacy_tk(
+    tmp_path: Path, patchlevel: str | None, message: str
+) -> None:
+    fake_bin = _fake_python_with_tk(tmp_path, patchlevel)
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN:$PATH"\nrequire_modern_tk\n',
+        env={"TEST_FAKE_BIN": str(fake_bin), "TEST_REAL_PYTHON": shutil.which("python3") or ""},
+    )
+    assert completed.returncode == 2
+    assert message in completed.stderr
+
+
+@pytest.mark.parametrize("patchlevel", ["8.6.16", "9.1.0"])
+def test_lume_runner_accepts_modern_tk(tmp_path: Path, patchlevel: str) -> None:
+    fake_bin = _fake_python_with_tk(tmp_path, patchlevel)
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN:$PATH"\nrequire_modern_tk\n',
+        env={"TEST_FAKE_BIN": str(fake_bin), "TEST_REAL_PYTHON": shutil.which("python3") or ""},
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
 @pytest.mark.parametrize("script", [RUN_ALL, RUN_RUST_E2E], ids=lambda path: path.name)
 def test_no_permission_mode_check_pipes_into_grep(script: Path) -> None:
     text = script.read_text(encoding="utf-8")

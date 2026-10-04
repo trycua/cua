@@ -939,6 +939,7 @@ impl BrowserEngine {
                 result = &mut reconnect => result,
                 _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
                     match self.platform.handle_existing_profile_consent(BrowserConsentRequest {
+                        action: Default::default(),
                         pid,
                         window_id: grant.window_id,
                         attempt,

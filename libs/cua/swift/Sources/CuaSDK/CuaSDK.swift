@@ -4437,9 +4437,23 @@ public protocol HostProtocol: AnyObject, Sendable {
     func configure(change: HostSettingsChange) async throws  -> HostStatus
 
     /**
+     * Pause relay sharing while nobody is signed in to the owner's
+     * account: the host leaves the relay and stays off it (also across a
+     * restart) with its setup kept. Direct mode is left alone.
+     */
+    func pauseSignedOut() async throws  -> HostStatus
+
+    /**
      * Unregister, uninstall the service and delete the host state.
      */
     func remove() async throws
+
+    /**
+     * Resume relay sharing paused by [`Host::pause_signed_out`] once
+     * `account` (the signed-in account's id or email) is signed in; refused
+     * when it is not the machine's owner.
+     */
+    func resumeSignedIn(account: String) async throws  -> HostStatus
 
     /**
      * Installs and starts the host service (relay mode needs
@@ -4553,6 +4567,28 @@ open func configure(change: HostSettingsChange)async throws  -> HostStatus  {
 }
 
     /**
+     * Pause relay sharing while nobody is signed in to the owner's
+     * account: the host leaves the relay and stays off it (also across a
+     * restart) with its setup kept. Direct mode is left alone.
+     */
+open func pauseSignedOut()async throws  -> HostStatus  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_host_pause_signed_out(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeHostStatus_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Unregister, uninstall the service and delete the host state.
      */
 open func remove()async throws   {
@@ -4568,6 +4604,28 @@ open func remove()async throws   {
             completeFunc: ffi_cua_sdk_rust_future_complete_void,
             freeFunc: ffi_cua_sdk_rust_future_free_void,
             liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Resume relay sharing paused by [`Host::pause_signed_out`] once
+     * `account` (the signed-in account's id or email) is signed in; refused
+     * when it is not the machine's owner.
+     */
+open func resumeSignedIn(account: String)async throws  -> HostStatus  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_host_resume_signed_in(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(account)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeHostStatus_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -8352,6 +8410,11 @@ public protocol SpaceProtocol: AnyObject, Sendable {
     func shares() async throws  -> SpaceShares
 
     /**
+     * The cua-spacesd client over the connection this Space authenticated.
+     */
+    func spacesd() throws  -> SpacesdClient
+
+    /**
      * Starts the reverse-SOCKS hotspot: this host serves the Space's
      * egress. `set_system_proxy` points the guest's proxy settings at it
      * (default false here).
@@ -9107,6 +9170,17 @@ open func shares()async throws  -> SpaceShares  {
             liftFunc: FfiConverterTypeSpaceShares_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
+}
+
+    /**
+     * The cua-spacesd client over the connection this Space authenticated.
+     */
+open func spacesd()throws  -> SpacesdClient  {
+    return try  FfiConverterTypeSpacesdClient_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_sdk_fn_method_space_spacesd(
+            self.uniffiCloneHandle(),$0
+    )
+})
 }
 
     /**
@@ -22926,6 +23000,19 @@ public struct HostStatus: Equatable, Hashable {
      * Set when the Spaces audit does not verify.
      */
     public var spacesAuditError: String?
+    /**
+     * Relay sharing is paused until the owner signs in again
+     * ([`Host::pause_signed_out`]).
+     */
+    public var pausedSignedOut: Bool
+    /**
+     * The account this machine is registered to (relay mode): its id.
+     */
+    public var owner: String?
+    /**
+     * The owner's email, when the relay gave one.
+     */
+    public var ownerEmail: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -23005,7 +23092,17 @@ public struct HostStatus: Equatable, Hashable {
          */spacesAudit: [HostSpacesAuditRecord] = [],
         /**
          * Set when the Spaces audit does not verify.
-         */spacesAuditError: String? = nil) {
+         */spacesAuditError: String? = nil,
+        /**
+         * Relay sharing is paused until the owner signs in again
+         * ([`Host::pause_signed_out`]).
+         */pausedSignedOut: Bool = false,
+        /**
+         * The account this machine is registered to (relay mode): its id.
+         */owner: String? = nil,
+        /**
+         * The owner's email, when the relay gave one.
+         */ownerEmail: String? = nil) {
         self.configured = configured
         self.mode = mode
         self.relayUrl = relayUrl
@@ -23031,6 +23128,9 @@ public struct HostStatus: Equatable, Hashable {
         self.providedSpaces = providedSpaces
         self.spacesAudit = spacesAudit
         self.spacesAuditError = spacesAuditError
+        self.pausedSignedOut = pausedSignedOut
+        self.owner = owner
+        self.ownerEmail = ownerEmail
     }
 
 
@@ -23073,7 +23173,10 @@ public struct FfiConverterTypeHostStatus: FfiConverterRustBuffer {
                 maxMacosVms: FfiConverterUInt32.read(from: &buf),
                 providedSpaces: FfiConverterSequenceTypeHostProvidedSpace.read(from: &buf),
                 spacesAudit: FfiConverterSequenceTypeHostSpacesAuditRecord.read(from: &buf),
-                spacesAuditError: FfiConverterOptionString.read(from: &buf)
+                spacesAuditError: FfiConverterOptionString.read(from: &buf),
+                pausedSignedOut: FfiConverterBool.read(from: &buf),
+                owner: FfiConverterOptionString.read(from: &buf),
+                ownerEmail: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -23103,6 +23206,9 @@ public struct FfiConverterTypeHostStatus: FfiConverterRustBuffer {
         FfiConverterSequenceTypeHostProvidedSpace.write(value.providedSpaces, into: &buf)
         FfiConverterSequenceTypeHostSpacesAuditRecord.write(value.spacesAudit, into: &buf)
         FfiConverterOptionString.write(value.spacesAuditError, into: &buf)
+        FfiConverterBool.write(value.pausedSignedOut, into: &buf)
+        FfiConverterOptionString.write(value.owner, into: &buf)
+        FfiConverterOptionString.write(value.ownerEmail, into: &buf)
     }
 }
 
@@ -40195,7 +40301,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_host_configure() != 36828) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_host_pause_signed_out() != 3338) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_host_remove() != 63746) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_host_resume_signed_in() != 8436) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_host_setup() != 765) {
@@ -40595,6 +40707,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_shares() != 19234) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_space_spacesd() != 47873) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_start_hotspot() != 44744) {

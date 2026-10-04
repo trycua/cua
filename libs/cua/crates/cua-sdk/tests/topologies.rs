@@ -487,6 +487,48 @@ async fn suite(t: Topology) {
     assert_eq!(fenv.transport(), expected);
     let out = fenv.run(cmd("echo", &["gw"])).await.unwrap();
     assert_eq!(out.stdout, b"gw\n");
+    let spaces = cua.spaces();
+    let direct_space = spaces
+        .add(w.env.url.clone(), Some(TOKEN.into()), None)
+        .await
+        .unwrap();
+    let mut cat = cmd("cat", &[]);
+    cat.stdin = true;
+    let p = spaces
+        .space(direct_space.id.clone())
+        .await
+        .unwrap()
+        .spacesd()
+        .unwrap()
+        .spawn(cat)
+        .await
+        .unwrap();
+    p.write_stdin(b"over stdin".to_vec()).await.unwrap();
+    p.close_stdin().await.unwrap();
+    assert_eq!(p.wait().await.unwrap().stdout, b"over stdin");
+    spaces.remove(direct_space.id).await.unwrap();
+    let cloud_space = spaces
+        .add(format!("cloud:{}", fsb.info().name), None, None)
+        .await
+        .unwrap();
+    let cenv = spaces
+        .space(cloud_space.id.clone())
+        .await
+        .unwrap()
+        .spacesd()
+        .unwrap();
+    assert_eq!(
+        cenv.run(cmd("echo", &["space"])).await.unwrap().stdout,
+        b"space\n"
+    );
+    assert!(
+        cenv.current_ws_headers()
+            .await
+            .unwrap()
+            .iter()
+            .any(|(k, _)| k == "authorization")
+    );
+    spaces.remove(cloud_space.id).await.unwrap();
     let svc = fsb.service("env".into()).unwrap();
     // Cloud: signed service URLs, no Fleet vocabulary outside the details.
     let signed = svc.url().await.unwrap();

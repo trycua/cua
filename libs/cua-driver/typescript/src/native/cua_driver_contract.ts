@@ -2624,7 +2624,9 @@ const FfiConverterTypeHotkeyInput = (() => {
 /**
  * Exact, immediate-child application menu path to resolve and invoke through
  * the operating system's accessibility API. Path labels are matched after
- * trimming surrounding whitespace and otherwise remain case-sensitive.
+ * trimming surrounding whitespace and otherwise remain case-sensitive. On
+ * macOS, three periods in a label also match the ellipsis character that
+ * native menu titles use (`Save As...` finds `Save As…`).
  */
 export type InvokeMenuInput = {
     /**

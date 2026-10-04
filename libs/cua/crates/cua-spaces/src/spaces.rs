@@ -2137,7 +2137,7 @@ impl Spaces {
         // Until the Space is registered, the create's journal holds its
         // token and what it made: a process that dies mid-create (a daemon
         // crash, a quit) leaves it, and [`Spaces::recover_interrupted_creates`]
-        // then registers the sandbox or deletes it, never a hidden one; a
+        // then recovers it or retains it for manual cleanup; an explicit
         // cancel removes what it made. Only a name nothing used before is
         // this create's to delete.
         let fresh = !self.inner.sandboxes.local_name_in_use(&name).await;
@@ -2214,7 +2214,7 @@ impl Spaces {
         {
             Ok(s) => s,
             Err(e) => {
-                if let Ok(sb) = self.inner.sandboxes.connect(&name).await {
+                if fresh && let Ok(sb) = self.inner.sandboxes.connect(&name).await {
                     let _ = sb.delete().await;
                 }
                 return Err(e);
@@ -2231,17 +2231,11 @@ impl Spaces {
         self.info(&id)
     }
 
-    /// Local creates a process that died left half done (its daemon
-    /// crashed or was killed between starting the sandbox and registering
-    /// the Space): each such sandbox is registered when its cua-spacesd
-    /// answers within `budget`, else deleted, so nothing keeps running
-    /// that no Space lists. Creates of live processes are left alone. The
-    /// daemon runs this when it starts.
-    ///
-    /// A create someone cancelled (its `.cancel` marker), a cloud or host
-    /// create, and one under a name that was in use before are not
-    /// registered: what they made is removed ([`Spaces::cancel_create`]'s
-    /// undo), and a sandbox that existed before is left as it was.
+    /// Recovers local creates left by a dead process when their cua-spacesd
+    /// authenticates within `budget`. Failed, cancelled or borrowed local
+    /// attempts retain their resources and journals for explicit cleanup.
+    /// Live processes are left alone; nonlocal creates retain cancellation
+    /// cleanup. The daemon runs this at startup.
     pub async fn recover_interrupted_creates(&self, budget: Duration) -> Vec<RecoveredCreate> {
         use crate::creating::Made;
         let mut out = Vec::new();
@@ -2254,7 +2248,7 @@ impl Spaces {
                 Made::LocalSandbox { fresh, .. } => Some(*fresh),
                 _ => None,
             });
-            if crate::creating::cancel_marked(&home, &stem) || j.kind != "local" {
+            if j.kind != "local" {
                 let message = self.undo(&j).await;
                 tracing::info!(create = %stem, message, "interrupted create undone");
                 crate::creating::remove(&home, &stem);
@@ -2271,12 +2265,15 @@ impl Spaces {
             let id = SpaceId::Local {
                 name: j.name.clone(),
             };
-            // Nothing made yet (cut off while resolving the image), or a
-            // name that was someone else's: nothing of this create's to
-            // delete.
-            let untouchable =
-                (j.token.is_empty() && j.made.is_empty()) || local_made == Some(false);
-            let outcome = if self
+            let outcome = if crate::creating::cancel_marked(&home, &stem)
+                || local_made == Some(false)
+                || j.token.trim().is_empty()
+                || !j.spacesd
+            {
+                RecoveryOutcome::Failed(
+                    "local attempt retained; inspect and clean up manually".into(),
+                )
+            } else if self
                 .inner
                 .registry
                 .get(&id.to_string())
@@ -2285,18 +2282,6 @@ impl Spaces {
                 .is_some()
             {
                 RecoveryOutcome::AlreadyRegistered
-            } else if untouchable && self.inner.sandboxes.connect(&j.name).await.is_err() {
-                RecoveryOutcome::NothingLeft
-            } else if self.inner.sandboxes.connect(&j.name).await.is_err() {
-                // Cut off before the sandbox was recorded: an instance the
-                // runtime started is deleted, never left running unlisted.
-                match self.inner.sandboxes.delete_local_instance(&j.name).await {
-                    Ok(true) => RecoveryOutcome::Deleted(
-                        "the create was cut off before the sandbox was recorded".into(),
-                    ),
-                    Ok(false) => RecoveryOutcome::NothingLeft,
-                    Err(e) => RecoveryOutcome::Failed(format!("delete: {e}")),
-                }
             } else {
                 let credential = Credential {
                     token: Some(j.token.clone()),
@@ -2317,38 +2302,25 @@ impl Spaces {
                             self.notify_connected(&id);
                             RecoveryOutcome::Registered
                         }
-                        Err(e) if untouchable => RecoveryOutcome::Failed(e.to_string()),
-                        Err(e) => self.discard_interrupted(&j.name, e.to_string()).await,
+                        Err(e) => RecoveryOutcome::Failed(format!(
+                            "{e}; local attempt retained for manual cleanup"
+                        )),
                     },
-                    Err(e) if untouchable => RecoveryOutcome::Failed(e.to_string()),
-                    Err(e) => self.discard_interrupted(&j.name, e.to_string()).await,
+                    Err(e) => RecoveryOutcome::Failed(format!(
+                        "{e}; local attempt retained for manual cleanup"
+                    )),
                 }
             };
             tracing::info!(space = %id, ?outcome, "interrupted create");
-            crate::creating::remove(&home, &stem);
+            if !matches!(outcome, RecoveryOutcome::Failed(_)) {
+                crate::creating::remove(&home, &stem);
+            }
             out.push(RecoveredCreate {
                 id: id.to_string(),
                 outcome,
             });
         }
         out
-    }
-
-    async fn discard_interrupted(&self, name: &str, why: String) -> RecoveryOutcome {
-        let deleted = match self.inner.sandboxes.connect(name).await {
-            Ok(sb) => sb.delete().await.map(|_| ()).map_err(Error::from),
-            Err(_) => self
-                .inner
-                .sandboxes
-                .delete_local_instance(name)
-                .await
-                .map(|_| ())
-                .map_err(Error::from),
-        };
-        match deleted {
-            Ok(()) => RecoveryOutcome::Deleted(why),
-            Err(e) => RecoveryOutcome::Failed(format!("{why}; delete: {e}")),
-        }
     }
 
     /// Deletes a Space's sandbox and forgets it: a cloud Space's sandbox is
@@ -2794,7 +2766,7 @@ pub enum RecoveryOutcome {
     Registered,
     /// It never became a Space (why): its sandbox was deleted.
     Deleted(String),
-    /// Its sandbox could not be deleted (why).
+    /// Recovery failed (why); a local attempt and its journal are retained.
     Failed(String),
     /// It had been registered after all.
     AlreadyRegistered,

@@ -6,21 +6,15 @@
 //! `sandboxes/.ephemeral/` names a process that no longer exists; after
 //! `CUA_ORPHAN_REAP_MINUTES` (default 10) the daemon, `cua cache prune` or
 //! the next `cua` run deletes the instance (container, VM disk, Lume clone)
-//! and the lease. Ephemeral instances with no lease at all (an SDK older
-//! than leases) are reaped after 24 hours, abandoned build VMs and build
-//! containers after 6 hours. Named sandboxes are never reaped.
+//! and the lease. Unleased ephemeral and build instances require explicit
+//! cleanup; their name, kind and age do not authorize deletion.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use cua_disk::{CacheConfig, Category, GcOptions, GcReport, Layout, Scanner};
+use cua_disk::{CacheConfig, GcOptions, GcReport, Layout, Scanner};
 use cua_sandbox_core::{LocalRuntime, RuntimeError, StateStore};
 use serde::Serialize;
 
-/// Ephemeral instances without a lease are reaped after this long.
-pub const UNLEASED_REAP_AFTER: Duration = Duration::from_secs(24 * 3600);
-/// Build VMs and build containers left by a crashed build are removed after
-/// this long.
-pub const BUILD_LEFTOVER_AFTER: Duration = Duration::from_secs(6 * 3600);
 /// `CUA_DAEMON_MAINTENANCE=0` turns the daemon's periodic maintenance off.
 pub const ENV_DAEMON_MAINTENANCE: &str = "CUA_DAEMON_MAINTENANCE";
 
@@ -98,51 +92,17 @@ pub async fn reap_leases(
     out
 }
 
-/// [`reap_leases`] plus instances the scan found: ephemeral ones without a
-/// lease (after 24 h) and abandoned build VMs and containers (after 6 h).
+/// Compatibility entry point for lease reaping; inventory does not authorize deletion.
 pub async fn reap_orphans(
     local: &dyn LocalRuntime,
     state: &StateStore,
-    items: &[cua_disk::Item],
+    _items: &[cua_disk::Item],
     reap_after: Duration,
     now: SystemTime,
     dry_run: bool,
     alive: &(dyn Fn(u32) -> bool + Sync),
 ) -> Vec<Reaped> {
-    let leases: Vec<String> = state.leases().into_iter().map(|l| l.name).collect();
-    let mut out = reap_leases(local, state, reap_after, now, dry_run, alive).await;
-    let age = |i: &cua_disk::Item| i.created.map(|c| secs(now).saturating_sub(c));
-    for i in items {
-        let running = i.status.as_deref() == Some("running");
-        let reason = if i.category == Category::Sandboxes
-            && i.ephemeral
-            && !leases.contains(&i.name)
-            && age(i).is_some_and(|a| a >= UNLEASED_REAP_AFTER.as_secs())
-        {
-            "ephemeral sandbox without an owner for over 24 hours"
-        } else if matches!(i.kind.as_str(), "build-vm" | "container-build")
-            && age(i).is_some_and(|a| a >= BUILD_LEFTOVER_AFTER.as_secs())
-            && !(running && i.kind == "build-vm")
-        {
-            "build instance left by an interrupted build"
-        } else {
-            continue;
-        };
-        if out.iter().any(|r| r.name == i.name) {
-            continue;
-        }
-        let error = if dry_run {
-            None
-        } else {
-            delete(local, &i.name).await
-        };
-        out.push(Reaped {
-            name: i.name.clone(),
-            reason: reason.into(),
-            error,
-        });
-    }
-    out
+    reap_leases(local, state, reap_after, now, dry_run, alive).await
 }
 
 /// One full pass: reap orphans, collect the cache (budget and orphans; the
@@ -155,13 +115,10 @@ pub async fn run(
     dry_run: bool,
 ) -> MaintenanceReport {
     let config = CacheConfig::load();
-    let scanner = Scanner::system(layout.clone()).await;
     let now = SystemTime::now();
-    let report = scanner.scan_at(now).await;
-    let reaped = reap_orphans(
+    let reaped = reap_leases(
         local,
         state,
-        &report.items,
         config.orphan_reap_after,
         now,
         dry_run,
@@ -170,6 +127,7 @@ pub async fn run(
     .await;
     let gc = match gc {
         Some(mut o) => {
+            let scanner = Scanner::system(layout.clone()).await;
             o.dry_run = dry_run;
             Some(cua_disk::collect(&scanner, o).await)
         }
@@ -206,6 +164,7 @@ pub fn spawn_auto_gc(reason: &'static str) {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use cua_disk::Category;
     use cua_sandbox_core::{
         InstanceStatus, LocalEndpoints, LocalInstance, LocalStartSpec, LocalSummary, RuntimeResult,
     };
@@ -301,7 +260,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unleased_ephemerals_and_build_leftovers_age_out_named_never() {
+    async fn unleased_inventory_is_not_authority_to_reap() {
         let d = tempfile::tempdir().unwrap();
         let state = StateStore::new(d.path());
         let now = UNIX_EPOCH + Duration::from_secs(NOW);
@@ -318,13 +277,16 @@ mod tests {
             status: Some("running".into()),
             ..Default::default()
         };
-        let items = vec![
+        let mut items = vec![
             item("cua-eph-ancient", "container-sandbox", true, 2 * 86_400),
             item("cua-eph-recent", "qemu", true, 3600),
             item("my-named-box", "qemu", false, 90 * 86_400),
             item("cua-build-ctr-9", "container-build", false, 7 * 3600),
             item("cua-build-1f", "build-vm", false, 7 * 3600),
         ];
+        let mut stopped = item("cua-build-stopped", "build-vm", false, 7 * 3600);
+        stopped.status = Some("stopped".into());
+        items.push(stopped);
         let fake = Fake::default();
         let r = reap_orphans(
             &fake,
@@ -336,15 +298,35 @@ mod tests {
             &|_| false,
         )
         .await;
-        let names: Vec<&str> = r.iter().map(|x| x.name.as_str()).collect();
-        // A running build VM is still building; the container is reaped.
-        assert_eq!(names, vec!["cua-eph-ancient", "cua-build-ctr-9"]);
-        assert!(
-            !fake
-                .deleted
-                .lock()
-                .unwrap()
-                .contains(&"my-named-box".to_string())
-        );
+        assert!(r.is_empty(), "{r:?}");
+        assert!(fake.deleted.lock().unwrap().is_empty());
+        lease(&state, "cua-eph-ancient", 111, NOW - 3600);
+        lease(&state, "my-named-box", 222, NOW - 3600);
+        let r = reap_orphans(
+            &fake,
+            &state,
+            &items,
+            Duration::from_secs(600),
+            now,
+            true,
+            &|p| p == 222,
+        )
+        .await;
+        assert_eq!(r.len(), 1);
+        assert!(fake.deleted.lock().unwrap().is_empty());
+        assert_eq!(state.leases().len(), 2);
+        let r = reap_orphans(
+            &fake,
+            &state,
+            &items,
+            Duration::from_secs(600),
+            now,
+            false,
+            &|p| p == 222,
+        )
+        .await;
+        assert_eq!(r.len(), 1);
+        assert_eq!(fake.deleted.lock().unwrap().as_slice(), ["cua-eph-ancient"]);
+        assert_eq!(state.leases().len(), 1);
     }
 }

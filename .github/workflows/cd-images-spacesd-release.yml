@@ -1,0 +1,206 @@
+name: "CD: Images on cua-spacesd release"
+
+# Every cua-spacesd release rebuilds the Space images on it and opens ONE pins
+# PR, with no hand dispatches:
+#
+#   CD: cua-spacesd (tag cua-spacesd-vX.Y.Z) completes
+#     -> linux, omarchy, windows, bench: the image workflows, called as
+#        reusable workflows with their publish inputs, in parallel (each one
+#        builds, gates on `cua-spacesd doctor --strict` and promotes, exactly
+#        as a manual workflow_dispatch with publish=true does)
+#     -> pins: scripts/images/pins-pr.sh opens or updates the PR on branch
+#        images/pins. An OS is pinned only when its floating tags resolve to
+#        NEW digests whose attached doctor reports say cua-spacesd X.Y.Z
+#        (scripts/images/image_pins.py), so a green run that pushed nothing
+#        cannot move a pin; the job fails loudly if that happens. The PR body
+#        is a per-OS checklist, and the PR is regenerated from main and the
+#        registry each run.
+#
+# macOS cannot build here (Lume needs an Apple silicon host; there is no
+# hosted macOS-VM runner): the PR lists it as pending with the command,
+# `scripts/images/release-macos.sh X.Y.Z`, which builds, gates, pushes and
+# promotes on a Mac and then dispatches this workflow with build=false to add
+# macOS to the same PR. Benchmark images open their own catalog PR from
+# cd-bench-images.yml (bench lock files are not registry state).
+#
+# Why workflow_run: cd-cua-spacesd.yml publishes the release with
+# GITHUB_TOKEN, and events made with GITHUB_TOKEN (release: published) start
+# no workflows. workflow_run of the tag-pushed run fires once its assets are
+# attached, which is what cd-image-linux (spacesd_source=release) downloads.
+#
+# Why the pins job uses the release GitHub App (RELEASE_APP_ID /
+# RELEASE_APP_PRIVATE_KEY, as release-please.yml): a PR opened with
+# GITHUB_TOKEN runs no checks, so it could never be merged as is.
+#
+# Manual: workflow_dispatch with a version (default libs/cua-spacesd/VERSION)
+# reruns everything; build=false only refreshes the pins PR. The image
+# workflows keep their own workflow_dispatch paths.
+
+on:
+  workflow_run:
+    workflows: ["CD: cua-spacesd"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "cua-spacesd version X.Y.Z the images must report (default libs/cua-spacesd/VERSION)"
+        type: string
+        default: ""
+      build:
+        description: "Rebuild and publish the CI images first (false: only refresh the pins PR, e.g. after release-macos.sh)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# One release at a time; a newer release queued behind it replaces any older
+# pending one, so the newest version wins.
+concurrency:
+  group: cd-images-spacesd-release
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    # Registry names belong to trycua/cua (staging builds no images); only a
+    # successful tag-pushed cua-spacesd run counts.
+    if: >-
+      github.repository == 'trycua/cua' && (
+        github.event_name == 'workflow_dispatch' || (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          startsWith(github.event.workflow_run.head_branch, 'cua-spacesd-v')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      build: ${{ steps.v.outputs.build }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.workflow_run.head_branch }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUILD: ${{ inputs.build }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
+            version="${TAG#cua-spacesd-v}" build=true
+          else
+            version="${INPUT_VERSION:-$(cat libs/cua-spacesd/VERSION)}" build="$INPUT_BUILD"
+          fi
+          version="${version#cua-spacesd-v}"; version="${version#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a version: $version"; exit 1; }
+          # Images pin a published release only (never a draft or prerelease).
+          state="$(gh release view "cua-spacesd-v$version" -R "$GITHUB_REPOSITORY" --json isDraft,isPrerelease -q '.isDraft or .isPrerelease')"
+          [ "$state" = false ] || { echo "::error::cua-spacesd-v$version is not a published release"; exit 1; }
+          { echo "version=$version"; echo "build=$build"; } | tee -a "$GITHUB_OUTPUT"
+          echo "### cua-spacesd $version (build images: $build)" >>"$GITHUB_STEP_SUMMARY"
+
+  # The image workflows, unchanged except for their workflow_call trigger.
+  # A called workflow's jobs can hold no more than the permissions granted
+  # here, so each grant is the union of its jobs' own blocks.
+  linux:
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    uses: ./.github/workflows/cd-image-linux.yml
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+      issues: write
+    with:
+      publish: true
+      spacesd_source: release
+      spacesd_version: ${{ needs.resolve.outputs.version }}
+
+  omarchy:
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    uses: ./.github/workflows/cd-image-omarchy.yml
+    permissions:
+      contents: write
+      packages: write
+      issues: write
+    with:
+      publish: true
+      series: edge
+
+  windows:
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    uses: ./.github/workflows/cd-image-windows.yml
+    permissions:
+      contents: write
+      packages: write
+    with:
+      stage: publish
+
+  # Builds cua-spacesd from this checkout (main at the release); its promote
+  # job opens the bench catalog PR itself.
+  bench:
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    uses: ./.github/workflows/cd-bench-images.yml
+    # The release app secrets, for the catalog PR (see cd-bench-images.yml).
+    secrets: inherit
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: write
+    with:
+      bench: osworld
+      push: true
+
+  pins:
+    needs: [resolve, linux, omarchy, windows, bench]
+    # Also after a failed or skipped build: whatever did reach the version is
+    # pinned, and the PR lists the rest as pending.
+    if: ${{ !cancelled() && needs.resolve.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Release GitHub App token (the PR's checks run)
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tools (crane, oras, jq, zstd) and Rust
+        run: |
+          scripts/images/install-release-tools.sh --push-only
+          cd libs/cua && (rustup show active-toolchain || rustup toolchain install)
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: images-pins
+      - name: Commit as the App's bot user (contributor-attribution resolves it)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          id="$(gh api "/users/${SLUG}%5Bbot%5D" --jq .id)"
+          git config user.name "${SLUG}[bot]"
+          git config user.email "${id}+${SLUG}[bot]@users.noreply.github.com"
+      - name: Open or update the pins PR (images/pins)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          RESULTS: linux=${{ needs.linux.result }},omarchy=${{ needs.omarchy.result }},windows=${{ needs.windows.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: scripts/images/pins-pr.sh "$VERSION" --results "$RESULTS" --run-url "$RUN_URL"

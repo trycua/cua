@@ -53,6 +53,8 @@ cua-sdk = { path = "../../../cua/crates/cua-sdk" }
 cua-host = { path = "../../../cua/crates/cua-host", features = ["testing"] }
 # The real relay, for the device-enrollment conformance of cua-host's client.
 cua-relay = { path = "../../crates/cua-relay" }
+# Stops the live host the relay re-register case joins.
+tokio-util = "0.7"
 cua-proto = { path = "../../../cua/crates/cua-proto", features = ["client", "server", "serde"] }
 futures-util = "0.3"
 hex = "0.4"

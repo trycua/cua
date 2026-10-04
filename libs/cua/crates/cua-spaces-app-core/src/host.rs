@@ -35,6 +35,9 @@ pub struct HostSummaryInput {
     /// Relay presence.
     #[serde(default)]
     pub online: Option<bool>,
+    /// Relay sharing is paused while signed out.
+    #[serde(default)]
+    pub paused_signed_out: bool,
 }
 
 /// One line for the entry.
@@ -44,6 +47,9 @@ pub fn host_summary(status: Option<&HostSummaryInput>) -> String {
     };
     if let Some(e) = s.error.as_deref().filter(|e| !e.is_empty()) {
         return format!("Needs attention \u{b7} {e}");
+    }
+    if s.paused_signed_out {
+        return PAUSED_SUMMARY.into();
     }
     if !s.service_running {
         return "Host service stopped".into();
@@ -64,6 +70,14 @@ pub fn host_summary(status: Option<&HostSummaryInput>) -> String {
     }
     format!("Sharing \u{b7} {via}")
 }
+
+/// The entry's line while relay sharing is paused for a sign-in.
+pub const PAUSED_SUMMARY: &str = "Paused \u{b7} signed out";
+
+/// The page's line while relay sharing is paused because nobody is signed
+/// in.
+pub const SIGNED_OUT_NOTICE: &str = "Sign in to share this Mac through Cua. \
+Sharing is paused while you\u{2019}re signed out.";
 
 /// "Sharing · N connected": the entry's detail while someone is connected.
 pub fn connected_detail(n: u32) -> String {
@@ -434,6 +448,89 @@ pub struct HostState {
     /// Set when the Spaces audit does not verify.
     #[serde(default)]
     pub spaces_audit_error: Option<String>,
+    /// Relay sharing is paused until the owner signs in again (the host
+    /// left the relay; its setup stays).
+    #[serde(default)]
+    pub paused_signed_out: bool,
+    /// The account this machine is registered to (relay mode): its id.
+    #[serde(default)]
+    pub owner: Option<String>,
+    /// The owner's email, when the relay gave one.
+    #[serde(default)]
+    pub owner_email: Option<String>,
+    /// Who is signed in to Cua in this app (`None`: nobody, or the shell
+    /// does not say). The shell fills it; the host does not know.
+    #[serde(default)]
+    pub account: Option<HostAccount>,
+}
+
+/// The account signed in to Cua in the app, as far as "This machine"
+/// needs it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostAccount {
+    /// The account id (the session's `sub`).
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Its email.
+    #[serde(default)]
+    pub email: Option<String>,
+    /// What the app shows for it (a display name, else the email).
+    #[serde(default)]
+    pub display: Option<String>,
+}
+
+impl HostAccount {
+    /// What `resume` passes the host to name this account (id, else email).
+    pub fn key(&self) -> String {
+        self.id
+            .clone()
+            .filter(|i| !i.is_empty())
+            .or_else(|| self.email.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// `account` owns the machine in `state`: compared by id, else by email.
+/// `None` when neither side says (the shells then take it as the owner).
+pub fn owned_by(state: &HostState, account: &HostAccount) -> Option<bool> {
+    let nonempty = |v: &Option<String>| v.clone().filter(|v| !v.trim().is_empty());
+    if let (Some(owner), Some(id)) = (nonempty(&state.owner), nonempty(&account.id)) {
+        return Some(owner == id);
+    }
+    if let (Some(owner), Some(email)) = (nonempty(&state.owner_email), nonempty(&account.email)) {
+        return Some(owner.eq_ignore_ascii_case(&email));
+    }
+    None
+}
+
+/// What the app does with the host when the account it is signed in to
+/// changes (launch, sign-in, sign-out, an expired session).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HostAccountStep {
+    /// Nothing to do.
+    Keep,
+    /// Pause relay sharing (signed out, or signed in to another account).
+    Pause,
+    /// Resume the paused relay sharing (its owner is signed in again).
+    Resume,
+}
+
+/// Relay sharing follows the sign-in: nobody signed in (or another
+/// account) pauses it, the owner signing in again resumes it. `account` is
+/// `None` only when the app knows nobody is signed in (not when it could
+/// not tell, offline). Direct mode does not use the account.
+pub fn account_step(state: &HostState, account: Option<&HostAccount>) -> HostAccountStep {
+    if !state.configured || state.mode.as_deref() != Some("relay") {
+        return HostAccountStep::Keep;
+    }
+    let owner = account.map(|a| owned_by(state, a).unwrap_or(true));
+    match (state.paused_signed_out, owner) {
+        (false, None | Some(false)) => HostAccountStep::Pause,
+        (true, Some(true)) => HostAccountStep::Resume,
+        _ => HostAccountStep::Keep,
+    }
 }
 
 fn yes() -> bool {
@@ -498,6 +595,7 @@ impl HostState {
             clients: self.clients.len() as u32,
             mode: self.mode.clone(),
             online: self.online,
+            paused_signed_out: self.paused_signed_out,
         }
     }
 }
@@ -522,6 +620,8 @@ pub enum HostActionId {
     ProvideSpaces,
     /// Stop creating Spaces for your other devices.
     StopProvidingSpaces,
+    /// Sign in to Cua (relay sharing paused while signed out resumes).
+    SignIn,
 }
 
 /// A settings change a host action asks for (`None` keeps a value).
@@ -597,6 +697,13 @@ pub struct HostAction {
     /// Ask this first; the action runs only when the user confirms.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirm: Option<HostConfirm>,
+    /// Can be pressed now (Resume sharing is not while nothing is on to
+    /// share).
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// The tooltip, when it says something the label does not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub help: Option<String>,
 }
 
 /// The confirmation before removing this machine's host setup.
@@ -810,6 +917,13 @@ pub struct HostPanelView {
     pub title: String,
     /// One line: how it is shared, or that it is not.
     pub summary: String,
+    /// Why relay sharing is paused, one line over the page (signed out, or
+    /// signed in to another account).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
+    /// The notice's button ("Sign In").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notice_action: Option<HostAction>,
     /// Set up for access.
     pub configured: bool,
     /// Name, Access, Service.
@@ -947,6 +1061,8 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
     let mut v = HostPanelView {
         title: "This machine".into(),
         summary: "Checking\u{2026}".into(),
+        notice: None,
+        notice_action: None,
         configured: false,
         facts: vec![],
         clients_title: None,
@@ -987,6 +1103,8 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
             label: "Set up for access".into(),
             destructive: false,
             confirm: None,
+            enabled: true,
+            help: None,
         }];
         return v;
     }
@@ -1040,6 +1158,29 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
             warning: None,
         },
     ];
+    let relay = s.mode.as_deref() != Some("direct");
+    // Whose machine this is: the signed-in owner's.
+    if relay
+        && !s.paused_signed_out
+        && let Some(a) = &s.account
+        && owned_by(s, a) != Some(false)
+        && let Some(who) = a
+            .display
+            .clone()
+            .or_else(|| a.email.clone())
+            .filter(|w| !w.trim().is_empty())
+    {
+        v.facts.insert(
+            1,
+            Fact {
+                label: "Shared with".into(),
+                value: format!("Your account ({who})"),
+                copy: None,
+                help: None,
+                warning: None,
+            },
+        );
+    }
     v.clients_title = Some("Connected now".into());
     v.clients = s
         .clients
@@ -1063,14 +1204,14 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
         .access_log_error
         .as_ref()
         .map(|_| "The access log was changed outside Cua; it may be incomplete.".into());
-    let relay = s.mode.as_deref() != Some("direct");
     v.toggles = vec![
         HostToggle {
             id: "desktop".into(),
             label: "Share this desktop".into(),
             help: "Your devices can see and control this screen.".into(),
             on: s.share_desktop,
-            enabled: relay && (!s.share_desktop || s.provide_spaces),
+            // Both may be off: then sharing stops (nothing to share).
+            enabled: relay,
             action: if s.share_desktop {
                 HostActionId::HideDesktop
             } else {
@@ -1086,7 +1227,7 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
                 "Needs the relay.".into()
             },
             on: s.provide_spaces,
-            enabled: relay && (!s.provide_spaces || s.share_desktop),
+            enabled: relay,
             action: if s.provide_spaces {
                 HostActionId::StopProvidingSpaces
             } else {
@@ -1114,6 +1255,51 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
         vec![]
     };
     v.permissions_title = (!v.permissions.is_empty()).then(|| PERMISSIONS_TITLE.into());
+    let remove = HostAction {
+        id: HostActionId::Remove,
+        label: "Remove host setup".into(),
+        destructive: true,
+        confirm: Some(remove_confirm()),
+        enabled: true,
+        help: None,
+    };
+    if relay && s.paused_signed_out {
+        match s.account.as_ref().map(|a| owned_by(s, a)) {
+            // Signed in to another account: this registration is not
+            // theirs to share. Removing it, then setting up again, is.
+            Some(Some(false)) => {
+                v.notice = Some(OTHER_ACCOUNT_NOTICE.into());
+                v.actions = vec![remove];
+            }
+            // The owner is signed in again (the app resumes on its own;
+            // this is the button when that failed).
+            Some(_) => {
+                v.notice = Some("Sharing is paused.".into());
+                v.notice_action = Some(HostAction {
+                    id: HostActionId::ResumeSharing,
+                    label: "Resume Sharing".into(),
+                    destructive: false,
+                    confirm: None,
+                    enabled: true,
+                    help: None,
+                });
+                v.actions = vec![remove];
+            }
+            None => {
+                v.notice = Some(SIGNED_OUT_NOTICE.into());
+                v.notice_action = Some(HostAction {
+                    id: HostActionId::SignIn,
+                    label: "Sign In".into(),
+                    destructive: false,
+                    confirm: None,
+                    enabled: true,
+                    help: None,
+                });
+                v.actions = vec![remove];
+            }
+        }
+        return v;
+    }
     v.actions = vec![
         if s.sharing {
             // One click, never a confirmation: stopping access must be
@@ -1123,6 +1309,8 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
                 label: "Stop sharing".into(),
                 destructive: true,
                 confirm: None,
+                enabled: true,
+                help: None,
             }
         } else {
             HostAction {
@@ -1130,17 +1318,25 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
                 label: "Resume sharing".into(),
                 destructive: false,
                 confirm: None,
+                // Both settings off: there is nothing to share.
+                enabled: s.share_desktop || s.provide_spaces,
+                help: (!s.share_desktop && !s.provide_spaces).then(|| NOTHING_TO_SHARE_HELP.into()),
             }
         },
-        HostAction {
-            id: HostActionId::Remove,
-            label: "Remove host setup".into(),
-            destructive: true,
-            confirm: Some(remove_confirm()),
-        },
+        remove,
     ];
     v
 }
+
+/// Resume sharing's tooltip while both settings are off.
+pub const NOTHING_TO_SHARE_HELP: &str =
+    "Turn on Share this desktop or Provide Spaces to share this machine.";
+
+/// The page's line while another account is signed in and this machine's
+/// relay sharing (registered to the account that signed out) is paused.
+pub const OTHER_ACCOUNT_NOTICE: &str = "This Mac is shared with another Cua \
+account, so sharing stays paused. Remove the host setup, then set it up again \
+to share it with yours.";
 
 /// "Up to 4 Spaces · 2 macOS VMs (Apple's license allows two per Mac)".
 pub fn limits_line(max_spaces: u32, max_macos_vms: u32) -> String {
@@ -2080,15 +2276,110 @@ mod tests {
         }
     }
 
+    fn ada() -> HostAccount {
+        HostAccount {
+            id: Some("user-1".into()),
+            email: Some("ada@example.com".into()),
+            display: Some("Ada Lovelace".into()),
+        }
+    }
+
+    fn owned(paused: bool, account: Option<HostAccount>) -> HostState {
+        HostState {
+            owner: Some("user-1".into()),
+            owner_email: Some("ada@example.com".into()),
+            paused_signed_out: paused,
+            sharing: !paused,
+            service_running: !paused,
+            account,
+            ..host(true, false)
+        }
+    }
+
     #[test]
-    fn the_two_settings_are_switches_and_one_stays_on() {
+    fn relay_sharing_follows_the_sign_in() {
+        let bob = HostAccount {
+            id: Some("user-2".into()),
+            email: Some("bob@example.com".into()),
+            display: None,
+        };
+        // Signed in and sharing: keep it, and say whose it is.
+        let s = owned(false, Some(ada()));
+        assert_eq!(account_step(&s, s.account.as_ref()), HostAccountStep::Keep);
+        let v = panel(Some(&s));
+        assert!(v.notice.is_none());
+        let fact = v.facts.iter().find(|f| f.label == "Shared with").unwrap();
+        assert_eq!(fact.value, "Your account (Ada Lovelace)");
+        assert_eq!(v.actions[0].id, HostActionId::StopSharing);
+
+        // Signed out: pause, then one line and Sign In.
+        let s = owned(false, None);
+        assert_eq!(account_step(&s, None), HostAccountStep::Pause);
+        let s = owned(true, None);
+        assert_eq!(account_step(&s, None), HostAccountStep::Keep);
+        let v = panel(Some(&s));
+        assert_eq!(v.notice.as_deref(), Some(SIGNED_OUT_NOTICE));
+        assert_eq!(v.notice_action.as_ref().unwrap().id, HostActionId::SignIn);
+        assert_eq!(v.notice_action.as_ref().unwrap().label, "Sign In");
+        assert!(v.facts.iter().all(|f| f.label != "Shared with"));
+        assert_eq!(v.actions.len(), 1);
+        assert_eq!(v.actions[0].id, HostActionId::Remove);
+        assert_eq!(v.summary, PAUSED_SUMMARY);
+        assert_eq!(
+            host_summary(Some(&s.summary_input())),
+            "Paused \u{b7} signed out"
+        );
+
+        // The owner signs in again: resume (by id, or by email alone).
+        let s = owned(true, Some(ada()));
+        assert_eq!(
+            account_step(&s, s.account.as_ref()),
+            HostAccountStep::Resume
+        );
+        let by_email = HostAccount { id: None, ..ada() };
+        assert_eq!(account_step(&s, Some(&by_email)), HostAccountStep::Resume);
+        assert_eq!(ada().key(), "user-1");
+        assert_eq!(by_email.key(), "ada@example.com");
+        // Its button, if resuming on its own failed.
+        let v = panel(Some(&s));
+        assert_eq!(
+            v.notice_action.as_ref().unwrap().id,
+            HostActionId::ResumeSharing
+        );
+
+        // Another account: never re-share the old one's registration.
+        let s = owned(true, Some(bob.clone()));
+        assert_eq!(account_step(&s, s.account.as_ref()), HostAccountStep::Keep);
+        let v = panel(Some(&s));
+        assert_eq!(v.notice.as_deref(), Some(OTHER_ACCOUNT_NOTICE));
+        assert!(v.notice_action.is_none());
+        assert_eq!(v.actions[0].id, HostActionId::Remove);
+        // ...and one signed in while it shares pauses it.
+        let s = owned(false, Some(bob));
+        assert_eq!(account_step(&s, s.account.as_ref()), HostAccountStep::Pause);
+
+        // Direct mode and a machine that is not set up never follow it.
+        let direct = HostState {
+            mode: Some("direct".into()),
+            ..owned(false, None)
+        };
+        assert_eq!(account_step(&direct, None), HostAccountStep::Keep);
+        assert!(panel(Some(&direct)).notice.is_none());
+        assert_eq!(
+            account_step(&HostState::default(), None),
+            HostAccountStep::Keep
+        );
+    }
+
+    #[test]
+    fn the_two_settings_are_switches_and_both_may_be_off() {
         let v = panel(Some(&host(true, false)));
         let desktop = &v.toggles[0];
         assert_eq!(
             (desktop.label.as_str(), desktop.on),
             ("Share this desktop", true)
         );
-        assert!(!desktop.enabled, "the only setting on cannot be turned off");
+        assert!(desktop.enabled, "the only setting on can be turned off too");
         assert_eq!(v.toggles[1].action, HostActionId::ProvideSpaces);
         assert!(v.toggles[1].enabled);
         assert!(v.limits.is_none() && v.provided_title.is_none());
@@ -2098,7 +2389,7 @@ mod tests {
         let v = panel(Some(&host(false, true)));
         assert_eq!(v.toggles[0].action, HostActionId::ShareDesktop);
         assert!(v.toggles[0].enabled);
-        assert!(!v.toggles[1].enabled);
+        assert!(v.toggles[1].enabled);
         assert!(v.permissions.is_empty() && v.permissions_title.is_none());
         assert_eq!(
             v.limits.as_deref(),
@@ -2109,6 +2400,25 @@ mod tests {
         // Both on: either can go off.
         let v = panel(Some(&host(true, true)));
         assert!(v.toggles.iter().all(|t| t.enabled));
+        assert!(v.actions.iter().all(|a| a.enabled && a.help.is_none()));
+
+        // Both off: nothing to share, so sharing stopped (the host's
+        // doing) and Resume sharing waits for one to be on again.
+        let off = HostState {
+            sharing: false,
+            ..host(false, false)
+        };
+        let v = panel(Some(&off));
+        assert!(v.toggles.iter().all(|t| t.enabled && !t.on));
+        assert_eq!(v.actions[0].id, HostActionId::ResumeSharing);
+        assert!(!v.actions[0].enabled);
+        assert_eq!(v.actions[0].help.as_deref(), Some(NOTHING_TO_SHARE_HELP));
+        assert!(v.actions[1].enabled, "Remove stays available");
+        let v = panel(Some(&HostState {
+            sharing: false,
+            ..host(false, true)
+        }));
+        assert!(v.actions[0].enabled && v.actions[0].help.is_none());
         // Direct mode cannot provide Spaces or hide the desktop.
         let direct = panel(Some(&HostState {
             mode: Some("direct".into()),

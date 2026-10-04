@@ -202,6 +202,14 @@ public final class AppModel {
             if case .failed = self.signIn { return false }
             return self.identity != nil
         }
+        // Relay sharing follows the sign-in: whose account this Mac is
+        // shared with, read from the local session (no network).
+        self.host.currentAccount = { [weak self] in
+            guard let self, let account = self.account, let who = account.identity() else { return nil }
+            let profile = account.profile()
+            let name = profile?.name.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
+            return AppHostAccount(id: profile?.subject, email: profile?.email, display: name ?? who)
+        }
         // Onboarding's This machine step has its own HostModel: give it the
         // same inline sign-in, or a skipped sign-in fails setup with "Not
         // signed in" instead of opening the browser and carrying on.
@@ -358,12 +366,17 @@ public final class AppModel {
     }
 
     static let createTickMs = 250
+    /// How often the app's refresh checks relay sharing against the sign-in.
+    static let accountCheckInterval: TimeInterval = 120
 
     static func nowMs() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
 
     /// Re-reads the registry (and the host).
     public func refresh() async {
         await host.refresh()
+        // At launch, then every few minutes: a session that expired for
+        // good (or a `cua auth logout`) pauses relay sharing too.
+        await host.reconcileAccount(ifOlderThan: Self.accountCheckInterval)
         cloudConfigured = await backend.cloudAvailable()
         do {
             let rows = try await backend.rows()
@@ -389,8 +402,7 @@ public final class AppModel {
 
     // MARK: - New Space
 
-    /// New Space with "Run on" set to `on` (`host:<machine>`): a machine's
-    /// "New Space on <name>…".
+    /// New Space with "Run on" set to `on` (`host:<machine>`).
     public func openNewSpace(on: String) async {
         await openNewSpace()
         wizard.send(.choosePlacement(on: on))
@@ -698,6 +710,9 @@ public final class AppModel {
             }
             onboarding.send(.signedIn(identity: identity ?? ""))
             signIn = .idle
+            // Relay sharing paused while signed out comes back for its
+            // owner (another account is asked to set it up again).
+            await host.reconcileAccount()
         } catch {
             signIn = .failed(message: LiveSpacesBackend.words(error))
         }
@@ -711,6 +726,8 @@ public final class AppModel {
         host.identity = nil
         onboarding.host.identity = nil
         devices.signedIn = false
+        // Signed out: relay sharing stops (the setup stays to resume).
+        await host.reconcileAccount()
         await devices.refresh()
         signIn = .idle
     }

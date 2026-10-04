@@ -44,6 +44,27 @@ struct ThisMachineView: View {
                                 .accessibilityIdentifier("host-choice-\(choice.id)")
                             }
                         }
+                    } else if let notice = panel.notice {
+                        // Relay sharing paused (signed out, or another
+                        // account): one line in place of the summary, and
+                        // its button.
+                        Section {
+                            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                Text(notice)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .accessibilityIdentifier("host-notice")
+                                Spacer(minLength: 8)
+                                if let action = panel.noticeAction {
+                                    Button(action.label) { Task { await host.run(action.id) } }
+                                        .buttonStyle(.borderedProminent)
+                                        .disabled(host.busy || !action.enabled)
+                                        .accessibilityIdentifier("host-notice-action")
+                                }
+                            }
+                            if let progress = host.progress {
+                                HostSetupProgressView(text: progress)
+                            }
+                        }
                     } else {
                         Section {
                             Text(panel.summary)
@@ -197,7 +218,8 @@ struct ThisMachineView: View {
                             Task { await host.run(action.id) }
                         }
                     }
-                    .disabled(host.busy)
+                    .disabled(host.busy || !action.enabled)
+                    .help(action.help ?? "")
                     .accessibilityIdentifier("host-action-\(index)")
                     if index == 0 {
                         button.buttonStyle(.borderedProminent).tint(action.destructive ? .red : .accentColor)

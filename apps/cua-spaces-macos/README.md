@@ -134,6 +134,17 @@ scripts/package-dmg.sh --app "/tmp/spaces-release/Cua Spaces.app" --out /tmp/cua
 scripts/verify-release.sh cua-spaces-0.2.0-darwin-universal.dmg      # a downloaded release
 ```
 
+The disk image window is the spaces.cua.ai hero with the blue Cua Spaces key
+missing. The app, whose icon is that key, sits on the left. The Applications
+alias, whose icon is the key's outline with an Applications glyph, sits where
+the key was, so installing is dragging the key into its place.
+`package-dmg.sh` lays the window out with a pinned
+[dmgbuild](https://github.com/dmgbuild/dmgbuild) (`scripts/dmg-settings.py`)
+and makes the alias with `scripts/make-alias.swift`. The art in
+`Support/dmg` and the app icon `Support/AppIcon.icns` are drawn from the
+site's keycap sprites by `scripts/dmg-art/render.sh` (headless Chrome); rerun
+it only when the art changes.
+
 ## Updates (Sparkle)
 
 The app updates itself with [Sparkle](https://sparkle-project.org) 2

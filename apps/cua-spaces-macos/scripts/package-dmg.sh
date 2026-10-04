@@ -30,16 +30,24 @@ done
 [ -n "$out" ] || { echo "--out is required" >&2; exit 2; }
 case "$out" in *.dmg) ;; *) echo "--out must end in .dmg" >&2; exit 2 ;; esac
 
+here="$(cd "$(dirname "$0")" && pwd)"
+art="$here/../Support/dmg"
+dmgbuild_version="1.6.7"
+for f in background.png background@2x.png applications.icns; do
+  [ -f "$art/$f" ] || { echo "missing $art/$f (scripts/dmg-art/render.sh draws it)" >&2; exit 1; }
+done
+[ -f "$app/Contents/Resources/AppIcon.icns" ] || { echo "$app has no Contents/Resources/AppIcon.icns" >&2; exit 2; }
+
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-stage="$work/Cua Spaces"
-mkdir -p "$stage"
-ditto "$app" "$stage/$(basename "$app")"
-ln -s /Applications "$stage/Applications"
+python3 -m venv "$work/venv"
+"$work/venv/bin/pip" install --quiet --disable-pip-version-check "dmgbuild==$dmgbuild_version"
+swift "$here/make-alias.swift" /Applications "$work/Applications" "$art/applications.icns"
 mkdir -p "$(dirname "$out")"
 rm -f "$out"
-hdiutil create -quiet -volname "Cua Spaces" -srcfolder "$stage" -fs HFS+ \
-  -format UDZO -imagekey zlib-level=9 -ov "$out"
+"$work/venv/bin/dmgbuild" -s "$here/dmg-settings.py" \
+  -D app="$app" -D alias="$work/Applications" -D art="$art" \
+  "Cua Spaces" "$out" >&2
 if [ -n "$identity" ]; then
   codesign --force --timestamp --sign "$identity" "$out"
   codesign --verify --strict --verbose=2 "$out" >&2

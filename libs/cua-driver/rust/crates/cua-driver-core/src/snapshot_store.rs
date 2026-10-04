@@ -108,10 +108,13 @@ fn stale_token_refusal<S>(pid: i32, lane: &[Snapshot<S>]) -> ToolResult {
 }
 
 fn zoom_context_refusal(pid: i32, window_id: Option<u64>) -> ToolResult {
-    ToolResult::error(
-        "The zoom coordinate context is missing or was replaced by a newer snapshot. Call get_window_state and zoom again on the same connection before using from_zoom coordinates.",
-    )
-    .with_structured(serde_json::json!({
+    let message = "The zoom coordinate context is missing or was replaced by a newer snapshot. Call get_window_state and zoom again on the same connection before using from_zoom coordinates.";
+    ToolResult::error(message).with_structured(serde_json::json!({
+        // Explicit shared refusal envelope: the context is resolved before any
+        // input is dispatched, so nothing was delivered. Top-level fields stay
+        // for existing consumers.
+        "status": "refused",
+        "refusal": { "code": "zoom_context_missing", "message": message },
         "code": "zoom_context_missing",
         "pid": pid,
         "window_id": window_id,
@@ -631,6 +634,34 @@ mod tests {
             structured["current_snapshots"],
             serde_json::json!([{ "snapshot_id": format_snapshot_id(current), "window_id": 555 }])
         );
+    }
+
+    #[test]
+    fn stale_zoom_is_an_explicit_refusal_with_no_delivery() {
+        let cache = SnapshotStore::<Payload>::new();
+        let structured = cache
+            .zoom(7, Some(9), None)
+            .unwrap_err()
+            .structured_content
+            .unwrap();
+        // Legacy top-level fields remain for existing consumers.
+        assert_eq!(structured["code"], "zoom_context_missing");
+        assert_eq!(structured["pid"], 7);
+        assert_eq!(structured["window_id"], 9);
+        assert_eq!(structured["status"], "refused");
+        assert_eq!(structured["refusal"]["code"], "zoom_context_missing");
+
+        let args = serde_json::json!({
+            "pid": 7, "window_id": 9, "x": 1, "y": 2, "from_zoom": true,
+            "delivery_mode": "foreground",
+        });
+        let record =
+            crate::action_record::ActionExecutionRecord::from_legacy("click", &args, &structured)
+                .unwrap();
+        assert_eq!(record.effect, crate::action_record::ActionEffect::Refused);
+        assert_eq!(record.actual_delivery, None);
+        assert_eq!(record.delivered_count, None);
+        assert_eq!(record.refusal.unwrap().code, "zoom_context_missing");
     }
 
     #[test]

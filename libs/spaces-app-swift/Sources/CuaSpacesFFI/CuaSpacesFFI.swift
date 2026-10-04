@@ -13536,6 +13536,82 @@ public func FfiConverterTypeAppHostAccessRow_lower(_ value: AppHostAccessRow) ->
 }
 
 
+public struct AppHostAccount: Equatable, Hashable {
+    /**
+     * The account id (the session's `sub`).
+     */
+    public var id: String?
+    /**
+     * Its email.
+     */
+    public var email: String?
+    /**
+     * What the app shows for it (a display name, else the email).
+     */
+    public var display: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The account id (the session's `sub`).
+         */id: String?,
+        /**
+         * Its email.
+         */email: String?,
+        /**
+         * What the app shows for it (a display name, else the email).
+         */display: String?) {
+        self.id = id
+        self.email = email
+        self.display = display
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppHostAccount: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppHostAccount: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppHostAccount {
+        return
+            try AppHostAccount(
+                id: FfiConverterOptionString.read(from: &buf),
+                email: FfiConverterOptionString.read(from: &buf),
+                display: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppHostAccount, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.id, into: &buf)
+        FfiConverterOptionString.write(value.email, into: &buf)
+        FfiConverterOptionString.write(value.display, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppHostAccount_lift(_ buf: RustBuffer) throws -> AppHostAccount {
+    return try FfiConverterTypeAppHostAccount.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppHostAccount_lower(_ value: AppHostAccount) -> RustBuffer {
+    return FfiConverterTypeAppHostAccount.lower(value)
+}
+
+
 public struct AppHostAction: Equatable, Hashable {
     /**
      * What it does.
@@ -13553,6 +13629,15 @@ public struct AppHostAction: Equatable, Hashable {
      * Ask this first; the action runs only when the user confirms.
      */
     public var confirm: AppHostConfirm?
+    /**
+     * Can be pressed now (Resume sharing is not while nothing is on to
+     * share).
+     */
+    public var enabled: Bool
+    /**
+     * The tooltip, when it says something the label does not.
+     */
+    public var help: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -13568,11 +13653,20 @@ public struct AppHostAction: Equatable, Hashable {
          */destructive: Bool,
         /**
          * Ask this first; the action runs only when the user confirms.
-         */confirm: AppHostConfirm?) {
+         */confirm: AppHostConfirm?,
+        /**
+         * Can be pressed now (Resume sharing is not while nothing is on to
+         * share).
+         */enabled: Bool,
+        /**
+         * The tooltip, when it says something the label does not.
+         */help: String?) {
         self.id = id
         self.label = label
         self.destructive = destructive
         self.confirm = confirm
+        self.enabled = enabled
+        self.help = help
     }
 
 
@@ -13594,7 +13688,9 @@ public struct FfiConverterTypeAppHostAction: FfiConverterRustBuffer {
                 id: FfiConverterTypeAppHostActionId.read(from: &buf),
                 label: FfiConverterString.read(from: &buf),
                 destructive: FfiConverterBool.read(from: &buf),
-                confirm: FfiConverterOptionTypeAppHostConfirm.read(from: &buf)
+                confirm: FfiConverterOptionTypeAppHostConfirm.read(from: &buf),
+                enabled: FfiConverterBool.read(from: &buf),
+                help: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -13603,6 +13699,8 @@ public struct FfiConverterTypeAppHostAction: FfiConverterRustBuffer {
         FfiConverterString.write(value.label, into: &buf)
         FfiConverterBool.write(value.destructive, into: &buf)
         FfiConverterOptionTypeAppHostConfirm.write(value.confirm, into: &buf)
+        FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterOptionString.write(value.help, into: &buf)
     }
 }
 
@@ -14390,6 +14488,15 @@ public struct AppHostPanelView: Equatable, Hashable {
      */
     public var summary: String
     /**
+     * Why relay sharing is paused, one line over the page (signed out, or
+     * signed in to another account).
+     */
+    public var notice: String?
+    /**
+     * The notice's button ("Sign In").
+     */
+    public var noticeAction: AppHostAction?
+    /**
      * Set up for access.
      */
     public var configured: Bool
@@ -14513,6 +14620,13 @@ public struct AppHostPanelView: Equatable, Hashable {
          * One line: how it is shared, or that it is not.
          */summary: String,
         /**
+         * Why relay sharing is paused, one line over the page (signed out, or
+         * signed in to another account).
+         */notice: String?,
+        /**
+         * The notice's button ("Sign In").
+         */noticeAction: AppHostAction?,
+        /**
          * Set up for access.
          */configured: Bool,
         /**
@@ -14600,6 +14714,8 @@ public struct AppHostPanelView: Equatable, Hashable {
          */setupChoices: [AppHostSetupChoice]) {
         self.title = title
         self.summary = summary
+        self.notice = notice
+        self.noticeAction = noticeAction
         self.configured = configured
         self.facts = facts
         self.clientsTitle = clientsTitle
@@ -14647,6 +14763,8 @@ public struct FfiConverterTypeAppHostPanelView: FfiConverterRustBuffer {
             try AppHostPanelView(
                 title: FfiConverterString.read(from: &buf),
                 summary: FfiConverterString.read(from: &buf),
+                notice: FfiConverterOptionString.read(from: &buf),
+                noticeAction: FfiConverterOptionTypeAppHostAction.read(from: &buf),
                 configured: FfiConverterBool.read(from: &buf),
                 facts: FfiConverterSequenceTypeAppFact.read(from: &buf),
                 clientsTitle: FfiConverterOptionString.read(from: &buf),
@@ -14680,6 +14798,8 @@ public struct FfiConverterTypeAppHostPanelView: FfiConverterRustBuffer {
     public static func write(_ value: AppHostPanelView, into buf: inout [UInt8]) {
         FfiConverterString.write(value.title, into: &buf)
         FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterOptionString.write(value.notice, into: &buf)
+        FfiConverterOptionTypeAppHostAction.write(value.noticeAction, into: &buf)
         FfiConverterBool.write(value.configured, into: &buf)
         FfiConverterSequenceTypeAppFact.write(value.facts, into: &buf)
         FfiConverterOptionString.write(value.clientsTitle, into: &buf)
@@ -15404,6 +15524,24 @@ public struct AppHostState: Equatable, Hashable {
      * Set when the Spaces audit does not verify.
      */
     public var spacesAuditError: String?
+    /**
+     * Relay sharing is paused until the owner signs in again (the host
+     * left the relay; its setup stays).
+     */
+    public var pausedSignedOut: Bool
+    /**
+     * The account this machine is registered to (relay mode): its id.
+     */
+    public var owner: String?
+    /**
+     * The owner's email, when the relay gave one.
+     */
+    public var ownerEmail: String?
+    /**
+     * Who is signed in to Cua in this app (`None`: nobody, or the shell
+     * does not say). The shell fills it; the host does not know.
+     */
+    public var account: AppHostAccount?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -15474,7 +15612,21 @@ public struct AppHostState: Equatable, Hashable {
          */spacesAudit: [AppHostSpacesAudit],
         /**
          * Set when the Spaces audit does not verify.
-         */spacesAuditError: String?) {
+         */spacesAuditError: String?,
+        /**
+         * Relay sharing is paused until the owner signs in again (the host
+         * left the relay; its setup stays).
+         */pausedSignedOut: Bool,
+        /**
+         * The account this machine is registered to (relay mode): its id.
+         */owner: String?,
+        /**
+         * The owner's email, when the relay gave one.
+         */ownerEmail: String?,
+        /**
+         * Who is signed in to Cua in this app (`None`: nobody, or the shell
+         * does not say). The shell fills it; the host does not know.
+         */account: AppHostAccount?) {
         self.configured = configured
         self.mode = mode
         self.relayUrl = relayUrl
@@ -15497,6 +15649,10 @@ public struct AppHostState: Equatable, Hashable {
         self.providedSpaces = providedSpaces
         self.spacesAudit = spacesAudit
         self.spacesAuditError = spacesAuditError
+        self.pausedSignedOut = pausedSignedOut
+        self.owner = owner
+        self.ownerEmail = ownerEmail
+        self.account = account
     }
 
 
@@ -15536,7 +15692,11 @@ public struct FfiConverterTypeAppHostState: FfiConverterRustBuffer {
                 maxMacosVms: FfiConverterUInt32.read(from: &buf),
                 providedSpaces: FfiConverterSequenceTypeAppHostProvidedSpace.read(from: &buf),
                 spacesAudit: FfiConverterSequenceTypeAppHostSpacesAudit.read(from: &buf),
-                spacesAuditError: FfiConverterOptionString.read(from: &buf)
+                spacesAuditError: FfiConverterOptionString.read(from: &buf),
+                pausedSignedOut: FfiConverterBool.read(from: &buf),
+                owner: FfiConverterOptionString.read(from: &buf),
+                ownerEmail: FfiConverterOptionString.read(from: &buf),
+                account: FfiConverterOptionTypeAppHostAccount.read(from: &buf)
         )
     }
 
@@ -15563,6 +15723,10 @@ public struct FfiConverterTypeAppHostState: FfiConverterRustBuffer {
         FfiConverterSequenceTypeAppHostProvidedSpace.write(value.providedSpaces, into: &buf)
         FfiConverterSequenceTypeAppHostSpacesAudit.write(value.spacesAudit, into: &buf)
         FfiConverterOptionString.write(value.spacesAuditError, into: &buf)
+        FfiConverterBool.write(value.pausedSignedOut, into: &buf)
+        FfiConverterOptionString.write(value.owner, into: &buf)
+        FfiConverterOptionString.write(value.ownerEmail, into: &buf)
+        FfiConverterOptionTypeAppHostAccount.write(value.account, into: &buf)
     }
 }
 
@@ -15611,6 +15775,10 @@ public struct AppHostSummaryInput: Equatable, Hashable {
      * Relay presence.
      */
     public var online: Bool?
+    /**
+     * Relay sharing is paused while signed out.
+     */
+    public var pausedSignedOut: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -15635,7 +15803,10 @@ public struct AppHostSummaryInput: Equatable, Hashable {
          */mode: String?,
         /**
          * Relay presence.
-         */online: Bool?) {
+         */online: Bool?,
+        /**
+         * Relay sharing is paused while signed out.
+         */pausedSignedOut: Bool) {
         self.configured = configured
         self.error = error
         self.serviceRunning = serviceRunning
@@ -15643,6 +15814,7 @@ public struct AppHostSummaryInput: Equatable, Hashable {
         self.clients = clients
         self.mode = mode
         self.online = online
+        self.pausedSignedOut = pausedSignedOut
     }
 
 
@@ -15667,7 +15839,8 @@ public struct FfiConverterTypeAppHostSummaryInput: FfiConverterRustBuffer {
                 sharing: FfiConverterBool.read(from: &buf),
                 clients: FfiConverterUInt32.read(from: &buf),
                 mode: FfiConverterOptionString.read(from: &buf),
-                online: FfiConverterOptionBool.read(from: &buf)
+                online: FfiConverterOptionBool.read(from: &buf),
+                pausedSignedOut: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -15679,6 +15852,7 @@ public struct FfiConverterTypeAppHostSummaryInput: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.clients, into: &buf)
         FfiConverterOptionString.write(value.mode, into: &buf)
         FfiConverterOptionBool.write(value.online, into: &buf)
+        FfiConverterBool.write(value.pausedSignedOut, into: &buf)
     }
 }
 
@@ -43282,6 +43456,89 @@ public func FfiConverterTypeAppEnrollmentKind_lower(_ value: AppEnrollmentKind) 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum AppHostAccountStep: Equatable, Hashable {
+
+    /**
+     * Nothing to do.
+     */
+    case keep
+    /**
+     * Pause relay sharing (signed out, or signed in to another account).
+     */
+    case pause
+    /**
+     * Resume the paused relay sharing (its owner is signed in again).
+     */
+    case resume
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppHostAccountStep: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppHostAccountStep: FfiConverterRustBuffer {
+    typealias SwiftType = AppHostAccountStep
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppHostAccountStep {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .keep
+
+        case 2: return .pause
+
+        case 3: return .resume
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppHostAccountStep, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .keep:
+            writeInt(&buf, Int32(1))
+
+
+        case .pause:
+            writeInt(&buf, Int32(2))
+
+
+        case .resume:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppHostAccountStep_lift(_ buf: RustBuffer) throws -> AppHostAccountStep {
+    return try FfiConverterTypeAppHostAccountStep.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppHostAccountStep_lower(_ value: AppHostAccountStep) -> RustBuffer {
+    return FfiConverterTypeAppHostAccountStep.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum AppHostActionId: Equatable, Hashable {
 
     /**
@@ -43316,6 +43573,10 @@ public enum AppHostActionId: Equatable, Hashable {
      * Stop creating Spaces for your other devices.
      */
     case stopProvidingSpaces
+    /**
+     * Sign in to Cua (relay sharing paused while signed out resumes).
+     */
+    case signIn
 
 
 
@@ -43352,6 +43613,8 @@ public struct FfiConverterTypeAppHostActionId: FfiConverterRustBuffer {
         case 7: return .provideSpaces
 
         case 8: return .stopProvidingSpaces
+
+        case 9: return .signIn
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -43391,6 +43654,10 @@ public struct FfiConverterTypeAppHostActionId: FfiConverterRustBuffer {
 
         case .stopProvidingSpaces:
             writeInt(&buf, Int32(8))
+
+
+        case .signIn:
+            writeInt(&buf, Int32(9))
 
         }
     }
@@ -54081,6 +54348,54 @@ fileprivate struct FfiConverterOptionTypeAppGpuRow: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeAppHostAccount: FfiConverterRustBuffer {
+    typealias SwiftType = AppHostAccount?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppHostAccount.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppHostAccount.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppHostAction: FfiConverterRustBuffer {
+    typealias SwiftType = AppHostAction?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppHostAction.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppHostAction.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeAppHostConfirm: FfiConverterRustBuffer {
     typealias SwiftType = AppHostConfirm?
 
@@ -60488,6 +60803,28 @@ public func appGroupWindowsByApp(windows: [AppRemoteWindow]) -> [AppRemoteWindow
 })
 }
 /**
+ * The account id (else email) host resume names the signed-in account by.
+ */
+public func appHostAccountKey(account: AppHostAccount) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_host_account_key(
+        FfiConverterTypeAppHostAccount_lower(account),$0
+    )
+})
+}
+/**
+ * What to do with the host when the signed-in account changes (`None`:
+ * nobody is signed in; never pass `None` for "could not tell").
+ */
+public func appHostAccountStep(state: AppHostState, account: AppHostAccount?) -> AppHostAccountStep  {
+    return try!  FfiConverterTypeAppHostAccountStep_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_host_account_step(
+        FfiConverterTypeAppHostState_lower(state),
+        FfiConverterOptionTypeAppHostAccount.lower(account),$0
+    )
+})
+}
+/**
  * This machine's CPU architecture as the Spaces apps pass it to the core
  * (`arm64`, `amd64`).
  */
@@ -62803,6 +63140,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_group_windows_by_app() != 1722) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_host_account_key() != 31377) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_host_account_step() != 15231) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_host_arch() != 62729) {

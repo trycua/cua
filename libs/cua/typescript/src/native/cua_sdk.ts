@@ -9410,7 +9410,20 @@ export type HostStatus = {
     /**
      * Set when the Spaces audit does not verify.
      */
-    spacesAuditError?: string
+    spacesAuditError?: string,
+    /**
+     * Relay sharing is paused until the owner signs in again
+     * ([`Host::pause_signed_out`]).
+     */
+    pausedSignedOut: boolean,
+    /**
+     * The account this machine is registered to (relay mode): its id.
+     */
+    owner?: string,
+    /**
+     * The owner's email, when the relay gave one.
+     */
+    ownerEmail?: string
 }
 
 /**
@@ -9426,7 +9439,10 @@ export const HostStatus = (() => {
         maxMacosVms: 0,
         providedSpaces: [],
         spacesAudit: [],
-        spacesAuditError: undefined
+        spacesAuditError: undefined,
+        pausedSignedOut: false,
+        owner: undefined,
+        ownerEmail: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<HostStatus, ReturnType<typeof defaults>>(defaults);
@@ -9467,7 +9483,10 @@ const FfiConverterTypeHostStatus = (() => {
                 maxMacosVms: FfiConverterUInt32.read(from),
                 providedSpaces: FfiConverterSequenceTypeHostProvidedSpace.read(from),
                 spacesAudit: FfiConverterSequenceTypeHostSpacesAuditRecord.read(from),
-                spacesAuditError: FfiConverterOptionalString.read(from)
+                spacesAuditError: FfiConverterOptionalString.read(from),
+                pausedSignedOut: FfiConverterBool.read(from),
+                owner: FfiConverterOptionalString.read(from),
+                ownerEmail: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -9496,6 +9515,9 @@ const FfiConverterTypeHostStatus = (() => {
             FfiConverterSequenceTypeHostProvidedSpace.write(value.providedSpaces, into);
             FfiConverterSequenceTypeHostSpacesAuditRecord.write(value.spacesAudit, into);
             FfiConverterOptionalString.write(value.spacesAuditError, into);
+            FfiConverterBool.write(value.pausedSignedOut, into);
+            FfiConverterOptionalString.write(value.owner, into);
+            FfiConverterOptionalString.write(value.ownerEmail, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.configured) +
@@ -9522,7 +9544,10 @@ const FfiConverterTypeHostStatus = (() => {
              FfiConverterUInt32.allocationSize(value.maxMacosVms) +
              FfiConverterSequenceTypeHostProvidedSpace.allocationSize(value.providedSpaces) +
              FfiConverterSequenceTypeHostSpacesAuditRecord.allocationSize(value.spacesAudit) +
-             FfiConverterOptionalString.allocationSize(value.spacesAuditError);
+             FfiConverterOptionalString.allocationSize(value.spacesAuditError) +
+             FfiConverterBool.allocationSize(value.pausedSignedOut) +
+             FfiConverterOptionalString.allocationSize(value.owner) +
+             FfiConverterOptionalString.allocationSize(value.ownerEmail);
 
         }
     };
@@ -30604,6 +30629,10 @@ export interface SpaceLike {
  */
     shares(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceShares>;
 /**
+ * The cua-spacesd client over the connection this Space authenticated.
+ */
+    spacesd() /*throws*/: SpacesdClientLike;
+/**
  * Starts the reverse-SOCKS hotspot: this host serves the Space's
  * egress. `set_system_proxy` points the guest's proxy settings at it
  * (default false here).
@@ -31730,6 +31759,21 @@ private constructor(pointer: UniffiHandle) {
         }
         throw __error;
     }
+    }
+
+/**
+ * The cua-spacesd client over the connection this Space authenticated.
+ */
+    spacesd(): SpacesdClientLike /*throws*/ {
+    return FfiConverterTypeSpacesdClient.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_sdk_fn_method_space_spacesd(
+                uniffiTypeSpaceObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
     }
 
 /**
@@ -35532,9 +35576,21 @@ export interface HostLike {
  */
     configure(change: HostSettingsChange, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HostStatus>;
 /**
+ * Pause relay sharing while nobody is signed in to the owner's
+ * account: the host leaves the relay and stays off it (also across a
+ * restart) with its setup kept. Direct mode is left alone.
+ */
+    pauseSignedOut(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HostStatus>;
+/**
  * Unregister, uninstall the service and delete the host state.
  */
     remove(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+/**
+ * Resume relay sharing paused by [`Host::pause_signed_out`] once
+ * `account` (the signed-in account's id or email) is signed in; refused
+ * when it is not the machine's owner.
+ */
+    resumeSignedIn(account: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HostStatus>;
 /**
  * Installs and starts the host service (relay mode needs
  * `account_token`).
@@ -35626,6 +35682,43 @@ export class Host extends UniffiAbstractObject implements HostLike {
     }
 
 /**
+ * Pause relay sharing while nobody is signed in to the owner's
+ * account: the host leaves the relay and stays off it (also across a
+ * restart) with its setup kept. Direct mode is left alone.
+ */
+    async pauseSignedOut(asyncOpts_?: { signal: AbortSignal }): Promise<HostStatus> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_host_pause_signed_out(
+                    uniffiTypeHostObjectFactory.clonePointer(this)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeHostStatus.lift.bind(FfiConverterTypeHostStatus),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
  * Unregister, uninstall the service and delete the host state.
  */
     async remove(asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
@@ -35643,6 +35736,43 @@ export class Host extends UniffiAbstractObject implements HostLike {
             /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_void,
             /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_void,
             /*liftFunc:*/ (_v) => {},
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Resume relay sharing paused by [`Host::pause_signed_out`] once
+ * `account` (the signed-in account's id or email) is signed in; refused
+ * when it is not the machine's owner.
+ */
+    async resumeSignedIn(account: string, asyncOpts_?: { signal: AbortSignal }): Promise<HostStatus> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_host_resume_signed_in(
+                    uniffiTypeHostObjectFactory.clonePointer(this),FfiConverterString.lower(account, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeHostStatus.lift.bind(FfiConverterTypeHostStatus),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -37090,8 +37220,14 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_host_configure() !== 36828) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_host_configure");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_host_pause_signed_out() !== 3338) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_host_pause_signed_out");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_host_remove() !== 63746) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_host_remove");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_host_resume_signed_in() !== 8436) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_host_resume_signed_in");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_host_setup() !== 765) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_host_setup");
@@ -37491,6 +37627,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_shares() !== 19234) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_shares");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_space_spacesd() !== 47873) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_spacesd");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_start_hotspot() !== 44744) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_start_hotspot");

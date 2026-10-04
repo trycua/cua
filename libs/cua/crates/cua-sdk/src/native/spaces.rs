@@ -2879,6 +2879,21 @@ impl Space {
         Ok(serde_json::to_string(self.inner.capabilities())?)
     }
 
+    /// The cua-spacesd client over the connection this Space authenticated.
+    pub fn spacesd(&self) -> Result<Arc<super::spacesd::SpacesdClient>> {
+        let client = self.inner.spacesd()?.clone();
+        let s = self.inner.clone();
+        let refresh: super::spacesd::WsHeaderRefresh = Arc::new(move || {
+            let s = s.clone();
+            Box::pin(async move { Ok(s.websocket_headers().await?) })
+        });
+        Ok(Arc::new(
+            super::spacesd::SpacesdClient::new(client, vec![])
+                .at(self.inner.provider().as_str())
+                .with_ws_refresh(refresh),
+        ))
+    }
+
     /// Headers a media WebSocket to this Space needs besides its ticket.
     pub async fn websocket_headers(&self) -> Result<Vec<super::HttpHeader>> {
         let s = self.inner.clone();

@@ -791,7 +791,11 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_host_configure() != 36828:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_host_pause_signed_out() != 3338:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_host_remove() != 63746:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_host_resume_signed_in() != 8436:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_host_setup() != 765:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1058,6 +1062,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_method_space_share() != 29574:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_shares() != 19234:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_space_spacesd() != 47873:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_start_hotspot() != 44744:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -2819,10 +2825,19 @@ _UniffiLib.uniffi_cua_sdk_fn_method_host_configure.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_host_configure.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_host_pause_signed_out.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_host_pause_signed_out.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_host_remove.argtypes = (
     ctypes.c_uint64,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_host_remove.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_host_resume_signed_in.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_host_resume_signed_in.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_host_setup.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -3513,6 +3528,11 @@ _UniffiLib.uniffi_cua_sdk_fn_method_space_shares.argtypes = (
     ctypes.c_uint64,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_space_shares.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_space_spacesd.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_space_spacesd.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_space_start_hotspot.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -4789,9 +4809,15 @@ _UniffiLib.uniffi_cua_sdk_checksum_constructor_host_new.restype = ctypes.c_uint1
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_configure.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_configure.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_host_pause_signed_out.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_host_pause_signed_out.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_remove.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_remove.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_host_resume_signed_in.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_host_resume_signed_in.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_setup.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_host_setup.restype = ctypes.c_uint16
@@ -5191,6 +5217,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_space_share.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_shares.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_shares.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_spacesd.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_spacesd.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_start_hotspot.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_start_hotspot.restype = ctypes.c_uint16
@@ -14231,7 +14260,7 @@ class HostStatus:
     """
     Host status.
 """
-    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT):
+    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT, paused_signed_out:bool = False, owner:typing.Optional[str] = _DEFAULT, owner_email:typing.Optional[str] = _DEFAULT):
         self.configured = configured
         self.mode = mode
         self.relay_url = relay_url
@@ -14272,12 +14301,21 @@ class HostStatus:
             self.spaces_audit_error = None
         else:
             self.spaces_audit_error = spaces_audit_error
+        self.paused_signed_out = paused_signed_out
+        if owner is _DEFAULT:
+            self.owner = None
+        else:
+            self.owner = owner
+        if owner_email is _DEFAULT:
+            self.owner_email = None
+        else:
+            self.owner_email = owner_email
 
 
 
 
     def __str__(self):
-        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.provided_spaces, self.spaces_audit, self.spaces_audit_error)
+        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={}, paused_signed_out={}, owner={}, owner_email={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.provided_spaces, self.spaces_audit, self.spaces_audit_error, self.paused_signed_out, self.owner, self.owner_email)
     def __eq__(self, other):
         if self.configured != other.configured:
             return False
@@ -14329,6 +14367,12 @@ class HostStatus:
             return False
         if self.spaces_audit_error != other.spaces_audit_error:
             return False
+        if self.paused_signed_out != other.paused_signed_out:
+            return False
+        if self.owner != other.owner:
+            return False
+        if self.owner_email != other.owner_email:
+            return False
         return True
 
 class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
@@ -14360,6 +14404,9 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
             provided_spaces=_UniffiFfiConverterSequenceTypeHostProvidedSpace.read(buf),
             spaces_audit=_UniffiFfiConverterSequenceTypeHostSpacesAuditRecord.read(buf),
             spaces_audit_error=_UniffiFfiConverterOptionalString.read(buf),
+            paused_signed_out=_UniffiFfiConverterBoolean.read(buf),
+            owner=_UniffiFfiConverterOptionalString.read(buf),
+            owner_email=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
@@ -14389,6 +14436,9 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceTypeHostProvidedSpace.check_lower(value.provided_spaces)
         _UniffiFfiConverterSequenceTypeHostSpacesAuditRecord.check_lower(value.spaces_audit)
         _UniffiFfiConverterOptionalString.check_lower(value.spaces_audit_error)
+        _UniffiFfiConverterBoolean.check_lower(value.paused_signed_out)
+        _UniffiFfiConverterOptionalString.check_lower(value.owner)
+        _UniffiFfiConverterOptionalString.check_lower(value.owner_email)
 
     @staticmethod
     def write(value, buf):
@@ -14417,6 +14467,9 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceTypeHostProvidedSpace.write(value.provided_spaces, buf)
         _UniffiFfiConverterSequenceTypeHostSpacesAuditRecord.write(value.spaces_audit, buf)
         _UniffiFfiConverterOptionalString.write(value.spaces_audit_error, buf)
+        _UniffiFfiConverterBoolean.write(value.paused_signed_out, buf)
+        _UniffiFfiConverterOptionalString.write(value.owner, buf)
+        _UniffiFfiConverterOptionalString.write(value.owner_email, buf)
 
 @dataclass
 class HttpHeader:
@@ -32245,6 +32298,11 @@ class SpaceProtocol(typing.Protocol):
         Who this Space is shared with, and who of them is connected now.
 """
         raise NotImplementedError
+    def spacesd(self, ) -> SpacesdClient:
+        """
+        The cua-spacesd client over the connection this Space authenticated.
+"""
+        raise NotImplementedError
     async def start_hotspot(self, set_system_proxy: typing.Optional[bool],bypass: typing.Optional[typing.List[str]]) -> SpaceHotspotStatus:
         """
         Starts the reverse-SOCKS hotspot: this host serves the Space's
@@ -33047,6 +33105,21 @@ class Space(SpaceProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    def spacesd(self, ) -> SpacesdClient:
+        """
+        The cua-spacesd client over the connection this Space authenticated.
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSpacesdClient.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_sdk_fn_method_space_spacesd,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
     async def start_hotspot(self, set_system_proxy: typing.Optional[bool],bypass: typing.Optional[typing.List[str]]) -> SpaceHotspotStatus:
         """
         Starts the reverse-SOCKS hotspot: this host serves the Space's
@@ -35838,9 +35911,23 @@ class HostProtocol(typing.Protocol):
         the desktop on or off restarts the host service.
 """
         raise NotImplementedError
+    async def pause_signed_out(self, ) -> HostStatus:
+        """
+        Pause relay sharing while nobody is signed in to the owner's
+        account: the host leaves the relay and stays off it (also across a
+        restart) with its setup kept. Direct mode is left alone.
+"""
+        raise NotImplementedError
     async def remove(self, ) -> None:
         """
         Unregister, uninstall the service and delete the host state.
+"""
+        raise NotImplementedError
+    async def resume_signed_in(self, account: str) -> HostStatus:
+        """
+        Resume relay sharing paused by [`Host::pause_signed_out`] once
+        `account` (the signed-in account's id or email) is signed in; refused
+        when it is not the machine's owner.
 """
         raise NotImplementedError
     async def setup(self, options: HostSetupOptions,account_token: typing.Optional[str]) -> HostStatus:
@@ -35935,6 +36022,25 @@ class Host(HostProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def pause_signed_out(self, ) -> HostStatus:
+        """
+        Pause relay sharing while nobody is signed in to the owner's
+        account: the host leaves the relay and stays off it (also across a
+        restart) with its setup kept. Direct mode is left alone.
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeHostStatus.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_host_pause_signed_out(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def remove(self, ) -> None:
         """
         Unregister, uninstall the service and delete the host state.
@@ -35949,6 +36055,28 @@ class Host(HostProtocol):
             _UniffiLib.ffi_cua_sdk_rust_future_poll_void,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_void,
             _UniffiLib.ffi_cua_sdk_rust_future_free_void,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def resume_signed_in(self, account: str) -> HostStatus:
+        """
+        Resume relay sharing paused by [`Host::pause_signed_out`] once
+        `account` (the signed-in account's id or email) is signed in; refused
+        when it is not the machine's owner.
+"""
+
+        _UniffiFfiConverterString.check_lower(account)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(account),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeHostStatus.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_host_resume_signed_in(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
             _uniffi_lift_return,
             _uniffi_error_converter,
         )

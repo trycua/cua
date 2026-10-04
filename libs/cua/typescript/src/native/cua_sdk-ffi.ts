@@ -1373,8 +1373,18 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_host_pause_signed_out": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_host_remove": {
       args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_host_resume_signed_in": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -2042,6 +2052,11 @@ const DEFINITIONS = {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_space_spacesd": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
     },
     "uniffi_cua_sdk_fn_method_space_start_hotspot": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
@@ -3573,7 +3588,17 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_host_pause_signed_out": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_host_remove": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_host_resume_signed_in": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -4239,6 +4264,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_space_shares": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_space_spacesd": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -5371,7 +5401,9 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_guestdisplay_via(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_sdk_fn_constructor_host_new(cuaHome: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_method_host_configure(uniffiSelf: bigint, change: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_host_pause_signed_out(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_host_remove(uniffiSelf: bigint): bigint;
+    uniffi_cua_sdk_fn_method_host_resume_signed_in(uniffiSelf: bigint, account: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_host_setup(uniffiSelf: bigint, options: Uint8Array, accountToken: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_host_start_sharing(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_host_status(uniffiSelf: bigint): bigint;
@@ -5505,6 +5537,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_space_set_presence_settings(uniffiSelf: bigint, cursorProbe: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_share(uniffiSelf: bigint, who: Uint8Array, role: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_shares(uniffiSelf: bigint): bigint;
+    uniffi_cua_sdk_fn_method_space_spacesd(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_method_space_start_hotspot(uniffiSelf: bigint, setSystemProxy: Uint8Array, bypass: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_stop_hotspot(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_space_stream_session(uniffiSelf: bigint, options: Uint8Array, frames: bigint, audio: Uint8Array): bigint;
@@ -5811,7 +5844,9 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_guestdisplay_via(): number;
     uniffi_cua_sdk_checksum_constructor_host_new(): number;
     uniffi_cua_sdk_checksum_method_host_configure(): number;
+    uniffi_cua_sdk_checksum_method_host_pause_signed_out(): number;
     uniffi_cua_sdk_checksum_method_host_remove(): number;
+    uniffi_cua_sdk_checksum_method_host_resume_signed_in(): number;
     uniffi_cua_sdk_checksum_method_host_setup(): number;
     uniffi_cua_sdk_checksum_method_host_start_sharing(): number;
     uniffi_cua_sdk_checksum_method_host_status(): number;
@@ -5945,6 +5980,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_space_set_presence_settings(): number;
     uniffi_cua_sdk_checksum_method_space_share(): number;
     uniffi_cua_sdk_checksum_method_space_shares(): number;
+    uniffi_cua_sdk_checksum_method_space_spacesd(): number;
     uniffi_cua_sdk_checksum_method_space_start_hotspot(): number;
     uniffi_cua_sdk_checksum_method_space_stop_hotspot(): number;
     uniffi_cua_sdk_checksum_method_space_stream_session(): number;

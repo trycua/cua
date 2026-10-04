@@ -931,9 +931,19 @@ uint64_t uniffi_cua_sdk_fn_constructor_host_new(RustBuffer cua_home, RustCallSta
 uint64_t uniffi_cua_sdk_fn_method_host_configure(uint64_t ptr, RustBuffer change
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_PAUSE_SIGNED_OUT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_PAUSE_SIGNED_OUT
+uint64_t uniffi_cua_sdk_fn_method_host_pause_signed_out(uint64_t ptr
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_REMOVE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_REMOVE
 uint64_t uniffi_cua_sdk_fn_method_host_remove(uint64_t ptr
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_RESUME_SIGNED_IN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_RESUME_SIGNED_IN
+uint64_t uniffi_cua_sdk_fn_method_host_resume_signed_in(uint64_t ptr, RustBuffer account
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_HOST_SETUP
@@ -1749,6 +1759,11 @@ uint64_t uniffi_cua_sdk_fn_method_space_share(uint64_t ptr, RustBuffer who, Rust
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_SHARES
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_SHARES
 uint64_t uniffi_cua_sdk_fn_method_space_shares(uint64_t ptr
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_SPACESD
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_SPACESD
+uint64_t uniffi_cua_sdk_fn_method_space_spacesd(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_START_HOTSPOT
@@ -4015,9 +4030,21 @@ uint16_t uniffi_cua_sdk_checksum_method_host_configure(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_PAUSE_SIGNED_OUT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_PAUSE_SIGNED_OUT
+uint16_t uniffi_cua_sdk_checksum_method_host_pause_signed_out(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_REMOVE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_REMOVE
 uint16_t uniffi_cua_sdk_checksum_method_host_remove(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_RESUME_SIGNED_IN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_HOST_RESUME_SIGNED_IN
+uint16_t uniffi_cua_sdk_checksum_method_host_resume_signed_in(void
 
 );
 #endif
@@ -4816,6 +4843,12 @@ uint16_t uniffi_cua_sdk_checksum_method_space_share(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_SHARES
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_SHARES
 uint16_t uniffi_cua_sdk_checksum_method_space_shares(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_SPACESD
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACE_SPACESD
+uint16_t uniffi_cua_sdk_checksum_method_space_spacesd(void
 
 );
 #endif

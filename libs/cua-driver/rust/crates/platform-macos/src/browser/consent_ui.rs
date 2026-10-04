@@ -338,22 +338,13 @@ pub async fn handle(
             .any(|nodes| remote_debugging_sheet_present(nodes));
         saw_prompt |= prompt_present;
         let mut candidates = Vec::new();
-        let mut matcher_error = None;
         for nodes in &trees.0 {
-            match exact_allow_button(nodes) {
-                Ok(Some(element)) => candidates.push(element),
-                Ok(None) => {}
-                Err(error) => {
-                    matcher_error = Some(error);
-                    break;
-                }
+            if let Some(element) = exact_allow_button(nodes)? {
+                candidates.push(element);
             }
         }
         candidates.sort_unstable();
         candidates.dedup();
-        if let Some(error) = matcher_error {
-            return Err(error);
-        }
         if let [element] = candidates.as_slice() {
             let pressed = request
                 .action

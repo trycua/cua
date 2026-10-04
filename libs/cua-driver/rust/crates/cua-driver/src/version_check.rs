@@ -64,10 +64,19 @@ const HTTP_TIMEOUT_SECONDS: u64 = 4;
 pub const RELEASE_TAG_PREFIX: &str = "cua-driver-rs-v";
 pub const NIGHTLY_RELEASE_TAG_PREFIX: &str = "nightly-cua-driver-rs-v";
 
-/// GitHub releases API endpoint. Paginates newest-first; 40 entries is
-/// plenty of headroom past the most recent stable release even when
-/// pre-releases are sprinkled in between.
-const RELEASES_URL: &str = "https://api.github.com/repos/trycua/cua/releases?per_page=40";
+/// GitHub releases API endpoint. Lists every component in the monorepo,
+/// newest first, so the driver's tags can sit behind other components'
+/// releases.
+const RELEASES_URL: &str = "https://api.github.com/repos/trycua/cua/releases";
+
+/// Releases requested per page. A page carries every release's asset list
+/// (about 2 MB at this size), so it stays small enough to arrive inside
+/// `HTTP_TIMEOUT_SECONDS`.
+const RELEASES_PER_PAGE: usize = 40;
+
+/// Pages searched before giving up, which bounds one check to five requests
+/// and the 200 most recent releases.
+const MAX_RELEASE_PAGES: usize = 5;
 
 // ── Public API ───────────────────────────────────────────────────────────
 
@@ -282,7 +291,7 @@ pub(crate) fn check_update_state_with_ownership(no_cache: bool, managed: bool) -
                     .filter(|_| cache_channel_matches)
                 {
                     Some(v) => (Some(v), true, None),
-                    None => (None, false, Some(e)),
+                    None => (None, false, Some(e.to_string())),
                 }
             }
         }
@@ -678,22 +687,62 @@ fn migrate_legacy_cache() {
 /// downgrade errors to `tracing::debug!`.
 pub fn fetch_latest_version() -> Result<String, String> {
     let channel = crate::release_channel::selected()?;
-    fetch_latest_version_for(channel)
+    fetch_latest_version_for(channel).map_err(|e| e.to_string())
+}
+
+/// Why a release lookup produced no version. `cua-driver update` prints a
+/// different message for each, so a missing tag is not reported as a
+/// connection problem.
+#[derive(Debug, PartialEq, Eq)]
+pub enum FetchError {
+    /// pacman owns this install; nothing was requested.
+    PackageManaged,
+    /// A page could not be fetched or parsed (transport, timeout, HTTP
+    /// status, or JSON).
+    Request(String),
+    /// GitHub answered, but no searched page held a tag for the channel.
+    NoMatchingRelease {
+        tag_prefix: &'static str,
+        releases_searched: usize,
+    },
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PackageManaged => f.write_str(crate::updater::PACMAN_UPDATE_GUIDANCE),
+            Self::Request(reason) => f.write_str(reason),
+            Self::NoMatchingRelease {
+                tag_prefix,
+                releases_searched,
+            } => write!(
+                f,
+                "no {tag_prefix}* release in the {releases_searched} most recent GitHub releases"
+            ),
+        }
+    }
 }
 
 pub fn fetch_latest_version_for(
     channel: crate::release_channel::ReleaseChannel,
-) -> Result<String, String> {
+) -> Result<String, FetchError> {
     if crate::updater::is_pacman_managed() {
-        return Err(crate::updater::PACMAN_UPDATE_GUIDANCE.to_owned());
+        return Err(FetchError::PackageManaged);
     }
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(HTTP_TIMEOUT_SECONDS)))
         .build()
         .new_agent();
 
+    find_latest_release(channel, |page| fetch_release_page(&agent, page))
+}
+
+/// Fetch one page of the releases listing as parsed JSON.
+fn fetch_release_page(agent: &ureq::Agent, page: usize) -> Result<serde_json::Value, String> {
     let response = agent
-        .get(RELEASES_URL)
+        .get(format!(
+            "{RELEASES_URL}?per_page={RELEASES_PER_PAGE}&page={page}"
+        ))
         .header("Accept", "application/vnd.github+json")
         .header(
             "User-Agent",
@@ -702,13 +751,48 @@ pub fn fetch_latest_version_for(
         .call()
         .map_err(|e| format!("HTTP error: {e}"))?;
 
-    let body: serde_json::Value = response
+    response
         .into_body()
         .read_json()
-        .map_err(|e| format!("JSON parse error: {e}"))?;
+        .map_err(|e| format!("JSON parse error: {e}"))
+}
 
-    pick_latest_release(&body, channel)
-        .ok_or_else(|| format!("no matching {}* release in response", tag_prefix(channel)))
+/// Walk the releases listing page by page and return the highest matching
+/// version on the first page that has one. Split out from the HTTP call so
+/// unit tests can feed in canned pages.
+///
+/// Stopping at the first matching page keeps the usual check to one request.
+/// It assumes the listing puts a channel's newest release first, which holds
+/// unless a backport is tagged after a higher version and a page boundary
+/// falls between the two.
+fn find_latest_release<F>(
+    channel: crate::release_channel::ReleaseChannel,
+    mut fetch_page: F,
+) -> Result<String, FetchError>
+where
+    F: FnMut(usize) -> Result<serde_json::Value, String>,
+{
+    let mut releases_searched = 0;
+    for page in 1..=MAX_RELEASE_PAGES {
+        let body = fetch_page(page).map_err(FetchError::Request)?;
+        if let Some(version) = pick_latest_release(&body, channel) {
+            return Ok(version);
+        }
+        let Some(releases) = body.as_array() else {
+            return Err(FetchError::Request(
+                "releases response is not a JSON array".to_owned(),
+            ));
+        };
+        releases_searched += releases.len();
+        // A short page is the end of the listing.
+        if releases.len() < RELEASES_PER_PAGE {
+            break;
+        }
+    }
+    Err(FetchError::NoMatchingRelease {
+        tag_prefix: tag_prefix(channel),
+        releases_searched,
+    })
 }
 
 /// Pull the highest non-draft `cua-driver-rs-v*` tag out of the parsed
@@ -1398,6 +1482,101 @@ mod tests {
                 crate::release_channel::ReleaseChannel::Stable
             ),
             None
+        );
+    }
+
+    // ── find_latest_release ─────────────────────────────────────────────
+
+    /// A full page of another component's releases, as the monorepo
+    /// listing returns when that component ships a burst.
+    fn full_page_without_driver_tags() -> serde_json::Value {
+        (0..RELEASES_PER_PAGE)
+            .map(
+                |n| serde_json::json!({"tag_name": format!("cua-spaces-v0.0.{n}"), "draft": false}),
+            )
+            .collect()
+    }
+
+    #[test]
+    fn release_lookup_reads_past_a_page_without_matching_tags() {
+        let mut requested = Vec::new();
+        let latest = find_latest_release(crate::release_channel::ReleaseChannel::Nightly, |page| {
+            requested.push(page);
+            Ok(match page {
+                1 => full_page_without_driver_tags(),
+                _ => serde_json::json!([
+                    {"tag_name": "nightly-cua-driver-rs-v0.30.5-nightly.20260929.7", "draft": false},
+                    {"tag_name": "nightly-cua-driver-rs-v0.30.3-nightly.20260928.5", "draft": false},
+                ]),
+            })
+        });
+        assert_eq!(latest.as_deref(), Ok("0.30.5-nightly.20260929.7"));
+        assert_eq!(requested, [1, 2]);
+    }
+
+    #[test]
+    fn release_lookup_ends_at_a_short_page() {
+        let mut requested = Vec::new();
+        let latest = find_latest_release(crate::release_channel::ReleaseChannel::Nightly, |page| {
+            requested.push(page);
+            Ok(match page {
+                1 => full_page_without_driver_tags(),
+                _ => serde_json::json!([{"tag_name": "cua-driver-rs-v0.33.1", "draft": false}]),
+            })
+        });
+        assert_eq!(
+            latest,
+            Err(FetchError::NoMatchingRelease {
+                tag_prefix: NIGHTLY_RELEASE_TAG_PREFIX,
+                releases_searched: RELEASES_PER_PAGE + 1,
+            })
+        );
+        assert_eq!(requested, [1, 2]);
+    }
+
+    #[test]
+    fn release_lookup_gives_up_after_the_page_cap() {
+        let mut requested = Vec::new();
+        let error = find_latest_release(crate::release_channel::ReleaseChannel::Stable, |page| {
+            requested.push(page);
+            Ok(full_page_without_driver_tags())
+        })
+        .unwrap_err();
+        assert_eq!(requested, [1, 2, 3, 4, 5]);
+        assert_eq!(
+            error.to_string(),
+            "no cua-driver-rs-v* release in the 200 most recent GitHub releases"
+        );
+    }
+
+    #[test]
+    fn release_lookup_reports_a_failed_page_request() {
+        let latest =
+            find_latest_release(
+                crate::release_channel::ReleaseChannel::Stable,
+                |page| match page {
+                    1 => Ok(full_page_without_driver_tags()),
+                    _ => Err("HTTP error: timeout: global".to_owned()),
+                },
+            );
+        assert_eq!(
+            latest,
+            Err(FetchError::Request(
+                "HTTP error: timeout: global".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn release_lookup_rejects_a_response_that_is_not_a_listing() {
+        let latest = find_latest_release(crate::release_channel::ReleaseChannel::Stable, |_| {
+            Ok(serde_json::json!({"message": "API rate limit exceeded"}))
+        });
+        assert_eq!(
+            latest,
+            Err(FetchError::Request(
+                "releases response is not a JSON array".to_owned()
+            ))
         );
     }
 

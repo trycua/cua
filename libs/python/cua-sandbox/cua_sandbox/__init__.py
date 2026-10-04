@@ -19,7 +19,7 @@ Usage::
 To control the local machine, use cua-driver (its SDK or MCP server).
 """
 
-__version__ = "0.9.0"  # x-release-please-version
+__version__ = "0.9.1"  # x-release-please-version
 
 # Managed Fleet pools (list / gc); imported last, it needs the package loaded.
 from cua_sandbox import pools  # noqa: E402

@@ -2,6 +2,7 @@
 
 import json
 import os
+import plistlib
 from pathlib import Path
 import subprocess
 import tempfile
@@ -14,6 +15,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 class TestCuaDriverReleaseWiring(unittest.TestCase):
     """Verify cua-driver-rs releases feed the Python cua-driver publisher."""
+
+    def test_macos_app_bundle_info_plist_is_valid(self) -> None:
+        plist = REPO_ROOT / "libs/cua-driver/rust/scripts/CuaDriverBundle/Contents/Info.plist"
+        metadata = plistlib.loads(plist.read_bytes())
+
+        self.assertEqual(metadata["CFBundleIdentifier"], "com.trycua.driver")
 
     def read(self, relative_path: str) -> str:
         return (REPO_ROOT / relative_path).read_text()

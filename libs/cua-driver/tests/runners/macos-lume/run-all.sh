@@ -1024,6 +1024,16 @@ if ! osascript -e \
   echo "Terminal cannot control System Events; rebuild the seed and grant the Automation prompt" >&2
   exit 2
 fi
+echo "[AUTOMATION] Verifying Terminal can read accessibility attributes through System Events"
+# The bring_to_front oracles raise fixture windows and read AXFocusedWindow
+# through System Events UI scripting, which needs Accessibility for Terminal.
+if ! osascript -e \
+    'tell application "System Events" to get value of attribute "AXRole" of (first application process whose frontmost is true)' \
+    > "${ARTIFACT_DIR}/terminal-accessibility.txt" 2>&1; then
+  cat "${ARTIFACT_DIR}/terminal-accessibility.txt" >&2
+  echo "Terminal cannot use System Events UI scripting; grant Terminal Accessibility in the seed" >&2
+  exit 2
+fi
 
 echo "[INSTALL] Building and installing ${SOURCE_SHA} with the golden signing identity"
 bash "${DRIVER_ROOT}/scripts/install-local.sh" \

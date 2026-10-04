@@ -1,0 +1,31 @@
+[package]
+name = "cua-test-harness-wayland-presentation"
+version = "1.0.0"
+description = "cua-driver Wayland presentation-timestamp latency fixture"
+edition = "2021"
+rust-version = "1.77"
+publish = false
+
+# Standalone crate, like the Tauri fixture: it is built by its own build.sh and
+# is intentionally not a member of the cua-driver Rust workspace.
+[workspace]
+
+[[bin]]
+name = "cua-harness-wayland-presentation"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# The Wayland client is Linux-only, so the accounting, layout, and journal
+# modules (and their unit tests) still build and run on any host.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+
+[profile.release]
+# Keep the fixture's own work out of the measurement: an unoptimized paint
+# would show up inside app_to_commit.
+opt-level = 2

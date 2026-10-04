@@ -1,4 +1,5 @@
 """Auto-generated cb task for KiCad submission c4baee36-ea0a-4451-81f0-fd540d47326c."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,8 +16,8 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Design a KiCad-style schematic of a switching, step-down voltage regulator to convert 48 Vdc to 3.3 Vdc. Use the LM2576HVS-3.3 from Texas Instruments.  \n\n\t• Pin 1 is the input and should be connected to both the input of 48 Vdc and a polarized capacitor (C1) of 100 uF. C1 has its negative terminal connected to ground.  \n\t• Pin 2 is connected to both a catch diode 1N5822 cathode and an inductor of 100 uH.  The other end of the diode is connected to ground. The other end of the inductor is connected to both Pin 4 and the positive end of polarized capacitor (C2) of 1000 uF. The other end of C2 is grounded.\nPins 3 and 5 should be connected directly to ground.',
-            metadata={"difficulty": 'easy', "submission_id": _SUBMISSION_ID},
+            description="Design a KiCad-style schematic of a switching, step-down voltage regulator to convert 48 Vdc to 3.3 Vdc. Use the LM2576HVS-3.3 from Texas Instruments.  \n\n\t• Pin 1 is the input and should be connected to both the input of 48 Vdc and a polarized capacitor (C1) of 100 uF. C1 has its negative terminal connected to ground.  \n\t• Pin 2 is connected to both a catch diode 1N5822 cathode and an inductor of 100 uH.  The other end of the diode is connected to ground. The other end of the inductor is connected to both Pin 4 and the positive end of polarized capacitor (C2) of 1000 uF. The other end of C2 is grounded.\nPins 3 and 5 should be connected directly to ground.",
+            metadata={"difficulty": "easy", "submission_id": _SUBMISSION_ID},
         )
     ]
 

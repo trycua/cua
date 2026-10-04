@@ -1,4 +1,7 @@
 *	        text=auto
 *.sh		text eol=lf
-docs/content/docs/reference/cua-driver/cli-reference.mdx text eol=lf
-docs/content/docs/reference/cua-driver/mcp-tools*.mdx text eol=lf
+# Generated reference and its registry snapshots: the generators write LF,
+# and a CRLF checkout (Windows) would read every page as drifted.
+docs/content/docs/cua-driver/reference/** text eol=lf
+scripts/docs-generators/cli-specs/** text eol=lf
+scripts/docs-generators/headers/** text eol=lf

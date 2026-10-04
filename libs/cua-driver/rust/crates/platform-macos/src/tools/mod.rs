@@ -74,7 +74,11 @@ fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
     let Ok(pid) = i32::try_from(pid) else {
         return Vec::new();
     };
-    window_target_candidates_for_pid(crate::windows::all_windows(), pid)
+    let enumeration = crate::windows::all_windows_with_space_snapshot();
+    let mut windows = enumeration.windows;
+    windows.retain(|window| window.pid == pid);
+    crate::windows::retain_ax_reachable(&mut windows, enumeration.current_space_id);
+    window_target_candidates_for_pid(windows, pid)
 }
 
 fn window_target_candidates_for_pid(
@@ -690,12 +694,7 @@ pub(super) fn screenshot_scale(
 ) -> Result<f64, cua_driver_core::protocol::ToolResult> {
     state
         .snapshots
-        .screenshot_context(
-            pid,
-            window_id.map(u64::from),
-            args.get("_session_id").and_then(serde_json::Value::as_str),
-        )
-        .map(|context| context.scale)
+        .screenshot_scale(pid, window_id.map(u64::from), args)
 }
 
 pub(super) fn zoom_context(

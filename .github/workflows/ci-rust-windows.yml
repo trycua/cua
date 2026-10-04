@@ -48,11 +48,27 @@ concurrency:
   group: ci-rust-windows-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
 jobs:
   unit:
     name: Rust Windows unit and compile
     runs-on: windows-latest
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_idle_seconds > 1 && 90 || 30 }}
+    # The suite below has been running within a hair of this budget for months:
+    # the last green run on `main` (359fad56) took 28m31s of 30m. The tests this
+    # branch adds push it past the line, and the failure mode is silent -- every
+    # step passes and the job is killed partway through, so `Run Windows
+    # protocol schema contract` (the last step) simply never executes and the
+    # run is reported as `cancelled`, not failed. Raising the ceiling makes more
+    # of the gate run, not less; no test or assertion is skipped or relaxed.
+    # workflow_dispatch proxy-idle runs keep upstream's 90-minute budget.
+    # A warm Rust cache runs in about 15 minutes (trycua/cua); the cache is
+    # saved only from main, so a repository without one builds cold, where
+    # the first test step alone took 22 minutes and the job passed 45.
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_idle_seconds > 1 && 90 || 75 }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1

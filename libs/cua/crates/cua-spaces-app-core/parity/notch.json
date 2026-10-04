@@ -1,0 +1,279 @@
+{
+  "name": "notch",
+  "about": "The notch panel alone: layout on a 14-inch MacBook Pro and on a display without a notch, the shared motion, the hover dwell and close delay, the missing window-drag permission line, a pasteboard drag, a window drag that is cancelled, the header search and Esc, the activity indicator (a Space starting, the hotspot, a transfer with progress, idle), and hiding the notch (menu bar only).",
+  "screens": [
+    {
+      "name": "mbp14",
+      "facts": {
+        "frame": {
+          "x": 0,
+          "y": 0,
+          "width": 1512,
+          "height": 982
+        },
+        "visibleFrame": {
+          "x": 0,
+          "y": 0,
+          "width": 1512,
+          "height": 945
+        },
+        "safeAreaTop": 32,
+        "auxLeftWidth": 662,
+        "auxRightWidth": 662
+      }
+    },
+    {
+      "name": "external 1920",
+      "facts": {
+        "frame": {
+          "x": 1512,
+          "y": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "visibleFrame": {
+          "x": 1512,
+          "y": 0,
+          "width": 1920,
+          "height": 1055
+        },
+        "safeAreaTop": 0,
+        "auxLeftWidth": null,
+        "auxRightWidth": null
+      }
+    }
+  ],
+  "spaces": [
+    {
+      "id": "local:aurora",
+      "name": "Aurora",
+      "os": "linux",
+      "status": "running",
+      "detail": "This Mac",
+      "lastUsedAt": 1799999990000,
+      "scene": "linux-terminal",
+      "provider": "local",
+      "sdk": {
+        "features": [
+          "desktop_stream"
+        ],
+        "spacesdVersion": "0.4.0",
+        "reachable": true
+      },
+      "osName": "Ubuntu 24.04.1 LTS"
+    },
+    {
+      "id": "direct:10.0.0.5:3211",
+      "name": "Lab PC",
+      "os": "windows",
+      "status": "running",
+      "detail": "10.0.0.5",
+      "lastUsedAt": 1799999980000,
+      "scene": "windows-desktop",
+      "provider": "direct",
+      "sdk": {
+        "features": [],
+        "spacesdVersion": "0.4.0",
+        "reachable": true
+      }
+    },
+    {
+      "id": "cloud:builder",
+      "name": "Builder",
+      "os": "macos",
+      "status": "suspended",
+      "detail": "Unreachable",
+      "lastUsedAt": 1799990000000,
+      "scene": "mac-desktop",
+      "provider": "cloud",
+      "sdk": {
+        "features": [],
+        "spacesdVersion": "0.4.0",
+        "reachable": false
+      }
+    },
+    {
+      "id": "cloud:starter",
+      "name": "Starter",
+      "os": "linux",
+      "status": "provisioning",
+      "detail": "Starting",
+      "lastUsedAt": 1799980000000,
+      "startedAt": 1799980000000,
+      "scene": "linux-terminal",
+      "provider": "cloud"
+    },
+    {
+      "id": "this-mac",
+      "name": "This machine",
+      "os": "macos",
+      "status": "local",
+      "detail": "Set up for access",
+      "lastUsedAt": 1800000000000,
+      "scene": "mac-desktop"
+    }
+  ],
+  "events": [
+    {
+      "type": "hover-enter"
+    },
+    {
+      "type": "dwell-elapsed"
+    },
+    {
+      "type": "drag-permission",
+      "granted": false
+    },
+    {
+      "type": "hover-exit"
+    },
+    {
+      "type": "hover-enter"
+    },
+    {
+      "type": "close-elapsed"
+    },
+    {
+      "type": "hover-exit"
+    },
+    {
+      "type": "close-elapsed"
+    },
+    {
+      "type": "drop-targeted",
+      "targeted": true
+    },
+    {
+      "type": "drop-targeted",
+      "targeted": false
+    },
+    {
+      "type": "close-elapsed"
+    },
+    {
+      "type": "click"
+    },
+    {
+      "type": "dismiss"
+    },
+    {
+      "type": "drag",
+      "event": {
+        "type": "start",
+        "windowId": 42,
+        "appName": "Notes"
+      }
+    },
+    {
+      "type": "drag",
+      "event": {
+        "type": "ghost-ready",
+        "ghost": null
+      }
+    },
+    {
+      "type": "drag",
+      "event": {
+        "type": "enter-notch"
+      }
+    },
+    {
+      "type": "drag",
+      "event": {
+        "type": "over",
+        "spaceId": "direct:10.0.0.5:3211"
+      }
+    },
+    {
+      "type": "drag",
+      "event": {
+        "type": "out"
+      }
+    },
+    {
+      "type": "drag",
+      "event": {
+        "type": "leave-notch"
+      }
+    },
+    {
+      "type": "drag",
+      "event": {
+        "type": "cancel"
+      }
+    },
+    {
+      "type": "drag-permission",
+      "granted": true
+    },
+    {
+      "type": "click"
+    },
+    {
+      "type": "search",
+      "query": "win"
+    },
+    {
+      "type": "search",
+      "query": "zzz"
+    },
+    {
+      "type": "escape"
+    },
+    {
+      "type": "search",
+      "query": "ubuntu"
+    },
+    {
+      "type": "escape"
+    },
+    {
+      "type": "escape"
+    },
+    {
+      "type": "activity",
+      "hotspot": true,
+      "transfer": null
+    },
+    {
+      "type": "activity",
+      "hotspot": true,
+      "transfer": {
+        "sent": 250,
+        "total": 1000
+      }
+    },
+    {
+      "type": "activity",
+      "hotspot": false,
+      "transfer": {
+        "sent": 1000,
+        "total": 1000
+      }
+    },
+    {
+      "type": "activity",
+      "hotspot": false,
+      "transfer": null
+    },
+    {
+      "type": "visibility",
+      "shown": false
+    },
+    {
+      "type": "hover-enter"
+    },
+    {
+      "type": "drag",
+      "event": {
+        "type": "start",
+        "windowId": 7,
+        "appName": "Notes"
+      }
+    },
+    {
+      "type": "visibility",
+      "shown": true
+    }
+  ]
+}

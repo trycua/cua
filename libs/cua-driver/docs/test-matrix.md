@@ -168,14 +168,22 @@ Windows native harnesses are repo-local applications built from source:
 
 | Harness | Source test | Coverage |
 | --- | --- | --- |
-| WPF | `harness_wpf_test.rs` | UIA controls, text, keys, pointer actions, scroll, drag, popups, menus, modal windows |
-| WinUI3 | `harness_winui3_test.rs` | XAML controls, text, checkbox/radio, slider, combo, popup |
+| WPF | `harness_wpf_test.rs` | UIA controls, text, keys, pointer actions, scroll, drag, popups, menus, modal windows; foreground single-line and multiline text integrity |
+| WinUI3 | `harness_winui3_test.rs` | XAML controls, text, checkbox/radio, slider, combo, popup; foreground single-line and multiline text integrity |
 | WebView2 | `harness_web_test.rs` | Window discovery, CDP page access, JavaScript, DOM click path |
 | Desktop target | `desktop_scope_windows_test.rs` | Per-call window/desktop modality, full-display capture, screen-absolute click/scroll, and strict rejection |
 | Desktop invariants | Testkit `DesktopObserver` plus typed launch/capture/cursor owners | Cross-cutting focus, z-order, minimized-launch, screenshot, cursor, and desktop checks |
 
-Native controls use AX/UIA state as their oracle. Pointer actions also use PX
-where the tool contract requires coordinates. Current `set_value` rows declare
+Native controls use AX/UIA state as their oracle. The foreground typing rows
+also compare each fixture's real `TextBox.Text` values from an isolated,
+atomically replaced state file, including the target and leakage sentinels.
+The single-line row covers CJK, digits, and emoji; the multiline sample covers
+LF, CR, CRLF, repeated empty lines, and leading/trailing breaks. The oracle
+normalizes line endings only and preserves all other characters and blank
+lines. Foreground delivery keeps the target in front until its thread has
+read every inserted event (a sentinel-key drain), so text after line breaks is
+not handed to the previously active window. Pointer actions also use PX where
+the tool contract requires coordinates. Current `set_value` rows declare
 background delivery and attach desktop-side-effect oracles.
 
 ## Harness E2E: macOS

@@ -1,0 +1,123 @@
+name: "Bench: streaming (media plane)"
+
+# Nightly media-plane benchmark of cua-spacesd in the Spaces image under
+# docker runc and gVisor (runsc): glass-to-glass, input-to-photon, TTFF, fps
+# stability, bytes/s per scenario, keyframe recovery after injected loss,
+# CPU on both ends, audio latency and A/V skew, over WebSocket and QUIC.
+# See libs/cua/bench/streaming/README.md.
+#
+# The driver is built from this commit (libs/images/linux/
+# build-spacesd-linux.sh) and swapped into the published image, so the
+# numbers track the code, not the last image release. Results are uploaded
+# as an artifact and the run fails on budget regressions (budgets.json).
+# Hardware encoders are reported as deferred (plan §8.6).
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Spaces image (rootfs ref; default the canonical Linux image, moved only after the image doctor passes)"
+        default: "ghcr.io/trycua/linux:24.04"
+      driver:
+        description: "cua-spacesd: `commit` (built here) or `image` (the image's own)"
+        default: commit
+      seconds:
+        description: "Seconds per run"
+        default: "20"
+      scenarios:
+        description: "Comma-separated scenarios (empty = all)"
+        default: ""
+      runtimes:
+        description: "Container runtimes"
+        default: "runc,runsc"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-streaming-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      # The pre-rename repo (docker-latest) is frozen (legacy repos
+      # keep their tags frozen); the canonical rootfs index is maintained.
+      IMAGE: ${{ inputs.image || 'ghcr.io/trycua/linux:24.04' }}
+      DRIVER: ${{ inputs.driver || 'commit' }}
+      SECONDS_PER_RUN: ${{ inputs.seconds || '20' }}
+      SCENARIOS: ${{ inputs.scenarios || '' }}
+      RUNTIMES: ${{ inputs.runtimes || 'runc,runsc' }}
+      CARGO_BUILD_JOBS: "4"
+      CARGO_TERM_COLOR: never
+      # Run-scoped container name prefix (the harness appends the runtime),
+      # so cleanup below only ever removes this run's containers.
+      CUA_BENCH_CONTAINER: cua-e2e-bench-space-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua/bench/streaming -> target
+      - name: Install build deps and gVisor
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev cmake nasm clang pkg-config
+          scripts/images/install-gvisor.sh
+          docker info --format '{{json .Runtimes}}'
+      - name: Pull the Spaces image
+        run: docker pull "$IMAGE"
+      - name: Build cua-spacesd for this commit
+        if: env.DRIVER == 'commit'
+        run: |
+          set -euo pipefail
+          libs/images/linux/build-spacesd-linux.sh amd64
+          echo "CUA_BENCH_DRIVER_BIN=$PWD/libs/images/linux/dist/amd64/cua-spacesd" >>"$GITHUB_ENV"
+      - name: Build the benchmark
+        working-directory: libs/cua/bench/streaming
+        run: |
+          cargo build --release --locked
+          timeout 900 cargo test --release --locked -- --test-threads=4
+      - name: Run the benchmark
+        id: run
+        working-directory: libs/cua/bench/streaming
+        run: |
+          set -euo pipefail
+          args=(run --image "$IMAGE" --runtimes "$RUNTIMES" --seconds "$SECONDS_PER_RUN"
+                --transports ws,quic --clients rust --decoder openh264
+                --out results/ci.json --markdown results/ci.md)
+          [ -n "$SCENARIOS" ] && args+=(--scenarios "$SCENARIOS")
+          timeout 5400 ./target/release/cua-bench-streaming "${args[@]}"
+      - name: Budget check
+        if: always() && steps.run.outcome != 'skipped'
+        working-directory: libs/cua/bench/streaming
+        run: |
+          set -euo pipefail
+          test -f results/ci.json
+          cat results/ci.md >>"$GITHUB_STEP_SUMMARY"
+          ./target/release/cua-bench-streaming check --results results/ci.json | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Clean up containers
+        if: always()
+        run: |
+          for runtime in ${RUNTIMES//,/ }; do
+            docker rm -f "$CUA_BENCH_CONTAINER-$runtime" >/dev/null 2>&1 || true
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: bench-streaming-${{ github.run_id }}
+          path: |
+            libs/cua/bench/streaming/results/ci.json
+            libs/cua/bench/streaming/results/ci.md
+          if-no-files-found: warn
+          retention-days: 30

@@ -11,10 +11,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use cua_driver_core::browser::platform::{
-    select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
-    BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, IsolatedBrowserProcess, PrepareAction, PrepareOutcome,
-    PrepareRequest,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
+    BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
+    IsolatedBrowserProcess, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -27,6 +26,10 @@ use cua_driver_core::browser::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use crate::browser_installation_path::{
+    plain_windows_path, resolve_installation, InstallationEntry, InstallationFs,
+    InstallationResolution,
+};
 use crate::browser_isolated_selection::{
     decide_isolated_browser, InstallationWriteAccess, IsolatedBrowserDecision,
     IsolatedCandidateFacts, NO_PROTECTED_BROWSER_MESSAGE,
@@ -37,7 +40,12 @@ use crate::browser_standard_user::{
 };
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_INSUFFICIENT_BUFFER, E_ACCESSDENIED, FILETIME, HWND, NO_ERROR, RECT,
+    CloseHandle, BOOL, ERROR_INSUFFICIENT_BUFFER, E_ACCESSDENIED, FILETIME, HWND, LPARAM, NO_ERROR,
+    RECT,
+};
+use windows::Win32::Graphics::Gdi::{
+    EnumDisplayMonitors, GetMonitorInfoW, MonitorFromWindow, HDC, HMONITOR, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::NetworkManagement::IpHelper::{
     GetExtendedTcpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCP6TABLE_OWNER_PID, MIB_TCPROW_OWNER_PID,
@@ -46,9 +54,9 @@ use windows::Win32::NetworkManagement::IpHelper::{
 use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, DELETE, FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_APPEND_DATA, FILE_DELETE_CHILD,
-    FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FILE_WRITE_EA, OPEN_EXISTING,
-    WRITE_DAC, WRITE_OWNER,
+    FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA,
+    FILE_WRITE_EA, OPEN_EXISTING, WRITE_DAC, WRITE_OWNER,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
@@ -56,7 +64,7 @@ use windows::Win32::System::Threading::{
     GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Shell::{
     FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX86, SHGetKnownFolderPath, KF_FLAG_DEFAULT,
 };
@@ -364,6 +372,18 @@ fn has_trusted_authenticode_identity(
 }
 
 fn authenticode_output(executable: &std::path::Path) -> std::io::Result<std::process::Output> {
+    // Some Windows PowerShell 5.1 builds cannot resolve a `\\?\` verbatim
+    // path through `-LiteralPath` ("A drive named '\?\C' does not exist"),
+    // which would make every candidate look unsigned. Pass the plain path.
+    let executable = executable
+        .to_str()
+        .and_then(plain_windows_path)
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "browser executable {} has no plain Win32 path",
+                executable.display()
+            ))
+        })?;
     let Ok(system32) = system_directory_path() else {
         return Err(std::io::Error::other(
             "could not resolve the Windows system directory",
@@ -381,7 +401,7 @@ fn authenticode_output(executable: &std::path::Path) -> std::io::Result<std::pro
         // The static command imports Security beside the trusted System32
         // PowerShell, ignoring an incompatible inherited PSModulePath. Pass the
         // browser path as data so PowerShell never parses it as command text.
-        .env("CUA_BROWSER_ATTEST_PATH", executable)
+        .env("CUA_BROWSER_ATTEST_PATH", &executable)
         .stdin(Stdio::null())
         .output()
 }
@@ -395,14 +415,17 @@ enum WriteProbe {
 }
 
 fn current_token_write_denial_reason(path: &std::path::Path, directory: bool) -> Option<String> {
-    match current_token_write_probe(path, directory) {
+    match current_token_write_probe(path, directory, false) {
         WriteProbe::Denied => None,
         WriteProbe::Granted(name) => Some(format!("current token was granted {name}")),
         WriteProbe::Failed(reason) => Some(reason),
     }
 }
 
-fn current_token_write_probe(path: &std::path::Path, directory: bool) -> WriteProbe {
+/// Probe `path` for write-class rights. With `link`, the junction or symbolic
+/// link object itself is opened rather than its target, because rewriting or
+/// replacing a link redirects every path through it.
+fn current_token_write_probe(path: &std::path::Path, directory: bool, link: bool) -> WriteProbe {
     use std::os::windows::ffi::OsStrExt;
 
     // This launch boundary keeps the token that runs the browser (the
@@ -439,11 +462,14 @@ fn current_token_write_probe(path: &std::path::Path, directory: bool) -> WritePr
             ("write_owner", WRITE_OWNER.0),
         ]
     };
-    let flags = if directory {
+    let mut flags = if directory {
         FILE_FLAG_BACKUP_SEMANTICS
     } else {
         FILE_FLAGS_AND_ATTRIBUTES(0)
     };
+    if link {
+        flags |= FILE_FLAG_OPEN_REPARSE_POINT;
+    }
     for &(name, right) in rights {
         match unsafe {
             CreateFileW(
@@ -469,31 +495,141 @@ fn current_token_write_probe(path: &std::path::Path, directory: bool) -> WritePr
     WriteProbe::Denied
 }
 
+/// Outcome of resolving and probing one isolated-launch candidate.
+#[derive(Debug, PartialEq, Eq)]
+struct CandidateInstallation {
+    installed: bool,
+    /// The real executable in plain drive form, when it resolved.
+    executable: Option<String>,
+    write_access: InstallationWriteAccess,
+    /// Why the candidate is not `Protected`, for the refusal detail.
+    reason: Option<String>,
+}
+
+/// The real filesystem, as seen by the calling thread's effective token.
+struct WindowsInstallationFs;
+
+impl InstallationFs for WindowsInstallationFs {
+    fn entry(&self, path: &str) -> Result<InstallationEntry, String> {
+        match std::fs::symlink_metadata(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(InstallationEntry::Missing)
+            }
+            Err(error) => Err(error.to_string()),
+            // std reports name-surrogate reparse points (junctions and
+            // symbolic links) as symlinks.
+            Ok(metadata) if metadata.file_type().is_symlink() => std::fs::read_link(path)
+                .map(|target| InstallationEntry::Link(target.to_string_lossy().into_owned()))
+                .map_err(|error| format!("could not read link target: {error}")),
+            Ok(metadata) if metadata.is_dir() => Ok(InstallationEntry::Directory),
+            Ok(_) => Ok(InstallationEntry::File),
+        }
+    }
+
+    fn canonical(&self, path: &str) -> Result<String, String> {
+        std::fs::canonicalize(path)
+            .map(|path| path.to_string_lossy().into_owned())
+            .map_err(|error| error.to_string())
+    }
+}
+
+/// Resolve the candidate below `trusted_root`, following junctions and
+/// symbolic links only when they keep the installation layout, and require
+/// every object on the resolved chain (each link object, each real directory
+/// up to each root, and the executable) to deny write access to the calling
+/// thread's token. The first non-denied probe decides the rejection kind: a
+/// granted right is `WritableByLaunchToken`, a failed probe is `Untrusted`
+/// (fail closed).
+fn windows_installation_write_access_with(
+    executable: &std::path::Path,
+    trusted_root: &std::path::Path,
+    fs: &impl InstallationFs,
+    mut probe: impl FnMut(&std::path::Path, bool, bool) -> WriteProbe,
+) -> CandidateInstallation {
+    let untrusted = |reason: String| CandidateInstallation {
+        installed: true,
+        executable: None,
+        write_access: InstallationWriteAccess::Untrusted,
+        reason: Some(reason),
+    };
+    let (Some(executable_text), Some(root_text)) = (executable.to_str(), trusted_root.to_str())
+    else {
+        return untrusted("installation path is not valid Unicode".to_owned());
+    };
+    let resolved = match resolve_installation(executable_text, root_text, fs) {
+        InstallationResolution::Missing => {
+            return CandidateInstallation {
+                installed: false,
+                executable: None,
+                write_access: InstallationWriteAccess::Untrusted,
+                reason: None,
+            }
+        }
+        InstallationResolution::Untrusted(reason) => return untrusted(reason),
+        InstallationResolution::Resolved(resolved) => resolved,
+    };
+    let mut write_access = InstallationWriteAccess::Protected;
+    let mut reason = None;
+    for target in &resolved.probes {
+        let path = std::path::Path::new(&target.path);
+        match probe(path, target.directory, target.link) {
+            WriteProbe::Denied => continue,
+            WriteProbe::Granted(right) => {
+                write_access = InstallationWriteAccess::WritableByLaunchToken;
+                reason = Some(format!(
+                    "launch token was granted {right} on {}",
+                    target.path
+                ));
+            }
+            WriteProbe::Failed(error) => {
+                write_access = InstallationWriteAccess::Untrusted;
+                reason = Some(format!("{}: {error}", target.path));
+            }
+        }
+        break;
+    }
+    CandidateInstallation {
+        installed: true,
+        executable: Some(resolved.executable),
+        write_access,
+        reason,
+    }
+}
+
 fn windows_installation_write_access(
     executable: &std::path::Path,
     trusted_root: &std::path::Path,
-) -> InstallationWriteAccess {
-    windows_installation_write_access_with_probe(
+) -> CandidateInstallation {
+    windows_installation_write_access_with(
         executable,
         trusted_root,
+        &WindowsInstallationFs,
         current_token_write_probe,
     )
 }
 
-/// Probe the installation for the token that will run the browser. For a
-/// standard-user launch every probe runs while impersonating that token; if
-/// impersonation fails the candidate is `Untrusted` (fail closed).
+/// Resolve and probe the installation for the token that will run the
+/// browser. For a standard-user launch the whole check runs while
+/// impersonating that token; if impersonation fails the candidate is
+/// `Untrusted` (fail closed).
 fn launch_token_installation_write_access(
     context: &BrowserLaunchContext,
     executable: &std::path::Path,
     trusted_root: &std::path::Path,
-) -> InstallationWriteAccess {
+) -> CandidateInstallation {
     match context {
         BrowserLaunchContext::Driver => windows_installation_write_access(executable, trusted_root),
         BrowserLaunchContext::StandardUser(token) => with_impersonation(token, || {
             windows_installation_write_access(executable, trusted_root)
         })
-        .unwrap_or(InstallationWriteAccess::Untrusted),
+        .unwrap_or_else(|error| CandidateInstallation {
+            installed: true,
+            executable: None,
+            write_access: InstallationWriteAccess::Untrusted,
+            reason: Some(format!(
+                "could not impersonate the standard-user launch token: {error}"
+            )),
+        }),
     }
 }
 
@@ -502,56 +638,8 @@ fn trusted_windows_installation(
     executable: &std::path::Path,
     trusted_root: &std::path::Path,
 ) -> bool {
-    windows_installation_write_access(executable, trusted_root)
+    windows_installation_write_access(executable, trusted_root).write_access
         == InstallationWriteAccess::Protected
-}
-
-#[cfg(test)]
-fn trusted_windows_installation_with_probe(
-    executable: &std::path::Path,
-    trusted_root: &std::path::Path,
-    mut cannot_write: impl FnMut(&std::path::Path, bool) -> bool,
-) -> bool {
-    windows_installation_write_access_with_probe(executable, trusted_root, |path, directory| {
-        if cannot_write(path, directory) {
-            WriteProbe::Denied
-        } else {
-            WriteProbe::Granted("test_write")
-        }
-    }) == InstallationWriteAccess::Protected
-}
-
-/// Walk the executable and every ancestor up to `trusted_root`, requiring
-/// each probe to deny write access. The first non-denied probe decides the
-/// rejection kind: a granted right is `WritableByLaunchToken`, a failed probe
-/// is `Untrusted` (fail closed).
-fn windows_installation_write_access_with_probe(
-    executable: &std::path::Path,
-    trusted_root: &std::path::Path,
-    mut probe: impl FnMut(&std::path::Path, bool) -> WriteProbe,
-) -> InstallationWriteAccess {
-    let rejection = |result: WriteProbe| match result {
-        WriteProbe::Denied => None,
-        WriteProbe::Granted(_) => Some(InstallationWriteAccess::WritableByLaunchToken),
-        WriteProbe::Failed(_) => Some(InstallationWriteAccess::Untrusted),
-    };
-    if !executable.starts_with(trusted_root) {
-        return InstallationWriteAccess::Untrusted;
-    }
-    if let Some(rejected) = rejection(probe(executable, false)) {
-        return rejected;
-    }
-    let mut current = executable.parent();
-    while let Some(directory) = current {
-        if let Some(rejected) = rejection(probe(directory, true)) {
-            return rejected;
-        }
-        if directory == trusted_root {
-            return InstallationWriteAccess::Protected;
-        }
-        current = directory.parent();
-    }
-    InstallationWriteAccess::Untrusted
 }
 
 fn isolated_browser_product_name(executable: &std::path::Path) -> &'static str {
@@ -909,13 +997,208 @@ fn cdp_comparable_window_bounds(window_id: u64) -> Result<Rect, BrowserRefusal> 
             format!("could not read Windows outer bounds for window {window_id}: {error}"),
         )
     })?;
+    let physical = (
+        outer.left,
+        outer.top,
+        outer.right - outer.left,
+        outer.bottom - outer.top,
+    );
+    let displays = physical_displays();
+    let window_monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+    let monitor_rect = monitor_info(window_monitor).map(|(rect, _)| rect);
+    let window_display = monitor_rect.and_then(|rect| {
+        displays.iter().position(|display| {
+            (display.left, display.top, display.right, display.bottom)
+                == (rect.left, rect.top, rect.right, rect.bottom)
+        })
+    });
+    if let Some(bounds) =
+        window_display.and_then(|index| physical_window_to_chromium_dip(physical, &displays, index))
+    {
+        return Ok(bounds);
+    }
+    // Fallback (display layout unavailable or not edge-connected to the
+    // primary): scale absolute coordinates by the window DPI. Exact on the
+    // primary display and on any display whose physical origin equals its
+    // Chromium DIP origin.
     let dpi = unsafe { GetDpiForWindow(hwnd) };
     let scale = if dpi == 0 { 1.0 } else { f64::from(dpi) / 96.0 };
     Ok(Rect::new(
-        f64::from(outer.left) / scale,
-        f64::from(outer.top) / scale,
-        f64::from(outer.right - outer.left) / scale,
-        f64::from(outer.bottom - outer.top) / scale,
+        f64::from(physical.0) / scale,
+        f64::from(physical.1) / scale,
+        f64::from(physical.2) / scale,
+        f64::from(physical.3) / scale,
+    ))
+}
+
+/// One monitor in physical (virtual-screen) pixels with its effective scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PhysicalDisplay {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    scale: f64,
+    primary: bool,
+}
+
+const MONITORINFOF_PRIMARY_FLAG: u32 = 1;
+
+fn monitor_info(monitor: HMONITOR) -> Option<(RECT, bool)> {
+    if monitor.is_invalid() {
+        return None;
+    }
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetMonitorInfoW(monitor, &mut info) }
+        .as_bool()
+        .then_some((
+            info.rcMonitor,
+            info.dwFlags & MONITORINFOF_PRIMARY_FLAG != 0,
+        ))
+}
+
+fn physical_displays() -> Vec<PhysicalDisplay> {
+    unsafe extern "system" fn collect(
+        monitor: HMONITOR,
+        _hdc: HDC,
+        _clip: *mut RECT,
+        data: LPARAM,
+    ) -> BOOL {
+        let displays = &mut *(data.0 as *mut Vec<PhysicalDisplay>);
+        if let Some((rect, primary)) = monitor_info(monitor) {
+            let (mut dpi_x, mut dpi_y) = (0u32, 0u32);
+            let scale = match GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) {
+                Ok(()) if dpi_x != 0 => f64::from(dpi_x) / 96.0,
+                _ => 1.0,
+            };
+            displays.push(PhysicalDisplay {
+                left: rect.left,
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+                scale,
+                primary,
+            });
+        }
+        BOOL(1)
+    }
+
+    let mut displays: Vec<PhysicalDisplay> = Vec::new();
+    unsafe {
+        let _ = EnumDisplayMonitors(
+            HDC::default(),
+            None,
+            Some(collect),
+            LPARAM(&mut displays as *mut Vec<PhysicalDisplay> as isize),
+        );
+    }
+    displays
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DisplayEdge {
+    Right,
+    Left,
+    Bottom,
+    Top,
+}
+
+/// Which edge of `parent` the `child` display shares (with a non-empty
+/// overlap along that edge), mirroring Chromium's touching-display test.
+fn shared_edge(parent: &PhysicalDisplay, child: &PhysicalDisplay) -> Option<DisplayEdge> {
+    let overlaps = |a0: i32, a1: i32, b0: i32, b1: i32| a0.max(b0) < a1.min(b1);
+    let vertical_overlap = overlaps(parent.top, parent.bottom, child.top, child.bottom);
+    let horizontal_overlap = overlaps(parent.left, parent.right, child.left, child.right);
+    if child.left == parent.right && vertical_overlap {
+        Some(DisplayEdge::Right)
+    } else if child.right == parent.left && vertical_overlap {
+        Some(DisplayEdge::Left)
+    } else if child.top == parent.bottom && horizontal_overlap {
+        Some(DisplayEdge::Bottom)
+    } else if child.bottom == parent.top && horizontal_overlap {
+        Some(DisplayEdge::Top)
+    } else {
+        None
+    }
+}
+
+/// Lay displays out in DIP space the way Chromium's `display::win::ScreenWin`
+/// does: the primary display keeps its origin, and every other display is
+/// placed against the edge it shares with an already placed display. The
+/// offset along that edge is scaled by the display it lies within (the
+/// child's scale when the child starts before the parent, otherwise the
+/// parent's), so a display's DIP origin generally differs from its physical
+/// origin divided by its own scale. Returns `None` for displays that are not
+/// edge-connected to the primary display.
+fn chromium_dip_origins(displays: &[PhysicalDisplay]) -> Vec<Option<(f64, f64)>> {
+    let mut origins: Vec<Option<(f64, f64)>> = vec![None; displays.len()];
+    let Some(primary) = displays.iter().position(|display| display.primary) else {
+        return origins;
+    };
+    origins[primary] = Some((
+        f64::from(displays[primary].left),
+        f64::from(displays[primary].top),
+    ));
+    let mut remaining: Vec<usize> = (0..displays.len()).filter(|&i| i != primary).collect();
+    let mut parents = vec![primary];
+    while let Some(parent_index) = parents.pop() {
+        let parent = displays[parent_index];
+        let (parent_x, parent_y) = origins[parent_index].expect("placed parent");
+        let parent_width = f64::from(parent.right - parent.left) / parent.scale;
+        let parent_height = f64::from(parent.bottom - parent.top) / parent.scale;
+        let mut still_remaining = Vec::with_capacity(remaining.len());
+        for child_index in remaining {
+            let child = displays[child_index];
+            let Some(edge) = shared_edge(&parent, &child) else {
+                still_remaining.push(child_index);
+                continue;
+            };
+            let (parent_begin, child_begin) = match edge {
+                DisplayEdge::Right | DisplayEdge::Left => (parent.top, child.top),
+                DisplayEdge::Bottom | DisplayEdge::Top => (parent.left, child.left),
+            };
+            let offset = if child_begin < parent_begin {
+                -(f64::from(parent_begin - child_begin) / child.scale)
+            } else {
+                f64::from(child_begin - parent_begin) / parent.scale
+            }
+            .floor();
+            let child_width = f64::from(child.right - child.left) / child.scale;
+            let child_height = f64::from(child.bottom - child.top) / child.scale;
+            origins[child_index] = Some(match edge {
+                DisplayEdge::Right => (parent_x + parent_width, parent_y + offset),
+                DisplayEdge::Left => (parent_x - child_width, parent_y + offset),
+                DisplayEdge::Bottom => (parent_x + offset, parent_y + parent_height),
+                DisplayEdge::Top => (parent_x + offset, parent_y - child_height),
+            });
+            parents.push(child_index);
+        }
+        remaining = still_remaining;
+    }
+    origins
+}
+
+/// Convert a physical window rect `(x, y, width, height)` on
+/// `displays[display_index]` to the DIP coordinates Chromium reports through
+/// CDP `Browser.getWindowForTarget` (#4428).
+fn physical_window_to_chromium_dip(
+    physical: (i32, i32, i32, i32),
+    displays: &[PhysicalDisplay],
+    display_index: usize,
+) -> Option<Rect> {
+    let display = displays.get(display_index)?;
+    let (origin_x, origin_y) = chromium_dip_origins(displays)
+        .get(display_index)
+        .copied()??;
+    let scale = display.scale;
+    Some(Rect::new(
+        origin_x + f64::from(physical.0 - display.left) / scale,
+        origin_y + f64::from(physical.1 - display.top) / scale,
+        f64::from(physical.2) / scale,
+        f64::from(physical.3) / scale,
     ))
 }
 
@@ -1665,15 +1948,35 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         let context = browser_launch_context()?;
         let mut facts = Vec::new();
         let mut executables = Vec::new();
+        let mut diagnostics = Vec::new();
         for (candidate, trusted_root, expected_cn, expected_org) in isolated_browser_candidates()? {
             let product = isolated_browser_product_name(&candidate);
-            let Ok(executable) = select_isolated_browser_executable([candidate.clone()]) else {
-                facts.push(IsolatedCandidateFacts::missing(product));
+            // Resolves junctions and symbolic links that keep the installation
+            // layout and probes every object on the resolved chain, so the
+            // executable is the real file in plain drive form.
+            let installation =
+                launch_token_installation_write_access(&context, &candidate, &trusted_root);
+            let Some(executable) = installation.executable.filter(|_| installation.installed)
+            else {
+                diagnostics.push(serde_json::json!({
+                    "candidate": candidate.display().to_string(),
+                    "installed": installation.installed,
+                    "reason": installation.reason,
+                }));
+                facts.push(if installation.installed {
+                    IsolatedCandidateFacts {
+                        product,
+                        installed: true,
+                        write_access: InstallationWriteAccess::Untrusted,
+                        vendor_signed: false,
+                    }
+                } else {
+                    IsolatedCandidateFacts::missing(product)
+                });
                 executables.push(None);
                 continue;
             };
-            let write_access =
-                launch_token_installation_write_access(&context, &candidate, &trusted_root);
+            let write_access = installation.write_access;
             // The signature of a writable candidate is read only to explain
             // the refusal; such a candidate is never launched.
             let vendor_signed = write_access != InstallationWriteAccess::Untrusted
@@ -1682,6 +1985,13 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                     expected_cn,
                     expected_org,
                 );
+            diagnostics.push(serde_json::json!({
+                "candidate": candidate.display().to_string(),
+                "installed": true,
+                "resolved": executable,
+                "vendor_signed": vendor_signed,
+                "reason": installation.reason,
+            }));
             let fact = IsolatedCandidateFacts {
                 product,
                 installed: true,
@@ -1705,7 +2015,8 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             IsolatedBrowserDecision::Refuse(message) => Err(refusal(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 message,
-            )),
+            )
+            .with_detail(serde_json::json!({ "candidates": diagnostics }))),
         }
     }
 
@@ -2369,6 +2680,78 @@ impl BrowserPlatform for WindowsBrowserPlatform {
 mod tests {
     use super::*;
 
+    fn display(left: i32, top: i32, right: i32, bottom: i32, scale: f64) -> PhysicalDisplay {
+        PhysicalDisplay {
+            left,
+            top,
+            right,
+            bottom,
+            scale,
+            primary: left == 0 && top == 0,
+        }
+    }
+
+    /// The mixed-DPI layout measured in #4428 (Chrome stable, Windows 11).
+    fn issue_4428_displays() -> Vec<PhysicalDisplay> {
+        vec![
+            display(6000, 13, 9840, 2173, 1.0),    // DISPLAY1, 100%
+            display(3840, -1000, 6000, 2840, 1.5), // DISPLAY2, 150%
+            display(0, 0, 3840, 2160, 1.0),        // DISPLAY3, primary
+        ]
+    }
+
+    fn assert_cdp_match(actual: Rect, expected: Rect) {
+        assert!(
+            actual.approx_eq(&expected, 2.0),
+            "actual {actual:?} expected CDP {expected:?}"
+        );
+    }
+
+    #[test]
+    fn chromium_dip_layout_matches_measured_cdp_bounds_on_mixed_dpi() {
+        let displays = issue_4428_displays();
+        // Primary, 100%: exact.
+        assert_cdp_match(
+            physical_window_to_chromium_dip((1470, 19, 2356, 2119), &displays, 2).unwrap(),
+            Rect::new(1470.0, 19.0, 2356.0, 2119.0),
+        );
+        // DISPLAY1, 100%, right of the 150% display: x shifted by its lost width.
+        assert_cdp_match(
+            physical_window_to_chromium_dip((6193, 200, 2014, 1507), &displays, 0).unwrap(),
+            Rect::new(5473.0, 195.0, 2014.0, 1507.0),
+        );
+        // DISPLAY2, 150%: monitor origin keeps 3840 DIP, not 3840 / 1.5.
+        assert_cdp_match(
+            physical_window_to_chromium_dip((3943, -800, 2721, 2261), &displays, 1).unwrap(),
+            Rect::new(3909.0, -534.0, 1815.0, 1508.0),
+        );
+    }
+
+    #[test]
+    fn chromium_dip_layout_places_left_top_and_detached_displays() {
+        let displays = vec![
+            display(0, 0, 1920, 1080, 1.0),
+            display(-3840, 0, 0, 2160, 2.0),      // left, 200%
+            display(0, -1440, 2560, 0, 1.0),      // above
+            display(5000, 5000, 6000, 6000, 1.0), // not edge-connected
+        ];
+        let origins = chromium_dip_origins(&displays);
+        assert_eq!(origins[0], Some((0.0, 0.0)));
+        assert_eq!(origins[1], Some((-1920.0, 0.0)));
+        assert_eq!(origins[2], Some((0.0, -1440.0)));
+        assert_eq!(origins[3], None);
+        assert!(physical_window_to_chromium_dip((5100, 5100, 10, 10), &displays, 3).is_none());
+    }
+
+    #[test]
+    fn chromium_dip_layout_without_primary_is_unplaced() {
+        let mut displays = issue_4428_displays();
+        for display in &mut displays {
+            display.primary = false;
+        }
+        assert!(chromium_dip_origins(&displays).iter().all(Option::is_none));
+    }
+
     #[test]
     fn process_fingerprint_uses_manifest_canonical_executable_path() {
         let (_started, executable) =
@@ -2581,77 +2964,168 @@ mod tests {
         assert!(!trusted_windows_installation(&executable, root.path()));
     }
 
+    /// A link-free installation tree: `.exe` paths are files, the rest are
+    /// directories, and every path is already canonical.
+    struct PlainTreeFs;
+
+    impl InstallationFs for PlainTreeFs {
+        fn entry(&self, path: &str) -> Result<InstallationEntry, String> {
+            Ok(if path.ends_with(".exe") {
+                InstallationEntry::File
+            } else {
+                InstallationEntry::Directory
+            })
+        }
+        fn canonical(&self, path: &str) -> Result<String, String> {
+            Ok(format!(r"\\?\{path}"))
+        }
+    }
+
+    /// A tree whose `Application` directory is a junction to `target`.
+    struct JunctionedTreeFs {
+        target: &'static str,
+    }
+
+    impl InstallationFs for JunctionedTreeFs {
+        fn entry(&self, path: &str) -> Result<InstallationEntry, String> {
+            if path.eq_ignore_ascii_case(r"C:\Program Files\Google\Chrome\Application") {
+                return Ok(InstallationEntry::Link(format!(r"\\?\{}", self.target)));
+            }
+            PlainTreeFs.entry(path)
+        }
+        fn canonical(&self, path: &str) -> Result<String, String> {
+            let relocated = path.replacen(
+                r"C:\Program Files\Google\Chrome\Application",
+                self.target,
+                1,
+            );
+            Ok(format!(r"\\?\{relocated}"))
+        }
+    }
+
+    fn write_access_with_probe(
+        fs: &impl InstallationFs,
+        probe: impl FnMut(&std::path::Path, bool, bool) -> WriteProbe,
+    ) -> CandidateInstallation {
+        let root = std::path::Path::new(r"C:\Program Files");
+        windows_installation_write_access_with(
+            &root.join(r"Google\Chrome\Application\chrome.exe"),
+            root,
+            fs,
+            probe,
+        )
+    }
+
     #[test]
     fn installation_trust_walk_requires_every_probe_to_deny_write() {
         let root = std::path::Path::new(r"C:\Program Files");
-        let executable = root.join(r"Google\Chrome\Application\chrome.exe");
-
-        assert!(trusted_windows_installation_with_probe(
-            &executable,
+        let protected = write_access_with_probe(&PlainTreeFs, |_, _, _| WriteProbe::Denied);
+        assert_eq!(protected.write_access, InstallationWriteAccess::Protected);
+        assert_eq!(
+            protected.executable.as_deref(),
+            Some(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+        );
+        for writable in [r"C:\Program Files\Google\Chrome", r"C:\Program Files"] {
+            let result = write_access_with_probe(&PlainTreeFs, |path, directory, _| {
+                if directory && path == std::path::Path::new(writable) {
+                    WriteProbe::Granted("add_file")
+                } else {
+                    WriteProbe::Denied
+                }
+            });
+            assert_eq!(
+                result.write_access,
+                InstallationWriteAccess::WritableByLaunchToken,
+                "{writable}"
+            );
+        }
+        let outside = windows_installation_write_access_with(
+            std::path::Path::new(r"D:\UserControlled\chrome.exe"),
             root,
-            |_, _| true,
-        ));
-        assert!(!trusted_windows_installation_with_probe(
-            &executable,
-            root,
-            |path, directory| !(directory && path.ends_with(r"Google\Chrome")),
-        ));
-        assert!(!trusted_windows_installation_with_probe(
-            &executable,
-            root,
-            |path, directory| !(directory && path == root),
-        ));
-        assert!(!trusted_windows_installation_with_probe(
-            &std::path::PathBuf::from(r"D:\UserControlled\chrome.exe"),
-            root,
-            |_, _| true,
-        ));
+            &PlainTreeFs,
+            |_, _, _| WriteProbe::Denied,
+        );
+        assert!(outside.installed);
+        assert_eq!(outside.executable, None);
+        assert_eq!(outside.write_access, InstallationWriteAccess::Untrusted);
     }
 
     #[test]
     fn installation_write_access_distinguishes_granted_from_failed_probes() {
         let root = std::path::Path::new(r"C:\Program Files");
         let executable = root.join(r"Google\Chrome\Application\chrome.exe");
-
-        assert_eq!(
-            windows_installation_write_access_with_probe(&executable, root, |_, _| {
+        let failed = write_access_with_probe(&PlainTreeFs, |_, directory, _| {
+            if directory {
                 WriteProbe::Denied
-            }),
-            InstallationWriteAccess::Protected
-        );
-        assert_eq!(
-            windows_installation_write_access_with_probe(&executable, root, |path, directory| {
-                if directory && path == root {
-                    WriteProbe::Granted("add_file")
-                } else {
-                    WriteProbe::Denied
-                }
-            }),
-            InstallationWriteAccess::WritableByLaunchToken
-        );
-        assert_eq!(
-            windows_installation_write_access_with_probe(&executable, root, |_, directory| {
-                if directory {
-                    WriteProbe::Denied
-                } else {
-                    WriteProbe::Failed("write_data probe failed closed".to_owned())
-                }
-            }),
-            InstallationWriteAccess::Untrusted
-        );
-        assert_eq!(
-            windows_installation_write_access_with_probe(
-                std::path::Path::new(r"D:\UserControlled\chrome.exe"),
-                root,
-                |_, _| WriteProbe::Denied,
-            ),
-            InstallationWriteAccess::Untrusted
-        );
+            } else {
+                WriteProbe::Failed("write_data probe failed closed".to_owned())
+            }
+        });
+        assert_eq!(failed.write_access, InstallationWriteAccess::Untrusted);
+        assert!(failed
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("write_data probe failed closed")));
         assert_eq!(isolated_browser_product_name(&executable), "Chrome");
         assert_eq!(
             isolated_browser_product_name(&root.join(r"Microsoft\Edge\Application\msedge.exe")),
             "Edge"
         );
+    }
+
+    #[test]
+    fn junctioned_installation_is_accepted_only_when_the_whole_chain_is_protected() {
+        let fs = JunctionedTreeFs {
+            target: r"E:\Program Files\Google\Chrome\Application",
+        };
+        let mut probed = Vec::new();
+        let protected = write_access_with_probe(&fs, |path, directory, link| {
+            probed.push((path.to_path_buf(), directory, link));
+            WriteProbe::Denied
+        });
+        assert_eq!(protected.write_access, InstallationWriteAccess::Protected);
+        assert_eq!(
+            protected.executable.as_deref(),
+            Some(r"E:\Program Files\Google\Chrome\Application\chrome.exe")
+        );
+        assert!(probed.contains(&(
+            PathBuf::from(r"C:\Program Files\Google\Chrome\Application"),
+            true,
+            true
+        )));
+
+        // The junction itself, each real directory, and the real root must
+        // all deny write access.
+        for writable in [
+            r"C:\Program Files\Google\Chrome\Application",
+            r"E:\Program Files",
+            r"E:\Program Files\Google\Chrome\Application",
+            r"E:\Program Files\Google\Chrome\Application\chrome.exe",
+        ] {
+            let result = write_access_with_probe(&fs, |path, _, _| {
+                if path == std::path::Path::new(writable) {
+                    WriteProbe::Granted("write_dac")
+                } else {
+                    WriteProbe::Denied
+                }
+            });
+            assert_eq!(
+                result.write_access,
+                InstallationWriteAccess::WritableByLaunchToken,
+                "{writable}"
+            );
+            assert!(result.reason.unwrap().contains(writable));
+        }
+
+        // A junction that leaves the installation layout is never followed.
+        let escaped = write_access_with_probe(
+            &JunctionedTreeFs {
+                target: r"C:\Users\Public\Chrome",
+            },
+            |_, _, _| WriteProbe::Denied,
+        );
+        assert_eq!(escaped.write_access, InstallationWriteAccess::Untrusted);
+        assert_eq!(escaped.executable, None);
     }
 
     #[test]
@@ -2697,7 +3171,8 @@ mod tests {
         let context = browser_launch_context().expect("browser launch context");
         if matches!(context, BrowserLaunchContext::StandardUser(_)) {
             assert_eq!(
-                launch_token_installation_write_access(&context, &installed.0, &installed.1),
+                launch_token_installation_write_access(&context, &installed.0, &installed.1)
+                    .write_access,
                 InstallationWriteAccess::Protected,
                 "the standard-user launch token must not be able to modify {}",
                 installed.0.display()

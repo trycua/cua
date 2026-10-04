@@ -50,3 +50,19 @@ python -m cua_bench.interact <task-folder>/main.py
 # Example
 python -m cua_bench.interact click-button/main.py
 ```
+
+## Image
+
+The tasks open their page in a bench-ui (pywebview) window, so they run on
+the `bench-web` image (`cua_bench.images.BENCH_WEB`), which ships bench-ui,
+pywebview and WebKit2GTK. It has a container variant (docker, gVisor) and a
+VM variant (QEMU, KubeVirt) in one index; `--runtime` picks one. Override
+the image with `--image` or `CUA_BENCH_IMAGE_BENCH_WEB`.
+
+```bash
+# The whole set with the scripted solutions, locally in a container
+cb run dataset libs/cua-bench/datasets/cua-bench-basic --oracle
+# The same on a local VM, and on Fleet
+cb run dataset libs/cua-bench/datasets/cua-bench-basic --oracle --kind vm
+cb run dataset libs/cua-bench/datasets/cua-bench-basic --oracle --on cloud
+```

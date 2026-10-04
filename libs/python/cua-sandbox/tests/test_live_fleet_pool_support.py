@@ -48,7 +48,14 @@ class FakeSandbox:
         self.pool_name = name
         self.screen = SimpleNamespace(size=self._size)
         self.shell = SimpleNamespace(run=self._run)
+        self.services = SimpleNamespace(request=self._request)
         self._shell_stdout = shell_stdout
+        self.service_status = 200
+
+    async def _request(self, name: str, *, method: str, path: str, **_):
+        # "Darwin" stands for a guest check that fails on the daemon-agnostic
+        # lane too: the service answers 503.
+        return SimpleNamespace(status_code=503 if self._shell_stdout != "Linux" else 200)
 
     async def _size(self) -> tuple[int, int]:
         return (1024, 768)

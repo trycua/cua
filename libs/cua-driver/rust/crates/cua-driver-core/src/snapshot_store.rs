@@ -6,9 +6,18 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
+/// Reserved dispatch argument marking window-relative pixels as native
+/// window pixels. Dispatch strips every caller-supplied underscore argument,
+/// so only [`crate::tool::ToolRegistry::invoke_with_native_window_pixels`]
+/// (an in-process Rust API) can set it.
+pub const NATIVE_WINDOW_PIXELS_ARG: &str = "_native_window_pixels";
+
 pub trait SnapshotPayload: Send + Sync + 'static {
     type Element;
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     fn retain(&self, index: usize) -> Option<Self::Element>;
 }
 
@@ -18,6 +27,7 @@ struct Snapshot<S> {
     screenshot_owner: Option<String>,
     screenshot_scale: Option<f64>,
     zoom: Option<ZoomContext>,
+    semantic: bool,
     payload: S,
 }
 
@@ -98,10 +108,13 @@ fn stale_token_refusal<S>(pid: i32, lane: &[Snapshot<S>]) -> ToolResult {
 }
 
 fn zoom_context_refusal(pid: i32, window_id: Option<u64>) -> ToolResult {
-    ToolResult::error(
-        "The zoom coordinate context is missing or was replaced by a newer snapshot. Call get_window_state and zoom again on the same connection before using from_zoom coordinates.",
-    )
-    .with_structured(serde_json::json!({
+    let message = "The zoom coordinate context is missing or was replaced by a newer snapshot. Call get_window_state and zoom again on the same connection before using from_zoom coordinates.";
+    ToolResult::error(message).with_structured(serde_json::json!({
+        // Explicit shared refusal envelope: the context is resolved before any
+        // input is dispatched, so nothing was delivered. Top-level fields stay
+        // for existing consumers.
+        "status": "refused",
+        "refusal": { "code": "zoom_context_missing", "message": message },
         "code": "zoom_context_missing",
         "pid": pid,
         "window_id": window_id,
@@ -142,6 +155,31 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         session: Option<&str>,
         screenshot_scale: Option<f64>,
     ) -> Option<(u32, Vec<u32>)> {
+        self.publish_snapshot(pid, window_id, payload, session, screenshot_scale, true)
+    }
+
+    /// Publish screenshot/capture state without claiming that an accessibility
+    /// walk has completed for this window.
+    pub fn publish_capture_for_session(
+        &self,
+        pid: i32,
+        window_id: u64,
+        payload: S,
+        session: Option<&str>,
+        screenshot_scale: Option<f64>,
+    ) -> Option<(u32, Vec<u32>)> {
+        self.publish_snapshot(pid, window_id, payload, session, screenshot_scale, false)
+    }
+
+    fn publish_snapshot(
+        &self,
+        pid: i32,
+        window_id: u64,
+        payload: S,
+        session: Option<&str>,
+        screenshot_scale: Option<f64>,
+        semantic: bool,
+    ) -> Option<(u32, Vec<u32>)> {
         let (id, retired) = {
             let mut inner = self.inner.lock().unwrap();
             if session.is_some_and(crate::session::is_session_ended) {
@@ -162,6 +200,7 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
                 screenshot_owner: session.map(str::to_owned),
                 screenshot_scale,
                 zoom: None,
+                semantic,
                 payload,
             });
             (id, retired)
@@ -197,6 +236,27 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             }
         };
         context.ok_or_else(|| screenshot_context_refusal(Some(pid), window_id))
+    }
+
+    /// The native-image / delivered-image scale for a window-relative pixel
+    /// action: 1.0 for a trusted in-process call whose pixels are already
+    /// native ([`NATIVE_WINDOW_PIXELS_ARG`]), otherwise the scale of the
+    /// session's current screenshot of the window (refused without one).
+    pub fn screenshot_scale(
+        &self,
+        pid: i32,
+        window_id: Option<u64>,
+        args: &serde_json::Value,
+    ) -> Result<f64, ToolResult> {
+        if args.get(NATIVE_WINDOW_PIXELS_ARG) == Some(&serde_json::Value::Bool(true)) {
+            return Ok(1.0);
+        }
+        self.screenshot_context(
+            pid,
+            window_id,
+            args.get("_session_id").and_then(serde_json::Value::as_str),
+        )
+        .map(|context| context.scale)
     }
 
     pub fn screenshot_context_for_zoom(
@@ -291,6 +351,24 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             .iter()
             .find(|entry| entry.id == snapshot_id)
             .map(|entry| entry.window_id)
+    }
+
+    /// Whether this runtime has already published any snapshot for the window.
+    pub fn contains_window(&self, pid: i32, window_id: u64) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .get(&pid)
+            .is_some_and(|lane| lane.iter().any(|entry| entry.window_id == window_id))
+    }
+
+    /// Whether an accessibility/semantic snapshot has been published for the
+    /// window. Screenshot-only previews deliberately do not satisfy this.
+    pub fn contains_semantic_window(&self, pid: i32, window_id: u64) -> bool {
+        self.inner.lock().unwrap().get(&pid).is_some_and(|lane| {
+            lane.iter()
+                .any(|entry| entry.window_id == window_id && entry.semantic)
+        })
     }
 
     pub fn resolve(
@@ -495,6 +573,28 @@ mod tests {
             .is_err());
     }
 
+    #[test]
+    fn semantic_membership_ignores_capture_only_publication() {
+        let cache = SnapshotStore::new();
+        assert!(!cache.contains_window(9, 99));
+        assert!(!cache.contains_semantic_window(9, 99));
+
+        cache
+            .publish_capture_for_session(9, 99, Payload(vec![]), None, Some(1.0))
+            .unwrap();
+        assert!(cache.contains_window(9, 99));
+        assert!(!cache.contains_semantic_window(9, 99));
+
+        cache.publish(9, 99, Payload(vec![]));
+        assert!(cache.contains_semantic_window(9, 99));
+        assert!(!cache.contains_semantic_window(9, 100));
+        assert!(!cache.contains_semantic_window(10, 99));
+
+        cache.remove(9, 99);
+        assert!(!cache.contains_window(9, 99));
+        assert!(!cache.contains_semantic_window(9, 99));
+    }
+
     fn token_refusal(cache: &SnapshotStore<Payload>, pid: i32, token: &str) -> serde_json::Value {
         cache
             .resolve(pid, &serde_json::json!({ "element_token": token }))
@@ -534,6 +634,34 @@ mod tests {
             structured["current_snapshots"],
             serde_json::json!([{ "snapshot_id": format_snapshot_id(current), "window_id": 555 }])
         );
+    }
+
+    #[test]
+    fn stale_zoom_is_an_explicit_refusal_with_no_delivery() {
+        let cache = SnapshotStore::<Payload>::new();
+        let structured = cache
+            .zoom(7, Some(9), None)
+            .unwrap_err()
+            .structured_content
+            .unwrap();
+        // Legacy top-level fields remain for existing consumers.
+        assert_eq!(structured["code"], "zoom_context_missing");
+        assert_eq!(structured["pid"], 7);
+        assert_eq!(structured["window_id"], 9);
+        assert_eq!(structured["status"], "refused");
+        assert_eq!(structured["refusal"]["code"], "zoom_context_missing");
+
+        let args = serde_json::json!({
+            "pid": 7, "window_id": 9, "x": 1, "y": 2, "from_zoom": true,
+            "delivery_mode": "foreground",
+        });
+        let record =
+            crate::action_record::ActionExecutionRecord::from_legacy("click", &args, &structured)
+                .unwrap();
+        assert_eq!(record.effect, crate::action_record::ActionEffect::Refused);
+        assert_eq!(record.actual_delivery, None);
+        assert_eq!(record.delivered_count, None);
+        assert_eq!(record.refusal.unwrap().code, "zoom_context_missing");
     }
 
     #[test]
@@ -617,6 +745,43 @@ mod tests {
         let refusal = cache
             .screenshot_context(10, Some(20), Some("client-a"))
             .expect_err("stale image coordinates must be refused");
+        assert_eq!(refusal_code(refusal), "screenshot_context_missing");
+    }
+
+    #[test]
+    fn window_pixels_need_a_session_screenshot_unless_marked_native() {
+        let cache = SnapshotStore::new();
+        let session = |extra: serde_json::Value| {
+            let mut args = serde_json::json!({ "_session_id": "client-a" });
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            args
+        };
+        let refusal = cache
+            .screenshot_scale(10, Some(20), &session(serde_json::json!({})))
+            .expect_err("pixels without a read are refused");
+        assert_eq!(refusal_code(refusal), "screenshot_context_missing");
+        let native = session(serde_json::json!({ NATIVE_WINDOW_PIXELS_ARG: true }));
+        assert_eq!(cache.screenshot_scale(10, Some(20), &native).unwrap(), 1.0);
+
+        // Native pixels ignore the session's screenshot scale; other calls use it.
+        cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(2.5));
+        assert_eq!(cache.screenshot_scale(10, Some(20), &native).unwrap(), 1.0);
+        assert_eq!(
+            cache
+                .screenshot_scale(10, Some(20), &session(serde_json::json!({})))
+                .unwrap(),
+            2.5
+        );
+        // Only the boolean true marks native pixels.
+        let refusal = cache
+            .screenshot_scale(
+                10,
+                Some(21),
+                &session(serde_json::json!({ NATIVE_WINDOW_PIXELS_ARG: "true" })),
+            )
+            .expect_err("a non-boolean marker is not native pixels");
         assert_eq!(refusal_code(refusal), "screenshot_context_missing");
     }
 
@@ -741,7 +906,7 @@ mod tests {
         drop(guard);
         assert_eq!(
             evict_idle_with_prefix(std::time::Duration::ZERO, &session),
-            [session.clone()]
+            std::slice::from_ref(&session)
         );
 
         let guard = begin().expect("next unnamed call recreates the session");

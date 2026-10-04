@@ -1,0 +1,13 @@
+[package]
+name = "cua-media-protocol"
+description = "Transport-neutral protocol types for RCDP window streaming and control"
+version.workspace = true
+edition = "2021"
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

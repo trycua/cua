@@ -1,0 +1,340 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+import "cua/env/v1/common.proto";
+import "google/protobuf/duration.proto";
+
+// Window enumeration, window management and app launching.
+//
+// Windows are addressed with opaque `WindowRef` handles (id + epoch). Native
+// handles never cross the wire. Nothing here goes through a shell: apps are
+// launched by identifier with an explicit argument vector.
+service WindowsService {
+  // Lists windows matching a filter.
+  rpc ListWindows(ListWindowsRequest) returns (ListWindowsResponse);
+  // Streams window lifecycle changes. Starts with a snapshot of all matching
+  // windows so clients never race between a list and a watch.
+  rpc WatchWindows(WatchWindowsRequest) returns (stream WatchWindowsResponse);
+  // Returns one window.
+  rpc GetWindow(GetWindowRequest) returns (GetWindowResponse);
+  // Brings a window to the front and gives it keyboard focus.
+  rpc ActivateWindow(ActivateWindowRequest) returns (ActivateWindowResponse);
+  // Moves and/or resizes a window.
+  rpc SetWindowBounds(SetWindowBoundsRequest) returns (SetWindowBoundsResponse);
+  // Minimizes (iconifies) a window.
+  rpc MinimizeWindow(MinimizeWindowRequest) returns (MinimizeWindowResponse);
+  // Maximizes (zooms) a window.
+  rpc MaximizeWindow(MaximizeWindowRequest) returns (MaximizeWindowResponse);
+  // Restores a minimized or maximized window to its normal state.
+  rpc RestoreWindow(RestoreWindowRequest) returns (RestoreWindowResponse);
+  // Asks a window to close (like clicking its close button), or force-closes
+  // it.
+  rpc CloseWindow(CloseWindowRequest) returns (CloseWindowResponse);
+  // Launches an application.
+  rpc LaunchApp(LaunchAppRequest) returns (LaunchAppResponse);
+  // Opens a URL or path with its default (or a given) application.
+  rpc Open(OpenRequest) returns (OpenResponse);
+}
+
+// Window state.
+enum WindowState {
+  // Not reported.
+  WINDOW_STATE_UNSPECIFIED = 0;
+  // Normal (neither minimized, maximized nor fullscreen).
+  WINDOW_STATE_NORMAL = 1;
+  // Minimized / iconified.
+  WINDOW_STATE_MINIMIZED = 2;
+  // Maximized / zoomed.
+  WINDOW_STATE_MAXIMIZED = 3;
+  // Fullscreen.
+  WINDOW_STATE_FULLSCREEN = 4;
+  // Hidden (app hidden, withdrawn, or on another virtual desktop).
+  WINDOW_STATE_HIDDEN = 5;
+}
+
+// Broad window role.
+enum WindowKind {
+  // Not reported.
+  WINDOW_KIND_UNSPECIFIED = 0;
+  // A normal application window.
+  WINDOW_KIND_STANDARD = 1;
+  // A dialog or sheet.
+  WINDOW_KIND_DIALOG = 2;
+  // A floating panel or utility window.
+  WINDOW_KIND_PANEL = 3;
+  // A menu or popup.
+  WINDOW_KIND_MENU = 4;
+  // A tooltip.
+  WINDOW_KIND_TOOLTIP = 5;
+  // Desktop chrome: dock, menu bar strip, panel, wallpaper.
+  WINDOW_KIND_SYSTEM = 6;
+  // Invisible or indicator surfaces (for example the macOS screen-recording
+  // indicator, 1x1 helper windows). Hidden unless `include_system` is set.
+  WINDOW_KIND_PHANTOM = 7;
+}
+
+// Application that owns a window.
+message AppInfo {
+  // Display name, for example "Firefox".
+  string name = 1;
+  // Platform app identifier: bundle id on macOS, .desktop id on Linux,
+  // AppUserModelID or executable name on Windows. Empty when unknown.
+  string app_id = 2;
+  // Guest process id of the owning process. Guest-local; never a host id.
+  uint32 pid = 3;
+}
+
+// Description of a window.
+message WindowInfo {
+  // Handle.
+  WindowRef ref = 1;
+  // Title.
+  string title = 2;
+  // Owning application.
+  AppInfo app = 3;
+  // Frame in global logical points. Advisory: it is a snapshot and may be
+  // stale by the time it is used. Media sessions and screenshots report
+  // their own authoritative geometry.
+  Rect bounds = 4;
+  // Display containing most of the window.
+  string display_id = 5;
+  // State.
+  WindowState state = 6;
+  // Role.
+  WindowKind kind = 7;
+  // True if this window has keyboard focus.
+  bool focused = 8;
+  // True if any part is on screen (not minimized, hidden or off-desktop).
+  bool on_screen = 9;
+  // Front-to-back stacking order among listed windows, 0 is frontmost.
+  uint32 z_order = 10;
+}
+
+// Filter for window listing and watching. All set fields must match.
+message WindowFilter {
+  // Case-insensitive substring of the title.
+  string title_contains = 1;
+  // Case-insensitive substring of the app name.
+  string app_name_contains = 2;
+  // Exact `AppInfo.app_id`.
+  string app_id = 3;
+  // Owning process id.
+  uint32 pid = 4;
+  // Only windows on this display.
+  string display_id = 5;
+  // Only on-screen windows.
+  bool on_screen_only = 6;
+  // Include `WINDOW_KIND_SYSTEM` and `WINDOW_KIND_PHANTOM` windows, which
+  // are omitted by default.
+  bool include_system = 7;
+}
+
+// Request for `WindowsService.ListWindows`.
+message ListWindowsRequest {
+  // Filter.
+  WindowFilter filter = 1;
+}
+
+// Response for `WindowsService.ListWindows`.
+message ListWindowsResponse {
+  // Matching windows, front to back.
+  repeated WindowInfo windows = 1;
+}
+
+// Request for `WindowsService.WatchWindows`.
+message WatchWindowsRequest {
+  // Filter applied to every event.
+  WindowFilter filter = 1;
+  // Interval between `keepalive` messages. Unset means 30 seconds.
+  google.protobuf.Duration keepalive_interval = 2;
+}
+
+// Initial state of a window watch.
+message WindowSnapshot {
+  // All matching windows, front to back.
+  repeated WindowInfo windows = 1;
+}
+
+// A window was closed or no longer matches the filter.
+message WindowClosed {
+  // The window.
+  WindowRef ref = 1;
+}
+
+// One message of the `WindowsService.WatchWindows` stream.
+message WatchWindowsResponse {
+  // The event.
+  oneof event {
+    // First message: current matching windows.
+    WindowSnapshot snapshot = 1;
+    // A new window appeared (or started matching).
+    WindowInfo created = 2;
+    // A window changed title, bounds, state, focus or z-order. Carries the
+    // full new description.
+    WindowInfo updated = 3;
+    // A window closed.
+    WindowClosed closed = 4;
+    // Idle stream heartbeat.
+    KeepAlive keepalive = 5;
+  }
+}
+
+// Request for `WindowsService.GetWindow`.
+message GetWindowRequest {
+  // Which window.
+  WindowRef window = 1;
+}
+
+// Response for `WindowsService.GetWindow`.
+message GetWindowResponse {
+  // The window.
+  WindowInfo window = 1;
+}
+
+// Request for `WindowsService.ActivateWindow`.
+message ActivateWindowRequest {
+  // Which window.
+  WindowRef window = 1;
+}
+
+// Response for `WindowsService.ActivateWindow`.
+message ActivateWindowResponse {
+  // The window afterwards.
+  WindowInfo window = 1;
+}
+
+// Request for `WindowsService.SetWindowBounds`.
+message SetWindowBoundsRequest {
+  // Which window.
+  WindowRef window = 1;
+  // New top-left corner in global logical points. Unset keeps the position.
+  Point position = 2;
+  // New width in logical points. Unset keeps the width.
+  optional double width = 3;
+  // New height in logical points. Unset keeps the height.
+  optional double height = 4;
+}
+
+// Response for `WindowsService.SetWindowBounds`.
+message SetWindowBoundsResponse {
+  // The window afterwards. Its bounds may differ from the request when the
+  // window manager or app constrains them.
+  WindowInfo window = 1;
+}
+
+// Request for `WindowsService.MinimizeWindow`.
+message MinimizeWindowRequest {
+  // Which window.
+  WindowRef window = 1;
+}
+
+// Response for `WindowsService.MinimizeWindow`.
+message MinimizeWindowResponse {
+  // The window afterwards.
+  WindowInfo window = 1;
+}
+
+// Request for `WindowsService.MaximizeWindow`.
+message MaximizeWindowRequest {
+  // Which window.
+  WindowRef window = 1;
+}
+
+// Response for `WindowsService.MaximizeWindow`.
+message MaximizeWindowResponse {
+  // The window afterwards.
+  WindowInfo window = 1;
+}
+
+// Request for `WindowsService.RestoreWindow`.
+message RestoreWindowRequest {
+  // Which window.
+  WindowRef window = 1;
+}
+
+// Response for `WindowsService.RestoreWindow`.
+message RestoreWindowResponse {
+  // The window afterwards.
+  WindowInfo window = 1;
+}
+
+// Request for `WindowsService.CloseWindow`.
+message CloseWindowRequest {
+  // Which window.
+  WindowRef window = 1;
+  // Destroy the window without giving the app a chance to object (for
+  // example to an unsaved-changes prompt). On most platforms this kills the
+  // owning process.
+  bool force = 2;
+}
+
+// Response for `WindowsService.CloseWindow`.
+message CloseWindowResponse {
+  // True if the window is gone. False when the app kept it open (for
+  // example it showed a save prompt).
+  bool closed = 1;
+}
+
+// Identifies an application to launch.
+message AppSpec {
+  // Exactly one must be set.
+  oneof app {
+    // Platform app identifier: macOS bundle id ("org.mozilla.firefox"),
+    // Linux .desktop id ("firefox.desktop"), Windows AppUserModelID.
+    string app_id = 1;
+    // Executable name (resolved on PATH) or absolute path.
+    string executable = 2;
+    // Display name, resolved by the platform (for example "Firefox"). The
+    // least precise option.
+    string name = 3;
+  }
+}
+
+// Request for `WindowsService.LaunchApp`.
+message LaunchAppRequest {
+  // What to launch.
+  AppSpec app = 1;
+  // Arguments passed verbatim, never through a shell.
+  repeated string args = 2;
+  // Extra environment variables.
+  map<string, string> env = 3;
+  // Working directory. Empty means the user's home.
+  string cwd = 4;
+  // `DELIVERY_BACKGROUND` launches without activating the app or stealing
+  // focus (where the platform allows). `DELIVERY_FOREGROUND` activates it.
+  Delivery delivery = 5;
+  // Wait up to this long for the app's first window and return it. Unset
+  // returns immediately after the process starts.
+  google.protobuf.Duration wait_for_window = 6;
+}
+
+// Response for `WindowsService.LaunchApp`.
+message LaunchAppResponse {
+  // Guest process id of the launched (or already running, for single-
+  // instance apps) process. 0 when the platform does not report it.
+  uint32 pid = 1;
+  // Windows that appeared within `wait_for_window`.
+  repeated WindowInfo windows = 2;
+}
+
+// Request for `WindowsService.Open`.
+message OpenRequest {
+  // What to open.
+  oneof target {
+    // A URL, for example "https://example.com" or "mailto:a@b".
+    string url = 1;
+    // A guest file or directory path.
+    string path = 2;
+  }
+  // Open with this app instead of the default handler.
+  AppSpec with_app = 3;
+  // Delivery, as for `LaunchAppRequest.delivery`.
+  Delivery delivery = 4;
+}
+
+// Response for `WindowsService.Open`.
+message OpenResponse {
+  // Guest process id of the handling app, 0 when unknown.
+  uint32 pid = 1;
+}

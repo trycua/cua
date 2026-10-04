@@ -221,10 +221,14 @@ mod tests {
         assert!(walk_regions(std::process::id() as i32, PROC_PIDREGIONPATHINFO).is_some());
     }
 
-    /// Loads `_tkinter` without creating any window, so this never touches the
-    /// desktop. Skips when the host Python lacks Tk support.
+    /// Loads `_tkinter` without creating any window. Skips when the host
+    /// Python lacks Tk support. Ignored under plain `cargo test`: on a Mac
+    /// without the Command Line Tools, `/usr/bin/python3` is a stub that opens
+    /// the developer-tools install dialog. The macOS canonical runner's native
+    /// lane, which provisions Python for the Tk rows, selects it.
     #[cfg(target_os = "macos")]
     #[test]
+    #[ignore = "host desktop: spawns the host python3, which can open the Command Line Tools installer; run by scripts/ci/macos/run-rust-e2e.sh"]
     fn detect_finds_tk_in_a_python_process_that_imported_tkinter() {
         use std::io::BufRead;
         let spawned = std::process::Command::new("python3")

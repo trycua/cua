@@ -1204,15 +1204,21 @@ fn state_status(state: &StateCapture, expected: bool) -> Value {
     status
 }
 
+/// How a turn's click marker is expected and whether it was captured.
+struct ClickEvidence {
+    expected: bool,
+    captured: bool,
+    /// Recorded when no click marker applies to the turn.
+    not_applicable_classification: &'static str,
+}
+
 fn write_evidence_manifest(
     turn_dir: &Path,
     before: &TurnCapture,
     after: &TurnCapture,
     state_expected: bool,
-    click_expected: bool,
-    click_captured: bool,
+    click: ClickEvidence,
     supplemental: &DispatchClickCapture,
-    click_not_applicable_classification: &'static str,
 ) -> anyhow::Result<()> {
     let mut manifest = serde_json::json!({
         "schema": "cua-turn-evidence/v1",
@@ -1232,12 +1238,12 @@ fn write_evidence_manifest(
                 after.screenshot_classification,
             ),
         },
-        "click": if click_expected {
-            capture_status(click_captured, true, None)
+        "click": if click.expected {
+            capture_status(click.captured, true, None)
         } else {
             serde_json::json!({
                 "status": "not_applicable",
-                "classification": click_not_applicable_classification,
+                "classification": click.not_applicable_classification,
             })
         },
     });
@@ -1482,18 +1488,20 @@ fn write_turn_with_after(
         &before,
         &after,
         pid.is_some() && capture_visual_state,
-        click_expected,
-        click_captured,
-        &supplemental,
-        if refused_before_target_resolution {
-            "action_refused_before_target_resolution"
-        } else if refused_before_dispatch {
-            "action_refused_before_dispatch"
-        } else if semantic_without_point {
-            "semantic_action_without_point"
-        } else {
-            "not_a_click_action"
+        ClickEvidence {
+            expected: click_expected,
+            captured: click_captured,
+            not_applicable_classification: if refused_before_target_resolution {
+                "action_refused_before_target_resolution"
+            } else if refused_before_dispatch {
+                "action_refused_before_dispatch"
+            } else if semantic_without_point {
+                "semantic_action_without_point"
+            } else {
+                "not_a_click_action"
+            },
         },
+        &supplemental,
     )?;
 
     Ok(())
@@ -2322,13 +2330,24 @@ mod tests {
                 RecordingCaller::default(),
             )
             .expect("resolved refusal should reserve an evidence turn");
-        let refusal_record = crate::action_record::ActionExecutionRecord::builder(
-            crate::action_record::ActionEffect::Refused,
-            crate::action_record::ActionTransport::WindowsTargetedInjection,
-            crate::action_record::RequestedDelivery::Background,
+        // Derive the record from the real shared stale-zoom refusal so the
+        // recorder is proven to treat it as refused-before-dispatch (no
+        // click marker), not as an unverifiable delivered click.
+        let zoom_refusal = cache
+            .zoom(1, Some(2), None)
+            .expect_err("no zoom context was published")
+            .structured_content
+            .expect("zoom refusal is structured");
+        let refusal_record = crate::action_record::ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({"pid": 1, "window_id": 2, "x": 3, "y": 4, "from_zoom": true}),
+            &zoom_refusal,
         )
-        .build()
-        .expect("valid refusal record");
+        .expect("click refusal normalizes to an action record");
+        assert_eq!(
+            refusal_record.effect,
+            crate::action_record::ActionEffect::Refused
+        );
         session.finish_turn_with_outcome(
             pending,
             "refused before dispatch",

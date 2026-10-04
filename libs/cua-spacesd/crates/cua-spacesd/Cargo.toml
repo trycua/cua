@@ -1,0 +1,71 @@
+[package]
+name = "cua-spacesd"
+description = "The in-sandbox cua daemon (cua.env.v1 over gRPC, gRPC-Web and HTTP on one port)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+cua-driver-core = { path = "../../../cua-driver/rust/crates/cua-driver-core" }
+cua-spacesd-desktop = { path = "../cua-spacesd-desktop" }
+cua-logging = { path = "../../../cua/crates/cua-logging" }
+cua-media-protocol = { path = "../../../cua/crates/cua-media-protocol" }
+cua-spacesd-provider-api = { path = "../cua-spacesd-provider-api" }
+cua-spacesd-session = { path = "../cua-spacesd-session" }
+cua-media-transport = { path = "../../../cua/crates/cua-media-transport" }
+cua-spacesd-server = { path = "../cua-spacesd-server" }
+cua-spacesd-doctor = { path = "../cua-spacesd-doctor" }
+cua-spacesd-client = { path = "../../../cua/crates/cua-spacesd-client" }
+cua-media-codec = { path = "../../../cua/crates/cua-media-codec", default-features = false }
+cua-proto = { path = "../../../cua/crates/cua-proto" }
+cua-relay = { path = "../cua-relay" }
+clap.workspace = true
+tracing-subscriber.workspace = true
+axum.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+quinn.workspace = true
+rcgen = "0.14.8"
+serde = { workspace = true }
+serde_json.workspace = true
+rustls.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tokio-tungstenite = "0.24"
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+cua-spacesd-client = { path = "../../../cua/crates/cua-spacesd-client" }
+cua-spacesd-provider-api = { path = "../cua-spacesd-provider-api" }
+tokio-tungstenite.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# cua-spacesd hands its OS main thread to the cursor overlay's AppKit run loop so
+# remote and agent cursors render on the ORIGIN desktop. See the comment on
+# `main` -- the overlay NSWindow cannot live on a spawned thread.
+platform-macos = { path = "../../../cua-driver/rust/crates/platform-macos" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The cua-driver tool registry behind DriverService and /mcp.
+platform-linux = { path = "../../../cua-driver/rust/crates/platform-linux" }
+# The guest mount of Cua Volume (`volume-mount`): FUSE over the file
+# operations protocol, served by the client.
+cua-volume = { path = "../../../cua/crates/cua-volume", features = ["fuse"] }
+libc = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+platform-windows = { path = "../../../cua-driver/rust/crates/platform-windows" }
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }

@@ -1,0 +1,446 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+import "cua/env/v1/common.proto";
+import "cua/env/v1/windows.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Control plane for video streaming.
+//
+// Video never travels over gRPC. This service discovers targets, negotiates
+// codec and limits, and mints a short-lived media ticket. The client then
+// opens the media plane (rcdp wire v2, see `libs/cua/proto/MEDIA.md`) on the
+// `/media` WebSocket of the same port, or on direct QUIC, authenticating
+// with the ticket. The ticket is bound to one media session and target and
+// is safe to put in a URL; it is not the root token.
+//
+// Audio is a first-class track next to video: a media session may carry
+// zero or one video track plus any number of downlink audio tracks (desktop
+// mix or per-app), and optionally one uplink audio track (client microphone
+// into a guest virtual source). All tracks share one media clock; see
+// MEDIA.md §12.
+service StreamService {
+  // Lists streamable targets: one desktop target per display, plus windows.
+  rpc ListTargets(ListTargetsRequest) returns (ListTargetsResponse);
+  // Creates a media session for a target and returns how to attach to it.
+  rpc OpenMedia(OpenMediaRequest) returns (OpenMediaResponse);
+  // Changes frame rate, size or bitrate of an open media session.
+  rpc SetPreferences(SetPreferencesRequest) returns (SetPreferencesResponse);
+  // Asks the encoder for a keyframe (IDR) on the next frame.
+  rpc RequestKeyframe(RequestKeyframeRequest) returns (RequestKeyframeResponse);
+  // Closes a media session and revokes its ticket.
+  rpc CloseMedia(CloseMediaRequest) returns (CloseMediaResponse);
+}
+
+// Video codec on the media plane.
+enum MediaCodec {
+  // Not set.
+  MEDIA_CODEC_UNSPECIFIED = 0;
+  // H.264, one Annex B access unit per packet; keyframes carry SPS/PPS.
+  MEDIA_CODEC_H264 = 1;
+  // Raw top-down BGRA, tightly packed. Loopback / debugging only.
+  MEDIA_CODEC_BGRA = 2;
+  // One PNG per frame. Fallback when no encoder is available.
+  MEDIA_CODEC_PNG = 3;
+}
+
+// What a media session's attached clients may do to the target.
+enum SessionPolicy {
+  // Not set. Treated as `SESSION_POLICY_VIEW_ONLY`.
+  SESSION_POLICY_UNSPECIFIED = 0;
+  // Video only; interactive input is refused.
+  SESSION_POLICY_VIEW_ONLY = 1;
+  // Input allowed, but only background delivery (never activates or moves
+  // the real pointer).
+  SESSION_POLICY_BACKGROUND_ONLY = 2;
+  // Input allowed and may activate the target.
+  SESSION_POLICY_ALLOW_ACTIVATION = 3;
+}
+
+// Whether a session may resize its target window to fit the viewer.
+enum GeometryControl {
+  // Not set. Treated as `GEOMETRY_CONTROL_OBSERVE_ONLY`.
+  GEOMETRY_CONTROL_UNSPECIFIED = 0;
+  // Never resize the target.
+  GEOMETRY_CONTROL_OBSERVE_ONLY = 1;
+  // Viewer may resize the target. Exclusive per target: a second
+  // bidirectional session fails with FAILED_PRECONDITION instead of
+  // stealing the lease. Window targets only.
+  GEOMETRY_CONTROL_BIDIRECTIONAL = 2;
+}
+
+// A streamable target.
+message MediaTarget {
+  // Exactly one must be set.
+  oneof target {
+    // A whole display ("desktop" target), by display id or "primary".
+    string display_id = 1;
+    // A single window.
+    WindowRef window = 2;
+  }
+}
+
+// One entry of `ListTargetsResponse`.
+message StreamTarget {
+  // The target's description.
+  oneof target {
+    // A desktop target.
+    Display display = 1;
+    // A window target.
+    WindowInfo window = 2;
+  }
+  // False when the target is listed but cannot be streamed right now.
+  bool available = 3;
+  // Why not, when `available` is false (for example "screen recording
+  // permission not granted").
+  string limitation = 4;
+  // The audio source that pairs with this target: the desktop mix for a
+  // display target, the owning app's audio for a window target (or the
+  // desktop mix, with `AudioSource.limitation` set, where per-app capture
+  // is unsupported). Unset when the guest has no audio capture.
+  AudioSource audio = 5;
+}
+
+// Audio codec on the media plane.
+enum AudioCodec {
+  // Not set.
+  AUDIO_CODEC_UNSPECIFIED = 0;
+  // Opus (RFC 6716), one Opus packet per media packet. The default.
+  AUDIO_CODEC_OPUS = 1;
+  // Raw interleaved signed 16-bit little-endian PCM. Lossless, for
+  // debugging and tests; roughly 1.5 Mbit/s for 48 kHz stereo.
+  AUDIO_CODEC_PCM_S16LE = 2;
+}
+
+// What an audio source captures.
+enum AudioSourceKind {
+  // Not reported.
+  AUDIO_SOURCE_KIND_UNSPECIFIED = 0;
+  // Everything the guest plays (the default output's mix).
+  AUDIO_SOURCE_KIND_DESKTOP = 1;
+  // Audio of one application only.
+  AUDIO_SOURCE_KIND_APPLICATION = 2;
+}
+
+// A capturable audio source.
+message AudioSource {
+  // Opaque id, stable while the source exists. "desktop" always names the
+  // desktop mix.
+  string source_id = 1;
+  // What the source captures.
+  AudioSourceKind kind = 2;
+  // Human-readable name, for example "Desktop audio" or "Firefox".
+  string name = 3;
+  // Owning application, for `AUDIO_SOURCE_KIND_APPLICATION`.
+  AppInfo app = 4;
+  // Windows of that application, for pairing with window video targets.
+  repeated WindowRef windows = 5;
+  // False when listed but not capturable right now.
+  bool available = 6;
+  // Why a source is unavailable, or degraded (for example "per-app capture
+  // needs Windows 10 2004+; falls back to desktop audio").
+  string limitation = 7;
+  // True if capturing this source actually captures the desktop mix
+  // because per-app capture is unsupported.
+  bool desktop_fallback = 8;
+}
+
+// Request for `StreamService.ListTargets`.
+message ListTargetsRequest {
+  // Include window targets. Desktop targets are always included.
+  bool include_windows = 1;
+  // Filter for window targets.
+  WindowFilter window_filter = 2;
+}
+
+// Response for `StreamService.ListTargets`.
+message ListTargetsResponse {
+  // Desktop targets first (primary display first), then windows front to
+  // back. Phantom and system windows are never listed.
+  repeated StreamTarget targets = 1;
+  // Codecs this driver can produce, in its preference order.
+  repeated MediaCodec codecs = 2;
+  // Every capturable audio source: the desktop mix first, then per-app
+  // sources. Empty when the guest has no audio capture.
+  repeated AudioSource audio_sources = 3;
+  // Audio codecs this driver can produce, in its preference order.
+  repeated AudioCodec audio_codecs = 4;
+  // True if this caller may open an audio uplink (feature "audio.uplink"
+  // is supported and the caller's principal is allowed).
+  bool audio_uplink_allowed = 5;
+  // Why the uplink is not allowed, when it is not.
+  string audio_uplink_limitation = 6;
+}
+
+// Audio encoding parameters shared by downlink and uplink requests. Zero
+// and unset values select the defaults noted per field.
+message AudioEncoding {
+  // Acceptable codecs in preference order. Empty means Opus, then PCM.
+  repeated AudioCodec codecs = 1;
+  // Sample rate in Hz. 0 means 48000. Opus accepts 8000, 12000, 16000,
+  // 24000 and 48000.
+  uint32 sample_rate_hz = 2;
+  // Channel count, 1 or 2. 0 means 2 (downlink) or 1 (uplink).
+  uint32 channels = 3;
+  // Opus target bitrate in kbps (6 to 510). 0 means 64 for stereo, 32 for
+  // mono. Ignored for PCM.
+  uint32 bitrate_kbps = 4;
+  // Opus in-band forward error correction. Unset means on.
+  optional bool fec = 5;
+  // Opus discontinuous transmission (send almost nothing during silence).
+  // Unset means on.
+  optional bool dtx = 6;
+  // Frame duration in milliseconds: 10, 20, 40 or 60. 0 means 20. Shorter
+  // frames lower latency at a higher packet rate.
+  uint32 frame_ms = 7;
+  // Expected packet loss in percent (0 to 100), tuning the Opus FEC
+  // redundancy. 0 means 10 when `fec` is on.
+  uint32 expected_loss_percent = 8;
+}
+
+// Audio options for `OpenMediaRequest`.
+message AudioOptions {
+  // Enable downlink audio. When false, no audio tracks are sent and the
+  // other fields except `uplink` are ignored.
+  bool enabled = 1;
+  // Sources to send, one track each, by `AudioSource.source_id`. Empty
+  // means the source that pairs with the video target
+  // (`StreamTarget.audio`).
+  repeated string source_ids = 2;
+  // Downlink encoding.
+  AudioEncoding encoding = 3;
+  // Optional microphone uplink.
+  AudioUplinkOptions uplink = 4;
+}
+
+// Client-to-guest audio (for example the user's microphone), played into a
+// guest virtual audio source so apps inside can "hear" the user.
+//
+// Off by default and gated separately from video and input: it requires the
+// "audio.uplink" feature, a session policy other than
+// `SESSION_POLICY_VIEW_ONLY`, and the caller's principal to be allowed by
+// `InitRequest.audio_uplink`. A denied uplink does not fail `OpenMedia`; the
+// response reports why in `AudioUplinkGrant`.
+message AudioUplinkOptions {
+  // Request an uplink track.
+  bool enabled = 1;
+  // Encoding the client will send.
+  AudioEncoding encoding = 2;
+  // Name of the guest virtual source (microphone) to create or reuse.
+  // Empty means "cua-uplink".
+  string virtual_source_name = 3;
+  // Make the virtual source the guest's default input device while the
+  // uplink is active.
+  bool set_default_input = 4;
+}
+
+// Request for `StreamService.OpenMedia`.
+message OpenMediaRequest {
+  // What to stream.
+  MediaTarget target = 1;
+  // Acceptable codecs in client preference order. Empty means any.
+  repeated MediaCodec codecs = 2;
+  // Maximum frames per second. 0 means 30.
+  uint32 max_fps = 3;
+  // Maximum long edge in pixels. 0 means native.
+  uint32 max_dimension = 4;
+  // Target H.264 bitrate in kbps (250 to 100000). 0 means encoder default.
+  uint32 bitrate_kbps = 5;
+  // Input policy for clients attached to this session.
+  SessionPolicy policy = 6;
+  // Geometry control.
+  GeometryControl geometry_control = 7;
+  // Ticket lifetime for attaching. Unset means 60 seconds; at most 10
+  // minutes. The ticket only has to be valid when the socket attaches; an
+  // attached socket stays open past expiry.
+  google.protobuf.Duration ticket_ttl = 8;
+  // Include `OpenMediaResponse.quic` when direct QUIC media is available.
+  bool prefer_quic = 9;
+  // Audio tracks. Unset means no audio (the v2.0 behavior).
+  AudioOptions audio = 10;
+  // Open an audio-only session: no video track is produced. `target` still
+  // selects the paired audio source when `audio.source_ids` is empty.
+  bool disable_video = 11;
+  // The viewer's presence participant, its input's owner (PRESENCE.md §7).
+  string presence_participant_id = 12;
+}
+
+// One negotiated downlink audio track.
+message AudioTrack {
+  // Track id carried in every audio packet header (MEDIA.md §12). Unique
+  // within the media session; never 0.
+  uint32 track_id = 1;
+  // The source it captures.
+  AudioSource source = 2;
+}
+
+// Negotiated audio encoding.
+message NegotiatedAudioEncoding {
+  // Selected codec.
+  AudioCodec codec = 1;
+  // Sample rate in Hz.
+  uint32 sample_rate_hz = 2;
+  // Channel count.
+  uint32 channels = 3;
+  // Target bitrate in kbps (0 for PCM).
+  uint32 bitrate_kbps = 4;
+  // In-band FEC on.
+  bool fec = 5;
+  // DTX on.
+  bool dtx = 6;
+  // Frame duration in milliseconds.
+  uint32 frame_ms = 7;
+}
+
+// Outcome of an uplink request.
+message AudioUplinkGrant {
+  // True if the uplink is open.
+  bool granted = 1;
+  // Why not, when denied (for example "principal not allowed",
+  // "view_only session", "no virtual audio device").
+  string denied_reason = 2;
+  // Track id the client must put in uplink packet headers.
+  uint32 track_id = 3;
+  // Encoding the server expects.
+  NegotiatedAudioEncoding encoding = 4;
+  // Name of the guest virtual source the audio is played into.
+  string virtual_source_name = 5;
+}
+
+// Negotiated audio for a media session.
+message NegotiatedAudio {
+  // Downlink tracks, in the order requested.
+  repeated AudioTrack tracks = 1;
+  // Downlink encoding, shared by every downlink track.
+  NegotiatedAudioEncoding encoding = 2;
+  // Uplink outcome, when an uplink was requested.
+  AudioUplinkGrant uplink = 3;
+}
+
+// Direct QUIC media endpoint. Only reachable when the client can reach the
+// guest's UDP port directly (not through the Fleet gateway or relay).
+message QuicEndpoint {
+  // UDP port (normally 3212).
+  uint32 port = 1;
+  // Lowercase hex SHA-256 of the server's self-signed certificate (DER),
+  // to pin.
+  string certificate_sha256 = 2;
+  // ALPN protocol id, "rcdp/2".
+  string alpn = 3;
+}
+
+// Geometry of a media session's frames.
+message MediaGeometry {
+  // Frame size in pixels.
+  PixelSize frame_size = 1;
+  // Frame pixels per logical point of the target.
+  double scale = 2;
+  // Target bounds in global logical points when the session opened.
+  Rect logical_bounds = 3;
+  // Geometry generation; matches `geometry_epoch` on the media plane.
+  uint64 geometry_epoch = 4;
+}
+
+// Response for `StreamService.OpenMedia`.
+message OpenMediaResponse {
+  // Media session id.
+  string media_session_id = 1;
+  // Bearer ticket for the media socket.
+  string ticket = 2;
+  // When the ticket stops being accepted for new attaches.
+  google.protobuf.Timestamp ticket_expires_at = 3;
+  // WebSocket path relative to the spacesd base URL, including the
+  // ticket, for example "/media?ticket=…". Works through the Fleet gateway
+  // and the relay.
+  string ws_path = 4;
+  // Direct QUIC endpoint, when requested and available.
+  QuicEndpoint quic = 5;
+  // Negotiated codec.
+  MediaCodec codec = 6;
+  // Effective frame rate cap.
+  uint32 max_fps = 7;
+  // Effective long-edge cap.
+  uint32 max_dimension = 8;
+  // Effective bitrate in kbps, 0 when not applicable.
+  uint32 bitrate_kbps = 9;
+  // Effective policy (may be lower than requested).
+  SessionPolicy policy = 10;
+  // Effective geometry control.
+  GeometryControl geometry_control = 11;
+  // Initial geometry.
+  MediaGeometry geometry = 12;
+  // Media wire protocol version. 2 for this contract.
+  uint32 wire_version = 13;
+  // Negotiated audio. Unset when audio was not requested or is not
+  // available (see the "audio.*" capabilities).
+  NegotiatedAudio audio = 14;
+}
+
+// Request for `StreamService.SetPreferences`.
+message SetPreferencesRequest {
+  // Which session.
+  string media_session_id = 1;
+  // New frame rate cap. 0 keeps the current value.
+  uint32 max_fps = 2;
+  // New long-edge cap. 0 keeps the current value.
+  uint32 max_dimension = 3;
+  // New bitrate in kbps. 0 keeps the current value.
+  uint32 bitrate_kbps = 4;
+  // Pause (false) or resume (true) all downlink audio tracks. Unset keeps
+  // the current state. Paused tracks send nothing; the session keeps its
+  // track ids.
+  optional bool audio_enabled = 5;
+  // New Opus bitrate in kbps. 0 keeps the current value.
+  uint32 audio_bitrate_kbps = 6;
+  // Turn Opus FEC on or off. Unset keeps the current value.
+  optional bool audio_fec = 7;
+  // Turn Opus DTX on or off. Unset keeps the current value.
+  optional bool audio_dtx = 8;
+  // New frame duration in milliseconds (10, 20, 40 or 60). 0 keeps the
+  // current value. Takes effect with a new audio config epoch.
+  uint32 audio_frame_ms = 9;
+  // New expected loss percentage for FEC tuning. Unset keeps the current
+  // value.
+  optional uint32 audio_expected_loss_percent = 10;
+  // Mute (true) or unmute (false) the uplink's virtual source. Unset keeps
+  // the current state.
+  optional bool audio_uplink_muted = 11;
+}
+
+// Response for `StreamService.SetPreferences`. When this returns, capture
+// has been reconfigured; frames from the old configuration may still be in
+// flight and are distinguished by `codec_epoch` on the media plane.
+message SetPreferencesResponse {
+  // Effective frame rate cap.
+  uint32 max_fps = 1;
+  // Effective long-edge cap.
+  uint32 max_dimension = 2;
+  // Effective bitrate in kbps.
+  uint32 bitrate_kbps = 3;
+  // True if downlink audio is flowing (not paused).
+  bool audio_enabled = 4;
+  // Effective downlink audio encoding. Unset when the session has no audio.
+  NegotiatedAudioEncoding audio_encoding = 5;
+  // True if the uplink's virtual source is muted.
+  bool audio_uplink_muted = 6;
+}
+
+// Request for `StreamService.RequestKeyframe`.
+message RequestKeyframeRequest {
+  // Which session.
+  string media_session_id = 1;
+}
+
+// Response for `StreamService.RequestKeyframe`.
+message RequestKeyframeResponse {}
+
+// Request for `StreamService.CloseMedia`.
+message CloseMediaRequest {
+  // Which session.
+  string media_session_id = 1;
+}
+
+// Response for `StreamService.CloseMedia`.
+message CloseMediaResponse {}

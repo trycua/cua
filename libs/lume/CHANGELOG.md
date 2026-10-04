@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/trycua/cua/compare/lume-v0.5.3...lume-v0.6.0) (2026-10-01)
+
+
+### Features
+
+* **lume:** add macOS GPU passthrough ([#3070](https://github.com/trycua/cua/issues/3070)) ([3c1acf2](https://github.com/trycua/cua/commit/3c1acf27748c3e0f8ff71cd0c9ab072b1e160997))
+* add immutable Driver and Lume nightly releases ([#3097](https://github.com/trycua/cua/issues/3097)) ([8cef90b](https://github.com/trycua/cua/commit/8cef90b7ce6f85793a0ca3a3ddc050eac01b6b83))
+* add persistent Driver and Lume release channels ([#3102](https://github.com/trycua/cua/issues/3102)) ([0813659](https://github.com/trycua/cua/commit/0813659ac237cd46da21c2a51f9a95f27a3e7845))
+* **lume:** support running without a VNC listener ([#3209](https://github.com/trycua/cua/issues/3209)) ([ab957bd](https://github.com/trycua/cua/commit/ab957bdb7566f7e137b00654cc01167d9e42af38))
+* merge updated sdk from cua-staging ([#4397](https://github.com/trycua/cua/issues/4397)) ([9166817](https://github.com/trycua/cua/commit/9166817485ae53f3966935c13878a8196d79a399))
+* **lume:** add force/timeout to stop and fix stuck stop for detached VMs ([#4235](https://github.com/trycua/cua/issues/4235)) ([14f66c8](https://github.com/trycua/cua/commit/14f66c849217b59c89d72b16e04148e0ab93aea2))
+
 ## [0.5.3](https://github.com/trycua/cua/compare/lume-v0.5.2...lume-v0.5.3) (2026-08-11)
 
 

@@ -1,0 +1,31 @@
+---
+title: Convert benchmark images
+description: 'Turn an upstream benchmark environment into one Cua image with a container and a VM variant, publish it, and check eval parity.'
+---
+
+The pipeline lives in `scripts/bench-images/`. Each benchmark is described once
+in `libs/images/bench/<id>/bench.json` (pinned sources, license,
+redistribution class, server, variants), then fetched, built as both variants,
+smoked, and published.
+
+```bash skip="no-runner"
+python3 scripts/bench-images/bench.py validate
+python3 scripts/bench-images/bench.py fetch osworld      # sha256-checked downloads
+scripts/bench-images/build-qcow2.sh osworld              # rootfs + containerdisk variants
+scripts/bench-images/publish.sh web                      # stage immutable pins, then --promote
+```
+
+| Variant | Tag | Runs on | Init |
+| --- | --- | --- | --- |
+| `rootfs` | `<ver>` | gVisor or runc locally, gVisor in the cloud | supervisord |
+| `containerdisk` | `<ver>-disk` | QEMU locally, KubeVirt in the cloud | systemd |
+
+`--promote` moves `<ver>` and `<ver>-disk` only after `cua-spacesd doctor`
+passes on every staged digest, arch and variant. The converted images are
+listed in [Adapter benchmarks](/cua-bench/guides/adapter-benchmarks).
+
+- On an arm64 host, amd64 images run under x86 emulation, where Mesa's
+  llvmpipe draws a black screen; server, file and spacesd checks still work.
+  Doctor and screen evidence for amd64 need a native amd64 host.
+- A cloud sandbox of a private package never becomes ready until pool pull
+  secrets ship; publish the package publicly or use an allowlisted registry.

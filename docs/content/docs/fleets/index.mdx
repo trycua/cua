@@ -1,0 +1,52 @@
+---
+title: Cua Fleets
+description: Dedicated cloud capacity for sandboxes. Named pools, templates, claims, warm replicas and Terraform.
+landing:
+  summary: 'Dedicated cloud capacity: pools, templates, claims, warm replicas and Terraform.'
+  cta: Explore Cua Fleets
+---
+
+Cua Fleets is the cloud behind `local=False`. A **pool** holds capacity for
+one sandbox template (image, runtime, size, command, services, sidecars). A
+**claim** reserves one sandbox from a pool. Named **services** route
+authenticated clients to ports inside the claimed sandbox.
+
+```text output
+pool (template: image, runtime, cpu/memory, command, services, sidecars; sizing)
+ └─ claim ── bound sandbox ── services: env -> 3211, mcp -> 8765, ...
+                                   │
+             https://run.cua.ai/api/svc/{namespace}/{sandbox}-{service}
+```
+
+## Fleets or `local=False`
+
+`Sandbox.create(image, local=False)` already runs on Fleets: the SDK creates a
+managed pool per image and shape, scales it from zero and deletes it when
+idle. Use Fleets directly when you need what a managed pool does not give you.
+
+| | Managed pool (`local=False`) | Your own pool |
+| --- | --- | --- |
+| Created by | `Sandbox.create(image, local=False)`, `cua sb create IMAGE --on cloud` | `Pool.apply(...)`, Terraform |
+| Name | `cua-auto-<hash>`, per account, image and shape | You choose it, globally unique |
+| Sizing | Autoscales from zero to `max_pool_size` (10); canonical images keep one warm | `replicas`, or autoscaling bounds |
+| Shared by | One account's processes | Any process or team with access |
+| Cleanup | Deleted after 30 minutes idle | You delete it, or set a TTL |
+| Extras | | Terraform, [claim secrets](/fleets/guides/claim-secrets), creation-age TTLs, template updates |
+
+## Claims and services
+
+A claim's name is the sandbox's name (`cloud:<name>`). Releasing it returns or
+deletes the sandbox; the pool stays. Its TTL (15 minutes by default) is renewed
+while a process holds it. The `env` service (port `3211`) is cua-spacesd, when
+the image has it. Pools run containers under gVisor and VMs under KubeVirt,
+amd64 only ([images](/fleets/guides/images)).
+
+## Guides
+
+- [Create capacity and claim from it](/fleets/guides/capacity-and-claims)
+- [Keep sandboxes warm](/fleets/guides/warm-pools)
+- [Manage pools with Terraform](/fleets/guides/terraform)
+- [Publish a Fleet image](/fleets/guides/images)
+- [Add sidecars on Fleet](/fleets/guides/sidecars)
+- [Deliver per-claim secrets](/fleets/guides/claim-secrets)
+- [Troubleshoot](/fleets/guides/troubleshoot)

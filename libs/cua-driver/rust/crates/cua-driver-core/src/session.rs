@@ -758,6 +758,30 @@ pub fn end_session_for_owner(session_id: &str, owner_transport: &str) -> bool {
     true
 }
 
+/// End every driver session a trusted transport adapter's session owns,
+/// keyed the way [`crate::tool::ToolRegistry::invoke_from_trusted_adapter`]
+/// keys them.
+///
+/// An in-process host (cua-spacesd's `/mcp`) names its transport sessions
+/// with public ids such as `agent-<run>` or an `Mcp-Session-Id`, but registry
+/// dispatch keys every session it owns, and so every agent cursor, by the
+/// runtime-private `__cua_runtime_<generation>:<id>`. Ending the bare id would
+/// fire the cleanup hooks for a key no cursor uses, leaving the overlay drawn
+/// until it idled out. Returns how many sessions ended; a transport that never
+/// dispatched a session-owning call ends nothing and leaves no tombstone.
+pub fn end_trusted_adapter_transport(transport_session: &str) -> usize {
+    if !is_trackable(transport_session) {
+        return 0;
+    }
+    let Ok(registry) = crate::session_authorization::configured_registry() else {
+        return 0;
+    };
+    end_sessions_for_owner(
+        &registry.runtime_session_key(transport_session),
+        SessionEndReason::Explicit,
+    )
+}
+
 pub fn list_session_snapshots(
     owner_transport: &str,
     ttl: Duration,
@@ -2238,11 +2262,11 @@ mod tests {
         drop(begin(&named, Some("named"), &named_owner).unwrap());
         assert_eq!(
             evict_idle_with_prefix(Duration::ZERO, &implicit),
-            [implicit.clone()]
+            std::slice::from_ref(&implicit)
         );
         assert_eq!(
             evict_idle_with_prefix(Duration::ZERO, &named),
-            [named.clone()]
+            std::slice::from_ref(&named)
         );
 
         // A named episode keeps its resurrection guard.
@@ -2532,5 +2556,58 @@ mod tests {
             .iter()
             .any(|(id, reason, _)| { id == idle && *reason == SessionEndReason::IdleTimeout }));
         assert!(!ends.iter().any(|(id, _, _)| id == control));
+    }
+
+    /// cua-spacesd's `/mcp` ends a run by its public transport id, while the
+    /// registry keyed the run's sessions (and cursors) by the runtime-private
+    /// id. The end must reach those keys, including labelled sessions the
+    /// run owns, and must not touch another run.
+    #[test]
+    fn trusted_adapter_transport_end_reaches_runtime_scoped_sessions() {
+        let registry = crate::session_authorization::configured_registry().unwrap();
+        let transport = "agent-test-trusted-end-7f3a";
+        let other = "agent-test-trusted-end-other-7f3a";
+        let scoped = registry.runtime_session_key(transport);
+        let labelled = registry.runtime_session_key("test-trusted-end-label-7f3a");
+        let other_scoped = registry.runtime_session_key(other);
+        let ended = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = ended.clone();
+        let _hook = register_scoped_session_end_hook(move |id| {
+            seen.lock().unwrap().push(id.to_owned());
+        });
+        for (id, label, owner) in [
+            (&scoped, None, &scoped),
+            (&labelled, Some("test-trusted-end-label-7f3a"), &scoped),
+            (&other_scoped, None, &other_scoped),
+        ] {
+            drop(
+                begin_session_dispatch(
+                    id,
+                    label,
+                    owner,
+                    label.is_none(),
+                    SessionTransport::McpHttp,
+                    SessionClientKind::Mcp,
+                )
+                .unwrap(),
+            );
+        }
+
+        assert_eq!(end_trusted_adapter_transport(transport), 2);
+        let ended = ended.lock().unwrap().clone();
+        assert!(ended.contains(&scoped), "{ended:?}");
+        assert!(ended.contains(&labelled), "{ended:?}");
+        assert!(!ended.contains(&other_scoped), "{ended:?}");
+        assert!(is_session_ended(&scoped) && is_session_ended(&labelled));
+        assert!(!is_session_ended(&other_scoped));
+        assert!(!is_session_ended(transport), "the bare id is not a session");
+
+        // A transport that never owned a session ends nothing.
+        assert_eq!(
+            end_trusted_adapter_transport("agent-test-never-seen-7f3a"),
+            0
+        );
+        assert_eq!(end_trusted_adapter_transport("default"), 0);
+        end_session(&other_scoped);
     }
 }

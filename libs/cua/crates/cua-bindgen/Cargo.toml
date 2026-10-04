@@ -1,0 +1,23 @@
+[package]
+name = "cua-bindgen"
+description = "Pinned UniFFI bindgen for cua-sdk: the generator is always the same UniFFI version as the one linked into the cdylib."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "cua-bindgen"
+path = "src/main.rs"
+
+[dependencies]
+uniffi = { workspace = true, features = ["cli"] }
+# `cua-bindgen docs`: the same pinned UniFFI, read in library mode.
+uniffi_bindgen = { version = "=0.31.0", default-features = false }
+uniffi_meta = "=0.31.0"
+camino = "1"
+anyhow = "1"
+serde_json = { workspace = true }

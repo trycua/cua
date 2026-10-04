@@ -1,0 +1,16 @@
+[package]
+name = "cua-sdk-e2e"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "cua SDK e2e scenarios (plan §3.5), Rust half. Lanes are env-gated; see ../scenarios.json."
+
+[dependencies]
+cua-sdk = { path = "../../../../libs/cua/crates/cua-sdk" }
+cua-vmm = { path = "../../../../libs/cua/crates/cua-vmm" }
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+base64 = "0.22"
+
+# Standalone workspace: not part of libs/cua (the SDK is consumed as a user would).
+[workspace]

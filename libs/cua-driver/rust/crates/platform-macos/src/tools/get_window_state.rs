@@ -567,6 +567,9 @@ impl Tool for GetWindowStateTool {
         // preferred-for-back-compat-only via the `_note` field below.
         let elements_json: Vec<serde_json::Value> = match (snapshot_id, tree_result.as_ref()) {
             (Some(sid), Some(r)) => build_elements_array_with_token(&r.nodes, Some(sid)),
+            (None, Some(r)) if scope_matched && observation_only => {
+                build_observation_elements_array(&r.nodes)
+            }
             (None, Some(r)) if scope_matched => build_elements_array_with_token(&r.nodes, None),
             _ => Vec::new(),
         };
@@ -908,102 +911,123 @@ pub(crate) fn build_elements_array_with_token(
     nodes
         .iter()
         .filter_map(|node| {
-            let idx = node.element_index?;
-            // `label` is a best-effort human-readable string: title first,
-            // then description, then value, then identifier. Mirrors what
-            // a human reading the markdown row would call this element.
-            let label = node
-                .title
-                .clone()
-                .or_else(|| node.description.clone())
-                .or_else(|| node.value.clone())
-                .or_else(|| node.identifier.clone());
-            let frame = node
-                .frame
-                .map(|[x, y, w, h]| serde_json::json!({ "x": x, "y": y, "w": w, "h": h }));
-            let mut entry = serde_json::json!({
-                "element_index": idx,
-                "role": node.role,
-                "depth": node.depth,
-            });
-            // Surface 6: opaque token paired to the integer index.
-            // Tools accept either; the token has explicit validity
-            // (invalidated when the next snapshot supersedes this
-            // one in the per-pid LRU). See cua-driver-core's
-            // `element_token` module.
-            if let Some(sid) = snapshot_id {
-                entry["element_token"] =
-                    serde_json::json!(cua_driver_core::element_token::token_for(sid, idx));
-            }
-            if let Some(label) = label {
-                entry["label"] = serde_json::Value::String(label);
-            }
-            // Surface the element's AXValue separately from `label`. `label`
-            // collapses title→description→value→identifier into one display
-            // string, so on a control that has BOTH a title/description AND a
-            // value (e.g. a "Compose message" text field holding typed text),
-            // the value is shadowed and invisible to a caller reading the
-            // structured side — it only showed up in `tree_markdown`, forcing a
-            // markdown grep to verify what landed. Emit it explicitly so the
-            // verify-then-escalate loop can read the typed text structurally.
-            // `value_state` widens the string-only AXValue read to all CF
-            // types (CFNumber sliders → "8", CFBoolean checkboxes/radios →
-            // "1"/"0") — controls whose state was previously invisible here.
-            // Falls back to `value` so the field never regresses for
-            // string-valued elements.
-            if let Some(value) = node
-                .value_state
-                .clone()
-                .or_else(|| node.value.clone())
-                .filter(|v| !v.is_empty())
-            {
-                entry["value"] = serde_json::Value::String(value);
-            }
-            if let Some(desc) = node.value_description.clone() {
-                entry["value_description"] = serde_json::Value::String(desc);
-            }
-            // Only surface a real range: WebKit reports AXMinValue/AXMaxValue
-            // as 0.0/0.0 on non-range controls (checkboxes, radios), which
-            // would be pure noise on every two-state element.
-            if let (Some(min), Some(max)) = (node.min_value, node.max_value) {
-                if max > min {
-                    entry["min"] = serde_json::json!(min);
-                    entry["max"] = serde_json::json!(max);
-                }
-            }
-            if let Some(enabled) = node.enabled {
-                entry["enabled"] = serde_json::Value::Bool(enabled);
-            }
-            let selected = node.selected.or_else(|| {
-                let role = node.role.to_ascii_lowercase();
-                if role.contains("checkbox") || role.contains("radiobutton") {
-                    node.value_state.as_deref().and_then(|value| match value {
-                        "1" | "true" | "on" => Some(true),
-                        "0" | "false" | "off" => Some(false),
-                        _ => None,
-                    })
-                } else {
-                    None
-                }
-            });
-            if let Some(selected) = selected {
-                entry["selected"] = serde_json::Value::Bool(selected);
-            }
-            if !node.actions.is_empty() {
-                entry["actions"] = serde_json::json!(node.actions);
-            }
-            if node.in_web_content {
-                entry["in_web_content"] = serde_json::Value::Bool(true);
-            }
-            if let Some(frame) = frame {
-                entry["frame"] = frame;
-            }
-            if let Some(parent) = node.parent_element_index {
-                entry["parent_index"] = serde_json::json!(parent);
-            }
-            Some(entry)
+            node.element_index?;
+            Some(element_entry(node, snapshot_id))
         })
         .collect()
+}
+
+/// Observation-only `elements` for `verify_state`: every actionable row as
+/// [`build_elements_array_with_token`] emits it, plus the display-only rows
+/// (static text, labels, read-only values) the public array omits, in DFS
+/// order. Display-only rows carry `"display_only": true` and no
+/// `element_index`/`element_token`, because they are not addressable. They let
+/// a postcondition read text that only a display node holds, such as a
+/// label-less AXStaticText whose content lives in AXValue (#4526).
+pub(crate) fn build_observation_elements_array(
+    nodes: &[crate::ax::tree::AXNode],
+) -> Vec<serde_json::Value> {
+    nodes.iter().map(|node| element_entry(node, None)).collect()
+}
+
+fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> serde_json::Value {
+    // `label` is a best-effort human-readable string: title first,
+    // then description, then value, then identifier. Mirrors what
+    // a human reading the markdown row would call this element.
+    let label = node
+        .title
+        .clone()
+        .or_else(|| node.description.clone())
+        .or_else(|| node.value.clone())
+        .or_else(|| node.identifier.clone());
+    let frame = node
+        .frame
+        .map(|[x, y, w, h]| serde_json::json!({ "x": x, "y": y, "w": w, "h": h }));
+    let mut entry = serde_json::json!({
+        "role": node.role,
+        "depth": node.depth,
+    });
+    if let Some(idx) = node.element_index {
+        entry["element_index"] = serde_json::json!(idx);
+        // Surface 6: opaque token paired to the integer index.
+        // Tools accept either; the token has explicit validity
+        // (invalidated when the next snapshot supersedes this
+        // one in the per-pid LRU). See cua-driver-core's
+        // `element_token` module.
+        if let Some(sid) = snapshot_id {
+            entry["element_token"] =
+                serde_json::json!(cua_driver_core::element_token::token_for(sid, idx));
+        }
+    } else {
+        entry["display_only"] = serde_json::Value::Bool(true);
+    }
+    if let Some(label) = label {
+        entry["label"] = serde_json::Value::String(label);
+    }
+    // Surface the element's AXValue separately from `label`. `label`
+    // collapses title→description→value→identifier into one display
+    // string, so on a control that has BOTH a title/description AND a
+    // value (e.g. a "Compose message" text field holding typed text),
+    // the value is shadowed and invisible to a caller reading the
+    // structured side — it only showed up in `tree_markdown`, forcing a
+    // markdown grep to verify what landed. Emit it explicitly so the
+    // verify-then-escalate loop can read the typed text structurally.
+    // `value_state` widens the string-only AXValue read to all CF
+    // types (CFNumber sliders → "8", CFBoolean checkboxes/radios →
+    // "1"/"0") — controls whose state was previously invisible here.
+    // Falls back to `value` so the field never regresses for
+    // string-valued elements.
+    if let Some(value) = node
+        .value_state
+        .clone()
+        .or_else(|| node.value.clone())
+        .filter(|v| !v.is_empty())
+    {
+        entry["value"] = serde_json::Value::String(value);
+    }
+    if let Some(desc) = node.value_description.clone() {
+        entry["value_description"] = serde_json::Value::String(desc);
+    }
+    // Only surface a real range: WebKit reports AXMinValue/AXMaxValue
+    // as 0.0/0.0 on non-range controls (checkboxes, radios), which
+    // would be pure noise on every two-state element.
+    if let (Some(min), Some(max)) = (node.min_value, node.max_value) {
+        if max > min {
+            entry["min"] = serde_json::json!(min);
+            entry["max"] = serde_json::json!(max);
+        }
+    }
+    if let Some(enabled) = node.enabled {
+        entry["enabled"] = serde_json::Value::Bool(enabled);
+    }
+    let selected = node.selected.or_else(|| {
+        let role = node.role.to_ascii_lowercase();
+        if role.contains("checkbox") || role.contains("radiobutton") {
+            node.value_state.as_deref().and_then(|value| match value {
+                "1" | "true" | "on" => Some(true),
+                "0" | "false" | "off" => Some(false),
+                _ => None,
+            })
+        } else {
+            None
+        }
+    });
+    if let Some(selected) = selected {
+        entry["selected"] = serde_json::Value::Bool(selected);
+    }
+    if !node.actions.is_empty() {
+        entry["actions"] = serde_json::json!(node.actions);
+    }
+    if node.in_web_content {
+        entry["in_web_content"] = serde_json::Value::Bool(true);
+    }
+    if let Some(frame) = frame {
+        entry["frame"] = frame;
+    }
+    if let Some(parent) = node.parent_element_index {
+        entry["parent_index"] = serde_json::json!(parent);
+    }
+    entry
 }
 
 /// Keep the structured response aligned with a query-filtered markdown tree.
@@ -1273,6 +1297,36 @@ mod tests {
             vec![0, 1, 2],
             "ordering must match DFS / element_index assignment"
         );
+    }
+
+    #[test]
+    fn observation_elements_include_display_only_rows_in_dfs_order() {
+        // #4526: verify_state must be able to read a label-less static text
+        // whose content lives in AXValue. The public array omits it; the
+        // observation-only array keeps it, marked display-only and without
+        // an element_index.
+        let mut text = node(None, "AXStaticText", None, 1, Some(0), None, vec![]);
+        text.value = Some("Saved".into());
+        let nodes = vec![
+            node(Some(0), "AXGroup", Some("Form"), 0, None, None, vec![]),
+            text,
+            node(Some(1), "AXButton", Some("OK"), 1, Some(0), None, vec![]),
+        ];
+
+        assert_eq!(build_elements_array_with_token(&nodes, None).len(), 2);
+        let observed = build_observation_elements_array(&nodes);
+        assert_eq!(observed.len(), 3);
+        assert_eq!(observed[0]["element_index"], 0);
+        let display = &observed[1];
+        assert_eq!(display["role"], "AXStaticText");
+        assert_eq!(display["label"], "Saved");
+        assert_eq!(display["value"], "Saved");
+        assert_eq!(display["display_only"], true);
+        assert_eq!(display["parent_index"], 0);
+        assert!(display.get("element_index").is_none());
+        assert!(display.get("element_token").is_none());
+        assert_eq!(observed[2]["element_index"], 1);
+        assert!(observed[2].get("display_only").is_none());
     }
 
     #[test]

@@ -11,8 +11,10 @@
 //! Action delivery (click, double/right click, scroll, type_text, press_key,
 //! hotkey, set_value) is owned by the state-verified fixture suites:
 //! `cross_platform_behavior_test` and the `harness_*` tests. Tests here that
-//! dispatch real input are `#[ignore]`d and never run under a plain
-//! `cargo test`. Run them with `--ignored` only on a disposable desktop.
+//! dispatch real input or read the real desktop (apps, windows, display,
+//! captures) are `#[ignore]`d and never run under a plain `cargo test`: the
+//! ad-hoc source build is a new TCC identity after every rebuild. Run them
+//! with `--ignored` only on a disposable desktop.
 
 #![cfg(any(target_os = "macos", target_os = "windows"))]
 
@@ -29,6 +31,7 @@ fn spawn_unrestricted() -> Option<RawDriver> {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "host desktop: enumerates the real running and installed apps; the Windows canonical runner selects it"]
 fn tools_call_list_apps() {
     let Some(mut d) = spawn_unrestricted() else {
         return;
@@ -243,6 +246,7 @@ fn get_config_and_check_permissions() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "host desktop: walks the real running apps and windows; see libs/cua-driver/tests/manual-e2e-allowlist.txt"]
 fn get_accessibility_tree() {
     //! get_accessibility_tree returns a lightweight process+window snapshot.
     let Some(mut d) = spawn_unrestricted() else {
@@ -286,6 +290,7 @@ fn get_accessibility_tree() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "host desktop: lists every real window; see libs/cua-driver/tests/manual-e2e-allowlist.txt"]
 fn list_windows_structured_content() {
     //! Verify list_windows returns structuredContent.windows array with expected fields.
     let Some(mut d) = spawn_unrestricted() else {
@@ -326,6 +331,7 @@ fn list_windows_structured_content() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "host desktop: reads the real display and cursor; see libs/cua-driver/tests/manual-e2e-allowlist.txt"]
 fn get_screen_size_and_cursor_position() {
     let Some(mut d) = spawn_unrestricted() else {
         return;
@@ -377,6 +383,7 @@ fn get_screen_size_and_cursor_position() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "host desktop: walks and captures a real window (Accessibility / Screen Recording); see libs/cua-driver/tests/manual-e2e-allowlist.txt"]
 fn get_window_state_returns_both_with_opt_out() {
     //! Perception is mode-agnostic: get_window_state returns BOTH the tree AND a
     //! screenshot by default (the deprecated `capture_mode` arg is ignored), and

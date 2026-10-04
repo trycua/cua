@@ -34,4 +34,4 @@ cb run task KiCad-task --variant-id 0 --agent cua-agent --model <model>
 
 ## Files
 
-- `main.py` – Task definition, setup (install KiCad), evaluation (check project file), and solve stub.
+- `main.py`: task definition, setup (install KiCad), evaluation (check project file), and solve stub.

@@ -39,7 +39,11 @@ function nativeLibraryPath() {
       : process.platform === "win32"
         ? "cua_driver_sdk.dll"
         : "libcua_driver_sdk.so"
-  return join(rustRoot, "target", "release", file)
+  // Cargo honors CARGO_TARGET_DIR (relative to the workspace) for the build above.
+  const targetRoot = process.env.CARGO_TARGET_DIR
+    ? resolve(rustRoot, process.env.CARGO_TARGET_DIR)
+    : join(rustRoot, "target")
+  return join(targetRoot, "release", file)
 }
 
 function normalizeWhitespace(source) {

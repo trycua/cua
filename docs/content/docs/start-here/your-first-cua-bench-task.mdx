@@ -1,0 +1,147 @@
+---
+title: 'Build your first Cua Bench task'
+description: 'Create a Cua Bench task, score it with its oracle in a local Linux sandbox, solve it yourself, then hand it to an agent.'
+---
+
+In this walkthrough you create a small computer-use task, check it with its
+built-in oracle solution in a Linux sandbox on your machine, solve it yourself
+in the same sandbox, and then hand it to an agent. You need no API key until
+the agent step.
+
+## Before you start
+
+- Python 3.12 or 3.13 and [uv](https://docs.astral.sh/uv/).
+- A local runtime for the `ghcr.io/trycua/linux:24.04` sandbox (Docker, and
+  gVisor when installed). Check it with the `cua` CLI:
+
+```bash test="cli-shape" id="cua-runtime-doctor"
+cua runtime doctor
+```
+
+## 1. Install Cua Bench
+
+```bash skip="host-install"
+uv tool install cua-bench
+```
+
+This puts the `cb` command on your `PATH`. `cb --help` lists its command
+groups, including `run`, `interact`, `task` and `trace`.
+
+## 2. Create a task
+
+Create a working directory and scaffold a task in it:
+
+```bash skip="no-runner"
+mkdir cua-bench-tutorial && cd cua-bench-tutorial
+cb task create first-task
+```
+
+Answer the prompts, for example:
+
+```text output
+Author name: Your name
+Author email: you@example.com
+License [MIT]:
+Task description: Write a word to a file
+Task difficulty (easy|medium|hard) [easy]:
+Task category (e.g., grounding, software-engineering) [grounding]:
+Tags (comma-separated): starter,linux
+```
+
+The scaffold is two files:
+
+```text output
+first-task/
+├── main.py
+└── pyproject.toml
+```
+
+`main.py` defines the whole task lifecycle. The starter defines two variants,
+each asking for one word in `/tmp/answer.txt`, and four functions:
+
+```python skip="pseudo"
+@cb.tasks_config(split="train")
+def load(): ...        # the variants and the machine they run on (native Linux)
+
+@cb.setup_task(split="train")
+async def start(task_cfg, session): ...     # remove any old answer
+
+@cb.solve_task(split="train")
+async def solve(task_cfg, session): ...     # the oracle: write the right word
+
+@cb.evaluate_task(split="train")
+async def evaluate(task_cfg, session): ...  # 1.0 if the file holds the word
+```
+
+## 3. Inspect the task
+
+```bash skip="no-runner"
+cb task info first-task
+```
+
+![cb task info: a native Linux task with 2 variants and setup, solve and evaluate](/img/cua-bench/cb-task-info.png)
+
+The provider is `native`: a real OS in a container or VM. The check marks
+confirm that Cua Bench found the setup, solve and evaluate functions.
+
+## 4. Run the oracle
+
+```bash skip="no-runner"
+cb run first-task --variant-id 0 --oracle
+```
+
+`cb run` starts a Linux sandbox, runs the setup, the oracle solution and the
+evaluator, and releases the sandbox. It reports `reward=1`. A failing oracle
+means the task is broken, not the agent.
+
+## 5. Solve it yourself
+
+Open the same variant without the oracle:
+
+```bash skip="no-runner"
+cb interact first-task --variant-id 0
+```
+
+`cb interact` sets the task up, prints the sandbox's `Display:` link and opens
+the viewer in your browser. Open a terminal in the sandbox desktop and write
+the answer:
+
+![The task sandbox mid-task: a terminal writing hello to /tmp/answer.txt](/img/cua-bench/cb-interact-desktop.png)
+
+Return to your terminal and press Enter. Cua Bench evaluates the sandbox and
+releases it:
+
+![cb interact: setup complete, evaluation result 1.0, sandbox released](/img/cua-bench/cb-interact.png)
+
+The evaluator that scored the oracle also scored your attempt.
+
+## 6. Hand it to an agent
+
+```bash test="cli-shape" id="first-task-agent"
+cb run first-task --agent cua-agent --model anthropic/claude-sonnet-4-20250514
+```
+
+`--on local` (the default) runs tasks in sandboxes on this machine; `--kind`,
+`--runtime`, `--image`, `--cpu` and `--memory` shape them.
+
+## Clean up
+
+```bash skip="destructive"
+cd .. && rm -rf cua-bench-tutorial
+```
+
+Run results stay in `~/.local/share/cua-bench/runs`. Keep fewer with
+`cb prune --runs --keep N`.
+
+## What you built
+
+You created a task with variants, a setup function, an oracle solution and an
+evaluator, and used the same evaluator to score the oracle, your own attempt
+and an agent.
+
+## Next steps
+
+- [Write a task](/cua-bench/guides/write-a-task): richer setup, checks and HTML task windows.
+- [Run a benchmark](/cua-bench/guides/benchmarks): OSWorld-Verified, MiniWoB++, WebVoyager and more.
+- [Sandbox images](/start-here/sandbox-images): the benchmark images and how to start them.
+- [CLI reference](/cua-bench/reference/cli)

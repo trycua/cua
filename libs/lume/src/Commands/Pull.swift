@@ -40,10 +40,10 @@ struct Pull: AsyncParsableCommand {
     func run() async throws {
         if verbose { Logger.setVerbose() }
 
-        // Record telemetry - only capture image name without tag for privacy
-        let imageName = image.split(separator: ":").first.map(String.init) ?? image
+        // Telemetry: the catalog id or `custom`, never the reference.
         TelemetryClient.shared.record(event: TelemetryEvent.pull, properties: [
-            "image_name": imageName
+            "image": TelemetryClient.imageId(
+                image, registry: registry, organization: organization)
         ])
 
         let controller = LumeController()

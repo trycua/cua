@@ -389,12 +389,22 @@ jobs:
       # The release's catalog step: move the catalog digests of the promoted
       # <ver> and <ver>-disk tags and record their sizes, then open a PR with
       # libs/images/sandbox-images.json, the promoted lock.json and the
-      # regenerated cua_bench/images.py. A PR opened
-      # with GITHUB_TOKEN does not trigger CI on its own; push to it (or close
-      # and reopen it) to run the required checks.
+      # regenerated cua_bench/images.py. The PR is opened with the release
+      # GitHub App (RELEASE_APP_ID / RELEASE_APP_PRIVATE_KEY, as
+      # release-please.yml and cd-images-spacesd-release.yml): this repo does
+      # not let GITHUB_TOKEN create pull requests, and a PR pushed and opened
+      # with GITHUB_TOKEN would not run its required checks anyway.
+      - name: Release app token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
       - name: Catalog PR (sandbox-images.json and lock.json at the promoted digests)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           lock="libs/images/bench/$BENCH/lock.json"
@@ -413,7 +423,7 @@ jobs:
           git checkout -B "$branch"
           git add -- "${files[@]}"
           git commit -m "chore(images): catalog bench-$BENCH $STAMP"
-          git push -u origin "$branch" --force
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$branch" --force
           url="$(gh pr create --base main --head "$branch" \
             --title "chore(images): catalog bench-$BENCH $STAMP" \
             --body "The catalog step of ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}: \`libs/images/sandbox-images.json\` moves bench-$BENCH's promoted tags to their new digests with fresh sizes (\`record-image-sizes.py --refresh-digest\`), and \`$lock\` records the promoted stamp (with cua-bench's generated \`cua_bench/images.py\` pin)." \

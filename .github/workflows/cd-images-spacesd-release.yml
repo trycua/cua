@@ -145,6 +145,8 @@ jobs:
     needs: resolve
     if: needs.resolve.outputs.build == 'true'
     uses: ./.github/workflows/cd-bench-images.yml
+    # The release app secrets, for the catalog PR (see cd-bench-images.yml).
+    secrets: inherit
     permissions:
       contents: write
       packages: write

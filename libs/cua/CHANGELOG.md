@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/trycua/cua/compare/cua-sdk-v0.3.1...cua-sdk-v0.3.2) (2026-10-04)
+
+
+### Bug Fixes
+
+* preserve borrowed sandboxes and remove speculative cleanup ([a597517](https://github.com/trycua/cua/commit/a597517d8077575050f40eaf31b575b868aed04f))
+
 ## [0.3.1](https://github.com/trycua/cua/compare/cua-sdk-v0.3.0...cua-sdk-v0.3.1) (2026-10-03)
 
 

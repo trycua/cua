@@ -33,7 +33,7 @@ Set a value on a UI element. Two modes depending on element role:
 
 - **All other elements**: writes AXValue directly (sliders, steppers, date pickers, native text fields that expose settable AXValue).
 
-- **A file's name as Finder lists it** (a text field carrying AXFilename and a file URL, not being edited): refused with `file_name_needs_rename`, because the write changes only what Finder shows, never the file. The refusal names the keyboard route that renames it.
+- **A file's name as Finder lists it** (a text field carrying AXFilename and a file URL, not being edited) or **as Finder's Get Info window shows it** (Finder's text field with AXIdentifier `Name`, not being edited): refused with `file_name_needs_rename`, because the write changes only what Finder shows, never the file. The refusal names the keyboard route that renames it.
 
 For free-form text entry into web inputs, prefer `type_text_chars` which synthesises key events: AXValue writes are ignored by WebKit.
 

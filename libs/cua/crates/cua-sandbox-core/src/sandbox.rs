@@ -40,8 +40,8 @@ use std::{
 };
 use tokio::net::{TcpListener, TcpStream};
 
-/// How long [`Sandboxes::create`] waits, at most, for the cua-spacesd of an
-/// image that declares one to answer `Health` (within `ready_timeout`) when
+/// How long [`Sandboxes::create`] waits for the cua-spacesd of an image
+/// that declares one to answer `Health`, once the guest's ports answer, when
 /// the caller did not choose the budget ([`CreateOptions::ready_timeout_given`]);
 /// a chosen `ready_timeout` governs that wait too.
 pub const SPACESD_READY_TIMEOUT: Duration = Duration::from_secs(120);
@@ -245,7 +245,10 @@ pub struct CreateOptions {
     pub services: BTreeMap<String, u16>,
     /// Readiness probes.
     pub wait_for: Vec<Probe>,
-    /// Total readiness budget, the cua-spacesd wait included.
+    /// Readiness budget, counted from when the image is present (the image
+    /// download is not counted: it has its own stall detection). A chosen
+    /// budget includes the cua-spacesd wait; otherwise that wait gets
+    /// [`SPACESD_READY_TIMEOUT`] (at most this budget) on top.
     pub ready_timeout: Duration,
     /// Whether the caller chose `ready_timeout` (`cua sb create
     /// --ready-timeout`, the SDK's `ready_timeout_ms`). Chosen, it bounds
@@ -1042,26 +1045,36 @@ impl Sandboxes {
             }
             _ => false,
         };
-        let sandbox = match options.provider {
-            ProviderKind::Fleet => self.create_fleet(&options).await?,
-            ProviderKind::Local => self.create_local(&options).await?,
-            ProviderKind::Contrib => self.create_contrib(&options).await?,
-            ProviderKind::Direct => {
-                return Err(Error::InvalidArgument(
+        // The readiness budget starts once the image is present (the first
+        // report after the pull): a large download has its own stall
+        // detection and does not use up the time the guest has to boot.
+        let (sandbox, image_ready) = crate::progress::past(Phase::Pulling, async {
+            match options.provider {
+                ProviderKind::Fleet => self.create_fleet(&options).await,
+                ProviderKind::Local => self.create_local(&options).await,
+                ProviderKind::Contrib => self.create_contrib(&options).await,
+                ProviderKind::Direct => Err(Error::InvalidArgument(
                     "direct sandboxes are not created; use Sandboxes::connect_url".into(),
-                ));
+                )),
             }
-        };
-        let remaining = options.ready_timeout.saturating_sub(started.elapsed());
+        })
+        .await;
+        let sandbox = sandbox?;
+        let clock = image_ready.unwrap_or(started);
         if !options.wait_for.is_empty() {
             report(Progress::phase(Phase::WaitingForServices));
         }
-        let mut ready = sandbox.wait_ready(&options.wait_for, remaining).await;
+        let mut ready = sandbox
+            .wait_ready(
+                &options.wait_for,
+                readiness_left(options.ready_timeout, clock),
+            )
+            .await;
         // The image declares cua-spacesd: ready includes it answering
         // `Health` (bounded), so the first guest call does not race its
         // start. Images that do not declare it are never waited on.
         if ready.is_ok() && sandbox.declares_spacesd(&options) {
-            let remaining = options.ready_timeout.saturating_sub(started.elapsed());
+            let remaining = readiness_left(options.ready_timeout, clock);
             report(Progress::phase(Phase::WaitingForServices).detail("cua-spacesd"));
             ready = sandbox
                 .wait_spacesd(spacesd_budget(&options, remaining))
@@ -4043,14 +4056,21 @@ fn unpublished_port_message(name: &str, port: u16, why: &str) -> String {
     )
 }
 
-/// How long create waits for cua-spacesd, given `remaining` of the
-/// readiness budget: all of it when the caller chose the budget, else at
-/// most [`SPACESD_READY_TIMEOUT`].
+/// What is left of a `ready_timeout` budget that started at `clock`.
+fn readiness_left(ready_timeout: Duration, clock: Instant) -> Duration {
+    ready_timeout.saturating_sub(clock.elapsed())
+}
+
+/// How long create waits for cua-spacesd once the guest's ports answer,
+/// given `remaining` of the readiness budget: all of it when the caller
+/// chose the budget, else [`SPACESD_READY_TIMEOUT`] (never more than the
+/// whole budget) however much is left, so a slow boot does not leave the
+/// daemon no time to answer.
 fn spacesd_budget(options: &CreateOptions, remaining: Duration) -> Duration {
     if options.ready_timeout_given {
         remaining
     } else {
-        remaining.min(SPACESD_READY_TIMEOUT)
+        SPACESD_READY_TIMEOUT.min(options.ready_timeout)
     }
 }
 
@@ -4193,13 +4213,40 @@ mod placement_tests {
         let mut o = opts(ProviderKind::Local, "macos:26");
         let left = Duration::from_secs(500);
         assert_eq!(spacesd_budget(&o, left), SPACESD_READY_TIMEOUT);
-        assert_eq!(
-            spacesd_budget(&o, Duration::from_secs(30)),
-            Duration::from_secs(30)
-        );
         o.ready_timeout = Duration::from_secs(900);
         o.ready_timeout_given = true;
         assert_eq!(spacesd_budget(&o, left), left);
+    }
+
+    #[test]
+    fn the_default_spacesd_wait_is_never_cut_short_by_a_slow_boot() {
+        let o = opts(ProviderKind::Local, "macos:26");
+        for left in [Duration::ZERO, Duration::from_secs(30)] {
+            assert_eq!(spacesd_budget(&o, left), SPACESD_READY_TIMEOUT);
+        }
+        // A budget shorter than the spacesd wait still bounds it.
+        let mut o = o;
+        o.ready_timeout = Duration::from_secs(2);
+        assert_eq!(spacesd_budget(&o, Duration::ZERO), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn the_readiness_budget_counts_from_its_clock() {
+        let budget = Duration::from_secs(600);
+        // The clock that starts once the image is present leaves nearly
+        // all of it.
+        let left = readiness_left(budget, Instant::now());
+        assert!(left > Duration::from_secs(590), "{left:?}");
+        // A clock that started 9 minutes earlier (the old start, before a
+        // macOS image pull) leaves about a minute.
+        if let Some(before_pull) = Instant::now().checked_sub(Duration::from_secs(540)) {
+            let left = readiness_left(budget, before_pull);
+            assert!(left <= Duration::from_secs(60), "{left:?}");
+        }
+        // Spent: nothing, never negative.
+        if let Some(long_ago) = Instant::now().checked_sub(Duration::from_secs(900)) {
+            assert_eq!(readiness_left(budget, long_ago), Duration::ZERO);
+        }
     }
 
     #[test]

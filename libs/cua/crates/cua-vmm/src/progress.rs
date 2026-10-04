@@ -245,6 +245,30 @@ pub fn report(progress: Progress) {
     let _ = SINK.try_with(|sink| sink(&progress));
 }
 
+/// Runs `fut`, passing its reports on to the current scope's sink, and
+/// returns when it first reported a phase after `phase` (`None`: it never
+/// did). A create's readiness budget is measured from the first report
+/// after [`Phase::Pulling`], so the image download does not count against
+/// it.
+pub async fn past<F: Future>(phase: Phase, fut: F) -> (F::Output, Option<std::time::Instant>) {
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let outer = current();
+    let mark = seen.clone();
+    let sink: Sink = Arc::new(move |p: &Progress| {
+        if p.phase.rank() > phase.rank() {
+            mark.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_or_insert_with(std::time::Instant::now);
+        }
+        if let Some(outer) = &outer {
+            outer(p);
+        }
+    });
+    let out = scope(sink, fut).await;
+    let at = *seen.lock().unwrap_or_else(|e| e.into_inner());
+    (out, at)
+}
+
 /// Turns a stream of byte counts into [`Transfer`] reports: at most one per
 /// [`Meter::INTERVAL`] (the first and the last always pass), with a rate
 /// smoothed over the recent samples so the time left does not jump around.
@@ -422,6 +446,52 @@ mod tests {
             [Phase::Pulling, Phase::Booting]
         );
         assert_eq!(seen[0].fraction, Some(0.5));
+    }
+
+    #[tokio::test]
+    async fn past_marks_the_first_later_phase_and_forwards_everything() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let s = seen.clone();
+        let sink: Sink = Arc::new(move |p: &Progress| s.lock().unwrap().push(p.phase));
+        let (before, after, at) = scope(sink, async {
+            let before = std::time::Instant::now();
+            let ((), at) = past(Phase::Pulling, async {
+                report(Progress::phase(Phase::Preparing));
+                report(Progress::phase(Phase::Pulling));
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                report(Progress::phase(Phase::Creating));
+                report(Progress::phase(Phase::Booting));
+            })
+            .await;
+            (before, std::time::Instant::now(), at)
+        })
+        .await;
+        let at = at.expect("a phase after pulling was reported");
+        assert!(
+            at >= before + std::time::Duration::from_millis(20),
+            "after the pull"
+        );
+        assert!(at <= after);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [
+                Phase::Preparing,
+                Phase::Pulling,
+                Phase::Creating,
+                Phase::Booting
+            ],
+            "the outer scope still sees every report"
+        );
+    }
+
+    #[tokio::test]
+    async fn past_is_none_without_a_later_phase_and_works_outside_a_scope() {
+        let ((), at) = past(Phase::Pulling, async {
+            report(Progress::phase(Phase::Preparing));
+            report(Progress::phase(Phase::Pulling));
+        })
+        .await;
+        assert_eq!(at, None);
     }
 
     #[test]

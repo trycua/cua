@@ -132,8 +132,9 @@ pub struct CreateArgs {
     /// input: display, window manager and cua-driver) (repeatable).
     #[arg(long = "wait", visible_alias = "wait-for", value_parser = parse_wait)]
     wait: Vec<(WaitTarget, Option<String>)>,
-    /// Readiness budget in seconds, the wait for the image's cua-spacesd
-    /// included (default 600, with at most 120 of it for cua-spacesd).
+    /// Readiness budget in seconds, counted once the image is downloaded,
+    /// the wait for the image's cua-spacesd included (default 600, plus up
+    /// to 120 for cua-spacesd).
     #[arg(long)]
     ready_timeout: Option<u32>,
     /// Inject a freshly built binary once the sandbox is up:

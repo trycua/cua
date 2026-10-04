@@ -2420,7 +2420,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "Readiness budget in seconds, the wait for the image's cua-spacesd included (default 600, with at most 120 of it for cua-spacesd)",
+       "help": "Readiness budget in seconds, counted once the image is downloaded, the wait for the image's cua-spacesd included (default 600, plus up to 120 for cua-spacesd)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,

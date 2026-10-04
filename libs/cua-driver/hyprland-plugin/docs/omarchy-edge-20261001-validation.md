@@ -2,6 +2,8 @@
 
 Refs [#4216](https://github.com/trycua/cua/issues/4216).
 
+Superseded by the [2026-10-04 kit qualification](omarchy-edge-20261004-validation.md). This record documents the earlier candidate and is kept for history.
+
 This is an in-progress qualification record, not a release or compatibility
 claim. The target is an upgraded disposable x86_64 Omarchy Edge guest, not a
 fresh ISO installation or Omarchy's independent Omabot acceptance run.

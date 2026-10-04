@@ -32,9 +32,9 @@ BENCH_WEB = "ghcr.io/trycua/bench-web@sha256:3b7e1d9d4e34694175cf1b44ffefc09b557
 
 #: OSWorld-Verified: OSWorld Verified desktop tasks.
 #: Guide: /cua-bench/guides/adapter-benchmarks#osworld-verified. Lock: libs/images/bench/osworld/lock.json.
-#: Pinned to ghcr.io/trycua/bench-osworld:verified-20260924-93d6b29.
-#: Floating ghcr.io/trycua/bench-osworld:verified (promoted: not yet).
-BENCH_OSWORLD = "ghcr.io/trycua/bench-osworld@sha256:afe8e25fdda48cc71c60a6118a1bdfa0235352f311d27b271c5b7f5711f9001a"
+#: Pinned to ghcr.io/trycua/bench-osworld:verified-20261003-a7b1e34.
+#: Floating ghcr.io/trycua/bench-osworld:verified (promoted: yes).
+BENCH_OSWORLD = "ghcr.io/trycua/bench-osworld@sha256:cd532a99e78eb096c787872ef6eb8017c617ba666b6c6ddd2ec87d388b5608e6"
 
 
 def image(name: str) -> str:

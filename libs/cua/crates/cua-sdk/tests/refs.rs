@@ -16,8 +16,8 @@ use cua_sandbox_core::{
     RuntimeError, RuntimeResult,
 };
 use cua_sdk::{
-    Cua, CuaError, SandboxCreateOptions, ambiguous_sandbox_candidates, parse_sandbox_ref,
-    qualify_sandbox_ref,
+    Cua, CuaError, SandboxCreateOptions, SpacesdCommand, ambiguous_sandbox_candidates,
+    parse_sandbox_ref, qualify_sandbox_ref,
 };
 use std::{
     collections::HashMap,
@@ -307,6 +307,108 @@ async fn embedded() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon() {
     tokio::time::timeout(Duration::from_secs(120), suite(true))
+        .await
+        .expect("bounded");
+}
+
+async fn registered_direct_space(daemon: bool) {
+    let space = fixtures::start_env(Some("space-token"), None).await;
+    let stranger = fixtures::start_env(Some("other-token"), None).await;
+    let dirs = tempfile::tempdir().unwrap();
+    let runtime = Runtime::new(RuntimeConfig {
+        state_dir: Some(dirs.path().join("sandboxes")),
+        spaces_home: Some(dirs.path().join("cua")),
+        env_probe_timeout: Some(Duration::from_secs(2)),
+        ..Default::default()
+    })
+    .unwrap();
+    let mut handle = None;
+    let cua = if daemon {
+        let h = server::start(
+            runtime,
+            ServerConfig {
+                socket_path: None,
+                loopback: Some("127.0.0.1:0".parse().unwrap()),
+                token: "daemon-token".into(),
+                discovery_path: Some(dirs.path().join("daemon.json")),
+                bridge_ticket_ttl: Duration::from_secs(30),
+            },
+        )
+        .await
+        .unwrap();
+        let c = Cua::connect(h.loopback_url.clone(), Some(h.token.clone())).unwrap();
+        handle = Some(h);
+        c
+    } else {
+        Cua::from_runtime(runtime)
+    };
+
+    let info = cua
+        .spaces()
+        .add(
+            space.url.clone(),
+            Some("space-token".into()),
+            Some("dev".into()),
+        )
+        .await
+        .unwrap();
+
+    let env = cua
+        .spaces()
+        .space(info.id.clone())
+        .await
+        .unwrap()
+        .spacesd()
+        .await
+        .expect("a Space hands out the spacesd client it authenticated");
+    let process = env
+        .spawn(SpacesdCommand {
+            program: "cat".into(),
+            args: vec![],
+            env: HashMap::new(),
+            cwd: None,
+            user: None,
+            timeout_ms: None,
+            tag: None,
+            stdin: true,
+            pty: None,
+        })
+        .await
+        .unwrap();
+    process.write_stdin(b"over stdin".to_vec()).await.unwrap();
+    process.close_stdin().await.unwrap();
+    assert_eq!(process.wait().await.unwrap().stdout, b"over stdin");
+
+    let sandbox = cua.sandboxes().connect(info.id.clone()).await.unwrap();
+    assert_eq!(sandbox.id(), info.id);
+    sandbox
+        .spacesd(Some(2000))
+        .await
+        .expect("reconnecting by id uses the registered token");
+
+    let authority = stranger.url.trim_start_matches("http://");
+    let unregistered = cua
+        .sandboxes()
+        .connect(format!("direct:{authority}"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        unregistered.spacesd(Some(2000)).await,
+        Err(CuaError::Unauthenticated(_))
+    ));
+    drop(handle);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn embedded_registered_direct_space() {
+    tokio::time::timeout(Duration::from_secs(60), registered_direct_space(false))
+        .await
+        .expect("bounded");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn daemon_registered_direct_space() {
+    tokio::time::timeout(Duration::from_secs(60), registered_direct_space(true))
         .await
         .expect("bounded");
 }

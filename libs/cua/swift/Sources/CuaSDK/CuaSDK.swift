@@ -8409,6 +8409,8 @@ public protocol SpaceProtocol: AnyObject, Sendable {
      */
     func shares() async throws  -> SpaceShares
 
+    func spacesd() async throws  -> SpacesdClient
+
     /**
      * Starts the reverse-SOCKS hotspot: this host serves the Space's
      * egress. `set_system_proxy` points the guest's proxy settings at it
@@ -9163,6 +9165,23 @@ open func shares()async throws  -> SpaceShares  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSpaceShares_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+open func spacesd()async throws  -> SpacesdClient  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_spacesd(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterTypeSpacesdClient_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -40691,6 +40710,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_shares() != 19234) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_space_spacesd() != 65268) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_start_hotspot() != 44744) {

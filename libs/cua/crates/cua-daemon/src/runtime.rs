@@ -871,9 +871,21 @@ impl Runtime {
         }
         let r = SandboxRef::parse(&key)?;
         let r = self.inner.sandboxes.resolve_ref_among(&r, vec![]).await?;
-        let sandbox = self.inner.sandboxes.connect_ref(&r).await?;
+        let sandbox = self.connect_ref(&r).await?;
         self.insert(key.clone(), sandbox, None, BTreeMap::new());
         Ok(key)
+    }
+
+    async fn connect_ref(&self, r: &SandboxRef) -> Result<Sandbox> {
+        #[cfg(feature = "spaces")]
+        if let SandboxRef::Direct { authority } = r
+            && let Ok(Some(c)) = self.inner.spaces.registry().credential(&r.to_string())
+            && c.token.is_some()
+        {
+            let url = c.url.unwrap_or_else(|| format!("http://{authority}"));
+            return Ok(self.inner.sandboxes.connect_url(&url, c.token)?);
+        }
+        Ok(self.inner.sandboxes.connect_ref(r).await?)
     }
 
     fn cached_record(&self, key: &str) -> Option<SandboxRecord> {

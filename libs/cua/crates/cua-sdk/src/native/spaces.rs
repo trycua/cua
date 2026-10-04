@@ -2879,6 +2879,25 @@ impl Space {
         Ok(serde_json::to_string(self.inner.capabilities())?)
     }
 
+    pub async fn spacesd(&self) -> Result<Arc<super::spacesd::SpacesdClient>> {
+        let s = self.inner.clone();
+        let location = self.info.provider.clone();
+        run(async move {
+            let client = s.spacesd()?.clone();
+            let headers = s.websocket_headers().await?;
+            let refresh: super::spacesd::WsHeaderRefresh = Arc::new(move || {
+                let s = s.clone();
+                Box::pin(async move { Ok(s.websocket_headers().await?) })
+            });
+            Ok(Arc::new(
+                super::spacesd::SpacesdClient::new(client, headers)
+                    .at(&location)
+                    .with_ws_refresh(refresh),
+            ))
+        })
+        .await
+    }
+
     /// Headers a media WebSocket to this Space needs besides its ticket.
     pub async fn websocket_headers(&self) -> Result<Vec<super::HttpHeader>> {
         let s = self.inner.clone();

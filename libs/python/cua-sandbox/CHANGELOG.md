@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/trycua/cua/compare/sandbox-v0.9.0...sandbox-v0.9.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* post-launch CI follow-ups ([#4405](https://github.com/trycua/cua/issues/4405)) ([352507b](https://github.com/trycua/cua/commit/352507b6c03162ab286b21d5ed509125cc3daece))
+
 ## [0.9.0](https://github.com/trycua/cua/compare/sandbox-v0.8.0...sandbox-v0.9.0) (2026-10-01)
 
 

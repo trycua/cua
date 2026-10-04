@@ -141,6 +141,15 @@ impl Default for StateCaptureBudget {
 type AxSnapshotFn =
     Arc<dyn Fn(Option<u64>, Option<i64>, StateCaptureBudget) -> Option<Vec<u8>> + Send + Sync>;
 static AX_SNAPSHOT_FN: OnceLock<AxSnapshotFn> = OnceLock::new();
+type AxSnapshotThreadInitFn = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+static AX_SNAPSHOT_THREAD_INIT: OnceLock<AxSnapshotThreadInitFn> = OnceLock::new();
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StateHookWorkerState {
+    Initializing,
+    Running,
+    Cancelled,
+}
 
 /// Register an AX/UIA snapshot callback that ignores the per-turn budget.
 /// The recorder's backstop still bounds how long a turn waits for it. Call
@@ -158,6 +167,17 @@ pub fn set_budgeted_ax_snapshot_fn(
     f: impl Fn(Option<u64>, Option<i64>, StateCaptureBudget) -> Option<Vec<u8>> + Send + Sync + 'static,
 ) {
     let _ = AX_SNAPSHOT_FN.set(Arc::new(f));
+}
+
+/// Register a lightweight initializer for the recorder-owned application-state
+/// worker. It runs on that worker before the platform snapshot callback; an
+/// error prevents the callback from entering native code. Platform runtimes
+/// may use this to establish an owned thread context without coupling this
+/// cross-platform crate to a particular operating system.
+pub fn set_budgeted_ax_snapshot_thread_initializer(
+    f: impl Fn() -> Result<(), String> + Send + Sync + 'static,
+) {
+    let _ = AX_SNAPSHOT_THREAD_INIT.set(Arc::new(f));
 }
 
 /// Hooks abandoned at their backstop and still running, per target pid. While
@@ -253,6 +273,22 @@ fn run_state_hook(
     pid: Option<i64>,
     budget: StateCaptureBudget,
 ) -> StateCapture {
+    run_state_hook_with_initializer(
+        hook,
+        window_id,
+        pid,
+        budget,
+        AX_SNAPSHOT_THREAD_INIT.get().cloned(),
+    )
+}
+
+fn run_state_hook_with_initializer(
+    hook: AxSnapshotFn,
+    window_id: Option<u64>,
+    pid: Option<i64>,
+    budget: StateCaptureBudget,
+    initializer: Option<AxSnapshotThreadInitFn>,
+) -> StateCapture {
     use std::sync::atomic::{AtomicBool, Ordering};
     let key = pid.unwrap_or(-1);
     if abandoned_state_captures()
@@ -263,10 +299,40 @@ fn run_state_hook(
     }
     let abandoned = Arc::new(AtomicBool::new(false));
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let start_state = Arc::new(Mutex::new(if initializer.is_some() {
+        StateHookWorkerState::Initializing
+    } else {
+        StateHookWorkerState::Running
+    }));
     let worker_abandoned = abandoned.clone();
+    let worker_start_state = start_state.clone();
     let spawned = std::thread::Builder::new()
         .name("cua-recording-state".into())
         .spawn(move || {
+            if let Some(initialize) = initializer {
+                if let Err(error) = initialize() {
+                    tracing::error!(
+                        target: "recording",
+                        "application-state worker initialization failed: {error}"
+                    );
+                    if worker_abandoned.swap(true, Ordering::SeqCst) {
+                        release_abandoned_state_capture(key);
+                    }
+                    return;
+                }
+            }
+            {
+                let mut state = worker_start_state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if *state == StateHookWorkerState::Cancelled {
+                    if worker_abandoned.swap(true, Ordering::SeqCst) {
+                        release_abandoned_state_capture(key);
+                    }
+                    return;
+                }
+                *state = StateHookWorkerState::Running;
+            }
             let result = hook(window_id, pid, budget);
             if worker_abandoned.swap(true, Ordering::SeqCst) {
                 release_abandoned_state_capture(key);
@@ -281,6 +347,13 @@ fn run_state_hook(
         Ok(result) => Some(result),
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => None,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            let mut state = start_state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if *state == StateHookWorkerState::Initializing {
+                *state = StateHookWorkerState::Cancelled;
+            }
+            drop(state);
             *abandoned_state_captures().entry(key).or_insert(0) += 1;
             if abandoned.swap(true, Ordering::SeqCst) {
                 // The worker finished between the timeout and the mark.
@@ -1589,6 +1662,53 @@ fn validate_video_metadata(meta: VideoMetadata) -> anyhow::Result<VideoMetadata>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recording_worker_initializes_before_hook_and_fails_closed_on_late_thread_error() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let initialization_count = Arc::new(AtomicUsize::new(0));
+        let initialized_thread = Arc::new(Mutex::new(None));
+        let count = initialization_count.clone();
+        let initialized = initialized_thread.clone();
+        let initializer: AxSnapshotThreadInitFn = Arc::new(move || {
+            if count.fetch_add(1, Ordering::SeqCst) > 0 {
+                return Err("late recorder thread PMv2 rejection".to_owned());
+            }
+            *initialized.lock().unwrap() = Some(std::thread::current().id());
+            Ok(())
+        });
+        let hook_calls = Arc::new(AtomicUsize::new(0));
+        let calls = hook_calls.clone();
+        let hook_initialized_thread = initialized_thread.clone();
+        let hook: AxSnapshotFn = Arc::new(move |_, _, _| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(
+                *hook_initialized_thread.lock().unwrap(),
+                Some(std::thread::current().id()),
+                "initializer and native callback must run on the same recorder worker"
+            );
+            assert_eq!(std::thread::current().name(), Some("cua-recording-state"));
+            Some(br#"{"element_count":0}"#.to_vec())
+        });
+        let budget = StateCaptureBudget { timeout_ms: 1000 };
+
+        let first = run_state_hook_with_initializer(
+            hook.clone(),
+            None,
+            Some(712_345),
+            budget,
+            Some(initializer.clone()),
+        );
+        assert!(first.bytes.is_some());
+        assert_eq!(hook_calls.load(Ordering::SeqCst), 1);
+
+        let late_failure =
+            run_state_hook_with_initializer(hook, None, Some(712_346), budget, Some(initializer));
+        assert!(late_failure.bytes.is_none());
+        assert_eq!(late_failure.classification, Some("capture_failed"));
+        assert_eq!(hook_calls.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn pixel_mappers_follow_registry_lifetimes_and_concurrent_runtime_state() {

@@ -282,7 +282,7 @@ where
     let (tx, rx) = mpsc::channel();
     let spawn = thread::Builder::new()
         .name("cua-uwp-package-scan".to_owned())
-        .spawn(move || {
+        .spawn(crate::dpi::owned_thread(move || {
             let _ = tx.send(f());
             if permit.timed_out() {
                 tracing::warn!(
@@ -293,7 +293,7 @@ where
             // Dropping the permit arms the cooldown after a timeout and
             // reopens the gate.
             drop(permit);
-        });
+        }));
 
     if let Err(error) = spawn {
         // The unspawned closure, and with it the permit, is already dropped,

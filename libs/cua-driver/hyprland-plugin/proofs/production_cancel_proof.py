@@ -6,7 +6,7 @@ telemetry proves two active drags; preserve unknown delivery without replay.
 """
 import argparse
 from harness_paths import harness_file  # Also puts tests/ helpers on sys.path.
-from production_app_smoke import add_provenance_arguments
+from production_app_smoke import OBSERVATION_TIMEOUT_MS, add_provenance_arguments
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
@@ -40,7 +40,7 @@ MAX_GROUNDING_ATTEMPTS = 2
 # recovered the status and geometry in about 1.2 seconds per independent app.
 # Keep the walk bounded and depth uncapped (the object row is deeply nested).
 # Missing oracle evidence and the unchanged five-second age limit fail closed.
-POINTER_SNAPSHOT_LIMITS = {'inkscape': {'max_elements': 3000}}
+POINTER_SNAPSHOT_LIMITS = {'inkscape': {'max_elements': 3000, 'timeout_ms': OBSERVATION_TIMEOUT_MS}}
 
 
 def validate_app_profile(plan, *, require_drag=True):

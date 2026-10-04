@@ -19,6 +19,11 @@ STAGES = {
 }
 
 
+INKSCAPE_AXIS_LABELS = {'X': 'Horizontal coordinate of selection',
+                        'Y': 'Vertical coordinate of selection',
+                        'W': 'Width of selection', 'H': 'Height of selection'}
+
+
 class Pixels:
     def __init__(self, width, height, data, stride, channels=3):
         self.width, self.height = width, height
@@ -173,7 +178,7 @@ def inkscape_geometry(snapshot, *, allow_transform_center=False):
         for index, line in enumerate(lines):
             if index == 0 or lines[index - 1] != f'- label = "{axis}:"':
                 continue
-            match = re.match(r'^- \[(\d+)\] spin button "([-\d.]+)" value="([-\d.]+)" ', line)
+            match = re.match(r'^- \[(\d+)\] spin button "([^"]+)" value="([-\d.]+)" ', line)
             if not match:
                 continue
             controls = [row for row in elements if row.get('element_index') == int(match[1])
@@ -181,7 +186,16 @@ def inkscape_geometry(snapshot, *, allow_transform_center=False):
                         and row.get('value') == match[3] and row.get('enabled') is True
                         and row.get('frame', {}).get('h', 0) > 0
                         and 0 <= row.get('frame', {}).get('y', -1) - snapshot['window_bounds']['y'] < 90]
-            if len(controls) == 1 and math.isclose(float(match[2]), float(match[3]), abs_tol=.001):
+            # A legacy numeric label must equal the value; otherwise the label
+            # must be this axis's own semantic name, never another axis's.
+            if match[2] == INKSCAPE_AXIS_LABELS[axis]:
+                label_ok = True
+            else:
+                try:
+                    label_ok = math.isclose(float(match[2]), float(match[3]), abs_tol=.001)
+                except ValueError:
+                    label_ok = False
+            if len(controls) == 1 and label_ok:
                 matches.append(float(match[3]))
         if len(matches) != 1 or not math.isfinite(matches[0]):
             raise GroundingUnavailable('selection geometry differs between semantic projections')

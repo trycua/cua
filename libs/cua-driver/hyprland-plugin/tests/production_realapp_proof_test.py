@@ -12,9 +12,10 @@ from unittest.mock import Mock, patch
 import zipfile
 
 import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
+import production_pointer_grounding as pointer
 from production_realapp_proof import (SMOKE_STEPS, app_process_identity, provenance,
                                     assert_no_dispatch, assert_primary_state, check_response,
-                                    capacity_lane, verify_capacity, check_manifest_refusal,
+                                    bound_drag_lanes, capacity_lane, verify_capacity, check_manifest_refusal,
                                     manifest_tool_messages, verify_policy_cache,
                                     passive_focus_evidence,
                                     expected_primary_motion, move_primary, primary_acknowledgement,
@@ -22,8 +23,9 @@ from production_realapp_proof import (SMOKE_STEPS, app_process_identity, provena
                                     PRIMARY_LIFETIME_MS, POINTER_EPISODES, run, trace_interval, validate_plan,
                                     verify_output)
 from proof_fixtures import (INKSCAPE, INKSCAPE_SELECTED, START, STOP, assert_rejects, capacity_events, capacity_plan,
-                            harness_args, inkscape_plan, lane, lane_status, patch_module, plan,
+                            harness_args, ink, inkscape_plan, lane, lane_status, patch_module, plan,
                             policy_cache_plan, primary_trace as trace, run_replacements)
+from production_app_smoke import OBSERVATION_TIMEOUT_MS
 
 
 def focus_evidence(rows):
@@ -385,6 +387,70 @@ class PolicyCacheTests(unittest.TestCase):
                     self.assertEqual(mutations, ['click', 'press_key'])
 
 
+class DragLaneBindingTests(unittest.TestCase):
+    def test_overlap_requires_serial_unique_selections_before_drags(self):
+        candidate = inkscape_plan()
+        candidate['require_overlap'] = True
+        selections = [{'agent': i, 'tool': 'hotkey', 'arguments': {'keys': ['ctrl', 'a']},
+                       'smoke_stage': 'select'} for i in range(2)]
+        drags = {'parallel': [{'agent': i, 'tool': 'drag', 'arguments': {},
+                              'pointer_stage': 'move_rectangle'} for i in range(2)]}
+        candidate['phases'] = [*selections, drags]
+        validate_plan(candidate)
+        for phases in ([drags, *selections], [selections[0], drags],
+                       [*selections, selections[0], drags], [{'parallel': selections}, drags]):
+            with self.subTest(phases=phases), self.assertRaises(AssertionError):
+                validate_plan({**candidate, 'phases': phases})
+
+    @staticmethod
+    def selects(*lanes):
+        return [{'agent': i, 'tool': 'hotkey', 'smoke_stage': 'select', 'compositor_lane': lane}
+                for i, lane in enumerate(lanes)]
+
+    def test_binding_comes_from_each_agents_own_select_evidence_not_order(self):
+        self.assertEqual(bound_drag_lanes(self.selects(1, 2)), {0: 1, 1: 2})
+        self.assertEqual(bound_drag_lanes(self.selects(2, 1)), {0: 2, 1: 1})
+        # Unbound plans record no lane evidence; overlap enforcement rejects that at cleanup.
+        rows = [{'agent': 0, 'tool': 'hotkey', 'smoke_stage': 'select'},
+                {'agent': 1, 'tool': 'drag', 'pointer_stage': 'move_rectangle'}]
+        self.assertEqual(bound_drag_lanes(rows), {})
+
+    def test_shared_duplicate_or_invalid_lane_evidence_is_rejected(self):
+        for rows in (self.selects(1, 1), self.selects(1, 2) + self.selects(1), self.selects(0),
+                     self.selects(3), self.selects(True), self.selects('1'), self.selects(None)):
+            with self.subTest(rows=rows), self.assertRaises(AssertionError):
+                bound_drag_lanes(rows)
+
+    def test_identical_coordinate_drags_are_ambiguous_without_but_exact_with_binding(self):
+        args, oracle = pointer.action(*ink(), 'inkscape', 'move_rectangle')
+        effect = pointer.verify(*ink(dx=35, dy=27), oracle)
+        rows = []
+        for lane_number in (1, 2):
+            rows += [('pointer_motion', 100, 200, lane_number, 0), ('agent_drag_start', 100, 200, lane_number, 0),
+                     ('pointer_button', 100, 200, lane_number, 1)] + \
+                    [('pointer_motion', 100, 200, lane_number, 0)] * 3 + \
+                    [('pointer_button', 100, 200, lane_number, 0), ('agent_drag_end', 100, 200, lane_number, 0)]
+        data = trace(START, *rows, STOP)
+        for base in (1, 9):  # Same local coordinates in both windows.
+            for offset, xy in ((0, [145, 165]), (3, [149, 168]), (4, [165, 180]), (5, [185, 195])):
+                data['events'][base + offset].extend(xy)
+        with self.assertRaisesRegex(AssertionError, 'missing or ambiguous'):
+            pointer.verify_drag_trace(data, args, effect)
+        # Swapped independently proven bindings select swapped lanes, never agent order.
+        for agents in (self.selects(1, 2), self.selects(2, 1)):
+            lanes = bound_drag_lanes(agents)
+            for agent, lane_number in lanes.items():
+                self.assertEqual(pointer.verify_drag_trace(data, args, effect, expected_lane=lanes[agent])['lane'],
+                                 lane_number)
+
+    def test_absent_or_ambiguous_select_trace_cannot_bind_a_lane(self):
+        before = {**trace(START), 'active': True}
+        two_lanes = {**trace(START, *capacity_events(1), *capacity_events(2)), 'active': True}
+        for after in (before, two_lanes):
+            with self.subTest(after=after['events']), self.assertRaisesRegex(AssertionError, 'exactly one compositor lane'):
+                capacity_lane(before, after, 'click')
+
+
 class CapacityTests(unittest.TestCase):
     def test_plan_requires_three_serial_independent_qualified_targets(self):
         for app_profile, factory in (('calc-inkscape', capacity_plan),
@@ -673,11 +739,22 @@ class SmokeStageTests(unittest.TestCase):
 
     def test_runner_grounds_full_snapshots_and_never_recovers_or_replays(self):
         failures = {None: None, 'unmarked': None,
+                    'truncated': 'not proven complete', 'incomplete': 'not proven complete',
+                    'degraded': 'not proven complete', 'missing_budget': 'not proven complete',
                     'no_elements': 'snapshot has no semantic elements',
                     'dialog': 'unexpected dialog; no dismissal keys were sent',
                     'extra_window': 'reviewed PID/window identity is stale or ambiguous',
                     'after_dialog': 'unexpected dialog; no dismissal keys were sent',
-                    'transport': 'unknown input outcome'}
+                    'transport': 'unknown input outcome',
+                    'identity_before_once': None, 'identity_after_once': None,
+                    'identity_before_permanent': 'not proven complete',
+                    'identity_after_permanent': 'not proven complete',
+                    'identity_window_changed': 'reviewed PID/window identity is stale or ambiguous',
+                    'identity_truncated': 'not proven complete',
+                    'identity_incomplete': 'not proven complete'}
+        no_input = ('no_elements', 'dialog', 'extra_window', 'truncated', 'incomplete', 'degraded',
+                    'missing_budget', 'identity_before_permanent', 'identity_window_changed',
+                    'identity_truncated', 'identity_incomplete')
         for app, stage, elements in (
                 ('calc', 'insert', [{'role': 'table cell', 'label': 'A1', 'selected': True}]),
                 ('inkscape', 'select', INKSCAPE['elements']),
@@ -705,10 +782,13 @@ class SmokeStageTests(unittest.TestCase):
                     observer = Mock()
                     targets = [candidate['foreground']] + [spec['target'] for spec in candidate['agents']]
 
+                    identity_seen, phase_count = [0], {False: 0, True: 0}
+
                     def tool(name, parameters):
                         if name == 'list_windows':
                             windows = copy.deepcopy(targets)
-                            if failure == 'extra_window':
+                            if failure == 'extra_window' or (failure == 'identity_window_changed'
+                                                             and identity_seen[0]):
                                 windows.append({**candidate['agents'][index]['target'], 'window_id': 999})
                             return {'structuredContent': {'windows': windows}}
                         if name == 'get_window_state':
@@ -719,7 +799,23 @@ class SmokeStageTests(unittest.TestCase):
                                 rows = []
                             if failure == 'dialog' or (failure == 'after_dialog' and sent):
                                 rows = [{'role': 'dialog'}]
+                            phase_count[sent] += parameters.get('timeout_ms') == OBSERVATION_TIMEOUT_MS
+                            identity = ((failure in ('identity_truncated', 'identity_incomplete',
+                                                     'identity_window_changed') and not sent)
+                                        or ((failure or '').startswith('identity_before') and not sent)
+                                        or ((failure or '').startswith('identity_after') and sent))
+                            if (failure or '').endswith('_once') and phase_count[sent] > 1:
+                                identity = False
+                            identity = identity and parameters.get('timeout_ms') == OBSERVATION_TIMEOUT_MS
+                            identity_seen[0] += identity
                             return {'structuredContent': {'screenshot_width': 600, 'window_bounds': bounds,
+                                                          'truncated': failure in ('truncated', 'identity_truncated'),
+                                                          'elements_complete': failure not in ('incomplete',
+                                                                                               'identity_incomplete'),
+                                                          'degraded': failure == 'degraded' or identity,
+                                                          **({'degraded_reason': 'accessibility_window_identity_unproven'
+                                                              ': title transition'} if identity else {}),
+                                                          'timeout_ms': None if failure == 'missing_budget' else OBSERVATION_TIMEOUT_MS,
                                                           'tree_markdown': (INKSCAPE_SELECTED if stage == 'move'
                                                                             else INKSCAPE)['tree_markdown'],
                                                           'elements': rows}}
@@ -740,7 +836,16 @@ class SmokeStageTests(unittest.TestCase):
                         verify_output=Mock(return_value={'verified': True})))
                     self.assertEqual(run(args), 0 if expected_error is None else 1)
                     inputs = [i for i, row in enumerate(calls) if row[0] == 'input']
-                    self.assertEqual(len(inputs), 0 if failure in ('no_elements', 'dialog', 'extra_window') else 1)
+                    self.assertEqual(len(inputs), 0 if failure in no_input else 1)
+                    snapshots = [row for row in calls if row[0] == 'snapshot'
+                                 and row[1].get('timeout_ms') == OBSERVATION_TIMEOUT_MS]
+                    bound = {'identity_before_once': 3, 'identity_after_once': 3,
+                             'identity_before_permanent': 2, 'identity_after_permanent': 3,
+                             'identity_window_changed': 1, 'identity_truncated': 1,
+                             'identity_incomplete': 1, 'truncated': 1, 'incomplete': 1,
+                             'degraded': 1, 'missing_budget': 1}
+                    if failure in bound:
+                        self.assertEqual(len(snapshots), bound[failure])
                     if inputs:
                         i = inputs[0]
                         self.assertEqual(calls[i - 1][0], 'snapshot')
@@ -750,6 +855,8 @@ class SmokeStageTests(unittest.TestCase):
                         for _, parameters in (calls[i - 1], calls[i + 1]):
                             self.assertEqual('max_elements' in parameters, failure == 'unmarked')
                             self.assertEqual('max_depth' in parameters, failure == 'unmarked')
+                            if failure != 'unmarked':
+                                self.assertEqual(parameters['timeout_ms'], OBSERVATION_TIMEOUT_MS)
                     for mcp in agents + [observer]:
                         mcp.close.assert_called_once()
                     self.assertFalse(held[0])
@@ -854,7 +961,9 @@ class PointerStageTests(unittest.TestCase):
                             calls.append(('snapshot', parameters, folder.name, mcp.counter))
                             image = folder / f'{mcp.counter}.png'
                             image.write_bytes(b'synthetic image read by a stub')
-                            return {'structuredContent': {'screenshot_width': 600, 'window_bounds': bounds},
+                            return {'structuredContent': {'screenshot_width': 600, 'window_bounds': bounds,
+                                    'truncated': False, 'elements_complete': True,
+                                    'timeout_ms': OBSERVATION_TIMEOUT_MS},
                                     'content': [] if failure == 'missing_image' else
                                     [{'type': 'image', 'image_file': image.name}]}
                         if name == 'get_desktop_state':

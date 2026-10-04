@@ -649,6 +649,9 @@ fn configure_macos_runtime() {
 
 #[cfg(target_os = "windows")]
 fn configure_windows_runtime() {
+    cua_driver_core::recording::set_budgeted_ax_snapshot_thread_initializer(
+        platform_windows::dpi::initialize_recording_state_thread,
+    );
     cua_driver_core::recording::set_classified_screenshot_fn(|window_id, pid| {
         platform_windows::recording_hooks::screenshot_for_recording(window_id, pid)
     });

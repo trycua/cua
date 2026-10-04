@@ -62,7 +62,7 @@ impl Default for WindowsPageBackend {
 impl PageBackend for WindowsPageBackend {
     async fn get_text(&self, _pid: i32, window_id: u64) -> anyhow::Result<String> {
         let hwnd = window_id;
-        tokio::task::spawn_blocking(move || unsafe { get_text_blocking(hwnd) })
+        crate::dpi::spawn_blocking(move || unsafe { get_text_blocking(hwnd) })
             .await
             .map_err(|e| anyhow::anyhow!("join error: {e}"))?
     }
@@ -77,7 +77,7 @@ impl PageBackend for WindowsPageBackend {
         let hwnd = window_id;
         let selector = css_selector.to_owned();
         let attrs: Vec<String> = attributes.to_vec();
-        tokio::task::spawn_blocking(move || unsafe { query_dom_blocking(hwnd, &selector, &attrs) })
+        crate::dpi::spawn_blocking(move || unsafe { query_dom_blocking(hwnd, &selector, &attrs) })
             .await
             .map_err(|e| anyhow::anyhow!("join error: {e}"))?
     }

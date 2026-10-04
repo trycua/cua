@@ -105,33 +105,41 @@ pub fn app_state_json_for(
     pid: Option<i64>,
     budget: cua_driver_core::recording::StateCaptureBudget,
 ) -> Option<Vec<u8>> {
-    let pid = u32::try_from(pid?).ok()?;
-    let hwnd = resolve_window_for_recording(window_id, Some(pid.into()))?;
-    let mut walk = cua_driver_core::walk_budget::WalkBudget::new(
-        budget.timeout_ms,
-        crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS,
-    );
-    let result =
-        crate::uia::walk_tree_budgeted(hwnd, None, crate::uia::DEFAULT_MAX_DEPTH, &mut walk);
-    let kind = if result.nodes.iter().any(|node| node.msaa_role.is_some()) {
-        SnapshotKind::Msaa
-    } else {
-        SnapshotKind::Uia
-    };
-    let _native_payload = UiaSnapshot::from_nodes(&result.nodes, kind);
-    let element_count = result
-        .nodes
-        .iter()
-        .filter(|n| n.element_index.is_some())
-        .count();
-    let mut payload = serde_json::json!({
-        "pid": pid,
-        "window_id": hwnd,
-        "element_count": element_count,
-        "tree_markdown": result.tree_markdown,
-    });
-    walk.outcome().apply(&mut payload);
-    serde_json::to_vec_pretty(&payload).ok()
+    match crate::dpi::with_recording_state_thread(|| -> Option<Vec<u8>> {
+        let pid = u32::try_from(pid?).ok()?;
+        let hwnd = resolve_window_for_recording(window_id, Some(pid.into()))?;
+        let mut walk = cua_driver_core::walk_budget::WalkBudget::new(
+            budget.timeout_ms,
+            crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS,
+        );
+        let result =
+            crate::uia::walk_tree_budgeted(hwnd, None, crate::uia::DEFAULT_MAX_DEPTH, &mut walk);
+        let kind = if result.nodes.iter().any(|node| node.msaa_role.is_some()) {
+            SnapshotKind::Msaa
+        } else {
+            SnapshotKind::Uia
+        };
+        let _native_payload = UiaSnapshot::from_nodes(&result.nodes, kind);
+        let element_count = result
+            .nodes
+            .iter()
+            .filter(|n| n.element_index.is_some())
+            .count();
+        let mut payload = serde_json::json!({
+            "pid": pid,
+            "window_id": hwnd,
+            "element_count": element_count,
+            "tree_markdown": result.tree_markdown,
+        });
+        walk.outcome().apply(&mut payload);
+        serde_json::to_vec_pretty(&payload).ok()
+    }) {
+        Ok(result) => result,
+        Err(error) => {
+            tracing::warn!(target: "recording", "Windows application-state thread is unavailable: {error}");
+            None
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -153,9 +161,10 @@ pub fn element_window_local_xy(
         return Some((window_id, None));
     }
     let (sx, sy) = element.center;
-    // The cached center is in SCREEN coords. Convert to window-local pixel
-    // coords by subtracting the window's screen origin (GetWindowRect-equivalent
-    // in WindowInfo). Windows captures at logical pixels so no scale factor.
+    // The cached center is in SCREEN coords. Convert to window-local physical
+    // pixel coords by subtracting the window's screen origin
+    // (GetWindowRect-equivalent in WindowInfo). Capture and input share this
+    // physical-pixel space under Per-Monitor-V2 awareness.
     let wins = crate::win32::list_windows(Some(pid_u32));
     let point = wins
         .iter()

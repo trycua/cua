@@ -428,6 +428,10 @@ if ($suite -in @("native", "all")) {
 }
 
 if ($suite -in @("capture", "all")) {
+    Invoke-CargoTest "Embedded SDK DPI ABI capture" @(
+        "test", "-p", "cua-driver-sdk", "--lib", "tests::embedded_abi_uses_physical_pixels_from_an_unaware_host_thread", "--",
+        "--ignored", "--exact", "--nocapture", "--test-threads=1"
+    )
     Invoke-CargoTest "capture contract" @(
         "test", "-p", "cua-driver-e2e", "--test", "capture_contract_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"

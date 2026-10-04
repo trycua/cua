@@ -69,22 +69,40 @@ where
     Claim: Future<Output = anyhow::Result<T>>,
     Consent: Future<Output = Result<BrowserConsentOutcome, BrowserRefusal>>,
 {
-    let mut consent = Box::pin(tokio::time::timeout(Duration::from_secs(4), consent));
-    let (result, outcome) = tokio::select! {
-        result = claim.as_mut() => {
-            if !action.started() {
-                return Ok((result, false));
-            }
-            (Some(result), consent.await)
-        },
-        outcome = consent.as_mut() => (None, outcome),
+    // A timeout may stop observation, but must not detach a committed native worker.
+    let mut consent = Box::pin(consent);
+    let (result, outcome) = {
+        let mut bounded = Box::pin(tokio::time::timeout(
+            Duration::from_secs(4),
+            consent.as_mut(),
+        ));
+        tokio::select! {
+            result = claim.as_mut() => {
+                if !action.started() {
+                    return Ok((result, false));
+                }
+                (Some(result), bounded.await)
+            },
+            outcome = bounded.as_mut() => (None, outcome),
+        }
     };
-    let outcome = outcome.map_err(|_| {
-        refusal(
-            BrowserRefusalCode::BrowserWrongTargetRefused,
-            "browser consent did not settle within its bounded attempt",
-        )
-    })??;
+    let outcome = match outcome {
+        Ok(outcome) => outcome?,
+        Err(_) => {
+            if action.started() {
+                consent.await.map_err(|mut error| {
+                    error
+                        .message
+                        .push_str(" (consent attempt deadline expired)");
+                    error
+                })?;
+            }
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "browser consent did not settle within its bounded attempt",
+            ));
+        }
+    };
     let accepted = outcome == BrowserConsentOutcome::Accepted;
     if action.started() && !accepted {
         return Err(refusal(
@@ -1378,7 +1396,7 @@ mod tests {
     async fn started_consent_settles_success_refusal_and_timeout_for_both_claim_results() {
         use std::sync::atomic::{AtomicBool, Ordering};
         for claim_succeeds in [true, false] {
-            for outcome in 0..3 {
+            for outcome in 0..4 {
                 let action = BrowserConsentAction::default();
                 let marker = action.clone();
                 let settled = Arc::new(AtomicBool::new(false));
@@ -1397,15 +1415,18 @@ mod tests {
                 let consent = async move {
                     let _drop_signal = drop_signal;
                     marker.perform(|| tx.send(()).unwrap());
-                    if outcome == 2 {
-                        loop {
-                            marker.perform(|| ());
-                            tokio::time::sleep(Duration::from_millis(10)).await;
-                        }
+                    if outcome >= 2 {
+                        // Model Linux's non-cancellable native action worker.
+                        tokio::task::spawn_blocking(|| {
+                            std::thread::sleep(Duration::from_millis(4100));
+                        })
+                        .await
+                        .unwrap();
+                    } else {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
                     }
-                    tokio::time::sleep(Duration::from_millis(10)).await;
                     settle_marker.store(true, Ordering::SeqCst);
-                    if outcome == 0 {
+                    if outcome == 0 || outcome == 2 {
                         Ok(BrowserConsentOutcome::Accepted)
                     } else {
                         Err(refusal(
@@ -1422,7 +1443,7 @@ mod tests {
                         assert_eq!(claim.is_ok(), claim_succeeds);
                         assert!(displayed && settled.load(Ordering::SeqCst));
                     }
-                    1 => assert_eq!(
+                    1 | 3 => assert_eq!(
                         result.unwrap_err().code,
                         BrowserRefusalCode::BrowserConsentRevoked
                     ),
@@ -1431,11 +1452,56 @@ mod tests {
                             result.unwrap_err().code,
                             BrowserRefusalCode::BrowserWrongTargetRefused
                         );
-                        assert!(!settled.load(Ordering::SeqCst));
+                        assert!(
+                            settled.load(Ordering::SeqCst),
+                            "committed worker was detached on timeout"
+                        );
                     }
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn timed_out_consent_drains_before_pending_claim_is_dropped() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let claim_dropped = Arc::new(AtomicBool::new(false));
+        let claim_guard = DropSignal(claim_dropped.clone());
+        let worker_done = Arc::new(AtomicBool::new(false));
+        let finished = worker_done.clone();
+        let dropped_during_worker = claim_dropped.clone();
+        let result = claim_with_delayed_consent(
+            async move {
+                let _guard = claim_guard;
+                std::future::pending::<anyhow::Result<u8>>().await
+            },
+            |action| async move {
+                action
+                    .perform(|| {
+                        tokio::task::spawn_blocking(move || {
+                            std::thread::sleep(Duration::from_millis(4100));
+                            assert!(!dropped_during_worker.load(Ordering::SeqCst));
+                            finished.store(true, Ordering::SeqCst);
+                        })
+                    })
+                    .await
+                    .unwrap();
+                Ok(BrowserConsentOutcome::Accepted)
+            },
+        )
+        .await;
+        assert_eq!(
+            result.unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+        assert!(
+            worker_done.load(Ordering::SeqCst),
+            "attempt returned before worker settlement"
+        );
+        assert!(
+            claim_dropped.load(Ordering::SeqCst),
+            "caller must be able to revoke without a pending claim"
+        );
     }
 
     #[tokio::test]

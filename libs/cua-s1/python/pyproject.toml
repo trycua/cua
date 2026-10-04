@@ -44,7 +44,7 @@ mcp = [
 ]
 nano-vision = [
     "transformers>=4.45,<5",
-    "pillow>=10,<12",
+    "pillow>=12.3.0,<13",
 ]
 four-b = [
     "transformers>=5.10.1,<6",
@@ -64,7 +64,7 @@ four-b-rl = [
     "accelerate>=0.34,<2",
     # The RL trainer renders its own set-of-mark screenshots (multimodal mode)
     # and decodes them for the processor.
-    "pillow>=10,<12",
+    "pillow>=12.3.0,<13",
     "cua-bench-s1",
     # The live environment itself (the `cua_bench` package) is deliberately not
     # declared here: it is the monorepo's own `libs/cua-bench`, imported lazily
@@ -75,7 +75,7 @@ all = [
     "mcp>=1,<2",
     "pdfplumber>=0.11,<1",
     "transformers>=4.45,<5",
-    "pillow>=10,<12",
+    "pillow>=12.3.0,<13",
     "peft>=0.13,<1",
 ]
 training = [

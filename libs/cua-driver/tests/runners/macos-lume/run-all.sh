@@ -197,6 +197,26 @@ require_golden_image_dependencies() {
   done
 }
 
+# The Tk pointer and perception rows skip when python3 has no tkinter, and
+# Apple's Tk 8.5.9 renders the canvas fixture too poorly for OCR. The canonical
+# lane must run them, so require a modern Tk instead of a shrunken matrix.
+require_modern_tk() {
+  local version
+  if ! version="$(python3 -c 'import tkinter; print(tkinter.Tcl().eval("info patchlevel"))' 2>/dev/null)"; then
+    echo "python3 has no usable tkinter; install Homebrew python-tk so the Tk rows run" >&2
+    return 2
+  fi
+  if ! python3 - "${version}" <<'PY'
+import sys
+major, minor = (int(part) for part in sys.argv[1].split(".")[:2])
+raise SystemExit(0 if (major, minor) >= (8, 6) else 1)
+PY
+  then
+    echo "python3 uses Tk ${version}; install Homebrew python-tk (Tk 8.6 or later) and put it first on PATH" >&2
+    return 2
+  fi
+}
+
 run_bounded_command() {
   command -v python3 >/dev/null 2>&1 || {
     echo "Missing golden-image dependency: python3" >&2
@@ -947,6 +967,7 @@ if [[ "${SIP_STATUS}" != *"System Integrity Protection status: disabled."* ]]; t
 fi
 
 require_golden_image_dependencies || exit $?
+require_modern_tk || exit $?
 
 if [[ ! -f "${SIGNING_KEYCHAIN}" ]]; then
   echo "Missing golden-image signing keychain: ${SIGNING_KEYCHAIN}" >&2

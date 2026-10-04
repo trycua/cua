@@ -2236,9 +2236,9 @@ public protocol CuaProtocol: AnyObject, Sendable {
     func auth()  -> Auth
 
     /**
-     * Fleet pools, templates, claims and images. Always talks to Fleet
-     * from this process with this SDK's credentials (in daemon mode, from
-     * the environment).
+     * Fleet (Cua Cloud, closed: its calls fail with that message) and the
+     * account's billing, with this SDK's account credentials (in daemon
+     * mode, from this process's settings and environment).
      */
     func fleet() throws  -> Fleet
 
@@ -2259,7 +2259,7 @@ public protocol CuaProtocol: AnyObject, Sendable {
     func mode()  -> CuaMode
 
     /**
-     * Sandboxes (Fleet, local, direct).
+     * Sandboxes (local, direct, providers).
      */
     func sandboxes()  -> Sandboxes
 
@@ -2274,8 +2274,8 @@ public protocol CuaProtocol: AnyObject, Sendable {
     func spaces()  -> Spaces
 
     /**
-     * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
-     * Fleet service URL or a relay URL) without a sandbox.
+     * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+     * relay URL) without a sandbox.
      */
     func spacesd(url: String, token: String?) async throws  -> SpacesdClient
 
@@ -2417,9 +2417,9 @@ open func auth() -> Auth  {
 }
 
     /**
-     * Fleet pools, templates, claims and images. Always talks to Fleet
-     * from this process with this SDK's credentials (in daemon mode, from
-     * the environment).
+     * Fleet (Cua Cloud, closed: its calls fail with that message) and the
+     * account's billing, with this SDK's account credentials (in daemon
+     * mode, from this process's settings and environment).
      */
 open func fleet()throws  -> Fleet  {
     return try  FfiConverterTypeFleet_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
@@ -2473,7 +2473,7 @@ open func mode() -> CuaMode  {
 }
 
     /**
-     * Sandboxes (Fleet, local, direct).
+     * Sandboxes (local, direct, providers).
      */
 open func sandboxes() -> Sandboxes  {
     return try!  FfiConverterTypeSandboxes_lift(try! rustCall() {
@@ -2515,8 +2515,8 @@ open func spaces() -> Spaces  {
 }
 
     /**
-     * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
-     * Fleet service URL or a relay URL) without a sandbox.
+     * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+     * relay URL) without a sandbox.
      */
 open func spacesd(url: String, token: String?)async throws  -> SpacesdClient  {
     return
@@ -2934,88 +2934,79 @@ public func FfiConverterTypeDevices_lower(_ value: Devices) -> UInt64 {
 
 
 /**
- * Fleet control plane.
+ * Fleet control plane (Cua Cloud, closed) and the account's billing.
  */
 public protocol FleetProtocol: AnyObject, Sendable {
 
     /**
-     * Claims a sandbox from a pool and waits for it to bind. A claim named
-     * `name` that already exists is reattached.
+     * Claims a sandbox from a pool. Cua Cloud has closed.
      */
     func acquire(pool: String, name: String?, ttlSeconds: UInt32?) async throws  -> FleetSandbox
 
     /**
-     * [`Fleet::acquire`] with claim options, including a per-claim env
-     * token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
-     * releases the claim).
+     * Claims a sandbox with options. Cua Cloud has closed.
      */
     func acquireWith(pool: String, options: FleetClaimOptions) async throws  -> FleetSandbox
 
     /**
-     * Reconciles pool `name` (= namespace = template) to run `spec` with
-     * `options`: the one pool writer (rolls a new pool back if the
-     * template fails). The image is pinned to the variant the runtime
-     * runs; `spec.registry_secret` is written as the pool's pull Secret.
+     * Reconciles a pool. Cua Cloud has closed.
      */
     func apply(name: String, spec: SandboxSpec, options: PoolOptions) async throws  -> FleetPool
 
     /**
-     * Deprecated: use [`Fleet::apply`]. Reconciles a pool and its template
-     * from the flat spec (converted to [`SandboxSpec`] + [`PoolOptions`]).
+     * Deprecated pool writer. Cua Cloud has closed.
      */
     func applyPool(spec: FleetPoolSpec) async throws  -> FleetPool
 
     /**
-     * Lays the set fields of `spec` over pool `pool`'s template and writes
-     * it (the pool's capacity is kept; a no-op when nothing differs).
+     * Writes a spec over a pool's template. Cua Cloud has closed.
      */
     func applyPoolTemplate(pool: String, spec: SandboxSpec) async throws
 
     /**
-     * Waits for a named claim to bind.
+     * Waits for a named claim to bind. Cua Cloud has closed.
      */
     func attachClaim(namespace: String, name: String) async throws  -> FleetSandbox
 
     /**
-     * Fleet API base URL.
+     * The Cua account API base URL.
      */
     func baseUrl()  -> String
 
     /**
-     * The account's Cua Cloud billing: its credit, card and the website
-     * billing page. A Fleet without billing answers `billing_enabled:
+     * The account's billing: its credit, card and the website billing
+     * page. An account API without billing answers `billing_enabled:
      * false`.
      */
     func billingStatus() async throws  -> FleetBillingStatus
 
     /**
-     * Compares the set fields of `spec` with pool `pool`'s template:
-     * `PoolSpecMismatch` (with a readable diff) when they differ.
+     * Compares a spec with a pool's template. Cua Cloud has closed.
      */
     func checkPoolSpec(pool: String, spec: SandboxSpec) async throws
 
     /**
-     * Creates a claim without waiting.
+     * Creates a claim. Cua Cloud has closed.
      */
     func claim(pool: String, name: String?, ttlSeconds: UInt32?) async throws  -> FleetClaim
 
     /**
-     * Creates an image resource (remote build) from a JSON manifest.
+     * Creates an image resource. Cua Cloud has closed.
      */
     func createImage(namespace: String, manifestJson: String) async throws  -> String
 
     /**
-     * Mints a signed, shareable service URL.
+     * Mints a signed service URL. Cua Cloud has closed.
      */
     func createSignedServiceUrl(sandbox: FleetSandbox, service: String, label: String?, expiresInSeconds: UInt32) async throws  -> FleetSignedUrl
 
     /**
-     * Deletes an image resource.
+     * Deletes an image resource. Cua Cloud has closed.
      */
     func deleteImage(namespace: String, name: String) async throws
 
     /**
-     * Deletes a pool, its namespace and its same-named template.
+     * Deletes a pool. Cua Cloud has closed.
      */
     func deletePool(name: String) async throws
 
@@ -3025,89 +3016,83 @@ public protocol FleetProtocol: AnyObject, Sendable {
     func ephemeralPoolName()  -> String
 
     /**
-     * Reads pool `name` back as the shared model, with its `fleets_pool`
-     * Terraform block.
+     * Reads a pool back. Cua Cloud has closed.
      */
     func exportPool(name: String) async throws  -> FleetPoolExport
 
     /**
-     * Gets an image resource (JSON).
+     * Gets an image resource. Cua Cloud has closed.
      */
     func getImage(namespace: String, name: String) async throws  -> String
 
     /**
-     * Looks up a pool.
+     * Looks up a pool. Cua Cloud has closed.
      */
     func getPool(name: String) async throws  -> FleetPool
 
     /**
-     * Extends a claim's lease; returns the RFC 3339 shutdown time.
+     * Extends a claim's lease. Cua Cloud has closed.
      */
     func keepAlive(namespace: String, name: String, seconds: UInt32) async throws  -> String
 
     /**
-     * Lists claims in a namespace.
+     * Lists claims. Cua Cloud has closed.
      */
     func listClaims(namespace: String) async throws  -> [FleetClaim]
 
     /**
-     * Lists image resources (JSON) in a namespace.
+     * Lists image resources. Cua Cloud has closed.
      */
     func listImages(namespace: String) async throws  -> [String]
 
     /**
-     * Lists pools in a namespace.
+     * Lists pools. Cua Cloud has closed.
      */
     func listPools(namespace: String) async throws  -> [FleetPool]
 
     /**
-     * Lists templates in a namespace as JSON resources.
+     * Lists templates. Cua Cloud has closed.
      */
     func listTemplates(namespace: String) async throws  -> [String]
 
     /**
-     * The image pool `name`'s template runs, as a claim on it reports it
-     * (`Sandbox.image_info`): pinned by the resolver (cached per pool), or
-     * the template reference with empty `pinned_ref`/`digest` when the
-     * registry cannot be read. `None` when the template names no image.
+     * The image a pool's template runs. Cua Cloud has closed.
      */
     func poolImageInfo(name: String) async throws  -> ImageInfo?
 
     /**
-     * Managed pools (list, gc).
+     * Managed pools (Cua Cloud, closed).
      */
     func pools()  -> FleetPools
 
     /**
-     * Releases a claim (missing claims are fine).
+     * Releases a claim. Cua Cloud has closed.
      */
     func release(namespace: String, name: String) async throws
 
     /**
-     * The gateway URL of a sandbox service (needs the Fleet bearer).
+     * The gateway URL of a sandbox service. Cua Cloud has closed.
      */
     func serviceUrl(sandbox: FleetSandbox, service: String) throws  -> String
 
     /**
-     * Sets warm replicas (0 suspends).
+     * Sets warm replicas. Cua Cloud has closed.
      */
     func setPoolReplicas(name: String, replicas: UInt32) async throws  -> FleetPool
 
     /**
-     * This account's Cua Cloud rates (`GET /api/config`), reused for five
-     * minutes. `None` when Fleet answers without rates: show no price
-     * rather than a guess.
+     * This account's Cua Cloud rates. Cua Cloud has closed: `None`.
      */
     func usagePricing() async throws  -> FleetUsagePricing?
 
     /**
-     * Waits for at least one ready replica.
+     * Waits for a ready replica. Cua Cloud has closed.
      */
     func waitPoolReady(name: String, timeoutMs: UInt32) async throws  -> FleetPool
 
 }
 /**
- * Fleet control plane.
+ * Fleet control plane (Cua Cloud, closed) and the account's billing.
  */
 open class Fleet: FleetProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -3163,8 +3148,7 @@ open class Fleet: FleetProtocol, @unchecked Sendable {
 
 
     /**
-     * Claims a sandbox from a pool and waits for it to bind. A claim named
-     * `name` that already exists is reattached.
+     * Claims a sandbox from a pool. Cua Cloud has closed.
      */
 open func acquire(pool: String, name: String?, ttlSeconds: UInt32?)async throws  -> FleetSandbox  {
     return
@@ -3184,9 +3168,7 @@ open func acquire(pool: String, name: String?, ttlSeconds: UInt32?)async throws 
 }
 
     /**
-     * [`Fleet::acquire`] with claim options, including a per-claim env
-     * token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
-     * releases the claim).
+     * Claims a sandbox with options. Cua Cloud has closed.
      */
 open func acquireWith(pool: String, options: FleetClaimOptions)async throws  -> FleetSandbox  {
     return
@@ -3206,10 +3188,7 @@ open func acquireWith(pool: String, options: FleetClaimOptions)async throws  -> 
 }
 
     /**
-     * Reconciles pool `name` (= namespace = template) to run `spec` with
-     * `options`: the one pool writer (rolls a new pool back if the
-     * template fails). The image is pinned to the variant the runtime
-     * runs; `spec.registry_secret` is written as the pool's pull Secret.
+     * Reconciles a pool. Cua Cloud has closed.
      */
 open func apply(name: String, spec: SandboxSpec, options: PoolOptions)async throws  -> FleetPool  {
     return
@@ -3229,8 +3208,7 @@ open func apply(name: String, spec: SandboxSpec, options: PoolOptions)async thro
 }
 
     /**
-     * Deprecated: use [`Fleet::apply`]. Reconciles a pool and its template
-     * from the flat spec (converted to [`SandboxSpec`] + [`PoolOptions`]).
+     * Deprecated pool writer. Cua Cloud has closed.
      */
 open func applyPool(spec: FleetPoolSpec)async throws  -> FleetPool  {
     return
@@ -3250,8 +3228,7 @@ open func applyPool(spec: FleetPoolSpec)async throws  -> FleetPool  {
 }
 
     /**
-     * Lays the set fields of `spec` over pool `pool`'s template and writes
-     * it (the pool's capacity is kept; a no-op when nothing differs).
+     * Writes a spec over a pool's template. Cua Cloud has closed.
      */
 open func applyPoolTemplate(pool: String, spec: SandboxSpec)async throws   {
     return
@@ -3271,7 +3248,7 @@ open func applyPoolTemplate(pool: String, spec: SandboxSpec)async throws   {
 }
 
     /**
-     * Waits for a named claim to bind.
+     * Waits for a named claim to bind. Cua Cloud has closed.
      */
 open func attachClaim(namespace: String, name: String)async throws  -> FleetSandbox  {
     return
@@ -3291,7 +3268,7 @@ open func attachClaim(namespace: String, name: String)async throws  -> FleetSand
 }
 
     /**
-     * Fleet API base URL.
+     * The Cua account API base URL.
      */
 open func baseUrl() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
@@ -3302,8 +3279,8 @@ open func baseUrl() -> String  {
 }
 
     /**
-     * The account's Cua Cloud billing: its credit, card and the website
-     * billing page. A Fleet without billing answers `billing_enabled:
+     * The account's billing: its credit, card and the website billing
+     * page. An account API without billing answers `billing_enabled:
      * false`.
      */
 open func billingStatus()async throws  -> FleetBillingStatus  {
@@ -3324,8 +3301,7 @@ open func billingStatus()async throws  -> FleetBillingStatus  {
 }
 
     /**
-     * Compares the set fields of `spec` with pool `pool`'s template:
-     * `PoolSpecMismatch` (with a readable diff) when they differ.
+     * Compares a spec with a pool's template. Cua Cloud has closed.
      */
 open func checkPoolSpec(pool: String, spec: SandboxSpec)async throws   {
     return
@@ -3345,7 +3321,7 @@ open func checkPoolSpec(pool: String, spec: SandboxSpec)async throws   {
 }
 
     /**
-     * Creates a claim without waiting.
+     * Creates a claim. Cua Cloud has closed.
      */
 open func claim(pool: String, name: String?, ttlSeconds: UInt32?)async throws  -> FleetClaim  {
     return
@@ -3365,7 +3341,7 @@ open func claim(pool: String, name: String?, ttlSeconds: UInt32?)async throws  -
 }
 
     /**
-     * Creates an image resource (remote build) from a JSON manifest.
+     * Creates an image resource. Cua Cloud has closed.
      */
 open func createImage(namespace: String, manifestJson: String)async throws  -> String  {
     return
@@ -3385,7 +3361,7 @@ open func createImage(namespace: String, manifestJson: String)async throws  -> S
 }
 
     /**
-     * Mints a signed, shareable service URL.
+     * Mints a signed service URL. Cua Cloud has closed.
      */
 open func createSignedServiceUrl(sandbox: FleetSandbox, service: String, label: String?, expiresInSeconds: UInt32)async throws  -> FleetSignedUrl  {
     return
@@ -3405,7 +3381,7 @@ open func createSignedServiceUrl(sandbox: FleetSandbox, service: String, label: 
 }
 
     /**
-     * Deletes an image resource.
+     * Deletes an image resource. Cua Cloud has closed.
      */
 open func deleteImage(namespace: String, name: String)async throws   {
     return
@@ -3425,7 +3401,7 @@ open func deleteImage(namespace: String, name: String)async throws   {
 }
 
     /**
-     * Deletes a pool, its namespace and its same-named template.
+     * Deletes a pool. Cua Cloud has closed.
      */
 open func deletePool(name: String)async throws   {
     return
@@ -3456,8 +3432,7 @@ open func ephemeralPoolName() -> String  {
 }
 
     /**
-     * Reads pool `name` back as the shared model, with its `fleets_pool`
-     * Terraform block.
+     * Reads a pool back. Cua Cloud has closed.
      */
 open func exportPool(name: String)async throws  -> FleetPoolExport  {
     return
@@ -3477,7 +3452,7 @@ open func exportPool(name: String)async throws  -> FleetPoolExport  {
 }
 
     /**
-     * Gets an image resource (JSON).
+     * Gets an image resource. Cua Cloud has closed.
      */
 open func getImage(namespace: String, name: String)async throws  -> String  {
     return
@@ -3497,7 +3472,7 @@ open func getImage(namespace: String, name: String)async throws  -> String  {
 }
 
     /**
-     * Looks up a pool.
+     * Looks up a pool. Cua Cloud has closed.
      */
 open func getPool(name: String)async throws  -> FleetPool  {
     return
@@ -3517,7 +3492,7 @@ open func getPool(name: String)async throws  -> FleetPool  {
 }
 
     /**
-     * Extends a claim's lease; returns the RFC 3339 shutdown time.
+     * Extends a claim's lease. Cua Cloud has closed.
      */
 open func keepAlive(namespace: String, name: String, seconds: UInt32)async throws  -> String  {
     return
@@ -3537,7 +3512,7 @@ open func keepAlive(namespace: String, name: String, seconds: UInt32)async throw
 }
 
     /**
-     * Lists claims in a namespace.
+     * Lists claims. Cua Cloud has closed.
      */
 open func listClaims(namespace: String)async throws  -> [FleetClaim]  {
     return
@@ -3557,7 +3532,7 @@ open func listClaims(namespace: String)async throws  -> [FleetClaim]  {
 }
 
     /**
-     * Lists image resources (JSON) in a namespace.
+     * Lists image resources. Cua Cloud has closed.
      */
 open func listImages(namespace: String)async throws  -> [String]  {
     return
@@ -3577,7 +3552,7 @@ open func listImages(namespace: String)async throws  -> [String]  {
 }
 
     /**
-     * Lists pools in a namespace.
+     * Lists pools. Cua Cloud has closed.
      */
 open func listPools(namespace: String)async throws  -> [FleetPool]  {
     return
@@ -3597,7 +3572,7 @@ open func listPools(namespace: String)async throws  -> [FleetPool]  {
 }
 
     /**
-     * Lists templates in a namespace as JSON resources.
+     * Lists templates. Cua Cloud has closed.
      */
 open func listTemplates(namespace: String)async throws  -> [String]  {
     return
@@ -3617,10 +3592,7 @@ open func listTemplates(namespace: String)async throws  -> [String]  {
 }
 
     /**
-     * The image pool `name`'s template runs, as a claim on it reports it
-     * (`Sandbox.image_info`): pinned by the resolver (cached per pool), or
-     * the template reference with empty `pinned_ref`/`digest` when the
-     * registry cannot be read. `None` when the template names no image.
+     * The image a pool's template runs. Cua Cloud has closed.
      */
 open func poolImageInfo(name: String)async throws  -> ImageInfo?  {
     return
@@ -3640,7 +3612,7 @@ open func poolImageInfo(name: String)async throws  -> ImageInfo?  {
 }
 
     /**
-     * Managed pools (list, gc).
+     * Managed pools (Cua Cloud, closed).
      */
 open func pools() -> FleetPools  {
     return try!  FfiConverterTypeFleetPools_lift(try! rustCall() {
@@ -3651,7 +3623,7 @@ open func pools() -> FleetPools  {
 }
 
     /**
-     * Releases a claim (missing claims are fine).
+     * Releases a claim. Cua Cloud has closed.
      */
 open func release(namespace: String, name: String)async throws   {
     return
@@ -3671,7 +3643,7 @@ open func release(namespace: String, name: String)async throws   {
 }
 
     /**
-     * The gateway URL of a sandbox service (needs the Fleet bearer).
+     * The gateway URL of a sandbox service. Cua Cloud has closed.
      */
 open func serviceUrl(sandbox: FleetSandbox, service: String)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
@@ -3684,7 +3656,7 @@ open func serviceUrl(sandbox: FleetSandbox, service: String)throws  -> String  {
 }
 
     /**
-     * Sets warm replicas (0 suspends).
+     * Sets warm replicas. Cua Cloud has closed.
      */
 open func setPoolReplicas(name: String, replicas: UInt32)async throws  -> FleetPool  {
     return
@@ -3704,9 +3676,7 @@ open func setPoolReplicas(name: String, replicas: UInt32)async throws  -> FleetP
 }
 
     /**
-     * This account's Cua Cloud rates (`GET /api/config`), reused for five
-     * minutes. `None` when Fleet answers without rates: show no price
-     * rather than a guess.
+     * This account's Cua Cloud rates. Cua Cloud has closed: `None`.
      */
 open func usagePricing()async throws  -> FleetUsagePricing?  {
     return
@@ -3726,7 +3696,7 @@ open func usagePricing()async throws  -> FleetUsagePricing?  {
 }
 
     /**
-     * Waits for at least one ready replica.
+     * Waits for a ready replica. Cua Cloud has closed.
      */
 open func waitPoolReady(name: String, timeoutMs: UInt32)async throws  -> FleetPool  {
     return
@@ -3796,33 +3766,28 @@ public func FfiConverterTypeFleet_lower(_ value: Fleet) -> UInt64 {
 
 
 /**
- * Managed pools: what `Sandboxes.create` without a pool uses.
+ * Managed pools (Cua Cloud, closed).
  */
 public protocol FleetPoolsProtocol: AnyObject, Sendable {
 
     /**
-     * Deletes managed pools idle for `idle_seconds` (default 1800) and
-     * stuck Pending/Failed managed claims past their TTL.
+     * Deletes idle managed pools. Cua Cloud has closed.
      */
     func gc(idleSeconds: UInt32?) async throws  -> FleetGcReport
 
     /**
-     * [`FleetPools::gc`] restricted to the named managed pools: each is
-     * deleted (with its namespace) once it has no claims and has been idle
-     * for `idle_seconds` (default 0, i.e. now). Pools with live claims are
-     * kept, so a pool another process is using survives. Tests use this to
-     * remove the pools they created.
+     * Deletes the named managed pools. Cua Cloud has closed.
      */
     func gcPools(names: [String], idleSeconds: UInt32?) async throws  -> FleetGcReport
 
     /**
-     * This account's managed pools.
+     * This account's managed pools. Cua Cloud has closed.
      */
     func list() async throws  -> [FleetManagedPool]
 
 }
 /**
- * Managed pools: what `Sandboxes.create` without a pool uses.
+ * Managed pools (Cua Cloud, closed).
  */
 open class FleetPools: FleetPoolsProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -3878,8 +3843,7 @@ open class FleetPools: FleetPoolsProtocol, @unchecked Sendable {
 
 
     /**
-     * Deletes managed pools idle for `idle_seconds` (default 1800) and
-     * stuck Pending/Failed managed claims past their TTL.
+     * Deletes idle managed pools. Cua Cloud has closed.
      */
 open func gc(idleSeconds: UInt32?)async throws  -> FleetGcReport  {
     return
@@ -3899,11 +3863,7 @@ open func gc(idleSeconds: UInt32?)async throws  -> FleetGcReport  {
 }
 
     /**
-     * [`FleetPools::gc`] restricted to the named managed pools: each is
-     * deleted (with its namespace) once it has no claims and has been idle
-     * for `idle_seconds` (default 0, i.e. now). Pools with live claims are
-     * kept, so a pool another process is using survives. Tests use this to
-     * remove the pools they created.
+     * Deletes the named managed pools. Cua Cloud has closed.
      */
 open func gcPools(names: [String], idleSeconds: UInt32?)async throws  -> FleetGcReport  {
     return
@@ -3923,7 +3883,7 @@ open func gcPools(names: [String], idleSeconds: UInt32?)async throws  -> FleetGc
 }
 
     /**
-     * This account's managed pools.
+     * This account's managed pools. Cua Cloud has closed.
      */
 open func list()async throws  -> [FleetManagedPool]  {
     return
@@ -17638,8 +17598,8 @@ public struct CuaConfig: Equatable, Hashable {
      */
     public var fleetFromSession: Bool
     /**
-     * Where managed Fleet pools keep their name cache and machine-wide GC
-     * lock (default: `$CUA_HOME` or `~/.cua`, or next to `state_dir`).
+     * Unused: managed Fleet pools (Cua Cloud, closed) kept their name
+     * cache here.
      */
     public var fleetPoolHome: String?
 
@@ -17671,8 +17631,8 @@ public struct CuaConfig: Equatable, Hashable {
          * shared credential store, refreshed as needed.
          */fleetFromSession: Bool = false,
         /**
-         * Where managed Fleet pools keep their name cache and machine-wide GC
-         * lock (default: `$CUA_HOME` or `~/.cua`, or next to `state_dir`).
+         * Unused: managed Fleet pools (Cua Cloud, closed) kept their name
+         * cache here.
          */fleetPoolHome: String? = nil) {
         self.stateDir = stateDir
         self.fleet = fleet
@@ -21620,8 +21580,9 @@ public func FfiConverterTypeFleetSandbox_lower(_ value: FleetSandbox) -> RustBuf
 
 
 /**
- * Fleet credentials and endpoints. Unset fields fall back to the
- * environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
+ * Cua account credentials and endpoints (Cua Cloud, closed, used them for
+ * sandboxes; the account's billing still does). Unset fields fall back to
+ * the environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
  * `CUA_CLIENT_SECRET`, `FLEETS_TOKEN`) when `CuaConfig.fleet_from_env`.
  */
 public struct FleetSettings: Equatable, Hashable {
@@ -21790,9 +21751,7 @@ public func FfiConverterTypeFleetSignedUrl_lower(_ value: FleetSignedUrl) -> Rus
 
 
 /**
- * The everyday sizes of a cloud sandbox, which the Cua apps offer
- * (`cua_fleet::CLOUD_DEFAULT_RANGE_CPUS`,
- * `cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB`).
+ * The everyday sizes of a cloud sandbox, which the Cua apps offered.
  */
 public struct FleetSizeLimits: Equatable, Hashable {
     /**
@@ -39317,10 +39276,8 @@ public func locations() -> [LocationInfo]  {
 })
 }
 /**
- * [`fleet_resolve_runtime`] with the image variant already known
- * (`variant` as [`fleet_image_variant`] returns it); `None` means the
- * manifest could not be read (an unset runtime then falls back to the
- * reference). Pure (no registry read).
+ * [`fleet_resolve_runtime`] with the image variant already known. Cua
+ * Cloud has closed.
  */
 public func fleetCheckRuntime(runtime: String?, image: String, variant: String?)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
@@ -39341,10 +39298,8 @@ public func fleetGenerateClaimToken() -> String  {
 })
 }
 /**
- * The variant of an image from its registry documents (`manifest`: an
- * image manifest or index, `config`: the platform manifest's config blob):
- * `container-disk`, `rootfs` or `other`. Pure (no registry read). A macOS
- * image raises `Unsupported`.
+ * The Fleet variant of an image from its registry documents. Cua Cloud
+ * has closed.
  */
 public func fleetImageVariant(manifest: String, config: String?)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
@@ -39355,19 +39310,7 @@ public func fleetImageVariant(manifest: String, config: String?)throws  -> Strin
 })
 }
 /**
- * The Fleet runtime for `image`: `runtime` (`kubevirt`, `gvisor`) when
- * given, else the one the image needs. What the image is
- * comes from its registry manifest (read with docker, ghcr and ECR
- * credentials): a KubeVirt containerDisk (a `/disk/disk.img` layer or
- * trycua containerDisk media types) runs on `kubevirt`, a container rootfs
- * on `gvisor`. When the manifest cannot be read and no runtime is given,
- * the runtime is guessed from the reference with a warning (a `docker-`
- * tag runs on `gvisor`, anything else on `kubevirt`). Raises
- * `InvalidArgument` only for a runtime the image cannot run on, and
- * `Unsupported` for a macOS image or runtime `macos` (Fleet does not offer
- * macOS in this SDK). Blocks
- * while the registry is read (at most 20 s; `CUA_FLEET_IMAGE_INSPECT=0`
- * skips it). The one copy of this rule; cua-sandbox calls it.
+ * The Fleet runtime for `image`. Cua Cloud has closed.
  */
 public func fleetResolveRuntime(runtime: String?, image: String)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
@@ -39379,9 +39322,7 @@ public func fleetResolveRuntime(runtime: String?, image: String)throws  -> Strin
 }
 /**
  * The everyday sizes of a cloud sandbox (1-8 vCPUs, 1-32 GiB), which the
- * Cua apps offer. The SDK does not enforce them: it accepts up to 64 vCPUs
- * and 512 MiB to 512 GiB, and Fleet decides what an account may run (a
- * size over the account's limits fails with `FleetAdmissionDenied`).
+ * Cua apps offered.
  */
 public func fleetSizeLimits() -> FleetSizeLimits  {
     return try!  FfiConverterTypeFleetSizeLimits_lift(try! rustCall() {
@@ -39874,19 +39815,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_func_locations() != 62174) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_func_fleet_check_runtime() != 18168) {
+    if (uniffi_cua_sdk_checksum_func_fleet_check_runtime() != 42391) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_fleet_generate_claim_token() != 46314) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_func_fleet_image_variant() != 30093) {
+    if (uniffi_cua_sdk_checksum_func_fleet_image_variant() != 35019) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_func_fleet_resolve_runtime() != 15632) {
+    if (uniffi_cua_sdk_checksum_func_fleet_resolve_runtime() != 9436) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_func_fleet_size_limits() != 53900) {
+    if (uniffi_cua_sdk_checksum_func_fleet_size_limits() != 19571) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_func_canonical_image() != 8955) {
@@ -40132,7 +40073,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_cua_auth() != 19106) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_cua_fleet() != 40955) {
+    if (uniffi_cua_sdk_checksum_method_cua_fleet() != 64152) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_cua_info() != 11159) {
@@ -40144,7 +40085,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_cua_mode() != 63626) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_cua_sandboxes() != 8394) {
+    if (uniffi_cua_sdk_checksum_method_cua_sandboxes() != 4520) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_cua_shutdown_daemon() != 57559) {
@@ -40153,106 +40094,106 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_cua_spaces() != 35262) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_cua_spacesd() != 28670) {
+    if (uniffi_cua_sdk_checksum_method_cua_spacesd() != 62689) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_acquire() != 16535) {
+    if (uniffi_cua_sdk_checksum_method_fleet_acquire() != 39166) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_acquire_with() != 8432) {
+    if (uniffi_cua_sdk_checksum_method_fleet_acquire_with() != 1499) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_apply() != 23134) {
+    if (uniffi_cua_sdk_checksum_method_fleet_apply() != 41633) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_apply_pool() != 43781) {
+    if (uniffi_cua_sdk_checksum_method_fleet_apply_pool() != 3527) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_apply_pool_template() != 43651) {
+    if (uniffi_cua_sdk_checksum_method_fleet_apply_pool_template() != 55758) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_attach_claim() != 27491) {
+    if (uniffi_cua_sdk_checksum_method_fleet_attach_claim() != 4432) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_base_url() != 7166) {
+    if (uniffi_cua_sdk_checksum_method_fleet_base_url() != 25728) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_billing_status() != 50128) {
+    if (uniffi_cua_sdk_checksum_method_fleet_billing_status() != 25349) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_check_pool_spec() != 58799) {
+    if (uniffi_cua_sdk_checksum_method_fleet_check_pool_spec() != 33863) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_claim() != 33116) {
+    if (uniffi_cua_sdk_checksum_method_fleet_claim() != 10574) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_create_image() != 53686) {
+    if (uniffi_cua_sdk_checksum_method_fleet_create_image() != 41649) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url() != 1809) {
+    if (uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url() != 12383) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_delete_image() != 54232) {
+    if (uniffi_cua_sdk_checksum_method_fleet_delete_image() != 24865) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_delete_pool() != 41031) {
+    if (uniffi_cua_sdk_checksum_method_fleet_delete_pool() != 32232) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_fleet_ephemeral_pool_name() != 51788) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_export_pool() != 36800) {
+    if (uniffi_cua_sdk_checksum_method_fleet_export_pool() != 48067) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_get_image() != 26535) {
+    if (uniffi_cua_sdk_checksum_method_fleet_get_image() != 64152) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_get_pool() != 27007) {
+    if (uniffi_cua_sdk_checksum_method_fleet_get_pool() != 65404) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_keep_alive() != 21850) {
+    if (uniffi_cua_sdk_checksum_method_fleet_keep_alive() != 28579) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_list_claims() != 30494) {
+    if (uniffi_cua_sdk_checksum_method_fleet_list_claims() != 13959) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_list_images() != 5380) {
+    if (uniffi_cua_sdk_checksum_method_fleet_list_images() != 28202) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_list_pools() != 19148) {
+    if (uniffi_cua_sdk_checksum_method_fleet_list_pools() != 9257) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_list_templates() != 27819) {
+    if (uniffi_cua_sdk_checksum_method_fleet_list_templates() != 48624) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_pool_image_info() != 2800) {
+    if (uniffi_cua_sdk_checksum_method_fleet_pool_image_info() != 3932) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_pools() != 34094) {
+    if (uniffi_cua_sdk_checksum_method_fleet_pools() != 32741) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_release() != 34855) {
+    if (uniffi_cua_sdk_checksum_method_fleet_release() != 21293) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_service_url() != 49169) {
+    if (uniffi_cua_sdk_checksum_method_fleet_service_url() != 15288) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas() != 32806) {
+    if (uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas() != 36702) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_usage_pricing() != 25347) {
+    if (uniffi_cua_sdk_checksum_method_fleet_usage_pricing() != 20174) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready() != 64422) {
+    if (uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready() != 9597) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleetpools_gc() != 4829) {
+    if (uniffi_cua_sdk_checksum_method_fleetpools_gc() != 22670) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleetpools_gc_pools() != 3481) {
+    if (uniffi_cua_sdk_checksum_method_fleetpools_gc_pools() != 4009) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_fleetpools_list() != 61403) {
+    if (uniffi_cua_sdk_checksum_method_fleetpools_list() != 24325) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_devices_approve() != 49147) {

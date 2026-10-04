@@ -5,15 +5,15 @@
 #   scripts/check-no-em-dash.sh            # every tracked *.md / *.mdx
 #   scripts/check-no-em-dash.sh FILE...    # only these files
 #
-# Excluded: historical or mirrored text we do not rewrite (CHANGELOGs, release
-# notes and backfill, blog posts, dated changelog entries, the read-only
-# libs/fleet mirror). Generated reference pages are covered: their generators
-# pass output through scripts/docs-generators/prose-style.ts.
+# Excluded: historical text we do not rewrite (CHANGELOGs, release notes and
+# backfill, blog posts, dated changelog entries). Generated reference pages are
+# covered: their generators pass output through
+# scripts/docs-generators/prose-style.ts.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-EXCLUDE='(^|/)CHANGELOG[^/]*\.md$|^\.github/release-backfill/|^\.github/release-notes/|^blog/|^changelog/|^libs/fleet/'
+EXCLUDE='(^|/)CHANGELOG[^/]*\.md$|^\.github/release-backfill/|^\.github/release-notes/|^blog/|^changelog/'
 EM=$'\xe2\x80\x94'
 
 if [ "$#" -gt 0 ]; then

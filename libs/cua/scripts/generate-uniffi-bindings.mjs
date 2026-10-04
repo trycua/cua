@@ -16,9 +16,8 @@
  *    listing each generated path, so renamed bindings are pruned;
  *  - `--check` regenerates into a temporary directory and compares.
  *
- * The cdylib also links cyclops-sdk, which carries its own UniFFI
- * namespaces (`fleet_sdk`, `cyclops_sdk_schema`). The cua SDK never exposes
- * their types, so only the `cua_sdk` namespace is generated.
+ * Only the `cua_sdk` namespace is generated; any other UniFFI namespace a
+ * linked crate carries is left out.
  *
  * Usage: node generate-uniffi-bindings.mjs [--check] [--skip-build]
  *        [--only=python,swift,kotlin,typescript]
@@ -273,7 +272,7 @@ try {
     )
     const files = {}
     const names = readdirSync(out).filter((name) => name.endsWith(".ts"))
-    // Other UniFFI namespaces linked into the cdylib (cyclops-sdk's).
+    // Other UniFFI namespaces linked into the cdylib, if any.
     const foreign = names
       .filter((name) => !name.endsWith("-ffi.ts") && name !== "index.ts")
       .map((name) => name.slice(0, -".ts".length))

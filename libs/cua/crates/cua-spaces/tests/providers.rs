@@ -1,17 +1,14 @@
-//! Fleet and Local provisioning against fakes: `cua_fleet::testing::FakeFleet`
-//! for the control plane and `cua_spacesd_client::testing::MockServer` as the guest's
-//! spacesd (behind an emulated Fleet gateway for claims).
+//! Local provisioning against fakes: `cua_spacesd_client::testing::MockServer`
+//! as the guest's spacesd. Cloud Spaces (Cua Cloud has closed) fail at once.
 
 use async_trait::async_trait;
-use cua_fleet::testing::FakeFleet;
-use cua_sandbox_core::placement::{On, Runtime};
+use cua_sandbox_core::placement::On;
 use cua_sandbox_core::{
     InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec, LocalSummary,
     RuntimeError,
 };
-use cua_spaces::contract::inputs::FleetRuntime;
-use cua_spaces::{Provider, SpaceCreate, Spaces};
-use cua_spacesd_client::testing::{MockAuth, MockGateway, MockServer};
+use cua_spaces::{SpaceCreate, Spaces};
+use cua_spacesd_client::testing::{MockAuth, MockServer};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -19,181 +16,7 @@ use std::time::Duration;
 const IMAGE: &str = "ghcr.io/trycua/linux:24.04-disk";
 
 #[tokio::test]
-async fn create_in_the_cloud_binds_connects_through_the_gateway_and_registers() {
-    let reg = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    let probe = Spaces::builder()
-        .home(reg.path())
-        .fleet(fake.client())
-        .fleet_namespace("cua-e2e-sp")
-        .build();
-    let pool = probe.fleet_pool_name(FleetRuntime::Kubevirt, IMAGE);
-    let srv = MockServer::start(MockAuth {
-        token: None,
-        gateway: Some(MockGateway {
-            prefix: format!("/api/svc/{pool}/sbx-cua-e2e-claim-env"),
-            bearer: "fake-fleet-token".into(),
-            claim: "cua-e2e-claim".into(),
-        }),
-        prefix: None,
-    })
-    .await;
-    let spaces = Spaces::builder()
-        .home(reg.path())
-        .fleet(fake.client_with_base(&srv.url()))
-        .fleet_namespace("cua-e2e-sp")
-        .build();
-    let info = spaces
-        .create(SpaceCreate {
-            on: Some(On::Cloud),
-            image: Some(IMAGE.into()),
-            name: Some("cua-e2e-claim".into()),
-            ..Default::default()
-        })
-        .await
-        .unwrap()
-        .ready()
-        .expect("waited");
-    assert_eq!(info.id, "cloud:cua-e2e-claim");
-    assert_eq!(info.provider, Provider::Cloud);
-    assert!(
-        fake.exists("pool", &pool, &pool),
-        "a warm pool per image and runtime"
-    );
-    // The Image row: the claim's template names the image (a tag, so no
-    // digest), recorded with the Space.
-    assert_eq!(
-        (info.image.as_str(), info.image_digest.as_str()),
-        (IMAGE, "")
-    );
-
-    // Commands go through the gateway (gRPC-Web + claim header).
-    let space = spaces.space(&info.id).await.unwrap();
-    assert_eq!(
-        space.spacesd().unwrap().transport(),
-        cua_spacesd_client::Transport::GrpcWeb
-    );
-    let out = space
-        .bash("echo through-the-gateway", Duration::from_secs(10))
-        .await
-        .unwrap();
-    assert_eq!(out.stdout, "through-the-gateway\n");
-    // The token travelled with the claim, in its Secret (the image reads
-    // it from /run/cua/env-token): the template opts in, the claim names
-    // the Secret, and the Space holds the same token.
-    let cred = spaces.registry().credential(&info.id).unwrap().unwrap();
-    let token = cred.token.clone().expect("a cloud Space holds its token");
-    assert_eq!(token.len(), 64);
-    let t = fake.object("template", &pool, &pool).unwrap();
-    assert_eq!(t["spec"]["vmTemplate"]["claimSecrets"], true);
-    let claim = fake.object("claim", &pool, "cua-e2e-claim").unwrap();
-    assert_eq!(
-        claim["spec"]["secretRef"]["name"],
-        "cua-claim-cua-e2e-claim"
-    );
-    let secret = fake
-        .object("secret", &pool, "cua-claim-cua-e2e-claim")
-        .unwrap();
-    let held = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        secret["data"]["env-token"].as_str().unwrap(),
-    )
-    .unwrap();
-    assert_eq!(held, token.as_bytes());
-
-    // `reuse` returns it instead of creating another.
-    let again = spaces
-        .create(SpaceCreate {
-            on: Some(On::Cloud),
-            reuse: true,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert!(again.reused());
-    assert_eq!(again.ready().unwrap().id, info.id);
-
-    // A registry written before the unified refs (a `space://fleet/...` id,
-    // no namespace hint) still reaches it: the namespace is looked up by
-    // the claim name. A bare name in two locations is ambiguous (typed).
-    let legacy = tempfile::tempdir().unwrap();
-    std::fs::write(
-        legacy.path().join("spaces.json"),
-        serde_json::to_vec(&serde_json::json!([
-            {"id": format!("space://fleet/{pool}/cua-e2e-claim"), "name": "old"},
-            {"id": "space://local/cua-e2e-claim", "name": "twin"},
-        ]))
-        .unwrap(),
-    )
-    .unwrap();
-    std::fs::write(
-        legacy.path().join("spaces-credentials.json"),
-        serde_json::to_vec(&serde_json::json!({"cloud:cua-e2e-claim": {"token": cred.token}}))
-            .unwrap(),
-    )
-    .unwrap();
-    let old = Spaces::builder()
-        .home(legacy.path())
-        .fleet(fake.client_with_base(&srv.url()))
-        .build();
-    let ids: Vec<String> = old.list().unwrap().into_iter().map(|i| i.id).collect();
-    assert_eq!(ids, ["cloud:cua-e2e-claim", "local:cua-e2e-claim"]);
-    let e = old.resolve("cua-e2e-claim").unwrap_err();
-    assert_eq!(e.tag(), "ambiguous_sandbox", "{e}");
-    assert!(
-        e.to_string()
-            .contains("local:cua-e2e-claim, cloud:cua-e2e-claim"),
-        "{e}"
-    );
-    let reached = old.space("cloud:cua-e2e-claim").await.unwrap();
-    // Reached from another machine's registry: the image comes from the
-    // claim all the same.
-    assert_eq!(reached.image(), Some((IMAGE, "")));
-    assert_eq!(
-        reached
-            .bash("echo legacy", Duration::from_secs(10))
-            .await
-            .unwrap()
-            .stdout,
-        "legacy\n"
-    );
-
-    // Delete deletes the claim (stops metering) and unregisters.
-    spaces.delete(&info.id).await.unwrap();
-    assert!(!fake.exists("claim", &pool, "cua-e2e-claim"));
-    assert!(!fake.exists("secret", &pool, "cua-claim-cua-e2e-claim"));
-    assert!(spaces.list().unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn a_runtime_image_mismatch_is_refused_before_any_request() {
-    let reg = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    // What the image is comes from its manifest (a fixture here).
-    cua_fleet::testing::set_image_variant(IMAGE, cua_fleet::ImageVariant::ContainerDisk);
-    let spaces = Spaces::builder()
-        .home(reg.path())
-        .fleet(fake.client())
-        .build();
-    let e = spaces
-        .create(SpaceCreate {
-            on: Some(On::Cloud),
-            image: Some(IMAGE.into()),
-            runtime: Runtime::Gvisor,
-            ..Default::default()
-        })
-        .await
-        .unwrap_err();
-    assert_eq!(e.tag(), "invalid_argument");
-    assert!(e.to_string().contains("containerDisk"), "{e}");
-    assert!(
-        fake.requests().is_empty(),
-        "nothing claimed, nothing pulled"
-    );
-}
-
-#[tokio::test]
-async fn fleet_tools_without_credentials_name_the_missing_host_capability() {
+async fn cloud_spaces_say_cua_cloud_has_closed() {
     let reg = tempfile::tempdir().unwrap();
     let spaces = Spaces::builder().home(reg.path()).build();
     let e = spaces
@@ -203,8 +26,29 @@ async fn fleet_tools_without_credentials_name_the_missing_host_capability() {
         })
         .await
         .unwrap_err();
-    assert_eq!(e.tag(), "host_capability_missing");
-    assert!(e.to_string().contains("CUA_CLIENT_ID"));
+    assert!(matches!(e, cua_spaces::Error::CloudClosed), "{e:?}");
+    assert!(e.to_string().contains("Cua Cloud has closed"), "{e}");
+    // A cloud Space registered before the closure: connecting says so, and
+    // delete forgets it.
+    spaces
+        .registry()
+        .upsert(
+            cua_proto::daemon::v1::Space {
+                id: "cloud:old-space".into(),
+                name: "old-space".into(),
+                ..Default::default()
+            },
+            Default::default(),
+        )
+        .unwrap();
+    let e = spaces
+        .space("cloud:old-space")
+        .await
+        .map(|_| ())
+        .unwrap_err();
+    assert!(matches!(e, cua_spaces::Error::CloudClosed), "{e:?}");
+    spaces.delete("cloud:old-space").await.unwrap();
+    assert!(spaces.registry().get("cloud:old-space").unwrap().is_none());
 }
 
 /// A local runtime whose one "instance" is a MockServer on loopback.
@@ -700,138 +544,6 @@ async fn a_stopped_local_space_deletes() {
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .collect();
     assert!(left.is_empty(), "{left:?}");
-}
-
-#[tokio::test]
-async fn a_cloud_space_gets_the_size_asked_for_within_the_absolute_ceiling() {
-    let reg = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    let spaces = Spaces::builder()
-        .home(reg.path())
-        .fleet(fake.client())
-        .fleet_namespace("cua-e2e-size")
-        .build();
-    let created = spaces
-        .create(SpaceCreate {
-            on: Some(On::Cloud),
-            image: Some(IMAGE.into()),
-            name: Some("sized".into()),
-            cpus: Some(4),
-            memory_mb: Some(8192),
-            wait: Some(false),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert!(!created.reused());
-    // Its own pool (an unsized Space keeps the image's), whose template
-    // reserves what was asked for: what Fleet meters and bills.
-    let plain = spaces.fleet_pool_name(FleetRuntime::Kubevirt, IMAGE);
-    assert!(!fake.exists("pool", &plain, &plain));
-
-    let templates: Vec<serde_json::Value> = fake
-        .requests()
-        .into_iter()
-        .filter(|r| r.method == "POST" && r.path.ends_with("/osgymsandboxtemplates"))
-        .filter_map(|r| r.body)
-        .collect();
-    assert_eq!(templates.len(), 1, "{templates:?}");
-    let vm = &templates[0]["spec"]["vmTemplate"];
-    assert_eq!(
-        (vm["cpuCores"].as_u64(), vm["memory"].as_str()),
-        (Some(4), Some("8192Mi"))
-    );
-
-    // Nonsense never reaches Fleet (sizes above the everyday range do:
-    // Fleet decides what the account may run).
-    let before = fake.requests().len();
-    for (cpus, memory_mb) in [
-        (Some(65), None),
-        (Some(0), None),
-        (None, Some(256)),
-        (None, Some(1 << 40)),
-    ] {
-        let e = spaces
-            .create(SpaceCreate {
-                on: Some(On::Cloud),
-                image: Some(IMAGE.into()),
-                cpus,
-                memory_mb,
-                wait: Some(false),
-                ..Default::default()
-            })
-            .await
-            .map(|_| ())
-            .unwrap_err()
-            .to_string();
-        assert!(e.contains("a Cua Cloud sandbox has"), "{e}");
-    }
-    assert_eq!(fake.requests().len(), before);
-
-    // Above the everyday range: written as asked (an exempt account).
-    let big = || SpaceCreate {
-        on: Some(On::Cloud),
-        image: Some(IMAGE.into()),
-        cpus: Some(16),
-        memory_mb: Some(64 * 1024),
-        wait: Some(false),
-        ..Default::default()
-    };
-    spaces.create(big()).await.unwrap();
-    let last = fake
-        .requests()
-        .into_iter()
-        .rev()
-        .find(|r| r.method == "POST" && r.path.ends_with("/osgymsandboxtemplates"))
-        .and_then(|r| r.body)
-        .unwrap();
-    assert_eq!(last["spec"]["vmTemplate"]["cpuCores"], 16);
-    assert_eq!(last["spec"]["vmTemplate"]["memory"], "65536Mi");
-
-    // An account under Fleet's size cap: Fleet's denial, typed, with its
-    // message.
-    fake.faults.lock().unwrap().size_cap = Some((8, 32 * 1024));
-    let e = spaces
-        .create(SpaceCreate {
-            cpus: Some(12),
-            ..big()
-        })
-        .await
-        .map(|_| ())
-        .unwrap_err();
-    assert_eq!(e.tag(), "fleet_admission_denied", "{e}");
-    assert!(
-        e.to_string()
-            .contains(cua_fleet::testing::SIZE_LIMIT_MESSAGE),
-        "{e}"
-    );
-}
-
-#[tokio::test]
-async fn a_cloud_space_out_of_credit_fails_typed_and_leaves_local_alone() {
-    let reg = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    fake.faults.lock().unwrap().credit_exhausted = Some("https://run.cua.ai/billing".into());
-    let spaces = Spaces::builder()
-        .home(reg.path())
-        .fleet(fake.client())
-        .fleet_namespace("cua-e2e-credit")
-        .build();
-    let e = spaces
-        .create(SpaceCreate {
-            on: Some(On::Cloud),
-            image: Some(IMAGE.into()),
-            wait: Some(false),
-            ..Default::default()
-        })
-        .await
-        .map(|_| ())
-        .unwrap_err();
-    assert_eq!(e.tag(), "cloud_credit_exhausted");
-    assert_eq!(
-        e.to_string(),
-        "You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing"
-    );
 }
 
 /// A local runtime whose start makes the instance, then fails readiness

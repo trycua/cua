@@ -3,25 +3,20 @@
 
 //! The app's command layer (`cua_spaces_lib::core::AppCore`, which every
 //! Tauri command calls) against SDK fakes: `cua_spacesd_client::testing::MockServer`
-//! as a Space's spacesd, `cua_fleet::testing::FakeFleet` as Fleet, and
-//! a fake local runtime. Hermetic: temp `~/.cua`, no daemon, no GUI, a
+//! as a Space's spacesd and a fake local runtime. Hermetic: temp `~/.cua`, no daemon, no GUI, a
 //! `FakeHost` teleport sender, no real user profile or keychain.
 
 use async_trait::async_trait;
-use cua_fleet::testing::FakeFleet;
 use cua_sandbox_core::{
     InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec, LocalSummary,
     RuntimeError,
 };
 use cua_spaces::Provider;
 use cua_spaces_lib::core::{AppCore, CoreConfig, SpaceCreateConfig, StreamOpts, StreamTargetArg};
-use cua_spacesd_client::testing::{MockAuth, MockGateway, MockServer};
+use cua_spacesd_client::testing::{MockAuth, MockServer};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-
-// The canonical Linux image: it carries cua-spacesd, so a create waits for it.
-const IMAGE: &str = "ghcr.io/trycua/linux:24.04-disk";
 
 fn core(home: &std::path::Path) -> Arc<AppCore> {
     AppCore::new(CoreConfig::hermetic(home))
@@ -198,113 +193,10 @@ async fn an_unreachable_space_is_listed_within_the_probe_bound() {
 }
 
 #[tokio::test]
-async fn cloud_spaces_bind_through_the_gateway_and_delete_removes_the_sandbox() {
+async fn runtime_kind_contradictions_are_refused_locally() {
     let home = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    // The pool name is derived from namespace + runtime + image; compute it
-    // with a probe core, then emulate the gateway for that sandbox.
-    let probe = {
-        let mut c = CoreConfig::hermetic(home.path());
-        c.fleet_client = Some(fake.client());
-        AppCore::new(c)
-    };
-    let pool = probe
-        .spaces()
-        .fleet_pool_name(cua_spaces::contract::inputs::FleetRuntime::Kubevirt, IMAGE);
-    let srv = MockServer::start(MockAuth {
-        token: None,
-        gateway: Some(MockGateway {
-            prefix: format!("/api/svc/{pool}/sbx-cua-e2e-app-claim-env"),
-            bearer: "fake-fleet-token".into(),
-            claim: "cua-e2e-app-claim".into(),
-        }),
-        prefix: None,
-    })
-    .await;
-    let mut c = CoreConfig::hermetic(home.path());
-    c.fleet_client = Some(fake.client_with_base(&srv.url()));
-    let app = AppCore::new(c);
-
-    let row = app
-        .create_space(SpaceCreateConfig {
-            on: Some("cloud".into()),
-            image: Some(IMAGE.into()),
-            runtime: Some("kubevirt".into()),
-            name: Some("cua-e2e-app-claim".into()),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert_eq!(row.id, "cloud:cua-e2e-app-claim");
-    assert_eq!(row.provider, Provider::Cloud);
-    assert!(row.reachable);
-
-    // Fleet media needs gateway headers: without a daemon the app says so
-    // instead of handing the webview a URL it cannot open.
-    srv.state.advertise(&["desktop_stream"]);
-    let app2 = {
-        let mut c = CoreConfig::hermetic(home.path());
-        c.fleet_client = Some(fake.client_with_base(&srv.url()));
-        AppCore::new(c)
-    };
-    let e = app2
-        .open_stream(
-            &row.id,
-            StreamTargetArg::Display { display_id: None },
-            StreamOpts::default(),
-        )
-        .await
-        .unwrap_err();
-    assert!(e.contains("daemon"), "{e}");
-
-    let msg = app.delete_space(&row.id).await.unwrap();
-    assert!(msg.to_lowercase().contains("deleted"), "{msg}");
-    assert!(!fake.exists("claim", &pool, "cua-e2e-app-claim"));
-    assert!(app.list_spaces().await.unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn runtime_image_pairing_errors_come_from_the_sdk() {
-    let home = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    let mut c = CoreConfig::hermetic(home.path());
-    c.fleet_client = Some(fake.client());
-    let app = AppCore::new(c);
-    // gVisor cannot run a containerDisk: the SDK's one check, from the
-    // image's manifest (here a fixture), not its tag.
-    cua_fleet::testing::set_image_variant(IMAGE, cua_fleet::ImageVariant::ContainerDisk);
-    let e = app
-        .create_space(SpaceCreateConfig {
-            on: Some("cloud".into()),
-            image: Some(IMAGE.into()),
-            runtime: Some("gvisor".into()),
-            name: None,
-            ..Default::default()
-        })
-        .await
-        .unwrap_err();
-    assert!(e.contains("containerDisk"), "{e}");
-    assert!(fake.requests().is_empty(), "refused before any request");
-    let e = app
-        .create_space(SpaceCreateConfig {
-            on: Some("cloud".into()),
-            runtime: Some("firecracker".into()),
-            ..Default::default()
-        })
-        .await
-        .unwrap_err();
-    assert!(e.contains("firecracker"), "{e}");
-    // A runtime the cloud does not offer lists the ones it does.
-    let e = app
-        .create_space(SpaceCreateConfig {
-            on: Some("cloud".into()),
-            runtime: Some("qemu".into()),
-            ..Default::default()
-        })
-        .await
-        .unwrap_err();
-    assert!(e.contains("kubevirt") || e.contains("gvisor"), "{e}");
-    // A kind that contradicts the runtime is refused locally too.
+    let app = core(home.path());
+    // A kind that contradicts the runtime is refused.
     let e = app
         .create_space(SpaceCreateConfig {
             on: Some("local".into()),
@@ -315,15 +207,15 @@ async fn runtime_image_pairing_errors_come_from_the_sdk() {
         .await
         .unwrap_err();
     assert!(e.contains("qemu"), "{e}");
-    assert!(fake.requests().is_empty(), "refused before any request");
 }
 
 #[tokio::test]
-async fn without_cloud_auth_creates_say_how_to_sign_in() {
+async fn cloud_creates_say_cua_cloud_has_closed() {
     let home = tempfile::tempdir().unwrap();
     let app = core(home.path());
     let status = app.fleet_status(false).await;
     assert!(!status.configured);
+    assert_eq!(app.billing_status().await.unwrap(), None, "not signed in");
     let e = app
         .create_space(SpaceCreateConfig {
             on: Some("cloud".into()),
@@ -331,8 +223,7 @@ async fn without_cloud_auth_creates_say_how_to_sign_in() {
         })
         .await
         .unwrap_err();
-    assert!(e.contains("sign in") || e.contains("CUA_CLIENT_ID"), "{e}");
-    assert!(!e.to_lowercase().contains("claim"), "{e}");
+    assert!(e.contains("Cua Cloud has closed"), "{e}");
 }
 
 #[tokio::test]
@@ -365,13 +256,13 @@ async fn default_location_is_stored_in_the_cua_home_config() {
             (after.value.as_str(), after.source.as_str()),
             ("cloud", "config")
         );
-        // No location given: the create goes to the default (the cloud,
-        // which is not signed in here).
+        // No location given: the create goes to the default (Cua Cloud,
+        // which has closed).
         let e = app
             .create_space(SpaceCreateConfig::default())
             .await
             .unwrap_err();
-        assert!(e.contains("sign in") || e.contains("CUA_CLIENT_ID"), "{e}");
+        assert!(e.contains("Cua Cloud has closed"), "{e}");
     }
 
     // An existing machine or an engine word is not a location.

@@ -139,7 +139,7 @@ argument and what it accepts.
 
 **Message** `invalid argument: <detail>`
 
-**Raised by** [`canonical_image_tier`](/cua-sdk/reference/image#canonical_image_tier), [`error_doc_url`](/cua-sdk/reference/cua#error_doc_url), [`fleet_resolve_runtime`](/cua-sdk/reference/fleet/images#fleet_resolve_runtime), [`qualify_sandbox_ref`](/cua-sdk/reference/sandbox#qualify_sandbox_ref)
+**Raised by** [`canonical_image_tier`](/cua-sdk/reference/image#canonical_image_tier), [`error_doc_url`](/cua-sdk/reference/cua#error_doc_url), [`qualify_sandbox_ref`](/cua-sdk/reference/sandbox#qualify_sandbox_ref)
 
 ## `InvalidPlacement`
 
@@ -184,7 +184,7 @@ message names what is missing.
 
 **Message** `unsupported: <detail>`
 
-**Raised by** [`Sandbox.guest_sh`](/cua-sdk/reference/sandbox/without-spacesd#sandboxguest_sh), [`fleet_image_variant`](/cua-sdk/reference/fleet/images#fleet_image_variant), [`fleet_resolve_runtime`](/cua-sdk/reference/fleet/images#fleet_resolve_runtime), [`resolve_image`](/cua-sdk/reference/image#resolve_image)
+**Raised by** [`Sandbox.guest_sh`](/cua-sdk/reference/sandbox/without-spacesd#sandboxguest_sh), [`resolve_image`](/cua-sdk/reference/image#resolve_image)
 
 ## `SpacesdNotAvailable`
 
@@ -226,8 +226,6 @@ run 1-8 vCPUs and 1-32 GiB per sandbox), or contact Cua support to
 raise the account's limits.
 
 **Message** `fleet admission denied: <detail>`
-
-**Raised by** [`fleet_size_limits`](/cua-sdk/reference/fleet/images#fleet_size_limits)
 
 ## `CloudCreditExhausted`
 
@@ -363,8 +361,6 @@ fields; the message holds the diff (pass `apply` to update it).
 
 **Message** `pool spec mismatch: <detail>`
 
-**Raised by** [`Fleet.check_pool_spec`](/cua-sdk/reference/fleet#fleetcheck_pool_spec)
-
 ## `ClaimSecretsNotDelivered`
 
 **Cause** A claim bound but its per-claim secrets (the env token) never
@@ -374,8 +370,6 @@ reached the sandbox within the bounded wait; the claim was released.
 and the Fleet status.
 
 **Message** `claim secrets not delivered: <detail>`
-
-**Raised by** [`Fleet.acquire_with`](/cua-sdk/reference/fleet/claims#fleetacquire_with)
 
 ## `Internal`
 

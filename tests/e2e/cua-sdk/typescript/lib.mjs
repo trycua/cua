@@ -20,12 +20,6 @@ export const RUN = process.env.CUA_E2E_RUN || randomBytes(3).toString("hex")
 process.env.CUA_E2E_RUN = RUN
 export const HOST_ARCH = arch() === "arm64" ? "arm64" : "amd64"
 
-export const LEGACY_FLEET_IMAGE =
-  process.env.CUA_E2E_FLEET_IMAGE ??
-  "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d"
-export const LEGACY_FLEET_ROOTFS =
-  process.env.CUA_E2E_FLEET_ROOTFS ?? "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-main-809e3f81"
-
 export const desktopImage = () =>
   process.env.CUA_E2E_DESKTOP_IMAGE ?? `cua-e2e-local/linux:docker-local-${HOST_ARCH}`
 export const plainImage = (n) =>
@@ -62,30 +56,12 @@ export function laneEnabled(lane) {
       return flag("CUA_E2E_QEMU") ? undefined : "set CUA_E2E_QEMU=1 for the QEMU lane"
     case "lume":
       return flag("CUA_E2E_LUME") ? undefined : "set CUA_E2E_LUME=1 for the Lume lane"
-    case "fleet":
-      if (!flag("CUA_E2E_FLEET")) return "set CUA_E2E_FLEET=1 for live Fleet"
-      return process.env.FLEETS_TOKEN || process.env.CUA_CLIENT_ID ? undefined : "no Fleet credentials"
-    case "fleet-env":
-      return (
-        laneEnabled("fleet") ??
-        (process.env.CUA_E2E_FLEET_ENV_IMAGE
-          ? undefined
-          : "CUA_E2E_FLEET_ENV_IMAGE is unset: no linux (spacesd) image in a registry Fleet can pull")
-      )
     case "cua-sandbox":
       return flag("CUA_E2E_CUA_SANDBOX") ? undefined : "set CUA_E2E_CUA_SANDBOX=1"
     default:
       throw new Error(`unknown lane ${lane}`)
   }
 }
-
-// Fleet pools have no env/secret field yet: a gVisor pod of the spacesd
-// image gets its token through an entrypoint override (the image reads
-// /etc/cua/env-token). KubeVirt containerDisk guests have no such hook.
-export const KUBEVIRT_ENV_SKIP =
-  "KubeVirt spacesd lane needs a per-claim secret field (cloud PR): no way to deliver the env token to a containerDisk guest yet"
-export const envTokenCommand = (token) => ["/bin/sh", "-c",
-  `mkdir -p /etc/cua && printf %s ${token} >/etc/cua/env-token && exec /opt/cua/desktop/entrypoint.sh`]
 
 export class Skip extends Error {}
 export const skip = (reason) => {
@@ -393,43 +369,6 @@ export async function mcpInitialize(addr, token) {
   const msg = JSON.parse(text)
   if (!msg.result?.serverInfo) throw new Error(`mcp: ${text.slice(0, 200)}`)
   return msg.result
-}
-
-export function parseCmdSse(body) {
-  const line = str(body).split("\n").find((l) => l.startsWith("data: "))
-  if (!line) throw new Error(`no data frame: ${str(body).slice(0, 200)}`)
-  return JSON.parse(line.slice(6))
-}
-
-export async function legacyCmd(sb, service, command, params = {}) {
-  const r = await sb.service(service).request("POST", "/cmd", u8(JSON.stringify({ command, params })).buffer, 120_000)
-  if (r.status < 200 || r.status >= 300) throw new Error(`/cmd ${r.status}`)
-  const p = parseCmdSse(r.body)
-  if (p.success === false) throw new Error(JSON.stringify(p).slice(0, 300))
-  return p
-}
-
-/**
- * `fleet.apply(name, SandboxSpec, PoolOptions)` from the flat pool fields the
- * guides list (name, image, runtime, replicas, cpu, memoryMb, services, efi,
- * command, ttlSecondsAfterCreated). Services default
- * to `{ env: 3211 }` and replicas to 1, as the deprecated `applyPool` did.
- */
-export function applyPool(fleet, o) {
-  let services = o.services instanceof Map ? o.services : new Map(Object.entries(o.services ?? {}))
-  if (services.size === 0) services = new Map([["env", 3211]])
-  const spec = cua.sandboxSpec(o.image, {
-    services,
-    efi: !!o.efi,
-    ...(o.cpu ? { cpu: o.cpu } : {}),
-    ...(o.memoryMb ? { memoryMb: o.memoryMb } : {}),
-    ...(o.command?.length ? { command: o.command } : {}),
-  })
-  return fleet.apply(o.name, spec, cua.poolOptions({
-    replicas: o.replicas ?? 1,
-    ...(o.runtime ? { runtime: o.runtime } : {}),
-    ...(o.ttlSecondsAfterCreated ? { poolTtlSeconds: o.ttlSecondsAfterCreated } : {}),
-  }))
 }
 
 export const embeddedLocal = (dir) => cua.embedded({ stateDir: dir, fleetFromEnv: false })

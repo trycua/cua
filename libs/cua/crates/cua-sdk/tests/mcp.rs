@@ -1,24 +1,19 @@
-#![allow(deprecated)] // also exercises the deprecated `apply_pool` wrapper
 //! MCP and the service pipe through the exported API, embedded and through
 //! `cua daemon` (loopback): `Sandbox.mcp_config` / `Sandbox.mcp` (rmcp),
 //! `Service.endpoint` streaming through the daemon passthrough (SSE that
-//! never ends, headers, a large binary body), a Fleet sandbox behind an
-//! emulated gateway, and a Space added by its MCP URL. Servers are
+//! never ends, headers, a large binary body), and a Space added by its MCP
+//! URL. Servers are
 //! in-process (`cua_sandbox_core::testing`); waits are bounded.
 
 use cua_daemon::{
     Runtime, RuntimeConfig,
     server::{self, ServerConfig},
 };
-use cua_fleet::testing::FakeFleet;
 use cua_sandbox_core::testing::{McpTestServer, PipeTestServer, expected_result, png_bytes};
 use cua_sdk::{Cua, CuaError, SandboxCreateOptions};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use std::{collections::HashMap, time::Duration};
-
-const IMAGE: &str = "docker.io/library/python:3.12-slim";
-const CLAIM: &str = "cua-e2e-sdk-mcp";
 
 fn opts(on: &str, name: &str) -> SandboxCreateOptions {
     SandboxCreateOptions {
@@ -184,26 +179,9 @@ async fn suite(daemon: bool) {
     let dirs = tempfile::tempdir().unwrap();
     let mcp_server = McpTestServer::start("").await.unwrap();
     let pipe_server = PipeTestServer::start("").await.unwrap();
-    // Fleet: the gateway base is a loopback MCP server under the claim's
-    // service path (the fake binds claim X to sandbox `sbx-X`).
-    let gw = McpTestServer::start(&format!("/api/svc/{CLAIM}/sbx-{CLAIM}-mcp"))
-        .await
-        .unwrap();
-    let fleet = FakeFleet::new();
-    cua_fleet::testing::set_image_variant(IMAGE, cua_fleet::ImageVariant::Rootfs);
-    fleet
-        .client_with_base(&gw.url)
-        .apply_pool(
-            &cua_fleet::PoolSpec::new(CLAIM, IMAGE)
-                .runtime(cua_fleet::RuntimeKind::Gvisor)
-                .services([("mcp", 8765u16)]),
-        )
-        .await
-        .unwrap();
     let runtime = Runtime::new(RuntimeConfig {
         state_dir: Some(dirs.path().join("sandboxes")),
         spaces_home: Some(dirs.path().join("cua")),
-        fleet_client: Some(fleet.client_with_base(&gw.url)),
         env_probe_timeout: Some(Duration::from_secs(2)),
         ..Default::default()
     })
@@ -258,14 +236,6 @@ async fn suite(daemon: bool) {
     let sb = sbx.create(o).await.unwrap();
     assert_pipe(sb.service("env".into()).unwrap().endpoint().await.unwrap()).await;
     sb.delete().await.unwrap();
-
-    // Fleet, through the (emulated) gateway.
-    let mut o = opts("cloud", CLAIM);
-    o.pool = Some(CLAIM.into());
-    o.image = IMAGE.into();
-    let fsb = sbx.create(o).await.unwrap();
-    exercise(&fsb.mcp("mcp".into(), None).await.unwrap()).await;
-    fsb.delete().await.unwrap();
 
     exercise(
         &cua_sdk::mcp_connect_url(format!("{}/mcp", mcp_server.url), None)

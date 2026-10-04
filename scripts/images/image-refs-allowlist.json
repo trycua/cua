@@ -1,7 +1,6 @@
 {
   "_doc": "Image refs that are not in libs/images/sandbox-images.json (or a bench lock), each with a reason. Checked by scripts/images/check-image-refs.py; an entry or path that matches nothing fails the gate, so this list only shrinks.",
   "exclude": [
-    "libs/fleet/**",
     "blog/**",
     "changelog/**",
     "CHANGELOG*",
@@ -56,7 +55,6 @@
     "public.ecr.aws/example/*": "placeholder namespace in tests",
     "registry.example.com/*": "placeholder registry in tests",
     "123456789012.dkr.ecr.*": "placeholder AWS account in docs and tests (private ECR)",
-    "123.dkr.ecr.*": "placeholder AWS account in tests",
     "ghcr.io/acme-corp/*": "fictional private registry ref in the cua-telemetry privacy test (proves image refs are redacted)"
   },
   "refs": {
@@ -208,22 +206,9 @@
         "scripts/images/test-check-tag-safety.sh"
       ]
     },
-    "ghcr.io/trycua/cua-desktop-linux:cua-e2e-test": {
-      "reason": "legacy name of ghcr.io/trycua/linux (frozen, read-only: never pushed or re-tagged); historical tests of legacy refs and tag safety",
-      "paths": [
-        "libs/cua/crates/cua-fleet/tests/claim_secrets.rs"
-      ]
-    },
-    "ghcr.io/trycua/cua-desktop-linux:docker-disk": {
-      "reason": "legacy name of ghcr.io/trycua/linux (frozen, read-only: never pushed or re-tagged); historical tests of legacy refs and tag safety",
-      "paths": [
-        "libs/cua/crates/cua-sandbox-core/tests/providers.rs"
-      ]
-    },
     "ghcr.io/trycua/cua-desktop-linux:docker-latest": {
       "reason": "legacy name of ghcr.io/trycua/linux (frozen, read-only: never pushed or re-tagged); historical tests of legacy refs and tag safety",
       "paths": [
-        "libs/cua/crates/cua-fleet/tests/fixtures/image-variants.json",
         "libs/cua/crates/cua-spaces/tests/generic.rs",
         "libs/python/cua-sandbox/tests/test_fleet_image_variants.py"
       ]
@@ -237,24 +222,15 @@
     "ghcr.io/trycua/cua-desktop-linux:latest": {
       "reason": "legacy name of ghcr.io/trycua/linux (frozen, read-only: never pushed or re-tagged); historical tests of legacy refs and tag safety",
       "paths": [
-        "libs/cua/crates/cua-fleet/tests/fixtures/image-variants.json",
         "libs/cua/crates/cua-image/src/canonical.rs",
-        "libs/cua/crates/cua-spaces/tests/generic.rs",
         "libs/python/cua-sandbox/tests/test_fleet_image_variants.py",
         "scripts/images/docs-image-refs-baseline.json",
         "scripts/images/test-check-tag-safety.sh"
       ]
     },
-    "ghcr.io/trycua/cua-desktop-linux:latest-rootfs": {
-      "reason": "legacy name of ghcr.io/trycua/linux (frozen, read-only: never pushed or re-tagged); historical tests of legacy refs and tag safety",
-      "paths": [
-        "libs/cua/crates/cua-sandbox-core/tests/providers.rs"
-      ]
-    },
     "ghcr.io/trycua/cua-desktop-linux:test": {
       "reason": "legacy name of ghcr.io/trycua/linux (frozen, read-only: never pushed or re-tagged); historical tests of legacy refs and tag safety",
       "paths": [
-        "libs/cua/crates/cua-cli/tests/sandbox_do.rs",
         "libs/cua/crates/cua-sdk/tests/refs.rs",
         "libs/cua/crates/cua-sdk/tests/topologies.rs"
       ]
@@ -262,15 +238,7 @@
     "ghcr.io/trycua/cua-e2e-plain:1": {
       "reason": "synthetic tag or digest in a test (parser, resolver or tag-safety input), never pulled",
       "paths": [
-        "libs/cua/crates/cua-fleet/tests/size_limits.rs",
-        "libs/cua/crates/cua-fleet/tests/spec.rs",
         "libs/python/cua-sandbox/tests/test_pool_spec.py"
-      ]
-    },
-    "ghcr.io/trycua/cua-e2e-x:1": {
-      "reason": "synthetic tag or digest in a test (parser, resolver or tag-safety input), never pulled",
-      "paths": [
-        "libs/cua/crates/cua-cli/src/pools.rs"
       ]
     },
     "ghcr.io/trycua/cua-plain-ubuntu-server:existing": {
@@ -364,7 +332,6 @@
     "ghcr.io/trycua/linux:latest": {
       "reason": "synthetic tag or digest in a test (parser, resolver or tag-safety input), never pulled",
       "paths": [
-        "libs/cua/crates/cua-sandbox-core/tests/parity.rs",
         "libs/cua/crates/cua-vmm/src/disk.rs",
         "scripts/images/test-check-tag-safety.sh"
       ]
@@ -458,12 +425,6 @@
         "scripts/images/test-check-tag-safety.sh"
       ]
     },
-    "ghcr.io/trycua/other:2": {
-      "reason": "synthetic tag or digest in a test (parser, resolver or tag-safety input), never pulled",
-      "paths": [
-        "libs/cua/crates/cua-fleet/tests/spec.rs"
-      ]
-    },
     "ghcr.io/trycua/plain-ubuntu:24.04": {
       "reason": "synthetic tag or digest in a test (parser, resolver or tag-safety input), never pulled",
       "paths": [
@@ -529,45 +490,22 @@
       "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
       "paths": [
         "libs/cua/crates/cua-image/src/detect.rs",
-        "libs/cua/crates/cua-sandbox-core/src/fleet_local.rs",
-        "libs/cua/crates/cua-sandbox-core/tests/providers.rs",
         "tests/e2e/local-runtimes/tests/container.rs"
-      ]
-    },
-    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-main": {
-      "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
-      "paths": [
-        "libs/cua/crates/cua-daemon/src/runtime.rs",
-        "libs/cua/crates/cua-fleet/tests/fixtures/image-variants.json"
       ]
     },
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-main-809e3f81": {
       "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
       "paths": [
         "libs/cua-bench/cua_bench/tests/live/test_cloud_live.py",
-        "libs/cua/crates/cua-fleet/tests/fixtures/image-variants.json",
-        "libs/cua/crates/cua-fleet/tests/live.rs",
-        "libs/cua/crates/cua-fleet/tests/live_autopool.rs",
-        "libs/cua/python/tests/test_live_fleet.py",
-        "libs/python/cua-sandbox/tests/live/test_fleet_autopool_live.py",
-        "tests/e2e/cua-sdk/python/e2e.py",
-        "tests/e2e/cua-sdk/rust/src/lib.rs",
-        "tests/e2e/cua-sdk/typescript/lib.mjs"
+        "libs/python/cua-sandbox/tests/live/test_fleet_autopool_live.py"
       ]
     },
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest": {
       "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
       "paths": [
         "infra/fleets-wif-smoke/main.tf",
-        "libs/cua/crates/cua-sandbox-core/src/fleet_local.rs",
         "scripts/images/test-check-tag-safety.sh",
         "tests/e2e/local-runtimes/fleet-catalog.public.json"
-      ]
-    },
-    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main": {
-      "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
-      "paths": [
-        "libs/cua/crates/cua-fleet/src/pool.rs"
       ]
     },
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-1": {
@@ -580,9 +518,6 @@
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34": {
       "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
       "paths": [
-        "libs/cua/crates/cua-fleet/tests/fixtures/image-variants.json",
-        "libs/cua/crates/cua-fleet/tests/fleet.rs",
-        "libs/cua/crates/cua-fleet/tests/live.rs",
         "libs/cua/crates/cua-image/src/detect.rs",
         "libs/cua/crates/cua-sandbox-core/tests/fixtures/python-state/py-qemu-sbx.json",
         "libs/cua/crates/cua-sandbox-core/tests/providers.rs",
@@ -591,30 +526,9 @@
         "tests/e2e/local-runtimes/fleet-catalog.public.json"
       ]
     },
-    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:x": {
-      "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
-      "paths": [
-        "libs/cua/crates/cua-fleet/src/pool.rs"
-      ]
-    },
-    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:80fff8a40f217a460cef7a60161adb3899eabd02c3451f18926b84d1f81b8da2": {
-      "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
-      "paths": [
-        "libs/cua/crates/cua-fleet/tests/fixtures/image-variants.json"
-      ]
-    },
-    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d": {
-      "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
-      "paths": [
-        "tests/e2e/cua-sdk/rust/src/lib.rs",
-        "tests/e2e/cua-sdk/typescript/lib.mjs"
-      ]
-    },
     "public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3": {
       "reason": "cloud-built Fleet workspace image (owned and gated by the cloud repo's image doctor); pinned by live tests, fixtures and the qualified-image facts",
       "paths": [
-        "libs/cua/crates/cua-sandbox-core/src/fleet_local.rs",
-        "libs/cua/crates/cua-sandbox-core/tests/providers.rs",
         "libs/python/cua-sandbox/tests/test_pull_secret.py",
         "tests/e2e/local-runtimes/fleet-catalog.public.json"
       ]
@@ -645,13 +559,8 @@
         "libs/cua/bench/streaming/results/baseline-macos-arm64.json",
         "libs/cua/bench/streaming/results/baseline-macos-arm64.md",
         "libs/cua/crates/cua-cli/src/image_build.rs",
-        "libs/cua/crates/cua-cli/tests/sandbox_do.rs",
-        "libs/cua/crates/cua-fleet/src/runtime.rs",
-        "libs/cua/crates/cua-fleet/tests/claim_secrets.rs",
-        "libs/cua/crates/cua-fleet/tests/fixtures/image-variants.json",
         "libs/cua/crates/cua-image/src/canonical.rs",
         "libs/cua/crates/cua-image/src/publish.rs",
-        "libs/cua/crates/cua-sandbox-core/tests/providers.rs",
         "libs/cua/crates/cua-sdk/tests/refs.rs",
         "libs/cua/crates/cua-sdk/tests/topologies.rs",
         "libs/cua/crates/cua-spaces/tests/generic.rs",

@@ -1845,7 +1845,7 @@ impl From<cua_spaces::Error> for CuaError {
         let message = e.to_string();
         match e {
             cua_spaces::Error::Env(env) => env.into(),
-            cua_spaces::Error::Fleet(f) => f.into(),
+            cua_spaces::Error::CloudClosed => CuaError::Fleet(message),
             _ => tag_error(kind, message),
         }
     }

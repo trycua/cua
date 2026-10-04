@@ -5,9 +5,7 @@ name: "E2E: cua SDK"
 #
 #   pull_request   hermetic (fixtures, daemon) + container (docker + gVisor on
 #                  the locally built reference images) + docs blocks.
-#   nightly        live Fleet (+ the spacesd image lane when
-#                  vars.CUA_E2E_FLEET_ENV_IMAGE names an image Fleet can pull),
-#                  cua-sandbox, and local QEMU (KVM) on the reference disk.
+#   nightly        local QEMU (KVM) on the reference disk.
 #   dispatch       any lane set.
 #
 # Lume needs a macOS host with nested virtualization, which hosted runners
@@ -32,11 +30,11 @@ on:
   workflow_dispatch:
     inputs:
       lanes:
-        description: "Lanes (comma list: hermetic,container,qemu,fleet,fleet-env,cua-sandbox,conformance)"
+        description: "Lanes (comma list: hermetic,container,qemu,conformance)"
         default: "hermetic,container"
       langs:
-        description: "Languages (py,ts,rust,go)"
-        default: "py,ts,rust,go"
+        description: "Languages (py,ts,rust)"
+        default: "py,ts,rust"
 
 permissions:
   contents: read
@@ -92,9 +90,6 @@ jobs:
         with:
           node-version: "22"
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
-        with:
-          go-version: "1.24"
       - name: Log in to Docker Hub (docs blocks read image manifests)
         if: env.DOCKERHUB_USERNAME != ''
         uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
@@ -114,10 +109,7 @@ jobs:
       - name: Run the suite
         env:
           LANES: ${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }}
-          LANGS: ${{ github.event_name == 'workflow_dispatch' && inputs.langs || 'py,ts,rust,go' }}
-          CUA_CLIENT_ID: ${{ contains(inputs.lanes, 'fleet') && secrets.CUA_CLIENT_ID || '' }}
-          CUA_CLIENT_SECRET: ${{ contains(inputs.lanes, 'fleet') && secrets.CUA_CLIENT_SECRET || '' }}
-          CUA_E2E_FLEET_ENV_IMAGE: ${{ vars.CUA_E2E_FLEET_ENV_IMAGE }}
+          LANGS: ${{ github.event_name == 'workflow_dispatch' && inputs.langs || 'py,ts,rust' }}
           CUA_E2E_PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
           # cua keeps 5 GiB free by default. On this disposable runner, after
           # the setup and the Rust half's own debug build, that refused the
@@ -139,14 +131,10 @@ jobs:
           path: ${{ runner.temp }}/cua-e2e
 
   live:
-    name: nightly (fleet, cua-sandbox, qemu)
+    name: nightly (qemu)
     if: github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
-    env:
-      CUA_CLIENT_ID: ${{ secrets.CUA_CLIENT_ID }}
-      CUA_CLIENT_SECRET: ${{ secrets.CUA_CLIENT_SECRET }}
-      CUA_E2E_FLEET_ENV_IMAGE: ${{ vars.CUA_E2E_FLEET_ENV_IMAGE }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/linux-rust-prep
@@ -173,21 +161,12 @@ jobs:
         with:
           node-version: "22"
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
-        with:
-          go-version: "1.24"
       - name: Build the SDK, fixtures, bindings, images, disks and runtimes
         run: tests/e2e/cua-sdk/ci-setup.sh --images --disks
-      - name: Lanes
-        id: lanes
-        run: |
-          lanes="fleet,cua-sandbox,qemu"
-          [ -n "$CUA_E2E_FLEET_ENV_IMAGE" ] && lanes="$lanes,fleet-env"
-          echo "lanes=$lanes" >>"$GITHUB_OUTPUT"
       - name: Run the suite
         run: >
-          python3 tests/e2e/cua-sdk/run.py --lanes "${{ steps.lanes.outputs.lanes }}"
-          --langs py,ts,rust,go --strict --out "$RUNNER_TEMP/cua-e2e"
+          python3 tests/e2e/cua-sdk/run.py --lanes qemu
+          --langs py,ts,rust --strict --out "$RUNNER_TEMP/cua-e2e"
       - name: Matrix summary
         if: always()
         run: |

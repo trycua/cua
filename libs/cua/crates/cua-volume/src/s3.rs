@@ -202,8 +202,8 @@ pub struct CloudVendor {
 }
 
 impl CloudVendor {
-    /// A vendor for `request` against the API at `api` (the cyclops-cs base
-    /// URL the Fleet client uses).
+    /// A vendor for `request` against the API at `api` (the Cua account
+    /// API base URL, `cua_auth::account::AccountApi::base_url`).
     pub fn new(
         api: &str,
         tokens: Arc<dyn TokenSource>,

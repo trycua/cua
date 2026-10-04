@@ -59,7 +59,6 @@ interface SourceFacts {
   sandboxVersion: string;
   cuaVersion: string;
   pythonFleetVersion: string;
-  typescriptFleetVersion: string;
   sandboxDriverVersion: string;
   qualifiedDirectDriverVersion: string;
   linuxImage: string;
@@ -232,9 +231,6 @@ export function loadSourceFacts(): SourceFacts {
     sandboxVersion: projectVersion('libs/python/cua-sandbox/pyproject.toml'),
     cuaVersion: projectVersion('libs/cua/python/pyproject.toml'),
     pythonFleetVersion: capture(sandboxProject, /"cua-fleet==([^"]+)"/, 'cua-fleet pin'),
-    typescriptFleetVersion: String(
-      (JSON.parse(read('libs/typescript/fleet/package.json')) as { version: string }).version
-    ),
     sandboxDriverVersion: capture(sandboxProject, /"cua-driver==([^"]+)"/, 'Sandbox Driver pin'),
     qualifiedDirectDriverVersion: string(
       profile.source?.driver_version,
@@ -303,7 +299,6 @@ export function renderEvidence(source: SourceFacts): string {
 - \`cua-image\` source (\`canonical.rs\`): the canonical image references.
 - \`cua\` ${source.cuaVersion} source: public Python exports.
 - \`cua-fleet\` ${source.pythonFleetVersion} package mapping: Python bound-claim service requests.
-- \`@trycua/fleet\` ${source.typescriptFleetVersion} package mapping: TypeScript service requests.
 - \`cua-sandbox[driver]\` ${source.sandboxVersion} maps direct Driver use to \`cua-driver\`
   ${source.sandboxDriverVersion}. This client mapping is not the Driver version inside a particular
   published or deployment-qualified guest image.`;

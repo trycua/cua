@@ -74,7 +74,7 @@ pub mod telemetry {
             Error::Agent(_) => "Agent",
             Error::Timeout(_) => "Timeout",
             Error::Env(_) => "Env",
-            Error::Fleet(_) => "Fleet",
+            Error::CloudClosed => "CloudClosed",
             Error::Cancelled(_) => "Cancelled",
             _ => "Other",
         }

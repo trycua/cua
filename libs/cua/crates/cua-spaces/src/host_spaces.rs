@@ -185,7 +185,10 @@ pub fn guest_relay_url(relay_url: &str, kind: &str) -> String {
 fn resolve_image(image: &str) -> (String, String) {
     let word = image.trim();
     if word.is_empty() {
-        return (cua_fleet::canonical_image("linux"), "linux".into());
+        return (
+            cua_image::canonical::canonical_for(cua_image::canonical::CanonicalOs::Linux, None),
+            "linux".into(),
+        );
     }
     if let Some((reference, os)) =
         cua_image::canonical::alias_with(word, &|n| std::env::var(n).ok())

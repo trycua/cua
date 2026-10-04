@@ -56,7 +56,8 @@ cua-spaces = { path = "../../../libs/cua/crates/cua-spaces", default-features = 
     "spaces-agents",
 ] }
 cua-daemon = { path = "../../../libs/cua/crates/cua-daemon", default-features = false, features = ["client"] }
-cua-fleet = { path = "../../../libs/cua/crates/cua-fleet" }
+# Canonical image references (the default local Space image).
+cua-image = { path = "../../../libs/cua/crates/cua-image" }
 # Cua Spaces extensions: teleport, the Cua Volume tools and persistent
 # agents over the Spaces runtime this app hosts.
 cua-spaces-ext = { path = "../../../libs/cua/crates/cua-spaces-ext" }
@@ -85,8 +86,8 @@ cua-auth = { path = "../../../libs/cua/crates/cua-auth" }
 cua-telemetry = { path = "../../../libs/cua/crates/cua-telemetry" }
 tokio = { version = "1", features = ["net", "rt", "rt-multi-thread", "sync", "macros", "time", "process"] }
 # User "Sign in to Cua" device-authorization grant (src/auth.rs): the device
-# and token endpoint calls. `async-trait` implements the Fleet SDK's
-# `AccessTokenProvider` that drives Fleet from the user token.
+# and token endpoint calls. `async-trait` implements the account API's
+# `AccessTokens` from the user token.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
 async-trait = "0.1"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
@@ -151,7 +152,6 @@ libc = "0.2"
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
 sha2 = "0.10"
 cua-spacesd-client = { path = "../../../libs/cua/crates/cua-spacesd-client", features = ["testing"] }
-cua-fleet = { path = "../../../libs/cua/crates/cua-fleet", features = ["testing"] }
 cua-host = { path = "../../../libs/cua/crates/cua-host", features = ["testing"] }
 # tests/keyvault.rs drives the daemon-hosted `teleport_app` seam
 # (`cua_spaces_ext::daemon::keyvault::McpSessionBroker`) against the kill switch.

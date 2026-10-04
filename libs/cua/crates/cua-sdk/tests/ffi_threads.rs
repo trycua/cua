@@ -5,9 +5,9 @@
 //! runtime (`run`) panics with "there is no reactor running" here.
 //!
 //! Two checks:
-//! - dynamic: env, Fleet, sandboxes, Spaces and presence methods against
-//!   in-process fakes (MockServer spacesd with presence, FakeFleet), in
-//!   the embedded and daemon topologies;
+//! - dynamic: env, Fleet (closed), sandboxes, Spaces and presence methods
+//!   against in-process fakes (MockServer spacesd with presence), in the
+//!   embedded and daemon topologies;
 //! - static: every `pub async fn` in an exported impl either goes through
 //!   the runtime (`run(`, `env_call!`, `fleet_call!`) or only delegates to
 //!   methods that do, so new methods cannot skip it silently.
@@ -19,9 +19,8 @@ use cua_daemon::{
     fixtures::{self, SpacesdFixture},
     server::{self, DaemonHandle, ServerConfig},
 };
-use cua_fleet::testing::FakeFleet;
 use cua_sdk::{
-    Cua, CuaConfig, FleetPoolSpec, PresenceCursor, PresenceIdentity, PresencePoint,
+    Cua, CuaConfig, CuaError, PresenceCursor, PresenceIdentity, PresencePoint,
     SandboxCreateOptions, SpacesdCommand, presence_now_ms,
 };
 use std::{
@@ -35,7 +34,6 @@ use std::{
 };
 
 const TOKEN: &str = "env-token";
-const POOL: &str = "cua-e2e-ffi";
 
 /// Polls `f` on the current thread, parking between wakeups. No Tokio.
 fn block_on<F: Future>(f: F) -> F::Output {
@@ -132,7 +130,6 @@ fn direct(url: &str, name: &str) -> SandboxCreateOptions {
 struct World {
     rt: tokio::runtime::Runtime,
     env: SpacesdFixture,
-    _gw: SpacesdFixture,
     _dirs: tempfile::TempDir,
     _daemon: Option<DaemonHandle>,
 }
@@ -144,24 +141,25 @@ fn world(daemon: bool) -> (World, Arc<Cua>) {
         .build()
         .unwrap();
     let dirs = tempfile::tempdir().unwrap();
-    let (env, gw, cua, handle) = rt.block_on(async {
+    let (env, cua, handle) = rt.block_on(async {
         let env = fixtures::start_env(Some(TOKEN), None).await;
         env.mock
             .state
             .advertise(&["presence", cua_spacesd_client::TUNNEL_FORWARD_FEATURE]);
-        let gw = fixtures::start_env(None, Some(fixtures::fake_gateway(POOL, POOL))).await;
-        let fake = FakeFleet::new();
+        let account = cua_auth::account::AccountApi::from_lookup(&|k| {
+            (k == "FLEETS_TOKEN").then(|| "account-token".to_string())
+        });
         let runtime = Runtime::new(RuntimeConfig {
             state_dir: Some(dirs.path().join("sandboxes")),
             spaces_home: Some(dirs.path().join("cua")),
             teleport_home: Some(dirs.path().join("host-home")),
-            fleet_client: Some(fake.client_with_base(&gw.url)),
+            account,
             env_probe_timeout: Some(Duration::from_secs(5)),
             ..Default::default()
         })
         .unwrap();
         if !daemon {
-            return (env, gw, Cua::from_runtime(runtime), None);
+            return (env, Cua::from_runtime(runtime), None);
         }
         let h = server::start(
             runtime,
@@ -177,13 +175,12 @@ fn world(daemon: bool) -> (World, Arc<Cua>) {
         .unwrap();
         // `Cua::connect` itself is exercised on the foreign thread below.
         let cua = Cua::connect(h.loopback_url.clone(), Some(h.token.clone())).unwrap();
-        (env, gw, cua, Some(h))
+        (env, cua, Some(h))
     });
     (
         World {
             rt,
             env,
-            _gw: gw,
             _dirs: dirs,
             _daemon: handle,
         },
@@ -236,42 +233,17 @@ async fn exercise(cua: Arc<Cua>, env_url: String, with_fleet: bool) {
         .await
         .unwrap();
 
-    // ---- Fleet (client side; embedded holds the fake Fleet client)
+    // ---- Fleet (Cua Cloud, closed; embedded holds an account)
     if with_fleet {
         let fleet = cua.fleet().unwrap();
-        // The runtime defaults from the image's manifest (a fixture here).
-        cua_fleet::testing::set_image_variant(
-            "registry.test/cua-e2e:fake",
-            cua_fleet::ImageVariant::ContainerDisk,
-        );
-        fleet
-            .apply_pool(FleetPoolSpec {
-                name: POOL.into(),
-                image: "registry.test/cua-e2e:fake".into(),
-                runtime: None,
-                replicas: None,
-                cpu: None,
-                memory_mb: None,
-                services: HashMap::from([("env".to_string(), 3211)]),
-                readiness_tcp_port: None,
-                efi: false,
-                command: None,
-                ttl_seconds_after_created: None,
-            })
-            .await
-            .unwrap();
-        fleet.get_pool(POOL.into()).await.unwrap();
-        fleet.list_pools(POOL.into()).await.unwrap();
-        let claim = fleet
-            .acquire(POOL.into(), Some(format!("{POOL}-c")), None)
-            .await
-            .unwrap();
-        fleet.list_claims(POOL.into()).await.unwrap();
-        fleet
-            .keep_alive(POOL.into(), claim.claim.clone(), 600)
-            .await
-            .unwrap();
-        fleet.release(POOL.into(), claim.claim).await.unwrap();
+        assert!(matches!(
+            fleet.get_pool("p".into()).await,
+            Err(CuaError::Fleet(_))
+        ));
+        assert!(matches!(
+            fleet.pools().list().await,
+            Err(CuaError::Fleet(_))
+        ));
     }
 
     // ---- sandboxes (direct)

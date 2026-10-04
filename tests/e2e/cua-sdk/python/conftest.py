@@ -119,7 +119,7 @@ def _record_docs_blocks(item, record: dict, out: Path) -> None:
 
 @pytest.fixture(scope="session")
 def fixtures():
-    """cua-test-fixtures: MockServer spacesd + fake Fleet on loopback."""
+    """cua-test-fixtures: MockServer spacesd on loopback."""
     binary = e2e.fixtures_binary()
     if binary is None:
         pytest.skip("cua-test-fixtures is not built")
@@ -136,25 +136,6 @@ def fixtures():
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=10)
-
-
-@pytest.fixture
-def fake_fleet(fixtures, tmp_path):
-    """An embedded Cua whose Fleet is the fake API."""
-    import cua
-
-    return cua.embedded(
-        state_dir=str(tmp_path / "state"),
-        fleet_from_env=False,
-        fleet=cua.FleetSettings(base_url=fixtures["fleet_base_url"], token=fixtures["fleet_token"]),
-    )
-
-
-@pytest.fixture
-def live_fleet(tmp_path):
-    import cua
-
-    return cua.embedded(state_dir=str(tmp_path / "state"))
 
 
 @pytest.fixture

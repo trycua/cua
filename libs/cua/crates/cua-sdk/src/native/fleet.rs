@@ -1,13 +1,20 @@
-//! `Fleet`: pools, templates, claims and images (cyclops-sdk via cua-fleet).
+//! `Fleet`: Cua Cloud pools, templates, claims and images.
 //!
-//! Resources cross as small records plus their full JSON (`json`), so the
-//! Fleet schema can evolve without regenerating every binding.
+//! Cua Cloud (Fleet) has closed. Every call that needed it fails with
+//! `CuaError::Fleet` and [`cua_sandbox_core::CLOUD_CLOSED`]; the API shape is
+//! kept so existing callers get that message instead of a missing symbol.
+//! [`Fleet::billing_status`] still reads the account's billing from the Cua
+//! account API ([`cua_auth::account::AccountApi`]).
 
 use super::run;
 use super::sandbox::{Container, ReadinessProbe, RegistrySecret};
 use crate::{CuaError, Result};
-use cua_fleet::{ClaimOptions, FleetClient};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use cua_auth::account::AccountApi;
+use std::{collections::HashMap, sync::Arc};
+
+fn closed<T>() -> Result<T> {
+    Err(CuaError::Fleet(cua_sandbox_core::CLOUD_CLOSED.into()))
+}
 
 /// What a sandbox runs: the one model behind `Sandbox.create`, managed
 /// pools and [`Fleet::apply`]. Unset fields keep Fleet's defaults (and are
@@ -129,145 +136,11 @@ pub struct FleetClaimOptions {
 /// A fresh per-claim env token (64 hex characters).
 #[uniffi::export]
 pub fn fleet_generate_claim_token() -> String {
-    cua_fleet::claim_secrets::generate_claim_token()
-}
-
-fn opt_runtime(r: Option<&str>) -> Result<Option<cua_fleet::RuntimeKind>> {
-    match r.filter(|r| !r.is_empty()) {
-        Some(r) => Ok(cua_fleet::parse_runtime(r)?),
-        None => Ok(None),
-    }
-}
-
-impl SandboxSpec {
-    /// The core spec and the credentials to write (resolved in this
-    /// process: env, AWS CLI).
-    pub(crate) async fn to_core(
-        &self,
-    ) -> Result<(
-        cua_fleet::SandboxSpec,
-        Option<cua_fleet::RegistryCredentials>,
-    )> {
-        let services: std::collections::BTreeMap<String, u16> =
-            self.services.clone().into_iter().collect();
-        let readiness = self
-            .readiness
-            .as_ref()
-            .map(|p| {
-                let p = p.resolve(&self.services)?;
-                Ok::<_, CuaError>(match p {
-                    cua_sandbox_core::Probe::Tcp(port) => cua_fleet::ReadinessProbe::Tcp { port },
-                    cua_sandbox_core::Probe::Http { port, path, .. } => {
-                        cua_fleet::ReadinessProbe::Http { port, path }
-                    }
-                })
-            })
-            .transpose()?;
-        let creds = match &self.registry_secret {
-            Some(s) => Some(s.credentials(&self.image).await?),
-            None => None,
-        };
-        let registry_secret = match (&self.registry_secret_name, &creds) {
-            (Some(n), _) => Some(n.clone()),
-            (None, Some(c)) => Some(cua_fleet::registry_secret_name(
-                c.registry
-                    .as_deref()
-                    .unwrap_or_else(|| cua_fleet::registry_of(&self.image)),
-                &c.username,
-            )),
-            (None, None) => None,
-        };
-        let spec = cua_fleet::SandboxSpec {
-            image: self.image.clone(),
-            command: self.command.clone().filter(|c| !c.is_empty()),
-            args: self.args.clone().filter(|a| !a.is_empty()),
-            env: self.env.clone().into_iter().collect(),
-            services,
-            readiness,
-            cpu: self.cpu,
-            memory_mb: self.memory_mb,
-            efi: self.efi,
-            sidecars: self.sidecars.iter().map(Container::to_core).collect(),
-            registry_secret,
-            process_mode: self
-                .process_mode
-                .as_deref()
-                .filter(|m| !m.is_empty())
-                .map(cua_fleet::ProcessMode::parse)
-                .transpose()?,
-            claim_secrets: self.claim_secrets,
-        };
-        Ok((spec, creds))
-    }
-
-    fn from_core(s: cua_fleet::SandboxSpec) -> Self {
-        Self {
-            image: s.image,
-            command: s.command,
-            args: s.args,
-            env: s.env.into_iter().collect(),
-            services: s.services.into_iter().collect(),
-            readiness: s.readiness.map(|r| match r {
-                cua_fleet::ReadinessProbe::Tcp { port } => ReadinessProbe {
-                    port,
-                    ..Default::default()
-                },
-                cua_fleet::ReadinessProbe::Http { port, path } => ReadinessProbe {
-                    port,
-                    http_path: Some(path),
-                    ..Default::default()
-                },
-            }),
-            cpu: s.cpu,
-            memory_mb: s.memory_mb,
-            efi: s.efi,
-            sidecars: s.sidecars.into_iter().map(Container::from_core).collect(),
-            registry_secret: None,
-            registry_secret_name: s.registry_secret,
-            process_mode: s.process_mode.map(|m| m.as_str().to_string()),
-            claim_secrets: s.claim_secrets,
-        }
-    }
-}
-
-impl PoolOptions {
-    pub(crate) fn to_core(&self) -> Result<cua_fleet::PoolOptions> {
-        let secs = |s: Option<u32>| s.map(|s| Duration::from_secs(u64::from(s)));
-        Ok(cua_fleet::PoolOptions {
-            runtime: opt_runtime(self.runtime.as_deref())?,
-            replicas: self.replicas,
-            warm: self.warm,
-            min_pool_size: self.min_pool_size,
-            max_pool_size: self.max_pool_size,
-            idle_ttl: secs(self.idle_ttl_seconds),
-            ttl_policy: self
-                .ttl_policy
-                .as_deref()
-                .filter(|p| !p.is_empty())
-                .map(cua_fleet::TtlPolicy::parse)
-                .transpose()?,
-            pool_ttl: secs(self.pool_ttl_seconds),
-            claim_ttl: secs(self.claim_ttl_seconds),
-        })
-    }
-
-    fn from_core(o: cua_fleet::PoolOptions) -> Self {
-        let secs = |d: Option<Duration>| d.map(|d| d.as_secs().min(u64::from(u32::MAX)) as u32);
-        Self {
-            runtime: o
-                .runtime
-                .as_ref()
-                .map(|r| cua_fleet::runtime_name(r).into()),
-            replicas: o.replicas,
-            warm: o.warm,
-            min_pool_size: o.min_pool_size,
-            max_pool_size: o.max_pool_size,
-            idle_ttl_seconds: secs(o.idle_ttl),
-            ttl_policy: o.ttl_policy.map(|p| p.as_str().to_string()),
-            pool_ttl_seconds: secs(o.pool_ttl),
-            claim_ttl_seconds: secs(o.claim_ttl),
-        }
-    }
+    format!(
+        "{:032x}{:032x}",
+        rand::random::<u128>(),
+        rand::random::<u128>()
+    )
 }
 
 /// A warm pool spec (`Pool.apply` semantics: pool, namespace and template
@@ -356,42 +229,6 @@ pub struct FleetSignedUrl {
     pub json: String,
 }
 
-fn pool_of(p: &cua_fleet::Pool) -> Result<FleetPool> {
-    Ok(FleetPool {
-        name: p.metadata.name.clone(),
-        namespace: p.metadata.namespace.clone(),
-        replicas: p.spec.replicas,
-        ready_replicas: p.status.as_ref().and_then(|s| s.ready_replicas),
-        json: serde_json::to_string(p)?,
-    })
-}
-
-fn claim_of(c: &cua_fleet::Claim) -> Result<FleetClaim> {
-    Ok(FleetClaim {
-        name: c.metadata.name.clone(),
-        namespace: c.metadata.namespace.clone(),
-        json: serde_json::to_string(c)?,
-    })
-}
-
-fn bound_of(b: cua_fleet::BoundSandbox) -> FleetSandbox {
-    FleetSandbox {
-        name: b.name,
-        namespace: b.namespace,
-        claim: b.claim,
-        services: b.services,
-    }
-}
-
-fn bound_to(b: &FleetSandbox) -> cua_fleet::BoundSandbox {
-    cua_fleet::BoundSandbox {
-        namespace: b.namespace.clone(),
-        claim: b.claim.clone(),
-        name: b.name.clone(),
-        services: b.services.clone(),
-    }
-}
-
 /// This account's Cua Cloud rates ([`Fleet::usage_pricing`]). Fleet bills
 /// the vCPUs and memory a sandbox reserves, per hour; disk is not metered.
 #[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
@@ -445,9 +282,7 @@ pub struct FleetBillingStatus {
     pub billing_url: Option<String>,
 }
 
-/// The everyday sizes of a cloud sandbox, which the Cua apps offer
-/// (`cua_fleet::CLOUD_DEFAULT_RANGE_CPUS`,
-/// `cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB`).
+/// The everyday sizes of a cloud sandbox, which the Cua apps offered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct FleetSizeLimits {
     /// Fewest vCPUs.
@@ -461,24 +296,21 @@ pub struct FleetSizeLimits {
 }
 
 /// The everyday sizes of a cloud sandbox (1-8 vCPUs, 1-32 GiB), which the
-/// Cua apps offer. The SDK does not enforce them: it accepts up to 64 vCPUs
-/// and 512 MiB to 512 GiB, and Fleet decides what an account may run (a
-/// size over the account's limits fails with `FleetAdmissionDenied`).
+/// Cua apps offered.
 #[uniffi::export]
 pub fn fleet_size_limits() -> FleetSizeLimits {
     FleetSizeLimits {
-        min_cpus: *cua_fleet::CLOUD_DEFAULT_RANGE_CPUS.start(),
-        max_cpus: *cua_fleet::CLOUD_DEFAULT_RANGE_CPUS.end(),
-        min_memory_mb: *cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB.start(),
-        max_memory_mb: *cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB.end(),
+        min_cpus: 1,
+        max_cpus: 8,
+        min_memory_mb: 1024,
+        max_memory_mb: 32 * 1024,
     }
 }
 
-/// Fleet control plane.
+/// Fleet control plane (Cua Cloud, closed) and the account's billing.
 #[derive(uniffi::Object)]
 pub struct Fleet {
-    pub(crate) client: FleetClient,
-    pub(crate) pools: cua_fleet::PoolManager,
+    pub(crate) account: AccountApi,
 }
 
 /// A managed pool (`cua-auto-*`, or a legacy `cua-eph-*`).
@@ -527,120 +359,56 @@ pub struct FleetGcReport {
     pub errors: Vec<String>,
 }
 
-/// Managed pools: what `Sandboxes.create` without a pool uses.
+/// Managed pools (Cua Cloud, closed).
 #[derive(uniffi::Object)]
-pub struct FleetPools {
-    pools: cua_fleet::PoolManager,
-}
+pub struct FleetPools {}
 
 #[uniffi::export]
 impl FleetPools {
-    /// This account's managed pools.
+    /// This account's managed pools. Cua Cloud has closed.
     pub async fn list(&self) -> Result<Vec<FleetManagedPool>> {
-        let m = self.pools.clone();
-        run(async move {
-            Ok(m.list()
-                .await?
-                .into_iter()
-                .map(|p| FleetManagedPool {
-                    name: p.name,
-                    managed: p.managed,
-                    spec_hash: p.spec_hash,
-                    image: p.image,
-                    replicas: p.replicas,
-                    ready_replicas: p.ready_replicas,
-                    max_pool_size: p.max_pool_size,
-                    claims: p.claims,
-                    bound_claims: p.bound_claims,
-                    last_used_unix: p.last_used,
-                    created_unix: p.created,
-                    expires_unix: p.expires_at,
-                    terminating: p.terminating,
-                })
-                .collect())
-        })
-        .await
+        run(async { closed() }).await
     }
 
-    /// Deletes managed pools idle for `idle_seconds` (default 1800) and
-    /// stuck Pending/Failed managed claims past their TTL.
+    /// Deletes idle managed pools. Cua Cloud has closed.
     pub async fn gc(&self, idle_seconds: Option<u32>) -> Result<FleetGcReport> {
-        let m = self.pools.clone();
-        let idle = super::secs(idle_seconds.unwrap_or(1800));
-        run(async move {
-            let r = m.gc(idle).await?;
-            Ok(FleetGcReport {
-                deleted_pools: r.deleted_pools,
-                deleted_namespaces: r.deleted_namespaces,
-                deleted_claims: r.deleted_claims,
-                kept: r.kept,
-                errors: r.errors,
-            })
-        })
-        .await
+        let _ = idle_seconds;
+        run(async { closed() }).await
     }
 
-    /// [`FleetPools::gc`] restricted to the named managed pools: each is
-    /// deleted (with its namespace) once it has no claims and has been idle
-    /// for `idle_seconds` (default 0, i.e. now). Pools with live claims are
-    /// kept, so a pool another process is using survives. Tests use this to
-    /// remove the pools they created.
+    /// Deletes the named managed pools. Cua Cloud has closed.
     pub async fn gc_pools(
         &self,
         names: Vec<String>,
         idle_seconds: Option<u32>,
     ) -> Result<FleetGcReport> {
-        let m = self.pools.clone();
-        let idle = super::secs(idle_seconds.unwrap_or(0));
-        run(async move {
-            let r = m.gc_pools(idle, &names).await?;
-            Ok(FleetGcReport {
-                deleted_pools: r.deleted_pools,
-                deleted_namespaces: r.deleted_namespaces,
-                deleted_claims: r.deleted_claims,
-                kept: r.kept,
-                errors: r.errors,
-            })
-        })
-        .await
+        let _ = (names, idle_seconds);
+        run(async { closed() }).await
     }
-}
-
-macro_rules! fleet_call {
-    ($self:ident, |$c:ident| $body:expr) => {{
-        let $c = $self.client.clone();
-        run(async move { $body }).await
-    }};
 }
 
 #[uniffi::export]
 impl Fleet {
-    /// Fleet API base URL.
+    /// The Cua account API base URL.
     pub fn base_url(&self) -> String {
-        self.client.config().base_url.clone()
+        self.account.base_url().to_string()
     }
 
-    /// This account's Cua Cloud rates (`GET /api/config`), reused for five
-    /// minutes. `None` when Fleet answers without rates: show no price
-    /// rather than a guess.
+    /// This account's Cua Cloud rates. Cua Cloud has closed: `None`.
     pub async fn usage_pricing(&self) -> Result<Option<FleetUsagePricing>> {
-        let client = self.client.clone();
-        run(async move {
-            Ok(client.usage_pricing().await?.map(|p| FleetUsagePricing {
-                vcpu_hour_usd: p.vcpu_hour_usd,
-                memory_gib_hour_usd: p.memory_gib_hour_usd,
-            }))
-        })
-        .await
+        run(async { Ok(None) }).await
     }
 
-    /// The account's Cua Cloud billing: its credit, card and the website
-    /// billing page. A Fleet without billing answers `billing_enabled:
+    /// The account's billing: its credit, card and the website billing
+    /// page. An account API without billing answers `billing_enabled:
     /// false`.
     pub async fn billing_status(&self) -> Result<FleetBillingStatus> {
-        let client = self.client.clone();
+        let account = self.account.clone();
         run(async move {
-            let s = client.billing_status().await?;
+            let s = account
+                .billing_status()
+                .await
+                .map_err(|e| CuaError::Fleet(e.to_string()))?;
             Ok(FleetBillingStatus {
                 billing_enabled: s.billing_enabled,
                 payment_method_present: s.payment_method_present,
@@ -663,290 +431,161 @@ impl Fleet {
         .await
     }
 
-    /// Managed pools (list, gc).
+    /// Managed pools (Cua Cloud, closed).
     pub fn pools(&self) -> Arc<FleetPools> {
-        Arc::new(FleetPools {
-            pools: self.pools.clone(),
-        })
+        Arc::new(FleetPools {})
     }
 
     /// A random ephemeral pool name (`cua-eph-<hex>`).
     pub fn ephemeral_pool_name(&self) -> String {
-        cua_fleet::ephemeral_pool_name()
+        format!("cua-eph-{:08x}", rand::random::<u32>())
     }
 
-    /// Reconciles pool `name` (= namespace = template) to run `spec` with
-    /// `options`: the one pool writer (rolls a new pool back if the
-    /// template fails). The image is pinned to the variant the runtime
-    /// runs; `spec.registry_secret` is written as the pool's pull Secret.
+    /// Reconciles a pool. Cua Cloud has closed.
     pub async fn apply(
         &self,
         name: String,
         spec: SandboxSpec,
         options: PoolOptions,
     ) -> Result<FleetPool> {
-        let options = options.to_core()?;
-        fleet_call!(self, |c| {
-            let (spec, creds) = spec.to_core().await?;
-            pool_of(
-                &c.apply_with_credentials(&name, &spec, &options, creds.as_ref())
-                    .await?
-                    .pool,
-            )
-        })
+        let _ = (name, spec, options);
+        run(async { closed() }).await
     }
 
-    /// Compares the set fields of `spec` with pool `pool`'s template:
-    /// `PoolSpecMismatch` (with a readable diff) when they differ.
+    /// Compares a spec with a pool's template. Cua Cloud has closed.
     pub async fn check_pool_spec(&self, pool: String, spec: SandboxSpec) -> Result<()> {
-        fleet_call!(self, |c| {
-            let (spec, _) = spec.to_core().await?;
-            Ok(c.check_pool_spec(&pool, &spec).await?)
-        })
+        let _ = (pool, spec);
+        run(async { closed() }).await
     }
 
-    /// Lays the set fields of `spec` over pool `pool`'s template and writes
-    /// it (the pool's capacity is kept; a no-op when nothing differs).
+    /// Writes a spec over a pool's template. Cua Cloud has closed.
     pub async fn apply_pool_template(&self, pool: String, spec: SandboxSpec) -> Result<()> {
-        fleet_call!(self, |c| {
-            let (spec, creds) = spec.to_core().await?;
-            Ok(c.apply_pool_template(&pool, &spec, creds.as_ref()).await?)
-        })
+        let _ = (pool, spec);
+        run(async { closed() }).await
     }
 
-    /// Reads pool `name` back as the shared model, with its `fleets_pool`
-    /// Terraform block.
+    /// Reads a pool back. Cua Cloud has closed.
     pub async fn export_pool(&self, name: String) -> Result<FleetPoolExport> {
-        fleet_call!(self, |c| {
-            let (spec, options, runtime) = c.export_pool(&name).await?;
-            let terraform = cua_fleet::terraform_pool_block(&name, &spec, &options, &runtime);
-            Ok(FleetPoolExport {
-                spec: SandboxSpec::from_core(spec),
-                options: PoolOptions::from_core(options),
-                runtime: cua_fleet::runtime_name(&runtime).into(),
-                terraform,
-            })
-        })
+        let _ = name;
+        run(async { closed() }).await
     }
 
-    /// Deprecated: use [`Fleet::apply`]. Reconciles a pool and its template
-    /// from the flat spec (converted to [`SandboxSpec`] + [`PoolOptions`]).
+    /// Deprecated pool writer. Cua Cloud has closed.
     pub async fn apply_pool(&self, spec: FleetPoolSpec) -> Result<FleetPool> {
-        let runtime = opt_runtime(spec.runtime.as_deref())?;
-        let mut sandbox = cua_fleet::SandboxSpec::new(spec.image);
-        sandbox.cpu = spec.cpu;
-        sandbox.memory_mb = spec.memory_mb;
-        sandbox.services = if spec.services.is_empty() {
-            [("env".to_string(), 3211u16)].into()
-        } else {
-            spec.services.into_iter().collect()
-        };
-        sandbox.readiness = spec
-            .readiness_tcp_port
-            .map(|port| cua_fleet::ReadinessProbe::Tcp { port });
-        sandbox.efi = spec.efi;
-        sandbox.command = spec.command.filter(|c| !c.is_empty());
-        let options = cua_fleet::PoolOptions {
-            runtime,
-            replicas: Some(spec.replicas.unwrap_or(1)),
-            pool_ttl: spec
-                .ttl_seconds_after_created
-                .map(|s| Duration::from_secs(u64::from(s))),
-            ..Default::default()
-        };
-        let name = spec.name;
-        fleet_call!(self, |c| pool_of(
-            &c.apply(&name, &sandbox, &options).await?.pool
-        ))
+        let _ = spec;
+        run(async { closed() }).await
     }
 
-    /// The image pool `name`'s template runs, as a claim on it reports it
-    /// (`Sandbox.image_info`): pinned by the resolver (cached per pool), or
-    /// the template reference with empty `pinned_ref`/`digest` when the
-    /// registry cannot be read. `None` when the template names no image.
+    /// The image a pool's template runs. Cua Cloud has closed.
     pub async fn pool_image_info(&self, name: String) -> Result<Option<super::sandbox::ImageInfo>> {
-        fleet_call!(self, |c| Ok(cua_sandbox_core::pool_image_info(
-            &c, &name, None
-        )
-        .await?
-        .map(Into::into)))
+        let _ = name;
+        run(async { closed() }).await
     }
 
-    /// Looks up a pool.
+    /// Looks up a pool. Cua Cloud has closed.
     pub async fn get_pool(&self, name: String) -> Result<FleetPool> {
-        fleet_call!(self, |c| pool_of(&c.get_pool(&name).await?.pool))
+        let _ = name;
+        run(async { closed() }).await
     }
 
-    /// Lists pools in a namespace.
+    /// Lists pools. Cua Cloud has closed.
     pub async fn list_pools(&self, namespace: String) -> Result<Vec<FleetPool>> {
-        fleet_call!(self, |c| {
-            c.sdk()
-                .list_pools(namespace)
-                .await
-                .map_err(cua_fleet::Error::from)?
-                .iter()
-                .map(pool_of)
-                .collect()
-        })
+        let _ = namespace;
+        run(async { closed() }).await
     }
 
-    /// Deletes a pool, its namespace and its same-named template.
+    /// Deletes a pool. Cua Cloud has closed.
     pub async fn delete_pool(&self, name: String) -> Result<()> {
-        fleet_call!(self, |c| {
-            let mut h = c.get_pool(&name).await?;
-            let templates = c
-                .sdk()
-                .list_templates(h.pool.metadata.namespace.clone())
-                .await
-                .map_err(cua_fleet::Error::from)?;
-            h.template = templates.into_iter().find(|t| t.metadata.name == name);
-            c.delete_pool(h).await?;
-            Ok(())
-        })
+        let _ = name;
+        run(async { closed() }).await
     }
 
-    /// Sets warm replicas (0 suspends).
+    /// Sets warm replicas. Cua Cloud has closed.
     pub async fn set_pool_replicas(&self, name: String, replicas: u32) -> Result<FleetPool> {
-        fleet_call!(self, |c| {
-            let mut h = c.get_pool(&name).await?;
-            c.set_pool_replicas(&mut h, replicas).await?;
-            pool_of(&h.pool)
-        })
+        let _ = (name, replicas);
+        run(async { closed() }).await
     }
 
-    /// Waits for at least one ready replica.
+    /// Waits for a ready replica. Cua Cloud has closed.
     pub async fn wait_pool_ready(&self, name: String, timeout_ms: u32) -> Result<FleetPool> {
-        fleet_call!(self, |c| {
-            let h = c.get_pool(&name).await?;
-            pool_of(&c.wait_pool_ready(&h, super::millis(timeout_ms)).await?)
-        })
+        let _ = (name, timeout_ms);
+        run(async { closed() }).await
     }
 
-    /// Lists templates in a namespace as JSON resources.
+    /// Lists templates. Cua Cloud has closed.
     pub async fn list_templates(&self, namespace: String) -> Result<Vec<String>> {
-        fleet_call!(self, |c| {
-            c.sdk()
-                .list_templates(namespace)
-                .await
-                .map_err(cua_fleet::Error::from)?
-                .iter()
-                .map(|t| serde_json::to_string(t).map_err(CuaError::from))
-                .collect()
-        })
+        let _ = namespace;
+        run(async { closed() }).await
     }
 
-    /// Claims a sandbox from a pool and waits for it to bind. A claim named
-    /// `name` that already exists is reattached.
+    /// Claims a sandbox from a pool. Cua Cloud has closed.
     pub async fn acquire(
         &self,
         pool: String,
         name: Option<String>,
         ttl_seconds: Option<u32>,
     ) -> Result<FleetSandbox> {
-        fleet_call!(self, |c| {
-            let p = c.get_pool(&pool).await?.pool;
-            let b = c
-                .acquire(
-                    &p,
-                    ClaimOptions {
-                        name,
-                        ttl_seconds_after_created: ttl_seconds,
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            Ok(bound_of(b))
-        })
+        let _ = (pool, name, ttl_seconds);
+        run(async { closed() }).await
     }
 
-    /// [`Fleet::acquire`] with claim options, including a per-claim env
-    /// token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
-    /// releases the claim).
+    /// Claims a sandbox with options. Cua Cloud has closed.
     pub async fn acquire_with(
         &self,
         pool: String,
         options: FleetClaimOptions,
     ) -> Result<FleetSandbox> {
-        fleet_call!(self, |c| {
-            let p = c.get_pool(&pool).await?.pool;
-            let b = c
-                .acquire(
-                    &p,
-                    ClaimOptions {
-                        name: options.name,
-                        ttl_seconds_after_created: options.ttl_seconds,
-                        claim_token: options.claim_token,
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            Ok(bound_of(b))
-        })
+        let _ = (pool, options);
+        run(async { closed() }).await
     }
 
-    /// Creates a claim without waiting.
+    /// Creates a claim. Cua Cloud has closed.
     pub async fn claim(
         &self,
         pool: String,
         name: Option<String>,
         ttl_seconds: Option<u32>,
     ) -> Result<FleetClaim> {
-        fleet_call!(self, |c| {
-            let p = c.get_pool(&pool).await?.pool;
-            let (claim, _) = c
-                .claim(
-                    &p,
-                    ClaimOptions {
-                        name,
-                        ttl_seconds_after_created: ttl_seconds,
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            claim_of(&claim)
-        })
+        let _ = (pool, name, ttl_seconds);
+        run(async { closed() }).await
     }
 
-    /// Waits for a named claim to bind.
+    /// Waits for a named claim to bind. Cua Cloud has closed.
     pub async fn attach_claim(&self, namespace: String, name: String) -> Result<FleetSandbox> {
-        fleet_call!(self, |c| Ok(bound_of(
-            c.attach_claim(&namespace, &name).await?
-        )))
+        let _ = (namespace, name);
+        run(async { closed() }).await
     }
 
-    /// Lists claims in a namespace.
+    /// Lists claims. Cua Cloud has closed.
     pub async fn list_claims(&self, namespace: String) -> Result<Vec<FleetClaim>> {
-        fleet_call!(self, |c| c
-            .list_claims(&namespace)
-            .await?
-            .iter()
-            .map(claim_of)
-            .collect())
+        let _ = namespace;
+        run(async { closed() }).await
     }
 
-    /// Releases a claim (missing claims are fine).
+    /// Releases a claim. Cua Cloud has closed.
     pub async fn release(&self, namespace: String, name: String) -> Result<()> {
-        fleet_call!(self, |c| Ok(c.release(&namespace, &name).await?))
+        let _ = (namespace, name);
+        run(async { closed() }).await
     }
 
-    /// Extends a claim's lease; returns the RFC 3339 shutdown time.
+    /// Extends a claim's lease. Cua Cloud has closed.
     pub async fn keep_alive(
         &self,
         namespace: String,
         name: String,
         seconds: u32,
     ) -> Result<String> {
-        fleet_call!(self, |c| Ok(c
-            .keep_alive(&namespace, &name, super::secs(seconds))
-            .await?))
+        let _ = (namespace, name, seconds);
+        run(async { closed() }).await
     }
 
-    /// The gateway URL of a sandbox service (needs the Fleet bearer).
+    /// The gateway URL of a sandbox service. Cua Cloud has closed.
     pub fn service_url(&self, sandbox: FleetSandbox, service: String) -> Result<String> {
-        Ok(self.client.service_url(&bound_to(&sandbox), &service)?)
+        let _ = (sandbox, service);
+        closed()
     }
 
-    /// Mints a signed, shareable service URL.
+    /// Mints a signed service URL. Cua Cloud has closed.
     pub async fn create_signed_service_url(
         &self,
         sandbox: FleetSandbox,
@@ -954,113 +593,58 @@ impl Fleet {
         label: Option<String>,
         expires_in_seconds: u32,
     ) -> Result<FleetSignedUrl> {
-        fleet_call!(self, |c| {
-            let u = c
-                .create_signed_service_url(
-                    &bound_to(&sandbox),
-                    &service,
-                    label,
-                    super::secs(expires_in_seconds),
-                )
-                .await?;
-            Ok(FleetSignedUrl {
-                url: u.url.clone(),
-                json: serde_json::to_string(&u)?,
-            })
-        })
+        let _ = (sandbox, service, label, expires_in_seconds);
+        run(async { closed() }).await
     }
 
-    /// Lists image resources (JSON) in a namespace.
+    /// Lists image resources. Cua Cloud has closed.
     pub async fn list_images(&self, namespace: String) -> Result<Vec<String>> {
-        fleet_call!(self, |c| c
-            .list_images(&namespace)
-            .await?
-            .iter()
-            .map(|v| Ok(v.to_string()))
-            .collect())
+        let _ = namespace;
+        run(async { closed() }).await
     }
 
-    /// Gets an image resource (JSON).
+    /// Gets an image resource. Cua Cloud has closed.
     pub async fn get_image(&self, namespace: String, name: String) -> Result<String> {
-        fleet_call!(self, |c| Ok(c
-            .get_image(&namespace, &name)
-            .await?
-            .to_string()))
+        let _ = (namespace, name);
+        run(async { closed() }).await
     }
 
-    /// Creates an image resource (remote build) from a JSON manifest.
+    /// Creates an image resource. Cua Cloud has closed.
     pub async fn create_image(&self, namespace: String, manifest_json: String) -> Result<String> {
-        let manifest: serde_json::Value = serde_json::from_str(&manifest_json)?;
-        fleet_call!(self, |c| Ok(c
-            .create_image(&namespace, manifest)
-            .await?
-            .to_string()))
+        let _ = (namespace, manifest_json);
+        run(async { closed() }).await
     }
 
-    /// Deletes an image resource.
+    /// Deletes an image resource. Cua Cloud has closed.
     pub async fn delete_image(&self, namespace: String, name: String) -> Result<()> {
-        fleet_call!(self, |c| Ok(c.delete_image(&namespace, &name).await?))
+        let _ = (namespace, name);
+        run(async { closed() }).await
     }
 }
 
-/// The Fleet runtime for `image`: `runtime` (`kubevirt`, `gvisor`) when
-/// given, else the one the image needs. What the image is
-/// comes from its registry manifest (read with docker, ghcr and ECR
-/// credentials): a KubeVirt containerDisk (a `/disk/disk.img` layer or
-/// trycua containerDisk media types) runs on `kubevirt`, a container rootfs
-/// on `gvisor`. When the manifest cannot be read and no runtime is given,
-/// the runtime is guessed from the reference with a warning (a `docker-`
-/// tag runs on `gvisor`, anything else on `kubevirt`). Raises
-/// `InvalidArgument` only for a runtime the image cannot run on, and
-/// `Unsupported` for a macOS image or runtime `macos` (Fleet does not offer
-/// macOS in this SDK). Blocks
-/// while the registry is read (at most 20 s; `CUA_FLEET_IMAGE_INSPECT=0`
-/// skips it). The one copy of this rule; cua-sandbox calls it.
+/// The Fleet runtime for `image`. Cua Cloud has closed.
 #[uniffi::export]
 pub fn fleet_resolve_runtime(runtime: Option<String>, image: String) -> Result<String> {
-    let runtime = match runtime.as_deref() {
-        Some(r) => cua_fleet::parse_runtime(r)?,
-        None => None,
-    };
-    // A plain thread: the caller may itself be on a Tokio runtime.
-    let resolved = std::thread::spawn(move || {
-        super::runtime().block_on(cua_fleet::resolve_runtime(runtime, &image))
-    })
-    .join()
-    .map_err(|_| CuaError::Internal("fleet_resolve_runtime panicked".into()))??;
-    Ok(cua_fleet::runtime_name(&resolved).into())
+    let _ = (runtime, image);
+    closed()
 }
 
-/// The variant of an image from its registry documents (`manifest`: an
-/// image manifest or index, `config`: the platform manifest's config blob):
-/// `container-disk`, `rootfs` or `other`. Pure (no registry read). A macOS
-/// image raises `Unsupported`.
+/// The Fleet variant of an image from its registry documents. Cua Cloud
+/// has closed.
 #[uniffi::export]
 pub fn fleet_image_variant(manifest: String, config: Option<String>) -> Result<String> {
-    Ok(
-        cua_fleet::runtime::classify_manifest_json(&manifest, config.as_deref())?
-            .as_str()
-            .into(),
-    )
+    let _ = (manifest, config);
+    closed()
 }
 
-/// [`fleet_resolve_runtime`] with the image variant already known
-/// (`variant` as [`fleet_image_variant`] returns it); `None` means the
-/// manifest could not be read (an unset runtime then falls back to the
-/// reference). Pure (no registry read).
+/// [`fleet_resolve_runtime`] with the image variant already known. Cua
+/// Cloud has closed.
 #[uniffi::export]
 pub fn fleet_check_runtime(
     runtime: Option<String>,
     image: String,
     variant: Option<String>,
 ) -> Result<String> {
-    let runtime = match runtime.as_deref() {
-        Some(r) => cua_fleet::parse_runtime(r)?,
-        None => None,
-    };
-    let evidence = match variant {
-        Some(v) => cua_fleet::ImageEvidence::Known(cua_fleet::ImageVariant::parse(&v)?),
-        None => cua_fleet::ImageEvidence::Unavailable("image variant not given".into()),
-    };
-    Ok(cua_fleet::runtime_name(&cua_fleet::check_runtime(runtime, &image, &evidence)?).into())
+    let _ = (runtime, image, variant);
+    closed()
 }

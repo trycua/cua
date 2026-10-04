@@ -507,15 +507,15 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_error_doc_url() != 10839:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_func_fleet_check_runtime() != 18168:
+    if lib.uniffi_cua_sdk_checksum_func_fleet_check_runtime() != 42391:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_fleet_generate_claim_token() != 46314:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_func_fleet_image_variant() != 30093:
+    if lib.uniffi_cua_sdk_checksum_func_fleet_image_variant() != 35019:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_func_fleet_resolve_runtime() != 15632:
+    if lib.uniffi_cua_sdk_checksum_func_fleet_resolve_runtime() != 9436:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_func_fleet_size_limits() != 53900:
+    if lib.uniffi_cua_sdk_checksum_func_fleet_size_limits() != 19571:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_func_image_alias() != 25551:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -675,7 +675,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_auth() != 19106:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_cua_fleet() != 40955:
+    if lib.uniffi_cua_sdk_checksum_method_cua_fleet() != 64152:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_info() != 11159:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -683,13 +683,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_mode() != 63626:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_cua_sandboxes() != 8394:
+    if lib.uniffi_cua_sdk_checksum_method_cua_sandboxes() != 4520:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_shutdown_daemon() != 57559:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_cua_spaces() != 35262:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_cua_spacesd() != 28670:
+    if lib.uniffi_cua_sdk_checksum_method_cua_spacesd() != 62689:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_approve() != 49147:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -709,71 +709,71 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_devices_snapshot() != 26132:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_acquire() != 16535:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_acquire() != 39166:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_acquire_with() != 8432:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_acquire_with() != 1499:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_apply() != 23134:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_apply() != 41633:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_apply_pool() != 43781:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_apply_pool() != 3527:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_apply_pool_template() != 43651:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_apply_pool_template() != 55758:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_attach_claim() != 27491:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_attach_claim() != 4432:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_base_url() != 7166:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_base_url() != 25728:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_billing_status() != 50128:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_billing_status() != 25349:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_check_pool_spec() != 58799:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_check_pool_spec() != 33863:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_claim() != 33116:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_claim() != 10574:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_create_image() != 53686:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_create_image() != 41649:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url() != 1809:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url() != 12383:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_delete_image() != 54232:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_delete_image() != 24865:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_delete_pool() != 41031:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_delete_pool() != 32232:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_fleet_ephemeral_pool_name() != 51788:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_export_pool() != 36800:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_export_pool() != 48067:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_get_image() != 26535:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_get_image() != 64152:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_get_pool() != 27007:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_get_pool() != 65404:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_keep_alive() != 21850:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_keep_alive() != 28579:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_list_claims() != 30494:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_list_claims() != 13959:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_list_images() != 5380:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_list_images() != 28202:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_list_pools() != 19148:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_list_pools() != 9257:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_list_templates() != 27819:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_list_templates() != 48624:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_pool_image_info() != 2800:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_pool_image_info() != 3932:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_pools() != 34094:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_pools() != 32741:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_release() != 34855:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_release() != 21293:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_service_url() != 49169:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_service_url() != 15288:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas() != 32806:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas() != 36702:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_usage_pricing() != 25347:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_usage_pricing() != 20174:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready() != 64422:
+    if lib.uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready() != 9597:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleetpools_gc() != 4829:
+    if lib.uniffi_cua_sdk_checksum_method_fleetpools_gc() != 22670:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleetpools_gc_pools() != 3481:
+    if lib.uniffi_cua_sdk_checksum_method_fleetpools_gc_pools() != 4009:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_fleetpools_list() != 61403:
+    if lib.uniffi_cua_sdk_checksum_method_fleetpools_list() != 24325:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_framesink_on_frame() != 56500:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -9061,8 +9061,9 @@ class _UniffiFfiConverterTypeContainer(_UniffiConverterRustBuffer):
 @dataclass
 class FleetSettings:
     """
-    Fleet credentials and endpoints. Unset fields fall back to the
-    environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
+    Cua account credentials and endpoints (Cua Cloud, closed, used them for
+    sandboxes; the account's billing still does). Unset fields fall back to
+    the environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
     `CUA_CLIENT_SECRET`, `FLEETS_TOKEN`) when `CuaConfig.fleet_from_env`.
 """
     def __init__(self, *, base_url:typing.Optional[str] = _DEFAULT, token_url:typing.Optional[str] = _DEFAULT, client_id:typing.Optional[str] = _DEFAULT, client_secret:typing.Optional[str] = _DEFAULT, token:typing.Optional[str] = _DEFAULT):
@@ -13531,9 +13532,7 @@ class _UniffiFfiConverterTypeFleetSignedUrl(_UniffiConverterRustBuffer):
 @dataclass
 class FleetSizeLimits:
     """
-    The everyday sizes of a cloud sandbox, which the Cua apps offer
-    (`cua_fleet::CLOUD_DEFAULT_RANGE_CPUS`,
-    `cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB`).
+    The everyday sizes of a cloud sandbox, which the Cua apps offered.
 """
     def __init__(self, *, min_cpus:int, max_cpus:int, min_memory_mb:int, max_memory_mb:int):
         self.min_cpus = min_cpus
@@ -24757,33 +24756,28 @@ class _UniffiFfiConverterSequenceTypeFleetManagedPool(_UniffiConverterRustBuffer
 
 class FleetPoolsProtocol(typing.Protocol):
     """
-    Managed pools: what `Sandboxes.create` without a pool uses.
+    Managed pools (Cua Cloud, closed).
 """
 
     async def gc(self, idle_seconds: typing.Optional[int]) -> FleetGcReport:
         """
-        Deletes managed pools idle for `idle_seconds` (default 1800) and
-        stuck Pending/Failed managed claims past their TTL.
+        Deletes idle managed pools. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def gc_pools(self, names: typing.List[str],idle_seconds: typing.Optional[int]) -> FleetGcReport:
         """
-        [`FleetPools::gc`] restricted to the named managed pools: each is
-        deleted (with its namespace) once it has no claims and has been idle
-        for `idle_seconds` (default 0, i.e. now). Pools with live claims are
-        kept, so a pool another process is using survives. Tests use this to
-        remove the pools they created.
+        Deletes the named managed pools. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def list(self, ) -> typing.List[FleetManagedPool]:
         """
-        This account's managed pools.
+        This account's managed pools. Cua Cloud has closed.
 """
         raise NotImplementedError
 
 class FleetPools(FleetPoolsProtocol):
     """
-    Managed pools: what `Sandboxes.create` without a pool uses.
+    Managed pools (Cua Cloud, closed).
 """
 
     _handle: ctypes.c_uint64
@@ -24817,8 +24811,7 @@ class FleetPools(FleetPoolsProtocol):
         return inst
     async def gc(self, idle_seconds: typing.Optional[int]) -> FleetGcReport:
         """
-        Deletes managed pools idle for `idle_seconds` (default 1800) and
-        stuck Pending/Failed managed claims past their TTL.
+        Deletes idle managed pools. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterOptionalUInt32.check_lower(idle_seconds)
@@ -24838,11 +24831,7 @@ class FleetPools(FleetPoolsProtocol):
         )
     async def gc_pools(self, names: typing.List[str],idle_seconds: typing.Optional[int]) -> FleetGcReport:
         """
-        [`FleetPools::gc`] restricted to the named managed pools: each is
-        deleted (with its namespace) once it has no claims and has been idle
-        for `idle_seconds` (default 0, i.e. now). Pools with live claims are
-        kept, so a pool another process is using survives. Tests use this to
-        remove the pools they created.
+        Deletes the named managed pools. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterSequenceString.check_lower(names)
@@ -24865,7 +24854,7 @@ class FleetPools(FleetPoolsProtocol):
         )
     async def list(self, ) -> typing.List[FleetManagedPool]:
         """
-        This account's managed pools.
+        This account's managed pools. Cua Cloud has closed.
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -24938,88 +24927,79 @@ class _UniffiFfiConverterOptionalTypeFleetUsagePricing(_UniffiConverterRustBuffe
 
 class FleetProtocol(typing.Protocol):
     """
-    Fleet control plane.
+    Fleet control plane (Cua Cloud, closed) and the account's billing.
 """
 
     async def acquire(self, pool: str,name: typing.Optional[str],ttl_seconds: typing.Optional[int]) -> FleetSandbox:
         """
-        Claims a sandbox from a pool and waits for it to bind. A claim named
-        `name` that already exists is reattached.
+        Claims a sandbox from a pool. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def acquire_with(self, pool: str,options: FleetClaimOptions) -> FleetSandbox:
         """
-        [`Fleet::acquire`] with claim options, including a per-claim env
-        token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
-        releases the claim).
+        Claims a sandbox with options. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def apply(self, name: str,spec: SandboxSpec,options: PoolOptions) -> FleetPool:
         """
-        Reconciles pool `name` (= namespace = template) to run `spec` with
-        `options`: the one pool writer (rolls a new pool back if the
-        template fails). The image is pinned to the variant the runtime
-        runs; `spec.registry_secret` is written as the pool's pull Secret.
+        Reconciles a pool. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def apply_pool(self, spec: FleetPoolSpec) -> FleetPool:
         """
-        Deprecated: use [`Fleet::apply`]. Reconciles a pool and its template
-        from the flat spec (converted to [`SandboxSpec`] + [`PoolOptions`]).
+        Deprecated pool writer. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def apply_pool_template(self, pool: str,spec: SandboxSpec) -> None:
         """
-        Lays the set fields of `spec` over pool `pool`'s template and writes
-        it (the pool's capacity is kept; a no-op when nothing differs).
+        Writes a spec over a pool's template. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def attach_claim(self, namespace: str,name: str) -> FleetSandbox:
         """
-        Waits for a named claim to bind.
+        Waits for a named claim to bind. Cua Cloud has closed.
 """
         raise NotImplementedError
     def base_url(self, ) -> str:
         """
-        Fleet API base URL.
+        The Cua account API base URL.
 """
         raise NotImplementedError
     async def billing_status(self, ) -> FleetBillingStatus:
         """
-        The account's Cua Cloud billing: its credit, card and the website
-        billing page. A Fleet without billing answers `billing_enabled:
+        The account's billing: its credit, card and the website billing
+        page. An account API without billing answers `billing_enabled:
         false`.
 """
         raise NotImplementedError
     async def check_pool_spec(self, pool: str,spec: SandboxSpec) -> None:
         """
-        Compares the set fields of `spec` with pool `pool`'s template:
-        `PoolSpecMismatch` (with a readable diff) when they differ.
+        Compares a spec with a pool's template. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def claim(self, pool: str,name: typing.Optional[str],ttl_seconds: typing.Optional[int]) -> FleetClaim:
         """
-        Creates a claim without waiting.
+        Creates a claim. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def create_image(self, namespace: str,manifest_json: str) -> str:
         """
-        Creates an image resource (remote build) from a JSON manifest.
+        Creates an image resource. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def create_signed_service_url(self, sandbox: FleetSandbox,service: str,label: typing.Optional[str],expires_in_seconds: int) -> FleetSignedUrl:
         """
-        Mints a signed, shareable service URL.
+        Mints a signed service URL. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def delete_image(self, namespace: str,name: str) -> None:
         """
-        Deletes an image resource.
+        Deletes an image resource. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def delete_pool(self, name: str) -> None:
         """
-        Deletes a pool, its namespace and its same-named template.
+        Deletes a pool. Cua Cloud has closed.
 """
         raise NotImplementedError
     def ephemeral_pool_name(self, ) -> str:
@@ -25029,89 +25009,83 @@ class FleetProtocol(typing.Protocol):
         raise NotImplementedError
     async def export_pool(self, name: str) -> FleetPoolExport:
         """
-        Reads pool `name` back as the shared model, with its `fleets_pool`
-        Terraform block.
+        Reads a pool back. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def get_image(self, namespace: str,name: str) -> str:
         """
-        Gets an image resource (JSON).
+        Gets an image resource. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def get_pool(self, name: str) -> FleetPool:
         """
-        Looks up a pool.
+        Looks up a pool. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def keep_alive(self, namespace: str,name: str,seconds: int) -> str:
         """
-        Extends a claim's lease; returns the RFC 3339 shutdown time.
+        Extends a claim's lease. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def list_claims(self, namespace: str) -> typing.List[FleetClaim]:
         """
-        Lists claims in a namespace.
+        Lists claims. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def list_images(self, namespace: str) -> typing.List[str]:
         """
-        Lists image resources (JSON) in a namespace.
+        Lists image resources. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def list_pools(self, namespace: str) -> typing.List[FleetPool]:
         """
-        Lists pools in a namespace.
+        Lists pools. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def list_templates(self, namespace: str) -> typing.List[str]:
         """
-        Lists templates in a namespace as JSON resources.
+        Lists templates. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def pool_image_info(self, name: str) -> typing.Optional[ImageInfo]:
         """
-        The image pool `name`'s template runs, as a claim on it reports it
-        (`Sandbox.image_info`): pinned by the resolver (cached per pool), or
-        the template reference with empty `pinned_ref`/`digest` when the
-        registry cannot be read. `None` when the template names no image.
+        The image a pool's template runs. Cua Cloud has closed.
 """
         raise NotImplementedError
     def pools(self, ) -> FleetPools:
         """
-        Managed pools (list, gc).
+        Managed pools (Cua Cloud, closed).
 """
         raise NotImplementedError
     async def release(self, namespace: str,name: str) -> None:
         """
-        Releases a claim (missing claims are fine).
+        Releases a claim. Cua Cloud has closed.
 """
         raise NotImplementedError
     def service_url(self, sandbox: FleetSandbox,service: str) -> str:
         """
-        The gateway URL of a sandbox service (needs the Fleet bearer).
+        The gateway URL of a sandbox service. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def set_pool_replicas(self, name: str,replicas: int) -> FleetPool:
         """
-        Sets warm replicas (0 suspends).
+        Sets warm replicas. Cua Cloud has closed.
 """
         raise NotImplementedError
     async def usage_pricing(self, ) -> typing.Optional[FleetUsagePricing]:
         """
-        This account's Cua Cloud rates (`GET /api/config`), reused for five
-        minutes. `None` when Fleet answers without rates: show no price
-        rather than a guess.
+        This account's Cua Cloud rates. Cua Cloud has closed: `None`.
 """
         raise NotImplementedError
     async def wait_pool_ready(self, name: str,timeout_ms: int) -> FleetPool:
         """
-        Waits for at least one ready replica.
+        Waits for a ready replica. Cua Cloud has closed.
 """
         raise NotImplementedError
 
 class Fleet(FleetProtocol):
     """
-    Fleet control plane.
+    Fleet control plane (Cua Cloud, closed) and the account's billing.
 """
 
     _handle: ctypes.c_uint64
@@ -25145,8 +25119,7 @@ class Fleet(FleetProtocol):
         return inst
     async def acquire(self, pool: str,name: typing.Optional[str],ttl_seconds: typing.Optional[int]) -> FleetSandbox:
         """
-        Claims a sandbox from a pool and waits for it to bind. A claim named
-        `name` that already exists is reattached.
+        Claims a sandbox from a pool. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(pool)
@@ -25172,9 +25145,7 @@ class Fleet(FleetProtocol):
         )
     async def acquire_with(self, pool: str,options: FleetClaimOptions) -> FleetSandbox:
         """
-        [`Fleet::acquire`] with claim options, including a per-claim env
-        token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
-        releases the claim).
+        Claims a sandbox with options. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(pool)
@@ -25197,10 +25168,7 @@ class Fleet(FleetProtocol):
         )
     async def apply(self, name: str,spec: SandboxSpec,options: PoolOptions) -> FleetPool:
         """
-        Reconciles pool `name` (= namespace = template) to run `spec` with
-        `options`: the one pool writer (rolls a new pool back if the
-        template fails). The image is pinned to the variant the runtime
-        runs; `spec.registry_secret` is written as the pool's pull Secret.
+        Reconciles a pool. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(name)
@@ -25226,8 +25194,7 @@ class Fleet(FleetProtocol):
         )
     async def apply_pool(self, spec: FleetPoolSpec) -> FleetPool:
         """
-        Deprecated: use [`Fleet::apply`]. Reconciles a pool and its template
-        from the flat spec (converted to [`SandboxSpec`] + [`PoolOptions`]).
+        Deprecated pool writer. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterTypeFleetPoolSpec.check_lower(spec)
@@ -25247,8 +25214,7 @@ class Fleet(FleetProtocol):
         )
     async def apply_pool_template(self, pool: str,spec: SandboxSpec) -> None:
         """
-        Lays the set fields of `spec` over pool `pool`'s template and writes
-        it (the pool's capacity is kept; a no-op when nothing differs).
+        Writes a spec over a pool's template. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(pool)
@@ -25271,7 +25237,7 @@ class Fleet(FleetProtocol):
         )
     async def attach_claim(self, namespace: str,name: str) -> FleetSandbox:
         """
-        Waits for a named claim to bind.
+        Waits for a named claim to bind. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(namespace)
@@ -25294,7 +25260,7 @@ class Fleet(FleetProtocol):
         )
     def base_url(self, ) -> str:
         """
-        Fleet API base URL.
+        The Cua account API base URL.
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -25309,8 +25275,8 @@ class Fleet(FleetProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     async def billing_status(self, ) -> FleetBillingStatus:
         """
-        The account's Cua Cloud billing: its credit, card and the website
-        billing page. A Fleet without billing answers `billing_enabled:
+        The account's billing: its credit, card and the website billing
+        page. An account API without billing answers `billing_enabled:
         false`.
 """
         _uniffi_lowered_args = (
@@ -25328,8 +25294,7 @@ class Fleet(FleetProtocol):
         )
     async def check_pool_spec(self, pool: str,spec: SandboxSpec) -> None:
         """
-        Compares the set fields of `spec` with pool `pool`'s template:
-        `PoolSpecMismatch` (with a readable diff) when they differ.
+        Compares a spec with a pool's template. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(pool)
@@ -25352,7 +25317,7 @@ class Fleet(FleetProtocol):
         )
     async def claim(self, pool: str,name: typing.Optional[str],ttl_seconds: typing.Optional[int]) -> FleetClaim:
         """
-        Creates a claim without waiting.
+        Creates a claim. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(pool)
@@ -25378,7 +25343,7 @@ class Fleet(FleetProtocol):
         )
     async def create_image(self, namespace: str,manifest_json: str) -> str:
         """
-        Creates an image resource (remote build) from a JSON manifest.
+        Creates an image resource. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(namespace)
@@ -25401,7 +25366,7 @@ class Fleet(FleetProtocol):
         )
     async def create_signed_service_url(self, sandbox: FleetSandbox,service: str,label: typing.Optional[str],expires_in_seconds: int) -> FleetSignedUrl:
         """
-        Mints a signed, shareable service URL.
+        Mints a signed service URL. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterTypeFleetSandbox.check_lower(sandbox)
@@ -25430,7 +25395,7 @@ class Fleet(FleetProtocol):
         )
     async def delete_image(self, namespace: str,name: str) -> None:
         """
-        Deletes an image resource.
+        Deletes an image resource. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(namespace)
@@ -25453,7 +25418,7 @@ class Fleet(FleetProtocol):
         )
     async def delete_pool(self, name: str) -> None:
         """
-        Deletes a pool, its namespace and its same-named template.
+        Deletes a pool. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(name)
@@ -25488,8 +25453,7 @@ class Fleet(FleetProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     async def export_pool(self, name: str) -> FleetPoolExport:
         """
-        Reads pool `name` back as the shared model, with its `fleets_pool`
-        Terraform block.
+        Reads a pool back. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(name)
@@ -25509,7 +25473,7 @@ class Fleet(FleetProtocol):
         )
     async def get_image(self, namespace: str,name: str) -> str:
         """
-        Gets an image resource (JSON).
+        Gets an image resource. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(namespace)
@@ -25532,7 +25496,7 @@ class Fleet(FleetProtocol):
         )
     async def get_pool(self, name: str) -> FleetPool:
         """
-        Looks up a pool.
+        Looks up a pool. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(name)
@@ -25552,7 +25516,7 @@ class Fleet(FleetProtocol):
         )
     async def keep_alive(self, namespace: str,name: str,seconds: int) -> str:
         """
-        Extends a claim's lease; returns the RFC 3339 shutdown time.
+        Extends a claim's lease. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(namespace)
@@ -25578,7 +25542,7 @@ class Fleet(FleetProtocol):
         )
     async def list_claims(self, namespace: str) -> typing.List[FleetClaim]:
         """
-        Lists claims in a namespace.
+        Lists claims. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(namespace)
@@ -25598,7 +25562,7 @@ class Fleet(FleetProtocol):
         )
     async def list_images(self, namespace: str) -> typing.List[str]:
         """
-        Lists image resources (JSON) in a namespace.
+        Lists image resources. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(namespace)
@@ -25618,7 +25582,7 @@ class Fleet(FleetProtocol):
         )
     async def list_pools(self, namespace: str) -> typing.List[FleetPool]:
         """
-        Lists pools in a namespace.
+        Lists pools. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(namespace)
@@ -25638,7 +25602,7 @@ class Fleet(FleetProtocol):
         )
     async def list_templates(self, namespace: str) -> typing.List[str]:
         """
-        Lists templates in a namespace as JSON resources.
+        Lists templates. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(namespace)
@@ -25658,10 +25622,7 @@ class Fleet(FleetProtocol):
         )
     async def pool_image_info(self, name: str) -> typing.Optional[ImageInfo]:
         """
-        The image pool `name`'s template runs, as a claim on it reports it
-        (`Sandbox.image_info`): pinned by the resolver (cached per pool), or
-        the template reference with empty `pinned_ref`/`digest` when the
-        registry cannot be read. `None` when the template names no image.
+        The image a pool's template runs. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(name)
@@ -25681,7 +25642,7 @@ class Fleet(FleetProtocol):
         )
     def pools(self, ) -> FleetPools:
         """
-        Managed pools (list, gc).
+        Managed pools (Cua Cloud, closed).
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -25696,7 +25657,7 @@ class Fleet(FleetProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     async def release(self, namespace: str,name: str) -> None:
         """
-        Releases a claim (missing claims are fine).
+        Releases a claim. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(namespace)
@@ -25719,7 +25680,7 @@ class Fleet(FleetProtocol):
         )
     def service_url(self, sandbox: FleetSandbox,service: str) -> str:
         """
-        The gateway URL of a sandbox service (needs the Fleet bearer).
+        The gateway URL of a sandbox service. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterTypeFleetSandbox.check_lower(sandbox)
@@ -25740,7 +25701,7 @@ class Fleet(FleetProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     async def set_pool_replicas(self, name: str,replicas: int) -> FleetPool:
         """
-        Sets warm replicas (0 suspends).
+        Sets warm replicas. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(name)
@@ -25763,9 +25724,7 @@ class Fleet(FleetProtocol):
         )
     async def usage_pricing(self, ) -> typing.Optional[FleetUsagePricing]:
         """
-        This account's Cua Cloud rates (`GET /api/config`), reused for five
-        minutes. `None` when Fleet answers without rates: show no price
-        rather than a guess.
+        This account's Cua Cloud rates. Cua Cloud has closed: `None`.
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -25782,7 +25741,7 @@ class Fleet(FleetProtocol):
         )
     async def wait_pool_ready(self, name: str,timeout_ms: int) -> FleetPool:
         """
-        Waits for at least one ready replica.
+        Waits for a ready replica. Cua Cloud has closed.
 """
 
         _UniffiFfiConverterString.check_lower(name)
@@ -35514,9 +35473,9 @@ class CuaProtocol(typing.Protocol):
         raise NotImplementedError
     def fleet(self, ) -> Fleet:
         """
-        Fleet pools, templates, claims and images. Always talks to Fleet
-        from this process with this SDK's credentials (in daemon mode, from
-        the environment).
+        Fleet (Cua Cloud, closed: its calls fail with that message) and the
+        account's billing, with this SDK's account credentials (in daemon
+        mode, from this process's settings and environment).
 """
         raise NotImplementedError
     async def info(self, ) -> CuaInfo:
@@ -35537,7 +35496,7 @@ class CuaProtocol(typing.Protocol):
         raise NotImplementedError
     def sandboxes(self, ) -> Sandboxes:
         """
-        Sandboxes (Fleet, local, direct).
+        Sandboxes (local, direct, providers).
 """
         raise NotImplementedError
     async def shutdown_daemon(self, ) -> None:
@@ -35552,8 +35511,8 @@ class CuaProtocol(typing.Protocol):
         raise NotImplementedError
     async def spacesd(self, url: str,token: typing.Optional[str]) -> SpacesdClient:
         """
-        Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
-        Fleet service URL or a relay URL) without a sandbox.
+        Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+        relay URL) without a sandbox.
 """
         raise NotImplementedError
 
@@ -35704,9 +35663,9 @@ class Cua(CuaProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     def fleet(self, ) -> Fleet:
         """
-        Fleet pools, templates, claims and images. Always talks to Fleet
-        from this process with this SDK's credentials (in daemon mode, from
-        the environment).
+        Fleet (Cua Cloud, closed: its calls fail with that message) and the
+        account's billing, with this SDK's account credentials (in daemon
+        mode, from this process's settings and environment).
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -35769,7 +35728,7 @@ class Cua(CuaProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     def sandboxes(self, ) -> Sandboxes:
         """
-        Sandboxes (Fleet, local, direct).
+        Sandboxes (local, direct, providers).
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -35816,8 +35775,8 @@ class Cua(CuaProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     async def spacesd(self, url: str,token: typing.Optional[str]) -> SpacesdClient:
         """
-        Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
-        Fleet service URL or a relay URL) without a sandbox.
+        Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+        relay URL) without a sandbox.
 """
 
         _UniffiFfiConverterString.check_lower(url)
@@ -36746,10 +36705,8 @@ def error_doc_url(variant: str) -> str:
     return _uniffi_lift_return(_uniffi_ffi_result)
 def fleet_check_runtime(runtime: typing.Optional[str],image: str,variant: typing.Optional[str]) -> str:
     """
-    [`fleet_resolve_runtime`] with the image variant already known
-    (`variant` as [`fleet_image_variant`] returns it); `None` means the
-    manifest could not be read (an unset runtime then falls back to the
-    reference). Pure (no registry read).
+    [`fleet_resolve_runtime`] with the image variant already known. Cua
+    Cloud has closed.
 """
 
     _UniffiFfiConverterOptionalString.check_lower(runtime)
@@ -36786,10 +36743,8 @@ def fleet_generate_claim_token() -> str:
     return _uniffi_lift_return(_uniffi_ffi_result)
 def fleet_image_variant(manifest: str,config: typing.Optional[str]) -> str:
     """
-    The variant of an image from its registry documents (`manifest`: an
-    image manifest or index, `config`: the platform manifest's config blob):
-    `container-disk`, `rootfs` or `other`. Pure (no registry read). A macOS
-    image raises `Unsupported`.
+    The Fleet variant of an image from its registry documents. Cua Cloud
+    has closed.
 """
 
     _UniffiFfiConverterString.check_lower(manifest)
@@ -36809,19 +36764,7 @@ def fleet_image_variant(manifest: str,config: typing.Optional[str]) -> str:
     return _uniffi_lift_return(_uniffi_ffi_result)
 def fleet_resolve_runtime(runtime: typing.Optional[str],image: str) -> str:
     """
-    The Fleet runtime for `image`: `runtime` (`kubevirt`, `gvisor`) when
-    given, else the one the image needs. What the image is
-    comes from its registry manifest (read with docker, ghcr and ECR
-    credentials): a KubeVirt containerDisk (a `/disk/disk.img` layer or
-    trycua containerDisk media types) runs on `kubevirt`, a container rootfs
-    on `gvisor`. When the manifest cannot be read and no runtime is given,
-    the runtime is guessed from the reference with a warning (a `docker-`
-    tag runs on `gvisor`, anything else on `kubevirt`). Raises
-    `InvalidArgument` only for a runtime the image cannot run on, and
-    `Unsupported` for a macOS image or runtime `macos` (Fleet does not offer
-    macOS in this SDK). Blocks
-    while the registry is read (at most 20 s; `CUA_FLEET_IMAGE_INSPECT=0`
-    skips it). The one copy of this rule; cua-sandbox calls it.
+    The Fleet runtime for `image`. Cua Cloud has closed.
 """
 
     _UniffiFfiConverterOptionalString.check_lower(runtime)
@@ -36842,9 +36785,7 @@ def fleet_resolve_runtime(runtime: typing.Optional[str],image: str) -> str:
 def fleet_size_limits() -> FleetSizeLimits:
     """
     The everyday sizes of a cloud sandbox (1-8 vCPUs, 1-32 GiB), which the
-    Cua apps offer. The SDK does not enforce them: it accepts up to 64 vCPUs
-    and 512 MiB to 512 GiB, and Fleet decides what an account may run (a
-    size over the account's limits fails with `FleetAdmissionDenied`).
+    Cua apps offered.
 """
     _uniffi_lowered_args = (
     )

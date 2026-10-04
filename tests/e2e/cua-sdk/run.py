@@ -2,7 +2,7 @@
 """Run the cua SDK e2e suite and print the guide x language x lane matrix.
 
     tests/e2e/cua-sdk/run.py --lanes hermetic,container --langs py,ts,rust
-    tests/e2e/cua-sdk/run.py --lanes fleet --strict        # nightly
+    tests/e2e/cua-sdk/run.py --lanes qemu --strict         # nightly
     tests/e2e/cua-sdk/run.py --matrix-only --out DIR       # re-render results
 
 Lanes map to the env gates in scenarios.json (the runner sets them). Every
@@ -16,8 +16,7 @@ test survey recommends), no expected cell may be missing, and every language
 must record at least one result. Known bugs are `xfail`, never skips.
 
 After each language, a janitor removes docker containers named
-cua-e2e-<run>-* that a crashed test may have left behind. Fleet pools are
-cleaned by the tests themselves (finally) and carry a TTL as a backstop.
+cua-e2e-<run>-* that a crashed test may have left behind.
 """
 
 from __future__ import annotations
@@ -40,26 +39,14 @@ GATES = {
     "container": {"CUA_E2E_CONTAINER": "1"},
     "qemu": {"CUA_E2E_QEMU": "1"},
     "lume": {"CUA_E2E_LUME": "1"},
-    "fleet": {"CUA_E2E_FLEET": "1"},
-    "fleet-env": {"CUA_E2E_FLEET": "1"},
-    "cua-sandbox": {"CUA_E2E_CUA_SANDBOX": "1"},
     "conformance": {"CUA_E2E_CONFORMANCE": "1", "CUA_E2E_CONTAINER": "1"},
 }
 # Skips that stay legitimate under --strict (a precondition the lane itself
 # cannot provide), matched as substrings of the recorded reason.
 ALLOWED_SKIPS = (
-    "CUA_E2E_FLEET_TAKEN_POOL",
-    "CUA_E2E_FLEET_ENV_IMAGE",
-    "needs a per-claim secret field (cloud PR)",
-    "CUA_E2E_FLEET_PUSH_REPO is unset",
     "terraform (or tofu) is not installed",
-    "@trycua/fleet is not built",
     "playwright is not installed",
     "Lume runs on macOS hosts only",
-    # A guide input the reader supplies (e.g. OMARCHY_IMAGE) and CI does not.
-    "docs block input",
-    # The TypeScript Fleet guide page was removed upstream.
-    "no Fleet TypeScript docs block is tagged",
 )
 STATUS_ICON = {
     "pass": "pass",
@@ -168,8 +155,6 @@ def run_langs(langs: list[str], env: dict, timeout: int) -> dict[str, int]:
                 SUITE / "rust",
                 timeout,
             )
-        elif lang == "go":
-            codes[lang] = sh([str(SUITE / "go" / "terraform-smoke.sh")], env, SUITE / "go", timeout)
         else:
             raise SystemExit(f"unknown language {lang}")
         janitor(env["CUA_E2E_RUN"])
@@ -210,7 +195,7 @@ def render(out: Path, lanes: list[str] | None) -> tuple[str, list[str]]:
     by = defaultdict(list)
     for r in rows:
         by[(r["scenario"], r["lane"], r["lang"])].append(r)
-    all_langs = ["py", "ts", "rust", "go"]
+    all_langs = ["py", "ts", "rust"]
     lines = [
         "| scenario (guide) | lane | " + " | ".join(all_langs) + " |",
         "|---|---|" + "---|" * len(all_langs),
@@ -297,7 +282,7 @@ def docs_coverage(out: Path, lanes: list[str], langs: list[str]) -> list[str]:
 
     ran = set(lanes) | ({"docs"} if "hermetic" in lanes else set())
     rows, problems = coverage.join(
-        coverage.extract.all_blocks(),
+        coverage.extract.runnable_blocks(),
         coverage.load_results(out),
         coverage.extract.load_policy(),
         ran,
@@ -315,9 +300,9 @@ def main() -> int:
     ap.add_argument(
         "--lanes",
         default="hermetic",
-        help="comma list: hermetic,container,qemu,lume,fleet,fleet-env,cua-sandbox,conformance",
+        help="comma list: hermetic,container,qemu,lume,conformance",
     )
-    ap.add_argument("--langs", default="py,ts,rust", help="comma list: py,ts,rust,go")
+    ap.add_argument("--langs", default="py,ts,rust", help="comma list: py,ts,rust")
     ap.add_argument(
         "--out", type=Path, default=None, help="results dir (default: a fresh temp dir)"
     )
@@ -338,10 +323,6 @@ def main() -> int:
         env = dict(os.environ, CUA_E2E_RUN=a.run, CUA_E2E_RESULTS=str(out))
         for lane in lanes:
             env.update(GATES.get(lane, {}))
-        if not {"fleet", "fleet-env"} & set(lanes):
-            # No live Fleet lane: never read a registry for the Fleet runtime
-            # rule. Unreadable manifests fall back to the image reference.
-            env.setdefault("CUA_FLEET_IMAGE_INSPECT", "0")
         t0 = time.monotonic()
         codes = run_langs(langs, env, a.timeout)
         print(f"\nexit codes: {codes} in {time.monotonic() - t0:.0f}s")

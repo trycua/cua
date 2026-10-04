@@ -10,14 +10,10 @@
 //!   cua-spacesd serves cua-driver's own MCP at `/mcp`; a screenshot comes
 //!   back as an intact image block. Never the host: the desktop is the
 //!   container's own Xvfb.
-//! - `CUA_E2E_MCP_FLEET=1` (+ Fleet credentials): the everything server on
-//!   a Fleet gVisor Space (`node:22-slim` + `command`), through the gateway.
 
 use base64::Engine;
 use cua_daemon::server::{self, ServerConfig};
-use cua_sdk::{
-    Cua, CuaConfig, HttpHeader, McpClient, ReadinessProbe, SandboxCreateOptions, SpaceCreateOptions,
-};
+use cua_sdk::{Cua, CuaConfig, HttpHeader, McpClient, ReadinessProbe, SandboxCreateOptions};
 use futures_util::FutureExt;
 use serde_json::{Value, json};
 use std::{collections::HashMap, panic::AssertUnwindSafe, sync::Arc, time::Duration};
@@ -32,12 +28,11 @@ fn suffix() -> String {
     )
 }
 
-fn cua(dirs: &tempfile::TempDir, fleet: bool) -> Arc<Cua> {
+fn cua(dirs: &tempfile::TempDir) -> Arc<Cua> {
     Cua::embedded(CuaConfig {
         state_dir: Some(dirs.path().join("sandboxes").display().to_string()),
         spaces_home: Some(dirs.path().join("cua").display().to_string()),
-        fleet_pool_home: Some(dirs.path().join("pools").display().to_string()),
-        fleet_from_env: fleet,
+        fleet_from_env: false,
         ..Default::default()
     })
     .unwrap()
@@ -154,7 +149,7 @@ async fn everything_server_local_daemon_and_space() {
         return;
     };
     let dirs = tempfile::tempdir().unwrap();
-    let cua = cua(&dirs, false);
+    let cua = cua(&dirs);
     let name = format!("cua-e2e-mcp-everything-{}", suffix());
     let sb = cua
         .sandboxes()
@@ -241,7 +236,7 @@ async fn cua_driver_mcp_returns_an_intact_screenshot() {
         return;
     };
     let dirs = tempfile::tempdir().unwrap();
-    let cua = cua(&dirs, false);
+    let cua = cua(&dirs);
     let name = format!("cua-e2e-mcp-driver-{}", suffix());
     let token = format!("{:032x}", rand_u128());
     let mut o = local(
@@ -320,95 +315,6 @@ async fn cua_driver_mcp_returns_an_intact_screenshot() {
     .await;
     sb.delete().await.unwrap();
     if let Err(p) = run {
-        std::panic::resume_unwind(p);
-    }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn everything_server_on_fleet_through_the_gateway() {
-    if std::env::var("CUA_E2E_MCP_FLEET").as_deref() != Ok("1") {
-        eprintln!("skipped: set CUA_E2E_MCP_FLEET=1 with Fleet credentials");
-        return;
-    }
-    let dirs = tempfile::tempdir().unwrap();
-    let ns = format!("cua-e2e-mcp-{}", suffix());
-    // SAFETY: set before the runtime reads it; the other tests never do.
-    unsafe { std::env::set_var("CUA_SPACES_NAMESPACE", &ns) };
-    let cua = cua(&dirs, true);
-    let spaces = cua.spaces();
-    let claim = format!("{ns}-claim");
-    let image = "docker.io/library/node:22-slim";
-    let command: Vec<String> = [
-        "npx",
-        "-y",
-        "@modelcontextprotocol/server-everything@2026.8.31",
-        "streamableHttp",
-    ]
-    .map(String::from)
-    .to_vec();
-    let pool = cua_spaces::Spaces::builder()
-        .home(dirs.path().join("names"))
-        .fleet_namespace(ns.clone())
-        .build()
-        .fleet_pool_name(
-            cua_spaces::contract::inputs::FleetRuntime::Gvisor,
-            &cua_spaces::pool_key(
-                image,
-                Some(&command),
-                &Default::default(),
-                &[("mcp".to_string(), 3001u16)].into(),
-            ),
-        );
-    let r = spaces
-        .create(SpaceCreateOptions {
-            on: Some("cloud".into()),
-            image: Some(image.into()),
-            runtime: Some("gvisor".into()),
-            name: Some(claim.clone()),
-            wait: Some(true),
-            command: Some(command.clone()),
-            services: HashMap::from([("mcp".to_string(), 3001u16)]),
-            spacesd: Some(false),
-            ..Default::default()
-        })
-        .await;
-    let run = AssertUnwindSafe(async {
-        let info = r.unwrap().space.expect("bound");
-        let space = spaces.space(info.id.clone()).await.unwrap();
-        let r = space
-            .call_tool(
-                "get-tiny-image".into(),
-                None,
-                Some("mcp".into()),
-                Some(60_000),
-            )
-            .await
-            .unwrap();
-        let content: Value = serde_json::from_str(&r.content_json).unwrap();
-        let img = content
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|c| c["type"] == "image")
-            .expect("image");
-        let png = base64::engine::general_purpose::STANDARD
-            .decode(img["data"].as_str().unwrap())
-            .unwrap();
-        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
-        spaces.delete(info.id).await.unwrap();
-    })
-    .catch_unwind();
-    let run = tokio::time::timeout(Duration::from_secs(300), run).await;
-    let fleet = cua_fleet::FleetClient::from_env().unwrap();
-    let _ = fleet.release(&pool, &claim).await;
-    match fleet.get_pool(&pool).await {
-        Ok(h) => match fleet.delete_pool(h).await {
-            Ok(()) => eprintln!("deleted pool {pool}"),
-            Err(e) => eprintln!("LEFT BEHIND: pool {pool}: {e}"),
-        },
-        Err(e) => eprintln!("pool {pool}: {e}"),
-    }
-    if let Err(p) = run.expect("Fleet run timed out") {
         std::panic::resume_unwind(p);
     }
 }

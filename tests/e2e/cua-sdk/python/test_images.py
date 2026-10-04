@@ -4,9 +4,7 @@ hand-made containerDisk).
 * image-build-push-run: ``cua image build`` (the CLI) applies layers on a
   base, pushes to a registry, and the pushed reference boots as a sandbox
   (container lane: rootfs; qemu lane: containerDisk on the reference disk).
-* images: the same through the SDK (``Cua.local().build_image``); on Fleet,
-  layers go through the remote build (``Fleet.create_image``) or fail with a
-  typed error.
+* images: the same through the SDK (``Cua.local().build_image``).
 
 The registry is a throwaway ``registry:2`` container on loopback
 (``cua-e2e-<run>-registry-py``), pushed to as an insecure registry.
@@ -242,61 +240,3 @@ def test_cli_build_push_boot_vm(local_cua, tmp_path):
                 await sb.delete()
 
         e2e.run_async(boot(), timeout=1200)
-
-
-@pytest.mark.e2e("image-build-push-run", "fleet-env")
-def test_cli_build_push_run_fleet(live_fleet):
-    """The pushed reference boots on Fleet. Needs a registry repository that
-    Fleet can pull and this run may push arbitrary tags to."""
-    if not os.environ.get("CUA_E2E_FLEET_PUSH_REPO"):
-        pytest.skip(
-            "CUA_E2E_FLEET_PUSH_REPO is unset: no Fleet-pullable repository the e2e may push built images to"
-        )
-    pytest.skip(
-        "CUA_E2E_FLEET_PUSH_REPO flow not implemented yet (build -> push -> gVisor pool of the pushed ref)"
-    )
-
-
-@pytest.mark.e2e("images", "fleet")
-def test_fleet_remote_build_or_typed_error(live_fleet):
-    """Layers on Fleet: the remote build (canonical create_image) accepts the
-    Image resource, or the SDK fails with a typed, explicit error."""
-
-    async def body():
-        fleet = live_fleet.fleet()
-        pool = e2e.name("img")
-        name = e2e.name("img-remote")
-        # A pool creates the namespace the Image lives in.
-        await fleet.apply_pool(
-            cua.FleetPoolSpec(
-                name=pool,
-                image=e2e.LEGACY_FLEET_ROOTFS,
-                runtime="gvisor",
-                replicas=0,
-                ttl_seconds_after_created=3600,
-            )
-        )
-        try:
-            s = spec(name, "remote")
-            s["metadata"]["namespace"] = pool
-            s["spec"]["recipe"]["kind"] = "vm"
-            try:
-                created = await fleet.create_image(pool, json.dumps(s))
-            except (
-                cua.CuaError.Fleet,
-                cua.CuaError.Unsupported,
-                cua.CuaError.InvalidArgument,
-                cua.CuaError.PermissionDenied,
-            ) as err:
-                print("remote build refused (typed):", type(err).__name__, str(err)[:300])
-                assert str(err), "the error must say why"
-                return
-            print("remote build accepted:", created[:300])
-            got = await fleet.get_image(pool, name)
-            assert name in got
-            await fleet.delete_image(pool, name)
-        finally:
-            with contextlib.suppress(cua.CuaError):
-                await fleet.delete_pool(pool)
-
-    e2e.run_async(body(), timeout=600)

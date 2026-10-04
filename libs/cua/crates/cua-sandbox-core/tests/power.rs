@@ -189,7 +189,7 @@ async fn sandboxes_without_a_power_control_refuse_by_name() {
     }
     assert!(rt.calls().is_empty());
 
-    // A cloud claim has no per-claim power.
+    // A Cua Cloud record (closed) has no power.
     sbx.state()
         .save(&SandboxState::Fleet(FleetState {
             name: "claim".into(),
@@ -203,10 +203,7 @@ async fn sandboxes_without_a_power_control_refuse_by_name() {
     assert_eq!(sbx.power_control("claim"), None);
     assert!(matches!(
         sbx.power_on("claim").await,
-        Err(Error::Unsupported {
-            provider: ProviderKind::Fleet,
-            ..
-        })
+        Err(Error::CloudClosed)
     ));
     // No such sandbox.
     assert_eq!(sbx.power_control("nope"), None);

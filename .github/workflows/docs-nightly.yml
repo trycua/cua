@@ -3,8 +3,7 @@ name: "Docs: nightly host lanes"
 # Docs code blocks that need a real host of their kind run here, nightly and
 # alert-only (a failure opens or updates one issue). The pull-request lanes
 # (lint, cli-shape, config, docs, container) run in ci-check-docs-links.yml and
-# e2e-cua-sdk.yml; the live Fleet and QEMU lanes, docs blocks included, run
-# in e2e-cua-sdk.yml's nightly job.
+# e2e-cua-sdk.yml; the QEMU lane runs in e2e-cua-sdk.yml's nightly job.
 #
 #   windows   PowerShell blocks tagged test="windows" on windows-latest
 #   lume      bash blocks tagged test="lume" on macos-latest (installer and

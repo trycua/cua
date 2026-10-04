@@ -1,11 +1,10 @@
 //! Spaces on images without cua-spacesd: a Space is any sandbox, its
 //! capability set is empty, its declared services answer generic MCP, and
 //! spacesd primitives fail at once with `capability_missing`. The MCP
-//! servers are `cua_sandbox_core::testing::McpTestServer` (rmcp); Fleet is
-//! `FakeFleet`; nothing starts a VM, container or claim.
+//! servers are `cua_sandbox_core::testing::McpTestServer` (rmcp); nothing
+//! starts a VM or container.
 
 use async_trait::async_trait;
-use cua_fleet::testing::FakeFleet;
 use cua_sandbox_core::placement::On;
 use cua_sandbox_core::testing::{McpTestServer, expected_result};
 use cua_sandbox_core::{
@@ -372,134 +371,4 @@ async fn an_spacesd_space_also_reaches_its_declared_services() {
     assert_mcp_service_works(&spaces, &info.id, Some("tools")).await;
     assert!(space.services().contains(&"tools".to_string()));
     spaces.delete(&info.id).await.unwrap();
-}
-
-#[tokio::test]
-async fn claim_fleet_plain_image_is_ready_without_spacesd() {
-    {
-        let reg = tempfile::tempdir().unwrap();
-        let fleet = FakeFleet::new();
-        cua_fleet::testing::set_image_variant(PLAIN, cua_fleet::ImageVariant::Rootfs);
-        // The gateway is a loopback server serving the claim's `mcp` service
-        // at `/api/svc/<pool>/sbx-<claim>-mcp/mcp`; the pool name comes from
-        // the image and workload (command and env, as the template has them).
-        let names = Spaces::builder()
-            .home(reg.path().join("names"))
-            .fleet_namespace("cua-e2e-gen")
-            .build();
-        let command: Vec<String> = ["python", "/srv/mcp.py"].map(String::from).to_vec();
-        let pool = names.fleet_pool_name(
-            cua_spaces::contract::inputs::FleetRuntime::Gvisor,
-            &cua_spaces::pool_key(
-                PLAIN,
-                Some(&command),
-                &[("MCP_PORT".to_string(), "8765".to_string())].into(),
-                &[("mcp".to_string(), 8765u16)].into(),
-            ),
-        );
-        let server = McpTestServer::start(&format!("/api/svc/{pool}/sbx-cua-e2e-gen-claim-mcp"))
-            .await
-            .unwrap();
-        let spaces = Spaces::builder()
-            .home(reg.path())
-            .fleet(fleet.client_with_base(&server.url))
-            .fleet_namespace("cua-e2e-gen")
-            .build();
-        let started = Instant::now();
-        let info = spaces
-            .create(SpaceCreate {
-                on: Some(On::Cloud),
-                image: Some(PLAIN.into()),
-                name: Some("cua-e2e-gen-claim".into()),
-                command: Some(vec!["python".into(), "/srv/mcp.py".into()]),
-                env: [("MCP_PORT".to_string(), "8765".to_string())].into(),
-                services: [("mcp".to_string(), 8765u16)].into(),
-                ..Default::default()
-            })
-            .await
-            .unwrap()
-            .ready()
-            .expect("waited");
-        assert!(
-            started.elapsed() < Duration::from_secs(20),
-            "no 300 s wait for 3211: {:?}",
-            started.elapsed()
-        );
-        assert!(info.features.is_empty());
-        assert_eq!(info.services, ["mcp"]);
-        // The pool template: gVisor from the manifest, the command and env
-        // (processMode Run), readiness on the declared service, no env port.
-        let pools: Vec<_> = fleet
-            .all_namespaces()
-            .into_iter()
-            .filter(|n| n.starts_with("cua-e2e-gen-gvisor-"))
-            .collect();
-        assert_eq!(pools.len(), 1, "{pools:?}");
-        let template = fleet.object("template", &pools[0], &pools[0]).unwrap();
-        let t = template.to_string();
-        let vm = &template["spec"]["vmTemplate"];
-        assert_eq!(vm["env"]["MCP_PORT"], "8765", "{t}");
-        assert_eq!(vm["command"][1], "/srv/mcp.py", "{t}");
-        assert_eq!(vm["processMode"], "Run", "{t}");
-        assert!(!t.contains("3211"), "no spacesd port: {t}");
-        assert_mcp_service_works(&spaces, &info.id, Some("mcp")).await;
-        assert_env_primitives_fail_fast(&spaces, &info.id).await;
-        spaces.delete(&info.id).await.unwrap();
-    }
-}
-
-#[tokio::test]
-async fn fleet_env_and_commands_run_on_both_runtimes() {
-    let reg = tempfile::tempdir().unwrap();
-    let fleet = FakeFleet::new();
-    cua_fleet::testing::set_image_variant(PLAIN, cua_fleet::ImageVariant::Rootfs);
-    let spaces = Spaces::builder()
-        .home(reg.path())
-        .fleet(fleet.client())
-        .build();
-    let template_of = |prefix: &str| {
-        let ns = fleet
-            .all_namespaces()
-            .into_iter()
-            .find(|n| n.contains(prefix))
-            .unwrap_or_else(|| panic!("no {prefix} pool"));
-        fleet.object("template", &ns, &ns).unwrap()
-    };
-    // env without a command: the image's entrypoint runs with it.
-    // `wait: false`: the fake has no sandbox to wait for; the template is
-    // what is checked.
-    let pending = spaces
-        .create(SpaceCreate {
-            on: Some(On::Cloud),
-            image: Some(PLAIN.into()),
-            env: [("A".to_string(), "b".to_string())].into(),
-            wait: Some(false),
-            ..Default::default()
-        })
-        .await
-        .unwrap()
-        .ready();
-    assert!(pending.is_err(), "wait: false returns the pending claim");
-    let vm = template_of("-gvisor-")["spec"]["vmTemplate"].clone();
-    assert_eq!(vm["env"]["A"], "b");
-    assert_eq!(vm["processMode"], "Run");
-    assert!(vm.get("command").is_none_or(|c| c.is_null()), "{vm}");
-    // A command on a VM image runs too (processMode Run, cloud-init).
-    let image = "ghcr.io/trycua/cua-desktop-linux:latest";
-    cua_fleet::testing::set_image_variant(image, cua_fleet::ImageVariant::ContainerDisk);
-    let pending = spaces
-        .create(SpaceCreate {
-            on: Some(On::Cloud),
-            image: Some(image.into()),
-            command: Some(vec!["true".into()]),
-            wait: Some(false),
-            ..Default::default()
-        })
-        .await
-        .unwrap()
-        .ready();
-    assert!(pending.is_err(), "wait: false returns the pending claim");
-    let vm = template_of("-kubevirt-")["spec"]["vmTemplate"].clone();
-    assert_eq!(vm["command"], serde_json::json!(["true"]));
-    assert_eq!(vm["processMode"], "Run");
 }

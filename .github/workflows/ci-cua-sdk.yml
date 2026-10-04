@@ -16,8 +16,6 @@ on:
       # cua-test-fixtures and the Spaces suites link a real driver core.
       - "libs/cua-spacesd/**"
       - "libs/cua-driver/rust/**"
-      - "libs/fleet/sdk/**"
-      - "libs/fleet/sdk-schema/**"
       - ".github/workflows/ci-cua-sdk.yml"
   push:
     branches: [main]
@@ -27,8 +25,6 @@ on:
       # cua-test-fixtures and the Spaces suites link a real driver core.
       - "libs/cua-spacesd/**"
       - "libs/cua-driver/rust/**"
-      - "libs/fleet/sdk/**"
-      - "libs/fleet/sdk-schema/**"
       - ".github/workflows/ci-cua-sdk.yml"
   workflow_dispatch:
 

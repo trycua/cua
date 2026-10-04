@@ -179,63 +179,6 @@ async fn plain_local(
 }
 
 #[tokio::test]
-async fn agnostic_fake_fleet_and_direct() {
-    e2e(
-        "daemon-agnostic",
-        "hermetic",
-        "fake Fleet pool without env + direct URL without a driver",
-        MIN,
-        None,
-        || async {
-            let fx = Fixtures::start()?;
-            let c = embedded_fleet(Some((&fx.fleet_base_url, &fx.fleet_token)));
-            let fleet = c.fleet()?;
-            let pool = name("agnostic");
-            let mut spec = pool_spec(&pool, "img:plain");
-            spec.services = HashMap::from([("server".to_string(), 8000)]);
-            fleet.apply_pool(spec).await?;
-            let mut o = opts("cloud");
-            o.pool = Some(pool.clone());
-            o.name = Some(format!("{pool}-c"));
-            let sb = c.sandboxes().create(o).await?;
-            let r = async {
-                assert_eq!(
-                    sb.service("server".into())?
-                        .request("GET".into(), "/status".into(), None, Some(5000), None)
-                        .await?
-                        .status,
-                    200
-                );
-                assert!(matches!(
-                    sb.spacesd(Some(2000)).await,
-                    Err(CuaError::SpacesdNotAvailable(_))
-                ));
-                Res::Ok(())
-            }
-            .await;
-            sb.delete().await?;
-            fleet.delete_pool(pool).await?;
-            r?;
-            let d = c
-                .sandboxes()
-                .connect_url(
-                    fx.fleet_base_url.clone(),
-                    Some("t".into()),
-                    Some(name("nodriver")),
-                )
-                .await?;
-            assert!(matches!(
-                d.spacesd(Some(2000)).await,
-                Err(CuaError::SpacesdNotAvailable(_))
-            ));
-            d.delete().await?;
-            Ok(())
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
 async fn agnostic_container_ssh_only() {
     e2e(
         "daemon-agnostic",
@@ -307,66 +250,6 @@ async fn agnostic_qemu_ssh_only() {
                 1024,
             )
             .await
-        },
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn agnostic_fleet_legacy_image() {
-    e2e(
-        "daemon-agnostic",
-        "fleet",
-        "legacy computer-server image on Fleet (no spacesd)",
-        25 * MIN,
-        None,
-        || async {
-            let c = embedded_fleet(None);
-            let fleet = c.fleet()?;
-            let pool = name("agnostic");
-            let mut spec = pool_spec(&pool, LEGACY_FLEET_ROOTFS);
-            spec.runtime = Some("gvisor".into());
-            spec.services = HashMap::from([("server".to_string(), 8000)]);
-            spec.cpu = Some(1);
-            spec.memory_mb = Some(2048);
-            spec.ttl_seconds_after_created = Some(3600);
-            fleet.apply_pool(spec).await?;
-            let r = async {
-                let mut o = opts("cloud");
-                o.pool = Some(pool.clone());
-                o.name = Some(format!("{pool}-c"));
-                o.ready_timeout_ms = Some(900_000);
-                let sb = c.sandboxes().create(o).await?;
-                let r = async {
-                    let svc = sb.service("server".into())?;
-                    poll(
-                        "server /status",
-                        60,
-                        Duration::from_secs(5),
-                        |_| true,
-                        || async {
-                            Ok(svc
-                                .request("GET".into(), "/status".into(), None, Some(30_000), None)
-                                .await?
-                                .status
-                                .eq(&200)
-                                .then_some(()))
-                        },
-                    )
-                    .await?;
-                    assert!(matches!(
-                        sb.spacesd(Some(10_000)).await,
-                        Err(CuaError::SpacesdNotAvailable(_))
-                    ));
-                    Res::Ok(())
-                }
-                .await;
-                sb.delete().await?;
-                r
-            }
-            .await;
-            let _ = fleet.delete_pool(pool).await;
-            r
         },
     )
     .await;

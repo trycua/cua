@@ -151,12 +151,12 @@ The 723 items of the Cua Spaces app export (source-available, FSL-1.1-MIT, Swift
 | [`error_doc_url`](/cua-sdk/reference/cua#error_doc_url) | function | A link to the errors-reference entry of a `CuaError` variant, by name (`InvalidArgument`, case-insensitive). |
 | [`ExitInfo`](/cua-sdk/reference/spacesd/shell#exitinfo-record) | record | How a process ended. |
 | [`FileEntry`](/cua-sdk/reference/spacesd/files#fileentry-record) | record | A file or directory in the guest. |
-| [`Fleet`](/cua-sdk/reference/fleet#fleet) | object | Fleet control plane. |
-| [`fleet_check_runtime`](/cua-sdk/reference/fleet/images#fleet_check_runtime) | function | `fleet_resolve_runtime` with the image variant already known (`variant` as `fleet_image_variant` returns it); `None` means the manifest could not be read (an unset runtime then falls back to the reference). |
+| [`Fleet`](/cua-sdk/reference/fleet#fleet) | object | Fleet control plane (Cua Cloud, closed) and the account's billing. |
+| [`fleet_check_runtime`](/cua-sdk/reference/fleet/images#fleet_check_runtime) | function | `fleet_resolve_runtime` with the image variant already known. |
 | [`fleet_generate_claim_token`](/cua-sdk/reference/fleet#fleet_generate_claim_token) | function | A fresh per-claim env token (64 hex characters). |
-| [`fleet_image_variant`](/cua-sdk/reference/fleet/images#fleet_image_variant) | function | The variant of an image from its registry documents (`manifest`: an image manifest or index, `config`: the platform manifest's config blob): `container-disk`, `rootfs` or `other`. |
-| [`fleet_resolve_runtime`](/cua-sdk/reference/fleet/images#fleet_resolve_runtime) | function | The Fleet runtime for `image`: `runtime` (`kubevirt`, `gvisor`) when given, else the one the image needs. |
-| [`fleet_size_limits`](/cua-sdk/reference/fleet/images#fleet_size_limits) | function | The everyday sizes of a cloud sandbox (1-8 vCPUs, 1-32 GiB), which the Cua apps offer. |
+| [`fleet_image_variant`](/cua-sdk/reference/fleet/images#fleet_image_variant) | function | The Fleet variant of an image from its registry documents. |
+| [`fleet_resolve_runtime`](/cua-sdk/reference/fleet/images#fleet_resolve_runtime) | function | The Fleet runtime for `image`. |
+| [`fleet_size_limits`](/cua-sdk/reference/fleet/images#fleet_size_limits) | function | The everyday sizes of a cloud sandbox (1-8 vCPUs, 1-32 GiB), which the Cua apps offered. |
 | [`FleetBillingCard`](/cua-sdk/reference/fleet/images#fleetbillingcard-record) | record | The saved card (`Fleet.billing_status`): never its number. |
 | [`FleetBillingCredit`](/cua-sdk/reference/fleet/images#fleetbillingcredit-record) | record | The account's Cua Cloud credit. |
 | [`FleetBillingStatus`](/cua-sdk/reference/fleet/images#fleetbillingstatus-record) | record | The account's Cua Cloud billing (`GET /api/billing/status`). |
@@ -166,12 +166,12 @@ The 723 items of the Cua Spaces app export (source-available, FSL-1.1-MIT, Swift
 | [`FleetManagedPool`](/cua-sdk/reference/fleet#fleetmanagedpool-record) | record | A managed pool (`cua-auto-*`, or a legacy `cua-eph-*`). |
 | [`FleetPool`](/cua-sdk/reference/fleet#fleetpool-record) | record | A pool. |
 | [`FleetPoolExport`](/cua-sdk/reference/fleet#fleetpoolexport-record) | record | A pool read back as the shared model, plus its Terraform block. |
-| [`FleetPools`](/cua-sdk/reference/fleet#fleetpools) | object | Managed pools: what `Sandboxes.create` without a pool uses. |
+| [`FleetPools`](/cua-sdk/reference/fleet#fleetpools) | object | Managed pools (Cua Cloud, closed). |
 | [`FleetPoolSpec`](/cua-sdk/reference/fleet#fleetpoolspec-record) | record | A warm pool spec (`Pool.apply` semantics: pool, namespace and template share `name`). |
 | [`FleetSandbox`](/cua-sdk/reference/fleet/claims#fleetsandbox-record) | record | A bound sandbox. |
-| [`FleetSettings`](/cua-sdk/reference/cua#fleetsettings-record) | record | Fleet credentials and endpoints. |
+| [`FleetSettings`](/cua-sdk/reference/cua#fleetsettings-record) | record | Cua account credentials and endpoints (Cua Cloud, closed, used them for sandboxes; the account's billing still does). |
 | [`FleetSignedUrl`](/cua-sdk/reference/fleet/claims#fleetsignedurl-record) | record | A signed, shareable service URL. |
-| [`FleetSizeLimits`](/cua-sdk/reference/fleet/images#fleetsizelimits-record) | record | The everyday sizes of a cloud sandbox, which the Cua apps offer (`cua_fleet::CLOUD_DEFAULT_RANGE_CPUS`, `cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB`). |
+| [`FleetSizeLimits`](/cua-sdk/reference/fleet/images#fleetsizelimits-record) | record | The everyday sizes of a cloud sandbox, which the Cua apps offered. |
 | [`FleetUsagePricing`](/cua-sdk/reference/fleet/images#fleetusagepricing-record) | record | This account's Cua Cloud rates (`Fleet.usage_pricing`). |
 | [`FrameSink`](/cua-sdk/reference/spacesd/media#framesink) | object | Receives video frames and control events. |
 | [`GpuOption`](/cua-sdk/reference/spaces/create#gpuoption-record) | record | One GPU option of a runtime (see `Spaces.gpu_support`). |

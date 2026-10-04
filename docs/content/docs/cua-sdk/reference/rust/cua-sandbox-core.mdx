@@ -12,25 +12,55 @@ description: "The daemon-agnostic Sandbox over the Fleet, local and direct provi
 
 Public API of the `cua-sandbox-core` crate (`cua_sandbox_core`). Summaries and declarations only (`cargo doc -p cua-sandbox-core --open` in `libs/cua` has the full comments); see [Rust crates](/cua-sdk/reference/rust) for stability.
 
-One daemon-agnostic `Sandbox` over three providers:
+One daemon-agnostic `Sandbox` over these providers:
 
 ## Modules
 
+- `build`: Image builds: image layers (`pip_install`, `run` ...
 - `byoc`: Your own cloud account as a sandbox location (--on ...
 - `byoc::meta`: Relay machine metadata (`meta`) a cloud sandbox's ...
-- `fleet_local`: Run a Fleet template (or the template behind a Fleet ...
 - `http`: HTTP to sandbox services: whole requests (readiness ...
 - `mcp`: MCP to sandbox services with the official Rust SDK ...
 - `placement`: Where a sandbox runs, what kind of machine it is, and ...
-- `pool_image`: The `ImageInfo` of a named (user-owned) Fleet pool: its ...
 - `power`: Turning a sandbox off and on again, the same words for ...
 - `provider`: Pluggable sandbox providers: third-party platforms ...
 - `proxy`: A small loopback HTTP reverse proxy.
 - `refs`: Sandbox references: one scheme for sandboxes and Spaces ...
 - `settings`: User defaults: where sandboxes run when nothing says ...
+- `sidecar`: Sidecars: extra containers next to a sandbox, addressed ...
 - `state`: Persistent sandbox state: ~/.cua/sa ...
 
 ## Types
+
+### `BuildFile`
+
+A local file copied into the image.
+
+```rust
+pub struct BuildFile {
+  pub source: PathBuf,
+  pub destination: String,
+}
+```
+
+### `BuildSpec`
+
+What to build.
+
+```rust
+pub struct BuildSpec {
+  pub from: String,
+  pub layers: Vec<ImageLayer>,
+  pub env: BTreeMap<String, String>,
+  pub ports: Vec<u16>,
+  pub files: Vec<BuildFile>,
+  pub timeout: Option<Duration>,
+}
+impl BuildSpec {
+  fn is_empty(&self) -> bool;
+  fn validate(&self) -> Result<()>;
+}
+```
 
 ### `byoc::CloudCheck`
 
@@ -244,7 +274,7 @@ pub struct CreateOptions {
   pub env: BTreeMap<String, String>,
   pub command: Option<Vec<String>>,
   pub env_token: Option<String>,
-  pub fleet: FleetOptions,
+  pub ttl_seconds: Option<u32>,
   pub firmware: Option<String>,
   pub sidecars: Vec<Sidecar>,
   pub registry_credentials: Option<RegistryCredentials>,
@@ -262,7 +292,6 @@ pub struct CreateOptions {
 impl CreateOptions {
   fn new(provider: ProviderKind, image: impl Into<String>) -> Self;
   fn sidecar(self, sidecar: Sidecar) -> Self;
-  fn default_warm(&self) -> Option<bool>;
   fn on(&self) -> Option<On>;
   fn apply_placement(&mut self) -> Result<()>;
   fn name(self, name: impl Into<String>) -> Self;
@@ -271,9 +300,6 @@ impl CreateOptions {
   fn command<I, S>(self, argv: I) -> Self where I: IntoIterator<Item = S>, S: Into<String>;
   fn wait_for_service(self, service: &str, http_path: Option<&str>) -> Result<Self>;
   fn service_probe(&self, service: &str, http_path: Option<&str>) -> Result<Probe>;
-  async fn fleet_pool_key(&self) -> Result<PoolSpecKey>;
-  async fn fleet_pool_key_resolved(&self) -> Result<(PoolSpecKey, Option<ImageInfo>)>;
-  fn pool_sandbox_spec(&self) -> SandboxSpec;
   fn validate_sidecars(&self) -> Result<()>;
 }
 ```
@@ -307,7 +333,7 @@ pub enum Error {
   UnsupportedImage(String),
   Timeout(String),
   Http(String),
-  Fleet(Error),
+  CloudClosed,
   Runtime(RuntimeError),
   Env(Error),
   Mcp(String),
@@ -315,24 +341,6 @@ pub enum Error {
   Io(Error),
   Json(Error),
   Cancelled(String),
-}
-```
-
-### `FleetOptions`
-
-Fleet-specific create options.
-
-```rust
-pub struct FleetOptions {
-  pub pool: Option<String>,
-  pub runtime: Option<RuntimeKind>,
-  pub warm: Option<bool>,
-  pub max_pool_size: Option<u32>,
-  pub replicas: Option<u32>,
-  pub ttl_seconds_after_created: Option<u32>,
-  pub apply: bool,
-  pub cpus_given: bool,
-  pub memory_given: bool,
 }
 ```
 
@@ -489,27 +497,6 @@ pub struct LocalEndpoints {
   pub ssh: Option<String>,
   pub serial_log: Option<String>,
   pub container_id: Option<String>,
-}
-```
-
-### `LocalFleetPlan`
-
-A Fleet template translated for the local provider.
-
-```rust
-pub struct LocalFleetPlan {
-  pub template: String,
-  pub reference: String,
-  pub runtime: RuntimeKind,
-  pub image: String,
-  pub firmware: Option<String>,
-  pub cpus: Option<u32>,
-  pub memory_mb: Option<u64>,
-  pub services: BTreeMap<String, u16>,
-  pub probes: Vec<Probe>,
-}
-impl LocalFleetPlan {
-  fn apply(&self, o: &mut CreateOptions);
 }
 ```
 
@@ -1119,7 +1106,6 @@ impl Sandbox {
   fn expires_at(&self) -> Option<SystemTime>;
   fn provider_details(&self) -> BTreeMap<String, String>;
   fn placement(&self) -> (Kind, Runtime);
-  fn fleet_sandbox(&self) -> Option<&BoundSandbox>;
   fn services(&self) -> &BTreeMap<String, u16>;
   fn ports(&self) -> BTreeMap<u16, PortTarget>;
   fn port(&self, port: u16) -> Result<PortTarget>;
@@ -1140,7 +1126,6 @@ impl Sandbox {
   async fn resume(&self) -> Result<()>;
   async fn restart(&self) -> Result<()>;
   async fn keep_alive(&self, duration: Duration) -> Result<()>;
-  fn detach(&self);
   async fn delete(self) -> Result<()>;
 }
 ```
@@ -1154,7 +1139,6 @@ pub struct Sandboxes { /* private fields */ }
 impl Sandboxes {
   fn builder() -> SandboxesBuilder;
   fn state(&self) -> &StateStore;
-  fn pools(&self) -> Result<&PoolManager>;
   fn contrib_provider(&self, name: &str) -> Result<&Arc<dyn Provider>>;
   fn clouds(&self) -> Result<&Arc<dyn CloudManager>>;
   fn persisted_details(&self, name: &str) -> BTreeMap<String, String>;
@@ -1172,8 +1156,6 @@ impl Sandboxes {
   async fn delete_local_instance(&self, name: &str) -> Result<bool>;
   async fn connect(&self, name: &str) -> Result<Sandbox>;
   async fn connect_ref(&self, wanted: &SandboxRef) -> Result<Sandbox>;
-  async fn connect_cloud(&self, name: &str, namespace: Option<&str>) -> Result<Sandbox>;
-  fn recorded_cloud_image(&self, name: &str, pool: &str) -> Option<ImageInfo>;
   async fn known_refs(&self) -> Result<Vec<SandboxRef>>;
   async fn resolve_ref(&self, wanted: &SandboxRef) -> Result<SandboxRef>;
   async fn resolve_ref_among(&self, wanted: &SandboxRef, extra: Vec<(String, SandboxRef)>) -> Result<SandboxRef>;
@@ -1200,8 +1182,6 @@ Builder for `Sandboxes`.
 ```rust
 pub struct SandboxesBuilder { /* private fields */ }
 impl SandboxesBuilder {
-  fn fleet(self, fleet: FleetClient) -> Self;
-  fn pool_manager(self, pools: PoolManager) -> Self;
   fn local(self, runtime: Arc<dyn LocalRuntime>) -> Self;
   fn provider(self, provider: Arc<dyn Provider>) -> Self;
   fn clouds(self, clouds: Arc<dyn CloudManager>) -> Self;
@@ -1386,6 +1366,26 @@ impl Source {
 }
 ```
 
+### `Sidecar`
+
+An extra container next to a sandbox.
+
+```rust
+pub struct Sidecar {
+  pub name: String,
+  pub image: String,
+  pub command: Option<Vec<String>>,
+  pub env: BTreeMap<String, String>,
+  pub ports: Vec<u16>,
+  pub args: Option<Vec<String>>,
+  pub cpu: Option<String>,
+  pub memory: Option<String>,
+}
+impl Sidecar {
+  fn new(image: impl Into<String>) -> Self;
+}
+```
+
 ### `StateStore`
 
 The state directory (`~/.cua/sandboxes` by default).
@@ -1442,30 +1442,22 @@ impl Tunnel {
 pub fn is_cloud_location(word: &str) -> bool
 /// Whether `word` is a contrib location ...
 pub fn is_contrib_location(word: &str) -> bool
-/// Looks up `name` on Fleet (read-only) as ...
-pub async fn local_from_fleet_template(fleet: &FleetClient, name: &str) -> Result<LocalFleetPlan>
-/// State-file fields of a sandbox on a ...
+/// The kind and runtime of a local backend ...
 pub fn placement_of_backend(backend: &str) -> (Kind, Runtime)
-/// Translates a template for the local ...
-pub fn plan_from_template(t: &Template) -> Result<LocalFleetPlan>
-/// The pool an image string names ...
-pub fn pool_image(image: &str) -> Option<&str>
-/// Pool `pool`'s template image as an ...
-pub async fn pool_image_info(fleet: &FleetClient, pool: &str, creds: Option<&RegistryCredentials>) -> Result<Option<ImageInfo>>
 /// Deletes the runtimes cua set up itself ...
 pub async fn remove_builtin_runtimes() -> Result<(), String>
+
+// mod build
+/// The content-addressed image name for a ...
+pub fn build_name(recipe: &ImageRecipe) -> String
+/// The recipe a build of `spec` on `base` ...
+pub fn build_recipe(spec: &BuildSpec, base: &str, files: Vec<ImageFile>, from_pull_secret: Option<String>) -> ImageRecipe
+/// A local build's content-addressed ...
+pub fn local_build_file(f: &BuildFile) -> Result<ImageFile>
 
 // mod byoc
 /// The error a cloud word without a ...
 pub fn not_built() -> Error
-
-// mod fleet_local
-/// Parses Kubernetes quantities as MiB ...
-pub fn parse_memory_mb(q: &str) -> Option<u64>
-/// Readiness probes in a template's ...
-pub fn probes_from_json(v: &Value, services: &BTreeMap<String, u16>) -> Vec<Probe>
-/// The template name an image string / ...
-pub fn template_name(o: &CreateOptions) -> Option<&str>
 
 // mod http
 /// Reads a streamed response whole.
@@ -1501,10 +1493,6 @@ pub fn select(on: &On, kind: Kind, runtime: &Runtime, image: &ImageFacts, host: 
 /// Checks a request against the location's ...
 pub fn validate(on: &On, kind: Kind, runtime: &Runtime) -> Result<Kind, PlacementError>
 
-// mod pool_image
-/// A template image as an `ImageInfo` for ...
-pub async fn template_image_info(image: &str, runtime: &RuntimeKind, creds: Option<&RegistryCredentials>) -> ImageInfo
-
 // mod provider
 /// Whether `word` is a provider location ...
 pub fn is_provider_location(word: &str) -> bool
@@ -1536,8 +1524,6 @@ pub fn resolve_named(wanted: &SandboxRef, known: impl IntoIterator<Item = (Strin
 pub fn valid_machine_id(id: &str) -> bool
 
 // mod settings
-/// The cloud pool settings with the user's ...
-pub fn auto_pool_config() -> AutoPoolConfig
 /// The hint appended to "no cloud ...
 pub fn cloud_default_hint(source: &Source) -> Option<String>
 /// `$CUA_HOME/config.toml`.
@@ -1548,6 +1534,14 @@ pub fn cua_home() -> PathBuf
 pub fn key(name: &str) -> Result<Key, SettingsError>
 /// Checks and normalises a value for `key`.
 pub fn normalize(key: Key, value: &str) -> Result<String, SettingsError>
+
+// mod sidecar
+/// Refuses `RESERVED_SERVICE_NAMES` in ...
+pub fn check_reserved_service_names<'a>(services: impl IntoIterator<Item = &'a String>, has_sidecars: bool) -> Result<()>
+/// redis for docker. ...
+pub fn default_sidecar_name(image: &str) -> String
+/// Checks sidecars (so a bad spec fails ...
+pub fn validate_sidecars(sidecars: &[Sidecar], reserved: &[u16]) -> Result<()>
 
 // mod state
 /// `~/.cua/sandboxes` ( ...
@@ -1561,26 +1555,33 @@ pub fn registry_image_dict(reference: &str, os_type: &str, kind: Option<&str>) -
 ## Constants
 
 ```rust
+/// What every call that needs Cua Cloud ...
+pub const CLOUD_CLOSED: &str = "Cua Cloud has closed: cloud sandboxes (on=\"cloud\", cloud:<name>) \
+     are no longer available. Run sandboxes locally, on a machine you run (Sandbox.connect(url)), \
+     or in your own cloud account (on=aws|gcp|modal); see \
+     https://cua.ai/docs/cua-sdk/guides/your-cloud";
 /// Your own cloud accounts as locations ...
 pub const CLOUD_LOCATIONS: &[&str] = _;
 /// Every contrib location word the refs ...
 pub const CONTRIB_LOCATIONS: &[&str] = _;
 /// Default spacesd port.
 pub const ENV_PORT: u16 = 3211;
-/// Why a cloud (Fleet) sandbox cannot have ...
-pub const FLEET_NO_GPU_REASON: &str = sandbox::FLEET_NO_GPU;
 /// Directory of the ephemeral-sandbox ...
 pub const LEASE_DIR: &str = ".ephemeral";
-/// How long a bare-name lookup waits for ...
-pub const LOOKUP_CLOUD_TIMEOUT: Duration = _;
-/// The error for Fleet `macos` templates ...
-pub const MACOS_FLEET_UNSUPPORTED: &str = /* ... */;
 /// The status word of a local record whose ...
 pub const MISSING: &str = "missing";
-/// Image-string prefix naming a Fleet pool ...
-pub const POOL_PREFIX: &str = "pool:";
 /// How long `Sandboxes::create` waits, at ...
 pub const SPACESD_READY_TIMEOUT: Duration = _;
+
+// mod build
+/// Prefix of content-named built images.
+pub const BUILD_NAME_PREFIX: &str = "cua-b-";
+/// Default build budget.
+pub const DEFAULT_BUILD_TIMEOUT: Duration = _;
+/// Most environment variables a build ...
+pub const MAX_BUILD_ENV: usize = 128;
+/// Longest environment value a build takes.
+pub const MAX_BUILD_ENV_VALUE: usize = 8192;
 
 // mod byoc
 /// The instance detail naming where a ...
@@ -1602,10 +1603,6 @@ pub const PROVIDER: &str = "cua.cloud.provider";
 /// The sandbox's name.
 pub const SANDBOX: &str = "cua.cloud.sandbox";
 
-// mod fleet_local
-/// Deprecated spelling of `POOL_PREFIX` ...
-pub const FLEET_PREFIX: &str = "fleet:";
-
 // mod mcp
 /// The default MCP endpoint path of a ...
 pub const DEFAULT_PATH: &str = "/mcp";
@@ -1613,6 +1610,14 @@ pub const DEFAULT_PATH: &str = "/mcp";
 // mod settings
 /// Every setting, in display order.
 pub const KEYS: [Key; 9] = _;
+
+// mod sidecar
+/// The hostname sidecars reach the sandbox ...
+pub const MAIN_CONTAINER_NAME: &str = "main";
+/// Most sidecars a sandbox may carry.
+pub const MAX_SIDECARS: usize = 8;
+/// Service names a sandbox with sidecars ...
+pub const RESERVED_SERVICE_NAMES: [&str; 3] = _;
 ```
 
 ## Type aliases
@@ -1640,4 +1645,4 @@ pub type RouteFuture = Pin<Box<dyn Future<Output = RouteDecision> + Send>>;
 
 ## Re-exports
 
-`sandbox::BuildFile`, `sandbox::BuildSpec`, `tokio_util::sync::CancellationToken`, `cua_vmm::cleanup`, `cua_fleet`, `cua_spacesd_client`, `cua_vmm::gpu`, `sandbox::ImageLayer`, `rmcp`, `cua_vmm::progress`, `sandbox::RegistryCredentials`, `sandbox::Sidecar`.
+`cua_image::spec::ImageLayer`, `cua_image::RegistryCredentials`, `tokio_util::sync::CancellationToken`, `cua_vmm::cleanup`, `cua_spacesd_client`, `cua_vmm::gpu`, `build::ImageLayer`, `rmcp`, `cua_vmm::progress`, `build::RegistryCredentials`.

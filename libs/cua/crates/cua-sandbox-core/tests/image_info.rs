@@ -1,11 +1,8 @@
 //! `Sandbox::image_info`: the image a sandbox runs, as resolved and pinned
 //! at create time. Fakes only (no network, no host processes, temp state
-//! dirs). Its own binary: the Fleet case installs a process-wide registry
-//! source.
+//! dirs).
 
 use async_trait::async_trait;
-use cua_fleet::testing::FakeFleet;
-use cua_image::testing::FakeRegistry;
 use cua_sandbox_core::{
     CreateOptions, ImageInfo, InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime,
     LocalStartSpec, LocalSummary, ProviderKind, RuntimeError, RuntimeResult, Sandboxes,
@@ -207,64 +204,4 @@ async fn unresolved_local_images_and_direct_urls_report_none() {
     // Direct: a machine by URL, nothing was resolved.
     let direct = sbx.connect_url("http://127.0.0.1:1", None).unwrap();
     assert_eq!(direct.image_info(), None);
-}
-
-#[tokio::test]
-async fn fleet_managed_claims_report_the_pinned_template_image() {
-    let dir = tempfile::tempdir().unwrap();
-    let fake = FakeFleet::new();
-    // Resolve through an in-memory registry instead of the fixtures'
-    // inspector (which sends references as given, unresolved).
-    cua_fleet::set_image_inspector(None);
-    let mut r = FakeRegistry::default();
-    let root = r.index(
-        "ghcr.io/trycua/linux:24.04",
-        &["amd64", "arm64"],
-        false,
-        None,
-    );
-    cua_image::resolve::set_source(Some(Arc::new(r)));
-    let sbx = Sandboxes::builder()
-        .fleet(fake.client())
-        .state_dir(dir.path().join("sandboxes"))
-        .build();
-
-    let sb = sbx
-        .create(
-            CreateOptions::new(ProviderKind::Fleet, "ghcr.io/trycua/linux:24.04")
-                .name("cua-e2e-ii-fleet"),
-        )
-        .await
-        .unwrap();
-    let want = ImageInfo {
-        reference: "ghcr.io/trycua/linux:24.04".into(),
-        pinned_ref: format!("ghcr.io/trycua/linux@{root}"),
-        digest: root.clone(),
-        variant: "rootfs".into(),
-        arch: Some("amd64".into()),
-        os: "linux".into(),
-        emulated: false,
-        // The fake registry image carries no `ai.cua.spacesd` label.
-        spacesd: Some(false),
-    };
-    assert_eq!(sb.image_info(), Some(&want));
-    // The claim's state file keeps it for a reattach.
-    let claim = sb.fleet_sandbox().unwrap().claim.clone();
-    let again = sbx.connect(&claim).await.unwrap();
-    assert_eq!(again.image_info(), Some(&want));
-    drop(again);
-
-    // A claim on a named pool reports its template's image: here the
-    // managed pool's digest-pinned one, used as is.
-    let pool = sb.fleet_sandbox().unwrap().namespace.clone();
-    let mut o = CreateOptions::new(ProviderKind::Fleet, "");
-    o.fleet.pool = Some(pool);
-    let named = sbx.create(o).await.unwrap();
-    let info = named.image_info().expect("named pool image info");
-    assert_eq!(info.digest, root);
-    assert_eq!(info.pinned_ref, format!("ghcr.io/trycua/linux@{root}"));
-    assert_eq!(info.variant, "rootfs");
-    named.delete().await.unwrap();
-    sb.delete().await.unwrap();
-    cua_image::resolve::set_source(None);
 }

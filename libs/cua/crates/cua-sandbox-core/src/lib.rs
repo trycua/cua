@@ -1,10 +1,9 @@
-//! One daemon-agnostic `Sandbox` over three providers:
+//! One daemon-agnostic `Sandbox` over these providers:
 //!
-//! - **Fleet** (cloud pools and claims, via `cua-fleet`),
 //! - **Local** (a VM or container runtime behind [`LocalRuntime`], which
 //!   `cua-vmm` implements through a thin adapter),
 //! - **Direct** (`url` + optional token; any reachable machine, including a
-//!   Fleet service URL or a relay URL),
+//!   relay URL),
 //! - **Contrib** (a third-party platform behind [`Provider`], registered by
 //!   the `cua-contrib` crate: `--on e2b`, `--on daytona`, ...).
 //!
@@ -15,9 +14,14 @@
 //! [`Error::SpacesdNotAvailable`] otherwise.
 //!
 //! State files (`~/.cua/sandboxes/<name>.json`) use cua-sandbox's format.
+//!
+//! Cua Cloud (`on="cloud"`, the Fleet provider) has closed: creating,
+//! reaching or listing cloud sandboxes fails with [`Error::CloudClosed`];
+//! records of earlier cloud sandboxes stay readable and `delete` removes
+//! them.
 
+pub mod build;
 pub mod byoc;
-pub mod fleet_local;
 pub mod http;
 pub mod mcp;
 pub mod placement;
@@ -40,7 +44,6 @@ pub async fn remove_builtin_runtimes() -> std::result::Result<(), String> {
 }
 /// Cancels a create ([`Sandboxes::create_cancellable`]).
 pub use tokio_util::sync::CancellationToken;
-pub mod pool_image;
 pub mod power;
 pub mod provider;
 pub mod proxy;
@@ -48,19 +51,15 @@ pub mod refs;
 mod runtime;
 mod sandbox;
 pub mod settings;
+pub mod sidecar;
 pub mod state;
 #[cfg(feature = "testing")]
 pub mod testing;
 
-pub use cua_fleet;
+pub use build::{BuildFile, BuildSpec, ImageLayer, RegistryCredentials};
 pub use cua_spacesd_client;
-pub use fleet_local::{
-    LocalFleetPlan, MACOS_FLEET_UNSUPPORTED, POOL_PREFIX, local_from_fleet_template,
-    plan_from_template, pool_image,
-};
 pub use http::{HttpResponse, RequestBody, ServiceEndpoint, StreamingResponse};
 pub use mcp::{McpClient, McpConfig};
-pub use pool_image::pool_image_info;
 pub use power::{PowerControl, PowerState};
 pub use provider::{
     CLOUD_LOCATIONS, CONTRIB_LOCATIONS, ImageMode, PortExposure, Provider, ProviderCapabilities,
@@ -74,13 +73,18 @@ pub use runtime::{
     RuntimeResult,
 };
 pub use sandbox::{
-    BuildFile, BuildSpec, ConnectOptionsOverride, CreateOptions, ENV_PORT, FleetOptions, Forward,
-    ForwardVia, ImageLayer, LOOKUP_CLOUD_TIMEOUT, MISSING, NetworkMode, PortTarget, Probe,
-    ProviderKind, RegistryCredentials, SPACESD_READY_TIMEOUT, Sandbox, SandboxInfo, Sandboxes,
-    SandboxesBuilder, Service, Sidecar, Status, Tunnel, placement_of_backend,
+    ConnectOptionsOverride, CreateOptions, ENV_PORT, Forward, ForwardVia, MISSING, NetworkMode,
+    PortTarget, Probe, ProviderKind, SPACESD_READY_TIMEOUT, Sandbox, SandboxInfo, Sandboxes,
+    SandboxesBuilder, Service, Status, Tunnel, placement_of_backend,
 };
-/// Why a cloud (Fleet) sandbox cannot have a GPU yet.
-pub const FLEET_NO_GPU_REASON: &str = sandbox::FLEET_NO_GPU;
+pub use sidecar::Sidecar;
+
+/// What every call that needs Cua Cloud (`on="cloud"`, cloud sandbox refs,
+/// Fleet pools) says now that it has closed.
+pub const CLOUD_CLOSED: &str = "Cua Cloud has closed: cloud sandboxes (on=\"cloud\", cloud:<name>) \
+     are no longer available. Run sandboxes locally, on a machine you run (Sandbox.connect(url)), \
+     or in your own cloud account (on=aws|gcp|modal); see \
+     https://cua.ai/docs/cua-sdk/guides/your-cloud";
 pub use state::{EphemeralLease, FleetState, LEASE_DIR, LocalState, SandboxState, StateStore};
 
 /// Errors.
@@ -141,9 +145,10 @@ pub enum Error {
     /// HTTP failure.
     #[error("http: {0}")]
     Http(String),
-    /// Fleet.
-    #[error(transparent)]
-    Fleet(#[from] cua_fleet::Error),
+    /// Cua Cloud has closed ([`CLOUD_CLOSED`]): the call needed a cloud
+    /// sandbox. Use a local sandbox, a machine you run, or your own cloud.
+    #[error("{}", CLOUD_CLOSED)]
+    CloudClosed,
     /// Local runtime.
     #[error(transparent)]
     Runtime(#[from] RuntimeError),
@@ -172,7 +177,7 @@ pub enum Error {
 
 fn provider_not_configured(p: &ProviderKind) -> String {
     match p {
-        ProviderKind::Fleet => cua_fleet::MISSING_CREDENTIALS.into(),
+        ProviderKind::Fleet => CLOUD_CLOSED.into(),
         ProviderKind::Contrib => "no contrib provider is configured".into(),
         other => format!("provider {other:?} is not configured"),
     }

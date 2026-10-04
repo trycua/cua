@@ -92,7 +92,6 @@ jobs:
             ["libs/python/bench-ui/"]="pypi/bench-ui"
             ["libs/cua-bench/"]="pypi/bench"
             ["libs/typescript/core/"]="npm/core"
-            ["libs/typescript/fleet/"]="npm/fleet"
             ["libs/typescript/playground/"]="npm/playground"
             ["libs/cuabot/"]="npm/cuabot"
             ["libs/xfce-cua/"]="docker/xfce-cua"

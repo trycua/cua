@@ -171,11 +171,9 @@ async fn stdio_speaks_mcp_and_publishes_the_contract() {
         teleport["structuredContent"]["error"]["kind"],
         "host_capability_missing"
     );
+    // Cua Cloud has closed.
     let fleet = c.call("create_space", json!({"on": "cloud"})).await;
-    assert_eq!(
-        fleet["structuredContent"]["error"]["kind"],
-        "host_capability_missing"
-    );
+    assert_eq!(fleet["structuredContent"]["error"]["kind"], "fleet");
 }
 
 #[tokio::test]

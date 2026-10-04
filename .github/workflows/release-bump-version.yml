@@ -16,7 +16,6 @@ on:
           - pypi/som
           - pypi/train
           - npm/core
-          - npm/fleet
           - npm/playground
           - npm/cuabot
           - docker/cuabot
@@ -103,10 +102,6 @@ jobs:
               ;;
             "npm/core")
               echo "directory=libs/typescript/core" >> $GITHUB_OUTPUT
-              echo "type=npm" >> $GITHUB_OUTPUT
-              ;;
-            "npm/fleet")
-              echo "directory=libs/typescript/fleet" >> $GITHUB_OUTPUT
               echo "type=npm" >> $GITHUB_OUTPUT
               ;;
             "npm/playground")

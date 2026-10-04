@@ -279,9 +279,8 @@ impl Settings {
         self.config_value(&key)
     }
 
-    /// A lookup for [`cua_fleet::AutoPoolConfig::from_lookup`]: the
-    /// environment variable, else the config file's value for the setting
-    /// it overrides.
+    /// The environment variable, else the config file's value for the
+    /// setting it overrides.
     pub fn lookup(&self, env_var: &str) -> Option<String> {
         let Some(key) = KEYS.iter().find(|k| k.env == env_var) else {
             return std::env::var(env_var).ok();
@@ -537,18 +536,6 @@ impl Settings {
     }
 }
 
-/// The cloud pool settings with the user's config applied:
-/// [`cua_fleet::AutoPoolConfig::from_lookup`] over the environment, then
-/// `config.toml` (`cloud.warm`, `cloud.max_pool_size`, `cloud.claim_ttl`).
-/// A config file that does not parse is ignored here (`cua doctor` reports
-/// it).
-pub fn auto_pool_config() -> cua_fleet::AutoPoolConfig {
-    match Settings::load() {
-        Ok(s) => cua_fleet::AutoPoolConfig::from_lookup(|k| s.lookup(k)),
-        Err(_) => cua_fleet::AutoPoolConfig::from_env(),
-    }
-}
-
 /// The hint appended to "no cloud credentials" when the cloud came from
 /// a default rather than the call.
 pub fn cloud_default_hint(source: &Source) -> Option<String> {
@@ -740,20 +727,6 @@ mod tests {
         assert_eq!(s.lookup("CUA_FLEET_WARM"), None, "auto is not an override");
         let s = settings(d.path(), &[("CUA_FLEET_MAX_POOL_SIZE", "7")]);
         assert_eq!(s.lookup("CUA_FLEET_MAX_POOL_SIZE").as_deref(), Some("7"));
-    }
-
-    #[test]
-    fn cloud_settings_reach_the_pool_manager() {
-        let d = tempfile::tempdir().unwrap();
-        let mut s = settings(d.path(), &[]);
-        s.set(key("cloud.warm").unwrap(), "true").unwrap();
-        s.set(key("cloud.max_pool_size").unwrap(), "4").unwrap();
-        s.set(key("cloud.claim_ttl").unwrap(), "20m").unwrap();
-        let s = settings(d.path(), &[]);
-        let c = cua_fleet::AutoPoolConfig::from_lookup(|k| s.lookup(k));
-        assert!(c.warm);
-        assert_eq!(c.max_pool_size, 4);
-        assert_eq!(c.claim_ttl, std::time::Duration::from_secs(1200));
     }
 
     #[test]

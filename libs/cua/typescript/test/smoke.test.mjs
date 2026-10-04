@@ -101,52 +101,19 @@ test("embedded", { skip: !binary("CUA_TEST_FIXTURES", "cua-test-fixtures") }, as
   await exercise(c)
 })
 
-test("managed Fleet pools through the fake API", { skip: !binary("CUA_TEST_FIXTURES", "cua-test-fixtures") }, async () => {
+test("Cua Cloud says it has closed", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cua-ts-"))
   const c = cua.embedded({
     stateDir: join(dir, "sandboxes"),
     fleetFromEnv: false,
-    fleet: cua.FleetSettings.create({ baseUrl: fx.fleet_base_url, token: fx.fleet_token }),
+    fleet: cua.FleetSettings.create({ baseUrl: "http://127.0.0.1:9", token: "t" }),
   })
-  // A digest-pinned image: nothing resolves tags against a registry. The
-  // kind is explicit because the fake image has no manifest to classify.
-  const image = "ghcr.io/trycua/cua-e2e-ts@sha256:0123"
-  const opts = (extra = {}) =>
-    cua.SandboxCreateOptions.create({ on: "cloud", image, kind: "vm", ...extra })
-  const sbx = c.sandboxes()
-  const pools = c.fleet().pools()
-  assert.deepEqual(await pools.list(), [])
-
-  // No pool: a managed, autoscaled pool keyed by image and shape.
-  const sb = await sbx.create(opts({ warm: true, maxPoolSize: 3, fleetTtlSeconds: 120 }))
-  assert.equal(sb.location(), "cloud")
-  assert.equal(sb.isEphemeral(), true)
-  let listed = await pools.list()
-  assert.equal(listed.length, 1)
-  const pool = listed[0]
-  assert.match(pool.name, /^cua-auto-[a-z2-7]{16}$/)
-  assert.equal(pool.managed, true)
-  assert.equal(pool.maxPoolSize, 3)
-  assert.equal(pool.replicas, 1)
-  assert.equal(pool.claims, 1)
-  assert.equal(pool.image, image)
-
-  // Same image and shape: same pool. Another cpu count: another pool.
-  const again = await sbx.create(opts())
-  assert.equal((await pools.list()).length, 1)
-  const bigger = await sbx.create(opts({ cpus: 4 }))
-  listed = await pools.list()
-  assert.equal(listed.length, 2)
-
-  // Deleting releases claims; pools stay for reuse until GC.
-  for (const s of [sb, again, bigger]) await s.delete_()
-  listed = await pools.list()
-  assert.deepEqual(listed.map((p) => p.claims), [0, 0])
-  const kept = await pools.gc(3600)
-  assert.deepEqual(kept.deletedPools, [])
-  const report = await pools.gc(0)
-  assert.deepEqual([...report.deletedPools].sort(), listed.map((p) => p.name).sort())
-  assert.deepEqual(await pools.list(), [])
+  const closed = (e) => cua.CuaError.Fleet.instanceOf(e) && /Cua Cloud has closed/.test(e.message)
+  await assert.rejects(c.fleet().pools().list(), closed)
+  await assert.rejects(
+    c.sandboxes().create(cua.SandboxCreateOptions.create({ on: "cloud", image: "img:test" })),
+    closed,
+  )
 })
 
 test("unconfigured fleet is a typed error", () => {

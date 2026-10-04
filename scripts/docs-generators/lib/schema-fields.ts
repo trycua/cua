@@ -1,6 +1,6 @@
 /**
- * JSON Schema to reference field tables, shared by the Fleets (CRD and Image
- * schemas) and Spaces (MCP tool input schemas) generators.
+ * JSON Schema to reference field tables, used by the Spaces (MCP tool input
+ * schemas) generator.
  *
  * `flattenSchema` walks a schema into dotted field paths
  * (`spec.vmTemplate.services[].name`), resolving local `$ref`s, so one table

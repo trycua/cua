@@ -63,7 +63,6 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
             triggers["push"]["paths"],
             [
                 "libs/python/cua-sandbox/**",
-                "libs/fleet/**",
                 ".github/workflows/periodic-cua-sandbox-live.yml",
                 ".github/scripts/tests/test_periodic_cua_sandbox_live.py",
             ],

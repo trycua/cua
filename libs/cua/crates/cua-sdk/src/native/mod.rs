@@ -142,12 +142,6 @@ impl From<cua_spacesd_client::Error> for CuaError {
     }
 }
 
-impl From<cua_fleet::Error> for CuaError {
-    fn from(e: cua_fleet::Error) -> Self {
-        cua_daemon::Error::from(e).into()
-    }
-}
-
 impl From<cua_sandbox_core::Error> for CuaError {
     fn from(e: cua_sandbox_core::Error) -> Self {
         cua_daemon::Error::from(e).into()

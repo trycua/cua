@@ -1,5 +1,5 @@
 // Spawns libs/cua/target/*/cua-test-fixtures (loopback MockServer spacesd
-// with a scripted media socket + fake Fleet API). Exits when stdin closes.
+// with a scripted media socket). Exits when stdin closes.
 import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"

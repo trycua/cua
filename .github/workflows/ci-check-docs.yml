@@ -9,7 +9,6 @@ on:
       - "libs/lume/src/**"
       - "libs/python/cua-sandbox/**"
       - "libs/cua/python/pyproject.toml"
-      - "libs/typescript/fleet/package.json"
       - "libs/cua-driver/hyprland-plugin/packaging/release/profiles/omarchy-stable-20260910.json"
       - "docs/content/docs/cua-driver/reference/**"
       - "docs/content/docs/lume/reference/**"
@@ -23,11 +22,7 @@ on:
       - "libs/cua/**"
       - "docs/content/docs/cua-cli/reference/**"
       - "docs/content/docs/cua-sdk/reference/**"
-      # Fleets (libs/fleet mirror: client, swagger, Terraform provider) and
       # Spaces (contract manifest) references.
-      - "libs/fleet/**"
-      - "docs/content/docs/fleets/reference/**"
-      - "docs/content/docs/fleets/guides/**"
       - "docs/content/docs/spaces/reference/**"
       # The shared image catalog and the hand-written pages with generated
       # catalog regions (scripts/docs-generators/sandbox.ts).
@@ -80,7 +75,7 @@ jobs:
       - name: Test generator routing and ownership
         run: |
           node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --test-routing
-          node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/runner.test.ts scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts scripts/docs-generators/sandbox.test.ts scripts/docs-generators/prose-style.test.ts scripts/docs-generators/lume.test.ts scripts/docs-generators/cua-cli.test.ts scripts/docs-generators/cli-mdx.test.ts scripts/docs-generators/cua-bench.test.ts scripts/docs-generators/reference-quality.test.ts scripts/docs-generators/cua-sdk.test.ts scripts/docs-generators/python-sdk.test.ts scripts/docs-generators/typescript-sdk.test.ts scripts/docs-generators/rust-crates.test.ts scripts/docs-generators/proto.test.ts scripts/docs-generators/fleet.test.ts scripts/docs-generators/spaces.test.ts
+          node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/runner.test.ts scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts scripts/docs-generators/sandbox.test.ts scripts/docs-generators/prose-style.test.ts scripts/docs-generators/lume.test.ts scripts/docs-generators/cua-cli.test.ts scripts/docs-generators/cli-mdx.test.ts scripts/docs-generators/cua-bench.test.ts scripts/docs-generators/reference-quality.test.ts scripts/docs-generators/cua-sdk.test.ts scripts/docs-generators/python-sdk.test.ts scripts/docs-generators/typescript-sdk.test.ts scripts/docs-generators/rust-crates.test.ts scripts/docs-generators/proto.test.ts scripts/docs-generators/spaces.test.ts
       - name: Select affected generator rows
         id: scope
         env:
@@ -88,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            GENERATORS="cua-driver lume cua-bench sandbox cua-cli cua-sdk cua-sdk-python cua-sdk-ts cua-rust cua-proto fleet spaces"
+            GENERATORS="cua-driver lume cua-bench sandbox cua-cli cua-sdk cua-sdk-python cua-sdk-ts cua-rust cua-proto spaces"
           else
             git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/docs-changed-files.txt"
             GENERATORS=$(node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --changed-files-file "$RUNNER_TEMP/docs-changed-files.txt")
@@ -108,7 +103,7 @@ jobs:
               "sandbox": [{"library": "sandbox", "platform": "linux", "os": "ubuntu-latest"}],
           }
           for library in ("cua-bench", "cua-cli", "cua-sdk", "cua-sdk-python", "cua-sdk-ts",
-                          "cua-rust", "cua-proto", "fleet", "spaces"):
+                          "cua-rust", "cua-proto", "spaces"):
               rows[library] = [{"library": library, "platform": "linux", "os": "ubuntu-latest"}]
           selected = sys.argv[1].split()
           unknown = sorted(set(selected) - set(rows))
@@ -141,7 +136,7 @@ jobs:
       # in debug; with the restored cache that fills the hosted runner's disk
       # ("No space left on device" linking libcua_spaces_ffi.a).
       - name: Free disk space (cua SDK generators)
-        if: runner.os == 'Linux' && contains(fromJSON('["cua-cli","cua-sdk","cua-rust","fleet"]'), matrix.library)
+        if: runner.os == 'Linux' && contains(fromJSON('["cua-cli","cua-sdk","cua-rust"]'), matrix.library)
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/.ghcup || true
           df -h /
@@ -175,26 +170,26 @@ jobs:
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Install protoc (cua SDK generators)
-        if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust","fleet"]'), matrix.library)
+        if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust"]'), matrix.library)
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           version: "29.x"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install pinned Rust toolchain (cua SDK generators)
-        if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust","fleet"]'), matrix.library)
+        if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust"]'), matrix.library)
         uses: dtolnay/rust-toolchain@1.97.1
       - name: Install the pinned nightly for rustdoc JSON (this job only)
         if: matrix.library == 'cua-rust'
         run: rustup toolchain install nightly-2026-09-20 --profile minimal
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
-        if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust","fleet"]'), matrix.library)
+        if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust"]'), matrix.library)
         with:
           workspaces: |
             libs/cua
             scripts/docs-generators/rustdoc-json
           key: docs-${{ matrix.library }}
       - name: Install Linux build dependencies (cua SDK)
-        if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust","fleet"]'), matrix.library)
+        if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust"]'), matrix.library)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \

@@ -1,8 +1,8 @@
 //! `cua daemon`: the cua SDK runtime hosted out of process.
 //!
 //! - [`Runtime`] is *the* SDK runtime: one [`cua_sandbox_core::Sandboxes`]
-//!   (Fleet, local, direct), a Fleet client, cached sandbox handles and
-//!   spacesd connections. `cua-sdk` embeds it in-process
+//!   (local, direct, providers), cached sandbox handles and spacesd
+//!   connections. `cua-sdk` embeds it in-process
 //!   (`Cua::embedded`); the daemon hosts the same value.
 //! - [`server`] serves `cua.daemon.v1` on a Unix socket (`~/.cua/cua.sock`,
 //!   mode 0600, no token) and/or loopback TCP (bearer token). The loopback
@@ -13,7 +13,7 @@
 //!     daemon, including the `/media` WebSocket;
 //!   - the **media bridge** `/v1/bridge/media?ticket=<bridge ticket>` for
 //!     webviews: a short-lived bridge ticket from `OpenMediaBridge`, so a
-//!     browser never sees a Fleet bearer or an env token.
+//!     browser never sees an env token.
 //! - [`client::DaemonClient`] is the typed client `Cua::connect` uses.
 //!
 //! Errors cross the wire as `google.rpc.Status` with a packed
@@ -44,7 +44,6 @@ mod passthrough;
 mod runtime;
 #[cfg(feature = "server")]
 pub mod server;
-pub mod session;
 pub mod shares;
 #[cfg(feature = "server")]
 mod spaces_svc;
@@ -59,8 +58,8 @@ pub use cua_spaces;
 #[cfg(feature = "server")]
 pub use passthrough::space_key;
 pub use runtime::{
-    CreateRequest, ForwardInfo, LIST_CLOUD_TIMEOUT, Listing, Runtime, RuntimeConfig, SandboxRecord,
-    SpacesdAttachment, contrib_provider_names, location_of,
+    CreateRequest, ForwardInfo, Listing, Runtime, RuntimeConfig, SandboxRecord, SpacesdAttachment,
+    contrib_provider_names, location_of,
 };
 
 /// The released cua SDK version this daemon was built as (reported by
@@ -98,7 +97,7 @@ pub enum Error {
         /// The accepted values.
         valid: Vec<String>,
     },
-    /// Provider not configured (for example no Fleet credentials).
+    /// Provider not configured (for example no local runtime).
     #[error("provider not configured: {0}")]
     ProviderNotConfigured(String),
     /// The provider or this build cannot do this.
@@ -110,7 +109,8 @@ pub enum Error {
     /// A deadline elapsed.
     #[error("timed out: {0}")]
     Timeout(String),
-    /// Fleet API failure.
+    /// Fleet API failure; Cua Cloud has closed
+    /// ([`cua_sandbox_core::CLOUD_CLOSED`]).
     #[error("fleet: {0}")]
     Fleet(String),
     /// Fleet's admission refused a write (a size over the account's
@@ -411,7 +411,7 @@ impl From<cua_sandbox_core::Error> for Error {
                 cua_sandbox_core::ProviderKind::Local => {
                     "local runtimes are not available in this build yet (cua-vmm)".into()
                 }
-                cua_sandbox_core::ProviderKind::Fleet => cua_fleet::MISSING_CREDENTIALS.into(),
+                cua_sandbox_core::ProviderKind::Fleet => cua_sandbox_core::CLOUD_CLOSED.into(),
                 cua_sandbox_core::ProviderKind::Direct
                 | cua_sandbox_core::ProviderKind::Contrib => m,
             }),
@@ -420,7 +420,7 @@ impl From<cua_sandbox_core::Error> for Error {
             E::SpacesdNotAvailable { .. } => Error::SpacesdNotAvailable(m),
             E::Timeout(t) => Error::Timeout(t),
             E::Http(h) => Error::Http(h),
-            E::Fleet(f) => Error::from(f),
+            E::CloudClosed => Error::Fleet(m),
             E::UnsupportedImage(u) => Error::Unsupported(u),
             E::Runtime(cua_sandbox_core::RuntimeError::UnsupportedImage(u)) => {
                 Error::Unsupported(u)
@@ -448,32 +448,6 @@ impl From<cua_sandbox_core::placement::PlacementError> for Error {
             message: p.message,
             axis: p.axis.as_str().to_string(),
             valid: p.valid,
-        }
-    }
-}
-
-impl From<cua_fleet::Error> for Error {
-    fn from(e: cua_fleet::Error) -> Self {
-        match e {
-            ref e if e.is_not_found() => Error::NotFound(e.to_string()),
-            cua_fleet::Error::MissingCredentials => Error::ProviderNotConfigured(e.to_string()),
-            cua_fleet::Error::InvalidArgument(a) => Error::InvalidArgument(a),
-            cua_fleet::Error::Timeout(t) => Error::Timeout(t),
-            cua_fleet::Error::Env(env) => Error::from(env),
-            cua_fleet::Error::Unsupported(u) => Error::Unsupported(u),
-            ref e @ cua_fleet::Error::PoolSpecMismatch { .. } => {
-                Error::PoolSpecMismatch(e.to_string())
-            }
-            ref e @ cua_fleet::Error::ClaimSecretsNotDelivered { .. } => {
-                Error::ClaimSecretsNotDelivered(e.to_string())
-            }
-            ref e @ cua_fleet::Error::AdmissionDenied { .. } => {
-                Error::FleetAdmissionDenied(e.to_string())
-            }
-            ref e @ cua_fleet::Error::CreditExhausted { .. } => {
-                Error::CloudCreditExhausted(e.to_string())
-            }
-            other => Error::Fleet(other.to_string()),
         }
     }
 }
@@ -511,7 +485,7 @@ impl From<cua_spaces::Error> for Error {
             E::Timeout(_) => Error::Timeout(m),
             E::Cancelled(c) => Error::Cancelled(c),
             E::Env(env) => Error::from(env),
-            E::Fleet(f) => Error::from(f),
+            E::CloudClosed => Error::Fleet(m),
             E::Sandbox(s) => Error::from(s),
             E::Transfer(_) | E::Agent(_) | E::Stream(_) => Error::Env(m),
             E::Io(_) | E::Json(_) => Error::Internal(m),
@@ -796,32 +770,12 @@ mod tests {
     }
 
     #[test]
-    fn fleet_404_and_read_403_are_not_found() {
-        let status = |op: &str, code: u16| {
-            Error::from(cua_fleet::Error::Sdk(cua_fleet::SdkError::status(
-                op, code, b"x",
-            )))
-        };
-        assert!(matches!(status("get pool", 404), Error::NotFound(_)));
-        assert!(matches!(status("delete claim", 404), Error::NotFound(_)));
-        assert!(matches!(status("get pool", 403), Error::NotFound(_)));
-        assert!(matches!(status("list claims", 403), Error::NotFound(_)));
-        assert!(matches!(status("create claim", 403), Error::Fleet(_)));
-        assert!(matches!(status("get pool", 500), Error::Fleet(_)));
-    }
-
-    #[test]
-    fn fleet_admission_denial_keeps_fleets_message() {
-        let e = Error::from(cua_fleet::Error::from(cua_fleet::SdkError::status(
-            "create template",
-            403,
-            br#"{"error":"sandbox size is over the Fleet limits"}"#,
-        )));
+    fn cua_cloud_closed_crosses_the_wire_as_fleet() {
+        let e = Error::from(cua_sandbox_core::Error::CloudClosed);
         assert!(
-            matches!(&e, Error::FleetAdmissionDenied(m) if m.contains("sandbox size is over the Fleet limits")),
+            matches!(&e, Error::Fleet(m) if m.contains("Cua Cloud has closed")),
             "{e:?}"
         );
-        assert_eq!(e.to_status().code(), tonic::Code::PermissionDenied);
         assert_eq!(Error::from_status(&e.to_status()), e);
     }
 

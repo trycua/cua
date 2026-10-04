@@ -1,13 +1,12 @@
 //! `cua auth` and `cua wif-token`: sign-in through `cua-auth` (browser
 //! authorization code + PKCE with a loopback redirect, device code with
 //! `--remote` or when the identity provider does not accept the loopback
-//! redirect yet), the shared credential store, Fleet identity and user API
-//! keys, and GitHub Actions workload identity tokens.
+//! redirect yet), the shared credential store, the account identity, and
+//! GitHub Actions workload identity tokens.
 //!
-//! Fleet credentials resolve in this order (same as cua-sandbox):
-//! `FLEETS_TOKEN`, then `CUA_CLIENT_ID` + `CUA_CLIENT_SECRET`, then the
-//! session stored by `cua auth login` (its access token, refreshed when
-//! needed).
+//! Account credentials resolve in this order: `FLEETS_TOKEN`, then
+//! `CUA_CLIENT_ID` + `CUA_CLIENT_SECRET`, then the session stored by `cua
+//! auth login` (its access token, refreshed when needed).
 
 use crate::util::{self, http, line};
 use cua_sdk::CuaError;
@@ -47,7 +46,7 @@ pub async fn session_token(_store: &Store) -> Result<Option<String>, CuaError> {
     }
 }
 
-// ------------------------------------------------------------------ Fleet
+// ---------------------------------------------------------------- account
 
 /// Where Fleet credentials come from.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,79 +69,35 @@ impl FleetAuth {
     }
 }
 
-/// Whether Fleet credentials are available without reading the OS
+/// Whether account credentials are available without reading the OS
 /// credential vault: `FLEETS_TOKEN` or client credentials in the
 /// environment, or a session the marker (or the file store) says exists.
-/// Implicit Fleet calls (the default `cua sb ls`) check this first.
 pub fn fleet_maybe_configured() -> bool {
-    let cfg = cua_fleet::FleetConfig::from_env();
-    cfg.fleet_token.is_some()
-        || (cfg.client_id.is_some() && cfg.client_secret.is_some())
-        || cua_auth::may_have_session()
+    cua_auth::account::AccountApi::from_env().is_some() || cua_auth::may_have_session()
 }
 
-/// The Fleet configuration from the environment, falling back to the
-/// stored session. `None` when no credentials exist at all.
-pub async fn fleet_config() -> Result<Option<(cua_fleet::FleetConfig, FleetAuth)>, CuaError> {
-    let mut cfg = cua_fleet::FleetConfig::from_env();
-    if cfg.fleet_token.is_some() {
-        return Ok(Some((cfg, FleetAuth::WorkloadToken)));
-    }
-    if let (Some(id), Some(_)) = (&cfg.client_id, &cfg.client_secret) {
-        let id = id.clone();
-        return Ok(Some((cfg, FleetAuth::ClientCredentials(id))));
-    }
-    match session_token(&Store::from_env()).await? {
-        Some(t) => {
-            cfg.fleet_token = Some(t);
-            Ok(Some((cfg, FleetAuth::Session)))
-        }
-        None => Ok(None),
-    }
-}
-
-/// A connected Fleet client, or `ProviderNotConfigured`.
-pub async fn fleet_client() -> Result<(cua_fleet::FleetClient, FleetAuth), CuaError> {
-    let Some((cfg, auth)) = fleet_config().await? else {
-        return Err(CuaError::ProviderNotConfigured(
-            cua_fleet::MISSING_CREDENTIALS.into(),
-        ));
+/// The account API from the environment, falling back to the stored
+/// session. `None` when no credentials exist at all.
+pub fn account() -> Option<(cua_auth::account::AccountApi, FleetAuth)> {
+    let get = |k: &str| {
+        std::env::var(k)
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
     };
-    let c = cua_fleet::FleetClient::connect(cfg).map_err(fleet_err)?;
-    Ok((c, auth))
+    if let Some(a) = cua_auth::account::AccountApi::from_env() {
+        let auth = match get("FLEETS_TOKEN") {
+            Some(_) => FleetAuth::WorkloadToken,
+            None => FleetAuth::ClientCredentials(get("CUA_CLIENT_ID").unwrap_or_default()),
+        };
+        return Some((a, auth));
+    }
+    cua_auth::account::AccountApi::from_stored_session().map(|a| (a, FleetAuth::Session))
 }
 
-/// Maps a Fleet error.
-pub fn fleet_err(e: impl Into<cua_fleet::Error>) -> CuaError {
-    match e.into() {
-        cua_fleet::Error::MissingCredentials => {
-            CuaError::ProviderNotConfigured(cua_fleet::MISSING_CREDENTIALS.into())
-        }
-        cua_fleet::Error::InvalidArgument(m) => CuaError::InvalidArgument(m),
-        e @ cua_fleet::Error::AdmissionDenied { .. } => {
-            CuaError::FleetAdmissionDenied(e.to_string())
-        }
-        e @ cua_fleet::Error::CreditExhausted { .. } => {
-            CuaError::CloudCreditExhausted(e.to_string())
-        }
-        cua_fleet::Error::Sdk(e) => {
-            use cua_fleet::SdkError as S;
-            let m = e.to_string();
-            match e {
-                S::Status { status: 401, .. } | S::Token { .. } => CuaError::Unauthenticated(m),
-                S::Status { status: 403, .. } | S::PoolAccessDenied { .. } => {
-                    CuaError::PermissionDenied(m)
-                }
-                S::Status { status: 404, .. } => CuaError::NotFound(m),
-                S::Transport { .. } => CuaError::Transport(m),
-                S::Configuration { .. } | S::InvalidResourceName { .. } => {
-                    CuaError::InvalidArgument(m)
-                }
-                _ => CuaError::Fleet(m),
-            }
-        }
-        other => CuaError::Fleet(other.to_string()),
-    }
+/// What every Cua Cloud (Fleet) command says now that it has closed.
+pub fn cloud_closed() -> CuaError {
+    CuaError::Fleet(cua_sandbox_core::CLOUD_CLOSED.into())
 }
 
 // --------------------------------------------------------------- commands
@@ -269,10 +224,10 @@ pub async fn status(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     Ok(0)
 }
 
-/// `cua auth whoami`: the active Fleet identity, verified with a read-only
-/// namespace listing.
+/// `cua auth whoami`: the active account identity (its token is fetched,
+/// or refreshed, from the identity provider).
 pub async fn whoami(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
-    let Some((cfg, auth)) = fleet_config().await? else {
+    let Some((account, auth)) = account() else {
         if json {
             util::json_line(out, &serde_json::json!({"authenticated": false}));
         } else {
@@ -283,15 +238,9 @@ pub async fn whoami(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
         }
         return Ok(1);
     };
-    let base = cfg.base_url.clone();
-    let client = cua_fleet::FleetClient::connect(cfg).map_err(fleet_err)?;
-    let token = client.access_token(false).await.map_err(fleet_err)?;
+    let base = account.base_url().to_string();
+    let token = account.access_token(false).await.map_err(auth_err)?;
     let claims = jwt_claims(&token).unwrap_or_default();
-    let namespaces = client
-        .sdk()
-        .list_namespaces()
-        .await
-        .map_err(|e| fleet_err(cua_fleet::Error::Sdk(e)))?;
     let pick = |k: &str| claims[k].as_str().map(str::to_string);
     let user = pick("preferred_username").or_else(|| pick("email"));
     let expires = claims["exp"]
@@ -310,11 +259,10 @@ pub async fn whoami(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
                 "client": pick("azp"),
                 "issuer": pick("iss"),
                 "expires_at": expires,
-                "namespaces": namespaces.len(),
             }),
         );
     } else {
-        line(out, format!("Fleet:      {base}"));
+        line(out, format!("Account:    {base}"));
         line(out, format!("Credential: {}", auth.describe()));
         if let Some(u) = &user {
             line(out, format!("User:       {u}"));
@@ -325,73 +273,7 @@ pub async fn whoami(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
         if let Some(e) = &expires {
             line(out, format!("Expires:    {e}"));
         }
-        line(out, format!("Namespaces: {}", namespaces.len()));
     }
-    Ok(0)
-}
-
-/// `cua auth keys ls`.
-pub async fn keys_list(json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
-    let (c, _) = fleet_client().await?;
-    let keys = c
-        .sdk()
-        .list_user_api_keys()
-        .await
-        .map_err(|e| fleet_err(cua_fleet::Error::Sdk(e)))?;
-    if json {
-        util::json_line(out, &serde_json::to_value(&keys)?);
-    } else if keys.is_empty() {
-        line(out, "No API keys.");
-    } else {
-        let rows: Vec<Vec<String>> = keys
-            .iter()
-            .map(|k| {
-                vec![
-                    k.id.clone(),
-                    k.name.clone(),
-                    k.client_id.clone(),
-                    k.scope.join(" "),
-                ]
-            })
-            .collect();
-        util::table(out, &["ID", "NAME", "CLIENT ID", "SCOPE"], &rows);
-    }
-    Ok(0)
-}
-
-/// `cua auth keys create`: prints the client id and secret once.
-pub async fn keys_create(
-    name: String,
-    scope: Vec<String>,
-    json: bool,
-    out: &mut dyn Write,
-) -> Result<i32, CuaError> {
-    let (c, _) = fleet_client().await?;
-    let k = c
-        .sdk()
-        .create_user_api_key(cua_fleet::sdk::CreateUserApiKeyRequest { name, scope })
-        .await
-        .map_err(|e| fleet_err(cua_fleet::Error::Sdk(e)))?;
-    if json {
-        util::json_line(out, &serde_json::to_value(&k)?);
-    } else {
-        line(out, format!("Created API key {}.", k.name));
-        line(out, format!("CUA_CLIENT_ID={}", k.client_id));
-        line(out, format!("CUA_CLIENT_SECRET={}", k.client_secret));
-        line(out, format!("CUA_TOKEN_URL={}", k.token_url));
-        line(out, "The secret is shown only once.");
-    }
-    Ok(0)
-}
-
-/// `cua auth keys rm`.
-pub async fn keys_delete(id: String, out: &mut dyn Write) -> Result<i32, CuaError> {
-    let (c, _) = fleet_client().await?;
-    c.sdk()
-        .delete_user_api_key(id.clone())
-        .await
-        .map_err(|e| fleet_err(cua_fleet::Error::Sdk(e)))?;
-    line(out, format!("Deleted API key {id}."));
     Ok(0)
 }
 

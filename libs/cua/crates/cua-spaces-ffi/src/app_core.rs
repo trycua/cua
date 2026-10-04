@@ -2510,30 +2510,13 @@ mod host_setup_tests {
 mod size_limit_tests {
     use cua_spaces_app_core::wizard::{CLOUD_CPU_RANGE, CLOUD_MEMORY_GB_RANGE};
 
-    /// The wizard's cloud sliders offer the everyday range
-    /// (`cua_fleet::CLOUD_DEFAULT_RANGE_*`, what `fleet_size_limits`
-    /// returns), which sits inside what the SDK accepts
-    /// (`cua_fleet::FLEET_ABSOLUTE_*`).
+    /// The wizard's cloud sliders offer the everyday range, what
+    /// `fleet_size_limits` returns.
     #[test]
     fn the_wizard_offers_the_everyday_cloud_sizes() {
-        let (cpus, mem) = (
-            cua_fleet::CLOUD_DEFAULT_RANGE_CPUS,
-            cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB,
-        );
-        assert_eq!(CLOUD_CPU_RANGE, (*cpus.start(), *cpus.end()));
-        assert!(CLOUD_MEMORY_GB_RANGE.0 * 1024 >= *mem.start());
-        assert_eq!(CLOUD_MEMORY_GB_RANGE.1 * 1024, *mem.end());
         let l = cua_sdk::fleet_size_limits();
-        assert_eq!((l.min_cpus, l.max_cpus), (*cpus.start(), *cpus.end()));
-        assert_eq!(
-            (l.min_memory_mb, l.max_memory_mb),
-            (*mem.start(), *mem.end())
-        );
-        let (abs_cpus, abs_mem) = (
-            cua_fleet::FLEET_ABSOLUTE_CPUS,
-            cua_fleet::FLEET_ABSOLUTE_MEMORY_MB,
-        );
-        assert!(abs_cpus.contains(cpus.start()) && abs_cpus.contains(cpus.end()));
-        assert!(abs_mem.contains(mem.start()) && abs_mem.contains(mem.end()));
+        assert_eq!(CLOUD_CPU_RANGE, (l.min_cpus, l.max_cpus));
+        assert!(CLOUD_MEMORY_GB_RANGE.0 * 1024 >= l.min_memory_mb);
+        assert_eq!(CLOUD_MEMORY_GB_RANGE.1 * 1024, l.max_memory_mb);
     }
 }

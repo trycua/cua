@@ -323,10 +323,8 @@ export function errorDocUrl(variant: string): string {
     }
 
 /**
- * [`fleet_resolve_runtime`] with the image variant already known
- * (`variant` as [`fleet_image_variant`] returns it); `None` means the
- * manifest could not be read (an unset runtime then falls back to the
- * reference). Pure (no registry read).
+ * [`fleet_resolve_runtime`] with the image variant already known. Cua
+ * Cloud has closed.
  */
 export function fleetCheckRuntime(runtime: string | undefined, image: string, variant: string | undefined): string /*throws*/ {
     return ((__rb: Uint8Array) => {
@@ -368,10 +366,8 @@ export function fleetGenerateClaimToken(): string {
     }
 
 /**
- * The variant of an image from its registry documents (`manifest`: an
- * image manifest or index, `config`: the platform manifest's config blob):
- * `container-disk`, `rootfs` or `other`. Pure (no registry read). A macOS
- * image raises `Unsupported`.
+ * The Fleet variant of an image from its registry documents. Cua Cloud
+ * has closed.
  */
 export function fleetImageVariant(manifest: string, config: string | undefined): string /*throws*/ {
     return ((__rb: Uint8Array) => {
@@ -393,19 +389,7 @@ export function fleetImageVariant(manifest: string, config: string | undefined):
     }
 
 /**
- * The Fleet runtime for `image`: `runtime` (`kubevirt`, `gvisor`) when
- * given, else the one the image needs. What the image is
- * comes from its registry manifest (read with docker, ghcr and ECR
- * credentials): a KubeVirt containerDisk (a `/disk/disk.img` layer or
- * trycua containerDisk media types) runs on `kubevirt`, a container rootfs
- * on `gvisor`. When the manifest cannot be read and no runtime is given,
- * the runtime is guessed from the reference with a warning (a `docker-`
- * tag runs on `gvisor`, anything else on `kubevirt`). Raises
- * `InvalidArgument` only for a runtime the image cannot run on, and
- * `Unsupported` for a macOS image or runtime `macos` (Fleet does not offer
- * macOS in this SDK). Blocks
- * while the registry is read (at most 20 s; `CUA_FLEET_IMAGE_INSPECT=0`
- * skips it). The one copy of this rule; cua-sandbox calls it.
+ * The Fleet runtime for `image`. Cua Cloud has closed.
  */
 export function fleetResolveRuntime(runtime: string | undefined, image: string): string /*throws*/ {
     return ((__rb: Uint8Array) => {
@@ -428,9 +412,7 @@ export function fleetResolveRuntime(runtime: string | undefined, image: string):
 
 /**
  * The everyday sizes of a cloud sandbox (1-8 vCPUs, 1-32 GiB), which the
- * Cua apps offer. The SDK does not enforce them: it accepts up to 64 vCPUs
- * and 512 MiB to 512 GiB, and Fleet decides what an account may run (a
- * size over the account's limits fails with `FleetAdmissionDenied`).
+ * Cua apps offered.
  */
 export function fleetSizeLimits(): FleetSizeLimits {
     return ((__rb: Uint8Array) => {
@@ -4225,8 +4207,9 @@ const FfiConverterTypeContainer = (() => {
 })();
 
 /**
- * Fleet credentials and endpoints. Unset fields fall back to the
- * environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
+ * Cua account credentials and endpoints (Cua Cloud, closed, used them for
+ * sandboxes; the account's billing still does). Unset fields fall back to
+ * the environment (`CUA_FLEET_BASE_URL`, `CUA_TOKEN_URL`, `CUA_CLIENT_ID`,
  * `CUA_CLIENT_SECRET`, `FLEETS_TOKEN`) when `CuaConfig.fleet_from_env`.
  */
 export type FleetSettings = {
@@ -4340,8 +4323,8 @@ export type CuaConfig = {
      */
     fleetFromSession: boolean,
     /**
-     * Where managed Fleet pools keep their name cache and machine-wide GC
-     * lock (default: `$CUA_HOME` or `~/.cua`, or next to `state_dir`).
+     * Unused: managed Fleet pools (Cua Cloud, closed) kept their name
+     * cache here.
      */
     fleetPoolHome?: string
 }
@@ -8555,9 +8538,7 @@ const FfiConverterTypeFleetSignedUrl = (() => {
 })();
 
 /**
- * The everyday sizes of a cloud sandbox, which the Cua apps offer
- * (`cua_fleet::CLOUD_DEFAULT_RANGE_CPUS`,
- * `cua_fleet::CLOUD_DEFAULT_RANGE_MEMORY_MB`).
+ * The everyday sizes of a cloud sandbox, which the Cua apps offered.
  */
 export type FleetSizeLimits = {
     /**
@@ -21593,25 +21574,20 @@ const uniffiTypeAuthObjectFactory: UniffiObjectFactory<AuthLike> = (() => {
 const FfiConverterTypeAuth = new FfiConverterObject(uniffiTypeAuthObjectFactory);
 
 /**
- * Managed pools: what `Sandboxes.create` without a pool uses.
+ * Managed pools (Cua Cloud, closed).
  */
 export interface FleetPoolsLike {
 
 /**
- * Deletes managed pools idle for `idle_seconds` (default 1800) and
- * stuck Pending/Failed managed claims past their TTL.
+ * Deletes idle managed pools. Cua Cloud has closed.
  */
     gc(idleSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetGcReport>;
 /**
- * [`FleetPools::gc`] restricted to the named managed pools: each is
- * deleted (with its namespace) once it has no claims and has been idle
- * for `idle_seconds` (default 0, i.e. now). Pools with live claims are
- * kept, so a pool another process is using survives. Tests use this to
- * remove the pools they created.
+ * Deletes the named managed pools. Cua Cloud has closed.
  */
     gcPools(names: Array<string>, idleSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetGcReport>;
 /**
- * This account's managed pools.
+ * This account's managed pools. Cua Cloud has closed.
  */
     list(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<FleetManagedPool>>;
 }
@@ -21622,7 +21598,7 @@ export type FleetPoolsInterface = FleetPoolsLike;
 
 
 /**
- * Managed pools: what `Sandboxes.create` without a pool uses.
+ * Managed pools (Cua Cloud, closed).
  */
 export class FleetPools extends UniffiAbstractObject implements FleetPoolsLike {
 
@@ -21640,8 +21616,7 @@ private constructor(pointer: UniffiHandle) {
 
 
 /**
- * Deletes managed pools idle for `idle_seconds` (default 1800) and
- * stuck Pending/Failed managed claims past their TTL.
+ * Deletes idle managed pools. Cua Cloud has closed.
  */
     async gc(idleSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<FleetGcReport> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -21676,11 +21651,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * [`FleetPools::gc`] restricted to the named managed pools: each is
- * deleted (with its namespace) once it has no claims and has been idle
- * for `idle_seconds` (default 0, i.e. now). Pools with live claims are
- * kept, so a pool another process is using survives. Tests use this to
- * remove the pools they created.
+ * Deletes the named managed pools. Cua Cloud has closed.
  */
     async gcPools(names: Array<string>, idleSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<FleetGcReport> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -21715,7 +21686,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * This account's managed pools.
+ * This account's managed pools. Cua Cloud has closed.
  */
     async list(asyncOpts_?: { signal: AbortSignal }): Promise<Array<FleetManagedPool>> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -21830,75 +21801,66 @@ const uniffiTypeFleetPoolsObjectFactory: UniffiObjectFactory<FleetPoolsLike> = (
 const FfiConverterTypeFleetPools = new FfiConverterObject(uniffiTypeFleetPoolsObjectFactory);
 
 /**
- * Fleet control plane.
+ * Fleet control plane (Cua Cloud, closed) and the account's billing.
  */
 export interface FleetLike {
 
 /**
- * Claims a sandbox from a pool and waits for it to bind. A claim named
- * `name` that already exists is reattached.
+ * Claims a sandbox from a pool. Cua Cloud has closed.
  */
     acquire(pool: string, name: string | undefined, ttlSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetSandbox>;
 /**
- * [`Fleet::acquire`] with claim options, including a per-claim env
- * token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
- * releases the claim).
+ * Claims a sandbox with options. Cua Cloud has closed.
  */
     acquireWith(pool: string, options: FleetClaimOptions, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetSandbox>;
 /**
- * Reconciles pool `name` (= namespace = template) to run `spec` with
- * `options`: the one pool writer (rolls a new pool back if the
- * template fails). The image is pinned to the variant the runtime
- * runs; `spec.registry_secret` is written as the pool's pull Secret.
+ * Reconciles a pool. Cua Cloud has closed.
  */
     apply(name: string, spec: SandboxSpec, options: PoolOptions, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetPool>;
 /**
- * Deprecated: use [`Fleet::apply`]. Reconciles a pool and its template
- * from the flat spec (converted to [`SandboxSpec`] + [`PoolOptions`]).
+ * Deprecated pool writer. Cua Cloud has closed.
  */
     applyPool(spec: FleetPoolSpec, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetPool>;
 /**
- * Lays the set fields of `spec` over pool `pool`'s template and writes
- * it (the pool's capacity is kept; a no-op when nothing differs).
+ * Writes a spec over a pool's template. Cua Cloud has closed.
  */
     applyPoolTemplate(pool: string, spec: SandboxSpec, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
- * Waits for a named claim to bind.
+ * Waits for a named claim to bind. Cua Cloud has closed.
  */
     attachClaim(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetSandbox>;
 /**
- * Fleet API base URL.
+ * The Cua account API base URL.
  */
     baseUrl(): string;
 /**
- * The account's Cua Cloud billing: its credit, card and the website
- * billing page. A Fleet without billing answers `billing_enabled:
+ * The account's billing: its credit, card and the website billing
+ * page. An account API without billing answers `billing_enabled:
  * false`.
  */
     billingStatus(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetBillingStatus>;
 /**
- * Compares the set fields of `spec` with pool `pool`'s template:
- * `PoolSpecMismatch` (with a readable diff) when they differ.
+ * Compares a spec with a pool's template. Cua Cloud has closed.
  */
     checkPoolSpec(pool: string, spec: SandboxSpec, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
- * Creates a claim without waiting.
+ * Creates a claim. Cua Cloud has closed.
  */
     claim(pool: string, name: string | undefined, ttlSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetClaim>;
 /**
- * Creates an image resource (remote build) from a JSON manifest.
+ * Creates an image resource. Cua Cloud has closed.
  */
     createImage(namespace: string, manifestJson: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
 /**
- * Mints a signed, shareable service URL.
+ * Mints a signed service URL. Cua Cloud has closed.
  */
     createSignedServiceUrl(sandbox: FleetSandbox, service: string, label: string | undefined, expiresInSeconds: number, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetSignedUrl>;
 /**
- * Deletes an image resource.
+ * Deletes an image resource. Cua Cloud has closed.
  */
     deleteImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
- * Deletes a pool, its namespace and its same-named template.
+ * Deletes a pool. Cua Cloud has closed.
  */
     deletePool(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
@@ -21906,69 +21868,63 @@ export interface FleetLike {
  */
     ephemeralPoolName(): string;
 /**
- * Reads pool `name` back as the shared model, with its `fleets_pool`
- * Terraform block.
+ * Reads a pool back. Cua Cloud has closed.
  */
     exportPool(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetPoolExport>;
 /**
- * Gets an image resource (JSON).
+ * Gets an image resource. Cua Cloud has closed.
  */
     getImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
 /**
- * Looks up a pool.
+ * Looks up a pool. Cua Cloud has closed.
  */
     getPool(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetPool>;
 /**
- * Extends a claim's lease; returns the RFC 3339 shutdown time.
+ * Extends a claim's lease. Cua Cloud has closed.
  */
     keepAlive(namespace: string, name: string, seconds: number, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
 /**
- * Lists claims in a namespace.
+ * Lists claims. Cua Cloud has closed.
  */
     listClaims(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<FleetClaim>>;
 /**
- * Lists image resources (JSON) in a namespace.
+ * Lists image resources. Cua Cloud has closed.
  */
     listImages(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<string>>;
 /**
- * Lists pools in a namespace.
+ * Lists pools. Cua Cloud has closed.
  */
     listPools(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<FleetPool>>;
 /**
- * Lists templates in a namespace as JSON resources.
+ * Lists templates. Cua Cloud has closed.
  */
     listTemplates(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<string>>;
 /**
- * The image pool `name`'s template runs, as a claim on it reports it
- * (`Sandbox.image_info`): pinned by the resolver (cached per pool), or
- * the template reference with empty `pinned_ref`/`digest` when the
- * registry cannot be read. `None` when the template names no image.
+ * The image a pool's template runs. Cua Cloud has closed.
  */
     poolImageInfo(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ImageInfo | undefined>;
 /**
- * Managed pools (list, gc).
+ * Managed pools (Cua Cloud, closed).
  */
     pools(): FleetPoolsLike;
 /**
- * Releases a claim (missing claims are fine).
+ * Releases a claim. Cua Cloud has closed.
  */
     release(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
- * The gateway URL of a sandbox service (needs the Fleet bearer).
+ * The gateway URL of a sandbox service. Cua Cloud has closed.
  */
     serviceUrl(sandbox: FleetSandbox, service: string) /*throws*/: string;
 /**
- * Sets warm replicas (0 suspends).
+ * Sets warm replicas. Cua Cloud has closed.
  */
     setPoolReplicas(name: string, replicas: number, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetPool>;
 /**
- * This account's Cua Cloud rates (`GET /api/config`), reused for five
- * minutes. `None` when Fleet answers without rates: show no price
- * rather than a guess.
+ * This account's Cua Cloud rates. Cua Cloud has closed: `None`.
  */
     usagePricing(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetUsagePricing | undefined>;
 /**
- * Waits for at least one ready replica.
+ * Waits for a ready replica. Cua Cloud has closed.
  */
     waitPoolReady(name: string, timeoutMs: number, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetPool>;
 }
@@ -21979,7 +21935,7 @@ export type FleetInterface = FleetLike;
 
 
 /**
- * Fleet control plane.
+ * Fleet control plane (Cua Cloud, closed) and the account's billing.
  */
 export class Fleet extends UniffiAbstractObject implements FleetLike {
 
@@ -21997,8 +21953,7 @@ private constructor(pointer: UniffiHandle) {
 
 
 /**
- * Claims a sandbox from a pool and waits for it to bind. A claim named
- * `name` that already exists is reattached.
+ * Claims a sandbox from a pool. Cua Cloud has closed.
  */
     async acquire(pool: string, name: string | undefined, ttlSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<FleetSandbox> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22033,9 +21988,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * [`Fleet::acquire`] with claim options, including a per-claim env
- * token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
- * releases the claim).
+ * Claims a sandbox with options. Cua Cloud has closed.
  */
     async acquireWith(pool: string, options: FleetClaimOptions, asyncOpts_?: { signal: AbortSignal }): Promise<FleetSandbox> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22070,10 +22023,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Reconciles pool `name` (= namespace = template) to run `spec` with
- * `options`: the one pool writer (rolls a new pool back if the
- * template fails). The image is pinned to the variant the runtime
- * runs; `spec.registry_secret` is written as the pool's pull Secret.
+ * Reconciles a pool. Cua Cloud has closed.
  */
     async apply(name: string, spec: SandboxSpec, options: PoolOptions, asyncOpts_?: { signal: AbortSignal }): Promise<FleetPool> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22108,8 +22058,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Deprecated: use [`Fleet::apply`]. Reconciles a pool and its template
- * from the flat spec (converted to [`SandboxSpec`] + [`PoolOptions`]).
+ * Deprecated pool writer. Cua Cloud has closed.
  */
     async applyPool(spec: FleetPoolSpec, asyncOpts_?: { signal: AbortSignal }): Promise<FleetPool> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22144,8 +22093,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Lays the set fields of `spec` over pool `pool`'s template and writes
- * it (the pool's capacity is kept; a no-op when nothing differs).
+ * Writes a spec over a pool's template. Cua Cloud has closed.
  */
     async applyPoolTemplate(pool: string, spec: SandboxSpec, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22175,7 +22123,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Waits for a named claim to bind.
+ * Waits for a named claim to bind. Cua Cloud has closed.
  */
     async attachClaim(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<FleetSandbox> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22210,7 +22158,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Fleet API base URL.
+ * The Cua account API base URL.
  */
     baseUrl(): string {
     return ((__rb: Uint8Array) => {
@@ -22230,8 +22178,8 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * The account's Cua Cloud billing: its credit, card and the website
- * billing page. A Fleet without billing answers `billing_enabled:
+ * The account's billing: its credit, card and the website billing
+ * page. An account API without billing answers `billing_enabled:
  * false`.
  */
     async billingStatus(asyncOpts_?: { signal: AbortSignal }): Promise<FleetBillingStatus> /*throws*/ {
@@ -22267,8 +22215,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Compares the set fields of `spec` with pool `pool`'s template:
- * `PoolSpecMismatch` (with a readable diff) when they differ.
+ * Compares a spec with a pool's template. Cua Cloud has closed.
  */
     async checkPoolSpec(pool: string, spec: SandboxSpec, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22298,7 +22245,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Creates a claim without waiting.
+ * Creates a claim. Cua Cloud has closed.
  */
     async claim(pool: string, name: string | undefined, ttlSeconds: number | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<FleetClaim> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22333,7 +22280,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Creates an image resource (remote build) from a JSON manifest.
+ * Creates an image resource. Cua Cloud has closed.
  */
     async createImage(namespace: string, manifestJson: string, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22368,7 +22315,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Mints a signed, shareable service URL.
+ * Mints a signed service URL. Cua Cloud has closed.
  */
     async createSignedServiceUrl(sandbox: FleetSandbox, service: string, label: string | undefined, expiresInSeconds: number, asyncOpts_?: { signal: AbortSignal }): Promise<FleetSignedUrl> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22403,7 +22350,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Deletes an image resource.
+ * Deletes an image resource. Cua Cloud has closed.
  */
     async deleteImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22433,7 +22380,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Deletes a pool, its namespace and its same-named template.
+ * Deletes a pool. Cua Cloud has closed.
  */
     async deletePool(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22483,8 +22430,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Reads pool `name` back as the shared model, with its `fleets_pool`
- * Terraform block.
+ * Reads a pool back. Cua Cloud has closed.
  */
     async exportPool(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<FleetPoolExport> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22519,7 +22465,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Gets an image resource (JSON).
+ * Gets an image resource. Cua Cloud has closed.
  */
     async getImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22554,7 +22500,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Looks up a pool.
+ * Looks up a pool. Cua Cloud has closed.
  */
     async getPool(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<FleetPool> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22589,7 +22535,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Extends a claim's lease; returns the RFC 3339 shutdown time.
+ * Extends a claim's lease. Cua Cloud has closed.
  */
     async keepAlive(namespace: string, name: string, seconds: number, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22624,7 +22570,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Lists claims in a namespace.
+ * Lists claims. Cua Cloud has closed.
  */
     async listClaims(namespace: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<FleetClaim>> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22659,7 +22605,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Lists image resources (JSON) in a namespace.
+ * Lists image resources. Cua Cloud has closed.
  */
     async listImages(namespace: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<string>> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22694,7 +22640,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Lists pools in a namespace.
+ * Lists pools. Cua Cloud has closed.
  */
     async listPools(namespace: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<FleetPool>> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22729,7 +22675,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Lists templates in a namespace as JSON resources.
+ * Lists templates. Cua Cloud has closed.
  */
     async listTemplates(namespace: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<string>> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22764,10 +22710,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * The image pool `name`'s template runs, as a claim on it reports it
- * (`Sandbox.image_info`): pinned by the resolver (cached per pool), or
- * the template reference with empty `pinned_ref`/`digest` when the
- * registry cannot be read. `None` when the template names no image.
+ * The image a pool's template runs. Cua Cloud has closed.
  */
     async poolImageInfo(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<ImageInfo | undefined> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22802,7 +22745,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Managed pools (list, gc).
+ * Managed pools (Cua Cloud, closed).
  */
     pools(): FleetPoolsLike {
     return FfiConverterTypeFleetPools.lift(uniffiCaller.rustCall(
@@ -22816,7 +22759,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Releases a claim (missing claims are fine).
+ * Releases a claim. Cua Cloud has closed.
  */
     async release(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22846,7 +22789,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * The gateway URL of a sandbox service (needs the Fleet bearer).
+ * The gateway URL of a sandbox service. Cua Cloud has closed.
  */
     serviceUrl(sandbox: FleetSandbox, service: string): string /*throws*/ {
     return ((__rb: Uint8Array) => {
@@ -22869,7 +22812,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Sets warm replicas (0 suspends).
+ * Sets warm replicas. Cua Cloud has closed.
  */
     async setPoolReplicas(name: string, replicas: number, asyncOpts_?: { signal: AbortSignal }): Promise<FleetPool> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22904,9 +22847,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * This account's Cua Cloud rates (`GET /api/config`), reused for five
- * minutes. `None` when Fleet answers without rates: show no price
- * rather than a guess.
+ * This account's Cua Cloud rates. Cua Cloud has closed: `None`.
  */
     async usagePricing(asyncOpts_?: { signal: AbortSignal }): Promise<FleetUsagePricing | undefined> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -22941,7 +22882,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Waits for at least one ready replica.
+ * Waits for a ready replica. Cua Cloud has closed.
  */
     async waitPoolReady(name: string, timeoutMs: number, asyncOpts_?: { signal: AbortSignal }): Promise<FleetPool> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -35126,9 +35067,9 @@ export interface CuaLike {
  */
     auth(): AuthLike;
 /**
- * Fleet pools, templates, claims and images. Always talks to Fleet
- * from this process with this SDK's credentials (in daemon mode, from
- * the environment).
+ * Fleet (Cua Cloud, closed: its calls fail with that message) and the
+ * account's billing, with this SDK's account credentials (in daemon
+ * mode, from this process's settings and environment).
  */
     fleet() /*throws*/: FleetLike;
 /**
@@ -35145,7 +35086,7 @@ export interface CuaLike {
  */
     mode(): CuaMode;
 /**
- * Sandboxes (Fleet, local, direct).
+ * Sandboxes (local, direct, providers).
  */
     sandboxes(): SandboxesLike;
 /**
@@ -35157,8 +35098,8 @@ export interface CuaLike {
  */
     spaces(): SpacesLike;
 /**
- * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
- * Fleet service URL or a relay URL) without a sandbox.
+ * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+ * relay URL) without a sandbox.
  */
     spacesd(url: string, token: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacesdClientLike>;
 }
@@ -35285,9 +35226,9 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Fleet pools, templates, claims and images. Always talks to Fleet
- * from this process with this SDK's credentials (in daemon mode, from
- * the environment).
+ * Fleet (Cua Cloud, closed: its calls fail with that message) and the
+ * account's billing, with this SDK's account credentials (in daemon
+ * mode, from this process's settings and environment).
  */
     fleet(): FleetLike /*throws*/ {
     return FfiConverterTypeFleet.lift(uniffiCaller.rustCallWithError(
@@ -35372,7 +35313,7 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Sandboxes (Fleet, local, direct).
+ * Sandboxes (local, direct, providers).
  */
     sandboxes(): SandboxesLike {
     return FfiConverterTypeSandboxes.lift(uniffiCaller.rustCall(
@@ -35430,8 +35371,8 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…`, a
- * Fleet service URL or a relay URL) without a sandbox.
+ * Connects to cua-spacesd at `url` (`host:port`, `http(s)://…` or a
+ * relay URL) without a sandbox.
  */
     async spacesd(url: string, token: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SpacesdClientLike> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -36775,19 +36716,19 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_func_error_doc_url() !== 10839) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_error_doc_url");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_func_fleet_check_runtime() !== 18168) {
+    if (nativeModule().uniffi_cua_sdk_checksum_func_fleet_check_runtime() !== 42391) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_fleet_check_runtime");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_fleet_generate_claim_token() !== 46314) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_fleet_generate_claim_token");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_func_fleet_image_variant() !== 30093) {
+    if (nativeModule().uniffi_cua_sdk_checksum_func_fleet_image_variant() !== 35019) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_fleet_image_variant");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_func_fleet_resolve_runtime() !== 15632) {
+    if (nativeModule().uniffi_cua_sdk_checksum_func_fleet_resolve_runtime() !== 9436) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_fleet_resolve_runtime");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_func_fleet_size_limits() !== 53900) {
+    if (nativeModule().uniffi_cua_sdk_checksum_func_fleet_size_limits() !== 19571) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_func_fleet_size_limits");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_func_image_alias() !== 25551) {
@@ -37027,7 +36968,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_auth() !== 19106) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_auth");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_fleet() !== 40955) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_fleet() !== 64152) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_fleet");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_info() !== 11159) {
@@ -37039,7 +36980,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_mode() !== 63626) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_mode");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_sandboxes() !== 8394) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_sandboxes() !== 4520) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_sandboxes");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_shutdown_daemon() !== 57559) {
@@ -37048,7 +36989,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_cua_spaces() !== 35262) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_spaces");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_spacesd() !== 28670) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_cua_spacesd() !== 62689) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_cua_spacesd");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_approve() !== 49147) {
@@ -37078,103 +37019,103 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_devices_snapshot() !== 26132) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_devices_snapshot");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_acquire() !== 16535) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_acquire() !== 39166) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_acquire");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_acquire_with() !== 8432) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_acquire_with() !== 1499) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_acquire_with");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_apply() !== 23134) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_apply() !== 41633) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_apply");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_apply_pool() !== 43781) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_apply_pool() !== 3527) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_apply_pool");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_apply_pool_template() !== 43651) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_apply_pool_template() !== 55758) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_apply_pool_template");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_attach_claim() !== 27491) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_attach_claim() !== 4432) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_attach_claim");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_base_url() !== 7166) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_base_url() !== 25728) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_base_url");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_billing_status() !== 50128) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_billing_status() !== 25349) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_billing_status");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_check_pool_spec() !== 58799) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_check_pool_spec() !== 33863) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_check_pool_spec");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_claim() !== 33116) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_claim() !== 10574) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_claim");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_create_image() !== 53686) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_create_image() !== 41649) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_create_image");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url() !== 1809) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url() !== 12383) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_create_signed_service_url");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_delete_image() !== 54232) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_delete_image() !== 24865) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_delete_image");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_delete_pool() !== 41031) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_delete_pool() !== 32232) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_delete_pool");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_ephemeral_pool_name() !== 51788) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_ephemeral_pool_name");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_export_pool() !== 36800) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_export_pool() !== 48067) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_export_pool");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_get_image() !== 26535) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_get_image() !== 64152) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_get_image");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_get_pool() !== 27007) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_get_pool() !== 65404) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_get_pool");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_keep_alive() !== 21850) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_keep_alive() !== 28579) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_keep_alive");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_list_claims() !== 30494) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_list_claims() !== 13959) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_list_claims");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_list_images() !== 5380) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_list_images() !== 28202) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_list_images");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_list_pools() !== 19148) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_list_pools() !== 9257) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_list_pools");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_list_templates() !== 27819) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_list_templates() !== 48624) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_list_templates");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_pool_image_info() !== 2800) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_pool_image_info() !== 3932) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_pool_image_info");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_pools() !== 34094) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_pools() !== 32741) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_pools");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_release() !== 34855) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_release() !== 21293) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_release");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_service_url() !== 49169) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_service_url() !== 15288) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_service_url");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas() !== 32806) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas() !== 36702) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_set_pool_replicas");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_usage_pricing() !== 25347) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_usage_pricing() !== 20174) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_usage_pricing");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready() !== 64422) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready() !== 9597) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleet_wait_pool_ready");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleetpools_gc() !== 4829) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleetpools_gc() !== 22670) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleetpools_gc");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleetpools_gc_pools() !== 3481) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleetpools_gc_pools() !== 4009) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleetpools_gc_pools");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_fleetpools_list() !== 61403) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_fleetpools_list() !== 24325) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_fleetpools_list");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_framesink_on_frame() !== 56500) {

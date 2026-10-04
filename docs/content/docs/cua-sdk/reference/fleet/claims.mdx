@@ -22,7 +22,7 @@ Methods of [`Fleet`](/cua-sdk/reference/fleet#fleet).
 
 ### `Fleet.claim`
 
-Creates a claim without waiting.
+Creates a claim. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -73,8 +73,7 @@ pub async fn claim(&self, pool: String, name: Option<String>, ttl_seconds: Optio
 
 ### `Fleet.acquire`
 
-Claims a sandbox from a pool and waits for it to bind. A claim named
-`name` that already exists is reattached.
+Claims a sandbox from a pool. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -125,9 +124,7 @@ pub async fn acquire(&self, pool: String, name: Option<String>, ttl_seconds: Opt
 
 ### `Fleet.acquire_with`
 
-`Fleet.acquire` with claim options, including a per-claim env
-token (bounded wait for its delivery; `ClaimSecretsNotDelivered`
-releases the claim).
+Claims a sandbox with options. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -173,11 +170,11 @@ pub async fn acquire_with(&self, pool: String, options: FleetClaimOptions) -> Re
 | `pool` | `String` | required |
 | `options` | [`FleetClaimOptions`](#fleetclaimoptions-record) | required |
 
-**Returns** [`FleetSandbox`](#fleetsandbox-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors) ([`ClaimSecretsNotDelivered`](/cua-sdk/reference/errors#claimsecretsnotdelivered))
+**Returns** [`FleetSandbox`](#fleetsandbox-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `Fleet.attach_claim`
 
-Waits for a named claim to bind.
+Waits for a named claim to bind. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -227,7 +224,7 @@ pub async fn attach_claim(&self, namespace: String, name: String) -> Result<Flee
 
 ### `Fleet.list_claims`
 
-Lists claims in a namespace.
+Lists claims. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -276,7 +273,7 @@ pub async fn list_claims(&self, namespace: String) -> Result<Vec<FleetClaim>, Cu
 
 ### `Fleet.keep_alive`
 
-Extends a claim's lease; returns the RFC 3339 shutdown time.
+Extends a claim's lease. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -327,7 +324,7 @@ pub async fn keep_alive(&self, namespace: String, name: String, seconds: u32) ->
 
 ### `Fleet.release`
 
-Releases a claim (missing claims are fine).
+Releases a claim. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -377,7 +374,7 @@ pub async fn release(&self, namespace: String, name: String) -> Result<(), CuaEr
 
 ### `Fleet.service_url`
 
-The gateway URL of a sandbox service (needs the Fleet bearer).
+The gateway URL of a sandbox service. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">
@@ -427,7 +424,7 @@ pub fn service_url(&self, sandbox: FleetSandbox, service: String) -> Result<Stri
 
 ### `Fleet.create_signed_service_url`
 
-Mints a signed, shareable service URL.
+Mints a signed service URL. Cua Cloud has closed.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">

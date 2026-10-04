@@ -40,11 +40,9 @@ pub mod extension;
 mod host;
 mod image_build;
 mod image_release;
-mod images;
 pub mod keyvault_cmd;
 mod mcp;
 mod persistent_cmd;
-mod pools;
 mod providers;
 pub mod sandbox;
 mod shell;
@@ -165,7 +163,8 @@ enum Command {
     /// Workload identity federation tokens.
     #[command(subcommand, name = "wif-token")]
     WifToken(WifCmd),
-    /// Fleet: managed pools behind `cua sandbox create` without `--pool`.
+    /// Fleet: managed pools of Cua Cloud, which has closed (every
+    /// subcommand says so).
     #[command(subcommand)]
     Fleet(FleetCmd),
     /// Images: local OCI pull/build/push and Fleet image resources.
@@ -320,11 +319,11 @@ enum AuthCmd {
   cua auth status
   cua auth status --json")]
     Status,
-    /// The active Fleet identity, verified against Fleet.
+    /// The active Cua account identity.
     #[command(after_help = "Examples:
   cua auth whoami")]
     Whoami,
-    /// Fleet user API keys (client credentials).
+    /// Fleet user API keys (Cua Cloud, closed: every subcommand says so).
     #[command(subcommand)]
     Keys(KeysCmd),
     /// Keys of the contrib sandbox providers (`--on e2b`, `--on daytona`,
@@ -1078,12 +1077,12 @@ pub(crate) const EXIT_CODES: &[(i32, &str)] = &[
     ),
     (
         4,
-        "Not supported, or not configured (for example no Fleet credentials)",
+        "Not supported, or not configured (for example Cua Cloud, which has closed)",
     ),
     (5, "No cua-spacesd answered, or a transport failure"),
     (
         6,
-        "Unauthenticated or permission denied (by Cua, Fleet or your cloud account)",
+        "Unauthenticated or permission denied (by Cua or your cloud account)",
     ),
     (7, "Not enough free disk space (see `cua cache`)"),
     (
@@ -1100,7 +1099,8 @@ fn exit_code(e: &CuaError) -> i32 {
         | CuaError::InvalidPlacement(_)
         | CuaError::AmbiguousSandbox(_) => 2,
         CuaError::NotFound(_) | CuaError::ImageNotPublished(_) => 3,
-        CuaError::Unsupported(_) | CuaError::ProviderNotConfigured(_) => 4,
+        // `Fleet`: Cua Cloud has closed.
+        CuaError::Unsupported(_) | CuaError::ProviderNotConfigured(_) | CuaError::Fleet(_) => 4,
         CuaError::SpacesdNotAvailable(_)
         | CuaError::Transport(_)
         | CuaError::DaemonNotRunning(_) => 5,
@@ -1475,11 +1475,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 AuthCmd::Logout => auth::logout(out).await,
                 AuthCmd::Status => auth::status(json, out).await,
                 AuthCmd::Whoami => auth::whoami(json, out).await,
-                AuthCmd::Keys(KeysCmd::Ls) => auth::keys_list(json, out).await,
-                AuthCmd::Keys(KeysCmd::Create { name, scope }) => {
-                    auth::keys_create(name.clone(), scope.clone(), json, out).await
-                }
-                AuthCmd::Keys(KeysCmd::Rm { id }) => auth::keys_delete(id.clone(), out).await,
+                AuthCmd::Keys(_) => Err(auth::cloud_closed()),
                 AuthCmd::Provider(ProviderCmd::Ls) => providers::list(json, out),
                 AuthCmd::Provider(ProviderCmd::Set { name, var }) => {
                     providers::set(name, var.as_deref(), out)
@@ -1566,39 +1562,15 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             let state_dir = cli.state_dir.clone();
             return cache::run(cmd.clone(), state_dir.as_deref(), json, out).await;
         }
-        Command::Fleet(FleetCmd::Pool(PoolCmd::Export { name, terraform })) => {
-            return pools::export(name, *terraform, out).await;
-        }
-        Command::Fleet(FleetCmd::Pools(cmd)) => {
-            let state_dir = cli.state_dir.as_deref();
-            return match cmd {
-                PoolsCmd::Ls => pools::list(state_dir, json, out).await,
-                PoolsCmd::Gc { idle, pools: only } => {
-                    pools::gc(state_dir, idle, only, json, out).await
-                }
-            };
-        }
-        Command::Image(
-            i @ (ImageCmd::Ls { .. }
+        // Cua Cloud (Fleet pools and image resources) has closed.
+        Command::Fleet(_)
+        | Command::Image(
+            ImageCmd::Ls { .. }
             | ImageCmd::Info { .. }
             | ImageCmd::Rm { .. }
-            | ImageCmd::Create { .. }),
+            | ImageCmd::Create { .. },
         ) => {
-            return match i {
-                ImageCmd::Ls { namespace } => images::list(namespace.clone(), json, out).await,
-                ImageCmd::Info { name, namespace } => {
-                    images::info(name.clone(), namespace.clone(), out).await
-                }
-                ImageCmd::Rm {
-                    name,
-                    namespace,
-                    force,
-                } => images::delete(name.clone(), namespace.clone(), *force, out).await,
-                ImageCmd::Create { file, namespace } => {
-                    images::create(file.clone(), namespace.clone(), out).await
-                }
-                _ => unreachable!(),
-            };
+            return Err(auth::cloud_closed());
         }
         Command::Daemon(DaemonCmd::Start {
             foreground,
@@ -2210,17 +2182,6 @@ async fn daemon_start(
             .embedded_runtime()
             .cloned()
             .ok_or_else(|| CuaError::Internal("embedded runtime".into()))?;
-        // Keep renewing the claims of managed Fleet sandboxes this machine
-        // created (for example after a daemon restart).
-        {
-            let rt = runtime.clone();
-            tokio::spawn(async move {
-                let held = rt.adopt_managed_fleet_sandboxes().await;
-                if !held.is_empty() {
-                    eprintln!("cua daemon: holding managed Fleet sandboxes {held:?}");
-                }
-            });
-        }
         // A local create the last daemon did not finish (it crashed or was
         // killed mid-create): register the Space or delete its sandbox, so
         // nothing runs that no Space lists.

@@ -2311,7 +2311,7 @@ const OTHER_PAGES: Record<string, [title: string, description: string]> = {
   'runtime-support': ['Runtime support', 'Which images run on which local runtime and in the cloud.'],
   python: ['Python high-level API', '`cua_sandbox`: `Sandbox`, `Image`, the computer interfaces, `Pool`, runtimes and configuration.'],
   typescript: ['TypeScript additions', 'What `@trycua/cua` adds in TypeScript: `embedded()`, `Image`, helpers, and the Spaces modules.'],
-  rust: ['Rust crates', 'The public crates (`cua-sdk`, `cua-spacesd-client`, `cua-fleet`, `cua-sandbox-core`, `cua-spaces`), with stability tiers.'],
+  rust: ['Rust crates', 'The public crates (`cua-sdk`, `cua-spacesd-client`, `cua-sandbox-core`, `cua-spaces`), with stability tiers.'],
   protocol: ['Protocol', 'The gRPC contracts of cua-spacesd (`cua.env.v1`) and the cua daemon (`cua.daemon.v1`).'],
 };
 

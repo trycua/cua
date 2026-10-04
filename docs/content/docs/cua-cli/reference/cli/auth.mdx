@@ -16,8 +16,8 @@ description: "Sign in, inspect your Fleet identity, manage API keys and CI token
 | [`cua auth login`](#cua-auth-login) | Log in (browser sign-in; `--remote` for a device code), then offer to set up your AI coding agents. |
 | [`cua auth logout`](#cua-auth-logout) | Revoke and remove the local session. |
 | [`cua auth status`](#cua-auth-status) | Local session state (no network). |
-| [`cua auth whoami`](#cua-auth-whoami) | The active Fleet identity, verified against Fleet. |
-| [`cua auth keys`](#cua-auth-keys) | Fleet user API keys (client credentials). |
+| [`cua auth whoami`](#cua-auth-whoami) | The active Cua account identity. |
+| [`cua auth keys`](#cua-auth-keys) | Fleet user API keys (Cua Cloud, closed: every subcommand says so). |
 | [`cua auth keys ls`](#cua-auth-keys-ls) | List API keys. |
 | [`cua auth keys create`](#cua-auth-keys-create) | Create an API key (prints CUA_CLIENT_ID / CUA_CLIENT_SECRET once). |
 | [`cua auth keys rm`](#cua-auth-keys-rm) | Delete an API key by id. |
@@ -102,7 +102,7 @@ cua auth status --json
 
 ### `cua auth whoami`
 
-The active Fleet identity, verified against Fleet.
+The active Cua account identity.
 
 ```text output
 cua auth whoami [OPTIONS]
@@ -116,7 +116,7 @@ cua auth whoami
 
 ### `cua auth keys`
 
-Fleet user API keys (client credentials).
+Fleet user API keys (Cua Cloud, closed: every subcommand says so).
 
 ```text output
 cua auth keys [OPTIONS] <COMMAND>
@@ -287,8 +287,8 @@ cua wif-token github
 | `1` | Failure, or `cua do` reported an error. |
 | `2` | Invalid argument, or an ambiguous sandbox name (qualify it: `local:NAME`, `cloud:NAME`). |
 | `3` | Not found: sandbox, window, skill or image (or an image not published yet). |
-| `4` | Not supported, or not configured (for example no Fleet credentials). |
+| `4` | Not supported, or not configured (for example Cua Cloud, which has closed). |
 | `5` | No cua-spacesd answered, or a transport failure. |
-| `6` | Unauthenticated or permission denied (by Cua, Fleet or your cloud account). |
+| `6` | Unauthenticated or permission denied (by Cua or your cloud account). |
 | `7` | Not enough free disk space (see `cua cache`). |
 | `130` | Cancelled (Ctrl-C during a create): what it made was removed. |

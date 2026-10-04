@@ -3,7 +3,6 @@
   "pages": [
     "cua-sdk",
     "cua-spacesd-client",
-    "cua-fleet",
     "cua-sandbox-core",
     "cua-spaces",
     "cua-spaces-client",

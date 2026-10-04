@@ -48,7 +48,8 @@ pub enum Made {
         /// Nothing had that name before.
         fresh: bool,
     },
-    /// A Cua Cloud claim the create made.
+    /// A Cua Cloud claim a create made (journals written before Cua Cloud
+    /// closed; nothing is left to release).
     FleetClaim {
         /// Its namespace.
         namespace: String,
@@ -576,13 +577,7 @@ impl Spaces {
                         .registry
                         .remove(&crate::SpaceId::Local { name: name.clone() }.to_string());
                 }
-                Made::FleetClaim { namespace, name } => match self.inner.fleet.as_ref() {
-                    Some(f) => match f.release(namespace, name).await {
-                        Ok(()) => done.push("released its cloud sandbox".into()),
-                        Err(e) => failed.push(format!("cloud:{name}: {e}")),
-                    },
-                    None => failed.push(format!("cloud:{name}: Fleet is not configured here")),
-                },
+                Made::FleetClaim { .. } => {}
                 Made::HostSpace { host, machine } => {
                     match crate::host_spaces::cancel_on_host(self, host, machine).await {
                         Ok(m) => done.push(m),

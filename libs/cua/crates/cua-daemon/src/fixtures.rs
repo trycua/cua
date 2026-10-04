@@ -3,12 +3,10 @@
 //! - [`start_env`]: a `cua_spacesd_client::testing::MockServer` behind a small TCP
 //!   front that also serves a scripted rcdp wire v2 `/media` WebSocket on
 //!   the same port, so env RPCs *and* media sessions work against one URL.
-//! - [`start_fleet_http`]: the in-memory `FakeFleet` API served over real
-//!   loopback HTTP, for bindings that configure Fleet by base URL.
+//! - [`start_registry_http`]: a read-only OCI registry on loopback HTTP.
 //!
 //! Every loop here is bounded (message counts and deadlines).
 
-use cua_fleet::testing::FakeFleet;
 /// The media wire's WebSocket subprotocols (RCDP wire v2, as cua-spacesd
 /// speaks it; `media_wire_matches_the_driver` in the cua-spacesd e2e suite
 /// pins them to the driver's).
@@ -73,7 +71,7 @@ impl Drop for SpacesdFixture {
 }
 
 /// Starts the env fixture. `token` is the spacesd token; `gateway`
-/// emulates the Fleet gateway prefix and credentials.
+/// emulates a gateway prefix and credentials.
 pub async fn start_env(token: Option<&str>, gateway: Option<MockGateway>) -> SpacesdFixture {
     let mock = MockServer::start(MockAuth {
         token: token.map(str::to_string),
@@ -300,288 +298,6 @@ pub fn audio_packet(track_id: u16, sequence: u32) -> Vec<u8> {
     b
 }
 
-/// A running fake Fleet API on loopback HTTP.
-pub struct FleetHttpFixture {
-    /// `http://127.0.0.1:<port>`.
-    pub base_url: String,
-    /// The fake.
-    pub fake: FakeFleet,
-    task: tokio::task::JoinHandle<()>,
-}
-
-impl Drop for FleetHttpFixture {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-
-/// Token the fake accepts (any token is accepted; this is the conventional
-/// one).
-pub const FAKE_FLEET_TOKEN: &str = "fake-fleet-token";
-
-/// Serves `fake` over loopback HTTP/1.1.
-pub async fn start_fleet_http(fake: FakeFleet) -> FleetHttpFixture {
-    start_fleet_http_with_gateway(fake, None).await
-}
-
-/// Same, and forwards the gateway's `/api/svc/...` requests to `gateway`
-/// (for example a `MockServer` with a [`fake_gateway`]) instead of the
-/// fake's canned reply, so a separate process (the CLI) can reach an
-/// spacesd through "Fleet".
-pub async fn start_fleet_http_with_gateway(
-    fake: FakeFleet,
-    gateway: Option<String>,
-) -> FleetHttpFixture {
-    serve_fleet_http(fake, gateway.map(Upstream::Gateway)).await
-}
-
-/// Same, and routes every claim's `env` service
-/// (`/api/svc/<namespace>/<sandbox>-env/...`) to the cua-spacesd at `spacesd`
-/// with the gateway prefix stripped, as the real gateway does. Any claim of
-/// any pool then has a working spacesd, so a separate process (docs examples,
-/// the CLI) can run `shell`, `files` or `screenshot` on a fake cloud sandbox.
-/// Other services keep the fake's canned reply.
-pub async fn start_fleet_http_with_spacesd(fake: FakeFleet, spacesd: String) -> FleetHttpFixture {
-    serve_fleet_http(fake, Some(Upstream::Spacesd(spacesd))).await
-}
-
-/// Where the fixture forwards `/api/svc/...` requests.
-#[derive(Clone)]
-enum Upstream {
-    /// Everything under `/api/svc/`, path unchanged (a gateway emulation).
-    Gateway(String),
-    /// Only `<sandbox>-env` services, prefix stripped (a plain spacesd).
-    Spacesd(String),
-}
-
-impl Upstream {
-    /// The upstream and the path (with query) to send, when `path_and_query`
-    /// is forwarded.
-    fn route(&self, path_and_query: &str) -> Option<(String, String)> {
-        match self {
-            Upstream::Gateway(gw) => path_and_query
-                .starts_with("/api/svc/")
-                .then(|| (gw.clone(), path_and_query.to_string())),
-            Upstream::Spacesd(url) => {
-                let rest = path_and_query.strip_prefix("/api/svc/")?;
-                let (_namespace, rest) = rest.split_once('/')?;
-                let (service, rest) = match rest.find(['/', '?']) {
-                    Some(i) => rest.split_at(i),
-                    None => (rest, ""),
-                };
-                if !service.ends_with("-env") {
-                    return None;
-                }
-                let rest = if rest.starts_with('/') {
-                    rest.to_string()
-                } else {
-                    format!("/{rest}")
-                };
-                Some((url.clone(), rest))
-            }
-        }
-    }
-}
-
-async fn serve_fleet_http(fake: FakeFleet, upstream: Option<Upstream>) -> FleetHttpFixture {
-    use cua_fleet::HttpClient;
-    use http_body_util::BodyExt;
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind fleet");
-    let addr = listener.local_addr().expect("fleet addr");
-    let served = fake.clone();
-    let task = tokio::spawn(async move {
-        loop {
-            let Ok((stream, _)) = listener.accept().await else {
-                break;
-            };
-            let fake = served.clone();
-            let upstream = upstream.clone();
-            tokio::spawn(async move {
-                let svc =
-                    hyper::service::service_fn(move |req: http::Request<hyper::body::Incoming>| {
-                        let fake = fake.clone();
-                        let upstream = upstream.clone();
-                        async move {
-                            let route = upstream.as_ref().and_then(|u| {
-                                u.route(
-                                    req.uri()
-                                        .path_and_query()
-                                        .map(|p| p.as_str())
-                                        .unwrap_or("/"),
-                                )
-                            });
-                            if let Some((to, path)) = &route
-                                && is_websocket(req.headers())
-                            {
-                                return Ok::<_, std::convert::Infallible>(
-                                    proxy_upgrade(to, path, req).await,
-                                );
-                            }
-                            let (parts, body) = req.into_parts();
-                            let body = body
-                                .collect()
-                                .await
-                                .map(|b| b.to_bytes())
-                                .unwrap_or_default();
-                            if let Some((to, path)) = route {
-                                return Ok::<_, std::convert::Infallible>(
-                                    proxy(&to, &path, parts, body).await,
-                                );
-                            }
-                            let r = fake
-                                .execute(cua_fleet::sdk::HttpRequest {
-                                    method: parts.method.to_string(),
-                                    url: format!("http://fleet.test{}", parts.uri),
-                                    headers: parts
-                                        .headers
-                                        .iter()
-                                        .map(|(k, v)| cua_fleet::sdk::HttpHeader {
-                                            name: k.to_string(),
-                                            value: v.to_str().unwrap_or_default().to_string(),
-                                        })
-                                        .collect(),
-                                    body: (!body.is_empty()).then(|| body.to_vec()),
-                                    timeout_secs: None,
-                                    max_response_bytes: None,
-                                })
-                                .await
-                                .expect("fake fleet never fails");
-                            let mut resp = http::Response::builder().status(r.status);
-                            for h in r.headers {
-                                resp = resp.header(h.name, h.value);
-                            }
-                            Ok::<_, std::convert::Infallible>(
-                                resp.body(http_body_util::Either::Left(http_body_util::Full::new(
-                                    bytes::Bytes::from(r.body),
-                                )))
-                                .unwrap(),
-                            )
-                        }
-                    });
-                let _ = hyper::server::conn::http1::Builder::new()
-                    .serve_connection(hyper_util::rt::TokioIo::new(stream), svc)
-                    .with_upgrades()
-                    .await;
-            });
-        }
-    });
-    FleetHttpFixture {
-        base_url: format!("http://{addr}"),
-        fake,
-        task,
-    }
-}
-
-type ProxyBody = http_body_util::Either<http_body_util::Full<bytes::Bytes>, hyper::body::Incoming>;
-
-/// Forwards one buffered request to `upstream` and streams the reply back
-/// unchanged (gRPC-Web frames keep their upstream chunking).
-async fn proxy(
-    upstream: &str,
-    path_and_query: &str,
-    parts: http::request::Parts,
-    body: bytes::Bytes,
-) -> http::Response<ProxyBody> {
-    let client = hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-        .build_http::<http_body_util::Full<bytes::Bytes>>();
-    let uri = format!("{}{}", upstream.trim_end_matches('/'), path_and_query);
-    let mut req = http::Request::builder().method(parts.method).uri(uri);
-    for (k, v) in parts.headers.iter() {
-        if k != http::header::HOST
-            && k != http::header::CONNECTION
-            && k != http::header::TRANSFER_ENCODING
-        {
-            req = req.header(k, v);
-        }
-    }
-    let bad = |m: String| {
-        http::Response::builder()
-            .status(502)
-            .body(http_body_util::Either::Left(http_body_util::Full::new(
-                bytes::Bytes::from(m),
-            )))
-            .unwrap()
-    };
-    let req = match req.body(http_body_util::Full::new(body)) {
-        Ok(r) => r,
-        Err(e) => return bad(e.to_string()),
-    };
-    match client.request(req).await {
-        Ok(r) => r.map(http_body_util::Either::Right),
-        Err(e) => bad(e.to_string()),
-    }
-}
-
-fn is_websocket(headers: &http::HeaderMap) -> bool {
-    headers
-        .get(http::header::UPGRADE)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"))
-}
-
-/// Relays a WebSocket upgrade (the spacesd's `/tunnel`, `/media`, ...) to
-/// `upstream` like the Fleet gateway does: the handshake with every header,
-/// then the raw upgraded bytes both ways.
-async fn proxy_upgrade(
-    upstream: &str,
-    path_and_query: &str,
-    mut req: http::Request<hyper::body::Incoming>,
-) -> http::Response<ProxyBody> {
-    let bad = |m: String| {
-        http::Response::builder()
-            .status(502)
-            .body(http_body_util::Either::Left(http_body_util::Full::new(
-                bytes::Bytes::from(m),
-            )))
-            .unwrap()
-    };
-    let authority = upstream
-        .trim_start_matches("http://")
-        .trim_end_matches('/')
-        .to_string();
-    let stream = match TcpStream::connect(&authority).await {
-        Ok(s) => s,
-        Err(e) => return bad(e.to_string()),
-    };
-    let (mut sender, conn) =
-        match hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream)).await {
-            Ok(v) => v,
-            Err(e) => return bad(e.to_string()),
-        };
-    tokio::spawn(async move {
-        let _ = conn.with_upgrades().await;
-    });
-    let downstream = hyper::upgrade::on(&mut req);
-    let mut up = http::Request::builder()
-        .method(req.method())
-        .uri(path_and_query);
-    for (k, v) in req.headers() {
-        if k != http::header::HOST {
-            up = up.header(k, v);
-        }
-    }
-    up = up.header(http::header::HOST, authority.as_str());
-    let up = match up.body(http_body_util::Empty::<bytes::Bytes>::new()) {
-        Ok(r) => r,
-        Err(e) => return bad(e.to_string()),
-    };
-    let mut resp = match sender.send_request(up).await {
-        Ok(r) => r,
-        Err(e) => return bad(e.to_string()),
-    };
-    if resp.status() == http::StatusCode::SWITCHING_PROTOCOLS {
-        let upstream_io = hyper::upgrade::on(&mut resp);
-        tokio::spawn(async move {
-            if let (Ok(a), Ok(b)) = tokio::join!(downstream, upstream_io) {
-                let mut a = hyper_util::rt::TokioIo::new(a);
-                let mut b = hyper_util::rt::TokioIo::new(b);
-                let _ = tokio::io::copy_bidirectional(&mut a, &mut b).await;
-            }
-        });
-    }
-    resp.map(http_body_util::Either::Right)
-}
-
 /// A running read-only OCI registry on loopback HTTP serving a
 /// [`cua_image::testing::FakeRegistry`]. Point `CUA_REGISTRY_MIRRORS` at
 /// [`RegistryFixture::mirror`] and a separate process resolves images
@@ -735,16 +451,6 @@ fn registry_reply<B>(
         );
     }
     not_found()
-}
-
-/// The gateway emulation matching `FakeFleet`'s binding of claim `claim`
-/// in pool `pool` (sandbox `sbx-<claim>`).
-pub fn fake_gateway(pool: &str, claim: &str) -> MockGateway {
-    MockGateway {
-        prefix: format!("/api/svc/{pool}/sbx-{claim}-env"),
-        bearer: FAKE_FLEET_TOKEN.into(),
-        claim: claim.into(),
-    }
 }
 
 #[cfg(test)]

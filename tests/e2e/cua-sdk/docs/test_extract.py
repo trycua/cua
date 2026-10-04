@@ -14,7 +14,7 @@ from pathlib import Path
 import extract
 
 POLICY = {
-    "lanes": {"docs": "", "fleet": ""},
+    "lanes": {"docs": "", "container": ""},
     "skip": {
         "host-install": {"owner": "docs"},
         "placeholder": {"owner": "docs", "requires_placeholder": True},
@@ -167,12 +167,23 @@ class LintTest(unittest.TestCase):
         page(
             self.tmp,
             "g/p.mdx",
-            '```bash\nx\n```\n```python test="docs,fleet" id="run" session="s"\nprint(1)\n```\n',
+            '```bash\nx\n```\n```python test="docs,container" id="run" session="s"\nprint(1)\n```\n',
         )
         (block,) = extract.all_blocks(self.tmp)
-        self.assertEqual(block.lanes, ["docs", "fleet"])
+        self.assertEqual(block.lanes, ["docs", "container"])
         self.assertEqual(block.id, "g/p#run")
         self.assertEqual(block.session, "s")
+
+    def test_cloud_blocks_are_not_runnable(self):
+        page(self.tmp, "fleets/q.mdx", '```python test="docs" id="a"\nx\n```\n')
+        page(
+            self.tmp,
+            "g/p.mdx",
+            '```python test="docs" id="b" prelude="fakefleet,image"\nx\n```\n'
+            '```python test="fleet" id="c"\nx\n```\n'
+            '```python test="docs" id="d" prelude="spacesd"\nx\n```\n',
+        )
+        self.assertEqual([b.id for b in extract.runnable_blocks(self.tmp)], ["g/p#d"])
 
 
 class ExcerptTest(unittest.TestCase):

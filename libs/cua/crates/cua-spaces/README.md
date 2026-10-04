@@ -5,7 +5,7 @@ the primitives a person or agent uses on them, and the Spaces MCP server.
 Space ids are sandbox refs: `cloud:<name>`, `local:<vm>`,
 `direct:<host:port>` and `relay:<machine-id>` (legacy `space://...` ids still
 parse).
-Everything goes through the cua SDK crates (`cua-spacesd-client`, `cua-fleet`,
+Everything goes through the cua SDK crates (`cua-spacesd-client`,
 `cua-sandbox-core`): no ssh, no `/cmd`, no base64 through a shell, no
 Python.
 
@@ -15,10 +15,9 @@ for bindings, and the Tauri app links it directly.
 ## API (for `cua-daemon`, `cua-sdk` and the Tauri app)
 
 ```rust
-use cua_spaces::{Spaces, FleetClaim, LocalProvision};
+use cua_spaces::Spaces;
 
 let spaces = Spaces::builder()
-    .fleet(cua_fleet::FleetClient::from_env()?)          // optional: cloud Spaces
     .local_runtime(daemon_local_runtime)                  // optional: Arc<dyn cua_sandbox_core::LocalRuntime>
     .app_sessions(Arc::new(cua_spaces::teleport::AppSessions::builtin()))   // teleport sender (real host)
     .agent_credentials(cua_spaces::agents::HostCredentials::from_home(home)) // host creds copied for agents
@@ -31,7 +30,7 @@ let spaces = Spaces::builder()
 |---|---|
 | `spaces.add(url, token, name)` | `GetCapabilities` handshake, then stored. `url` is `http(s)://host:port`, `host:port`, or a Space id (`local:<name>`, `cloud:<name>`). |
 | `spaces.list()` / `spaces.resolve(s)` / `spaces.remove(s)` | Registry. `resolve` accepts ids, legacy `space://...` / `fleet:ns:claim`, URLs, names; a name in two locations is `AmbiguousSandbox`. |
-| `spaces.create(SpaceCreate{image, on, kind, runtime, name, reuse, wait, ..})` | A new sandbox registered as a Space, where `on` says (`None`: `default.on`, `CUA_DEFAULT_ON`, else local). Placement is validated once (`InvalidPlacement` lists the valid values); cloud Spaces get warm capacity per (image, runtime) and a fresh env token. `reuse` returns a reachable registered Space in the same location first. |
+| `spaces.create(SpaceCreate{image, on, kind, runtime, name, reuse, wait, ..})` | A new sandbox registered as a Space, where `on` says (`None`: `default.on`, `CUA_DEFAULT_ON`, else local). Placement is validated once (`InvalidPlacement` lists the valid values); `on="cloud"` (Cua Cloud, closed) fails with `CloudClosed`. `reuse` returns a reachable registered Space in the same location first. |
 | `spaces.delete(s)` | Deletes the Space's sandbox and forgets it. A Space added by address is only forgotten. |
 | `spaces.space(s) -> Space` | A cached, connected handle. |
 | `spaces.hotspot_start / hotspot_stop / hotspot_statuses` | Hotspots kept alive by this process. |
@@ -124,13 +123,13 @@ tool is JSON-RPC `-32601` (the CLI used `-32602`), and tool failures carry
 
 ## In `cua daemon` and the SDK
 
-`cua_daemon::Runtime` owns one `Spaces` (sharing its sandboxes and Fleet
-client). `cua.daemon.v1.SpaceService` is a thin adapter: `AddSpace`,
-`ListSpaces`, `ResolveSpace`, `RemoveSpace`, `ClaimFleetSpace`,
+`cua_daemon::Runtime` owns one `Spaces` (sharing its sandboxes). `cua.daemon.v1.SpaceService` is a thin adapter: `AddSpace`,
+`ListSpaces`, `ResolveSpace`, `RemoveSpace`, `ClaimFleetSpace` (Cua Cloud
+has closed: it says so),
 `ProvisionLocalSpace`, `ReleaseSpace`, `ListSpaceTools`, `CallSpaceTool`,
 and `ConnectSpace`, which returns a loopback env passthrough
 (`/v1/spaces/<base64url id>/env`, daemon bearer only; the Space's env token
-and Fleet credentials are attached inside the daemon, WebSockets included).
+is attached inside the daemon, WebSockets included).
 `OpenMediaBridge` accepts Space ids too. `cua-sdk` exposes `Spaces` /
 `Space` to every language in both topologies (see its crate docs).
 
@@ -147,7 +146,6 @@ All on by default: `spaces-files`, `spaces-stream`, `spaces-presence`,
 cargo test -p cua-spaces                     # unit + in-process env-server + fakes + MCP conformance
 tests/e2e/run-docker-e2e.sh [--runtime runsc] [--driver PATH]   # live linux, --memory=4g
 tests/e2e/run-relay-account-e2e.sh                               # host joins cua-relay, client lists and streams it
-CUA_E2E_FLEET=1 CUA_E2E_FLEET_IMAGE=<public spacesd image> cargo test -p cua-spaces --test e2e_fleet
 cargo run -p cua-spaces --bin cua-spaces-control-fixtures -- --check
 ```
 

@@ -1,20 +1,14 @@
-"""sandbox-parity: sidecars, env, private registry secrets and image layers
-with the same meaning local and in the cloud.
+"""sandbox-parity: sidecars, env, private registry secrets and image layers.
 
 Lanes:
 
-* hermetic: the fake Fleet admits sidecars like Fleet (on KubeVirt too) and
-  refuses the reserved service names ``main`` / ``sidecars`` / ``sc`` with
-  sidecars; cloud layer builds fail with the "not deployed yet" error before
-  anything is created; a local core create refuses layers on a VM image.
+* hermetic: a cloud create fails at once (Cua Cloud has closed); a local
+  core create refuses layers on a VM image.
 * container: ``python:3.12-slim`` with a ``redis:7-alpine`` sidecar named
   ``db`` and a ``busybox`` sidecar named ``relay``, through a private
   ``cua daemon`` on runc. The sandbox reaches ``db:6379`` by name and the
   relay reaches the sandbox at ``main``; refused on gVisor without an
   explicit runc.
-* fleet: the same group on Fleet gVisor and Fleet KubeVirt (a companion pod),
-  plus a ``processMode: Run`` command with ``env`` serving HTTP on both
-  runtimes. Pools are garbage-collected in the test.
 """
 
 from __future__ import annotations
@@ -26,17 +20,12 @@ import pytest
 
 import cua
 
-KUBEVIRT_IMAGE = "registry.example/workspace@sha256:0123"
 ROOTFS_IMAGE = "registry.example/mcp:docker-e2e"
-# Live Fleet: a container image for gVisor, the canonical VM disk for
-# KubeVirt (its guest has python3 and cloud-init).
-GVISOR_IMAGE = "docker.io/library/python:3.12-slim"
-KUBEVIRT_LIVE_IMAGE = "ghcr.io/trycua/linux:24.04"
 GREETING = "hi-from-env"
 
 # The sandbox's server: PINGs redis at db:6379 (by name), then serves
-# "<GREETING> <reply>" on 8000. One line (KubeVirt Run takes single-line
-# arguments), so the script travels base64-encoded.
+# "<GREETING> <reply>" on 8000. One line, so the script travels
+# base64-encoded.
 _SERVER = """
 import os, socket, time, http.server
 def ping(host):
@@ -86,7 +75,6 @@ def _relay() -> "cua.Container":
 
 def _opts(on: str, image: str, what: str, **kw) -> "cua.SandboxCreateOptions":
     kw.setdefault("cpus", 1)
-    # 512 MiB is the smallest cloud sandbox the SDK accepts (cua-fleet limits).
     kw.setdefault("memory_mb", 512)
     return cua.SandboxCreateOptions(on=on, image=image, name=e2e.name(what), **kw)
 
@@ -115,61 +103,15 @@ async def _expect_group(sb) -> None:
 
 
 @pytest.mark.e2e("sandbox-parity", "hermetic")
-def test_parity_admits_sidecars_and_refuses_what_fleet_refuses(fixtures, fake_fleet, tmp_path):
+def test_parity_cloud_closed_and_local_refuses_vm_layers(tmp_path):
     async def body():
-        sbx = fake_fleet.sandboxes()
-        # With sidecars, main / sidecars / sc are reserved service names.
-        for reserved in ("main", "sidecars", "sc"):
-            with pytest.raises(cua.CuaError) as err:
-                await sbx.create(
-                    _opts(
-                        "cloud",
-                        ROOTFS_IMAGE,
-                        "parity",
-                        sidecars=[_redis("db")],
-                        services={reserved: 6379},
-                    )
-                )
-            assert "reserved" in str(err.value), err.value
-        # A sidecar may not be named main.
-        with pytest.raises(cua.CuaError) as err:
-            await sbx.create(_opts("cloud", ROOTFS_IMAGE, "parity", sidecars=[_redis("main")]))
-        assert "main" in str(err.value), err.value
-        # Cloud layers need Fleet's builder, which does not run them yet.
-        with pytest.raises(cua.CuaError) as err:
-            await sbx.create(
-                _opts(
-                    "cloud",
-                    ROOTFS_IMAGE,
-                    "parity",
-                    build=cua.ImageBuild(
-                        layers=[cua.ImageLayer.PIP_INSTALL(packages=["mcp"])],
-                        env={},
-                        ports=[],
-                        files=[],
-                        timeout_ms=None,
-                    ),
-                )
+        local = cua.embedded(state_dir=str(tmp_path / "local"), fleet_from_env=False)
+        with pytest.raises(cua.CuaError.Fleet, match="Cua Cloud has closed"):
+            await local.sandboxes().create(
+                _opts("cloud", ROOTFS_IMAGE, "parity", sidecars=[_redis("db")])
             )
-        assert "not deployed yet" in str(err.value), err.value
-        assert not await fake_fleet.fleet().pools().list(), "nothing was created"
-        # A cloud VM image takes sidecars (Fleet runs them in a companion pod).
-        sb = await sbx.create(
-            _opts(
-                "cloud",
-                KUBEVIRT_IMAGE,
-                "parity-vm",
-                sidecars=[_redis("db")],
-                services={"db": 6379},
-            )
-        )
-        try:
-            assert sb.info().services.get("db") == 6379
-        finally:
-            await sb.delete()
         # Locally, layers build into the container engine (the container
         # lane runs that); a VM image takes none, refused before anything runs.
-        local = cua.embedded(state_dir=str(tmp_path / "local"), fleet_from_env=False)
         with pytest.raises(cua.CuaError.Unsupported):
             await local.sandboxes().create(
                 _opts(
@@ -215,63 +157,3 @@ def test_parity_sidecars_by_name_through_the_daemon():
             assert not left.stdout.strip(), left.stdout
 
     e2e.run_async(body(), 600)
-
-
-async def _live(live_fleet, o) -> None:
-    sb = await live_fleet.sandboxes().create(o)
-    pool = sb.info().provider_details.get("pool", "")
-    try:
-        await _expect_group(sb) if o.sidecars else await _expect_env(sb)
-    finally:
-        await sb.delete()
-        if pool:
-            await live_fleet.fleet().pools().gc_pools([pool], 0)
-
-
-async def _expect_env(sb) -> None:
-    web = await sb.service("web").request("GET", "/", None, 60_000, None)
-    assert bytes(web.body).strip() == f"{GREETING} none".encode(), web.body
-
-
-def _fleet_group(runtime: str, image: str) -> "cua.SandboxCreateOptions":
-    return _group(
-        "cloud",
-        image,
-        f"parity-{runtime}",
-        cpus=2,
-        memory_mb=4096 if runtime == "kubevirt" else 1024,
-        ready_timeout_ms=1_500_000,
-        runtime=runtime,
-    )
-
-
-def _fleet_env(runtime: str, image: str) -> "cua.SandboxCreateOptions":
-    return _opts(
-        "cloud",
-        image,
-        f"parity-env-{runtime}",
-        cpus=2,
-        memory_mb=4096 if runtime == "kubevirt" else 1024,
-        command=SERVER,
-        env={"GREETING": GREETING},
-        services={"web": 8000},
-        wait_for=[cua.ReadinessProbe(port=0, service="web", http_path="/")],
-        ready_timeout_ms=1_500_000,
-        runtime=runtime,
-    )
-
-
-@pytest.mark.e2e("sandbox-parity", "fleet")
-@pytest.mark.parametrize(
-    "runtime,image", [("gvisor", GVISOR_IMAGE), ("kubevirt", KUBEVIRT_LIVE_IMAGE)]
-)
-def test_parity_fleet_sidecars_by_name(live_fleet, runtime, image):
-    e2e.run_async(_live(live_fleet, _fleet_group(runtime, image)), 1800)
-
-
-@pytest.mark.e2e("sandbox-parity", "fleet")
-@pytest.mark.parametrize(
-    "runtime,image", [("gvisor", GVISOR_IMAGE), ("kubevirt", KUBEVIRT_LIVE_IMAGE)]
-)
-def test_parity_fleet_run_command_with_env(live_fleet, runtime, image):
-    e2e.run_async(_live(live_fleet, _fleet_env(runtime, image)), 1800)

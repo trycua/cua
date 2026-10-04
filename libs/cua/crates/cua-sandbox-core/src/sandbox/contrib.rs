@@ -41,15 +41,9 @@ fn check_request(word: &str, caps: &ProviderCapabilities, o: &CreateOptions) -> 
     if !o.sidecars.is_empty() {
         return Err(unsupported("sidecars".into()));
     }
-    if o.fleet.pool.is_some() {
-        return Err(Error::InvalidArgument(format!(
-            "pools are Cua cloud capacity; --on {word} takes an image"
-        )));
-    }
     if !o.os.eq_ignore_ascii_case("linux") {
         return Err(Error::UnsupportedImage(format!(
-            "{word} runs Linux sandboxes only (asked for {}); run {} guests with --on local or \
-             --on cloud",
+            "{word} runs Linux sandboxes only (asked for {}); run {} guests with --on local",
             o.os, o.os
         )));
     }
@@ -120,7 +114,7 @@ pub(super) async fn resolve_image(
         Some(k) if caps.kinds.contains(&k) => vec![k],
         Some(k) => {
             return Err(Error::UnsupportedImage(format!(
-                "{word} does not run {} sandboxes (it runs: {}); use --on local or --on cloud",
+                "{word} does not run {} sandboxes (it runs: {}); use --on local",
                 k.as_str(),
                 caps.kinds
                     .iter()
@@ -148,7 +142,7 @@ pub(super) async fn resolve_image(
         Ok(Err(cua_image::ImageError::UnsupportedVariant { found, .. })) => {
             return Err(Error::UnsupportedImage(format!(
                 "{reference} has no variant {word} can run: it offers {} and {word} runs {} \
-                 (a VM image needs a provider with VMs, or --on local / --on cloud)",
+                 (a VM image needs a provider with VMs, or --on local)",
                 if found.is_empty() {
                     "none".to_string()
                 } else {
@@ -313,8 +307,7 @@ impl Sandboxes {
             command: o.command.clone().filter(|c| !c.is_empty()),
             ports,
             ttl: o
-                .fleet
-                .ttl_seconds_after_created
+                .ttl_seconds
                 .filter(|t| *t > 0)
                 .map(|t| Duration::from_secs(u64::from(t))),
             labels,

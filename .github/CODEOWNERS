@@ -35,7 +35,6 @@
 /.github/workflows/e2e-rust-windows.yml @f-trycua @injaneity
 
 # Platform infrastructure.
-/libs/fleet/ @ddupont808
 /nix/ @ddupont808
 /flake.nix @ddupont808
 /flake.lock @ddupont808

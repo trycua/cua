@@ -51,6 +51,7 @@ test("lookups take refs", async () => {
   })
   const sbx = c.sandboxes()
   await assert.rejects(sbx.get("nope"), (e) => cua.CuaError.NotFound.instanceOf(e))
-  await assert.rejects(sbx.get("cloud:nope"), (e) => cua.CuaError.ProviderNotConfigured.instanceOf(e))
+  // Cua Cloud has closed.
+  await assert.rejects(sbx.get("cloud:nope"), (e) => cua.CuaError.Fleet.instanceOf(e))
   await assert.rejects(sbx.get("moon:x"), (e) => cua.CuaError.InvalidArgument.instanceOf(e))
 })

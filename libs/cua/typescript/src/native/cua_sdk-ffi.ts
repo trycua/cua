@@ -2056,7 +2056,7 @@ const DEFINITIONS = {
     "uniffi_cua_sdk_fn_method_space_spacesd": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
-      hasRustCallStatus: false,
+      hasRustCallStatus: true,
     },
     "uniffi_cua_sdk_fn_method_space_start_hotspot": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
@@ -5537,7 +5537,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_space_set_presence_settings(uniffiSelf: bigint, cursorProbe: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_share(uniffiSelf: bigint, who: Uint8Array, role: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_shares(uniffiSelf: bigint): bigint;
-    uniffi_cua_sdk_fn_method_space_spacesd(uniffiSelf: bigint): bigint;
+    uniffi_cua_sdk_fn_method_space_spacesd(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_sdk_fn_method_space_start_hotspot(uniffiSelf: bigint, setSystemProxy: Uint8Array, bypass: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_stop_hotspot(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_space_stream_session(uniffiSelf: bigint, options: Uint8Array, frames: bigint, audio: Uint8Array): bigint;

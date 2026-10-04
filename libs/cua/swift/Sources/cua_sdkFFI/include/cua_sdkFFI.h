@@ -1763,7 +1763,7 @@ uint64_t uniffi_cua_sdk_fn_method_space_shares(uint64_t ptr
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_SPACESD
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_SPACESD
-uint64_t uniffi_cua_sdk_fn_method_space_spacesd(uint64_t ptr
+uint64_t uniffi_cua_sdk_fn_method_space_spacesd(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACE_START_HOTSPOT

@@ -2221,7 +2221,7 @@ external fun uniffi_cua_sdk_fn_method_space_share(`ptr`: Long,`who`: RustBuffer.
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_shares(`ptr`: Long,
 ): Long
-external fun uniffi_cua_sdk_fn_method_space_spacesd(`ptr`: Long,
+external fun uniffi_cua_sdk_fn_method_space_spacesd(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_start_hotspot(`ptr`: Long,`setSystemProxy`: RustBuffer.ByValue,`bypass`: RustBuffer.ByValue,
 ): Long
@@ -3633,7 +3633,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_space_shares() != 19234.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_space_spacesd() != 65268.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_space_spacesd() != 47873.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_start_hotspot() != 44744.toShort()) {
@@ -16301,7 +16301,10 @@ public interface SpaceInterface {
      */
     suspend fun `shares`(): SpaceShares
 
-    suspend fun `spacesd`(): SpacesdClient
+    /**
+     * The cua-spacesd client over the connection this Space authenticated.
+     */
+    fun `spacesd`(): SpacesdClient
 
     /**
      * Starts the reverse-SOCKS hotspot: this host serves the Space's
@@ -17234,25 +17237,21 @@ open class Space: Disposable, AutoCloseable, SpaceInterface
     }
 
 
-    @Throws(CuaException::class)
-    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-    override suspend fun `spacesd`() : SpacesdClient {
-        return uniffiRustCallAsync(
-        callWithHandle { uniffiHandle ->
-            UniffiLib.uniffi_cua_sdk_fn_method_space_spacesd(
-                uniffiHandle,
-
-            )
-        },
-        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_u64(future, callback, continuation) },
-        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_u64(future, continuation) },
-        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_u64(future) },
-        // lift function
-        { FfiConverterTypeSpacesdClient.lift(it) },
-        // Error FFI converter
-        CuaException.ErrorHandler,
+    /**
+     * The cua-spacesd client over the connection this Space authenticated.
+     */
+    @Throws(CuaException::class)override fun `spacesd`(): SpacesdClient {
+            return FfiConverterTypeSpacesdClient.lift(
+    callWithHandle {
+    uniffiRustCallWithError(CuaException) { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_method_space_spacesd(
+        it,
+        _status)
+}
+    }
     )
     }
+
 
 
     /**

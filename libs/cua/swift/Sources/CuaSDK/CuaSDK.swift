@@ -8409,7 +8409,10 @@ public protocol SpaceProtocol: AnyObject, Sendable {
      */
     func shares() async throws  -> SpaceShares
 
-    func spacesd() async throws  -> SpacesdClient
+    /**
+     * The cua-spacesd client over the connection this Space authenticated.
+     */
+    func spacesd() throws  -> SpacesdClient
 
     /**
      * Starts the reverse-SOCKS hotspot: this host serves the Space's
@@ -9169,21 +9172,15 @@ open func shares()async throws  -> SpaceShares  {
         )
 }
 
-open func spacesd()async throws  -> SpacesdClient  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_cua_sdk_fn_method_space_spacesd(
-                    self.uniffiCloneHandle()
-
-                )
-            },
-            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
-            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
-            freeFunc: ffi_cua_sdk_rust_future_free_u64,
-            liftFunc: FfiConverterTypeSpacesdClient_lift,
-            errorHandler: FfiConverterTypeCuaError_lift
-        )
+    /**
+     * The cua-spacesd client over the connection this Space authenticated.
+     */
+open func spacesd()throws  -> SpacesdClient  {
+    return try  FfiConverterTypeSpacesdClient_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_sdk_fn_method_space_spacesd(
+            self.uniffiCloneHandle(),$0
+    )
+})
 }
 
     /**
@@ -40712,7 +40709,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_space_shares() != 19234) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_space_spacesd() != 65268) {
+    if (uniffi_cua_sdk_checksum_method_space_spacesd() != 47873) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_start_hotspot() != 44744) {

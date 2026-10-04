@@ -1,0 +1,41 @@
+{
+  "schema_version": "0.3.0",
+  "id": "policy.synthetic.standard",
+  "version": "1.0.0",
+  "limits": {
+    "wall_time_ms": 600000,
+    "total_tokens": 100000,
+    "cost_usd": 10,
+    "attempts_per_task": 5,
+    "infrastructure_retries": 1
+  },
+  "network": { "mode": "full" },
+  "autonomy": {
+    "required": true,
+    "max_human_interventions": 0,
+    "approval_prompts": "count_as_intervention"
+  },
+  "isolation": {
+    "fresh_harness_workspace": true,
+    "target_reset": true,
+    "persistent_cache": "forbidden",
+    "package_installation": "ephemeral_declared"
+  },
+  "permissions": {
+    "mode": "unrestricted",
+    "policy_sha256": "2c20049161ac72723ce12cf65699bb2eaa1dd782b85a790fd60ce6c4389e2a33"
+  },
+  "accounting": {
+    "currency": "USD",
+    "cost_basis": "pinned_list_price",
+    "model_price_table": {
+      "path": "freeze-inputs/model-price-table.json",
+      "sha256": "6fe077f680deaf851336503622735a3acf26f9dc16a38d3d08a18dc43f2037a2"
+    },
+    "includes_subagents": true
+  },
+  "credential_state_profile": {
+    "path": "freeze-inputs/credential-state-profile.json",
+    "sha256": "b9d33321b216bbfb4611eadeae9d6e67742b316e3d8fc871df0ff3ec96781369"
+  }
+}

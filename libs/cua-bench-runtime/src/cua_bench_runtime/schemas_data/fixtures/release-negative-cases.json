@@ -1,0 +1,20 @@
+{
+  "schema": "release.schema.json",
+  "base": "../examples/release.cuabench.json",
+  "cases": [
+    { "name": "root-fields", "remove": ["/schema_version", "/id", "/version", "/created_at", "/decision_bearing", "/inputs", "/digest"], "covers": "#/required", "expect": { "instance": "/", "validator": "required" } },
+    { "name": "digest-fields", "remove": ["/digest/algorithm", "/digest/value"], "covers": "#/properties/digest/required", "expect": { "instance": "/digest", "validator": "required" } },
+    { "name": "artifact-fields", "remove": ["/inputs/apparatus/harness_builds/0/path", "/inputs/apparatus/harness_builds/0/sha256"], "covers": "#/$defs/artifact/required", "expect": { "instance": "/inputs/apparatus/harness_builds/0", "validator": "required" } },
+    { "name": "versioned-artifact-fields", "remove": ["/inputs/candidates/0/id", "/inputs/candidates/0/version", "/inputs/candidates/0/manifest"], "covers": "#/$defs/versionedArtifact/required", "expect": { "instance": "/inputs/candidates/0", "validator": "required" } },
+    { "name": "dataset-fields", "remove": ["/inputs/dataset/id", "/inputs/dataset/version", "/inputs/dataset/manifest", "/inputs/dataset/freeze_digest"], "covers": "#/$defs/datasetInput/required", "expect": { "instance": "/inputs/dataset", "validator": "required" } },
+    { "name": "provenance-fields", "remove": ["/inputs/apparatus/provenance/original", "/inputs/apparatus/provenance/sources_consulted"], "covers": "#/$defs/provenance/required", "expect": { "instance": "/inputs/apparatus/provenance", "validator": "required" } },
+    { "name": "runtime-fields", "remove": ["/inputs/runtime/id", "/inputs/runtime/version", "/inputs/runtime/source_revision", "/inputs/runtime/artifact"], "covers": "#/$defs/runtimeInput/required", "expect": { "instance": "/inputs/runtime", "validator": "required" } },
+    { "name": "apparatus-fields", "remove": ["/inputs/apparatus/digest", "/inputs/apparatus/provenance", "/inputs/apparatus/harness_builds", "/inputs/apparatus/environment_images", "/inputs/apparatus/observers", "/inputs/apparatus/evaluators", "/inputs/apparatus/normalized_facade_contract", "/inputs/apparatus/neutral_instructions"], "covers": "#/$defs/apparatusInput/required", "expect": { "instance": "/inputs/apparatus", "validator": "required" } },
+    { "name": "profile-fields", "remove": ["/inputs/profiles/0/id", "/inputs/profiles/0/version", "/inputs/profiles/0/manifest"], "covers": "#/$defs/profileInput/required", "expect": { "instance": "/inputs/profiles/0", "validator": "required" } },
+    { "name": "trial-fields", "remove": ["/inputs/trials/0/id", "/inputs/trials/0/profile_id", "/inputs/trials/0/comparison_candidate_id", "/inputs/trials/0/pairing_key", "/inputs/trials/0/manifest"], "covers": "#/$defs/trialInput/required", "expect": { "instance": "/inputs/trials/0", "validator": "required" } },
+    { "name": "tool-surface-arm-fields", "remove": ["/inputs/tool_surface_study/arms/0/id", "/inputs/tool_surface_study/arms/0/contract", "/inputs/tool_surface_study/arms/0/trials", "/inputs/tool_surface_study/arms/0/result"], "covers": "#/$defs/toolSurfaceArm/required", "expect": { "instance": "/inputs/tool_surface_study/arms/0", "validator": "required" } },
+    { "name": "tool-surface-fields", "remove": ["/inputs/tool_surface_study/backend", "/inputs/tool_surface_study/capabilities", "/inputs/tool_surface_study/capability_digest", "/inputs/tool_surface_study/harness_kind", "/inputs/tool_surface_study/guidance_mode", "/inputs/tool_surface_study/arms"], "covers": "#/$defs/toolSurfaceStudy/required", "expect": { "instance": "/inputs/tool_surface_study", "validator": "required" } },
+    { "name": "release-input-fields", "remove": ["/inputs/runtime", "/inputs/dataset", "/inputs/apparatus", "/inputs/profiles", "/inputs/candidates", "/inputs/trials", "/inputs/report_inputs", "/inputs/tool_surface_study"], "covers": "#/$defs/releaseInputs/required", "expect": { "instance": "/inputs", "validator": "required" } },
+    { "name": "not-decision-bearing", "replace": { "/decision_bearing": false }, "expect": { "instance": "/decision_bearing", "validator": "const" } }
+  ]
+}

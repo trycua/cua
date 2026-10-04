@@ -1,0 +1,180 @@
+{
+  "schema_version": "0.3.0",
+  "id": "trial.synthetic.system-track.0",
+  "task": {
+    "id": "cua.synthetic.background-note",
+    "version": "1.0.0",
+    "manifest_sha256": "38380f0f9277a6bb5b6ce687a09190485dd7d12dc278dfa93674100097954868"
+  },
+  "dataset": {
+    "id": "cua.synthetic.dataset",
+    "version": "1.0.0",
+    "manifest_sha256": "ed7d09c17b0e756877fb8a1612ae09751a56a7bcd6218de6f0b33641f0ca8b75",
+    "freeze_digest": "bb0cdefaa74107d64526087c1432cd4c0618791cba933664dc55e92f7696e413"
+  },
+  "variant": "fixture.alpha",
+  "profile": { "id": "native-bundle", "version": "1.0.0" },
+  "candidate": {
+    "id": "cua.synthetic.driver",
+    "version": "1.0.0",
+    "manifest_sha256": "6bac21e334ef593c0897506ce84338db9d5869044151bc02b8734165abe40b44"
+  },
+  "pairing_key": "background-note.fixture-alpha.attempt-0",
+  "attempt_index": 0,
+  "system": {
+    "id": "system.synthetic.full",
+    "version": "1.0.0",
+    "manifest_sha256": "1c625049b4fa410195f8599f64a3e84cee757a6e2363412c9c6630bb52a4a2a6"
+  },
+  "execution_policy": {
+    "id": "policy.synthetic.standard",
+    "version": "1.0.0",
+    "manifest_sha256": "c9f211ef784afb32b30afb6e59d733c4c2b77cf368f21ed37c43c47ea443ee20"
+  },
+  "environment": {
+    "id": "synthetic-macos",
+    "os": "macos",
+    "os_version": "15.6",
+    "architecture": "arm64",
+    "image": {
+      "path": "freeze-inputs/environment-image.json",
+      "sha256": "8faddf0d2883811041a3d8ee9fa4672f509d93108b8c01e6e5bd9859a90505ce"
+    },
+    "resolved_seed_provenance_sha256": "8faddf0d2883811041a3d8ee9fa4672f509d93108b8c01e6e5bd9859a90505ce",
+    "observer": {
+      "path": "freeze-inputs/observer.json",
+      "sha256": "fc3de3c8a7372d2c4d1237c459b6ba119b7d522de474dd27ed29940d1fea250d"
+    }
+  },
+  "support_status": "supported",
+  "missing_capabilities": [],
+  "eligibility_status": "eligible",
+  "eligibility_evidence": ["Synthetic macOS fixture is available."],
+  "pre_freeze": false,
+  "bindings": {
+    "dataset_freeze_digest": "bb0cdefaa74107d64526087c1432cd4c0618791cba933664dc55e92f7696e413",
+    "apparatus_digest": "c20b98d398d5432a24646715220773fb2f59c5477cf1943f46c380a16f8f1873",
+    "system_digest": "1c625049b4fa410195f8599f64a3e84cee757a6e2363412c9c6630bb52a4a2a6",
+    "execution_policy_digest": "c9f211ef784afb32b30afb6e59d733c4c2b77cf368f21ed37c43c47ea443ee20"
+  },
+  "resolved_driver": {
+    "tool_schemas_digest": "078b9f5820ea38f63ed11a13916a5a3b4e57a9fae813df06cf29725953478cb9",
+    "tool_names": ["observe", "type_text"],
+    "skill_delivery": {
+      "status": "delivered",
+      "channel": "harness-injection",
+      "injection_point": "system-context",
+      "bytes": 129,
+      "token_count": 24,
+      "content_sha256": "fd91a0fae667490b07e23619dd3481458ca2da7192bd3bca5785c7fd6506714d",
+      "source_artifact": {
+        "path": "freeze-inputs/driver-skill.md",
+        "sha256": "fd91a0fae667490b07e23619dd3481458ca2da7192bd3bca5785c7fd6506714d"
+      },
+      "content_artifact": {
+        "path": "freeze-inputs/driver-skill.md",
+        "sha256": "fd91a0fae667490b07e23619dd3481458ca2da7192bd3bca5785c7fd6506714d"
+      }
+    }
+  },
+  "execution": {
+    "agent_execution_id": "execution.native-bundle.0",
+    "started_at": "2026-08-15T16:00:00Z",
+    "ended_at": "2026-08-15T16:00:12Z",
+    "event_log": {
+      "path": "freeze-inputs/event-log.jsonl",
+      "sha256": "3900b0674aca1abfea11fa53aeddc3d0521772b98d6ad9d9d5eb62c9eb0092fd"
+    },
+    "observed": {
+      "model_calls": [
+        {
+          "route_id": "route.primary",
+          "role": "primary",
+          "provider": "synthetic-provider",
+          "model": "synthetic-model",
+          "snapshot": "2026-08-01",
+          "service_tier": "standard",
+          "calls": 3,
+          "tokens": { "input": 100, "output": 20, "cache_read": 0, "cache_write": 0 }
+        }
+      ],
+      "tokens": { "input": 100, "output": 20, "cache_read": 0, "cache_write": 0, "includes_subagents": true },
+      "human_interventions": 0,
+      "approval_prompts": 0,
+      "max_parallelism": 1,
+      "fresh_harness_workspace": {
+        "satisfied": true,
+        "evidence": { "path": "freeze-inputs/isolation-evidence.json", "sha256": "c7f9e0e169ac494bd7b718d6a486b56653a8e80d96768c1962a81a50d7e48a20" }
+      },
+      "target_reset": {
+        "satisfied": true,
+        "evidence": { "path": "freeze-inputs/reset-evidence.json", "sha256": "cdddc268c02a86b3ccfb6cfcdb23ec3a172ce8072f90b62fead5baa22f7fd626" }
+      },
+      "cache_state": {
+        "mode": "empty",
+        "evidence": { "path": "freeze-inputs/cache-evidence.json", "sha256": "d00dabee637767e2535f71ce59aeabd17075f9b54be11ac70cbdaa9f87ffbe49" }
+      },
+      "package_installations": [],
+      "persistent_state": {
+        "mode": "absent",
+        "evidence": { "path": "freeze-inputs/cache-evidence.json", "sha256": "d00dabee637767e2535f71ce59aeabd17075f9b54be11ac70cbdaa9f87ffbe49" }
+      },
+      "applied_network_mode": "full",
+      "applied_permission_policy_sha256": "2c20049161ac72723ce12cf65699bb2eaa1dd782b85a790fd60ce6c4389e2a33",
+      "self_modifications": [],
+      "applications": [{ "id": "synthetic-note", "version": "1.0.0" }],
+      "display": { "width_px": 1440, "height_px": 900, "scale": 2 },
+      "cost_basis": "pinned_list_price",
+      "model_price_table_sha256": "6fe077f680deaf851336503622735a3acf26f9dc16a38d3d08a18dc43f2037a2"
+    },
+    "certification": {
+      "apparatus_status": "passed",
+      "certifying": true,
+      "reasons": [],
+      "bindings": {
+        "trial_id": "trial.synthetic.system-track.0",
+        "task_digest": "38380f0f9277a6bb5b6ce687a09190485dd7d12dc278dfa93674100097954868",
+        "system_digest": "1c625049b4fa410195f8599f64a3e84cee757a6e2363412c9c6630bb52a4a2a6",
+        "execution_policy_digest": "c9f211ef784afb32b30afb6e59d733c4c2b77cf368f21ed37c43c47ea443ee20",
+        "resolved_seed_provenance_sha256": "8faddf0d2883811041a3d8ee9fa4672f509d93108b8c01e6e5bd9859a90505ce",
+        "apparatus_digest": "c20b98d398d5432a24646715220773fb2f59c5477cf1943f46c380a16f8f1873"
+      },
+      "receipt": {
+        "path": "freeze-inputs/apparatus-certification-receipt.json",
+        "sha256": "3eadbb81f2048192bf63711533bb408ba89c2004797296dd40f5578b0b3f3fb9"
+      },
+      "signature": {
+        "path": "freeze-inputs/apparatus-certification-signature.json",
+        "sha256": "e8f9f1fab647d964882d07cf35e3fe08d7b02fcc74d574e9668cf365fb4d9077"
+      },
+      "verifier_key_id": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  },
+  "termination_status": "completed",
+  "outcomes": {
+    "completion": true,
+    "forbidden_side_effects": [],
+    "wrong_target_mutations": [],
+    "leaked_input": []
+  },
+  "observables": {
+    "focus_changes": 0,
+    "focus_recovery": true,
+    "cursor_movement": false,
+    "surface_transitions": 1,
+    "wall_time_ms": 12000,
+    "cost_usd": 0.01,
+    "tokens": { "input": 100, "output": 20, "cache_read": 0, "cache_write": 0, "tool_schema": 30, "driver_skill": 24, "neutral_guidance": 0, "includes_subagents": true },
+    "tool_usage": [
+      { "name": "observe", "calls": 2 },
+      { "name": "type_text", "calls": 1 }
+    ]
+  },
+  "truncated": false,
+  "evidence": [
+    {
+      "path": "freeze-inputs/evidence.json",
+      "sha256": "127dfde66f4015cce8f77d1d6cd23875dc8e693ff62947d009f7d6cb08b9ab4d"
+    }
+  ]
+}

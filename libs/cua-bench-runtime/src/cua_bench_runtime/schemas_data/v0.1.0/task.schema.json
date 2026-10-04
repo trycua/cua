@@ -1,0 +1,278 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cua.ai/cuabench/v0.1.0/task.schema.json",
+  "title": "Cua-Bench Task Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "version",
+    "title",
+    "authors",
+    "provenance",
+    "instructions",
+    "variants",
+    "required_capabilities",
+    "observation_surfaces",
+    "network_policy",
+    "limits",
+    "side_effects",
+    "evaluator",
+    "reset"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.1.0" },
+    "id": { "$ref": "#/$defs/id" },
+    "version": { "$ref": "#/$defs/semver" },
+    "title": { "type": "string", "minLength": 1 },
+    "authors": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/author" }
+    },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "instructions": { "type": "string", "minLength": 1 },
+    "variants": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/variant" }
+    },
+    "required_capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "capability.schema.json" }
+    },
+    "observation_surfaces": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "screen",
+          "accessibility",
+          "window-system",
+          "process",
+          "filesystem",
+          "application-api",
+          "network",
+          "input-events"
+        ]
+      }
+    },
+    "network_policy": { "$ref": "#/$defs/networkPolicy" },
+    "limits": { "$ref": "#/$defs/limits" },
+    "side_effects": { "$ref": "#/$defs/sideEffects" },
+    "evaluator": { "$ref": "#/$defs/evaluator" },
+    "reset": { "$ref": "#/$defs/reset" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)+$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "author": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "contact": { "type": "string", "minLength": 1 }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "purpose"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "uri": { "type": "string", "format": "uri" },
+        "revision": { "type": "string", "minLength": 1 },
+        "purpose": { "type": "string", "minLength": 1 }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "sources_consulted", "third_party_material"],
+      "properties": {
+        "origin": { "enum": ["original", "adapted", "imported"] },
+        "sources_consulted": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/source" }
+        },
+        "third_party_material": { "type": "boolean" },
+        "notes": { "type": "string" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "fixture_artifacts"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "fixture_artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/artifact" }
+        },
+        "parameters": { "type": "object" }
+      }
+    },
+    "phasePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["deny", "allowlist", "unrestricted"] },
+        "allow_hosts": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "allowlist" } } },
+          "then": { "required": ["allow_hosts"] },
+          "else": { "not": { "required": ["allow_hosts"] } }
+        }
+      ]
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["setup", "agent", "evaluation", "cleanup"],
+      "properties": {
+        "setup": { "$ref": "#/$defs/phasePolicy" },
+        "agent": { "$ref": "#/$defs/phasePolicy" },
+        "evaluation": { "$ref": "#/$defs/phasePolicy" },
+        "cleanup": { "$ref": "#/$defs/phasePolicy" }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_seconds", "evaluator_seconds"],
+      "properties": {
+        "agent_seconds": { "type": "integer", "minimum": 1 },
+        "evaluator_seconds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "sideEffect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "description"],
+      "properties": {
+        "scope": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 }
+      }
+    },
+    "sideEffects": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "forbidden"],
+      "properties": {
+        "allowed": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sideEffect" }
+        },
+        "forbidden": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/sideEffect" }
+        }
+      }
+    },
+    "oracle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "staging"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "staging": {
+          "enum": ["none", "before-setup", "after-agent"]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "required": { "const": false } } },
+          "then": { "properties": { "staging": { "const": "none" } } },
+          "else": { "properties": { "staging": { "enum": ["before-setup", "after-agent"] } } }
+        }
+      ]
+    },
+    "evaluator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entrypoint", "inputs", "staging", "oracle"],
+      "properties": {
+        "entrypoint": { "$ref": "#/$defs/relativePath" },
+        "inputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifact" }
+        },
+        "staging": {
+          "enum": ["agent-inaccessible", "agent-visible"]
+        },
+        "oracle": { "$ref": "#/$defs/oracle" }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entrypoint", "timeout_seconds"],
+      "properties": {
+        "entrypoint": { "$ref": "#/$defs/relativePath" },
+        "timeout_seconds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "failureFixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "artifact", "expected_failure"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "artifact": { "$ref": "#/$defs/artifact" },
+        "expected_failure": { "type": "string", "minLength": 1 }
+      }
+    },
+    "reset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entrypoint", "verification", "failure_fixtures"],
+      "properties": {
+        "entrypoint": { "$ref": "#/$defs/relativePath" },
+        "verification": { "$ref": "#/$defs/verification" },
+        "failure_fixtures": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/failureFixture" }
+        }
+      }
+    }
+  }
+}

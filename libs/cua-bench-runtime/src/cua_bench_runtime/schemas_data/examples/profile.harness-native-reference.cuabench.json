@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.1.0",
+  "id": "harness-native-reference",
+  "version": "1.0.0",
+  "description": "Full harness without an evaluated driver bundle.",
+  "harness": {
+    "kind": "full",
+    "inventory": {
+      "path": "freeze-inputs/harness-full.json",
+      "sha256": "82f7210b8078069a55c3a6aec178931c8fcbc3785e981ad59c26d690b894f9ef"
+    }
+  },
+  "driver_presentation": "absent",
+  "guidance": { "mode": "none" },
+  "decision_bearing": true
+}

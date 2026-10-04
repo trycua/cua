@@ -1,0 +1,1 @@
+Verify the target note equals the requested text and the decoy is unchanged.

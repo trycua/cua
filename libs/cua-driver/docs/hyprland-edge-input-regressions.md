@@ -11,11 +11,15 @@ these focused foreground failures:
   trusts as screen coordinates, producing an out-of-capture pixel target.
 
 This workstream repairs those exact failures and adds focused regression
-coverage. It does not change application admission, private security handling,
-multi-monitor behavior, or the keyboard transaction redesign. Refs #3011.
+coverage. It does not change application admission, multi-monitor behavior,
+or the keyboard transaction redesign. Refs #3011.
 The Edge kit evidence and proof-harness changes remain in #4395 / #4216.
 
 Acceptance requires focused native replays, independent review, ordinary CI,
 and the complete canonical native gate at the final candidate. No test
-threshold or outside-capture assertion is waived. Work in progress; no passing
-native certification is claimed here.
+threshold or outside-capture assertion is waived.
+
+At candidate `8f026edc1fefa4428969c36826e34c7d385a0f5e`, on Omarchy Edge with
+Hyprland `0.56.2-4`, the complete native suite delivered 90 cases and refused
+42 as expected, with none failed or skipped. The manual foreground and native
+observation gates also passed. #4396 records the full cross-platform evidence.

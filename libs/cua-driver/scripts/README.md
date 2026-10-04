@@ -54,17 +54,43 @@ The installer fails closed when that exact usable code-signing identity is not
 present in `CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN`.
 
 The first install creates `CuaDriver Local Signing (cua-driver-rs)` in that
-keychain. If `codesign` cannot use its private key non-interactively, unlock
-the keychain, trust the certificate in Keychain Access, and authorize Apple
-code-signing tools:
+keychain and then authorizes its private key for Apple's code-signing tools,
+which `security import` alone does not do: since macOS 10.12 an unauthorized
+key makes the first `codesign` prompt for a keychain password or fail with
+`errSecInternalComponent`.
+
+Whether that authorization needs the keychain password depends on the host. The
+installer tries without one first, and when the host insists it asks for the
+password on the terminal, uses it for that single `security` call and drops it
+immediately: nothing is exported, so no password reaches the build. With no
+terminal to ask on, such as a scripted install, the installer says the key is
+not authorized and prints the command to run; it does not claim to have
+authorized it. Later installs retry the passwordless form silently and never
+prompt, so a key that needed the password is authorized once, by hand:
 
 ```bash
-read -r -s -p 'Keychain password: ' KEYCHAIN_PASSWORD; echo
+security unlock-keychain "$SIGNING_KEYCHAIN"
 security set-key-partition-list \
-  -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" \
-  "$SIGNING_KEYCHAIN"
-unset KEYCHAIN_PASSWORD
+  -S apple-tool:,apple:,codesign: \
+  -l 'CuaDriver Local Signing (cua-driver-rs)' -t private -s \
+  -k '<keychain-password>' "$SIGNING_KEYCHAIN"
 ```
+
+`-l` is what keeps the change to that one key; `-s` on its own matches every
+signing key in the keychain, including unrelated identities in a login keychain.
+Drop `-k` if the host does not ask for the password.
+
+That command shape is covered by a test which is skipped by default because it
+touches a real keychain. On macOS, run it in a throwaway keychain with:
+
+```bash
+CUA_DRIVER_LOCAL_SIGNING_REAL_KEYCHAIN_TEST=1 \
+  python -m pytest libs/cua-driver/scripts/tests/test_install_local.py
+```
+
+Trusting the certificate in Keychain Access is optional. codesign then pins it
+as `certificate root` rather than `certificate leaf`; both are stable across
+rebuilds and both are accepted.
 
 Then rerun the strict installer and grant Accessibility and Screen Recording
 once. When the dedicated default keychain above exists, the installer prefers

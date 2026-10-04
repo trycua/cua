@@ -26,8 +26,66 @@ print_local_signing_bootstrap() {
     echo "  security unlock-keychain \"\$SIGNING_KEYCHAIN\"" >&2
     echo "  export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN=\"\$SIGNING_KEYCHAIN\"" >&2
     echo "  bash libs/cua-driver/scripts/install-local.sh --require-stable-signing" >&2
-    echo "If the certificate is newly created, authorize its private key for codesign as described in:" >&2
+    echo "If the certificate is newly created and its key is not usable yet, see:" >&2
     echo "  libs/cua-driver/scripts/README.md#stable-macos-local-signing" >&2
+}
+
+# Since macOS 10.12 a private key's usability is gated by a partition list that
+# `security import -A -T /usr/bin/codesign` does NOT populate. Without this the
+# first codesign against a freshly imported key either raises a GUI keychain
+# password prompt or, in a non-interactive shell, fails with
+# errSecInternalComponent — and `sign_staged_local_app` then reports "no usable
+# certificate-backed identity" for a certificate that was just created.
+#
+# `-s` on its own matches every signing key in the resolved keychain, which on
+# a login keychain means unrelated identities, so the ACL change names the key
+# this script imported and nothing else.
+#
+# Whether that write needs the keychain password depends on the host: on some
+# an unlocked keychain is enough, on others security demands it even then. So
+# try without a password first, and only when that fails ask for one, on the
+# terminal, for exactly one `security` call, never through the environment and
+# never held past that call. With no terminal to ask on, say so instead of
+# claiming the key was authorized. $2 = "prompt" enables that question.
+#
+# Everything here goes to stderr: this function runs inside the command
+# substitution that captures the identity.
+authorize_generated_signing_key() {
+    local kc="$1" mode="${2:-quiet}"
+
+    if security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -l "$CUA_LOCAL_SIGN_CN" -t private -s "$kc" >/dev/null 2>&1 </dev/null; then
+        return 0
+    fi
+    [ "$mode" = "prompt" ] || return 1
+
+    local password=""
+    if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+        printf '%s' "Keychain password for $kc (authorizes the new local signing key for codesign): " >/dev/tty
+        IFS= read -rs -t 120 password < /dev/tty || password=""
+        printf '\n' >/dev/tty
+        if [ -n "$password" ] \
+           && security set-key-partition-list -S apple-tool:,apple:,codesign: \
+                -l "$CUA_LOCAL_SIGN_CN" -t private -s -k "$password" "$kc" \
+                >/dev/null 2>&1 </dev/null; then
+            password=""
+            unset password
+            return 0
+        fi
+        password=""
+        unset password
+    fi
+    echo "warning: the local signing key in $kc is not authorized for codesign." >&2
+    echo "codesign will prompt for a keychain password or fail with errSecInternalComponent. Authorize it with:" >&2
+    echo "  security unlock-keychain \"$kc\"" >&2
+    echo "  security set-key-partition-list -S apple-tool:,apple:,codesign: -l \"$CUA_LOCAL_SIGN_CN\" -t private -s -k '<keychain-password>' \"$kc\"" >&2
+    echo "See libs/cua-driver/scripts/README.md#stable-macos-local-signing" >&2
+    return 1
+}
+
+find_generated_signing_identity() {
+    security find-identity -p codesigning "$1" 2>/dev/null \
+        | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }'
 }
 
 # Echoes the `codesign --sign` argument: a matching identity's SHA-1 when
@@ -51,9 +109,15 @@ ensure_local_signing_identity() {
         [ -n "$identity" ] && printf '%s' "$identity" || printf -- '-'
         return
     fi
-    identity="$(security find-identity -p codesigning "$kc" 2>/dev/null \
-        | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }')"
+    identity="$(find_generated_signing_identity "$kc")"
     if [ -n "$identity" ]; then
+        # The key this script generated on some earlier run. Repair it silently
+        # when that costs nothing: a host where the write needs no password
+        # then recovers from a keychain that was locked during the first
+        # install. Asking for a password here would ask on every install, so a
+        # key that still needs one is left to the command the creating install
+        # printed, which authorizes it once and for good.
+        authorize_generated_signing_key "$kc" quiet || :
         printf '%s' "$identity"
         return
     fi
@@ -70,8 +134,10 @@ ensure_local_signing_identity() {
             || openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
                 -out "$tmp/id.p12" -passout pass:"$pw" -name "$CUA_LOCAL_SIGN_CN" >/dev/null 2>&1; } \
        && security import "$tmp/id.p12" -k "$kc" -P "$pw" -A -T /usr/bin/codesign >/dev/null 2>&1; then
-        identity="$(security find-identity -p codesigning "$kc" 2>/dev/null \
-            | awk -v cn="$CUA_LOCAL_SIGN_CN" 'index($0, "\"" cn "\"") { print $2; exit }')"
+        identity="$(find_generated_signing_identity "$kc")"
+        if [ -n "$identity" ]; then
+            authorize_generated_signing_key "$kc" prompt || :
+        fi
         rm -rf "$tmp"
         if [ -n "$identity" ]; then
             printf '%s' "$identity"
@@ -117,12 +183,30 @@ designated_requirement() {
         | sed -n -e 's/^designated => //p' -e 's/^# designated => //p'
 }
 
+# codesign spells a certificate-backed designated requirement three ways. An
+# untrusted local signing certificate is pinned as `certificate leaf = H"..."`.
+# The same certificate, once the developer marked it trusted in the keychain,
+# evaluates as its own anchor and is pinned as `certificate root = H"..."`. An
+# Apple-issued identity pins its team through `certificate leaf[subject.OU]`.
+# Each names something that outlives rebuilds, which is what TCC grants need.
+#
+# The match has to be the pinning form itself: `certificate root trusted` is a
+# trust setting that pins nothing, and a cdhash clause makes the whole
+# requirement rebuild-fragile however many certificates it also names, so it is
+# checked first.
 classify_designated_requirement() {
-    case "$1" in
-        *"certificate leaf"*) printf '%s' "certificate-backed" ;;
-        *cdhash*) printf '%s' "ad-hoc" ;;
-        *) printf '%s' "unknown" ;;
+    local requirement="$1"
+    local hash_pin='certificate (leaf|root) *= *H"[0-9a-fA-F]{40}"'
+    local team_pin='certificate leaf\[subject\.OU\] *= *[^ ]'
+
+    case "$requirement" in
+        *cdhash*) printf '%s' "ad-hoc"; return ;;
     esac
+    if [[ "$requirement" =~ $hash_pin || "$requirement" =~ $team_pin ]]; then
+        printf '%s' "certificate-backed"
+        return
+    fi
+    printf '%s' "unknown"
 }
 
 # An ad-hoc signature's designated requirement is its cdhash. Replacing the

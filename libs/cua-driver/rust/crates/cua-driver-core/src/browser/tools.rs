@@ -911,7 +911,9 @@ impl BrowserClickTool {
                 input_route=\"dom_event\" (synthetic \
                 el.click(), ref required) is used only when explicitly requested; \
                 it proves dispatch, not control activation, because trust-gated \
-                controls may ignore synthetic events. \
+                controls may ignore synthetic events. If the handler opens a \
+                page-owned JavaScript dialog, the call returns at once with a \
+                dialog block (present, kind, dialog_id) to pass to browser_dialog. \
                 Refused for heuristic bindings."
                 .into(),
             input_schema: json!({

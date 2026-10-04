@@ -1,0 +1,10 @@
+{
+  "name": "cua-driver-motion-lab",
+  "private": true,
+  "type": "module",
+  "description": "Candidate agent-cursor motion styles for Cua Driver, previewed in the cursor gallery.",
+  "scripts": {
+    "test": "node --test test/",
+    "bench": "node test/bench.js"
+  }
+}

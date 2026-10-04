@@ -114,7 +114,10 @@ From a local checkout, `libs/cua-driver/scripts/install-local.sh` installs the
 source-built macOS driver as `cua-driver-local` and `CuaDriverLocal.app`, without
 replacing the release installation. Keep standalone and embedded identity rules from
 `MACOS.md` and `EMBEDDING.md`; launching a raw binary is not a substitute for
-the stable app identity that owns macOS TCC grants.
+the stable app identity that owns macOS TCC grants. `cua-driver-local skills
+install` links this pack under the separate `cua-driver-local` skill name, with
+its frontmatter and CLI invocations rewritten to `cua-driver-local`, so it
+coexists with the released `cua-driver` skill instead of replacing it.
 
 ## License
 

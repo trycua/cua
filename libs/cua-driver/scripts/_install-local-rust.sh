@@ -535,9 +535,9 @@ if [ "$OS" = "Darwin" ]; then
     fi
 fi
 
-# Agent skill pack symlinks: NOT auto-created. Run
-# `cua-driver skills install --local` to symlink agent dirs to the
-# staged copy at $VERSIONED_DIR/Skills/cua-driver above.
+# Agent skill pack symlinks: NOT auto-created. `cua-driver-local skills
+# install` links agent dirs under the distinct `cua-driver-local` skill name
+# so the local pack never collides with the released `cua-driver` skill.
 echo ""
 
 # --- Autostart (optional) ----------------------------------------------

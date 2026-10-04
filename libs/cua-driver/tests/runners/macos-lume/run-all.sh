@@ -333,6 +333,25 @@ prepare_keychain() {
   keychain_password=""
 }
 
+# Computer History adds its key to the default (login) Keychain and reads it back
+# through the user search list. A list that omits the login Keychain lets the add
+# succeed while every read-back misses, which the daemon reports as
+# history_key_unavailable.
+require_login_keychain_searchable() {
+  local keychain="$1"
+  local listed
+  if ! listed="$(security list-keychains -d user 2>&1)"; then
+    echo "Could not read the user Keychain search list: ${listed}" >&2
+    return 2
+  fi
+  if [[ "${listed}" != *"\"${keychain}\""* ]]; then
+    echo "The login Keychain is missing from the user Keychain search list, so Computer History cannot read back its key" >&2
+    echo "Keep it searchable next to the signing keychain:" >&2
+    echo "  security list-keychains -d user -s \"${SIGNING_KEYCHAIN}\" \"${keychain}\"" >&2
+    return 2
+  fi
+}
+
 unlock_required_keychains() {
   local provided_password="${CUA_E2E_SIGNING_KEYCHAIN_PASSWORD:-}"
   unset CUA_E2E_SIGNING_KEYCHAIN_PASSWORD
@@ -349,6 +368,7 @@ unlock_required_keychains() {
   prepare_keychain "Login keychain" "${LOGIN_KEYCHAIN}" \
     "${provided_password}" login
   provided_password=""
+  require_login_keychain_searchable "${LOGIN_KEYCHAIN}"
 }
 
 json_string_array() {

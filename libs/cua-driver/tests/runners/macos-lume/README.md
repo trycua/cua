@@ -165,10 +165,17 @@ the VM account so maintainers have only one local credential to enter:
 SIGNING_KEYCHAIN="$HOME/Library/Keychains/cua-driver-signing.keychain-db"
 security create-keychain "$SIGNING_KEYCHAIN"
 security set-keychain-settings "$SIGNING_KEYCHAIN"
-security list-keychains -d user -s "$SIGNING_KEYCHAIN"
+security list-keychains -d user -s "$SIGNING_KEYCHAIN" \
+  "$HOME/Library/Keychains/login.keychain-db"
 security unlock-keychain "$SIGNING_KEYCHAIN"
 export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN="$SIGNING_KEYCHAIN"
 ```
+
+Keep the login Keychain in the search list. Computer History adds its key to
+the default login Keychain and reads it back through the search list, so a list
+with only the signing keychain fails the history gate with
+`history_key_unavailable`. The acceptance runner refuses such a list before it
+builds.
 
 The first strict local install creates and imports the self-signed identity,
 then stops without replacing the app if the new certificate is not usable yet.

@@ -1063,6 +1063,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_shares() != 19234:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_space_spacesd() != 65268:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_start_hotspot() != 44744:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_stop_hotspot() != 18254:
@@ -3526,6 +3528,10 @@ _UniffiLib.uniffi_cua_sdk_fn_method_space_shares.argtypes = (
     ctypes.c_uint64,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_space_shares.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_space_spacesd.argtypes = (
+    ctypes.c_uint64,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_space_spacesd.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_space_start_hotspot.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -5210,6 +5216,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_space_share.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_shares.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_shares.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_spacesd.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_spacesd.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_start_hotspot.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_start_hotspot.restype = ctypes.c_uint16
@@ -32288,6 +32297,8 @@ class SpaceProtocol(typing.Protocol):
         Who this Space is shared with, and who of them is connected now.
 """
         raise NotImplementedError
+    async def spacesd(self, ) -> SpacesdClient:
+        raise NotImplementedError
     async def start_hotspot(self, set_system_proxy: typing.Optional[bool],bypass: typing.Optional[typing.List[str]]) -> SpaceHotspotStatus:
         """
         Starts the reverse-SOCKS hotspot: this host serves the Space's
@@ -33087,6 +33098,20 @@ class Space(SpaceProtocol):
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def spacesd(self, ) -> SpacesdClient:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSpacesdClient.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_space_spacesd(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_u64,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_u64,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_u64,
             _uniffi_lift_return,
             _uniffi_error_converter,
         )

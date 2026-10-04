@@ -16,8 +16,8 @@ use cua_sandbox_core::{
     RuntimeError, RuntimeResult,
 };
 use cua_sdk::{
-    Cua, CuaError, SandboxCreateOptions, ambiguous_sandbox_candidates, parse_sandbox_ref,
-    qualify_sandbox_ref,
+    Cua, CuaError, SandboxCreateOptions, SpacesdCommand, ambiguous_sandbox_candidates,
+    parse_sandbox_ref, qualify_sandbox_ref,
 };
 use std::{
     collections::HashMap,
@@ -230,6 +230,37 @@ async fn suite(daemon: bool) {
         .collect();
     assert!(ids.contains(&"local:box".to_string()), "{ids:?}");
     assert!(ids.contains(&"cloud:box".to_string()), "{ids:?}");
+
+    let tokened = fixtures::start_env(Some("space-token"), None).await;
+    let space = cua
+        .spaces()
+        .add(tokened.url.clone(), Some("space-token".into()), None)
+        .await
+        .unwrap();
+    let cat = cua
+        .spaces()
+        .space(space.id)
+        .await
+        .unwrap()
+        .spacesd()
+        .await
+        .unwrap()
+        .spawn(SpacesdCommand {
+            program: "cat".into(),
+            args: vec![],
+            env: HashMap::new(),
+            cwd: None,
+            user: None,
+            timeout_ms: None,
+            tag: None,
+            stdin: true,
+            pty: None,
+        })
+        .await
+        .unwrap();
+    cat.write_stdin(b"over stdin".to_vec()).await.unwrap();
+    cat.close_stdin().await.unwrap();
+    assert_eq!(cat.wait().await.unwrap().stdout, b"over stdin");
 
     // A cloud claim this machine did not create is reachable by its ref.
     fake.client()

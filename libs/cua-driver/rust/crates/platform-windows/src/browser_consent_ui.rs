@@ -33,6 +33,15 @@ fn release_nodes(nodes: &[UiaNode]) {
     }
 }
 
+// Own references before crossing the blocking-task boundary, including cancellation.
+struct ConsentNodes(Vec<UiaNode>);
+
+impl Drop for ConsentNodes {
+    fn drop(&mut self) {
+        release_nodes(&self.0);
+    }
+}
+
 fn is_in_web_content(nodes: &[UiaNode], node: &UiaNode) -> bool {
     let mut parent = node.parent_element_index;
     for _ in 0..nodes.len() {
@@ -431,26 +440,28 @@ pub async fn handle(
     loop {
         prove_window_owner(request.window_id, pid)?;
         let hwnd = request.window_id;
-        let tree = tokio::task::spawn_blocking(move || crate::uia::walk_tree(hwnd, None))
-            .await
-            .map_err(|error| {
-                refusal(
-                    BrowserRefusalCode::BrowserRouteUnavailable,
-                    format!("could not inspect the browser consent UI: {error}"),
-                )
-            })?;
-        let prompt_present = native_prompt_surface_present(&tree.nodes);
+        let tree = tokio::task::spawn_blocking(move || {
+            ConsentNodes(crate::uia::walk_tree(hwnd, None).nodes)
+        })
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not inspect the browser consent UI: {error}"),
+            )
+        })?;
+        let prompt_present = native_prompt_surface_present(&tree.0);
         saw_prompt |= prompt_present;
-        match exact_allow_button(&tree.nodes) {
+        match exact_allow_button(&tree.0) {
             Ok(Some(element)) => {
-                let invoked = unsafe { invoke(element) };
-                release_nodes(&tree.nodes);
+                let invoked = request.action.perform(|| unsafe { invoke(element) });
+                drop(tree);
                 invoked?;
                 return Ok(BrowserConsentOutcome::Accepted);
             }
-            Ok(None) => release_nodes(&tree.nodes),
+            Ok(None) => drop(tree),
             Err(error) => {
-                release_nodes(&tree.nodes);
+                drop(tree);
                 return Err(error);
             }
         }
@@ -553,6 +564,61 @@ mod tests {
 
     fn properties(element_ptr: usize) -> Result<(String, bool), BrowserRefusal> {
         Ok((CHROMIUM_DIALOG_BUTTON_CLASS.to_owned(), element_ptr == 13))
+    }
+
+    #[tokio::test]
+    async fn cancelled_scan_releases_late_blocking_result() {
+        use std::ffi::c_void;
+        use windows::core::{IUnknown_Vtbl, GUID, HRESULT};
+
+        // Only IUnknown::Release is used, as in the existing snapshot ownership tests.
+        #[repr(C)]
+        struct OwnedReference {
+            vtable: *const IUnknown_Vtbl,
+            released: Option<tokio::sync::oneshot::Sender<()>>,
+        }
+        unsafe extern "system" fn query(
+            _: *mut c_void,
+            _: *const GUID,
+            _: *mut *mut c_void,
+        ) -> HRESULT {
+            HRESULT(0x8000_4002u32 as i32)
+        }
+        unsafe extern "system" fn retain(_: *mut c_void) -> u32 {
+            2
+        }
+        unsafe extern "system" fn release(this: *mut c_void) -> u32 {
+            let mut owned = unsafe { Box::from_raw(this as *mut OwnedReference) };
+            let _ = owned.released.take().unwrap().send(());
+            0
+        }
+        static VTABLE: IUnknown_Vtbl = IUnknown_Vtbl {
+            QueryInterface: query,
+            AddRef: retain,
+            Release: release,
+        };
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
+        let scan = tokio::task::spawn_blocking(move || {
+            let ptr = Box::into_raw(Box::new(OwnedReference {
+                vtable: &VTABLE,
+                released: Some(dropped_tx),
+            }));
+            let mut element = node("Button", "Allow", &["Invoke"]);
+            element.element_ptr = ptr as usize;
+            let owned = ConsentNodes(vec![element]);
+            ready_tx.send(()).unwrap();
+            finish_rx.recv().unwrap();
+            owned
+        });
+        ready_rx.await.unwrap();
+        drop(scan);
+        finish_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), dropped_rx)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[test]

@@ -3,7 +3,6 @@ ComputerAgent - Main agent class that selects and runs agent loops
 """
 
 import asyncio
-import hashlib
 import inspect
 import json
 import random
@@ -25,6 +24,7 @@ from typing import (
 import litellm
 import litellm.utils
 from cua_core.telemetry import is_telemetry_enabled, record_event
+from cua_core.telemetry._config import sanitize_model_name
 from litellm.responses.utils import Usage
 
 from .adapters import (
@@ -181,13 +181,6 @@ def get_output_call_ids(messages: List[Dict[str, Any]]) -> List[str]:
         ):
             call_ids.append(message.get("call_id"))
     return call_ids
-
-
-def hash_api_key(api_key: Optional[str]) -> Optional[str]:
-    """Hash API key using SHA256 for secure telemetry identification."""
-    if not api_key:
-        return None
-    return hashlib.sha256(api_key.encode()).hexdigest()
 
 
 def _is_retryable_error(exc: BaseException) -> bool:
@@ -440,15 +433,13 @@ class ComputerAgent:
             if api_base:
                 args_provided.append("api_base")
             if additional_generation_kwargs:
-                args_provided.extend(additional_generation_kwargs.keys())
+                # Only the fact that extra kwargs were passed, never their names.
+                args_provided.append("additional_generation_kwargs")
 
             event_data = {
-                "model": model,
+                "model": sanitize_model_name(model) if isinstance(model, str) else "custom",
                 "args_provided": args_provided,
             }
-            # Add hashed API key
-            if api_key:
-                event_data["api_key_hash"] = hash_api_key(api_key)
 
             record_event("agent_init", event_data)
 
@@ -502,12 +493,8 @@ class ComputerAgent:
                                 pass
 
                     if interface is None:
-                        # Try cua_computer for cuaComputerHandler
-                        if hasattr(tool, "cua_computer"):
-                            interface = tool
-                        else:
-                            # Fallback: use the tool itself as interface
-                            interface = tool
+                        # Fallback: use the tool itself as interface
+                        interface = tool
 
                     warnings.warn(
                         "Model requires browser tools. "
@@ -872,13 +859,8 @@ class ComputerAgent:
 
                 # Track function tool execution
                 if self.telemetry_enabled and is_telemetry_enabled():
-                    record_event(
-                        "agent_tool_executed",
-                        {
-                            "tool_type": "function",
-                            "tool_name": item.get("name"),
-                        },
-                    )
+                    # The function name is user-defined: send the tool type only.
+                    record_event("agent_tool_executed", {"tool_type": "function"})
 
                 # Create function call output
                 call_output = {

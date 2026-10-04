@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="A sleeping koala">
+  <!-- Idle illustration: eyes closed, a eucalyptus leaf. -->
+  <path d="M186 232c28-18 44-48 38-80-30 8-50 34-50 64" fill="#6fa37a"/>
+  <path d="M204 170c-10 18-18 38-22 58" stroke="#4d7d57" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <circle cx="60" cy="88" r="50" fill="#8e98a3"/>
+  <circle cx="196" cy="88" r="50" fill="#8e98a3"/>
+  <circle cx="56" cy="90" r="30" fill="#e6e9ed"/>
+  <circle cx="200" cy="90" r="30" fill="#e6e9ed"/>
+  <ellipse cx="128" cy="142" rx="84" ry="76" fill="#a9b2bc"/>
+  <ellipse cx="128" cy="176" rx="46" ry="30" fill="#c3cad1"/>
+  <path d="M83 130q11 9 22 0" stroke="#1b1e23" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M151 130q11 9 22 0" stroke="#1b1e23" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <ellipse cx="128" cy="160" rx="22" ry="29" fill="#2a2e35"/>
+  <ellipse cx="121" cy="149" rx="6" ry="8" fill="#4a505a"/>
+  <text x="196" y="44" font-family="-apple-system, system-ui, sans-serif" font-size="26" font-weight="600" fill="#8e98a3">z</text>
+  <text x="216" y="26" font-family="-apple-system, system-ui, sans-serif" font-size="18" font-weight="600" fill="#b3bac2">z</text>
+</svg>

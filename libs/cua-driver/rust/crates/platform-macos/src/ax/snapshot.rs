@@ -10,6 +10,11 @@ impl RetainedElement {
         self.0
     }
 
+    /// Take a +1 reference on an AX element pointer (0 is kept as null).
+    ///
+    /// # Safety
+    ///
+    /// A nonzero `ptr` must be a live `AXUIElementRef`.
     pub unsafe fn retain(ptr: usize) -> Self {
         if ptr != 0 {
             unsafe { CFRetain(ptr as AXUIElementRef as CFTypeRef) };

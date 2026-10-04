@@ -63,7 +63,7 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
             triggers["push"]["paths"],
             [
                 "libs/python/cua-sandbox/**",
-                "libs/python/cua-fleet/**",
+                "libs/fleet/**",
                 ".github/workflows/periodic-cua-sandbox-live.yml",
                 ".github/scripts/tests/test_periodic_cua_sandbox_live.py",
             ],
@@ -123,53 +123,6 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
                 event_name=inputs[0], requested_lane=inputs[1], requested_suite=inputs[2]
             ):
                 self.assertEqual(self.run_prepare_matrix(*inputs), expected_matrix)
-
-    def test_docs_describe_the_remediated_workflow(self) -> None:
-        docs = (
-            REPO_ROOT / "docs/superpowers/specs/2026-08-09-periodic-cua-sandbox-live-e2e-design.md",
-            REPO_ROOT / "docs/superpowers/plans/2026-08-09-periodic-cua-sandbox-live-e2e.md",
-        )
-        required_contract = (
-            "libs/python/cua-fleet/**",
-            "github.repository == 'trycua/cua'",
-            "Check Fleet OAuth credentials",
-            "step-scoped OAuth credentials",
-            "CUA_LIVE_E2E_SOURCE_SHA",
-            "periodic-cua-sandbox-live-${{ github.event_name }}-${{ matrix.lane }}",
-            "Prepare isolated live test suite",
-            "CUA_LIVE_E2E_TEST_ROOT",
-            'tee -a "$GITHUB_OUTPUT"',
-            "Write controlled failure diagnostics",
-            "persistent reconciled resources",
-            "claim-only cleanup",
-            "cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}",
-            "periodic-cua-sandbox-live-${{ github.event_name }}-${{ matrix.lane }}-${{ matrix.suite }}",
-            "cua-live-pool-warm-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}",
-            "cua-live-pool-cold-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}",
-            "Run live Fleet pool smoke",
-            "test_fleet_pool_persistent.py",
-            "WarmPoolAutoscaling(min_pool_size=0, initial_pool_size=0, max_pool_size=1)",
-            "pool_pre_existed",
-            "claim-only release",
-        )
-        stale_contract = (
-            "Concurrency is scoped\nper lane",
-            "python - <<'PY' >> \"$GITHUB_OUTPUT\"",
-            "Emergency namespace cleanup",
-            "namespace leak",
-            "automatic namespace cleanup",
-            "leave no test namespace behind",
-            "no remaining namespace",
-            "namespace is absent",
-        )
-
-        for document in docs:
-            content = document.read_text()
-            with self.subTest(document=document):
-                for expected in required_contract:
-                    self.assertIn(expected, content)
-                for stale in stale_contract:
-                    self.assertNotIn(stale, content)
 
     def test_live_job_security_and_execution_structure(self) -> None:
         workflow = self.workflow()

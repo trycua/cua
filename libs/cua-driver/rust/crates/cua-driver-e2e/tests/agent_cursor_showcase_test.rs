@@ -882,6 +882,57 @@ fn settle(milliseconds: u64) {
     std::thread::sleep(Duration::from_millis(milliseconds));
 }
 
+fn spawn_driver() -> McpDriver {
+    spawn_driver_named(CELL_ID)
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_driver_named(cell_id: &str) -> McpDriver {
+    McpDriver::spawn_macos_daemon_proxy_named(cell_id).expect("start installed macOS daemon proxy")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn spawn_driver_named(cell_id: &str) -> McpDriver {
+    McpDriver::spawn_named_with_overlay(cell_id)
+        .expect("start source-built driver with native cursor overlay")
+}
+
+#[cfg(target_os = "macos")]
+fn platform_toolkit() -> &'static str {
+    "appkit"
+}
+
+#[cfg(target_os = "windows")]
+fn platform_toolkit() -> &'static str {
+    "win32"
+}
+
+#[cfg(target_os = "linux")]
+fn platform_toolkit() -> &'static str {
+    "gtk3"
+}
+
+#[cfg(target_os = "macos")]
+fn platform_route() -> DriverRoute {
+    DriverRoute::Composite
+}
+
+#[cfg(target_os = "windows")]
+fn platform_route() -> DriverRoute {
+    DriverRoute::WindowsOverlay
+}
+
+#[cfg(target_os = "linux")]
+fn platform_route() -> DriverRoute {
+    if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
+        DriverRoute::LinuxCuaCompositorInject
+    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        DriverRoute::LinuxWaylandVirtualPointer
+    } else {
+        DriverRoute::LinuxXTest
+    }
+}
+
 #[cfg(test)]
 mod pixel_oracle_tests {
     use super::*;
@@ -1043,56 +1094,5 @@ mod pixel_oracle_tests {
                 image.put_pixel(x, y, Rgba([94, 192, 232, 255]));
             }
         }
-    }
-}
-
-fn spawn_driver() -> McpDriver {
-    spawn_driver_named(CELL_ID)
-}
-
-#[cfg(target_os = "macos")]
-fn spawn_driver_named(cell_id: &str) -> McpDriver {
-    McpDriver::spawn_macos_daemon_proxy_named(cell_id).expect("start installed macOS daemon proxy")
-}
-
-#[cfg(not(target_os = "macos"))]
-fn spawn_driver_named(cell_id: &str) -> McpDriver {
-    McpDriver::spawn_named_with_overlay(cell_id)
-        .expect("start source-built driver with native cursor overlay")
-}
-
-#[cfg(target_os = "macos")]
-fn platform_toolkit() -> &'static str {
-    "appkit"
-}
-
-#[cfg(target_os = "windows")]
-fn platform_toolkit() -> &'static str {
-    "win32"
-}
-
-#[cfg(target_os = "linux")]
-fn platform_toolkit() -> &'static str {
-    "gtk3"
-}
-
-#[cfg(target_os = "macos")]
-fn platform_route() -> DriverRoute {
-    DriverRoute::Composite
-}
-
-#[cfg(target_os = "windows")]
-fn platform_route() -> DriverRoute {
-    DriverRoute::WindowsOverlay
-}
-
-#[cfg(target_os = "linux")]
-fn platform_route() -> DriverRoute {
-    if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
-        DriverRoute::LinuxCuaCompositorInject
-    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        DriverRoute::LinuxWaylandVirtualPointer
-    } else {
-        DriverRoute::LinuxXTest
     }
 }

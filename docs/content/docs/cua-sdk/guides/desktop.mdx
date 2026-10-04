@@ -1,0 +1,200 @@
+---
+title: Control the desktop
+description: Take screenshots, click and type, call typed Cua Driver tools, open a shell or a browser view, and attach to any cua-spacesd.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Images that ship cua-spacesd (port `3211`, service `env`), such as
+`Image.linux()`, expose the desktop. spacesd delegates pointer and keyboard
+input to Cua Driver in the guest. On an image without spacesd, `sb.spacesd()` and
+the interfaces below raise `SpacesdNotAvailable`.
+
+| Surface | Use it for |
+| --- | --- |
+| `sb.screenshot()`, `sb.mouse`, `sb.keyboard`, `sb.shell`, `sb.files` | Scripts and agent loops |
+| `sb.driver.connect()` | The full Cua Driver API: windows, accessibility, background input |
+| `cua mcp --sandbox NAME` | Coding agents and MCP clients |
+
+## Screenshots and input
+
+![A terminal on a local Linux sandbox desktop, opened from the dock and typed into through the HTML5 viewer](/img/cua-sdk/viewer-terminal.png)
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript', 'CLI']}>
+  <Tab value="Python">
+
+```python test="container" id="desktop-python"
+from pathlib import Path
+from cua_sandbox import Image, Sandbox
+
+FOCUS_TERMINAL = ("export DISPLAY=:1; setsid -f xfce4-terminal -T demo >/dev/null 2>&1; "
+                  "xdotool search --sync --onlyvisible --name demo windowactivate --sync")
+
+async with Sandbox.ephemeral(Image.linux()) as sb:
+    width, height = await sb.get_dimensions()
+    await sb.mouse.click(width // 2, height // 2)
+    # Keys go to the focused window, so open one.
+    assert (await sb.shell.run(FOCUS_TERMINAL)).success
+    await sb.keyboard.type("hello")
+    await sb.keyboard.keypress(["ctrl", "a"])
+    Path("desk.png").write_bytes(await sb.screenshot())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts test="container" id="desktop-typescript"
+import { writeFile } from 'node:fs/promises';
+import { embedded, SandboxCreateOptions, SpacesdCommand } from '@trycua/cua';
+
+const FOCUS_TERMINAL =
+  'export DISPLAY=:1; setsid -f xfce4-terminal -T demo >/dev/null 2>&1; ' +
+  'xdotool search --sync --onlyvisible --name demo windowactivate --sync';
+
+const sb = await embedded().sandboxes().create(
+  SandboxCreateOptions.create({
+    image: 'ghcr.io/trycua/linux:24.04',
+  })
+);
+try {
+  const env = await sb.spacesd(undefined);
+  const shot = await env.screenshot(undefined);
+  await env.click(Math.floor(shot.width / 2), Math.floor(shot.height / 2));
+  // Keys go to the focused window, so open one.
+  await env.run(SpacesdCommand.create({ program: 'sh', args: ['-c', FOCUS_TERMINAL] }));
+  await env.typeText('hello');
+  await env.hotkey(['ctrl', 'a']);
+  await writeFile('desk.png', Buffer.from((await env.screenshot(undefined)).image));
+} finally {
+  await sb.delete_();
+}
+```
+
+  </Tab>
+  <Tab value="CLI">
+
+```bash test="cli-shape" id="cua-sb-create-linux"
+cua sb create linux --name desk
+cua sb screenshot desk -o desk.png
+cua sb view desk         # opens the desktop in the browser viewer
+cua sb rm -f desk
+```
+
+  </Tab>
+</Tabs>
+
+## Typed Cua Driver
+
+```bash skip="host-install"
+pip install --extra-index-url https://wheels.cua.ai/simple 'cua-sandbox[driver]==0.9.0'
+```
+
+```python test="container" id="typed-driver" prelude="image-desktop"
+from cua_driver import GetScreenSizeInput
+
+async with Sandbox.ephemeral(image) as sb:
+    async with sb.driver.connect() as driver:
+        result = await driver.get_screen_size(GetScreenSizeInput(session=None))
+        print(result.text)
+```
+
+`connect()` goes through spacesd's `/mcp` route with the sandbox's own
+credentials; `connect(service="mcp", transport="mcp")` selects a named MCP
+service instead.
+
+`cua mcp` is a stdio MCP server for agents:
+
+```bash test="cli-shape" id="cua-mcp-desk"
+cua mcp --sandbox desk
+```
+
+## Shell
+
+A shell is a PTY served by spacesd; no SSH needed.
+
+```bash test="cli-shape" id="cua-sb-shell-dev"
+cua sb shell dev                    # interactive login shell
+cua sb shell dev python3            # a program in a PTY
+cua sb exec dev ls -la /tmp         # one command, no PTY
+```
+
+```python test="container" id="terminal"
+from cua_sandbox import Sandbox, Image
+
+async with Sandbox.ephemeral(Image.linux()) as sb:
+    session = await sb.terminal.create(cols=80, rows=24)   # command='python3' for a program
+    pid = session['pid']
+    await sb.terminal.send_input(pid, 'echo hello\n')
+    print(await sb.terminal.info(pid))
+    print('closed:', await sb.terminal.close(pid))
+```
+
+## Browser view
+
+Images with cua-spacesd, such as `Image.linux()`, serve an HTML5 viewer at
+`/viewer/` on the `env` service (port `3211`). It streams H.264 video
+(WebCodecs, PNG fallback) and Opus audio, and sends keyboard, mouse and touch
+input through Cua Driver.
+
+![The cua-spacesd viewer with its toolbar, two app windows and a shared folder in sync](/img/cua-sdk/viewer-desktop-toolbar.png)
+
+```bash test="cli-shape" id="cua-sb-view"
+cua sb view desk                        # open the viewer
+cua sb view desk --view-only --no-open  # print a watch-only link
+cua sb view desk --files none --ttl 30m # no file access, link valid 30 minutes
+cua sb create linux --name desk2 --view # open it when the sandbox is ready
+cua viewer                              # one local page for every sandbox (Cua Spaces)
+```
+
+```python test="container" id="desktop-viewer-url"
+from cua_sandbox import Image, Sandbox
+
+async with Sandbox.ephemeral(Image.linux()) as sb:
+    print(await sb.viewer_url())
+```
+
+The `cua` SDK's `sb.viewer_url(options)` (Rust, Python, TypeScript, Swift,
+Kotlin) returns `{url, expires_at_unix}`; options are `ttl_seconds`,
+`view_only`, `clipboard`, `files_root` and `microphone`. The MCP tool is
+`sandbox_view`.
+
+The link's fragment carries a viewer ticket that authorizes only the viewer's
+calls (never processes or tokens), expires (default 1 hour, at most 24) and is
+revoked when the root token rotates. In the cloud it is a signed `env` service
+URL.
+
+The toolbar has full screen, scaling, a keys menu, two-way clipboard, file
+upload (to `~/Downloads`), folder sharing, microphone and stats.
+
+| Feature | Chrome, Edge | Firefox | Safari |
+| --- | --- | --- | --- |
+| Video, input, typing, audio | yes | yes | yes |
+| Clipboard to the sandbox | Ctrl+V, and on focus | Ctrl+V | Ctrl+V |
+| Clipboard from the sandbox | automatic (text and images) | automatic (text) | automatic, or a one-click Copy |
+| File upload | yes | yes | yes |
+| Folder sharing | yes | no | no |
+| Microphone | yes | yes | not verified |
+| Full screen | yes, with keyboard lock | yes | yes |
+
+**Folder sharing** picks a local folder and keeps it in sync with
+`~/Shared/<name>` both ways. On a conflict both are kept (the sandbox one as
+`name (sandbox copy YYYY-MM-DD HHMMSS).ext`).
+Sharing stops when you close the page or click Stop.
+
+![The folder sharing prompt of the viewer](/img/cua-sdk/viewer-share-folder.png)
+
+<Callout type="info">
+  The viewer needs a secure context (https or localhost) for WebCodecs,
+  clipboard and folder access. Local sandboxes use a loopback port and the
+  cloud uses https. Over plain http to a LAN address it falls back to PNG
+  frames without clipboard or folders.
+</Callout>
+
+Images without cua-spacesd that serve their own web display page open with
+`cua sb view NAME --service <service>`.
+
+## Attach to or run spacesd
+
+To use any machine that runs cua-spacesd, or to run it yourself, see
+[Attach to or run cua-spacesd](/cua-sdk/guides/spacesd).

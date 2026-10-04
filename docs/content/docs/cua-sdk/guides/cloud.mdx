@@ -1,0 +1,140 @@
+---
+title: Run sandboxes in the cloud
+description: Run the same sandbox code in the Cua cloud, make the cloud your default, set up credentials, and see what differs from local.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Cloud sandboxes use the same code as local ones with `on="cloud"` (`local=False`
+in cua-sandbox), and `--on cloud` in the CLI. To run in your own AWS, Google
+Cloud or Modal account instead, see [Use your own cloud](/cua-sdk/guides/your-cloud). The SDK manages the capacity:
+no pools to create, and idle capacity is removed for you.
+
+## Credentials
+
+```bash test="cli-shape" id="cua-auth-login"
+cua auth login            # browser sign-in; --remote for SSH sessions
+cua auth whoami           # verifies the identity against the cloud
+```
+
+The CLI and every SDK resolve credentials in this order:
+
+| Credential | Set with | Use for |
+| --- | --- | --- |
+| Bearer token | `FLEETS_TOKEN` | CI with workload identity (`cua wif-token github`) |
+| API key | `CUA_CLIENT_ID` + `CUA_CLIENT_SECRET` | Scripts, services, CI |
+| Signed-in session | `cua auth login` | Your machine |
+
+For scripts, create an API key while signed in. It prints the ID and secret
+once; store them in a secret manager:
+
+```bash test="cli-shape" id="cua-auth-keys-create"
+cua auth keys create my-script
+```
+
+```bash skip="placeholder"
+export CUA_CLIENT_ID="<client-id>"
+export CUA_CLIENT_SECRET="<client-secret>"
+unset FLEETS_TOKEN   # a token takes precedence over the key
+```
+
+Manage keys with `cua auth keys ls` / `rm ID` or under
+[API keys](https://run.cua.ai/user-keys). Without credentials, a cloud create
+fails with:
+
+```text output
+Fleet credentials missing: run `cua auth login` or set CUA_CLIENT_ID/CUA_CLIENT_SECRET, or pass local=True
+```
+
+## Run it
+
+```bash test="cli-shape" id="cua-sb-create-linux"
+cua sb create linux --on cloud --name demo              # a gVisor container
+cua sb create linux --on cloud --kind vm --name demo-vm  # a KubeVirt VM
+cua sb exec demo -- uname -a
+cua sb rm demo -f
+```
+
+In code, pass `local=False` to the [quickstart](/cua-sdk/quickstart) calls, and
+`kind=` / `runtime=` as locally (cloud runtimes: `gvisor` for containers,
+`kubevirt` for VMs). `CloudOptions` tunes the managed capacity:
+
+| Field | Default (env override) | Effect |
+| --- | --- | --- |
+| `warm` | on for the canonical images (`CUA_FLEET_WARM`) | Keep one ready sandbox of this image |
+| `max_pool_size` | `10` (`CUA_FLEET_MAX_POOL_SIZE`) | Autoscaling ceiling |
+| `claim_ttl` | 15 min (`CUA_FLEET_CLAIM_TTL`) | Lifetime after your process stops renewing |
+| `pool` | none | Claim from a pool you manage ([Cua Fleets](/fleets/guides/capacity-and-claims)) |
+
+`cpu` and `memory` are part of the shape: a new shape is a new pool. Managed
+pools idle for 30 minutes are deleted (`CUA_FLEET_POOL_IDLE_GC`, `off` disables
+it; `cua fleet pools gc` runs it now).
+
+## Choose where sandboxes run by default
+
+Without `--on` (or `on=` / `local=`) a sandbox runs on this machine. To make
+the cloud your default:
+
+```bash test="cli-shape" id="cua-config-set-default-on"
+cua config set default.on cloud   # written to ~/.cua/config.toml
+cua config list                   # each setting, its value and its source
+```
+
+```text output
+KEY                  VALUE  SOURCE
+default.on           cloud  config
+default.kind         auto   default
+default.runtime      auto   default
+```
+
+Now `cua sb create linux` and `Sandbox.create(...)` run in the cloud, and
+`--on local` still runs one here. `cua sb ls` lists every location either way.
+The first match wins:
+
+1. `--on`, `on=` or `local=`
+2. `CUA_DEFAULT_ON` (one shell or CI job)
+3. `default.on` in `$CUA_HOME/config.toml`
+4. `local`
+
+`default.kind` and `default.runtime` (`CUA_DEFAULT_KIND`, `CUA_DEFAULT_RUNTIME`)
+work the same way, and `cua doctor` shows each default with its source. The
+SDKs read and write the same file:
+
+```python test="docs" id="cloud-config-default-on"
+import cua
+
+cua.config_set("default.on", "cloud")
+entry = cua.config_get("default.on")
+print([entry.value, entry.source])
+# ['cloud', 'config']
+cua.config_unset("default.on")
+```
+
+Switch back with `cua config unset default.on` (or `cua config set default.on
+local`). With a cloud default and no credentials, a create fails and says to
+run `cua auth login` or `cua config set default.on local`.
+
+## What differs from local
+
+- Public or [private](/cua-sdk/guides/images#private-registries) registry
+  images, amd64 only: containers under gVisor, containerDisks as KubeVirt VMs.
+  No macOS.
+- A cold image's first start takes a few minutes; canonical images are warm.
+- Services go through the gateway: `url()` is a signed URL and `request` adds
+  the gateway's credentials.
+- `command=`, `env=` and [sidecars](/fleets/guides/sidecars) work on container
+  and VM images; VM `env` values are single-line.
+- The sandbox lapses `claim_ttl` after your process stops renewing it
+  ([Lifecycle](/cua-sdk/guides/lifecycle#cloud-lifetime)). No suspend or
+  restart.
+- Usage is billed while a sandbox runs.
+
+<Callout type="info">
+  Image builds from layers are not in the cloud yet: a cloud sandbox with
+  layers fails with a clear error. Build locally, push, and reference the
+  image ([Fleet images](/fleets/guides/images)).
+</Callout>
+
+For named pools, fixed warm replicas, Terraform or per-claim secrets, use
+[Cua Fleets](/fleets). For errors such as `401` or `403`, see
+[Troubleshoot](/fleets/guides/troubleshoot).

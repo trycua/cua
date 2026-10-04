@@ -14,6 +14,12 @@ use std::sync::OnceLock;
 /// One cursor update: the cursor identified by `cursor_id` is at screen point
 /// (`x`, `y`), optionally in a pressed state (a click/drag press). Emitted on
 /// every commanded move and on press edges.
+///
+/// Events come from every driver session, including a human-origin one (a
+/// trusted host relaying a viewer's input, see
+/// [`crate::agent_cursor::InputOrigin`]). An embedder that publishes agent
+/// cursors must skip those: check
+/// [`crate::agent_cursor::input_origin`]`(&event.cursor_id)`.
 #[derive(Debug, Clone)]
 pub struct CursorHookEvent {
     pub cursor_id: String,
@@ -61,10 +67,9 @@ pub fn declare_cursor_hook_emitter() {
 /// Whether this build emits cursor events at all.
 ///
 /// Registering a hook always succeeds, so `cursor_hook_enabled()` cannot tell
-/// an embedder whether events will ever arrive. Today only the macOS adapter
-/// emits; the Windows, X11 and Wayland adapters have no cursor write path
-/// wired to this hook, so on those hosts a registered hook stays silent
-/// forever.
+/// an embedder whether events will ever arrive. The macOS and Linux (X11 and
+/// Wayland) adapters emit; the Windows adapter has no cursor write path
+/// wired to this hook, so there a registered hook stays silent forever.
 ///
 /// Per the cross-platform contract, a host must publish that limitation
 /// explicitly — "cursor tracking unavailable on this platform" — rather than

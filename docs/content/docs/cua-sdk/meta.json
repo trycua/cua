@@ -1,0 +1,11 @@
+{
+  "title": "Cua SDK",
+  "root": true,
+  "pages": [
+    "index",
+    "quickstart",
+    "guides",
+    "concepts",
+    "reference"
+  ]
+}

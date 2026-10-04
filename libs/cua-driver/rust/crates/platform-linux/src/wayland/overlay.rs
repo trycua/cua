@@ -128,6 +128,9 @@ pub fn ensure_started() -> bool {
                 if let Err(e) = owner_thread(rx) {
                     tracing::warn!("cua-overlay-wl thread exited with error: {e}");
                 }
+                // No frame will ever be painted again: unblock every pointer
+                // action still waiting for its glide to arrive.
+                crate::overlay::release_arrivals();
             })
             .expect("spawn cua-overlay-wl thread");
         tx
@@ -481,7 +484,7 @@ fn visible_cores_for_output<'a>(
                     .is_some_and(|selected| selected.id == output_id)
         })
         .collect();
-    visible_cores.sort_by(|(left, _), (right, _)| left.cmp(right));
+    visible_cores.sort_by_key(|(left, _)| *left);
     visible_cores
 }
 
@@ -701,14 +704,15 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         // Advance only on a scheduled animation/fade wake. A command wake
         // applies the new state at dt=0, avoiding a jump proportional to how
         // long the loop was parked.
+        let mut arrived = Vec::new();
         if let Some(timeout_kind) = timed_out {
             match timeout_kind {
                 WlWait::Frame => {
-                    tick_all_cores(&mut state.render.cursors, elapsed.min(0.05));
+                    arrived.extend(tick_all_cores(&mut state.render.cursors, elapsed.min(0.05)));
                     dirty = true;
                 }
                 WlWait::Deadline(_) => {
-                    tick_all_cores(&mut state.render.cursors, elapsed);
+                    arrived.extend(tick_all_cores(&mut state.render.cursors, elapsed));
                     dirty = true;
                 }
                 WlWait::Maintenance(_) => {
@@ -718,7 +722,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                         .iter()
                         .map(|(key, core)| (key.clone(), core.idle_alpha))
                         .collect();
-                    tick_all_cores(&mut state.render.cursors, elapsed);
+                    arrived.extend(tick_all_cores(&mut state.render.cursors, elapsed));
                     dirty |= state.render.cursors.iter().any(|(key, core)| {
                         before
                             .get(key)
@@ -742,6 +746,12 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
             // parking. The buffer map remains authoritative until release, so
             // no mmap/fd can be reclaimed while the compositor still uses it.
             queue.roundtrip(&mut state)?;
+        }
+        // Report arrivals only once the frame at the target is committed, so
+        // a pointer action lands after the viewer saw the glide end (the X11
+        // renderer's contract).
+        for key in arrived {
+            crate::overlay::fire_arrival(&key);
         }
         frame_tick_needed = next_frame_tick_needed;
     }
@@ -813,10 +823,12 @@ fn earliest_idle_fade_wait(cores: &CursorMap<RenderStateCore>) -> Option<Duratio
         .min()
 }
 
-fn tick_all_cores(cores: &mut CursorMap<RenderStateCore>, dt: f64) {
-    for core in cores.values_mut() {
-        core.tick_motion(dt);
-    }
+/// Advance every cursor and return the keys whose planned glide just ended.
+fn tick_all_cores(cores: &mut CursorMap<RenderStateCore>, dt: f64) -> Vec<CursorKey> {
+    cores
+        .iter_mut()
+        .filter_map(|(key, core)| core.tick_motion(dt).then(|| key.clone()))
+        .collect()
 }
 
 /// The shared frame-tick predicate, including resting motion (the float bob),
@@ -1368,6 +1380,37 @@ mod tests {
                 height: 1024,
             },
         ]
+    }
+
+    /// The layer-shell renderer reports a glide's end exactly once, for the
+    /// key that moved, so pointer actions can wait for it like on X11.
+    #[test]
+    fn ticking_reports_each_glide_arrival_once() {
+        let mut render = WlRenderMap::new(CursorConfig::default(), ());
+        let frame = Some(ScreenFrame::new(0.0, 0.0, 1920.0, 1080.0));
+        apply_keyed_command(
+            &mut render,
+            frame,
+            "mover".to_owned(),
+            OverlayCommand::MoveTo {
+                x: 400.0,
+                y: 300.0,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+            },
+        );
+        let mut still = positioned_core();
+        still.motion.idle_hide_ms = 0.0;
+        render.cursors.insert("still".to_owned(), still);
+
+        let mut arrivals = Vec::new();
+        for _ in 0..600 {
+            arrivals.extend(tick_all_cores(&mut render.cursors, 1.0 / 60.0));
+        }
+        assert_eq!(arrivals, vec!["mover".to_owned()]);
+        assert!(
+            render.cursors["mover"].path.is_none(),
+            "the planned glide has ended"
+        );
     }
 
     fn initialized(layouts: &[OutputLayout]) -> HashSet<u32> {

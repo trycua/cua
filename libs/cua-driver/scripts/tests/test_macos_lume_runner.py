@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import time
@@ -24,9 +25,7 @@ RUN_ALL = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/run-all.sh"
 SEED_TCC = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/seed-tcc.sh"
 SEED_TCC_GUEST = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/seed-tcc-guest.sh"
 HARNESS_GUIDE = REPO_ROOT / "libs/cua-driver/docs/test-harnesses-guide.md"
-PUBLIC_LUME_TEST_GUIDE = (
-    REPO_ROOT / "docs/content/docs/how-to-guides/driver/run-tests-in-macos-lume-vm.mdx"
-)
+RUNNER_GUIDE = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/README.md"
 RUN_RUST_E2E = REPO_ROOT / "scripts/ci/macos/run-rust-e2e.sh"
 ELECTRON_BUILD = REPO_ROOT / "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
 ELECTRON_LOCK = (
@@ -60,7 +59,19 @@ def _run(
         text=True,
         env=merged,
         check=False,
+        preexec_fn=_default_signal_dispositions,
     )
+
+
+def _default_signal_dispositions() -> None:
+    """Undo inherited SIG_IGN (nohup, some CI/agent launchers) in the child.
+
+    bash cannot trap a signal that was ignored when it started, so the
+    runner's HUP/INT/TERM traps would silently never fire and the trap tests
+    would depend on how pytest itself was launched.
+    """
+    for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, signal.SIG_DFL)
 
 
 # The runner derives the installed daemon path from HOME on purpose, so tests
@@ -180,6 +191,122 @@ def test_status_match_rejects_the_wrong_mode_and_a_failing_cli(tmp_path: Path) -
         )
         assert completed.returncode == 0, completed.stderr
         assert expected in completed.stdout
+
+
+def test_golden_image_preflight_requires_python3(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    for command in (
+        "cargo",
+        "codesign",
+        "ffmpeg",
+        "ffprobe",
+        "jq",
+        "node",
+        "npm",
+        "osascript",
+        "security",
+        "xcrun",
+    ):
+        _write_executable(fake_bin / command, "exit 0\n")
+
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN"\nrequire_golden_image_dependencies\n',
+        env={"TEST_FAKE_BIN": str(fake_bin)},
+    )
+
+    assert completed.returncode == 2
+    assert completed.stderr == "Missing golden-image dependency: python3\n"
+
+
+def _fake_keychain_list(tmp_path: Path, *keychains: str) -> Path:
+    fake_bin = tmp_path / "bin"
+    listed = "".join(f'    \\"{keychain}\\"\\n' for keychain in keychains)
+    _write_executable(
+        fake_bin / "security",
+        f'[ "$1 $2 $3" = "list-keychains -d user" ] || exit 9\nprintf "{listed}"\n',
+    )
+    return fake_bin
+
+
+def test_login_keychain_must_stay_in_the_user_search_list(tmp_path: Path) -> None:
+    login = "/Users/lume/Library/Keychains/login.keychain-db"
+    signing = "/Users/lume/Library/Keychains/cua-driver-signing.keychain-db"
+    fake_bin = _fake_keychain_list(tmp_path, signing)
+
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN:$PATH"\nrequire_login_keychain_searchable "$TEST_LOGIN"\n',
+        env={"TEST_FAKE_BIN": str(fake_bin), "TEST_LOGIN": login},
+    )
+
+    assert completed.returncode == 2
+    assert "missing from the user Keychain search list" in completed.stderr
+    assert f'"{login}"' in completed.stderr
+
+
+def test_searchable_login_keychain_passes_the_history_preflight(tmp_path: Path) -> None:
+    login = "/Users/lume/Library/Keychains/login.keychain-db"
+    signing = "/Users/lume/Library/Keychains/cua-driver-signing.keychain-db"
+    fake_bin = _fake_keychain_list(tmp_path, signing, login)
+
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN:$PATH"\nrequire_login_keychain_searchable "$TEST_LOGIN"\n',
+        env={"TEST_FAKE_BIN": str(fake_bin), "TEST_LOGIN": login},
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stderr == ""
+
+
+def test_seed_guide_keeps_the_login_keychain_searchable() -> None:
+    text = RUNNER_GUIDE.read_text(encoding="utf-8")
+    assert 'security list-keychains -d user -s "$SIGNING_KEYCHAIN"\n' not in text
+    assert '"$HOME/Library/Keychains/login.keychain-db"' in text
+
+
+def _fake_python_with_tk(tmp_path: Path, patchlevel: str | None) -> Path:
+    fake_bin = tmp_path / "bin"
+    real = shutil.which("python3")
+    if patchlevel is None:
+        body = 'case "$*" in *tkinter*) exit 1 ;; esac\nexec "$TEST_REAL_PYTHON" "$@"\n'
+    else:
+        body = (
+            f'case "$*" in *tkinter*) echo {patchlevel}; exit 0 ;; esac\n'
+            'exec "$TEST_REAL_PYTHON" "$@"\n'
+        )
+    _write_executable(fake_bin / "python3", body)
+    assert real is not None
+    return fake_bin
+
+
+@pytest.mark.parametrize(
+    ("patchlevel", "message"),
+    [(None, "no usable tkinter"), ("8.5.9", "uses Tk 8.5.9")],
+)
+def test_lume_runner_refuses_missing_or_legacy_tk(
+    tmp_path: Path, patchlevel: str | None, message: str
+) -> None:
+    fake_bin = _fake_python_with_tk(tmp_path, patchlevel)
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN:$PATH"\nrequire_modern_tk\n',
+        env={"TEST_FAKE_BIN": str(fake_bin), "TEST_REAL_PYTHON": shutil.which("python3") or ""},
+    )
+    assert completed.returncode == 2
+    assert message in completed.stderr
+
+
+@pytest.mark.parametrize("patchlevel", ["8.6.16", "9.1.0"])
+def test_lume_runner_accepts_modern_tk(tmp_path: Path, patchlevel: str) -> None:
+    fake_bin = _fake_python_with_tk(tmp_path, patchlevel)
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN:$PATH"\nrequire_modern_tk\n',
+        env={"TEST_FAKE_BIN": str(fake_bin), "TEST_REAL_PYTHON": shutil.which("python3") or ""},
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 @pytest.mark.parametrize("script", [RUN_ALL, RUN_RUST_E2E], ids=lambda path: path.name)
@@ -436,7 +563,7 @@ def test_tcc_guest_seed_library_mode_fails_closed_when_executed() -> None:
 
 @pytest.mark.parametrize(
     "document",
-    [HARNESS_GUIDE, PUBLIC_LUME_TEST_GUIDE],
+    [HARNESS_GUIDE, RUNNER_GUIDE],
     ids=lambda path: path.name,
 )
 def test_harness_guides_route_automated_tcc_through_guarded_helper(document: Path) -> None:
@@ -978,6 +1105,9 @@ def test_required_keychains_unlock_login_without_retaining_password(
     _write_executable(
         fake_security,
         """printf '%s\\n' "$*" >> "$CUA_TEST_SECURITY_LOG"
+if [ "$1" = list-keychains ]; then
+    printf '    "%s"\\n' "$CUA_E2E_SIGNING_KEYCHAIN" "$CUA_E2E_LOGIN_KEYCHAIN"
+fi
 """,
     )
     completed = _run(
@@ -997,6 +1127,7 @@ def test_required_keychains_unlock_login_without_retaining_password(
     assert log.read_text(encoding="utf-8").splitlines() == [
         f"unlock-keychain -p fixture-password {signing_keychain}",
         f"unlock-keychain -p fixture-password {login_keychain}",
+        "list-keychains -d user",
     ]
 
 
@@ -1014,6 +1145,9 @@ def test_required_keychains_accept_already_unlocked_noninteractive_keychains(
     _write_executable(
         fake_security,
         """printf '%s\n' "$*" >> "$CUA_TEST_SECURITY_LOG"
+if [ "$1" = list-keychains ]; then
+    printf '    "%s"\n' "$CUA_E2E_SIGNING_KEYCHAIN" "$CUA_E2E_LOGIN_KEYCHAIN"
+fi
 command="$1"
 shift
 if [ "$command" = find-generic-password ]; then
@@ -1055,7 +1189,7 @@ fi
     probe_binary = codesign_calls[0].rsplit(" ", 1)[1]
     assert codesign_calls[1] == f"--verify --strict {probe_binary}"
     security_calls = security_log.read_text(encoding="utf-8").splitlines()
-    assert len(security_calls) == 3
+    assert len(security_calls) == 4
     assert security_calls[0].startswith("add-generic-password -a cua-driver-keychain-probe -s ")
     service = security_calls[0].split(" -s ", 1)[1].split(" -w ", 1)[0]
     assert security_calls[0].endswith(f" -w {service} {login_keychain}")
@@ -1067,6 +1201,7 @@ fi
         f"delete-generic-password -a cua-driver-keychain-probe -s {service} "
         f"{login_keychain}"
     )
+    assert security_calls[3] == "list-keychains -d user"
 
 
 def test_required_keychains_fail_when_noninteractive_keychain_is_locked(

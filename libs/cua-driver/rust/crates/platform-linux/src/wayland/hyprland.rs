@@ -35,6 +35,12 @@ struct Client {
     at: [i32; 2],
     size: [i32; 2],
     workspace: Workspace,
+    /// Absent on compositors that do not report it; never read as native.
+    #[serde(default)]
+    xwayland: Option<bool>,
+    /// 0 is the focused client; larger is longer ago. Absent on old builds.
+    #[serde(rename = "focusHistoryID", default)]
+    focus_history: i64,
 }
 
 #[derive(Deserialize)]
@@ -86,15 +92,23 @@ impl DisplayMonitor {
 
     /// The output mode divided by its scale, rounded as Hyprland rounds its
     /// logical monitor size. Window geometry and the layout use this size.
+    /// Hyprland reports the mode in the panel's native orientation; quarter
+    /// turns (wl_output transforms 1 and 3) swap the logical axes, and flipped
+    /// transforms (4-7) are refused.
     fn logical_size(&self) -> Result<(u32, u32)> {
         if !self.scale.is_finite() || self.scale <= 0.0 {
             bail!("invalid Hyprland display scale");
         }
+        if self.transform > 3 {
+            bail!("Hyprland display identity requires unflipped outputs");
+        }
         if !valid_dimensions(self.width, self.height) {
             bail!("invalid Hyprland display dimensions");
         }
-        let logical_width = (f64::from(self.width) / self.scale).round();
-        let logical_height = (f64::from(self.height) / self.scale).round();
+        let (width, height) =
+            super::logical_output_size((self.width, self.height), self.transform);
+        let logical_width = (f64::from(width) / self.scale).round();
+        let logical_height = (f64::from(height) / self.scale).round();
         if !logical_width.is_finite()
             || !logical_height.is_finite()
             || logical_width < 1.0
@@ -170,7 +184,13 @@ pub struct Window {
     pub height: u32,
     pub workspace: i64,
     pub visible: bool,
+    /// `Some(true)` for XWayland, `Some(false)` for native Wayland, `None`
+    /// when the compositor did not report the flag.
+    pub xwayland: Option<bool>,
     hidden: bool,
+    /// Focus recency (0 = focused); the closest thing to z-order Hyprland
+    /// exposes.
+    pub focus_order: i64,
 }
 
 pub fn is_session() -> bool {
@@ -322,7 +342,10 @@ fn query_with<T: serde::de::DeserializeOwned>(
     let deadline = Instant::now() + total;
     // Keep this a closed list: a generic "j/" prefix also admits JSON-formatted
     // dispatch commands. JSON output does not imply a read-only operation.
-    let read_only = matches!(command, "j/monitors" | "j/clients" | "j/activewindow");
+    let read_only = matches!(
+        command,
+        "j/monitors" | "j/clients" | "j/activewindow" | "j/cursorpos"
+    );
     for attempt in 1..=QUERY_MAX_ATTEMPTS {
         query_time_remaining(deadline)?;
         let attempt_deadline = deadline.min(Instant::now() + per_attempt);
@@ -410,7 +433,9 @@ fn windows_from_clients(clients: Vec<Client>, active: &HashSet<i64>) -> Result<V
             height,
             workspace: c.workspace.id,
             visible: !c.hidden && active.contains(&c.workspace.id),
+            xwayland: c.xwayland,
             hidden: c.hidden,
+            focus_order: c.focus_history,
         });
     }
     Ok(windows)
@@ -511,8 +536,11 @@ fn desktop_frame_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<DesktopF
     }
     let mut outputs = Vec::with_capacity(powered.len());
     for monitor in &powered {
-        if monitor.transform != 0 {
-            bail!("Hyprland display identity requires unrotated outputs");
+        // A lone output may be rotated: its logical rectangle swaps axes and
+        // the single-output capture rotates into it. Composing several outputs
+        // assumes unrotated ones, so a rotated output among others refuses.
+        if monitor.transform != 0 && powered.len() > 1 {
+            bail!("Hyprland multi-monitor desktops require unrotated outputs");
         }
         outputs.push(frame_output(monitor)?);
     }
@@ -572,11 +600,13 @@ fn bounding_box(outputs: &[FrameOutput]) -> Result<(i32, i32, u32, u32)> {
 /// Hyprland maps absolute virtual-pointer motion across the bounding box of
 /// every enabled, unmirrored output's logical rectangle; DPMS standby does
 /// not change the layout. Returns `(x, y, width, height)` of that box in
-/// layout coordinates.
+/// layout coordinates. A lone output may be rotated (its logical rectangle
+/// swaps axes); a rotated output among others is refused.
 fn pointer_layout_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<(i32, i32, u32, u32)> {
+    let in_layout: Vec<&DisplayMonitor> = monitors.iter().filter(|m| m.in_layout()).collect();
     let mut outputs = Vec::new();
-    for monitor in monitors.iter().filter(|m| m.in_layout()) {
-        if monitor.transform != 0 {
+    for monitor in &in_layout {
+        if monitor.transform != 0 && in_layout.len() > 1 {
             bail!(
                 "Hyprland pointer layout requires unrotated outputs ({} has transform {}{})",
                 monitor.name,
@@ -734,6 +764,17 @@ fn compose_frame(
     Ok(canvas)
 }
 
+/// wl_output transform of the single active output. Full-display screencopy
+/// frames arrive in the panel's native orientation; callers use this to turn
+/// them into the logical desktop frame.
+pub fn single_output_transform() -> Result<u32> {
+    let monitors: Vec<DisplayMonitor> = query("j/monitors")?;
+    let [monitor] = monitors.as_slice() else {
+        bail!("Hyprland display identity requires exactly one active output");
+    };
+    Ok(monitor.transform)
+}
+
 pub fn list_windows() -> Result<Vec<Window>> {
     let monitors: Vec<Monitor> = query("j/monitors")?;
     let active = monitors
@@ -743,6 +784,37 @@ pub fn list_windows() -> Result<Vec<Window>> {
         .filter(|id| *id != 0)
         .collect();
     windows_from_clients(query("j/clients")?, &active)
+}
+
+#[derive(Deserialize)]
+struct CursorPos {
+    x: f64,
+    y: f64,
+}
+
+/// The pointer in Hyprland's global layout coordinates.
+pub fn cursor_position() -> Result<(f64, f64)> {
+    let pos: CursorPos = query("j/cursorpos")?;
+    Ok((pos.x, pos.y))
+}
+
+/// Move the pointer (`dispatch movecursor`), no button state. For the
+/// presence shape probe only.
+pub fn move_cursor(x: f64, y: f64) -> Result<()> {
+    let mut ipc = ipc_connection()?;
+    let command = format!(
+        "dispatch movecursor {} {}",
+        x.round() as i64,
+        y.round() as i64
+    );
+    let reply = read_reply(&mut ipc, command.as_bytes(), QUERY_TIMEOUT)?;
+    if reply.trim_ascii() != b"ok" {
+        bail!(
+            "Hyprland movecursor refused: {}",
+            String::from_utf8_lossy(&reply)
+        );
+    }
+    Ok(())
 }
 
 pub fn window_for_address(address: u64) -> Option<Window> {
@@ -769,6 +841,21 @@ fn accessibility_target(windows: &[Window], address: u64, pid: u32) -> Option<Wi
             .count()
             == 1)
         .then(|| target.clone())
+}
+
+/// True only when the compositor positively identifies the exact
+/// `(address, pid)` client as native Wayland. A zero address, missing or
+/// mismatched window, or an absent/XWayland flag all refuse.
+pub fn native_client_attested(address: u64, pid: u32) -> bool {
+    list_windows().is_ok_and(|windows| native_attestation(&windows, address, pid))
+}
+
+fn native_attestation(windows: &[Window], address: u64, pid: u32) -> bool {
+    address != 0
+        && windows
+            .iter()
+            .find(|w| w.address == address)
+            .is_some_and(|w| w.pid == pid && w.xwayland == Some(false))
 }
 
 /// The legacy PID-only bounds caller has no window identity: allow only a
@@ -852,8 +939,44 @@ mod tests {
             height: 600,
             workspace: 1,
             visible: true,
+            xwayland: Some(false),
             hidden: false,
+            focus_order: 0,
         }
+    }
+
+    #[test]
+    fn native_attestation_requires_exact_address_pid_and_native_flag() {
+        let native = window(0x10, 42);
+        let mut xwayland = window(0x20, 42);
+        xwayland.xwayland = Some(true);
+        let mut absent = window(0x30, 42);
+        absent.xwayland = None;
+        let windows = [native, xwayland, absent];
+        assert!(native_attestation(&windows, 0x10, 42));
+        assert!(!native_attestation(&windows, 0x20, 42));
+        assert!(!native_attestation(&windows, 0x30, 42));
+        assert!(!native_attestation(&windows, 0x10, 43));
+        assert!(!native_attestation(&windows, 0x40, 42));
+        assert!(!native_attestation(&windows, 0, 42));
+    }
+
+    #[test]
+    fn client_xwayland_flag_is_tri_state() {
+        let active = HashSet::from([1]);
+        let with = |flag: Option<bool>| {
+            let mut c = client("0x10", 42, [800, 600]);
+            c.xwayland = flag;
+            windows_from_clients(vec![c], &active)
+                .unwrap()
+                .remove(0)
+                .xwayland
+        };
+        assert_eq!(with(Some(true)), Some(true));
+        assert_eq!(with(Some(false)), Some(false));
+        assert_eq!(with(None), None);
+        // `client()` omits the field entirely: absent must deserialize to None.
+        assert_eq!(client("0x10", 42, [800, 600]).xwayland, None);
     }
 
     #[test]
@@ -871,7 +994,7 @@ mod tests {
     fn accessibility_correlation_rejects_duplicate_compositor_titles() {
         let a = window(0x10, 42);
         let b = window(0x20, 42);
-        assert!(accessibility_target(&[a.clone()], a.address, a.pid).is_some());
+        assert!(accessibility_target(std::slice::from_ref(&a), a.address, a.pid).is_some());
         assert!(accessibility_target(&[a.clone(), b], a.address, a.pid).is_none());
     }
 
@@ -1487,11 +1610,15 @@ mod tests {
     fn pointer_space_falls_back_only_for_a_single_unqualified_output() {
         let mut rotated = monitor_at("B", 0, 0);
         rotated.transform = 1;
-        // One rotated output: its own mode is the whole layout.
+        // One rotated output: its logical rectangle (axes swapped) is the layout.
         assert_eq!(
             pointer_space_from_monitors(vec![rotated.clone()]).unwrap(),
-            None
+            Some((0, 0, 1080, 1920))
         );
+        // One flipped output stays unqualified: its own mode is the whole layout.
+        let mut flipped = monitor_at("B", 0, 0);
+        flipped.transform = 5;
+        assert_eq!(pointer_space_from_monitors(vec![flipped]).unwrap(), None);
         // A rotated output in standby beside a powered one: no fallback is right.
         rotated.dpms_status = false;
         let monitors = vec![monitor_at("A", -1920, 0), rotated];
@@ -1507,6 +1634,18 @@ mod tests {
                 .unwrap(),
             Some((-1920, 0, 3840, 1080))
         );
+    }
+
+    #[test]
+    fn desktop_frame_allows_rotation_only_for_a_lone_output() {
+        let mut rotated = monitor_at("A", 0, 0);
+        rotated.transform = 1;
+        let frame = desktop_frame_from_monitors(vec![rotated.clone()]).unwrap();
+        assert_eq!((frame.width, frame.height), (1080, 1920));
+        assert!(desktop_frame_from_monitors(vec![rotated, monitor_at("B", 1080, 0)]).is_err());
+        let mut flipped = monitor_at("A", 0, 0);
+        flipped.transform = 4;
+        assert!(desktop_frame_from_monitors(vec![flipped]).is_err());
     }
 
     #[test]
@@ -1542,6 +1681,16 @@ mod tests {
                     + (f64::from(abs_y) / f64::from(extent_h) * f64::from(layout.3)).round() as i32,
             );
             assert_eq!(landed, (layout_x, layout_y), "frame point {point:?}");
+        }
+    }
+
+    #[test]
+    fn display_identity_reports_the_logical_frame_of_rotated_outputs() {
+        for (transform, expected) in [(1, (1080, 1920)), (2, (1920, 1080)), (3, (1080, 1920))] {
+            let mut monitor = display_monitor();
+            monitor.transform = transform;
+            let (width, height, _) = screen_size_from_monitors(vec![monitor]).unwrap();
+            assert_eq!((width, height), expected, "transform {transform}");
         }
     }
 
@@ -1586,7 +1735,7 @@ mod tests {
             monitor.scale = scale;
             assert!(screen_size_from_monitors(vec![monitor]).is_err());
         }
-        for transform in [1, 7] {
+        for transform in [4, 7] {
             let mut monitor = display_monitor();
             monitor.transform = transform;
             assert!(screen_size_from_monitors(vec![monitor]).is_err());

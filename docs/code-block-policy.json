@@ -1,0 +1,130 @@
+{
+  "$comment": "Dispositions for fenced code blocks in docs/content/docs (enforced by tests/e2e/cua-sdk/docs/extract.py --lint). Every fence carries exactly one of test=\"<lane>[,<lane>]\" id=\"<id>\", skip=\"<reason>\" or output. A lane is listed here only once a runner executes it; a skip reason names its owner and, optionally, an expiry date after which the linter rejects it. Each lane names the e2e lane (tests/e2e/cua-sdk/scenarios.json) whose run must produce a result for every block tagged with it (docs-coverage).",
+  "lanes": {
+    "docs": {
+      "e2e": "docs",
+      "what": "Python and TypeScript blocks run hermetically by tests/e2e/cua-sdk/python/test_docs_blocks.py (sessions, hidden preludes such as fakefleet)"
+    },
+    "container": {
+      "e2e": "container",
+      "what": "Python / TypeScript blocks that start local sandboxes (Docker, gVisor), run by test_docs_blocks.py in the container lane"
+    },
+    "fleet": {
+      "e2e": "fleet",
+      "what": "whole scripts against live Fleet (nightly; pools cua-e2e-<run>-docs-*)"
+    },
+    "contrib": {
+      "e2e": "contrib",
+      "what": "Python blocks on contrib providers (on=\"daytona\", ...) against cua-contrib-fixtures (schema mocks of the provider APIs and a mock cua-spacesd), run by test_docs_blocks.py in the contrib lane of .github/workflows/ci-cua-contrib.yml"
+    },
+    "terraform": {
+      "e2e": "docs",
+      "what": "terraform init -backend=false + validate"
+    },
+    "cli-shape": {
+      "e2e": "cli-shape",
+      "what": "every cua, cua-driver and lume command in the block parses against the CLI's generated definition (scripts/docs-generators/cli-specs); nothing runs"
+    },
+    "config": {
+      "e2e": "config",
+      "what": "JSON, JSONC, YAML and TOML blocks parse, and validate against schema=<name> when given (tests/e2e/cua-sdk/docs/config_lane.py)"
+    },
+    "excerpt": {
+      "e2e": null,
+      "what": "the block is byte-identical to a marked region (// #region docs:<id>) of a file CI builds, named by source=\"<repo path>#<id>\"; extract.py --lint checks it"
+    },
+    "lume": {
+      "e2e": "lume",
+      "what": "bash blocks run on a disposable macOS CI machine (tests/e2e/cua-sdk/docs/shell_lane.py --lane lume; nightly)"
+    },
+    "windows": {
+      "e2e": "windows",
+      "what": "PowerShell blocks run on a disposable Windows CI machine (tests/e2e/cua-sdk/docs/shell_lane.py --lane windows; nightly)"
+    },
+    "swift": {
+      "e2e": "swift",
+      "what": "Swift blocks compile against libs/cua/swift (tests/e2e/cua-sdk/docs/compile_lane.py --lane swift; compile-only)"
+    },
+    "kotlin": {
+      "e2e": "kotlin",
+      "what": "Kotlin blocks compile against libs/cua/kotlin (tests/e2e/cua-sdk/docs/compile_lane.py --lane kotlin; compile-only)"
+    }
+  },
+  "skip": {
+    "host-install": {
+      "owner": "docs",
+      "why": "installs software on the reader's machine (package managers, curl | sh installers)"
+    },
+    "host-macos-permissions": {
+      "owner": "cua-driver",
+      "why": "needs macOS TCC grants (Accessibility, Screen Recording) on a real Mac"
+    },
+    "macos-vm": {
+      "owner": "lume",
+      "why": "needs a macOS host with nested virtualization (nightly Lume lane)"
+    },
+    "windows-host": {
+      "owner": "cua-driver",
+      "why": "needs an interactive Windows session (nightly Windows lane)"
+    },
+    "destructive": {
+      "owner": "docs",
+      "why": "deletes or overwrites user state; never run by CI"
+    },
+    "placeholder": {
+      "owner": "docs",
+      "why": "a template the reader fills in; must show a visible placeholder such as <name> or ...",
+      "requires_placeholder": true
+    },
+    "third-party-cli": {
+      "owner": "docs",
+      "why": "drives a third-party tool or service CI cannot reach (cloud consoles, agents, editors)"
+    },
+    "pseudo": {
+      "owner": "docs",
+      "why": "illustrative pseudo-code or an excerpt that is not meant to run on its own"
+    },
+    "diagram": {
+      "owner": "docs",
+      "why": "a diagram (mermaid) rendered by the site, not code"
+    },
+    "legacy-frozen": {
+      "owner": "docs",
+      "why": "documents a legacy surface kept for existing users; frozen until the page is retired",
+      "expires": "2027-03-31"
+    },
+    "browser": {
+      "owner": "docs",
+      "why": "runs in a web page (the wasm build); exercised by the e2e suite's playwright browser lane, not as a docs block"
+    },
+    "no-runner": {
+      "owner": "docs",
+      "why": "needs a runner no docs lane has yet (a local Docker service started by hand, repository bench scripts, live media streaming, sample build steps); retag when the lane exists",
+      "expires": "2027-03-31"
+    },
+    "live-cloud-only": {
+      "owner": "sandbox",
+      "why": "needs something only a real cloud image serves (an image's own web display page), in a fragment of a page whose image the reader supplies. The fake Fleet of cua-test-fixtures gives every claim a cua-spacesd and the signed-URL API, so other cloud fragments run on PRs."
+    },
+    "many-sandboxes": {
+      "owner": "sandbox",
+      "why": "starts several desktop sandboxes at once (fan-out examples); beyond a CI runner's memory, and the single-sandbox calls it uses are tested elsewhere"
+    },
+    "cua-spaces": {
+      "owner": "spaces",
+      "why": "needs the Cua Spaces daemon (source-available, FSL-1.1-MIT), whose Keyvault asks the user to approve; the open source SDK lanes run without it. cua-spaces-ext's tests (spaces_daemon_boundary, e2e_teleport_app) and the binding smoke tests cover these calls through the daemon"
+    },
+    "local-vm": {
+      "owner": "sandbox",
+      "why": "boots a local QEMU VM (bare-metal acceleration); the nightly qemu lane covers local VMs through the local-qemu scenario tests"
+    },
+    "your-cloud": {
+      "owner": "docs",
+      "why": "creates billable resources in the reader's own cloud account (AWS, Google Cloud, Modal); cua-byoc's hermetic tests (a scripted cloud and the fake relay) and the manual cloud conformance suite (apps/cua-spaces-macos/scripts/reliability/cloud_suite.py) cover these calls"
+    }
+  },
+  "schemas": {
+    "mcp-client-config": "tests/e2e/cua-sdk/docs/schemas/mcp-client-config.schema.json",
+    "cua-image": "libs/cua/crates/cua-image/schema/image-v1alpha1.schema.json"
+  }
+}

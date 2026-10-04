@@ -1,5 +1,21 @@
 import Foundation
 
+/// Byte-level progress of an image pull.
+struct PullProgress: Sendable, Equatable {
+    /// Downloaded share of the image, 0 to 100.
+    var percent: Double
+    /// Bytes downloaded so far (finished layers, cached layers and in-flight transfers).
+    var downloadedBytes: Int64
+    /// Total bytes to download (0 until the manifest is known).
+    var totalBytes: Int64
+    /// Smoothed network transfer rate in bytes per second.
+    var bytesPerSecond: Double
+
+    static let zero = PullProgress(percent: 0, downloadedBytes: 0, totalBytes: 0, bytesPerSecond: 0)
+}
+
+typealias PullProgressHandler = @Sendable (PullProgress) -> Void
+
 /// Protocol defining the interface for image registries (ghcr, gcs, etc.)
 protocol ImageRegistry: Sendable {
     /// Pull an image from the registry
@@ -14,7 +30,7 @@ protocol ImageRegistry: Sendable {
         name: String?,
         locationName: String?,
         force: Bool,
-        progressHandler: (@Sendable (Double) -> Void)?
+        progressHandler: PullProgressHandler?
     ) async throws -> VMDirectory
 
     /// Push a VM to the registry
@@ -45,7 +61,7 @@ protocol ImageRegistry: Sendable {
 
 // Default implementations for optional parameters
 extension ImageRegistry {
-    func pull(image: String, name: String? = nil, locationName: String? = nil, force: Bool = false, progressHandler: (@Sendable (Double) -> Void)? = nil) async throws -> VMDirectory {
+    func pull(image: String, name: String? = nil, locationName: String? = nil, force: Bool = false, progressHandler: PullProgressHandler? = nil) async throws -> VMDirectory {
         try await pull(image: image, name: name, locationName: locationName, force: force, progressHandler: progressHandler)
     }
 

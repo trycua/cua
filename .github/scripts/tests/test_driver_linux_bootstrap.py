@@ -66,14 +66,14 @@ class TestDriverLinuxBootstrap(unittest.TestCase):
             for line in self.bootstrap.replace("\\\n", " ").splitlines()
             if line.startswith("apt-get ")
         ]
-        self.assertEqual(commands[0], ["apt-get", "-o", "Dir::Etc::sourceparts=-", "update"])
+        self.assertEqual(commands[0], ["apt-get", "-o", "Dir::Etc::sourceparts=-", "-o", "Acquire::Retries=5", "update"])
         self.assertEqual(
-            commands[1][:6],
-            ["apt-get", "-o", "Dir::Etc::sourceparts=-", "install", "-y", "--no-install-recommends"],
+            commands[1][:8],
+            ["apt-get", "-o", "Dir::Etc::sourceparts=-", "-o", "Acquire::Retries=5", "install", "-y", "--no-install-recommends"],
         )
         self.assertEqual(len(commands), 2)
         self.assertEqual(
-            set(commands[1][6:]),
+            set(commands[1][8:]),
             {
                 "git", "ca-certificates", "curl", "python3", "build-essential", "pkg-config",
                 "libx11-dev", "libxi-dev", "libxtst-dev", "libxext-dev", "libwayland-dev",

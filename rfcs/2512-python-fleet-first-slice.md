@@ -6,6 +6,8 @@ discussion: https://github.com/trycua/cua/issues/2512
 parent_rfc: 2512-cua-driver-environment-convergence.md
 ---
 
+> **Status (Sep 2026):** historical design record. computer-server was removed in the consolidation: sandboxes now run cua-env-driver (port 3211), which hosts cua-driver's MCP at `/mcp` and is reached through the cua SDK (`libs/cua`). References below to computer-server as a current or compatibility service describe the state when this RFC was written.
+
 # RFC 2512: Python and Fleet first delivery slice
 
 ## Accepted delivery direction

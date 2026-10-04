@@ -1205,7 +1205,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver"
-version = "0.31.0"
+version = "0.33.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1216,6 +1216,7 @@ dependencies = [
  "cua-driver-core",
  "cua-driver-sdk",
  "cua-driver-testkit",
+ "cua-telemetry",
  "cursor-overlay",
  "embed-resource",
  "flate2",
@@ -1247,7 +1248,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-bindgen"
-version = "0.31.0"
+version = "0.33.3"
 dependencies = [
  "cbindgen",
  "uniffi",
@@ -1255,7 +1256,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.31.0"
+version = "0.33.3"
 dependencies = [
  "schemars",
  "serde",
@@ -1265,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.31.0"
+version = "0.33.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1303,7 +1304,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-e2e"
-version = "0.31.0"
+version = "0.33.3"
 dependencies = [
  "base64",
  "core-foundation",
@@ -1332,7 +1333,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-sdk"
-version = "0.31.0"
+version = "0.33.3"
 dependencies = [
  "async-trait",
  "core-foundation",
@@ -1355,7 +1356,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-testkit"
-version = "0.31.0"
+version = "0.33.3"
 dependencies = [
  "arbitrary",
  "async-trait",
@@ -1376,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-uia"
-version = "0.31.0"
+version = "0.33.3"
 dependencies = [
  "anyhow",
  "cua-driver-core",
@@ -1405,11 +1406,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-telemetry"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml_edit 0.25.12+spec-1.1.0",
+]
+
+[[package]]
 name = "cursor-overlay"
-version = "0.31.0"
+version = "0.33.3"
 dependencies = [
  "anyhow",
  "cua-driver-contract",
+ "cua-driver-core",
  "fontdue",
  "image",
  "indexmap",
@@ -1424,7 +1438,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-theme-cli"
-version = "0.31.0"
+version = "0.33.3"
 dependencies = [
  "anyhow",
  "cursor-overlay",
@@ -3434,7 +3448,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pip-preview"
-version = "0.31.0"
+version = "0.33.3"
 dependencies = [
  "serde_json",
 ]
@@ -3492,7 +3506,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-linux"
-version = "0.31.0"
+version = "0.33.3"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -3546,7 +3560,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.31.0"
+version = "0.33.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3585,7 +3599,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.31.0"
+version = "0.33.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4050,9 +4064,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.40"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "log",
  "once_cell",
@@ -4074,9 +4088,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -4538,7 +4552,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.2",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -4812,6 +4826,7 @@ dependencies = [
  "indexmap",
  "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.3",
 ]
 

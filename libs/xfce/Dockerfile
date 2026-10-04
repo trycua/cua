@@ -1,5 +1,5 @@
 # Cua Docker XFCE Container
-# Vanilla XFCE desktop with noVNC and computer-server
+# Vanilla XFCE desktop with noVNC and cua-spacesd
 # Uses the official KiCad 9 image as base (Debian Bookworm + KiCad 9 pre-installed)
 
 FROM kicad/kicad:9.0
@@ -12,7 +12,7 @@ ENV HOME=/home/cua
 ENV DISPLAY=:1
 ENV VNC_PORT=5901
 ENV NOVNC_PORT=6901
-ENV API_PORT=8000
+ENV CUA_ENV_PORT=3211
 ENV VNC_RESOLUTION=1024x768
 ENV VNC_COL_DEPTH=24
 
@@ -52,7 +52,7 @@ RUN apt-get update && apt-get install -y \
     net-tools \
     netcat-openbsd \
     supervisor \
-    # computer-server dependencies (screenshot, mouse, clipboard)
+    # Desktop tooling (screenshot, window control, clipboard)
     gnome-screenshot \
     wmctrl \
     ffmpeg \
@@ -61,6 +61,7 @@ RUN apt-get update && apt-get install -y \
     # Browser (used by agent)
     wget \
     ca-certificates \
+    curl \
     firefox-esr \
     # GTK/WebKit for pywebview (cua-bench-ui task display)
     gir1.2-gtk-3.0 \
@@ -106,7 +107,6 @@ RUN git clone https://github.com/trycua/noVNC.git /opt/noVNC && \
 
 # Install Python packages into /opt/venv (Python 3.13)
 RUN uv pip install --python /opt/venv/bin/python3 \
-    cua-computer-server \
     "cua-agent[all]" \
     "pywebview[gtk]" \
     "cua-bench-ui>=0.7.0" \
@@ -127,14 +127,38 @@ RUN uv pip install --python /opt/venv/bin/python3 \
     "matplotlib>=3.8.0" \
     "anthropic>=0.26.0"
 
-# Install the typed Cua Driver SDK and its bundled executable. The image keeps
-# computer-server as its active remote API until a transport adapter is chosen.
+# Install the typed Cua Driver SDK and its bundled executable for co-located
+# applications. The remote API is cua-spacesd (installed below).
 COPY requirements-cua-driver.txt /tmp/requirements-cua-driver.txt
 RUN uv pip install --python /opt/venv/bin/python3 --no-cache-dir \
         -r /tmp/requirements-cua-driver.txt && \
     /opt/venv/bin/python3 -c \
         "from pathlib import Path; from cua_driver import CuaDriver, get_binary_path; assert Path(get_binary_path()).is_file()" && \
     /opt/venv/bin/cua-driver --version
+
+# Install cua-spacesd, the in-sandbox daemon (gRPC + gRPC-Web on :3211).
+# Same artifact as libs/cua-spacesd/packaging/install.sh installs.
+ARG CUA_SPACESD_VERSION=0.1.0
+# release (default) installs the published cua-spacesd; none leaves it out
+# (pull-request builds before that version is published).
+ARG CUA_SPACESD_SOURCE=release
+ARG TARGETARCH
+RUN set -eux; \
+    if [ "$CUA_SPACESD_SOURCE" = none ]; then \
+      echo "CUA_SPACESD_SOURCE=none: cua-spacesd not installed"; exit 0; \
+    fi; \
+    [ "$CUA_SPACESD_SOURCE" = release ] || { echo "CUA_SPACESD_SOURCE must be release or none" >&2; exit 1; }; \
+    case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
+      amd64|x86_64) arch=x86_64 ;; \
+      arm64|aarch64) arch=aarch64 ;; \
+      *) echo "unsupported arch" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/trycua/cua/releases/download/cua-spacesd-v${CUA_SPACESD_VERSION}/cua-spacesd-${arch}-unknown-linux-gnu.tar.gz"; \
+    curl -fsSL "$url" | tar -xz -C /usr/local/bin cua-spacesd; \
+    chmod 0755 /usr/local/bin/cua-spacesd; \
+    ln -s cua-spacesd /usr/local/bin/cua-env-driver; \
+    ln -s cua-spacesd /usr/local/bin/cua-guestd
+RUN install -d -o cua -g cua -m 0700 /run/cua
 
 # Copy startup scripts
 COPY src/supervisor/ /etc/supervisor/conf.d/
@@ -169,7 +193,7 @@ RUN mkdir -p $HOME/storage $HOME/shared $HOME/.cache/dconf $HOME/.mozilla/firefo
 USER root
 
 # Expose ports
-EXPOSE $VNC_PORT $NOVNC_PORT $API_PORT
+EXPOSE $VNC_PORT $NOVNC_PORT $CUA_ENV_PORT
 
 # Start services via supervisor
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]

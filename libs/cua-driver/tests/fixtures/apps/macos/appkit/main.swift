@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // CuaTestHarness.AppKit — deterministic Cocoa AppKit host app for the
 // cua-driver-rs test harness. Mirrors the role of CuaTestHarness.Wpf.
 //
@@ -12,6 +15,9 @@
 //   click_target   — NSButton (AX-addressable) records click/double_click/right_click
 //   slider         — NSSlider drives drag / set_value (slider_value=)
 //   checkable_controls — NSButton checkbox (agreed=)
+//   erroring_toggles — opt-in (CUA_APPKIT_ERRORING_TOGGLES=1): two checkboxes
+//                    whose accessibility press raises, so AppKit answers AXPress
+//                    with an AX error; one toggles before raising (#3835)
 //   context_menu   — NSButton + NSMenu (Cut/Copy/Paste → menu_action=)
 //   scroll_target  — NSScrollView with a tall body and offset label
 //   ns_menubar     — main menu item with known title (Mac-specific)
@@ -49,6 +55,10 @@ let kSliderAID = "sld-value"
 let kSliderValueAID = "lbl-slider-value"
 let kCheckboxAID = "chk-agree"
 let kCheckStateAID = "lbl-chk-state"
+let kErroringTogglesEnv = "CUA_APPKIT_ERRORING_TOGGLES"
+let kActsThenErrorsAID = "chk-acts-then-errors"
+let kErrorsOnlyAID = "chk-errors-only"
+let kErroringTogglesStateAID = "lbl-erroring-toggles"
 let kSelectionStateAID = "lbl-selection-state"
 let kContextButtonAID = "btn-context"
 let kMenuActionAID = "lbl-menu-action"
@@ -123,6 +133,9 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     var clicks = 0
     let sliderValueLabel = NSTextField(labelWithString: "slider_value=0")
     let checkStateLabel = NSTextField(labelWithString: "agreed=false")
+    let actsThenErrors = RaisingCheckbox(checkboxWithTitle: "Acts then errors", target: nil, action: nil)
+    let errorsOnly = RaisingCheckbox(checkboxWithTitle: "Errors only", target: nil, action: nil)
+    let erroringTogglesLabel = NSTextField(labelWithString: "")
     let selectionItems = ["alpha", "beta", "gamma"]
     let selectionTable = NSTableView()
     let selectionStateLabel = NSTextField(labelWithString: "selection=none")
@@ -241,7 +254,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         content.addArrangedSubview(inputRow)
 
         // click_target — a REAL NSButton so it is in the AX tree and addressable
-        // by element_index (AppKit NSButton ignores synthetic pixel clicks, but
+        // by element_token (AppKit NSButton ignores synthetic pixel clicks, but
         // AXPress works). AXPress / single mouse → click; pixel double → double_click;
         // right-click → right_click. (matches WPF btn-clicktarget contract.)
         content.addArrangedSubview(sectionLabel("click_target"))
@@ -387,6 +400,9 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         if taskStatePath != nil {
             addTaskControls(to: content)
         }
+        if ProcessInfo.processInfo.environment[kErroringTogglesEnv] == "1" {
+            addErroringToggles(to: content)
+        }
 
         // No outer scroll-view wrap: the content is sized to fit the window
         // so the only scrollable surface is the inner scroll_target NSScrollView.
@@ -451,6 +467,34 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
             sizeRow.addArrangedSubview(radio)
         }
         content.addArrangedSubview(sizeRow)
+    }
+
+    /// Opt-in erroring toggles (#3835), appended below Exit like the task
+    /// controls so every ordinary control keeps its position. The label is the
+    /// fixture's own record of both states.
+    private func addErroringToggles(to content: NSStackView) {
+        content.addArrangedSubview(sectionLabel("erroring_toggles"))
+        actsThenErrors.setAccessibilityIdentifier(kActsThenErrorsAID)
+        actsThenErrors.toggles = true
+        errorsOnly.setAccessibilityIdentifier(kErrorsOnlyAID)
+        erroringTogglesLabel.setAccessibilityIdentifier(kErroringTogglesStateAID)
+        erroringTogglesLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 12
+        for box in [actsThenErrors, errorsOnly] {
+            box.state = .off
+            box.onChange = { [weak self] in self?.recordErroringToggles() }
+            row.addArrangedSubview(box)
+        }
+        row.addArrangedSubview(erroringTogglesLabel)
+        content.addArrangedSubview(row)
+        recordErroringToggles()
+    }
+
+    private func recordErroringToggles() {
+        erroringTogglesLabel.stringValue =
+            "acts_then_errors=\(actsThenErrors.state == .on) errors_only=\(errorsOnly.state == .on)"
     }
 
     /// Benign distractor controls for density mode (#4312): a grid of buttons,
@@ -709,10 +753,28 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
 
 // MARK: - Click target button
 
-// A real NSButton (so it shows up in the AX tree and is element_index-addressable
+// A real NSButton (so it shows up in the AX tree and is element_token-addressable
 // via AXPress) that additionally reports double-click and right-click. AXPress and
 // single mouse-up fire the target/action (→ click); a pixel double-click is caught
 // here before super so it reports double_click; right-click reports right_click.
+/// A checkbox whose accessibility press raises after optionally toggling.
+/// AppKit answers that AXPress with an AX error, as Finder's toolbar view
+/// switcher does after it has switched the view (#3835).
+final class RaisingCheckbox: NSButton {
+    var toggles = false
+    var onChange: (() -> Void)?
+
+    override func accessibilityPerformPress() -> Bool {
+        if toggles {
+            state = state == .on ? .off : .on
+            onChange?()
+        }
+        NSException(name: .genericException, reason: "harness press handler raised",
+                    userInfo: nil).raise()
+        return false
+    }
+}
+
 final class ClickTargetButton: NSButton {
     weak var harness: HarnessWindowController?
 

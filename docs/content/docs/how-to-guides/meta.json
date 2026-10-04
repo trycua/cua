@@ -1,5 +1,0 @@
-{
-  "title": "How-to guides",
-  "icon": "Wrench",
-  "pages": ["index", "driver", "sandbox", "lume", "cua-bench", "recipes", "agent-context"]
-}

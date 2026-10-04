@@ -1,6 +1,6 @@
 //! Win32 agent-cursor overlay — transparent, click-through layered window.
 //!
-//! Matches the C# reference in CuaDriver.Win/Cursor/AgentCursorOverlay.cs:
+//! Design:
 //!
 //! - Extended style: `WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`
 //! - Spans the virtual screen (all monitors).
@@ -34,9 +34,11 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
+#[cfg(target_os = "windows")]
+use cursor_overlay::SurfaceFit;
 use cursor_overlay::{
     CursorConfig, CursorKey, KeyedOverlayCommand, MotionConfig, MsgOutcome, OverlayCommand,
-    OverlayMsg, RenderEntry, RenderStateCore, ScreenFrame, ZOrderEnforcer,
+    OverlayMsg, RenderEntry, RenderStateCore, ScreenFrame, SurfaceGeometry, ZOrderEnforcer,
 };
 
 // ── Global channel ────────────────────────────────────────────────────────
@@ -86,7 +88,9 @@ fn arrival_cancel(key: &CursorKey) {
 // ── Keyed render collection ───────────────────────────────────────────────
 
 /// Virtual-screen geometry and timing kept beside the shared keyed render map
-/// (screen-global, written once in `run_overlay_thread`).
+/// (screen-global, written in `run_overlay_thread`, then refitted by the
+/// WM_TIMER handler when the display layout changes; see
+/// [`cursor_overlay::SurfaceFit`]).
 struct WinScreen {
     /// Virtual screen bounds (Win32 DIPs). `virt_x/y` are subtracted from each
     /// cursor's `core.pos` when rendering so the pixmap is laid out in
@@ -102,6 +106,22 @@ struct WinScreen {
 }
 
 impl WinScreen {
+    /// The geometry the layered surface covers (Win32 DIPs, scale 1).
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    fn geometry(&self) -> Option<SurfaceGeometry> {
+        self.frame().map(|frame| SurfaceGeometry::new(frame, 1.0))
+    }
+
+    /// Cover `geometry`. The next composite recreates the surface at the new
+    /// bounds and its first present moves and resizes the layered window.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    fn refit(&mut self, geometry: SurfaceGeometry) {
+        self.virt_x = geometry.frame.x.round() as i32;
+        self.virt_y = geometry.frame.y.round() as i32;
+        self.virt_w = geometry.frame.width.round() as i32;
+        self.virt_h = geometry.frame.height.round() as i32;
+    }
+
     fn frame(&self) -> Option<ScreenFrame> {
         (self.virt_w > 0 && self.virt_h > 0).then(|| {
             ScreenFrame::new(
@@ -184,13 +204,21 @@ pub fn init(cfg: CursorConfig) {
     ));
 }
 
+/// Whether commands for `key` reach the renderer: not the empty no-cursor
+/// key (direct platform calls that bypass lifecycle dispatch), and not a
+/// human-origin session, whose client draws the human's own cursor (see
+/// `cua_driver_core::agent_cursor`).
+pub(crate) fn draws_cursor(key: &str) -> bool {
+    !key.is_empty() && !cua_driver_core::agent_cursor::overlay_suppressed(key)
+}
+
 /// Send a keyed command from any thread (MCP tool, etc.). Non-blocking; drops
 /// if the channel is full (old commands are less important than new ones).
 ///
 /// Empty key = anonymous (no session declared) → no cursor; the command is
 /// dropped so a cursor-less run never paints. See `tools::resolve_cursor_key`.
 pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
-    if key.is_empty() {
+    if !draws_cursor(&key) {
         return;
     }
     if let Some(tx) = CMD_TX.get() {
@@ -376,14 +404,10 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
 
     let should_animate = {
         let guard = RENDER.lock().unwrap();
-        match guard.as_ref().and_then(|m| m.cursors.get(&key)) {
-            Some(rs)
-                if rs.core.cfg.enabled && cursor_overlay::render_state::is_placed(rs.core.pos) =>
-            {
-                true
-            }
-            _ => false,
-        }
+        matches!(
+            guard.as_ref().and_then(|m| m.cursors.get(&key)),
+            Some(rs) if rs.core.cfg.enabled && cursor_overlay::render_state::is_placed(rs.core.pos)
+        )
     };
     if !should_animate {
         return;
@@ -527,6 +551,8 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
                 virt_h,
                 last_tick: Instant::now(),
             };
+            let applied = map.platform.geometry();
+            SURFACE_FIT.with(|fit| *fit.borrow_mut() = SurfaceFit::new(applied));
         }
     }
 
@@ -577,7 +603,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     }
     let hwnd = hwnd.unwrap();
 
-    // Show without activation (mirrors ShowWithoutActivation in C# ref).
+    // Show without activation.
     unsafe {
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     }
@@ -831,6 +857,10 @@ impl Drop for WinSurface {
 
 #[cfg(target_os = "windows")]
 thread_local! {
+    /// The geometry the overlay window was last fitted to. Overlay-thread
+    /// only; seeded in `run_overlay_thread`.
+    static SURFACE_FIT: std::cell::RefCell<SurfaceFit> =
+        std::cell::RefCell::new(SurfaceFit::new(None));
     /// The persistent render surface. Overlay-thread only. `None` while the
     /// loop is parked at the IDLE cadence (freed to keep idle memory flat).
     static SURFACE: std::cell::RefCell<Option<WinSurface>> =
@@ -1001,7 +1031,7 @@ unsafe fn present_surface(hwnd: windows::Win32::Foundation::HWND, dirty: DirtyRe
 // static (issue #1808). `TIMER_PERIOD_MS` is the cadence the timer is currently
 // armed at; the WM_TIMER handler flips it based on `RenderMap::needs_frame_tick`.
 const TIMER_ID: usize = 1;
-const TIMER_MS_ACTIVE: u32 = 8; // ~125 Hz, matches the C# reference render rate
+const TIMER_MS_ACTIVE: u32 = 8; // ~125 Hz render rate
 const TIMER_MS_HOVER: u32 = 80; // low-cost hardware-pointer hover sampling
 const TIMER_MS_IDLE: u32 = 250; // slow heartbeat: drain channel, stay responsive
 /// Current armed timer cadence in ms. Compared against the desired cadence each
@@ -1010,6 +1040,27 @@ static TIMER_PERIOD_MS: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(TIMER_MS_ACTIVE);
 
 // ── Window procedure ──────────────────────────────────────────────────────
+
+/// The live virtual-screen bounds (all monitors) in Win32 DIPs.
+#[cfg(target_os = "windows")]
+fn virtual_screen_geometry() -> Option<SurfaceGeometry> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN,
+    };
+    let (x, y, w, h) = unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    };
+    Some(SurfaceGeometry::new(
+        ScreenFrame::new(f64::from(x), f64::from(y), f64::from(w), f64::from(h)),
+        1.0,
+    ))
+}
 
 #[cfg(target_os = "windows")]
 unsafe extern "system" fn wnd_proc(
@@ -1100,6 +1151,21 @@ unsafe extern "system" fn wnd_proc(
                     }
 
                     let now = Instant::now();
+                    // Follow display-layout changes (resolution, monitor
+                    // attach) so screen-coordinate cursors stay on the pointer.
+                    let refit = SURFACE_FIT.with(|fit| {
+                        let mut fit = fit.borrow_mut();
+                        if !fit.due(now) {
+                            return false;
+                        }
+                        match fit.observe(now, virtual_screen_geometry()) {
+                            Some(geometry) => {
+                                map.platform.refit(geometry);
+                                true
+                            }
+                            None => false,
+                        }
+                    });
                     let real_dt = now.duration_since(map.platform.last_tick).as_secs_f64();
                     // Clamped dt for the motion physics: a large gap between
                     // ticks must not teleport an in-flight glide.
@@ -1148,7 +1214,8 @@ unsafe extern "system" fn wnd_proc(
                     // final settle frame as the previous animation winds down
                     // (`was_active && !needs_tick`). A fully-quiescent idle tick
                     // returns `None` here and does no compositing at all.
-                    let should_render = had_msg || hover_changed || needs_tick || was_active;
+                    let should_render =
+                        had_msg || refit || hover_changed || needs_tick || was_active;
 
                     if !should_render {
                         (None, arrived, None, needs_tick, needs_hover_poll)
@@ -1495,6 +1562,41 @@ fn set_capture_excluded(_hwnd_isize: isize, _excluded: bool) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A human-origin session (a Cua Spaces viewer's relayed input) never
+    /// reaches the renderer; an agent's session does. The rule itself lives
+    /// in `cua_driver_core::agent_cursor`.
+    #[test]
+    fn human_origin_sessions_draw_no_agent_cursor() {
+        use cua_driver_core::agent_cursor::{set_input_origin, InputOrigin};
+        let human = "overlay-test-human-origin-session";
+        assert!(draws_cursor(human));
+        set_input_origin(human, InputOrigin::Human);
+        assert!(!draws_cursor(human));
+        assert!(draws_cursor("overlay-test-agent-session"));
+        assert!(!draws_cursor(""));
+        set_input_origin(human, InputOrigin::Agent);
+        assert!(draws_cursor(human));
+    }
+
+    /// Adapter half of the shared surface-fit contract: a refit moves the
+    /// virtual-screen origin and size the composite lays cursors out against.
+    #[test]
+    fn refit_follows_a_reconfigured_virtual_screen() {
+        let mut map = empty_map();
+        let grown = SurfaceGeometry::new(ScreenFrame::new(-1440.0, -120.0, 3360.0, 1200.0), 1.0);
+        map.platform.refit(grown);
+        assert_eq!(map.platform.geometry(), Some(grown));
+        assert_eq!(
+            (
+                map.platform.virt_x,
+                map.platform.virt_y,
+                map.platform.virt_w,
+                map.platform.virt_h
+            ),
+            (-1440, -120, 3360, 1200)
+        );
+    }
 
     fn empty_map() -> RenderMap {
         RenderMap::new(

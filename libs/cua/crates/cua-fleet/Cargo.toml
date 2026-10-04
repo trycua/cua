@@ -1,0 +1,63 @@
+[package]
+name = "cua-fleet"
+description = "Fleet (cloud sandboxes) for the cua SDK: a thin layer over cyclops-sdk with cua-sandbox pool/claim semantics and a gRPC-Web channel factory for a claim's env service."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+# In-memory fake Fleet control plane (`cua_fleet::testing`) for tests.
+testing = []
+# Kept for compatibility: per-claim env tokens through Fleet claim Secrets
+# (trycua/cloud#7885) are always on now; the claim Secret, `secretRef` and
+# `vmTemplate.claimSecrets` are written as JSON (see `claim_secrets`).
+fleet-claim-secrets = []
+# Kept for compatibility: process fields (`vmTemplate.env` / `args` with
+# `processMode: Run`, trycua/cloud#7887) are always on now.
+fleet-pod-env = []
+# Kept for compatibility: sidecars on every runtime (trycua/cloud#7893),
+# `processMode` and tenant `cua-registry-*` pull Secrets (#7887) are always
+# on now. They are written as JSON next to the typed template until the
+# `libs/fleet` mirror carries them.
+fleet-sandbox-parity = []
+# Remote image builds from a registry base (`recipe.from`, `kind:
+# container`). Off until Fleet's builder runs them (the rootfs builder core
+# in #7887 is not wired yet); a cloud `Image` with layers fails with a clear
+# error until then.
+fleet-remote-builds = []
+
+[dependencies]
+cua-home.workspace = true
+cyclops-sdk.workspace = true
+cyclops-sdk-schema.workspace = true
+cua-spacesd-client.workspace = true
+# Registry manifests: the runtime/image rule reads what an image is.
+cua-image = { path = "../cua-image" }
+# Clean-up a dropped (cancelled) claim leaves to finish (`cua_vmm::cleanup`).
+cua-vmm = { path = "../cua-vmm", default-features = false }
+async-trait.workspace = true
+base64.workspace = true
+hex.workspace = true
+humantime.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+
+[dev-dependencies]
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+cua-fleet = { path = ".", features = ["testing"] }
+# Well-known types for the live image doctor test.
+cua-proto.workspace = true
+tempfile.workspace = true
+# Live viewer test: the page and the media socket through a signed URL.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite.workspace = true
+futures-util.workspace = true

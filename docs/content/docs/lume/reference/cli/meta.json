@@ -1,0 +1,12 @@
+{
+  "title": "CLI",
+  "pages": [
+    "index",
+    "vms",
+    "images",
+    "guest",
+    "server",
+    "config",
+    "updates"
+  ]
+}

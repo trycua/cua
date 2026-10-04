@@ -1,4 +1,4 @@
-# cua WinRects — GNOME Shell helper extension (Wayland)
+# cua WinRects: GNOME Shell helper extension (Wayland)
 
 A small GNOME Shell extension that lets cua-driver get **pixel coordinates**,
 activate an exact target window, capture the compositor stage, and draw the
@@ -7,28 +7,28 @@ these things globally.
 
 It exposes `org.cua.WinRects` on the session bus:
 
-- `GetVersion() -> uint` — a browser-sensitive API version. cua-driver only
+- `GetVersion() -> uint`: a browser-sensitive API version. cua-driver only
   accepts it after resolving the immutable D-Bus owner and proving the owner is
   the current user's system-installed `gnome-shell` process.
-- `GetRects() -> json` — every window's frame geometry and surface-buffer
+- `GetRects() -> json`: every window's frame geometry and surface-buffer
   origin. cua-driver combines the buffer origin with AT-SPI
   `CoordType::Window` per-widget coords: `screen = origin + window_xy`. This is
   the GNOME analogue of the X11 `_GTK_FRAME_EXTENTS` reconstruction (AT-SPI's
   `CoordType::Screen` is `(0,0)` for every widget on Mutter). Keeping the frame
   and buffer origins separate accounts for GTK client-side shadows.
-- `Activate(id) -> bool` — activate one Shell stable-sequence window and report
+- `Activate(id) -> bool`: activate one Shell stable-sequence window and report
   whether the request was accepted. cua-driver verifies focus through a second
   `GetRects` snapshot before sending focus-bound portal/libei input, preventing
   input from leaking into whichever application happened to be focused.
-- `Capture() -> png_base64` — capture the compositor stage through Shell's
+- `Capture() -> png_base64`: capture the compositor stage through Shell's
   screenshot API. cua-driver crops it with the same authoritative geometry.
-- `MoveCursor(x,y)` / `ClickPulse(x,y)` / `HideCursor()` — position and hide
+- `MoveCursor(x,y)` / `ClickPulse(x,y)` / `HideCursor()`: position and hide
   the agent cursor as a Clutter actor on the compositor stage.
-- `SetCursorState(action,delivery,target,active)` — render the same 12 semantic
+- `SetCursorState(action,delivery,target,active)`: render the same 12 semantic
   action states as the cross-platform `cua.default` cursor theme. Delivery and
   target context appears as host-owned chips in the session badge rather than
   pointer-relative theme artwork. This contract requires helper v8.
-- `SetCursorColor(fill_color)` — apply the stable per-session fill selected by
+- `SetCursorColor(fill_color)`: apply the stable per-session fill selected by
   cua-driver. The helper validates the `#RRGGBB` value, updates the matching
   glow, and keeps a white pointer outline.
 

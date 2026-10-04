@@ -1,0 +1,185 @@
+---
+title: Parse visual regions
+description: Parse a screenshot into text and icon regions with the optional perception extension, and let an external chooser such as jev-use pick bounded actions.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+When a window's accessibility tree and browser state do not identify the
+target, `parse_visual_regions` turns one retained screenshot into text and icon
+regions. Cua Driver keeps capture and input authority; the regions are
+observations, not action recommendations.
+
+<Callout type="warning" title="Developer preview">
+  `cua-perception` is a separate extension, not part of the default install. Its verified catalog
+  and initial OCR/model artifact are pending release verification. Its OmniParser detector is
+  AGPL-3.0-only and its PP-OCR models are Apache-2.0; see the [perception third-party
+  notices](https://github.com/trycua/cua/blob/18259fc2ee5d37a133edd91f762057daf9d9f791/libs/cua-driver/docs/perception-third-party-notices.md).
+  The default Driver stays MIT licensed and works without it.
+</Callout>
+
+## Install the extension
+
+Inspect the catalog entry (version, hashes, licenses, provenance) before
+installing. Nothing is ever installed as a side effect: a parse on a default
+install returns `not_installed`.
+
+```bash test="cli-shape" id="cua-driver-extension-install-cua-percept"
+cua-driver describe parse_visual_regions
+cua-driver extension inspect cua-perception --catalog <catalog.json>
+cua-driver extension install cua-perception --catalog <catalog.json>
+cua-driver extension status cua-perception
+```
+
+Update with `cua-driver extension update cua-perception --catalog <catalog.json>`
+and remove with:
+
+```bash test="cli-shape" id="cua-driver-extension-remove-cua-percepti"
+cua-driver extension remove cua-perception
+```
+
+## Capture, parse, act once, reobserve
+
+Use one persistent MCP connection or SDK runtime for the whole loop. A
+one-shot `cua-driver call` process cannot resolve another process's
+`capture_id`.
+
+```text output
+state   = get_window_state({"pid":844,"window_id":10725})
+regions = parse_visual_regions({
+  "capture_id": state.capture_id,
+  "options": {"kinds":["text","icon"], "min_confidence":0.5, "max_regions":100}
+})
+click({..., "x": <point in a region>, "y": ..., "capture_id": state.capture_id})
+state   = get_window_state({"pid":844,"window_id":10725})
+```
+
+- Regions are half-open rectangles in the source PNG's pixels, origin top left.
+  Map a point through the returned action-coordinate mapping; do not rescale
+  yourself.
+- Build the `click` locally with `x`, `y`, the exact target, delivery mode, and
+  the same `capture_id`. At most one action per capture.
+- Never strip `capture_id` to retry a stale capture as a plain coordinate click.
+- Reobserve after every attempt, including timeouts and refusals, and verify
+  the real postcondition. `background_unavailable` does not authorize a
+  foreground retry.
+- Prefer an accessibility element or browser ref when one names the same control.
+
+| Error | Response |
+| --- | --- |
+| `not_installed` | Continue without it, or inspect and install explicitly. |
+| `capture_not_found`, `capture_expired`, `capture_stale`, `capture_generation_mismatch` | Capture again and parse the new id. |
+| `unsupported_target`, `unsupported_platform` | Use accessibility, browser state, or your own visual reasoning. |
+| `incompatible_protocol`, `artifact_invalid` | Stop and inspect the installed version and provenance. |
+| `worker_*`, `timeout`, `inference_failed` | Do not act on partial results; reobserve. |
+| `invalid_frame`, `resource_limit_exceeded` | Use a native-resolution capture or narrow the request. |
+
+The worker only receives the screenshot and parse options, never input,
+accessibility, browser, or credential access.
+
+## Let an external chooser pick the action
+
+To put a model such as [TypeSafe Jev](https://typesafe.ai/) above this loop,
+build a small candidate table locally: opaque IDs, each mapped to one complete
+Driver action, plus `reobserve` and `abstain`. Send the chooser only the goal,
+the `capture_id`, compact regions, and candidate descriptions. Accept exactly
+one known ID and dispatch the prebuilt action unchanged. The chooser never sees
+tool names, arguments, screenshots, or credentials.
+
+The `jev-use` example (public preview) does this for a local browser form. It
+needs Cua Driver 0.23.2 or later, a system-installed Chrome, Edge, or Chromium,
+[uv](https://docs.astral.sh/uv/getting-started/installation/), and, for the
+live run, a key from the [TypeSafe console](https://console.typesafe.ai/). On
+macOS, point it at the app binary with
+`export CUA_DRIVER_BIN="/Applications/CuaDriver.app/Contents/MacOS/cua-driver"`.
+On Windows, run Driver and the terminal without elevation.
+
+```bash skip="third-party-cli"
+git clone --depth 1 https://github.com/trycua/cua.git cua-jev-use
+cd cua-jev-use/libs/cua-driver/examples/jev-use
+uv sync --frozen --python 3.12
+
+# Fixed choices, no API key:
+uv run --frozen python verify_setup.py --output-dir runs/connection-check
+# Live Jev choices (prompts for TYPESAFE_API_KEY):
+uv run --frozen python verify_setup.py --live --output-dir runs/jev-example
+```
+
+Each run ends with a line like this; the live run reports `"checks": 2`:
+
+```json test="config" id="json-config"
+{"event": "setup_complete", "checks": 1, "fixture_closed": true}
+```
+
+In `runs/jev-example/summary.json`, look for `"complete": true` and
+`"observed": {"submitted": "jev-guide-live"}`, which comes from the test
+server, not the model. Add `--typescript` to run the TypeScript agent too
+(after `npm ci`; `"checks": 4`). To call only the chooser from your own loop:
+
+<Tabs items={['Mock', 'Live']}>
+  <Tab value="Mock">
+
+```bash skip="third-party-cli"
+uv run python/choose_action.py --mock < fixtures/jev-choice-request-v1.json
+```
+
+  </Tab>
+  <Tab value="Live">
+
+```bash skip="third-party-cli"
+uv run python/choose_action.py < fixtures/jev-choice-request-v1.json
+```
+
+  </Tab>
+</Tabs>
+
+To adapt it, change the candidates (`python/core.py`), the goal and
+observations (`python/jev_adapter.py`), and the completion check
+(`python/run.py`). A failed or incomplete run may still have acted: read the
+action log before retrying.
+
+## Native desktop apps
+
+The same chooser loop works in native desktop apps. Candidates then come from
+the accessibility tree that Cua Driver reports through macOS Accessibility,
+Windows UI Automation, or Linux AT-SPI, not from a web page:
+
+- An element becomes a candidate only when it is enabled, on screen, labeled,
+  and part of the native app rather than embedded web content. Window chrome is
+  skipped.
+- Platform roles map to one vocabulary (`button`, `toggle`, `checkbox`,
+  `radio`, `popup`, `menu_item`, `link`, `text_input`), and candidate IDs come
+  from the role, the label, and the path of actionable ancestors, so the same
+  task yields the same IDs on every platform.
+- At most 24 actions are offered, plus `reobserve` and `abstain`. In a window
+  with more controls, the ones that perform the task's declared steps are kept
+  first, and the offered actions keep their accessibility-tree order. Risky labels
+  (delete, send, purchase, close) are left out unless the task allows them, and
+  typed text comes only from the task's parameters.
+- When the tree offers nothing to act through (empty, missing a declared
+  control, or only window chrome), the agent falls back to visual regions from
+  the same capture. A visual target needs an exact, unique text match with OCR
+  confidence of at least 0.8 unless the task lowers it.
+
+Native requests use the `cua.jev_choice_request_v2` contract, which adds a
+`source` (`page`, `ax`, or `visual`) to each candidate. The built-in tasks also
+send `progress`: each required step and how many times this run has performed
+it. The runner counts its own successful actions and never reads the count
+from the app. The example includes AppKit, WPF, WinUI3, GTK3, and
+custom-painted canvas test apps; each task passes only when the app's own state
+file shows the expected result:
+
+```bash skip="third-party-cli"
+bash ../../tests/fixtures/build/macos.sh --only appkit
+uv run --frozen python verify_native.py --harness appkit --typescript --output-dir runs/native-mock
+# Add --live for Jev choices, or --task counter to run one task.
+```
+
+Use `--harness wpf` (build with `..\..\tests\fixtures\build\windows.ps1 -Targets wpf`)
+or `--harness winui3` (build with `-Targets winui3`) on Windows and `--harness gtk3` (build with
+`bash ../../tests/fixtures/build/linux.sh --only gtk3`, run with `.venv/bin/python`) on an
+X11 Linux session. `--harness canvas` needs the perception extension and proves
+the visual fallback. Tasks live in `python/native_tasks.py` and
+`typescript/native_tasks.ts`; the design is recorded in
+[RFC 4268](https://github.com/trycua/cua/blob/main/rfcs/4268-jev-use-native-candidates.md).

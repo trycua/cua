@@ -162,6 +162,7 @@ fn exact_omnibox<'a>(
 }
 
 /// Whether the omnibox currently holds exactly the fixed setup URL.
+#[cfg(test)]
 fn omnibox_holds_setup_url(node: &AtspiNode, descriptor: &BrowserSetupDescriptor) -> bool {
     node.value
         .as_deref()

@@ -30628,6 +30628,7 @@ export interface SpaceLike {
  * Who this Space is shared with, and who of them is connected now.
  */
     shares(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceShares>;
+    spacesd(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacesdClientLike>;
 /**
  * Starts the reverse-SOCKS hotspot: this host serves the Space's
  * egress. `set_system_proxy` points the guest's proxy settings at it
@@ -31745,6 +31746,38 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeSpaceShares.lift.bind(FfiConverterTypeSpaceShares),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+    async spacesd(asyncOpts_?: { signal: AbortSignal }): Promise<SpacesdClientLike> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_space_spacesd(
+                    uniffiTypeSpaceObjectFactory.clonePointer(this)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_u64,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_u64,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_u64,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_u64,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeSpacesdClient.lift.bind(FfiConverterTypeSpacesdClient),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -37608,6 +37641,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_shares() !== 19234) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_shares");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_space_spacesd() !== 65268) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_spacesd");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_start_hotspot() !== 44744) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_start_hotspot");

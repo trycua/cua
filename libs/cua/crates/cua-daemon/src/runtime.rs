@@ -876,41 +876,16 @@ impl Runtime {
         Ok(key)
     }
 
-    /// Reattaches to `r`. A `direct:` ref that names a registered Space
-    /// connects with the URL and token the Spaces registry stored for it.
     async fn connect_ref(&self, r: &SandboxRef) -> Result<Sandbox> {
         #[cfg(feature = "spaces")]
-        if let Some(sandbox) = self.connect_registered_space(r)? {
-            return Ok(sandbox);
+        if let SandboxRef::Direct { authority } = r
+            && let Ok(Some(c)) = self.inner.spaces.registry().credential(&r.to_string())
+            && c.token.is_some()
+        {
+            let url = c.url.unwrap_or_else(|| format!("http://{authority}"));
+            return Ok(self.inner.sandboxes.connect_url(&url, c.token)?);
         }
         Ok(self.inner.sandboxes.connect_ref(r).await?)
-    }
-
-    #[cfg(feature = "spaces")]
-    fn connect_registered_space(&self, r: &SandboxRef) -> Result<Option<Sandbox>> {
-        let SandboxRef::Direct { authority } = r else {
-            return Ok(None);
-        };
-        let id = r.to_string();
-        let registry = self.inner.spaces.registry();
-        let credential = match registry.credential(&id) {
-            Ok(Some(c)) if c.token.is_some() => c,
-            Ok(_) => return Ok(None),
-            Err(e) => {
-                tracing::debug!(space = %id, error = %e, "Spaces credentials not read");
-                return Ok(None);
-            }
-        };
-        let url = credential
-            .url
-            .filter(|u| !u.is_empty())
-            .unwrap_or_else(|| format!("http://{authority}"));
-        let name = registry.get(&id).ok().flatten().map(|s| s.name);
-        Ok(Some(self.inner.sandboxes.connect_url_named(
-            &url,
-            credential.token,
-            name.as_deref(),
-        )?))
     }
 
     fn cached_record(&self, key: &str) -> Option<SandboxRecord> {

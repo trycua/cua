@@ -16,8 +16,8 @@ use cua_sandbox_core::{
     RuntimeError, RuntimeResult,
 };
 use cua_sdk::{
-    Cua, CuaError, SandboxCreateOptions, ambiguous_sandbox_candidates, parse_sandbox_ref,
-    qualify_sandbox_ref,
+    Cua, CuaError, SandboxCreateOptions, SpacesdCommand, ambiguous_sandbox_candidates,
+    parse_sandbox_ref, qualify_sandbox_ref,
 };
 use std::{
     collections::HashMap,
@@ -311,10 +311,6 @@ async fn daemon() {
         .expect("bounded");
 }
 
-/// A Space added with a token is reachable by its id through the sandbox
-/// API: `connect("direct:…")` carries the token the Spaces registry stored,
-/// so spacesd (and forwards) authenticate. A direct machine nobody
-/// registered still connects without one.
 async fn registered_direct_space(daemon: bool) {
     let space = fixtures::start_env(Some("space-token"), None).await;
     let stranger = fixtures::start_env(Some("other-token"), None).await;
@@ -356,12 +352,39 @@ async fn registered_direct_space(daemon: bool) {
         )
         .await
         .unwrap();
+
+    let env = cua
+        .spaces()
+        .space(info.id.clone())
+        .await
+        .unwrap()
+        .spacesd()
+        .await
+        .expect("a Space hands out the spacesd client it authenticated");
+    let process = env
+        .spawn(SpacesdCommand {
+            program: "cat".into(),
+            args: vec![],
+            env: HashMap::new(),
+            cwd: None,
+            user: None,
+            timeout_ms: None,
+            tag: None,
+            stdin: true,
+            pty: None,
+        })
+        .await
+        .unwrap();
+    process.write_stdin(b"over stdin".to_vec()).await.unwrap();
+    process.close_stdin().await.unwrap();
+    assert_eq!(process.wait().await.unwrap().stdout, b"over stdin");
+
     let sandbox = cua.sandboxes().connect(info.id.clone()).await.unwrap();
     assert_eq!(sandbox.id(), info.id);
     sandbox
         .spacesd(Some(2000))
         .await
-        .expect("a registered Space authenticates with its stored token");
+        .expect("reconnecting by id uses the registered token");
 
     let authority = stranger.url.trim_start_matches("http://");
     let unregistered = cua

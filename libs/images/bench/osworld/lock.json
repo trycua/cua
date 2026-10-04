@@ -10,7 +10,7 @@
   ],
   "stamp": "20261003-fe6d89d",
   "dry_run": false,
-  "promoted": false,
+  "promoted": true,
   "index": {
     "ref": "ghcr.io/trycua/bench-osworld:verified-20261003-fe6d89d",
     "digest": "sha256:e55cf3a314793f89be7efbffdc043aab29bf85990c6213a9ebbb204825504439",

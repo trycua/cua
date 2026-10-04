@@ -33,7 +33,7 @@ BENCH_WEB = "ghcr.io/trycua/bench-web@sha256:3b7e1d9d4e34694175cf1b44ffefc09b557
 #: OSWorld-Verified: OSWorld Verified desktop tasks.
 #: Guide: /cua-bench/guides/adapter-benchmarks#osworld-verified. Lock: libs/images/bench/osworld/lock.json.
 #: Pinned to ghcr.io/trycua/bench-osworld:verified-20261003-fe6d89d.
-#: Floating ghcr.io/trycua/bench-osworld:verified (promoted: not yet).
+#: Floating ghcr.io/trycua/bench-osworld:verified (promoted: yes).
 BENCH_OSWORLD = "ghcr.io/trycua/bench-osworld@sha256:e55cf3a314793f89be7efbffdc043aab29bf85990c6213a9ebbb204825504439"
 
 

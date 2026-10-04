@@ -6,6 +6,15 @@
 
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.
 
+## [0.33.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.33.2...cua-driver-rs-v0.33.3) (2026-10-04)
+
+
+### Bug Fixes
+
+* **cua-driver:** drain committed consent work through timeout ([26560e5](https://github.com/trycua/cua/commit/26560e5ccc6bb7c06864377794790094a4c3171a))
+* **cua-driver:** refuse set_value on Finder's Get Info Name field ([#4614](https://github.com/trycua/cua/issues/4614)) ([f8c292a](https://github.com/trycua/cua/commit/f8c292a95135d7c87d1f426bad3afa271a598f80)), closes [#4577](https://github.com/trycua/cua/issues/4577)
+* **cua-driver:** settle started browser consent before claim completion ([d2d8d26](https://github.com/trycua/cua/commit/d2d8d263a924f425e835a1eeb5a7c0c6d9183d95))
+
 ## [0.33.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.33.1...cua-driver-rs-v0.33.2) (2026-10-04)
 
 

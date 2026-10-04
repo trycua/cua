@@ -24,7 +24,8 @@ from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
 from primary_observer import PrimaryObserver, verify_negative_control as verify_primary_control
 from production_app_smoke import (EXECUTABLES, NS, add_provenance_arguments, digest, ground, package_owner, profile_packages,
-                                  provenance as runtime_provenance)
+                                  provenance as runtime_provenance, OBSERVATION_ATTEMPTS, OBSERVATION_TIMEOUT_MS, identity_unproven_only,
+                                  require_complete)
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
 import production_pointer_grounding as pointer_grounding
 from realapp_proof import cleanup_all, rect_position, released_synthetic_input
@@ -147,6 +148,17 @@ def validate_plan(plan):
             assert Path(oracle['path']).resolve() == documents[oracle['agent']].resolve(), \
                 'saved SVG oracle does not belong to its target lane'
     assert plan['phases'], 'empty plan cannot pass'
+    if inkscape_only and plan['purpose'] == 'apps' and plan.get('require_overlap'):
+        selected = set()
+        for phase in plan['phases']:
+            for step in phase.get('parallel', [phase]):
+                if step.get('smoke_stage') == 'select':
+                    assert 'parallel' not in phase, 'lane binding requires serial selection'
+                    assert step['agent'] not in selected, 'lane binding requires one selection per agent'
+                    selected.add(step['agent'])
+                if step.get('pointer_stage') == 'move_rectangle':
+                    assert selected == {0, 1}, 'both lane bindings must precede overlapping drags'
+        assert selected == {0, 1}, 'overlap requires both serial lane selections'
     for phase in plan['phases']:
         if phase.get('negative_control'):
             assert plan['purpose'] == 'negative_control'
@@ -307,6 +319,21 @@ def capacity_lane(before, after, tool):
     assert admissions and inputs and completions, 'capacity needs admission, input, and completion evidence'
     assert min(admissions) < min(inputs) <= max(inputs) < max(completions), 'unordered capacity dispatch'
     return lanes.pop()
+
+
+def bound_drag_lanes(actions):
+    """Map agents to lanes proven by their own serial select hotkey, never by order."""
+    bound = {}
+    for row in actions:
+        # Only bound plans record lane evidence; its absence is rejected where required.
+        if row.get('tool') != 'hotkey' or row.get('smoke_stage') != 'select' or 'compositor_lane' not in row:
+            continue
+        lane = row['compositor_lane']
+        assert type(lane) is int and lane in (1, 2), 'invalid select compositor lane evidence'
+        assert row['agent'] not in bound, 'agent bound to a lane twice'
+        assert lane not in bound.values(), 'agents share a compositor lane'
+        bound[row['agent']] = lane
+    return bound
 
 
 def verify_capacity(actions):
@@ -604,6 +631,7 @@ def run(args):
     commands, motion_errors, action_intervals = [], [], []
     capacity_traces = []
     capacity_owners = {}
+    bound_owners = {}
     policy_cache_traces = []
     trajectory = None
     recording = False
@@ -629,18 +657,28 @@ def run(args):
         directory.mkdir()
         return DirectMCP(args.driver, directory, profile)
     def snapshot(mcp, target, session=None, full=False, pixels=False):
-        if capacity or policy_cache or full:
-            windows = mcp.tool('list_windows', {})
-            assert not windows.get('isError'), windows
-            matches = [window for window in windows['structuredContent']['windows']
-                       if window.get('pid') == target['pid']]
-            assert len(matches) == 1 and matches[0].get('window_id') == target['window_id'], \
-                'reviewed PID/window identity is stale or ambiguous'
-        result = mcp.tool('get_window_state', {**target,
-                          **({} if full else {'max_elements': 100, 'max_depth': 6}),
-                          **({'session': session} if session else {})})
-        assert not result.get('isError'), result
-        content = result['structuredContent']
+        # Only a complete walk whose sole defect is a not-yet-reconciled window
+        # identity is re-observed (read-only, fixed bound, exact PID/window on
+        # every attempt). Input is never replayed; every strict gate still applies.
+        for attempt in range(1, (OBSERVATION_ATTEMPTS if full else 1) + 1):
+            if capacity or policy_cache or full:
+                windows = mcp.tool('list_windows', {})
+                assert not windows.get('isError'), windows
+                matches = [window for window in windows['structuredContent']['windows']
+                           if window.get('pid') == target['pid']]
+                assert len(matches) == 1 and matches[0].get('window_id') == target['window_id'], \
+                    'reviewed PID/window identity is stale or ambiguous'
+            result = mcp.tool('get_window_state', {**target,
+                              **({'timeout_ms': OBSERVATION_TIMEOUT_MS} if full else {'max_elements': 100, 'max_depth': 6}),
+                              **({'session': session} if session else {})})
+            assert not result.get('isError'), result
+            content = result['structuredContent']
+            if not (full and attempt < OBSERVATION_ATTEMPTS and identity_unproven_only(content)):
+                break
+            mark('observation_retry', pid=target['pid'], window_id=target['window_id'], attempt=attempt,
+                 max_attempts=OBSERVATION_ATTEMPTS, degraded_reason=content['degraded_reason'])
+        if full:
+            require_complete(content)
         assert content.get('screenshot_width', 0) > 0, 'missing grounding image'
         if pixels:
             images = [row for row in result.get('content', []) if row.get('type') == 'image']
@@ -687,8 +725,17 @@ def run(args):
                 status = read_input_status()
                 save(f'capacity-agent-{index}-owners-before.json', status)
                 capacity_reservations(status, capacity_owners, capacity_owners)
+        bind_select = bool(trace) and plan['purpose'] == 'apps' and plan.get('app_profile') == 'inkscape-only' \
+            and plan.get('require_overlap', False) \
+            and step['tool'] == 'hotkey' and smoke_stage == 'select'
+        if bound_owners:
+            # Quiet pre-dispatch check (parallel siblings dispatch only after the
+            # barrier): a reassigned lane would invalidate the agent->lane binding.
+            status = read_input_status()
+            save(f'bound-agent-{index}-{mcp.counter}-owners-before.json', status)
+            capacity_reservations(status, bound_owners, bound_owners)
         if not policy_cache:
-            trace_before = trace.collect() if trace and (capacity or expected['kind'] == 'refused') else None
+            trace_before = trace.collect() if trace and (capacity or bind_select or expected['kind'] == 'refused') else None
         if capacity:
             assert_no_dispatch(capacity_traces[-1] if capacity_traces else trace_before, trace_before)
         if barrier:
@@ -766,6 +813,17 @@ def run(args):
             result['compositor_lane'] = capacity_lane(trace_before, trace_after, step['tool'])
             assert result['compositor_lane'] not in {row.get('compositor_lane') for row in report['actions']}, \
                 'capacity needs distinct compositor lanes'
+        if bind_select:
+            # Serial select: the only exercised lane is this agent's lane.
+            trace_after = trace.collect()
+            save(f'bound-agent-{index}-trace.json', {'before': trace_before, 'after': trace_after})
+            lane = capacity_lane(trace_before, trace_after, step['tool'])
+            assert lane not in bound_owners, 'agents share a compositor lane'
+            result['compositor_lane'] = lane
+            status = read_input_status()
+            save(f'bound-agent-{index}-owners-after.json', status)
+            bound_owners.update(capacity_reservations(status, {*bound_owners, lane}, bound_owners))
+            result['persistent_owners'] = dict(bound_owners)
         if expected['kind'] == 'refused' and not policy_cache:
             result['no_dispatch'] = 'unproven'
             if trace:
@@ -991,10 +1049,14 @@ def run(args):
                 report['synthetic_cleanup'] = 'verified'
                 if focus_before is not None:
                     report['passive_focus'] = passive_focus_evidence(focus_before, focus_after, data)
+                lanes = bound_drag_lanes(report['actions'])
                 for action_result in report['actions']:
                     if action_result.get('pointer_stage') in ('select_range', 'move_rectangle'):
+                        if plan.get('require_overlap') and plan.get('app_profile') == 'inkscape-only':
+                            assert action_result['agent'] in lanes, 'overlapping drag lacks an independent lane binding'
                         action_result['pointer_delivery'] = pointer_grounding.verify_drag_trace(
-                            data, action_result['arguments'], action_result['pointer_effect'])
+                            data, action_result['arguments'], action_result['pointer_effect'],
+                            expected_lane=lanes.get(action_result['agent']))
             operations += [('finish_trace', finish_trace), ('close_trace', trace.close)]
         def release_primary():
             if grab:

@@ -556,6 +556,7 @@ class OwnershipTests(unittest.TestCase):
                         grounded_snapshot(mcp, spec['target'], spec)
 
     def test_inkscape_pointer_snapshot_bounds_walk_without_limiting_depth(self):
+        self.assertEqual(POINTER_SNAPSHOT_LIMITS['inkscape'], {'max_elements': 3000, 'timeout_ms': 15000})
         spec = {**plan()['agents'][1], 'drag': {}, 'pointer_stage': 'move_rectangle'}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

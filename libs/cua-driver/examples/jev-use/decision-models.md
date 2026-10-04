@@ -63,6 +63,34 @@ with a non-secret `reason: "model_error"`. Missing local S1 paths or a failure
 to initialize the TypeSafe client stop the CLI with a generic nonzero setup
 error and no JSON response. Never treat a missing response as `selected`.
 
+
+### OpenJev-compatible HTTP
+
+The optional OpenJev adapter uses the same closed-candidate `DecisionModel`
+boundary over a configurable System One HTTP endpoint. The complete validated
+`cua.jev_choice_request_v1|v2` object is the System One `state`; the one
+`choice` question contains only the caller-supplied candidate criteria.
+
+Set the remote base URL explicitly. An API key is optional for local compatible
+servers, but when present it is sent only over HTTPS:
+
+```bash
+export OPENJEV_BASE_URL=https://api.openjev.sh
+export OPENJEV_API_KEY=...
+uv run --frozen python/choose_decision.py --model openjev \
+  < fixtures/jev-choice-request-v2.json
+```
+
+`OPENJEV_MODEL` defaults to `openjev`. `OPENJEV_TIMEOUT_MS` is bounded to
+100–60000 ms. A full `.../v1/systemone` URL is also accepted. Embedded URL
+credentials, query/fragment-bearing base URLs, redirects, oversized responses,
+and malformed decisions fail closed. The adapter returns scores only; the
+existing decision validator still owns candidate-set, probability-mass, argmax,
+and selection checks.
+
+This backend does not change Driver or the browser/native runners. Runner-side
+provider selection and backend receipt logging are separate integration work.
+
 ## Run a bounded request
 
 The deterministic mock requires no model weights or credential:

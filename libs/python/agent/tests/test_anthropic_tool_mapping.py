@@ -2,7 +2,6 @@ import pytest
 
 from cua_agent.loops.anthropic import _get_tool_config_for_model
 
-
 COMPUTER_20251124 = {
     "tool_version": "computer_20251124",
     "beta_flag": "computer-use-2025-11-24",
@@ -51,7 +50,5 @@ def test_claude_5_5_does_not_match_claude_5_mapping(model: str) -> None:
         ),
     ],
 )
-def test_existing_model_mapping_behavior_is_unchanged(
-    model: str, expected: dict[str, str]
-) -> None:
+def test_existing_model_mapping_behavior_is_unchanged(model: str, expected: dict[str, str]) -> None:
     assert _get_tool_config_for_model(model) == expected

@@ -13,10 +13,10 @@ use serde::{Deserialize, Serialize};
 
 use super::engine::unsupported_engine_refusal;
 use super::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, IsolatedBrowserProcess, PrepareAction, PrepareAttachment,
-    PrepareAttachmentKind, PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest,
-    PrepareSideEffects, PrepareStrategy,
+    BrowserConsentAction, BrowserConsentOutcome, BrowserConsentRequest,
+    ExistingProfileSetupOutcome, ExistingProfileSetupRequest, IsolatedBrowserProcess,
+    PrepareAction, PrepareAttachment, PrepareAttachmentKind, PrepareOutcome, PrepareProfile,
+    PrepareProfileMode, PrepareRequest, PrepareSideEffects, PrepareStrategy,
 };
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::types::{
@@ -62,27 +62,51 @@ fn validate_profile(profile: &PrepareProfile) -> Result<(), BrowserRefusal> {
 
 async fn claim_with_optional_consent<T, Claim, Consent>(
     claim: &mut Pin<Box<Claim>>,
+    action: &BrowserConsentAction,
     consent: Consent,
 ) -> Result<(anyhow::Result<T>, bool), BrowserRefusal>
 where
     Claim: Future<Output = anyhow::Result<T>>,
     Consent: Future<Output = Result<BrowserConsentOutcome, BrowserRefusal>>,
 {
-    let mut consent = Box::pin(consent);
-    tokio::select! {
-        result = claim.as_mut() => Ok((result, false)),
-        outcome = consent.as_mut() => match outcome? {
-            BrowserConsentOutcome::Accepted => Ok((claim.as_mut().await, true)),
-            BrowserConsentOutcome::NotPresent => Ok((claim.as_mut().await, false)),
+    let mut consent = Box::pin(tokio::time::timeout(Duration::from_secs(4), consent));
+    let (result, outcome) = tokio::select! {
+        result = claim.as_mut() => {
+            if !action.started() {
+                return Ok((result, false));
+            }
+            (Some(result), consent.await)
         },
+        outcome = consent.as_mut() => (None, outcome),
+    };
+    let outcome = outcome.map_err(|_| {
+        refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "browser consent did not settle within its bounded attempt",
+        )
+    })??;
+    let accepted = outcome == BrowserConsentOutcome::Accepted;
+    if action.started() && !accepted {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "browser consent action did not produce a confirmed outcome",
+        ));
     }
+    Ok((
+        match result {
+            Some(result) => result,
+            None => claim.as_mut().await,
+        },
+        accepted,
+    ))
 }
 
-async fn claim_with_delayed_consent<T, Claim, Consent>(
+async fn claim_with_delayed_consent<T, Claim, Consent, MakeConsent>(
     claim: Claim,
-    consent: Consent,
+    consent: MakeConsent,
 ) -> Result<(anyhow::Result<T>, bool), BrowserRefusal>
 where
+    MakeConsent: FnOnce(BrowserConsentAction) -> Consent,
     Claim: Future<Output = anyhow::Result<T>>,
     Consent: Future<Output = Result<BrowserConsentOutcome, BrowserRefusal>>,
 {
@@ -93,7 +117,10 @@ where
     };
     match initial {
         Some(result) => Ok((result, false)),
-        None => claim_with_optional_consent(&mut claim, consent).await,
+        None => {
+            let action = BrowserConsentAction::default();
+            claim_with_optional_consent(&mut claim, &action, consent(action.clone())).await
+        }
     }
 }
 
@@ -1148,12 +1175,15 @@ impl BrowserEngine {
         }
         let (claimed, displayed_consent_prompt) = match claim_with_delayed_consent(
             self.pool.claim_existing(&endpoint.ws_url, grant.generation),
-            self.platform
-                .handle_existing_profile_consent(BrowserConsentRequest {
-                    pid,
-                    window_id,
-                    attempt: 1,
-                }),
+            |action| {
+                self.platform
+                    .handle_existing_profile_consent(BrowserConsentRequest {
+                        action,
+                        pid,
+                        window_id,
+                        attempt: 1,
+                    })
+            },
         )
         .await
         {
@@ -1188,12 +1218,15 @@ impl BrowserEngine {
         // one exact browser-owned prompt against the same PID and window.
         let retry = claim_with_delayed_consent(
             self.pool.claim_existing(&endpoint.ws_url, grant.generation),
-            self.platform
-                .handle_existing_profile_consent(BrowserConsentRequest {
-                    pid,
-                    window_id,
-                    attempt: 2,
-                }),
+            |action| {
+                self.platform
+                    .handle_existing_profile_consent(BrowserConsentRequest {
+                        action,
+                        pid,
+                        window_id,
+                        attempt: 2,
+                    })
+            },
         );
         let (claimed, initial_claim_error, fresh_consent_prompt) =
             match retry_claim_after_accepted_consent(claimed, displayed_consent_prompt, retry).await
@@ -1312,6 +1345,137 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn claim_completion_preserves_started_consent_confirmation() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let confirmed = Arc::new(AtomicBool::new(false));
+        let confirmation = confirmed.clone();
+        let (action_tx, action_rx) = tokio::sync::oneshot::channel();
+        let mut claim = Box::pin(async {
+            action_rx.await.unwrap();
+            Ok::<_, anyhow::Error>(7_u8)
+        });
+        let action = BrowserConsentAction::default();
+        let marker = action.clone();
+        let consent = async move {
+            marker.perform(|| ());
+            action_tx.send(()).unwrap();
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            confirmation.store(true, Ordering::SeqCst);
+            Ok(BrowserConsentOutcome::Accepted)
+        };
+        let (result, displayed) = claim_with_optional_consent(&mut claim, &action, consent)
+            .await
+            .unwrap();
+        assert_eq!(result.unwrap(), 7);
+        assert!(displayed, "performed consent must be reported");
+        assert!(
+            confirmed.load(Ordering::SeqCst),
+            "post-action confirmation was cancelled"
+        );
+    }
+
+    #[tokio::test]
+    async fn started_consent_settles_success_refusal_and_timeout_for_both_claim_results() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        for claim_succeeds in [true, false] {
+            for outcome in 0..3 {
+                let action = BrowserConsentAction::default();
+                let marker = action.clone();
+                let settled = Arc::new(AtomicBool::new(false));
+                let settle_marker = settled.clone();
+                let dropped = Arc::new(AtomicBool::new(false));
+                let drop_signal = DropSignal(dropped.clone());
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                let mut claim = Box::pin(async move {
+                    rx.await.unwrap();
+                    if claim_succeeds {
+                        Ok(7_u8)
+                    } else {
+                        Err(anyhow::anyhow!("claim failed"))
+                    }
+                });
+                let consent = async move {
+                    let _drop_signal = drop_signal;
+                    marker.perform(|| tx.send(()).unwrap());
+                    if outcome == 2 {
+                        loop {
+                            marker.perform(|| ());
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    settle_marker.store(true, Ordering::SeqCst);
+                    if outcome == 0 {
+                        Ok(BrowserConsentOutcome::Accepted)
+                    } else {
+                        Err(refusal(
+                            BrowserRefusalCode::BrowserConsentRevoked,
+                            "native action refused",
+                        ))
+                    }
+                };
+                let result = claim_with_optional_consent(&mut claim, &action, consent).await;
+                assert!(dropped.load(Ordering::SeqCst));
+                match outcome {
+                    0 => {
+                        let (claim, displayed) = result.unwrap();
+                        assert_eq!(claim.is_ok(), claim_succeeds);
+                        assert!(displayed && settled.load(Ordering::SeqCst));
+                    }
+                    1 => assert_eq!(
+                        result.unwrap_err().code,
+                        BrowserRefusalCode::BrowserConsentRevoked
+                    ),
+                    _ => {
+                        assert_eq!(
+                            result.unwrap_err().code,
+                            BrowserRefusalCode::BrowserWrongTargetRefused
+                        );
+                        assert!(!settled.load(Ordering::SeqCst));
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn idle_claim_failure_cancels_unused_consent_without_waiting() {
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let signal = DropSignal(dropped.clone());
+        let mut claim = Box::pin(async { Err::<u8, _>(anyhow::anyhow!("dial failed")) });
+        let consent = async move {
+            let _signal = signal;
+            std::future::pending::<Result<BrowserConsentOutcome, BrowserRefusal>>().await
+        };
+        let (result, displayed) = tokio::time::timeout(
+            Duration::from_millis(100),
+            claim_with_optional_consent(&mut claim, &BrowserConsentAction::default(), consent),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.unwrap_err().to_string(), "dial failed");
+        assert!(!displayed);
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn started_action_cannot_settle_as_not_present() {
+        let action = BrowserConsentAction::default();
+        let marker = action.clone();
+        let mut claim = Box::pin(std::future::pending::<anyhow::Result<u8>>());
+        let result = claim_with_optional_consent(&mut claim, &action, async move {
+            marker.perform(|| ());
+            Ok(BrowserConsentOutcome::NotPresent)
+        })
+        .await;
+        assert_eq!(
+            result.unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[tokio::test]
     async fn completed_claim_wins_while_optional_consent_is_absent() {
         let mut claim = Box::pin(async {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1324,9 +1488,10 @@ mod tests {
                 "no consent surface",
             ))
         };
-        let (result, displayed) = claim_with_optional_consent(&mut claim, consent)
-            .await
-            .expect("the completed claim should win the race");
+        let (result, displayed) =
+            claim_with_optional_consent(&mut claim, &BrowserConsentAction::default(), consent)
+                .await
+                .expect("the completed claim should win the race");
         assert_eq!(result.unwrap(), 7);
         assert!(!displayed);
     }
@@ -1338,9 +1503,11 @@ mod tests {
             Ok::<_, anyhow::Error>(9_u8)
         });
         let (result, displayed) =
-            claim_with_optional_consent(&mut claim, async { Ok(BrowserConsentOutcome::Accepted) })
-                .await
-                .expect("accepted consent should resume the existing claim");
+            claim_with_optional_consent(&mut claim, &BrowserConsentAction::default(), async {
+                Ok(BrowserConsentOutcome::Accepted)
+            })
+            .await
+            .expect("accepted consent should resume the existing claim");
         assert_eq!(result.unwrap(), 9);
         assert!(displayed);
     }
@@ -1355,9 +1522,10 @@ mod tests {
                 first_waiting.await.expect("first consent should complete");
                 Err::<u8, _>(anyhow::anyhow!("first handshake rejected"))
             },
-            async move {
+            |action| async move {
+                assert!(!action.started());
                 first_attempts.lock().unwrap().push(1_u8);
-                first_approved.send(()).unwrap();
+                action.perform(|| first_approved.send(()).unwrap());
                 Ok(BrowserConsentOutcome::Accepted)
             },
         )
@@ -1373,9 +1541,10 @@ mod tests {
                     .expect("second consent should complete");
                 Ok::<_, anyhow::Error>(11_u8)
             },
-            async move {
+            |action| async move {
+                assert!(!action.started());
                 second_attempts.lock().unwrap().push(2_u8);
-                second_approved.send(()).unwrap();
+                action.perform(|| second_approved.send(()).unwrap());
                 Ok(BrowserConsentOutcome::Accepted)
             },
         );
@@ -1398,7 +1567,7 @@ mod tests {
         let consent_polled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let consent_marker = consent_polled.clone();
         let retry =
-            claim_with_delayed_consent(async { Ok::<_, anyhow::Error>(17_u8) }, async move {
+            claim_with_delayed_consent(async { Ok::<_, anyhow::Error>(17_u8) }, |_| async move {
                 consent_marker.store(true, std::sync::atomic::Ordering::SeqCst);
                 Ok(BrowserConsentOutcome::Accepted)
             });
@@ -1425,7 +1594,8 @@ mod tests {
                 let _drop_signal = drop_signal;
                 std::future::pending::<anyhow::Result<u8>>().await
             },
-            async {
+            |action| async move {
+                action.perform(|| ());
                 Err(refusal(
                     BrowserRefusalCode::BrowserConsentRevoked,
                     "second consent was revoked",

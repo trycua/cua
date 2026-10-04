@@ -47,6 +47,17 @@ fn release_actionable_nodes(nodes: &[AXNode]) {
     }
 }
 
+// Own references before crossing the blocking-task boundary, including cancellation.
+struct ConsentTrees(Vec<Vec<AXNode>>);
+
+impl Drop for ConsentTrees {
+    fn drop(&mut self) {
+        for nodes in &self.0 {
+            release_actionable_nodes(nodes);
+        }
+    }
+}
+
 fn consent_surface_ids(
     windows: impl IntoIterator<Item = crate::windows::WindowInfo>,
     pid: i32,
@@ -288,9 +299,11 @@ pub async fn handle(
     let mut accepted_prompt = false;
     loop {
         let trees = tokio::task::spawn_blocking(move || {
-            consent_surface_ids(crate::windows::all_windows(), pid, window_id)
-                .into_iter()
-                .map(|candidate_window_id| {
+            let mut trees = ConsentTrees(Vec::new());
+            for candidate_window_id in
+                consent_surface_ids(crate::windows::all_windows(), pid, window_id)
+            {
+                trees.0.push(
                     walk_tree_bounded(
                         pid,
                         Some(candidate_window_id),
@@ -298,9 +311,10 @@ pub async fn handle(
                         CONSENT_MAX_ELEMENTS,
                         DEFAULT_MAX_DEPTH,
                     )
-                    .nodes
-                })
-                .collect::<Vec<_>>()
+                    .nodes,
+                );
+            }
+            trees
         })
         .await
         .map_err(|error| {
@@ -309,13 +323,23 @@ pub async fn handle(
                 format!("could not inspect the browser consent UI: {error}"),
             )
         })?;
+        if Instant::now() >= deadline {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!(
+                    "Chrome remote-debugging consent did not settle for reconnect attempt {}",
+                    request.attempt
+                ),
+            ));
+        }
         let prompt_present = trees
+            .0
             .iter()
             .any(|nodes| remote_debugging_sheet_present(nodes));
         saw_prompt |= prompt_present;
         let mut candidates = Vec::new();
         let mut matcher_error = None;
-        for nodes in &trees {
+        for nodes in &trees.0 {
             match exact_allow_button(nodes) {
                 Ok(Some(element)) => candidates.push(element),
                 Ok(None) => {}
@@ -328,16 +352,13 @@ pub async fn handle(
         candidates.sort_unstable();
         candidates.dedup();
         if let Some(error) = matcher_error {
-            for nodes in &trees {
-                release_actionable_nodes(nodes);
-            }
             return Err(error);
         }
         if let [element] = candidates.as_slice() {
-            let pressed = unsafe { perform_action(*element as AXUIElementRef, "AXPress") };
-            for nodes in &trees {
-                release_actionable_nodes(nodes);
-            }
+            let pressed = request
+                .action
+                .perform(|| unsafe { perform_action(*element as AXUIElementRef, "AXPress") });
+            drop(trees);
             if pressed != kAXErrorSuccess {
                 return Err(refusal(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -353,9 +374,7 @@ pub async fn handle(
             tokio::time::sleep(Duration::from_millis(100)).await;
             continue;
         }
-        for nodes in &trees {
-            release_actionable_nodes(nodes);
-        }
+        drop(trees);
         if candidates.len() > 1 {
             return Err(refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -369,15 +388,6 @@ pub async fn handle(
             return Err(refusal(
                 BrowserRefusalCode::BrowserConsentRevoked,
                 "the person dismissed the browser consent sheet",
-            ));
-        }
-        if Instant::now() >= deadline {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                format!(
-                    "no exact Chrome remote-debugging consent sheet appeared for reconnect attempt {}",
-                    request.attempt
-                ),
             ));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -410,6 +420,43 @@ mod tests {
             selected: None,
             in_web_content: false,
         }
+    }
+
+    #[tokio::test]
+    async fn cancelled_scan_releases_late_blocking_result() {
+        use core_foundation::base::{CFGetRetainCount, CFRetain, TCFType};
+        use core_foundation::string::CFString;
+
+        struct Finished(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for Finished {
+            fn drop(&mut self) {
+                let _ = self.0.take().unwrap().send(());
+            }
+        }
+        let value = CFString::new("consent-cancelled-scan-owned-reference");
+        let ptr = value.as_concrete_TypeRef() as usize;
+        let base = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
+        let scan = tokio::task::spawn_blocking(move || {
+            let mut element = node("AXButton", 0, Some("Allow"), &["AXPress"]);
+            element.element_ptr = unsafe { CFRetain(ptr as CFTypeRef) } as usize;
+            let owned = ConsentTrees(vec![vec![element]]);
+            ready_tx.send(()).unwrap();
+            finish_rx.recv().unwrap();
+            // Tuple fields drop in order: release the native reference before signalling.
+            (owned, Finished(Some(dropped_tx)))
+        });
+        ready_rx.await.unwrap();
+        assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base + 1);
+        drop(scan);
+        finish_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), dropped_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base);
     }
 
     #[test]

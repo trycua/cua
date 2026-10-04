@@ -205,8 +205,23 @@ pub enum PrepareAttachmentKind {
     ExistingProfile,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct BrowserConsentAction(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl BrowserConsentAction {
+    pub fn perform<T>(&self, action: impl FnOnce() -> T) -> T {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+        action()
+    }
+
+    pub(crate) fn started(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BrowserConsentRequest {
+    pub action: BrowserConsentAction,
     pub pid: i64,
     pub window_id: u64,
     pub attempt: u8,
@@ -506,6 +521,26 @@ pub trait BrowserPlatform: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn consent_action_boundary_precedes_success_and_failure_and_never_resets() {
+        for succeeds in [true, false] {
+            let action = super::BrowserConsentAction::default();
+            let observer = action.clone();
+            assert!(!observer.started());
+            let result = action.perform(|| {
+                assert!(observer.started());
+                if succeeds {
+                    Ok(())
+                } else {
+                    Err("native action failed")
+                }
+            });
+            assert_eq!(result.is_ok(), succeeds);
+            assert!(observer.started());
+            assert!(!super::BrowserConsentAction::default().started());
+        }
+    }
+
     use super::select_isolated_browser_executable;
 
     #[test]

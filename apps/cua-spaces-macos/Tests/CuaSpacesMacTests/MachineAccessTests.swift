@@ -93,14 +93,15 @@ enum MachinesFixture {
         return s
     }
 
-    static func model(rows: [AppSpaceRow], enrollment: Enrollment, hostSetUp: Bool = false) async -> AppModel {
+    static func model(rows: [AppSpaceRow], enrollment: Enrollment, hostSetUp: Bool = false,
+                      hostStatus: HostStatus? = nil) async -> AppModel {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-machines-\(UUID().uuidString)")
         let fixture = FixtureDevices(snapshot: devices(enrollment))
         let m = AppModel(backend: FixtureSpacesBackend(rows: rows),
                          keyvault: KeyvaultModel(client: nil, clock: { fixtureNow }),
                          onboarding: OnboardingModel(statePath: dir.appendingPathComponent("o.json").path),
                          settingsPath: dir.appendingPathComponent("settings.json").path,
-                         host: hostSetUp ? FixtureHost(status: relayHost) : FixtureHost(),
+                         host: hostSetUp ? FixtureHost(status: hostStatus ?? relayHost) : FixtureHost(),
                          account: FixtureAccount(), telemetry: FixtureTelemetry(),
                          devices: fixture, presence: FixturePresence())
         m.onboarding.finish()
@@ -227,6 +228,41 @@ struct MachineAccessTests {
         #expect(ids.contains("relay:m-dana-2"))
         try SnapshotTests().assertSnapshot(Sidebar(model: m).frame(width: 260), "sidebar-without-this-mac",
                                            size: CGSize(width: 260, height: 600))
+    }
+
+    /// The user's Macs after updating to 0.7.0: this Mac (relay
+    /// `b695…`, not sharing) and cua.local ("Mac.localdomain", relay
+    /// `9e9d…`: sharing, desktop not shared, Spaces on with none running,
+    /// the cua-spacesd 0.2.2 of an older app). cua.local is listed under
+    /// My machines however its probe went; this Mac only as This machine.
+    @Test func anOlderHostThatKeepsItsDesktopPrivateIsListed() async throws {
+        let other = "relay:9e9d969d41649428f693b403f6f8f225"
+        let thisId = "b6953d14ff94b10fcbb38bdd13c47824"
+        let probes: [([String], Bool, String?)] = [
+            (["host_spaces", "files"], true, nil),
+            (["desktop_stream", "window_stream", "host_spaces", "files"], true, nil),
+            ([], false, "permission denied: this machine does not share its desktop"),
+        ]
+        for (features, reachable, error) in probes {
+            var mac = MachinesFixture.row(other, "Mac.localdomain", os: .macos, features: features,
+                                          reachable: reachable, error: error)
+            mac.spacesdVersion = "0.2.2"
+            var me = MachinesFixture.row("relay:\(thisId)", "Dillons-MacBook-Pro-2.local", os: .macos,
+                                         features: [], reachable: false)
+            me.spacesdVersion = "0.2.0"
+            var status = MachinesFixture.relayHost
+            status.machineId = thisId
+            status.name = "Dillons-MacBook-Pro-2.local"
+            status.sharing = false
+            status.shareDesktop = true
+            status.provideSpaces = false
+            let m = await MachinesFixture.model(rows: [FixtureSpacesBackend.sample[0], mac, me],
+                                                enrollment: .enrolled, hostSetUp: true, hostStatus: status)
+            #expect(m.sidebar.thisMachine != nil)
+            let mine = try #require(m.sidebar.sections.first { $0.title == "My machines" },
+                                    "no My machines for \(features) \(String(describing: error))")
+            #expect(mine.rows.map(\.id) == [other])
+        }
     }
 
     // MARK: - Snapshots

@@ -1307,6 +1307,147 @@ mod tests {
         assert_eq!(shares_desktop(&direct), None);
     }
 
+    /// The user's Macs after updating to 0.7.0: cua.local
+    /// (`relay:9e9d…`, "Mac.localdomain") shares, keeps its desktop
+    /// private, provides Spaces with none running and runs the cua-spacesd
+    /// of an older app (0.2.2); this Mac (`relay:b695…`) is not sharing.
+    const OTHER_MAC: &str = "9e9d969d41649428f693b403f6f8f225";
+    const THIS_MAC: &str = "b6953d14ff94b10fcbb38bdd13c47824";
+
+    fn roster_row(
+        id: &str,
+        name: &str,
+        version: &str,
+        features: &[&str],
+        reachable: bool,
+        error: Option<&str>,
+    ) -> Space {
+        let row: SpaceRow = serde_json::from_value(serde_json::json!({
+            "id": id,
+            "name": name,
+            "provider": id.split(':').next().unwrap(),
+            "spacesdVersion": version,
+            "features": features,
+            "os": "macos",
+            "reachable": reachable,
+            "error": error,
+        }))
+        .unwrap();
+        super::super::row_to_space(&row, 0)
+    }
+
+    /// One of your machines that is online and provides Spaces is listed
+    /// under "My machines" whatever it shares and whichever cua-spacesd it
+    /// runs: desktop off with Spaces on and none running (a current host
+    /// says so in its features), an older host that reports every feature
+    /// or whose probe was refused or has not answered yet.
+    #[test]
+    fn your_other_machine_is_listed_whatever_it_shares_or_runs() {
+        let other = format!("relay:{OTHER_MAC}");
+        let this = format!("relay:{THIS_MAC}");
+        let probes: [(&[&str], bool, Option<&str>); 4] = [
+            // Current cua-spacesd, desktop not shared: desktop features
+            // unsupported, host_spaces on.
+            (&["pty", "files", "host_spaces"], true, None),
+            // 0.2.2 reports the desktop's features to anyone.
+            (
+                &["pty", "desktop_stream", "window_stream", "host_spaces"],
+                true,
+                None,
+            ),
+            // Refused or unanswered: no features at all.
+            (&[], false, Some("permission denied: desktop not shared")),
+            (&[], false, None),
+        ];
+        for (features, reachable, error) in probes {
+            let spaces = vec![
+                roster_row(
+                    "local:space-753034eaaf",
+                    "Apple-Virtual-Machine-1.local",
+                    "0.1.1",
+                    &["pty"],
+                    true,
+                    None,
+                ),
+                roster_row(
+                    &other,
+                    "Mac.localdomain",
+                    "0.2.2",
+                    features,
+                    reachable,
+                    error,
+                ),
+                roster_row(
+                    &this,
+                    "Dillons-MacBook-Pro-2.local",
+                    "0.2.0",
+                    &[],
+                    false,
+                    None,
+                ),
+            ];
+            let listed = without_this_relay_machine(&spaces, Some(THIS_MAC));
+            let view = sidebar(&listed, "", "");
+            let mine = view
+                .sections
+                .iter()
+                .find(|s| s.title == "My machines")
+                .unwrap_or_else(|| panic!("no My machines for {features:?} {error:?}: {view:?}"));
+            assert_eq!(
+                mine.rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+                [other.as_str()],
+                "{features:?} {error:?}"
+            );
+            assert!(view.sections.iter().any(|s| s.title == "This Mac"
+                && s.rows.iter().any(|r| r.id == "local:space-753034eaaf")));
+        }
+        // Desktop not shared but providing Spaces: its detail says so, with
+        // Spaces still offered (not hidden as "shares nothing").
+        let m = roster_row(
+            &other,
+            "Mac.localdomain",
+            "0.2.2",
+            &["pty", "host_spaces"],
+            true,
+            None,
+        );
+        assert_eq!(shares_desktop(&m), Some(false));
+        assert_eq!(
+            desktop_note(&m).as_deref(),
+            Some(
+                "Mac.localdomain isn\u{2019}t sharing its desktop. You can still create Spaces on it."
+            )
+        );
+    }
+
+    /// This Mac is left out by its exact relay machine id only: never by
+    /// a prefix, another case, or the other Mac's id.
+    #[test]
+    fn this_mac_is_excluded_only_by_its_exact_id() {
+        let spaces: Vec<Space> = [
+            format!("relay:{OTHER_MAC}"),
+            format!("relay:{THIS_MAC}"),
+            format!("relay:{THIS_MAC}0"),
+            "relay:b6953d14".to_string(),
+            format!("relay:{}", THIS_MAC.to_uppercase()),
+        ]
+        .iter()
+        .map(|id| roster_row(id, "Mac", "0.2.2", &[], true, None))
+        .collect();
+        let ids = |v: Vec<Space>| v.into_iter().map(|s| s.id).collect::<Vec<_>>();
+        let all = ids(spaces.clone());
+        let without = |own: &str| ids(without_this_relay_machine(&spaces, Some(own)));
+        let mut want = all.clone();
+        want.retain(|id| *id != format!("relay:{THIS_MAC}"));
+        assert_eq!(without(THIS_MAC), want);
+        // A prefix or a near miss of this Mac's id drops nothing else.
+        assert_eq!(without("b6953d14ff94"), all);
+        assert_eq!(without(&format!("relay:{THIS_MAC}")), all);
+        assert_eq!(without(&format!(" {THIS_MAC}")), all);
+        // Not set up as a host: nothing is dropped.
+        assert_eq!(ids(without_this_relay_machine(&spaces, None)), all);
+    }
+
     /// This machine's own relay entry is dropped by id; another machine
     /// of the same name and the Spaces this machine provides stay.
     #[test]

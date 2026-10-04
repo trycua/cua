@@ -2251,7 +2251,9 @@ impl Spaces {
         let host = self.host.clone();
         run(async move {
             match &host {
-                Host::Embedded(s) => Ok(s.list()?.into_iter().map(Into::into).collect()),
+                // With the account's relay machines, the directory read
+                // again, as `cua daemon`'s `ListSpaces` does.
+                Host::Embedded(s) => Ok(s.list_all().await?.into_iter().map(Into::into).collect()),
                 Host::Daemon(d) => Ok(d
                     .spaces()
                     .list_spaces(dpb::ListSpacesRequest {})

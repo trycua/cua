@@ -2756,8 +2756,14 @@ async fn dom_event_click_refuses_while_a_dialog_is_already_open() {
         .invoke(args.clone())
         .await;
     assert_eq!(structured(&first)["dialog"]["present"], true);
+    let frame_trees_before = recorded_calls(&f, "Page.getFrameTree").len();
 
     let second = BrowserClickTool::new(f.engine.clone()).invoke(args).await;
+    assert_eq!(
+        recorded_calls(&f, "Page.getFrameTree").len(),
+        frame_trees_before,
+        "a blocked renderer must not be asked for its frame tree"
+    );
     let s = structured(&second);
     assert_eq!(s["refusal"]["code"], "browser_action_unavailable", "{s}");
     assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");

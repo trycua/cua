@@ -1056,6 +1056,20 @@ impl Tool for BrowserClickTool {
             }
         }
 
+        // A page-owned dialog blocks the renderer, so any frame revalidation
+        // below would wait out its timeout. Refuse before touching the page.
+        if let Some(open) = conn_dialog_state(&validated) {
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserActionUnavailable,
+                format!(
+                    "a {} dialog is already open on the exact tab; resolve it with browser_dialog before clicking",
+                    open.kind
+                ),
+            )
+            .with_detail(json!({ "dialog": dialog_block(Some(&open)) }))
+            .to_tool_result();
+        }
+
         // Ref path: re-prove the ref's frame/document identity and get
         // the session (tab or contained OOPIF child) its node lives in.
         let (backend_node_id, frame_kind, cdp_session) = match &ext_ref {
@@ -1109,17 +1123,6 @@ impl Tool for BrowserClickTool {
             // with it the reply to the click. Observe dialog events before
             // dispatching so the click can return as soon as one opens.
             ensure_dialog_observation(conn, validated.cdp_session.as_str(), cdp_target_id).await;
-            if let Some(open) = conn.dialog_state(cdp_target_id) {
-                return BrowserRefusal::new(
-                    BrowserRefusalCode::BrowserActionUnavailable,
-                    format!(
-                        "a {} dialog is already open on the exact tab; resolve it with browser_dialog before clicking",
-                        open.kind
-                    ),
-                )
-                .with_detail(json!({ "dialog": dialog_block(Some(&open)) }))
-                .to_tool_result();
-            }
             let resolved = match conn
                 .call(
                     Some(cdp),
@@ -1412,6 +1415,15 @@ async fn ensure_dialog_observation(conn: &CdpConnection, tab_session: &str, cdp_
     {
         conn.unregister_dialog_session(tab_session, cdp_target_id);
     }
+}
+
+/// The dialog currently blocking a validated tab, if any is known.
+fn conn_dialog_state(
+    validated: &super::engine::ValidatedTab,
+) -> Option<super::cdp_ws::CdpDialogState> {
+    validated
+        .conn
+        .dialog_state(validated.tab.cdp_target_id.as_str())
 }
 
 fn dialog_block(dialog: Option<&super::cdp_ws::CdpDialogState>) -> Value {

@@ -32,7 +32,8 @@ apply    moves every ready OS: ``record-image-sizes.py --refresh-digest`` for
          its tags (new digest and sizes), checks the catalog now holds exactly
          the digests that were verified, and moves the dated pin named in the
          libs/images/README.md table row of each tag that has one. Writes the
-         pins PR body (a per-OS checklist) to --body and prints a JSON summary.
+         pins PR body (a per-OS checklist) to --body and prints a JSON summary
+         (the only line on stdout).
          Exits 1 when an OS whose CI build (--results) succeeded still does
          not report the version: a green run that pushed nothing.
 lag      the CI check: every catalog digest that does not report the version
@@ -56,6 +57,7 @@ from typing import Callable
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CATALOG = os.path.join(ROOT, "libs", "images", "sandbox-images.json")
 README = os.path.join(ROOT, "libs", "images", "README.md")
+RECORD_SIZES = os.path.join(ROOT, "scripts", "images", "record-image-sizes.py")
 VERSION_FILE = os.path.join(ROOT, "libs", "cua-spacesd", "VERSION")
 REPORT_TYPE = "application/vnd.cua.doctor.report.v1+json"
 INDEX_TYPES = {
@@ -264,7 +266,8 @@ def body(oses: list[OS], version: str, *, run_url: str = "", results: dict[str, 
         "A tag counts as on the version when the newest passing doctor report attached to each of its "
         "platform children (an OCI referrer) says so: a green run that pushed nothing cannot move a pin. "
         "Sizes are from `record-image-sizes.py --refresh-digest`, the app-core parity goldens from "
-        "`UPDATE_PARITY=1`, and README pin rows follow their tags.",
+        "`UPDATE_PARITY=1`, the docs pages generated from the catalog from their docs generators "
+        "(`scripts/docs-generators`), and README pin rows follow their tags.",
         "",
         "This PR is regenerated from `main` and the registry on every run of "
         "`.github/workflows/cd-images-spacesd-release.yml` (each cua-spacesd release, and after "
@@ -293,11 +296,14 @@ def update_readme(text: str, ref: str, pin: str) -> str:
     return row.sub(lambda m: PIN_RE.sub(f"pin `{pin}`", m.group(1)), text)
 
 
-def refresh_sizes(refs: list[str]) -> None:
-    cmd = [sys.executable, os.path.join(ROOT, "scripts", "images", "record-image-sizes.py"), "--refresh-digest"]
+def refresh_sizes(refs: list[str], script: str = RECORD_SIZES) -> None:
+    cmd = [sys.executable, script, "--refresh-digest"]
     for r in refs:
         cmd += ["--ref", r]
-    subprocess.run(cmd, check=True)
+    # apply's stdout is the one-line JSON summary pins-pr.sh parses: the
+    # child's progress lines go to stderr.
+    proc = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, text=True)
+    sys.stderr.write(proc.stdout)
 
 
 def apply(

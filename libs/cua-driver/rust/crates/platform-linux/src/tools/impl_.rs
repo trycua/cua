@@ -4502,6 +4502,40 @@ async fn foreground_hyprland_action(
     )
 }
 
+async fn foreground_hyprland_scroll(
+    args: &Value,
+    pid: u32,
+    xid: u64,
+    actions: Vec<crate::wayland::hyprland_input::Action>,
+) -> ToolResult {
+    if !crate::wayland::hyprland_input::enabled() {
+        return foreground_hyprland_refusal("production Hyprland input plugin is unavailable");
+    }
+    let owner = named_session_cursor_key(args);
+    let (_cancellation, dispatch) = match spawn_isolated_hyprland(args, move |cancellation| {
+        crate::wayland::hyprland_input::execute_foreground_scroll(
+            owner,
+            pid,
+            xid,
+            actions,
+            cancellation,
+        )
+    }) {
+        Ok(dispatch) => dispatch,
+        Err(_) => return foreground_hyprland_refusal("authenticated admitted lifecycle required"),
+    };
+    hyprland_input_result(
+        match dispatch.await {
+            Ok(result) => result,
+            Err(error) => Err(crate::wayland::hyprland_input::unknown_dispatch(
+                error.into(),
+                0,
+            )),
+        },
+        true,
+    )
+}
+
 fn foreground_hyprland_key(
     key: String,
     mut modifiers: Vec<String>,
@@ -7293,6 +7327,8 @@ impl Tool for TypeTextTool {
                 Ok(_) => return isolated_hyprland_refusal("background text must not be empty"),
                 Err(error) => return isolated_hyprland_refusal(error.to_string()),
             }
+            position_named_session_keyboard_cursor(&self.state, &args, pid, xid, None, None, true)
+                .await;
             let owner = named_session_cursor_key(&args);
             let (_cancellation, dispatch) =
                 match spawn_isolated_hyprland(&args, move |cancellation| {
@@ -7350,6 +7386,16 @@ impl Tool for TypeTextTool {
                         .await,
                         Ok(Ok(()))
                     ) {
+                        position_named_session_keyboard_cursor(
+                            &self.state,
+                            &args,
+                            pid,
+                            xid,
+                            resolved_elem_idx,
+                            None,
+                            true,
+                        )
+                        .await;
                         return type_text_ax_result(
                             pid,
                             text.chars().count(),
@@ -7375,7 +7421,20 @@ impl Tool for TypeTextTool {
             {
                 return error;
             }
-            if named_session_cursor_key(&args).is_none() {
+            if named_session_cursor_key(&args).is_some() {
+                if px.is_none() {
+                    position_named_session_keyboard_cursor(
+                        &self.state,
+                        &args,
+                        pid,
+                        xid,
+                        resolved_elem_idx,
+                        None,
+                        true,
+                    )
+                    .await;
+                }
+            } else {
                 announce_keyboard_target(&args, pid, xid, resolved_elem_idx, px.zip(py)).await;
             }
             let owner = named_session_cursor_key(&args);
@@ -8185,6 +8244,8 @@ impl Tool for PressKeyTool {
                     "isolated keys address the exact top-level; first click the child explicitly",
                 );
             }
+            position_named_session_keyboard_cursor(&self.state, &args, pid, xid, None, None, false)
+                .await;
             return isolated_hyprland_action(
                 &args,
                 pid,
@@ -8246,6 +8307,18 @@ impl Tool for PressKeyTool {
             .await
             {
                 return error;
+            }
+            if px.is_none() {
+                position_named_session_keyboard_cursor(
+                    &self.state,
+                    &args,
+                    pid,
+                    xid,
+                    resolved_element_index,
+                    None,
+                    false,
+                )
+                .await;
             }
             return foreground_hyprland_action(&args, pid, xid, action).await;
         }
@@ -8629,6 +8702,8 @@ impl Tool for HotkeyTool {
                     );
                 }
             }
+            position_named_session_keyboard_cursor(&self.state, &args, pid, xid, None, None, false)
+                .await;
             return isolated_hyprland_action(
                 &args,
                 pid,
@@ -8702,6 +8777,18 @@ impl Tool for HotkeyTool {
             .await
             {
                 return error;
+            }
+            if px.is_none() {
+                position_named_session_keyboard_cursor(
+                    &self.state,
+                    &args,
+                    pid,
+                    xid,
+                    resolved_element_index,
+                    None,
+                    false,
+                )
+                .await;
             }
             return foreground_hyprland_action(&args, pid, xid, action).await;
         }
@@ -9496,17 +9583,15 @@ impl Tool for ScrollTool {
             } else {
                 pixel_target
             };
-            return foreground_hyprland_action(
-                &args,
-                pid,
-                xid,
-                crate::wayland::hyprland_input::Action::Scroll {
-                    point,
-                    direction,
-                    amount,
-                },
-            )
-            .await;
+            // `by: "page"` is the documented 3-detent approximation, not an
+            // exact viewport; large requests become several wheel packets.
+            let actions =
+                match crate::wayland::hyprland_input::scroll_actions(point, &direction, amount, by)
+                {
+                    Ok(actions) => actions,
+                    Err(error) => return foreground_hyprland_refusal(error.to_string()),
+                };
+            return foreground_hyprland_scroll(&args, pid, xid, actions).await;
         }
         if isolated_background {
             if xid_opt.is_none() {
@@ -9523,15 +9608,14 @@ impl Tool for ScrollTool {
                     } else {
                         pixel_target
                     };
-                    crate::wayland::hyprland_input::execute(
+                    let actions = crate::wayland::hyprland_input::scroll_actions(
+                        point, &direction, amount, by,
+                    )?;
+                    crate::wayland::hyprland_input::execute_scroll(
                         owner,
                         pid,
                         xid,
-                        crate::wayland::hyprland_input::Action::Scroll {
-                            point,
-                            direction,
-                            amount,
-                        },
+                        actions,
                         cancellation,
                     )
                 }) {

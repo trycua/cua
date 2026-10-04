@@ -33,15 +33,16 @@
 # Needs: lume (`lume serve`), the cua CLI ($CUA, default `cua` on PATH, or
 # build it: cargo build --release -p cua-cli in libs/cua), crane, oras, jq,
 # uv, gh (logged in with write:packages, for ghcr.io and the dispatch).
-# Knobs: STAMP, PREFIX, WORK, RECORD_LEDGER (default false: trycua/cua has
-# no image-doctor-ledger branch yet), CUA.
+# Knobs: STAMP, PREFIX, WORK, RECORD_LEDGER (default true: the docs image-refs
+# gate trusts only the image-doctor-ledger branch, so a release that skips it
+# leaves every guide that names 26 or 26-slim failing), CUA.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VERSION="" DRY=0
 for a in "$@"; do
     case "$a" in
         --dry-run) DRY=1 ;;
-        -h|--help) sed -n '2,37p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
         -*) echo "unknown option $a" >&2; exit 2 ;;
         *) VERSION="${a#cua-spacesd-v}"; VERSION="${VERSION#v}" ;;
     esac
@@ -55,7 +56,7 @@ CUA="${CUA:-cua}"
 STAMP="${STAMP:-$(date -u +%Y%m%d)-$(git -C "$ROOT" rev-parse --short=7 HEAD)}"
 PREFIX="${PREFIX:-cua-e2e-macos-rel-${STAMP%%-*}}"
 WORK="${WORK:-${CUA_IMAGES_OUT:-$HOME/.cache/cua-images}/macos-release/$VERSION}"
-RECORD_LEDGER="${RECORD_LEDGER:-false}"
+RECORD_LEDGER="${RECORD_LEDGER:-true}"
 log() { echo "[release-macos $(date +%T)] $*" >&2; }
 run() { log "+ $*"; [ "$DRY" = 1 ] || "$@"; }
 

@@ -12501,7 +12501,8 @@ impl Tool for GetCursorPositionTool {
         if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
             let position = tokio::task::spawn_blocking(|| -> anyhow::Result<(i32, i32)> {
                 let (x, y) = crate::wayland::hyprland::cursor_position()?;
-                Ok(crate::wayland::hyprland::desktop_frame()?.from_layout(x, y))
+                Ok(crate::wayland::hyprland::desktop_frame()?
+                    .from_layout(x.round() as i32, y.round() as i32))
             })
             .await;
             // The synthetic registry below holds layout coordinates, not the

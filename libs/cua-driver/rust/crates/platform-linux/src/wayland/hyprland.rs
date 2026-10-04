@@ -105,8 +105,7 @@ impl DisplayMonitor {
         if !valid_dimensions(self.width, self.height) {
             bail!("invalid Hyprland display dimensions");
         }
-        let (width, height) =
-            super::logical_output_size((self.width, self.height), self.transform);
+        let (width, height) = super::logical_output_size((self.width, self.height), self.transform);
         let logical_width = (f64::from(width) / self.scale).round();
         let logical_height = (f64::from(height) / self.scale).round();
         if !logical_width.is_finite()
@@ -161,6 +160,20 @@ impl DesktopFrame {
 
     pub fn from_layout(&self, x: i32, y: i32) -> (i32, i32) {
         (x.saturating_sub(self.x), y.saturating_sub(self.y))
+    }
+
+    /// Whether a layout point lies on one of the frame's outputs. With
+    /// several outputs the frame's bounding box can include gaps and outputs
+    /// in standby, where the compositor would move the pointer to some other
+    /// output edge instead of the point the caller saw.
+    pub fn output_contains_layout(&self, x: i32, y: i32) -> bool {
+        self.outputs.iter().any(|o| {
+            let (x, y) = (i64::from(x), i64::from(y));
+            x >= i64::from(o.x)
+                && y >= i64::from(o.y)
+                && x < i64::from(o.x) + i64::from(o.width)
+                && y < i64::from(o.y) + i64::from(o.height)
+        })
     }
 
     /// Move window geometry from layout coordinates into this frame, so it
@@ -486,14 +499,15 @@ fn monitor_report_for(monitors: &[DisplayMonitor], frame: &DesktopFrame) -> serd
             .map(|m| {
                 let size = m.logical_size().ok();
                 let (fx, fy) = frame.from_layout(m.x, m.y);
+                let in_frame = frame.outputs.iter().any(|o| o.name == m.name);
                 serde_json::json!({
                     "name": m.name,
                     "width": size.map(|(width, _)| width),
                     "height": size.map(|(_, height)| height),
                     "scale": m.scale,
                     "powered": m.powered(),
-                    "frame_x": m.powered().then_some(fx),
-                    "frame_y": m.powered().then_some(fy),
+                    "frame_x": in_frame.then_some(fx),
+                    "frame_y": in_frame.then_some(fy),
                 })
             })
             .collect(),
@@ -527,12 +541,21 @@ pub fn desktop_frame() -> Result<DesktopFrame> {
 }
 
 fn desktop_frame_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<DesktopFrame> {
-    let powered: Vec<DisplayMonitor> = monitors
+    let in_layout: Vec<DisplayMonitor> = monitors
         .into_iter()
-        .filter(DisplayMonitor::powered)
+        .filter(DisplayMonitor::in_layout)
         .collect();
+    // An output in DPMS standby shows nothing, so the frame leaves it out
+    // while another output is on. With every output in standby the display is
+    // only idle (hypridle turned it off): keep the whole layout, as a single
+    // output always did, so observation and the input that wakes it still work.
+    let powered: Vec<DisplayMonitor> = if in_layout.iter().any(|m| m.dpms_status) {
+        in_layout.into_iter().filter(|m| m.dpms_status).collect()
+    } else {
+        in_layout
+    };
     if powered.is_empty() {
-        bail!("Hyprland has no powered output: every monitor is disabled or in DPMS standby");
+        bail!("Hyprland has no enabled output: every monitor is disabled or mirrors another");
     }
     let mut outputs = Vec::with_capacity(powered.len());
     for monitor in &powered {
@@ -644,17 +667,6 @@ fn pointer_space_from_monitors(
             "{error}; the virtual pointer spans every monitor in the layout, including ones in standby, so it cannot be sized"
         )),
     }
-}
-
-/// Real pointer position in layout coordinates.
-pub fn cursor_position() -> Result<(i32, i32)> {
-    #[derive(Deserialize)]
-    struct CursorPos {
-        x: f64,
-        y: f64,
-    }
-    let pos: CursorPos = query("j/cursorpos")?;
-    Ok((pos.x.round() as i32, pos.y.round() as i32))
 }
 
 /// Desktop capture for layouts the generic capture cannot represent. With a
@@ -777,9 +789,13 @@ pub fn single_output_transform() -> Result<u32> {
 
 pub fn list_windows() -> Result<Vec<Window>> {
     let monitors: Vec<Monitor> = query("j/monitors")?;
+    // Windows on an output in DPMS standby are not visible while another
+    // output is on. With every output in standby the display is only idle,
+    // so its workspaces stay on screen.
+    let any_powered = monitors.iter().any(|m| m.dpms_status);
     let active = monitors
         .into_iter()
-        .filter(|m| m.dpms_status)
+        .filter(|m| m.dpms_status || !any_powered)
         .flat_map(|m| [m.active_workspace.id, m.special_workspace.id])
         .filter(|id| *id != 0)
         .collect();
@@ -1477,7 +1493,15 @@ mod tests {
         let frame =
             desktop_frame_from_monitors(vec![monitor_at("A", -1920, 0), right_off]).unwrap();
         assert_eq!((frame.x, frame.width), (-1920, 1920));
-        assert!(desktop_frame_from_monitors(vec![off]).is_err());
+        // Every output in standby: the display is idle, and the frame keeps it.
+        let frame = desktop_frame_from_monitors(vec![off]).unwrap();
+        assert_eq!(
+            (frame.x, frame.width, frame.outputs.len()),
+            (-1920, 1920, 1)
+        );
+        let mut disabled = monitor_at("A", 0, 0);
+        disabled.disabled = true;
+        assert!(desktop_frame_from_monitors(vec![disabled]).is_err());
     }
 
     /// #4161: a laptop panel with a second monitor stacked above it, so the
@@ -1634,6 +1658,24 @@ mod tests {
                 .unwrap(),
             Some((-1920, 0, 3840, 1080))
         );
+    }
+
+    #[test]
+    fn frame_points_off_every_output_are_detected() {
+        // L-shaped layout: a gap at the bottom right of the bounding box.
+        let frame =
+            desktop_frame_from_monitors(vec![monitor_at("A", 0, 0), monitor_at("B", 1920, -1080)])
+                .unwrap();
+        assert_eq!(
+            (frame.x, frame.y, frame.width, frame.height),
+            (0, -1080, 3840, 2160)
+        );
+        assert!(frame.output_contains_layout(10, 10));
+        assert!(frame.output_contains_layout(1920, -1080));
+        assert!(frame.output_contains_layout(3839, -1));
+        assert!(!frame.output_contains_layout(1920, 0));
+        assert!(!frame.output_contains_layout(10, -10));
+        assert!(!frame.output_contains_layout(3840, -1));
     }
 
     #[test]

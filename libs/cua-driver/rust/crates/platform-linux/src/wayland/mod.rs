@@ -1380,6 +1380,23 @@ impl DesktopInputSpace {
             .as_ref()
             .map_or((x, y), |snapshot| snapshot.frame.to_layout(x, y))
     }
+
+    /// Layout coordinates of a desktop-frame point that input may target.
+    /// On a multi-monitor frame a point in a gap or on an output in standby
+    /// is refused rather than left for the compositor to move to another
+    /// output edge. A single output keeps the existing edge clamping.
+    pub fn input_layout(&self, x: i32, y: i32) -> anyhow::Result<(i32, i32)> {
+        let Some(snapshot) = self.snapshot.as_ref() else {
+            return Ok((x, y));
+        };
+        let (layout_x, layout_y) = snapshot.frame.to_layout(x, y);
+        anyhow::ensure!(
+            snapshot.frame.outputs.len() <= 1
+                || snapshot.frame.output_contains_layout(layout_x, layout_y),
+            "desktop point ({x}, {y}) is not on a powered monitor in the current layout; call get_desktop_state again"
+        );
+        Ok((layout_x, layout_y))
+    }
 }
 
 impl VptrSession {
@@ -1772,7 +1789,7 @@ pub fn click_desktop(
         let btn = evdev_button(button as u32);
         return inject_send(&[format!("d {x} {y} {} {btn}", count.max(1))]);
     }
-    let (x, y) = space.to_layout(x, y);
+    let (x, y) = space.input_layout(x, y)?;
     with_libei_fallback(
         || click_vptr(None, x, y, count, button, space.snapshot.as_ref()),
         || libei_click(x, y, count, button),
@@ -1948,7 +1965,7 @@ pub fn scroll_desktop(
     if is_inject_mode() {
         return inject_scroll_desktop(x, y, direction, amount);
     }
-    let (x, y) = space.to_layout(x, y);
+    let (x, y) = space.input_layout(x, y)?;
     let direction = direction.to_string();
     with_libei_fallback(
         || {
@@ -2050,7 +2067,7 @@ pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::R
 
 /// Warp the cursor to a desktop-frame point (the `get_desktop_state` frame).
 pub fn move_cursor_desktop(space: &DesktopInputSpace, x: i32, y: i32) -> anyhow::Result<()> {
-    let (x, y) = space.to_layout(x, y);
+    let (x, y) = space.input_layout(x, y)?;
     with_libei_fallback(
         || move_cursor_absolute_vptr(None, x, y, space.snapshot.as_ref()),
         || libei_move_absolute(x, y),
@@ -2122,8 +2139,8 @@ pub fn drag_desktop(
     duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
-    let (from_x, from_y) = space.to_layout(from_x, from_y);
-    let (to_x, to_y) = space.to_layout(to_x, to_y);
+    let (from_x, from_y) = space.input_layout(from_x, from_y)?;
+    let (to_x, to_y) = space.input_layout(to_x, to_y)?;
     with_libei_fallback(
         || {
             drag_vptr(

@@ -165,10 +165,17 @@ the VM account so maintainers have only one local credential to enter:
 SIGNING_KEYCHAIN="$HOME/Library/Keychains/cua-driver-signing.keychain-db"
 security create-keychain "$SIGNING_KEYCHAIN"
 security set-keychain-settings "$SIGNING_KEYCHAIN"
-security list-keychains -d user -s "$SIGNING_KEYCHAIN"
+security list-keychains -d user -s "$SIGNING_KEYCHAIN" \
+  "$HOME/Library/Keychains/login.keychain-db"
 security unlock-keychain "$SIGNING_KEYCHAIN"
 export CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN="$SIGNING_KEYCHAIN"
 ```
+
+Keep the login Keychain in the search list. Computer History adds its key to
+the default login Keychain and reads it back through the search list, so a list
+with only the signing keychain fails the history gate with
+`history_key_unavailable`. The acceptance runner refuses such a list before it
+builds.
 
 The first strict local install creates and imports the self-signed identity,
 then stops without replacing the app if the new certificate is not usable yet.
@@ -232,7 +239,10 @@ osascript -e \
 ```
 
 Choose Allow for `Terminal` -> `System Events` and on the CuaDriverLocal
-direct-capture prompt. CuaDriverLocal app enumeration must not ask for System
+direct-capture prompt. Then add Terminal under System Settings > Privacy &
+Security > Accessibility: the `bring_to_front` oracles raise fixture windows and
+read `AXFocusedWindow` through System Events UI scripting, which needs it. The
+runner checks both Terminal grants before it builds. CuaDriverLocal app enumeration must not ask for System
 Events. Target-specific Automation prompts may still appear later when a user
 explicitly requests an Apple Events-backed browser or app operation; do not
 pre-grant those in the seed. These are normal macOS consent flows; do not edit
@@ -356,6 +366,7 @@ granted and then rerun without prompts:
 
 - `CuaDriverLocal.app`: Accessibility and Screen Recording
 - Terminal controlling System Events
+- Terminal: Accessibility, for System Events UI scripting
 - CuaDriverLocal direct screen capture without the system picker. macOS labels
   this combined consent as screen and system-audio access even though Cua
   Driver's current ScreenCaptureKit recorder does not enable audio capture.

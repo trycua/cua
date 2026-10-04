@@ -5,10 +5,11 @@ description: Run OpenAI Agents, Codex, Cursor, OpenClaw, an Omarchy desktop and 
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Each recipe gives a third-party agent its own cloud desktop instead of yours.
-You need [cloud credentials](/cua-sdk/guides/cloud#credentials), and Python
-`>=3.11,<3.14` with [`uv`](https://docs.astral.sh/uv/) for the scripts, which
-pin `cua-sandbox==0.9.0`. Your controller owns the sandbox and must release it.
+Each recipe gives a third-party agent its own desktop instead of yours. The
+cloud recipes need [cloud credentials](/cua-sdk/guides/cloud#credentials), and
+Python `>=3.11,<3.14` with [`uv`](https://docs.astral.sh/uv/) for the scripts,
+which pin `cua-sandbox==0.9.0`. Your controller owns the sandbox and must
+release it.
 
 ## OpenAI Agents API
 
@@ -40,12 +41,46 @@ interactive.
 
 ## Cursor Cloud Agents
 
-A Cursor self-hosted Team Pool worker runs in a Linux desktop for as long as
-your controller holds `Sandbox.ephemeral(Image.linux())`.
-The controller installs the Cursor CLI, writes `CURSOR_API_KEY` to a
-mode-`600` file with `sb.files.write_text`, and starts
-`agent worker --pool <pool> start` in the background. It needs Cursor
-Enterprise with Self-Hosted Agents and a service-account key.
+Cursor's self-hosted Team Pool worker can run in a Linux Space on your Mac or
+on a machine you set up with
+[`cua host setup --provide-spaces`](/start-here/host-spaces-on-your-spare-mac)
+(add `--on "<machine>"` and use the id `create` prints). It needs Cursor
+Enterprise with [Self-Hosted Machines](https://cursor.com/docs/cloud-agent/self-hosted)
+allowed and a service-account API key. Create the Space, install the Cursor
+CLI, clone the repository the pool serves, and copy the key in as a file so it
+never appears on a command line:
+
+```bash test="cli-shape" id="cursor-worker-setup"
+cua spaces create linux --name cursor-worker --cpus 4 --memory-mb 8192
+cua sb exec cursor-worker 'curl https://cursor.com/install -fsS | bash'
+cua sb exec cursor-worker 'git clone https://github.com/<owner>/<repo>.git ~/repo'
+(umask 077; printf '%s' "$CURSOR_API_KEY" > cursor-api-key)
+cua sb cp cursor-api-key cursor-worker:/home/cua/.cursor-api-key
+rm cursor-api-key
+```
+
+The worker exits after an idle hour (`--idle-release-timeout`), so
+`cursor-worker.sh` restarts it:
+
+```sh title="cursor-worker.sh" skip="placeholder"
+#!/bin/sh
+chmod 600 ~/.cursor-api-key; cd ~/repo || exit 1
+while true; do
+  CURSOR_API_KEY="$(cat ~/.cursor-api-key)" ~/.local/bin/agent worker --pool <pool> start
+  sleep 5
+done
+```
+
+Start it in the background:
+
+```bash test="cli-shape" id="cursor-worker-start"
+cua sb cp cursor-worker.sh cursor-worker:/home/cua/cursor-worker.sh
+cua sb exec cursor-worker 'nohup sh ~/cursor-worker.sh > ~/cursor-worker.log 2>&1 &'
+```
+
+The worker connects out to Cursor; the Space accepts no incoming connections.
+After a Space restart, run the `nohup` line again. One worker serves one agent
+at a time. `cua spaces delete cursor-worker` removes it.
 
 ## OpenClaw
 

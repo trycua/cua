@@ -23,8 +23,8 @@ Each image publishes directly under `ghcr.io/trycua/<os>` (`linux`, `windows`, `
 | `ghcr.io/trycua/linux:24.04` | OCI index, rootfs for docker / gVisor, amd64 + arm64 |
 | `ghcr.io/trycua/linux:24.04-disk` | OCI index, KubeVirt containerDisk (`/disk/disk.img`, uid 107), amd64 + arm64 |
 | `ghcr.io/trycua/windows:2022`, `2022-disk` | containerDisk, amd64, built by `windows-2022/` (`cd-image-windows.yml`): the Windows workspace plus cua-spacesd, gated on `cua-spacesd doctor --strict` in the guest |
-| `ghcr.io/trycua/macos:26` | Lume image built by `macos/`, full tier (slim plus the Command Line Tools, Homebrew and dev tools); pin `26-20261003-5845488` |
-| `ghcr.io/trycua/macos:26-slim` | Lume image built by `macos/`, slim tier (the base plus cua-spacesd and Google Chrome); pin `26-slim-20261003-5845488` |
+| `ghcr.io/trycua/macos:26` | Lume image built by `macos/`, full tier (slim plus the Command Line Tools, Homebrew and dev tools); pin `26-20261003-a7b1e34` |
+| `ghcr.io/trycua/macos:26-slim` | Lume image built by `macos/`, slim tier (the base plus cua-spacesd and Google Chrome); pin `26-slim-20261003-a7b1e34` |
 | `ghcr.io/trycua/macos:15` | Lume image (copy of `macos-sequoia-cua`) |
 
 - Every floating tag has an immutable dated pin: `<tag>-<yyyymmdd>-<sha7>`. Pins and per-arch children are written once. In the canonical repos only the floating tags (`<version>[-slim|-xcode[-X.Y]][-disk]`: `24.04`, `24.04-disk`, `2022`, `2022-disk`, `26`, `26-slim`, `15`) ever move, and only to a pin's digest. The macOS tiers also push `<pin>-raw` (the plain `lume push`) before `annotate.sh` writes the pin; it never moves.

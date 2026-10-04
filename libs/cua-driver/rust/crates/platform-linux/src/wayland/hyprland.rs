@@ -35,6 +35,9 @@ struct Client {
     at: [i32; 2],
     size: [i32; 2],
     workspace: Workspace,
+    /// Absent on compositors that do not report it; never read as native.
+    #[serde(default)]
+    xwayland: Option<bool>,
     /// 0 is the focused client; larger is longer ago. Absent on old builds.
     #[serde(rename = "focusHistoryID", default)]
     focus_history: i64,
@@ -70,6 +73,9 @@ pub struct Window {
     pub height: u32,
     pub workspace: i64,
     pub visible: bool,
+    /// `Some(true)` for XWayland, `Some(false)` for native Wayland, `None`
+    /// when the compositor did not report the flag.
+    pub xwayland: Option<bool>,
     hidden: bool,
     /// Focus recency (0 = focused); the closest thing to z-order Hyprland
     /// exposes.
@@ -316,6 +322,7 @@ fn windows_from_clients(clients: Vec<Client>, active: &HashSet<i64>) -> Result<V
             height,
             workspace: c.workspace.id,
             visible: !c.hidden && active.contains(&c.workspace.id),
+            xwayland: c.xwayland,
             hidden: c.hidden,
             focus_order: c.focus_history,
         });
@@ -453,6 +460,21 @@ fn accessibility_target(windows: &[Window], address: u64, pid: u32) -> Option<Wi
         .then(|| target.clone())
 }
 
+/// True only when the compositor positively identifies the exact
+/// `(address, pid)` client as native Wayland. A zero address, missing or
+/// mismatched window, or an absent/XWayland flag all refuse.
+pub fn native_client_attested(address: u64, pid: u32) -> bool {
+    list_windows().is_ok_and(|windows| native_attestation(&windows, address, pid))
+}
+
+fn native_attestation(windows: &[Window], address: u64, pid: u32) -> bool {
+    address != 0
+        && windows
+            .iter()
+            .find(|w| w.address == address)
+            .is_some_and(|w| w.pid == pid && w.xwayland == Some(false))
+}
+
 /// The legacy PID-only bounds caller has no window identity: allow only a
 /// single mapped client. Explicit IDs never fall back to this function.
 pub fn window_for_pid(pid: u32) -> Option<Window> {
@@ -534,9 +556,44 @@ mod tests {
             height: 600,
             workspace: 1,
             visible: true,
+            xwayland: Some(false),
             hidden: false,
             focus_order: 0,
         }
+    }
+
+    #[test]
+    fn native_attestation_requires_exact_address_pid_and_native_flag() {
+        let native = window(0x10, 42);
+        let mut xwayland = window(0x20, 42);
+        xwayland.xwayland = Some(true);
+        let mut absent = window(0x30, 42);
+        absent.xwayland = None;
+        let windows = [native, xwayland, absent];
+        assert!(native_attestation(&windows, 0x10, 42));
+        assert!(!native_attestation(&windows, 0x20, 42));
+        assert!(!native_attestation(&windows, 0x30, 42));
+        assert!(!native_attestation(&windows, 0x10, 43));
+        assert!(!native_attestation(&windows, 0x40, 42));
+        assert!(!native_attestation(&windows, 0, 42));
+    }
+
+    #[test]
+    fn client_xwayland_flag_is_tri_state() {
+        let active = HashSet::from([1]);
+        let with = |flag: Option<bool>| {
+            let mut c = client("0x10", 42, [800, 600]);
+            c.xwayland = flag;
+            windows_from_clients(vec![c], &active)
+                .unwrap()
+                .remove(0)
+                .xwayland
+        };
+        assert_eq!(with(Some(true)), Some(true));
+        assert_eq!(with(Some(false)), Some(false));
+        assert_eq!(with(None), None);
+        // `client()` omits the field entirely: absent must deserialize to None.
+        assert_eq!(client("0x10", 42, [800, 600]).xwayland, None);
     }
 
     #[test]

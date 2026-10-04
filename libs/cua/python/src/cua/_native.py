@@ -1063,6 +1063,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_shares() != 19234:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_space_spacesd() != 47873:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_start_hotspot() != 44744:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_stop_hotspot() != 18254:
@@ -3526,6 +3528,11 @@ _UniffiLib.uniffi_cua_sdk_fn_method_space_shares.argtypes = (
     ctypes.c_uint64,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_space_shares.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_space_spacesd.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_space_spacesd.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_space_start_hotspot.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -5210,6 +5217,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_space_share.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_shares.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_shares.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_spacesd.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_spacesd.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_start_hotspot.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_start_hotspot.restype = ctypes.c_uint16
@@ -32288,6 +32298,11 @@ class SpaceProtocol(typing.Protocol):
         Who this Space is shared with, and who of them is connected now.
 """
         raise NotImplementedError
+    def spacesd(self, ) -> SpacesdClient:
+        """
+        The cua-spacesd client over the connection this Space authenticated.
+"""
+        raise NotImplementedError
     async def start_hotspot(self, set_system_proxy: typing.Optional[bool],bypass: typing.Optional[typing.List[str]]) -> SpaceHotspotStatus:
         """
         Starts the reverse-SOCKS hotspot: this host serves the Space's
@@ -33090,6 +33105,21 @@ class Space(SpaceProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    def spacesd(self, ) -> SpacesdClient:
+        """
+        The cua-spacesd client over the connection this Space authenticated.
+"""
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSpacesdClient.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cua_sdk_fn_method_space_spacesd,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
     async def start_hotspot(self, set_system_proxy: typing.Optional[bool],bypass: typing.Optional[typing.List[str]]) -> SpaceHotspotStatus:
         """
         Starts the reverse-SOCKS hotspot: this host serves the Space's

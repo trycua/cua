@@ -8410,6 +8410,11 @@ public protocol SpaceProtocol: AnyObject, Sendable {
     func shares() async throws  -> SpaceShares
 
     /**
+     * The cua-spacesd client over the connection this Space authenticated.
+     */
+    func spacesd() throws  -> SpacesdClient
+
+    /**
      * Starts the reverse-SOCKS hotspot: this host serves the Space's
      * egress. `set_system_proxy` points the guest's proxy settings at it
      * (default false here).
@@ -9165,6 +9170,17 @@ open func shares()async throws  -> SpaceShares  {
             liftFunc: FfiConverterTypeSpaceShares_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
+}
+
+    /**
+     * The cua-spacesd client over the connection this Space authenticated.
+     */
+open func spacesd()throws  -> SpacesdClient  {
+    return try  FfiConverterTypeSpacesdClient_lift(try rustCallWithError(FfiConverterTypeCuaError_lift) {
+    uniffi_cua_sdk_fn_method_space_spacesd(
+            self.uniffiCloneHandle(),$0
+    )
+})
 }
 
     /**
@@ -40691,6 +40707,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_shares() != 19234) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_space_spacesd() != 47873) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_start_hotspot() != 44744) {

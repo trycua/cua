@@ -1,0 +1,10 @@
+# TypeScript messages and service descriptors for the viewer's gRPC-Web
+# client (Connect-ES). Regenerate with `pnpm generate`; `pnpm check` fails
+# on drift.
+version: v2
+plugins:
+  - local: node_modules/.bin/protoc-gen-es
+    out: src/gen
+    opt:
+      - target=ts
+      - import_extension=none

@@ -1,6 +1,6 @@
 {
   "name": "cuabot",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "packageManager": "pnpm@10.11.0",
   "description": "Sandboxed, co-op computer-use agents",
   "repository": {
@@ -19,7 +19,8 @@
     "dev": "npx tsx --watch src/cuabot.tsx",
     "serve": "npx tsx src/cuabot.tsx --serve",
     "stop": "npx tsx src/cuabot.tsx --stop",
-    "status": "npx tsx src/cuabot.tsx --status"
+    "status": "npx tsx src/cuabot.tsx --status",
+    "test": "node --import tsx --test test/telemetry.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
@@ -48,17 +49,17 @@
   },
   "pnpm": {
     "overrides": {
-      "@hono/node-server": "1.19.13",
+      "@hono/node-server": "1.19.17",
       "@modelcontextprotocol/sdk": "1.26.0",
       "ajv": "8.18.0",
-      "brace-expansion": "2.0.3",
-      "fast-uri": "3.1.2",
-      "hono": "4.12.25",
-      "ip-address": "10.1.1",
+      "brace-expansion": "2.1.7",
+      "fast-uri": "3.1.8",
+      "hono": "4.13.9",
+      "ip-address": "10.7.2",
       "minimatch": "9.0.7",
       "path-to-regexp": "8.4.0",
-      "qs": "6.15.2",
-      "tar": "7.5.16",
+      "qs": "6.16.0",
+      "tar": "7.5.22",
       "uuid": "13.0.1",
       "ws": "8.21.0"
     }

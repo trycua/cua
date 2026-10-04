@@ -51,9 +51,12 @@ def test_osworld_images_default_to_the_flask_port():
     osworld = Image.from_registry(REF, os_type="linux", kind="vm", agent_type="osworld")
     plain = Image.from_registry(REF, os_type="linux", kind="vm")
     assert default_server_port(osworld) == 5000
-    assert default_server_port(plain) == 8000
+    # None is the daemon-agnostic default: the pool publishes cua-spacesd
+    # as ``env``; only a declared server_port or an OSWorld disk adds ``server``.
+    assert default_server_port(plain) is None
+    assert default_server_port(plain, 8000) == 8000
     assert default_server_port(osworld, 5555) == 5555
-    assert default_server_port(None) == 8000
+    assert default_server_port(None) is None
 
 
 def test_transport_classes_follow_agent_type():

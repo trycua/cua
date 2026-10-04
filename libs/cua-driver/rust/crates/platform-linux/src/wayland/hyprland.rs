@@ -38,6 +38,9 @@ struct Client {
     /// Absent on compositors that do not report it; never read as native.
     #[serde(default)]
     xwayland: Option<bool>,
+    /// 0 is the focused client; larger is longer ago. Absent on old builds.
+    #[serde(rename = "focusHistoryID", default)]
+    focus_history: i64,
 }
 
 #[derive(Deserialize)]
@@ -74,6 +77,9 @@ pub struct Window {
     /// when the compositor did not report the flag.
     pub xwayland: Option<bool>,
     hidden: bool,
+    /// Focus recency (0 = focused); the closest thing to z-order Hyprland
+    /// exposes.
+    pub focus_order: i64,
 }
 
 pub fn is_session() -> bool {
@@ -225,7 +231,10 @@ fn query_with<T: serde::de::DeserializeOwned>(
     let deadline = Instant::now() + total;
     // Keep this a closed list: a generic "j/" prefix also admits JSON-formatted
     // dispatch commands. JSON output does not imply a read-only operation.
-    let read_only = matches!(command, "j/monitors" | "j/clients" | "j/activewindow");
+    let read_only = matches!(
+        command,
+        "j/monitors" | "j/clients" | "j/activewindow" | "j/cursorpos"
+    );
     for attempt in 1..=QUERY_MAX_ATTEMPTS {
         query_time_remaining(deadline)?;
         let attempt_deadline = deadline.min(Instant::now() + per_attempt);
@@ -315,6 +324,7 @@ fn windows_from_clients(clients: Vec<Client>, active: &HashSet<i64>) -> Result<V
             visible: !c.hidden && active.contains(&c.workspace.id),
             xwayland: c.xwayland,
             hidden: c.hidden,
+            focus_order: c.focus_history,
         });
     }
     Ok(windows)
@@ -342,15 +352,20 @@ fn screen_size_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<(u32, u32,
     if !monitor.scale.is_finite() || monitor.scale <= 0.0 {
         bail!("invalid Hyprland display scale");
     }
-    if monitor.transform != 0 || monitor.x != 0 || monitor.y != 0 {
-        bail!("Hyprland display identity requires an unrotated output at the origin");
+    // Hyprland reports the mode in the panel's native orientation. Rotated
+    // outputs (wl_output transforms 1-3) are supported by reporting the logical
+    // frame that windows and input use; flipped transforms (4-7) still refuse.
+    if monitor.transform > 3 || monitor.x != 0 || monitor.y != 0 {
+        bail!("Hyprland display identity requires an unflipped output at the origin");
     }
     if !valid_dimensions(monitor.width, monitor.height) {
         bail!("invalid Hyprland display dimensions");
     }
 
-    let logical_width = (f64::from(monitor.width) / monitor.scale).round();
-    let logical_height = (f64::from(monitor.height) / monitor.scale).round();
+    let (width, height) =
+        super::logical_output_size((monitor.width, monitor.height), monitor.transform);
+    let logical_width = (f64::from(width) / monitor.scale).round();
+    let logical_height = (f64::from(height) / monitor.scale).round();
     if !logical_width.is_finite()
         || !logical_height.is_finite()
         || logical_width < 1.0
@@ -367,6 +382,17 @@ fn screen_size_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<(u32, u32,
     Ok((logical_width, logical_height, monitor.scale))
 }
 
+/// wl_output transform of the single active output. Full-display screencopy
+/// frames arrive in the panel's native orientation; callers use this to turn
+/// them into the logical desktop frame.
+pub fn single_output_transform() -> Result<u32> {
+    let monitors: Vec<DisplayMonitor> = query("j/monitors")?;
+    let [monitor] = monitors.as_slice() else {
+        bail!("Hyprland display identity requires exactly one active output");
+    };
+    Ok(monitor.transform)
+}
+
 pub fn list_windows() -> Result<Vec<Window>> {
     let monitors: Vec<Monitor> = query("j/monitors")?;
     let active = monitors
@@ -375,6 +401,37 @@ pub fn list_windows() -> Result<Vec<Window>> {
         .filter(|id| *id != 0)
         .collect();
     windows_from_clients(query("j/clients")?, &active)
+}
+
+#[derive(Deserialize)]
+struct CursorPos {
+    x: f64,
+    y: f64,
+}
+
+/// The pointer in Hyprland's global layout coordinates.
+pub fn cursor_position() -> Result<(f64, f64)> {
+    let pos: CursorPos = query("j/cursorpos")?;
+    Ok((pos.x, pos.y))
+}
+
+/// Move the pointer (`dispatch movecursor`), no button state. For the
+/// presence shape probe only.
+pub fn move_cursor(x: f64, y: f64) -> Result<()> {
+    let mut ipc = ipc_connection()?;
+    let command = format!(
+        "dispatch movecursor {} {}",
+        x.round() as i64,
+        y.round() as i64
+    );
+    let reply = read_reply(&mut ipc, command.as_bytes(), QUERY_TIMEOUT)?;
+    if reply.trim_ascii() != b"ok" {
+        bail!(
+            "Hyprland movecursor refused: {}",
+            String::from_utf8_lossy(&reply)
+        );
+    }
+    Ok(())
 }
 
 pub fn window_for_address(address: u64) -> Option<Window> {
@@ -501,6 +558,7 @@ mod tests {
             visible: true,
             xwayland: Some(false),
             hidden: false,
+            focus_order: 0,
         }
     }
 
@@ -553,7 +611,7 @@ mod tests {
     fn accessibility_correlation_rejects_duplicate_compositor_titles() {
         let a = window(0x10, 42);
         let b = window(0x20, 42);
-        assert!(accessibility_target(&[a.clone()], a.address, a.pid).is_some());
+        assert!(accessibility_target(std::slice::from_ref(&a), a.address, a.pid).is_some());
         assert!(accessibility_target(&[a.clone(), b], a.address, a.pid).is_none());
     }
 
@@ -999,6 +1057,16 @@ mod tests {
     }
 
     #[test]
+    fn display_identity_reports_the_logical_frame_of_rotated_outputs() {
+        for (transform, expected) in [(1, (1080, 1920)), (2, (1920, 1080)), (3, (1080, 1920))] {
+            let mut monitor = display_monitor();
+            monitor.transform = transform;
+            let (width, height, _) = screen_size_from_monitors(vec![monitor]).unwrap();
+            assert_eq!((width, height), expected, "transform {transform}");
+        }
+    }
+
+    #[test]
     fn display_identity_rejects_ambiguous_outputs_and_unsupported_frames() {
         assert!(screen_size_from_monitors(vec![]).is_err());
         assert!(screen_size_from_monitors(vec![display_monitor(), display_monitor()]).is_err());
@@ -1007,7 +1075,7 @@ mod tests {
             monitor.scale = scale;
             assert!(screen_size_from_monitors(vec![monitor]).is_err());
         }
-        for (x, y, transform) in [(100, 0, 0), (0, -100, 0), (0, 0, 1), (0, 0, 7)] {
+        for (x, y, transform) in [(100, 0, 0), (0, -100, 0), (0, 0, 4), (0, 0, 7)] {
             let mut monitor = display_monitor();
             (monitor.x, monitor.y, monitor.transform) = (x, y, transform);
             assert!(screen_size_from_monitors(vec![monitor]).is_err());

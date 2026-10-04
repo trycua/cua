@@ -48,10 +48,7 @@ pub fn select_nearest_container(element_ptr: usize) -> Option<String> {
         if owns_current {
             unsafe { CFRelease(current as CFTypeRef) };
         }
-        let Some(parent) = parent else {
-            return None;
-        };
-        current = parent;
+        current = parent?;
         owns_current = true;
     }
 
@@ -84,10 +81,7 @@ pub fn nearest_container_selection_state(element_ptr: usize) -> Option<(String, 
         if owns_current {
             unsafe { CFRelease(current as CFTypeRef) };
         }
-        let Some(parent) = parent else {
-            return None;
-        };
-        current = parent;
+        current = parent?;
         owns_current = true;
     }
 
@@ -184,10 +178,7 @@ pub fn capture_nearest_container_selection(element_ptr: usize) -> Option<Selecti
         if owns_current {
             unsafe { CFRelease(current as CFTypeRef) };
         }
-        let Some(parent) = parent else {
-            return None;
-        };
-        current = parent;
+        current = parent?;
         owns_current = true;
     }
 
@@ -242,36 +233,6 @@ fn map_action(action: &str) -> &'static str {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn disabled_elements_are_refused_before_dispatch() {
-        let error = ensure_ax_enabled(Some(false), "AXPick").unwrap_err();
-        let message = error.to_string();
-        assert!(message.contains("AXEnabled=false"));
-        assert!(message.contains("delivery_mode:\"foreground\""));
-        assert!(message.contains("bring_to_front"));
-    }
-
-    #[test]
-    fn enabled_or_unreported_state_is_allowed() {
-        assert!(ensure_ax_enabled(Some(true), "AXPress").is_ok());
-        assert!(ensure_ax_enabled(None, "AXPress").is_ok());
-    }
-
-    #[test]
-    fn selection_fallback_is_limited_to_collection_item_roles() {
-        for role in ["AXRow", "AXCell", "AXListItem", "AXImage"] {
-            assert!(is_selectable_container_role(role), "{role}");
-        }
-        for role in ["AXButton", "AXTextField", "AXWindow", "AXOutline"] {
-            assert!(!is_selectable_container_role(role), "{role}");
-        }
-    }
-}
-
 /// Set AXFocused=true on an element (for pre-focusing before key press).
 pub fn focus_element(element_ptr: usize) -> anyhow::Result<()> {
     let err = unsafe { set_bool_attr_true(element_ptr as AXUIElementRef, "AXFocused") };
@@ -314,5 +275,35 @@ pub fn set_ax_value(element_ptr: usize, value: &str) -> anyhow::Result<()> {
         Ok(())
     } else {
         anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabled_elements_are_refused_before_dispatch() {
+        let error = ensure_ax_enabled(Some(false), "AXPick").unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("AXEnabled=false"));
+        assert!(message.contains("delivery_mode:\"foreground\""));
+        assert!(message.contains("bring_to_front"));
+    }
+
+    #[test]
+    fn enabled_or_unreported_state_is_allowed() {
+        assert!(ensure_ax_enabled(Some(true), "AXPress").is_ok());
+        assert!(ensure_ax_enabled(None, "AXPress").is_ok());
+    }
+
+    #[test]
+    fn selection_fallback_is_limited_to_collection_item_roles() {
+        for role in ["AXRow", "AXCell", "AXListItem", "AXImage"] {
+            assert!(is_selectable_container_role(role), "{role}");
+        }
+        for role in ["AXButton", "AXTextField", "AXWindow", "AXOutline"] {
+            assert!(!is_selectable_container_role(role), "{role}");
+        }
     }
 }

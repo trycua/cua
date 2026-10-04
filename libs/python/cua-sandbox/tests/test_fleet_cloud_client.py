@@ -386,6 +386,6 @@ def test_fleet_client_requires_credentials_when_no_workload_token_exists(monkeyp
 
     with pytest.raises(
         ValueError,
-        match="Fleet cloud sandboxes require CUA_CLIENT_ID and CUA_CLIENT_SECRET",
+        match="Fleet credentials missing: run `cua auth login` or set CUA_CLIENT_ID/CUA_CLIENT_SECRET",
     ):
         _FleetClient()

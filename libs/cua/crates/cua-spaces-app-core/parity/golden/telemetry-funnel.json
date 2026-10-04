@@ -1,0 +1,982 @@
+{
+  "flow": "telemetry-funnel",
+  "frames": [
+    {
+      "at": "launch",
+      "signals": [
+        {
+          "ok": true,
+          "step": "app_launched",
+          "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "experiments-loaded",
+      "at": "onboarding",
+      "page": "welcome",
+      "signals": []
+    },
+    {
+      "action": "telemetry-loaded",
+      "at": "onboarding",
+      "page": "welcome",
+      "signals": []
+    },
+    {
+      "action": "start",
+      "at": "onboarding",
+      "page": "signin",
+      "signals": [
+        {
+          "ok": true,
+          "step": "onboarding_shown",
+          "type": "step"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "welcome",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "completed",
+          "choice": "none",
+          "page": "welcome",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "signin",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "cli-installed",
+      "at": "onboarding",
+      "page": "signin",
+      "signals": []
+    },
+    {
+      "action": "signed-in",
+      "at": "onboarding",
+      "page": "signin",
+      "signals": [
+        {
+          "ok": true,
+          "step": "signed_in",
+          "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "signin-done",
+      "at": "onboarding",
+      "page": "agents",
+      "signals": [
+        {
+          "action": "completed",
+          "choice": "signed_in",
+          "page": "signin",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "agents",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "agents-done",
+      "at": "onboarding",
+      "page": "presentation",
+      "signals": [
+        {
+          "action": "completed",
+          "choice": "agents_set_up",
+          "page": "agents",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "presentation",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "presentation-picked",
+      "at": "onboarding",
+      "page": "presentation",
+      "signals": []
+    },
+    {
+      "action": "presentation-done",
+      "at": "onboarding",
+      "page": "drive",
+      "signals": [
+        {
+          "action": "completed",
+          "choice": "menu_bar_only",
+          "page": "presentation",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "volume",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "drive-storage-loaded",
+      "at": "onboarding",
+      "page": "drive",
+      "signals": []
+    },
+    {
+      "action": "drive-checked",
+      "at": "onboarding",
+      "page": "drive",
+      "signals": []
+    },
+    {
+      "action": "drive-toggled",
+      "at": "onboarding",
+      "page": "drive",
+      "signals": []
+    },
+    {
+      "action": "back",
+      "at": "onboarding",
+      "page": "presentation",
+      "signals": [
+        {
+          "action": "back",
+          "choice": "none",
+          "page": "volume",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "presentation",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "presentation-done",
+      "at": "onboarding",
+      "page": "drive",
+      "signals": [
+        {
+          "action": "completed",
+          "choice": "menu_bar_only",
+          "page": "presentation",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "volume",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "drive-continue",
+      "at": "onboarding",
+      "page": "drive",
+      "signals": []
+    },
+    {
+      "action": "drive-mounted",
+      "at": "onboarding",
+      "page": "mode",
+      "signals": [
+        {
+          "action": "completed",
+          "choice": "this_mac",
+          "page": "volume",
+          "type": "onboarding-page"
+        },
+        {
+          "addToFinder": true,
+          "mountMethod": "fskit",
+          "outcome": "ok",
+          "storage": "this_mac",
+          "surface": "onboarding",
+          "type": "volume-setup"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "this_machine",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "mode-chosen",
+      "at": "onboarding",
+      "page": "done",
+      "signals": [
+        {
+          "action": "completed",
+          "choice": "access_others",
+          "page": "this_machine",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "done",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "finish",
+      "at": "onboarding",
+      "signals": [
+        {
+          "action": "completed",
+          "choice": "none",
+          "page": "done",
+          "type": "onboarding-page"
+        },
+        {
+          "ok": true,
+          "step": "onboarding_completed",
+          "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "experiments-loaded",
+      "at": "skipping",
+      "page": "welcome",
+      "signals": []
+    },
+    {
+      "action": "signed-in",
+      "at": "skipping",
+      "page": "welcome",
+      "signals": []
+    },
+    {
+      "action": "start",
+      "at": "skipping",
+      "page": "signin",
+      "signals": [
+        {
+          "ok": true,
+          "step": "onboarding_shown",
+          "type": "step"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "welcome",
+          "type": "onboarding-page"
+        },
+        {
+          "ok": true,
+          "step": "signed_in",
+          "type": "step"
+        },
+        {
+          "action": "completed",
+          "choice": "none",
+          "page": "welcome",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "signin",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "signin-done",
+      "at": "skipping",
+      "page": "agents",
+      "signals": [
+        {
+          "action": "completed",
+          "choice": "signed_in",
+          "page": "signin",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "agents",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "agents-done",
+      "at": "skipping",
+      "page": "presentation",
+      "signals": [
+        {
+          "action": "skipped",
+          "choice": "no_agents",
+          "page": "agents",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "presentation",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "presentation-done",
+      "at": "skipping",
+      "page": "drive",
+      "signals": [
+        {
+          "action": "completed",
+          "choice": "notch_and_menu_bar",
+          "page": "presentation",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "volume",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "drive-checked",
+      "at": "skipping",
+      "page": "mode",
+      "signals": [
+        {
+          "action": "skipped",
+          "choice": "none",
+          "page": "volume",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "this_machine",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "mode-chosen",
+      "at": "skipping",
+      "page": "done",
+      "signals": [
+        {
+          "action": "completed",
+          "choice": "host",
+          "page": "this_machine",
+          "type": "onboarding-page"
+        },
+        {
+          "action": "shown",
+          "choice": "none",
+          "page": "done",
+          "type": "onboarding-page"
+        }
+      ]
+    },
+    {
+      "action": "finish",
+      "at": "skipping",
+      "signals": [
+        {
+          "action": "completed",
+          "choice": "none",
+          "page": "done",
+          "type": "onboarding-page"
+        },
+        {
+          "ok": true,
+          "step": "onboarding_completed",
+          "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "experiments-loaded",
+      "at": "no-usage-data",
+      "page": "welcome",
+      "signals": []
+    },
+    {
+      "action": "telemetry-loaded",
+      "at": "no-usage-data",
+      "page": "welcome",
+      "signals": []
+    },
+    {
+      "action": "usage-data-toggled",
+      "at": "no-usage-data",
+      "page": "welcome",
+      "signals": []
+    },
+    {
+      "action": "start",
+      "at": "no-usage-data",
+      "page": "signin",
+      "signals": []
+    },
+    {
+      "action": "cli-installed",
+      "at": "no-usage-data",
+      "page": "signin",
+      "signals": []
+    },
+    {
+      "action": "signed-in",
+      "at": "no-usage-data",
+      "page": "signin",
+      "signals": []
+    },
+    {
+      "action": "signin-done",
+      "at": "no-usage-data",
+      "page": "agents",
+      "signals": []
+    },
+    {
+      "action": "agents-done",
+      "at": "no-usage-data",
+      "page": "presentation",
+      "signals": []
+    },
+    {
+      "action": "presentation-picked",
+      "at": "no-usage-data",
+      "page": "presentation",
+      "signals": []
+    },
+    {
+      "action": "presentation-done",
+      "at": "no-usage-data",
+      "page": "drive",
+      "signals": []
+    },
+    {
+      "action": "drive-storage-loaded",
+      "at": "no-usage-data",
+      "page": "drive",
+      "signals": []
+    },
+    {
+      "action": "drive-checked",
+      "at": "no-usage-data",
+      "page": "drive",
+      "signals": []
+    },
+    {
+      "action": "drive-toggled",
+      "at": "no-usage-data",
+      "page": "drive",
+      "signals": []
+    },
+    {
+      "action": "back",
+      "at": "no-usage-data",
+      "page": "presentation",
+      "signals": []
+    },
+    {
+      "action": "presentation-done",
+      "at": "no-usage-data",
+      "page": "drive",
+      "signals": []
+    },
+    {
+      "action": "drive-continue",
+      "at": "no-usage-data",
+      "page": "drive",
+      "signals": []
+    },
+    {
+      "action": "drive-mounted",
+      "at": "no-usage-data",
+      "page": "mode",
+      "signals": []
+    },
+    {
+      "action": "mode-chosen",
+      "at": "no-usage-data",
+      "page": "done",
+      "signals": []
+    },
+    {
+      "action": "finish",
+      "at": "no-usage-data",
+      "signals": []
+    },
+    {
+      "action": "start",
+      "at": "creates",
+      "signals": [
+        {
+          "feature": "space_create_local",
+          "type": "feature"
+        },
+        {
+          "gpu": false,
+          "guestOs": "linux",
+          "kind": "container",
+          "location": "local",
+          "type": "space-create-started"
+        },
+        {
+          "ok": true,
+          "step": "first_space_created",
+          "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "progress",
+      "at": "creates",
+      "signals": []
+    },
+    {
+      "action": "progress",
+      "at": "creates",
+      "signals": []
+    },
+    {
+      "action": "finish",
+      "at": "creates",
+      "signals": [
+        {
+          "elapsedMs": 47000,
+          "failedPhase": "none",
+          "gpu": false,
+          "guestOs": "linux",
+          "kind": "container",
+          "location": "local",
+          "outcome": "ok",
+          "stalled": false,
+          "type": "space-create"
+        },
+        {
+          "ok": true,
+          "step": "first_space_ready",
+          "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "start",
+      "at": "creates",
+      "signals": [
+        {
+          "feature": "space_create_cloud",
+          "type": "feature"
+        },
+        {
+          "gpu": false,
+          "guestOs": "windows",
+          "kind": "vm",
+          "location": "cloud",
+          "type": "space-create-started"
+        },
+        {
+          "ok": true,
+          "step": "first_space_created",
+          "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "progress",
+      "at": "creates",
+      "signals": []
+    },
+    {
+      "action": "fail",
+      "at": "creates",
+      "signals": [
+        {
+          "elapsedMs": 45000,
+          "failedPhase": "booting",
+          "gpu": false,
+          "guestOs": "windows",
+          "kind": "vm",
+          "location": "cloud",
+          "outcome": "error",
+          "stalled": false,
+          "type": "space-create"
+        }
+      ]
+    },
+    {
+      "action": "dismiss",
+      "at": "creates",
+      "signals": []
+    },
+    {
+      "action": "start",
+      "at": "creates",
+      "signals": [
+        {
+          "feature": "space_create_local",
+          "type": "feature"
+        },
+        {
+          "gpu": false,
+          "guestOs": "linux",
+          "kind": "container",
+          "location": "local",
+          "type": "space-create-started"
+        },
+        {
+          "ok": true,
+          "step": "first_space_created",
+          "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "progress",
+      "at": "creates",
+      "signals": []
+    },
+    {
+      "action": "tick",
+      "at": "creates",
+      "signals": []
+    },
+    {
+      "action": "dismiss",
+      "at": "creates",
+      "signals": [
+        {
+          "elapsedMs": 7201000,
+          "failedPhase": "pulling",
+          "gpu": false,
+          "guestOs": "linux",
+          "kind": "container",
+          "location": "local",
+          "outcome": "error",
+          "stalled": true,
+          "type": "space-create"
+        }
+      ]
+    },
+    {
+      "action": "start",
+      "at": "creates",
+      "signals": [
+        {
+          "feature": "space_create_local",
+          "type": "feature"
+        },
+        {
+          "gpu": true,
+          "guestOs": "macos",
+          "kind": "vm",
+          "location": "local",
+          "type": "space-create-started"
+        },
+        {
+          "ok": true,
+          "step": "first_space_created",
+          "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "progress",
+      "at": "creates",
+      "signals": []
+    },
+    {
+      "action": "cancel-start",
+      "at": "creates",
+      "signals": []
+    },
+    {
+      "action": "cancel-done",
+      "at": "creates",
+      "signals": [
+        {
+          "elapsedMs": 31000,
+          "failedPhase": "pulling",
+          "gpu": true,
+          "guestOs": "macos",
+          "kind": "vm",
+          "location": "local",
+          "outcome": "cancelled",
+          "stalled": false,
+          "type": "space-create"
+        }
+      ]
+    },
+    {
+      "action": "start",
+      "at": "creates",
+      "signals": [
+        {
+          "feature": "space_create_cloud",
+          "type": "feature"
+        },
+        {
+          "gpu": false,
+          "guestOs": "linux",
+          "kind": "container",
+          "location": "cloud",
+          "type": "space-create-started"
+        },
+        {
+          "ok": true,
+          "step": "first_space_created",
+          "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "cancel-start",
+      "at": "creates",
+      "signals": []
+    },
+    {
+      "action": "cancel-fail",
+      "at": "creates",
+      "signals": []
+    },
+    {
+      "action": "finish",
+      "at": "creates",
+      "signals": [
+        {
+          "elapsedMs": 40000,
+          "failedPhase": "none",
+          "gpu": false,
+          "guestOs": "linux",
+          "kind": "container",
+          "location": "cloud",
+          "outcome": "ok",
+          "stalled": false,
+          "type": "space-create"
+        },
+        {
+          "ok": true,
+          "step": "first_space_ready",
+          "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "start",
+      "at": "creates",
+      "signals": [
+        {
+          "feature": "space_create_local",
+          "type": "feature"
+        },
+        {
+          "gpu": true,
+          "guestOs": "linux",
+          "kind": "container",
+          "location": "local",
+          "type": "space-create-started"
+        },
+        {
+          "ok": true,
+          "step": "first_space_created",
+          "type": "step"
+        }
+      ]
+    },
+    {
+      "action": "cancel-start",
+      "at": "creates",
+      "signals": []
+    },
+    {
+      "action": "fail",
+      "at": "creates",
+      "signals": [
+        {
+          "elapsedMs": 4000,
+          "failedPhase": "preparing",
+          "gpu": true,
+          "guestOs": "linux",
+          "kind": "container",
+          "location": "local",
+          "outcome": "cancelled",
+          "stalled": false,
+          "type": "space-create"
+        }
+      ]
+    },
+    {
+      "at": "storage",
+      "signals": [
+        {
+          "addToFinder": true,
+          "mountMethod": "fskit",
+          "outcome": "ok",
+          "storage": "this_mac",
+          "surface": "settings",
+          "type": "volume-setup"
+        }
+      ],
+      "step": "Finder volume on"
+    },
+    {
+      "at": "storage",
+      "signals": [
+        {
+          "feature": "volume_open_finder",
+          "type": "feature"
+        }
+      ],
+      "step": "Open in Finder"
+    },
+    {
+      "at": "storage",
+      "signals": [
+        {
+          "addToFinder": false,
+          "mountMethod": "fskit",
+          "outcome": "ok",
+          "storage": "s3",
+          "surface": "settings",
+          "type": "volume-setup"
+        }
+      ],
+      "step": "bucket saved"
+    },
+    {
+      "at": "storage",
+      "signals": [
+        {
+          "addToFinder": false,
+          "mountMethod": "fskit",
+          "outcome": "error",
+          "storage": "s3",
+          "surface": "settings",
+          "type": "volume-setup"
+        }
+      ],
+      "step": "save failed"
+    },
+    {
+      "at": "storage",
+      "signals": [],
+      "step": "a test is not a save"
+    },
+    {
+      "at": "share",
+      "signals": [
+        {
+          "action": "share",
+          "outcome": "ok",
+          "role": "viewer",
+          "type": "share"
+        }
+      ],
+      "step": "shared view-only"
+    },
+    {
+      "at": "share",
+      "signals": [
+        {
+          "action": "change_role",
+          "outcome": "ok",
+          "role": "editor",
+          "type": "share"
+        }
+      ],
+      "step": "role changed"
+    },
+    {
+      "at": "share",
+      "signals": [
+        {
+          "action": "unshare",
+          "outcome": "ok",
+          "role": "none",
+          "type": "share"
+        }
+      ],
+      "step": "unshared"
+    },
+    {
+      "at": "share",
+      "signals": [
+        {
+          "action": "share",
+          "outcome": "error",
+          "role": "editor",
+          "type": "share"
+        }
+      ],
+      "step": "share failed"
+    },
+    {
+      "at": "share",
+      "signals": [],
+      "step": "typing is not sharing"
+    },
+    {
+      "at": "enroll",
+      "signals": [
+        {
+          "method": "sign_in",
+          "outcome": "ok",
+          "type": "device-enroll"
+        }
+      ],
+      "step": "fresh sign-in"
+    },
+    {
+      "at": "enroll",
+      "signals": [],
+      "step": "code shown"
+    },
+    {
+      "at": "enroll",
+      "signals": [
+        {
+          "method": "approval",
+          "outcome": "ok",
+          "type": "device-enroll"
+        }
+      ],
+      "step": "approved"
+    },
+    {
+      "at": "enroll",
+      "signals": [
+        {
+          "method": "sign_in",
+          "outcome": "error",
+          "type": "device-enroll"
+        }
+      ],
+      "step": "failed"
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
     cua sb launch android:14 --json
     # parse name from JSON output, connect with SDK, run assertions
-    cua sb delete <name>
+    cua sb delete --force <name>
 
 Mirrors tests/integration/sandbox_sdk/test_android_cloud_vm.py but exercises the CLI
 launch path and persistent state tracking instead of Sandbox.ephemeral().
@@ -47,7 +47,7 @@ async def test_android_cloud_vm():
 
             await sb.mobile.home()
     finally:
-        _cua("sb", "delete", name)
+        _cua("sb", "delete", "--force", name)
 
 
 async def main():
@@ -68,7 +68,7 @@ async def main():
             await sb.mobile.home()
             print("Tap + home: OK")
     finally:
-        _cua("sb", "delete", name)
+        _cua("sb", "delete", "--force", name)
 
 
 if __name__ == "__main__":

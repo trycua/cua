@@ -1,0 +1,281 @@
+---
+title: Recipes
+description: Real desktop workflows with Cua Driver, each with the prompt to give your agent and how to check the result.
+---
+
+Each recipe assumes Cua Driver is installed and connected to your agent
+([Quickstart](/cua-driver/quickstart)). The recorded ones ran on macOS with
+GPT-6 Astra + Cua Driver: selected gestures play at 1x; setup, waits, retries,
+and intervening edits are cut. They use foreground desktop input and fictional
+data, so run them on a desktop you are not using, or in a
+[VM](/cua-driver/guides/vms-and-remote).
+
+Cua Driver has no file or HTTP tools: an agent reads and writes files by
+driving apps (an editor, Terminal, a PDF viewer). To run many jobs in
+parallel, give each its own [Cua Sandbox](/cua-sdk).
+
+## Background examples on Windows and Linux
+
+Agents operating desktop apps while the user's active window stays in place,
+recorded by the Cua team on the named platform.
+
+<div className="not-prose my-8 grid gap-5 md:grid-cols-2">
+  <VideoDemo
+    src="https://github.com/user-attachments/assets/4159f98d-9623-40d0-a85f-37c913b1403b"
+    poster="https://github.com/user-attachments/assets/54536146-328a-431c-95b4-14a799248026"
+    title="Build and check a WPF app on Windows"
+    sourceUrl="https://x.com/trycua/status/2059688966085853245"
+  >
+    Claude Code builds a WPF CRM, runs it, patches the code, and checks the app again.
+  </VideoDemo>
+
+  <VideoDemo
+    src="https://github.com/user-attachments/assets/7096c772-aa24-4286-a453-6aedfbeb3e23"
+    poster="https://github.com/user-attachments/assets/74d428cb-1adc-4ebc-bc43-590f0966e84b"
+    title="Fill a Linux spreadsheet over SSH"
+    sourceUrl="https://x.com/trycua/status/2067639346719826213"
+  >
+    An agent enters a monthly budget in Gnumeric on a remote machine with no attached display or GPU.
+  </VideoDemo>
+</div>
+
+## Build and inspect a map
+
+QGIS map and LibreOffice Writer handoff from eight fictional station
+observations. Inputs:
+[stations.csv](/media/workflow-demos/map/stations.csv) and
+[campus.geojson](/media/workflow-demos/map/campus.geojson).
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/e133cb0a-9b70-4812-9d97-76fadd67317b"
+  poster="/media/workflow-demos/map-poster.jpg"
+  title="Build a planning map in QGIS and inspect the exported PDF"
+  aspectRatio={8 / 5}
+  autoPlay={false}
+  loop={false}
+  preload="metadata"
+>
+  Selected layout gestures in QGIS and inspection of the exported map in Chrome.
+</VideoDemo>
+
+```text output
+Use Cua Driver to build a fictional Morrow Field campus planning map in QGIS.
+Preserve stations.csv and campus.geojson. Save new outputs in an output folder.
+
+Import stations.csv as points: X = longitude, Y = latitude, source CRS EPSG:4326.
+Import campus.geojson with the same source CRS. Set the project CRS to EPSG:3857
+for a layout with distances in meters; do not relabel the source coordinates.
+
+Use the field calculator to create status: READY when flow_lpm >= 2.0 AND
+days_since_check <= 30; otherwise REVIEW. Compare the original numeric values
+without rounding or recalculating elapsed days. Save an editable GeoPackage.
+
+Style READY green and REVIEW amber, label all eight station IDs, and include
+category names so the result does not rely on color alone. Select the REVIEW
+features and confirm their IDs and count from the data.
+
+Create one A4 landscape layout with a title, legend, north arrow, and meter scale
+bar. Save a QGZ project with relative paths and export the map as a PDF.
+
+In LibreOffice Writer, create a one-page handoff with the map, verified category
+counts and REVIEW IDs, the classification rule, and the fictional-planning caveat.
+Save the handoff as ODT and PDF. Reopen the project and inspect both exported PDFs
+in Chrome or Preview. Report the saved files, completed checks, and any unresolved issue.
+Keep the outputs local; do not send or publish them.
+```
+
+**Check:** R01 sits at longitude `0.00150`, latitude `0.00440` (swapped axes
+look plausible here). `READY` is R01–R04 and `REVIEW` is R05–R08; R08 fails on
+flow `1.99`. The map PDF is A4 landscape with all eight labels, legend, north
+arrow, and scale bar.
+
+## Redact and annotate a PDF
+
+A review copy of a fictional two-page proof in Preview, plus a Writer handoff.
+Input: [willowfen-vendor-proof-SOURCE.pdf](/media/workflow-demos/pdf/willowfen-vendor-proof-SOURCE.pdf).
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/5ef3bec8-70a5-45f5-8eb3-930a345b9019"
+  poster="/media/workflow-demos/pdf-poster.jpg"
+  title="Redact and annotate a vendor proof in Preview"
+  aspectRatio={8 / 5}
+  autoPlay={false}
+  loop={false}
+  preload="metadata"
+>
+  Selected redaction and annotation steps in Preview.
+</VideoDemo>
+
+```text output
+Use Cua Driver to prepare a local review copy of willowfen-vendor-proof-SOURCE.pdf
+in Preview. Preserve the original. Duplicate it before editing, and confirm that
+the active document is the copy before applying any irreversible redaction.
+
+Use Preview's actual Redact tool to remove the complete line below each marker:
+- Page 1, R1: Supplier cost.
+- Page 1, R2: Internal reference.
+- Page 2, R3: Supplier contact.
+- Page 2, R4: Internal contingency.
+The R1-R4 markers may remain. Do not substitute shapes or highlights for Redact.
+If Redact is unavailable, stop and report the limitation.
+
+Keep the title, date, time, location, participant count, public fee, materials,
+booking address, schedule, access notes, and complete room diagram. Add REVIEW
+COPY in page 1's outlined annotation area without covering other text. Save as
+willowfen-vendor-proof-REVIEW.pdf, then close and reopen it in Preview.
+
+In LibreOffice Writer, create a one-page handoff with the workshop title,
+review-only status, source and review filenames, the four removed categories
+without their values, retained public facts, page count, and verification results.
+Save willowfen-release-handoff.odt and export willowfen-release-handoff.pdf.
+
+Inspect both review PDF pages and the handoff PDF in Preview. Report the files
+and the checks that passed. If extraction has not been checked, state that it
+remains unverified. Keep all outputs local; do not send or publish them.
+```
+
+**Check:** the source hash is unchanged; the four target lines are gone from
+the rendered pages and from `pdftotext` output. Extraction alone is not proof:
+a black box can hide text that is still recoverable.
+
+## Prepare an exhibition panel
+
+Crop a fictional archive ticket in GIMP, build two editable A4 panels in
+Inkscape, and a two-page installation packet in Writer. Inputs:
+[archive-contact-sheet.png](/media/workflow-demos/archive/archive-contact-sheet.png)
+and [panel-starter.svg](/media/workflow-demos/archive/panel-starter.svg).
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/89d570f7-e895-4b66-8c20-ded5da2926a4"
+  poster="/media/workflow-demos/archive-poster.jpg"
+  title="Prepare archive artwork in GIMP and an exhibition panel in Inkscape"
+  aspectRatio={8 / 5}
+  autoPlay={false}
+  loop={false}
+  preload="metadata"
+>
+  Selected image and panel edits in GIMP and Inkscape.
+</VideoDemo>
+
+Give the agent this caption table with the prompt:
+
+| Station | Object ID  | Year | Caption                                                           |
+| ------- | ---------- | ---- | ----------------------------------------------------------------- |
+| A       | RA-1932-01 | 1932 | A three-pence ticket links Ferry Steps and Market Square.         |
+| B       | RA-1956-02 | 1956 | Route 4 connects Ferry Steps, Market Square, and Hill Library.    |
+| C       | RA-1974-03 | 1974 | Three morning departures make the same journey in twenty minutes. |
+
+```text output
+Use Cua Driver to prepare a fictional Riverline Archive / Everyday Journeys
+exhibition. Preserve both source files and save new work in an output folder.
+
+In GIMP, crop the ticket from archive-contact-sheet.png: top-left origin,
+X = 200, Y = 300, width = 1800, height = 1100 pixels. Retain all ticket text;
+do not scale or retouch it. Save riverline-hero.xcf and export riverline-hero.png.
+
+In Inkscape, use panel-starter.svg to create two A4 landscape panels. Keep text
+editable, content inside the 15 mm safe margin, body text at least 24 pt, and
+headings at least 36 pt. Use teal #164E52, oxblood #702F3B, and ivory #F5EEDC.
+The entry panel must say Riverline Archive, Everyday Journeys, START HERE,
+A > B > C, and Fictional collection. The object key must include all three
+stations, object IDs, years, and exact captions from the supplied table.
+Save riverline-entry.svg and riverline-object-key.svg. Export each as PDF and
+as a 1782 × 1260 PNG.
+
+In LibreOffice Writer, create an A4 portrait installation packet with exactly
+two pages and an explicit page break. Page 1 needs the exhibition title,
+proportional ticket image, caption table, and fictional-collection notice.
+Page 2 needs both panel images and this illustrative plan: a 3600 mm wall;
+A, B, and C centered at 600, 1800, and 3000 mm from its left end; object centers
+1400 mm high; label centers 1200 mm high; and 1500 mm of clear approach depth.
+Place the entry panel left of A and the object key right of C. Include a checklist
+to confirm object order, measure centers, keep the approach clear, proof labels,
+and check glare. Label these as illustrative targets, not measured venue
+conditions or formal accessibility compliance.
+
+Save riverline-installation.odt and export riverline-installation.pdf. Reopen
+the editable files in their apps and inspect the exported PDFs in Preview.
+Report output files, completed checks, and unresolved issues. Keep the outputs
+local; do not send or publish them.
+```
+
+**Check:** the XCF canvas is 1800 × 1100 with all ticket text; SVG text is
+still editable; the packet PDF has exactly two pages with every measurement.
+
+## Build a report in Numbers
+
+macOS only (Numbers has no Linux or Windows version).
+
+```text output
+Using cua-driver, fetch the last 30 days of AAPL daily closing prices. Open Numbers, create a new spreadsheet, enter Date and Close columns, add a 2D line chart, then export the document as a PDF to ~/reports/aapl-analysis.pdf.
+```
+
+The agent fetches data by driving Terminal (`curl`) or a browser, then drives
+Numbers with `launch_app`, `click`, `type_text`, and `set_value`. **Check:**
+open `~/reports/aapl-analysis.pdf` and confirm the table and chart.
+
+## Automate a legacy Windows app behind a VPN
+
+Run Cua Driver on the Windows machine inside the VPN, so the desktop session,
+app traffic, and files stay there.
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/11b248e5-d505-4349-aaae-ad9f95a1162f"
+  poster="https://github.com/user-attachments/assets/0fb62243-56ec-4d51-8771-35640a5e6031"
+  title="Drive a legacy postal app with Cua Driver"
+  sourceUrl="https://x.com/trycua/status/2059693301276565841"
+>
+  Claude Code fills shipment details and prints receipts in a Windows desktop app with no API.
+</VideoDemo>
+
+Confirm the driver sees the app first:
+
+```powershell test="cli-shape" id="cua-driver-call"
+cua-driver call list_apps
+cua-driver call list_windows
+```
+
+An empty `[]` means the driver is outside the interactive desktop; see
+[Windows over SSH](/cua-driver/guides/vms-and-remote#windows-over-ssh). Stage
+input files on that machine, then:
+
+```text output
+Open the payroll client, log in with the credentials in C:\creds.txt, create a new employee from new_hire.xlsx, generate the onboarding report, and export it as PDF to the Desktop.
+```
+
+## Export contacts overnight
+
+Log into LinkedIn or X yourself in the browser the agent will drive, keep the
+machine awake, and cap the run while testing:
+
+```text output
+Using cua-driver, open the browser to https://www.linkedin.com/mynetwork/invite-connect/connections/ .
+
+For each of the first 50 connections:
+1. Open the profile.
+2. Read first name, last name, role, company, and profile URL.
+3. Append one row to ~/contacts.csv.
+4. Set met_at to "Google Devfest Toronto" for every row.
+
+Use this CSV header:
+first,last,role,company,met_at,linkedin
+
+If a value is missing, leave that field empty and keep going.
+```
+
+Spot-check `~/contacts.csv` in the morning before importing it anywhere.
+
+## Fill a form from a local file
+
+The data stays on your machine: the agent opens the file in a viewer, reads
+it on screen, and types it into the form. Name the exact fields you want.
+
+```text output
+Open ~/Downloads/resume.pdf in the PDF viewer. Read the name, email,
+phone, and work history. Then open
+https://form.jotform.com/<your-form-id> in the browser, fill each matching
+field from the PDF, and submit the form.
+```
+
+Watch the field mapping and correct it in plain language ("use the resume
+email for Work Email").

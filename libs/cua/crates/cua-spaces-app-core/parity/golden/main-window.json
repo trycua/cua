@@ -1,0 +1,1208 @@
+{
+  "flow": "main-window",
+  "frames": [
+    {
+      "host": null,
+      "panel": {
+        "actions": [],
+        "clients": null,
+        "configured": false,
+        "facts": [],
+        "openSettings": "Open Settings",
+        "permissions": [],
+        "summary": "Checking…",
+        "title": "This machine"
+      },
+      "sidebar": {
+        "emptyText": null,
+        "sections": [
+          "# Cua Cloud",
+          "<os-linux> Builder | Suspended | Unreachable · timed out (dim)",
+          "# This Mac",
+          "<os-linux> Aurora | Running | This Mac",
+          "# Connected",
+          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
+          "# My machines",
+          "<os-linux> Research Box @ AWS · us-west-2 | Running | AWS · us-west-2",
+          "<os-linux> Their Box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+        ],
+        "selectedId": "direct:10.0.0.5:3211",
+        "thisMachine": "<os-macos> This machine | This Mac | Set up for access"
+      }
+    },
+    {
+      "host": false,
+      "panel": {
+        "actions": [
+          "set-up: Set up for access"
+        ],
+        "clients": null,
+        "configured": false,
+        "facts": [],
+        "openSettings": "Open Settings",
+        "permissions": [],
+        "summary": "Other devices can’t reach this machine yet.",
+        "title": "This machine"
+      },
+      "sidebar": {
+        "emptyText": null,
+        "sections": [
+          "# Cua Cloud",
+          "<os-linux> Builder | Suspended | Unreachable · timed out (dim)",
+          "# This Mac",
+          "<os-linux> Aurora | Running | This Mac",
+          "# Connected",
+          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
+          "# My machines",
+          "<os-linux> Research Box @ AWS · us-west-2 | Running | AWS · us-west-2",
+          "<os-linux> Their Box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+        ],
+        "selectedId": "direct:10.0.0.5:3211",
+        "thisMachine": "<os-macos> This machine | This Mac | Set up for access"
+      }
+    },
+    {
+      "host": true,
+      "panel": {
+        "actions": [
+          "stop-sharing: Stop sharing (destructive)",
+          "remove: Remove host setup (destructive)"
+        ],
+        "clients": "Connected now: Ada · 2 streams, grace@example.com",
+        "configured": true,
+        "facts": [
+          "Name: Studio",
+          "Access: Relay https://relay.cua.ai",
+          "Service: launchd · running"
+        ],
+        "openSettings": "Open Settings",
+        "permissions": [
+          "Grant in System Settings",
+          "screen-recording: Screen Recording ?Turn on Cua Spaces <x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture>"
+        ],
+        "summary": "Sharing · 2 connected",
+        "title": "This machine"
+      },
+      "sidebar": {
+        "emptyText": null,
+        "sections": [
+          "# Cua Cloud",
+          "<os-linux> Builder | Suspended | Unreachable · timed out (dim)",
+          "# This Mac",
+          "<os-linux> Aurora | Running | This Mac",
+          "# Connected",
+          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
+          "# My machines",
+          "<os-linux> Research Box @ AWS · us-west-2 | Running | AWS · us-west-2",
+          "<os-linux> Their Box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+        ],
+        "selectedId": "direct:10.0.0.5:3211",
+        "thisMachine": "<os-macos> This machine | This Mac | Sharing · 2 connected"
+      }
+    },
+    {
+      "host": true,
+      "panel": {
+        "actions": [
+          "resume-sharing: Resume sharing",
+          "remove: Remove host setup (destructive)"
+        ],
+        "clients": "Connected now: Nobody",
+        "configured": true,
+        "facts": [
+          "Name: This machine",
+          "Access: Direct at http://10.0.0.9:3211",
+          "Service: launchd · stopped"
+        ],
+        "openSettings": "Open Settings",
+        "permissions": [],
+        "summary": "Host service stopped",
+        "title": "This machine"
+      },
+      "sidebar": {
+        "emptyText": null,
+        "sections": [
+          "# Cua Cloud",
+          "<os-linux> Builder | Suspended | Unreachable · timed out (dim)",
+          "# This Mac",
+          "<os-linux> Aurora | Running | This Mac",
+          "# Connected",
+          "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
+          "# My machines",
+          "<os-linux> Research Box @ AWS · us-west-2 | Running | AWS · us-west-2",
+          "<os-linux> Their Box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+        ],
+        "selectedId": "direct:10.0.0.5:3211",
+        "thisMachine": "<os-macos> This machine | This Mac | Host service stopped"
+      }
+    },
+    {
+      "query": "aur",
+      "sidebar": {
+        "emptyText": null,
+        "sections": [
+          "# This Mac",
+          "<os-linux> Aurora | Running | This Mac"
+        ],
+        "selectedId": "this-mac",
+        "thisMachine": null
+      }
+    },
+    {
+      "detail": "direct:10.0.0.5:3211",
+      "frame": {
+        "actions": [
+          "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space",
+          "pip: Picture in picture [pip.enter] ?Picture in picture",
+          "share: Share [person.badge.plus] ?Share this Space",
+          "delete: Remove [trash] ?Remove from the list (destructive)",
+          "open: Open [-] ?Open the desktop in its own window (primary)"
+        ],
+        "canStream": true,
+        "confirm": "Remove 10.0.0.5:3211? | It is only removed from the list. | Remove / Keep",
+        "facts": [
+          "Status: Running",
+          "Identifier: direct:10.0.0.5:3211 [copy direct:10.0.0.5:3211 doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: Windows"
+        ],
+        "isHost": false,
+        "previewText": "Loading the desktop…",
+        "sections": [
+          "Stream",
+          "Agents",
+          "Teleport"
+        ],
+        "title": "10.0.0.5:3211"
+      }
+    },
+    {
+      "detail": "this-mac",
+      "frame": {
+        "actions": [],
+        "canStream": false,
+        "confirm": "Delete This machine? | Its sandbox is deleted. | Delete Space / Keep",
+        "facts": [
+          "Status: This Mac",
+          "Identifier: this-mac [copy this-mac doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: macOS"
+        ],
+        "isHost": true,
+        "previewText": "Not reachable",
+        "sections": [],
+        "title": "This machine"
+      }
+    },
+    {
+      "detail": "relay:cloud-0000000000000a01",
+      "frame": {
+        "actions": [
+          "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space",
+          "pip: Picture in picture [pip.enter] ?Picture in picture",
+          "share: Share [person.badge.plus] ?Share this Space",
+          "delete: Delete Space [trash] ?Delete this Space or remove it from the list (destructive)",
+          "open: Open [-] ?Open the desktop in its own window (primary)"
+        ],
+        "canStream": true,
+        "confirm": "Delete Research Box? | Delete Permanently deletes it and everything Cua created for it in AWS · us-west-2. Remove from List keeps it running there. | Delete Permanently / Remove from List / Cancel",
+        "facts": [
+          "Status: Running",
+          "Location: AWS · us-west-2",
+          "Identifier: relay:cloud-0000000000000a01 [copy relay:cloud-0000000000000a01 doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: Linux"
+        ],
+        "isHost": false,
+        "previewText": "Loading the desktop…",
+        "sections": [
+          "Stream",
+          "Agents",
+          "Teleport"
+        ],
+        "title": "Research Box"
+      }
+    },
+    {
+      "detail": "relay:cloud-0000000000000e01",
+      "frame": {
+        "actions": [
+          "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space (disabled)",
+          "pip: Picture in picture [pip.enter] ?Picture in picture (disabled)",
+          "share: Share [person.badge.plus] ?Share this Space (disabled)",
+          "delete: Delete Space [trash] ?Delete this Space or remove it from the list (destructive)",
+          "open: Open [-] ?Open the desktop in its own window (disabled) (primary)"
+        ],
+        "canStream": false,
+        "confirm": "Delete Their Box? | It runs in Google Cloud · us-central1 and was created on another device. Remove from List keeps it running there. | Delete Permanently (disabled: Created on another device: delete it there, or remove it from this list.) / Remove from List / Cancel",
+        "facts": [
+          "Status: offline",
+          "Location: Google Cloud · us-central1",
+          "Identifier: relay:cloud-0000000000000e01 [copy relay:cloud-0000000000000e01 doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: Linux"
+        ],
+        "isHost": false,
+        "previewText": "Not reachable",
+        "sections": [],
+        "title": "Their Box"
+      }
+    },
+    {
+      "detail": "local:aurora",
+      "frame": {
+        "actions": [
+          "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space",
+          "pip: Picture in picture [pip.enter] ?Picture in picture",
+          "share: Share [person.badge.plus] ?Share this Space",
+          "delete: Delete Space [trash] ?Delete this Space (destructive)",
+          "open: Open [-] ?Open the desktop in its own window (primary)"
+        ],
+        "canStream": true,
+        "confirm": "Delete Aurora? | Its sandbox is deleted. | Delete Space / Keep",
+        "facts": [
+          "Status: Running",
+          "Identifier: local:aurora [copy local:aurora doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: Linux"
+        ],
+        "isHost": false,
+        "previewText": "Loading the desktop…",
+        "sections": [
+          "Stream",
+          "Agents",
+          "Teleport"
+        ],
+        "title": "Aurora"
+      }
+    },
+    {
+      "detail": "cloud:builder",
+      "frame": {
+        "actions": [
+          "teleport: Teleport an app [arrow.down.circle] ?Teleport an app into this Space (disabled)",
+          "pip: Picture in picture [pip.enter] ?Picture in picture (disabled)",
+          "share: Share [person.badge.plus] ?Share this Space (disabled)",
+          "delete: Delete Space [trash] ?Delete this Space (destructive)",
+          "open: Open [-] ?Open the desktop in its own window (disabled) (primary)"
+        ],
+        "canStream": false,
+        "confirm": "Delete Builder? | Its sandbox is deleted. | Delete Space / Keep",
+        "facts": [
+          "Status: timed out",
+          "Identifier: cloud:builder [copy cloud:builder doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: Linux"
+        ],
+        "isHost": false,
+        "previewText": "Not reachable",
+        "sections": [],
+        "title": "Builder"
+      }
+    },
+    {
+      "deleteFailed": "Could not delete Aurora: connection refused",
+      "detailCopy": [
+        "streamLoading: Looking for this Space’s windows…",
+        "streamEmpty: No open windows in this Space yet.",
+        "streamFailed: No windows: the Space’s window host is not up.",
+        "streamNoMatch: No windows match your filter.",
+        "agentsLoading: Looking for this Space’s agents…",
+        "agentsEmpty: No agents have been started in this Space.",
+        "agentsFailed: Could not read this Space’s agents.",
+        "agentsNoMatch: No agents match your filter.",
+        "dropCaption: Drop a file or window",
+        "sendFile: Send file…",
+        "teleportApp: Teleport an app…",
+        "teleportSymbol: arrow.down.circle",
+        "teleportSymbolActive: arrow.down.circle.fill"
+      ]
+    },
+    {
+      "frame": {
+        "advanced": "Advanced",
+        "busy": false,
+        "buttons": "Back / Set up for access",
+        "canSubmit": true,
+        "error": null,
+        "fields": [
+          "name: Name [This computer’s name] = ",
+          "profile: Use for [-] = desktop",
+          "allow: Also allow [Emails, optional] = "
+        ],
+        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "request": "mode=relay relay=https://relay.cua.ai direct=- name=- allow=-",
+        "title": "Set up this machine"
+      },
+      "hostForm": "initial"
+    },
+    {
+      "frame": {
+        "advanced": "Advanced",
+        "busy": false,
+        "buttons": "Back / Set up for access",
+        "canSubmit": true,
+        "error": null,
+        "fields": [
+          "name: Name [This computer’s name] =  Studio ",
+          "profile: Use for [-] = desktop",
+          "allow: Also allow [Emails, optional] = "
+        ],
+        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "request": "mode=relay relay=https://relay.cua.ai direct=- name=Studio allow=-",
+        "title": "Set up this machine"
+      },
+      "hostForm": "set-name"
+    },
+    {
+      "frame": {
+        "advanced": "Advanced",
+        "busy": false,
+        "buttons": "Back / Set up for access",
+        "canSubmit": true,
+        "error": null,
+        "fields": [
+          "name: Name [This computer’s name] =  Studio ",
+          "profile: Use for [-] = desktop",
+          "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com"
+        ],
+        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "request": "mode=relay relay=https://relay.cua.ai direct=- name=Studio allow=grace@example.com,bob@example.com",
+        "title": "Set up this machine"
+      },
+      "hostForm": "set-allow"
+    },
+    {
+      "frame": {
+        "advanced": "Advanced (open)",
+        "busy": false,
+        "buttons": "Back / Set up for access",
+        "canSubmit": true,
+        "error": null,
+        "fields": [
+          "name: Name [This computer’s name] =  Studio ",
+          "profile: Use for [-] = desktop",
+          "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com",
+          "direct: Direct connection = off (advanced)",
+          "relay: Relay [https://relay.cua.ai] = https://relay.cua.ai (advanced)"
+        ],
+        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "request": "mode=relay relay=https://relay.cua.ai direct=- name=Studio allow=grace@example.com,bob@example.com",
+        "title": "Set up this machine"
+      },
+      "hostForm": "toggle-advanced"
+    },
+    {
+      "frame": {
+        "advanced": "Advanced (open)",
+        "busy": false,
+        "buttons": "Back / Set up for access",
+        "canSubmit": false,
+        "error": null,
+        "fields": [
+          "name: Name [This computer’s name] =  Studio ",
+          "profile: Use for [-] = desktop",
+          "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com",
+          "direct: Direct connection = off (advanced)",
+          "relay: Relay [https://relay.cua.ai] = ftp://relay !invalid (advanced)"
+        ],
+        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "request": null,
+        "title": "Set up this machine"
+      },
+      "hostForm": "set-relay-url"
+    },
+    {
+      "frame": {
+        "advanced": "Advanced (open)",
+        "busy": false,
+        "buttons": "Back / Set up for access",
+        "canSubmit": true,
+        "error": null,
+        "fields": [
+          "name: Name [This computer’s name] =  Studio ",
+          "profile: Use for [-] = desktop",
+          "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com",
+          "direct: Direct connection = off (advanced)",
+          "relay: Relay [https://relay.cua.ai] = https://relay.example/ (advanced)"
+        ],
+        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
+        "title": "Set up this machine"
+      },
+      "hostForm": "set-relay-url"
+    },
+    {
+      "frame": {
+        "advanced": "Advanced (open)",
+        "busy": false,
+        "buttons": "Back / Set up for access",
+        "canSubmit": true,
+        "error": null,
+        "fields": [
+          "name: Name [This computer’s name] =  Studio ",
+          "direct: Direct connection = on (advanced)",
+          "listen: Listen on [0.0.0.0:3211] = 0.0.0.0:3211 (advanced)"
+        ],
+        "lede": "Other machines connect to this address with an access token.",
+        "request": "mode=direct relay=- direct=0.0.0.0:3211 name=Studio allow=-",
+        "title": "Set up this machine"
+      },
+      "hostForm": "set-direct"
+    },
+    {
+      "frame": {
+        "advanced": "Advanced (open)",
+        "busy": false,
+        "buttons": "Back / Set up for access",
+        "canSubmit": false,
+        "error": null,
+        "fields": [
+          "name: Name [This computer’s name] =  Studio ",
+          "direct: Direct connection = on (advanced)",
+          "listen: Listen on [0.0.0.0:3211] = somewhere !invalid (advanced)"
+        ],
+        "lede": "Other machines connect to this address with an access token.",
+        "request": null,
+        "title": "Set up this machine"
+      },
+      "hostForm": "set-listen"
+    },
+    {
+      "frame": {
+        "advanced": "Advanced (open)",
+        "busy": false,
+        "buttons": "Back / Set up for access",
+        "canSubmit": true,
+        "error": null,
+        "fields": [
+          "name: Name [This computer’s name] =  Studio ",
+          "direct: Direct connection = on (advanced)",
+          "listen: Listen on [0.0.0.0:3211] = 0.0.0.0:3300 (advanced)"
+        ],
+        "lede": "Other machines connect to this address with an access token.",
+        "request": "mode=direct relay=- direct=0.0.0.0:3300 name=Studio allow=-",
+        "title": "Set up this machine"
+      },
+      "hostForm": "set-listen"
+    },
+    {
+      "frame": {
+        "advanced": "Advanced (open)",
+        "busy": true,
+        "buttons": "Back / Setting up…",
+        "canSubmit": false,
+        "error": null,
+        "fields": [
+          "name: Name [This computer’s name] =  Studio ",
+          "direct: Direct connection = on (advanced)",
+          "listen: Listen on [0.0.0.0:3211] = 0.0.0.0:3300 (advanced)"
+        ],
+        "lede": "Other machines connect to this address with an access token.",
+        "request": "mode=direct relay=- direct=0.0.0.0:3300 name=Studio allow=-",
+        "title": "Set up this machine"
+      },
+      "hostForm": "submit"
+    },
+    {
+      "frame": {
+        "advanced": "Advanced (open)",
+        "busy": false,
+        "buttons": "Back / Set up for access",
+        "canSubmit": true,
+        "error": "launchctl bootstrap failed",
+        "fields": [
+          "name: Name [This computer’s name] =  Studio ",
+          "direct: Direct connection = on (advanced)",
+          "listen: Listen on [0.0.0.0:3211] = 0.0.0.0:3300 (advanced)"
+        ],
+        "lede": "Other machines connect to this address with an access token.",
+        "request": "mode=direct relay=- direct=0.0.0.0:3300 name=Studio allow=-",
+        "title": "Set up this machine"
+      },
+      "hostForm": "failed"
+    },
+    {
+      "frame": {
+        "advanced": "Advanced (open)",
+        "busy": false,
+        "buttons": "Back / Set up for access",
+        "canSubmit": true,
+        "error": "launchctl bootstrap failed",
+        "fields": [
+          "name: Name [This computer’s name] =  Studio ",
+          "profile: Use for [-] = desktop",
+          "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com",
+          "direct: Direct connection = off (advanced)",
+          "relay: Relay [https://relay.cua.ai] = https://relay.example/ (advanced)"
+        ],
+        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
+        "title": "Set up this machine"
+      },
+      "hostForm": "set-direct"
+    },
+    {
+      "frame": {
+        "advanced": "Advanced",
+        "busy": false,
+        "buttons": "Back / Set up for access",
+        "canSubmit": true,
+        "error": "launchctl bootstrap failed",
+        "fields": [
+          "name: Name [This computer’s name] =  Studio ",
+          "profile: Use for [-] = desktop",
+          "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com"
+        ],
+        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
+        "title": "Set up this machine"
+      },
+      "hostForm": "toggle-advanced"
+    },
+    {
+      "frame": {
+        "advanced": "Advanced",
+        "busy": true,
+        "buttons": "Back / Setting up…",
+        "canSubmit": false,
+        "error": null,
+        "fields": [
+          "name: Name [This computer’s name] =  Studio ",
+          "profile: Use for [-] = desktop",
+          "allow: Also allow [Emails, optional] = grace@example.com, bob@example.com"
+        ],
+        "lede": "Joins the Cua relay as ada@example.com. No port forwarding.",
+        "request": "mode=relay relay=https://relay.example direct=- name=Studio allow=grace@example.com,bob@example.com",
+        "title": "Set up this machine"
+      },
+      "hostForm": "submit"
+    },
+    {
+      "chrome": [
+        "title: Cua Spaces",
+        "newSpace: New Space ⌘N",
+        "search: Search",
+        "keyvault: Keyvault",
+        "account: Not signed in",
+        "signIn: Sign in",
+        "settings: Settings ⌘,",
+        "empty: No Spaces yet / New Space",
+        "volume: Volume"
+      ]
+    },
+    {
+      "chrome": [
+        "title: Cua Spaces",
+        "newSpace: New Space ⌘N",
+        "search: Search",
+        "keyvault: Keyvault",
+        "account: API key",
+        "signIn: -",
+        "settings: Settings ⌘,",
+        "empty: No Spaces yet / New Space",
+        "volume: Volume"
+      ]
+    },
+    {
+      "chrome": [
+        "title: Cua Spaces",
+        "newSpace: New Space ⌘N",
+        "search: Search",
+        "keyvault: Keyvault",
+        "account: ada@example.com",
+        "signIn: -",
+        "settings: Settings ⌘,",
+        "empty: No Spaces yet / New Space",
+        "volume: Volume"
+      ]
+    },
+    {
+      "frame": [
+        "status: No Spaces (disabled)",
+        "---",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings… ⌘,",
+        "---",
+        "quit: Quit Cua Spaces ⌘Q"
+      ],
+      "menuBar": 0
+    },
+    {
+      "frame": [
+        "status: 1 Space (disabled)",
+        "---",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings… ⌘,",
+        "---",
+        "quit: Quit Cua Spaces ⌘Q"
+      ],
+      "menuBar": 1
+    },
+    {
+      "frame": [
+        "status: 3 Spaces (disabled)",
+        "---",
+        "open: Open Cua Spaces",
+        "new-space: New Space…",
+        "settings: Settings… ⌘,",
+        "---",
+        "quit: Quit Cua Spaces ⌘Q"
+      ],
+      "menuBar": 3
+    },
+    {
+      "agents": [
+        "codex: Codex installed configured (skills and MCP configured) 3/3",
+        "cursor: Cursor installed (skills 1/3, MCP not configured) 1/3",
+        "pi: Pi installed configured (skills installed (no MCP support)) 3/3",
+        "kiro: Kiro installed (malformed mcp.json, left unchanged) 0/3",
+        "claude-code: Claude Code (not installed) 0/3"
+      ],
+      "summaries": [
+        "Codex: done | cua MCP server configured, 2 skills installed | ",
+        "Cursor: failed | 2 skills installed | cua: malformed mcp.json",
+        "Pi: done | nothing to change | ",
+        "Kiro: done | nothing to change | "
+      ]
+    },
+    {
+      "frame": [
+        "= Settings",
+        "# Account (account)",
+        "- sign-in text: Cua account [Sign in to Cua]",
+        "- teams text: Teams = Coming soon [Join the waitlist] < https://cua.ai/teams>",
+        "# General (general)",
+        "- notch choice: Spaces tab in the notch {*Show|Hide}",
+        "- welcome text: Welcome [Show again]",
+        "# AI agents (agents) [Configure all detected agents] (disabled)"
+      ],
+      "settings": 0
+    },
+    {
+      "frame": [
+        "= Settings",
+        "# Account (account)",
+        "- api-key text: Signed in via API key = client-123",
+        "- sign-in text: Cua account [Try again]",
+        "- sign-in-error error: The code expired",
+        "- teams text: Teams = Coming soon [Join the waitlist] < https://cua.ai/teams>",
+        "# General (general)",
+        "- notch choice: Spaces tab in the notch {Show|*Hide}",
+        "- welcome text: Welcome [Show again]",
+        "# Privacy (privacy)",
+        "- telemetry choice: Share anonymous usage data {On|*Off} (disabled) ?Set by DO_NOT_TRACK",
+        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "# AI agents (agents) [Configure all detected agents] (disabled)"
+      ],
+      "settings": 1
+    },
+    {
+      "frame": [
+        "= Settings",
+        "# Account (account)",
+        "- sign-in-code text: Enter this code in your browser = WXYZ-1234 [Cancel]",
+        "- teams text: Teams = Coming soon [Join the waitlist] < https://cua.ai/teams>",
+        "# General (general)",
+        "- notch choice: Spaces tab in the notch {*Show|Hide}",
+        "- welcome text: Welcome [Show again]",
+        "# Privacy (privacy)",
+        "- telemetry choice: Share anonymous usage data {*On|Off}",
+        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "# AI agents (agents) [Configure all detected agents]",
+        "- agent:codex text: Codex = skills and MCP configured [Remove]",
+        "- agent:cursor text: Cursor = working…",
+        "- agent:pi text: Pi = skills installed (no MCP support) [Remove]",
+        "- agent:kiro text: Kiro = malformed mcp.json, left unchanged [Configure]",
+        "- agent:claude-code text: Claude Code (disabled)"
+      ],
+      "settings": 2
+    },
+    {
+      "frame": [
+        "= Settings",
+        "# Account (account)",
+        "- account text: ada@example.com [Sign out]",
+        "- teams text: Teams = Coming soon [Join the waitlist] < https://cua.ai/teams>",
+        "# General (general)",
+        "- notch choice: Spaces tab in the notch {*Show|Hide}",
+        "- welcome text: Welcome [Show again]",
+        "# Privacy (privacy)",
+        "- telemetry choice: Share anonymous usage data {*On|Off}",
+        "- telemetry-note note: Features used, sandbox types, durations and error categories. Never paths, names, prompts, screen content or Keyvault items. <What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry>",
+        "# AI agents (agents) [Configuring…] (disabled)",
+        "- agent:codex text: Codex = skills and MCP configured [Remove] (disabled)",
+        "- agent:cursor text: Cursor = skills 1/3, MCP not configured [Configure] (disabled)",
+        "- agent:pi text: Pi = skills installed (no MCP support) [Remove] (disabled)",
+        "- agent:kiro text: Kiro = malformed mcp.json, left unchanged [Configure] (disabled)",
+        "- agent:claude-code text: Claude Code (disabled)"
+      ],
+      "settings": 3
+    },
+    {
+      "frame": {
+        "canBack": false,
+        "canSkip": false,
+        "choices": [],
+        "dots": "*Welcome,Sign in,AI agents,Menu bar,This machine,Done",
+        "drive": null,
+        "driveStorage": null,
+        "lede": "Computers for you and your agents.",
+        "notice": "Cua collects anonymous usage data (features used, sandbox types, durations, error categories), never file paths, names, prompts or screen content. Change it here or in Settings, Privacy.",
+        "noticeLink": "What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry",
+        "presentations": [],
+        "primary": "Get started",
+        "prompts": [],
+        "showMark": true,
+        "step": "welcome",
+        "summary": [],
+        "title": "Welcome to Cua Spaces",
+        "usage": "Share anonymous usage data [x]"
+      },
+      "onboarding": "initial"
+    },
+    {
+      "frame": {
+        "canBack": false,
+        "canSkip": false,
+        "choices": [],
+        "dots": "*Welcome,Sign in,AI agents,Menu bar,This machine,Done",
+        "drive": null,
+        "driveStorage": null,
+        "lede": "Computers for you and your agents.",
+        "notice": "Cua collects anonymous usage data (features used, sandbox types, durations, error categories), never file paths, names, prompts or screen content. Change it here or in Settings, Privacy.",
+        "noticeLink": "What is collected https://cua.ai/docs/cua-sdk/concepts/telemetry",
+        "presentations": [],
+        "primary": "Get started",
+        "prompts": [],
+        "showMark": true,
+        "step": "welcome",
+        "summary": [],
+        "title": "Welcome to Cua Spaces",
+        "usage": "Share anonymous usage data [x]"
+      },
+      "onboarding": "cli-installed"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": true,
+        "choices": [],
+        "dots": "Welcome,*Sign in,AI agents,Menu bar,This machine,Done",
+        "drive": null,
+        "driveStorage": null,
+        "lede": "Connect your machines and your team.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [],
+        "primary": "Continue",
+        "prompts": [],
+        "showMark": false,
+        "step": "signin",
+        "summary": [],
+        "title": "Sign in",
+        "usage": null
+      },
+      "onboarding": "start"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [],
+        "dots": "Welcome,*Sign in,AI agents,Menu bar,This machine,Done",
+        "drive": null,
+        "driveStorage": null,
+        "lede": "Connect your machines and your team.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [],
+        "primary": "Continue",
+        "prompts": [],
+        "showMark": false,
+        "step": "signin",
+        "summary": [],
+        "title": "Sign in",
+        "usage": null
+      },
+      "onboarding": "signed-in"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": true,
+        "choices": [],
+        "dots": "Welcome,Sign in,*AI agents,Menu bar,This machine,Done",
+        "drive": null,
+        "driveStorage": null,
+        "lede": "Give your coding agents the cua skills and MCP server.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [],
+        "primary": "Continue",
+        "prompts": [],
+        "showMark": false,
+        "step": "agents",
+        "summary": [],
+        "title": "AI agents",
+        "usage": null
+      },
+      "onboarding": "signin-done"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [],
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "drive": null,
+        "driveStorage": null,
+        "lede": "You can change this in Settings.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [
+          "Notch and menu bar [onboarding-notch] (selected)",
+          "Menu bar only [onboarding-menu-bar]"
+        ],
+        "primary": "Continue",
+        "prompts": [],
+        "showMark": false,
+        "step": "presentation",
+        "summary": [],
+        "title": "Where should Cua Spaces show up?",
+        "usage": null
+      },
+      "onboarding": "agents-done"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": true,
+        "choices": [],
+        "dots": "Welcome,Sign in,*AI agents,Menu bar,This machine,Done",
+        "drive": null,
+        "driveStorage": null,
+        "lede": "Give your coding agents the cua skills and MCP server.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [],
+        "primary": "Continue",
+        "prompts": [],
+        "showMark": false,
+        "step": "agents",
+        "summary": [],
+        "title": "AI agents",
+        "usage": null
+      },
+      "onboarding": "back"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [],
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "drive": null,
+        "driveStorage": null,
+        "lede": "You can change this in Settings.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [
+          "Notch and menu bar [onboarding-notch] (selected)",
+          "Menu bar only [onboarding-menu-bar]"
+        ],
+        "primary": "Continue",
+        "prompts": [],
+        "showMark": false,
+        "step": "presentation",
+        "summary": [],
+        "title": "Where should Cua Spaces show up?",
+        "usage": null
+      },
+      "onboarding": "agents-done"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [],
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "drive": null,
+        "driveStorage": null,
+        "lede": "You can change this in Settings.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [
+          "Notch and menu bar [onboarding-notch]",
+          "Menu bar only [onboarding-menu-bar] (selected)"
+        ],
+        "primary": "Continue",
+        "prompts": [],
+        "showMark": false,
+        "step": "presentation",
+        "summary": [],
+        "title": "Where should Cua Spaces show up?",
+        "usage": null
+      },
+      "onboarding": "presentation-picked"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [],
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "drive": null,
+        "driveStorage": null,
+        "lede": "You can change this in Settings.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [
+          "Notch and menu bar [onboarding-notch] (selected)",
+          "Menu bar only [onboarding-menu-bar]"
+        ],
+        "primary": "Continue",
+        "prompts": [],
+        "showMark": false,
+        "step": "presentation",
+        "summary": [],
+        "title": "Where should Cua Spaces show up?",
+        "usage": null
+      },
+      "onboarding": "presentation-picked"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [],
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "drive": null,
+        "driveStorage": null,
+        "lede": "You can change this in Settings.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [
+          "Notch and menu bar [onboarding-notch]",
+          "Menu bar only [onboarding-menu-bar] (selected)"
+        ],
+        "primary": "Continue",
+        "prompts": [],
+        "showMark": false,
+        "step": "presentation",
+        "summary": [],
+        "title": "Where should Cua Spaces show up?",
+        "usage": null
+      },
+      "onboarding": "presentation-picked"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [
+          "client: Access other machines",
+          "host: Set up this machine for unattended access (preselected)"
+        ],
+        "dots": "Welcome,Sign in,AI agents,Menu bar,*This machine,Done",
+        "drive": null,
+        "driveStorage": null,
+        "lede": "You can change this later.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [],
+        "primary": "Continue",
+        "prompts": [],
+        "showMark": false,
+        "step": "mode",
+        "summary": [],
+        "title": "How will you use this machine?",
+        "usage": null
+      },
+      "onboarding": "presentation-done"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [],
+        "dots": "Welcome,Sign in,AI agents,*Menu bar,This machine,Done",
+        "drive": null,
+        "driveStorage": null,
+        "lede": "You can change this in Settings.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [
+          "Notch and menu bar [onboarding-notch]",
+          "Menu bar only [onboarding-menu-bar] (selected)"
+        ],
+        "primary": "Continue",
+        "prompts": [],
+        "showMark": false,
+        "step": "presentation",
+        "summary": [],
+        "title": "Where should Cua Spaces show up?",
+        "usage": null
+      },
+      "onboarding": "back"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [
+          "client: Access other machines",
+          "host: Set up this machine for unattended access (preselected)"
+        ],
+        "dots": "Welcome,Sign in,AI agents,Menu bar,*This machine,Done",
+        "drive": null,
+        "driveStorage": null,
+        "lede": "You can change this later.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [],
+        "primary": "Continue",
+        "prompts": [],
+        "showMark": false,
+        "step": "mode",
+        "summary": [],
+        "title": "How will you use this machine?",
+        "usage": null
+      },
+      "onboarding": "presentation-done"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [
+          "client: Access other machines",
+          "host: Set up this machine for unattended access (preselected)"
+        ],
+        "dots": "Welcome,Sign in,AI agents,Menu bar,*This machine,Done",
+        "drive": null,
+        "driveStorage": null,
+        "lede": "You can change this later.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [],
+        "primary": "Continue",
+        "prompts": [],
+        "showMark": false,
+        "step": "mode",
+        "summary": [],
+        "title": "How will you use this machine?",
+        "usage": null
+      },
+      "onboarding": "drive-continue"
+    },
+    {
+      "frame": {
+        "canBack": true,
+        "canSkip": false,
+        "choices": [],
+        "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
+        "drive": null,
+        "driveStorage": null,
+        "launchAtLogin": "[x] Launch at login ~Keeps your Spaces and agents available after a restart.",
+        "lede": "Cua Spaces is in your menu bar.",
+        "notice": null,
+        "noticeLink": null,
+        "presentations": [],
+        "primary": "Start using Cua Spaces",
+        "prompts": [
+          "qa my app on windows, macos and linux",
+          "use the cua sdk to build an agent app that runs codex in a space",
+          "open my app in a space and pip it",
+          "use the cua sdk to stream a space's window into my app",
+          "teleport my browser into a space and finish the checkout test",
+          "use the cua docs to set up a cua bench taskset",
+          "spin up a linux space and run the test suite there"
+        ],
+        "showMark": false,
+        "step": "done",
+        "summary": [
+          "cua command: /Users/me/.local/bin/cua",
+          "Account: ada@example.com",
+          "AI agents: Codex",
+          "Shows in: Menu bar only",
+          "This machine: Set up for unattended access"
+        ],
+        "title": "You're all set",
+        "usage": null
+      },
+      "onboarding": "mode-chosen"
+    },
+    {
+      "onboardingCopy": [
+        "back: Back",
+        "skip: Skip",
+        "continueLabel: Continue",
+        "tryAgain: Try again",
+        "checking: Checking…",
+        "installScript: curl -fsSL https://cua.ai/install.sh | sh",
+        "install: Install",
+        "installing: Installing…",
+        "addToPath: Add to PATH",
+        "shadowed: Another cua comes first on PATH.",
+        "signIn: Sign in",
+        "signInWaiting: Waiting for the browser…",
+        "agentsLooking: Looking for agents…",
+        "agentsNone: No agents found.",
+        "agentsSkills: cua skills",
+        "agentsMcp: cua MCP server",
+        "agentsSetUp: Set up",
+        "agentsSettingUp: Setting up…",
+        "agentsDoneTitle: Your AI agents are set up",
+        "agentsDoneLede: Your agents can now use Spaces.",
+        "permissionsTitle: Grant in System Settings",
+        "openSettings: Open Settings"
+      ],
+      "texts": [
+        "Signed in.",
+        "Signed in as ada@example.com.",
+        "Finish in your browser.",
+        "Confirm WXYZ-1234 in your browser.",
+        "Replaces the cua already there",
+        "Replaces the cua already there (0.4.1)",
+        "Installed at /Users/me/.local/bin/cua"
+      ]
+    },
+    {
+      "presentationPreviews": [
+        [
+          "notch: tiles macos-qa,ubuntu-ci,windows-11; tab 3 Spaces; 232x91 loop 4000",
+          "0: pointer 1717,728 open 0 content 0 tab 1000 hover 0 pressed false active false highlighted -",
+          "850: pointer 1458,404 open 0 content 0 tab 1000 hover 0 pressed false active false highlighted -",
+          "1350: pointer 1200,79 open 0 content 0 tab 1000 hover 336 pressed false active false highlighted -",
+          "1550: pointer 1200,79 open 0 content 0 tab 1000 hover 1043 pressed false active false highlighted -",
+          "1700: pointer 1200,79 open 497 content 0 tab 503 hover 501 pressed false active false highlighted -",
+          "2400: pointer 1200,79 open 1000 content 1000 tab 0 hover 0 pressed false active false highlighted -",
+          "2750: pointer 1201,80 open 1000 content 1000 tab 0 hover 0 pressed false active false highlighted -",
+          "3150: pointer 1544,511 open 1000 content 500 tab 0 hover 0 pressed false active false highlighted -",
+          "3900: pointer 1717,728 open 0 content 0 tab 1000 hover 0 pressed false active false highlighted -",
+          "still: pointer 1200,79 open 1000 content 1000 tab 0 hover 0 pressed false active false highlighted -"
+        ],
+        [
+          "menu: 3 Spaces|-|Open Cua Spaces|New Space…|Settings… ⌘,|-|Quit Cua Spaces ⌘Q; 232x103 loop 4000",
+          "0: pointer 835,845 open 0 content 0 tab 0 hover 0 pressed false active false highlighted -",
+          "850: pointer 1395,463 open 0 content 0 tab 0 hover 0 pressed false active false highlighted -",
+          "1350: pointer 1955,82 open 0 content 0 tab 0 hover 0 pressed true active true highlighted -",
+          "1550: pointer 1955,82 open 1000 content 1000 tab 0 hover 0 pressed false active true highlighted -",
+          "1700: pointer 1955,82 open 1000 content 1000 tab 0 hover 0 pressed false active true highlighted -",
+          "2400: pointer 1674,446 open 1000 content 1000 tab 0 hover 0 pressed false active true highlighted 2",
+          "2750: pointer 1674,446 open 1000 content 1000 tab 0 hover 0 pressed true active true highlighted 2",
+          "3150: pointer 1673,446 open 0 content 0 tab 0 hover 0 pressed false active false highlighted -",
+          "3900: pointer 835,845 open 0 content 0 tab 0 hover 0 pressed false active false highlighted -",
+          "still: pointer 1674,446 open 1000 content 1000 tab 0 hover 0 pressed false active true highlighted 2"
+        ]
+      ]
+    },
+    {
+      "dropSending": [
+        "Sending notes.txt…",
+        "Sending 3 files…"
+      ],
+      "dropSent": [
+        "notes.txt (1.5 KB) verified in /home/cua/Downloads/notes.txt",
+        "2 files (3.0 MB) verified in Downloads"
+      ]
+    }
+  ]
+}

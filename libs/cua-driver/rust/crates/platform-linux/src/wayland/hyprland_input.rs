@@ -18,7 +18,13 @@ const CANCELLATION_POLL: Duration = Duration::from_millis(25);
 const TEXT_ACTION_GAP: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
 const MAX_LANES: usize = 2;
-const MAX_STALE_GEOMETRY_RETRIES: usize = 1;
+/// Retries of an action the plugin refused as `stale_geometry` (the target's
+/// surface box changed between TARGET and the action). Hyprland animates a
+/// window for a few hundred milliseconds after a click activates it or the
+/// layout changes, so an immediate retry lands in the same animation: wait
+/// `STALE_GEOMETRY_BACKOFF * attempt` before each (at most ~0.6 s in all).
+const MAX_STALE_GEOMETRY_RETRIES: usize = 4;
+const STALE_GEOMETRY_BACKOFF: Duration = Duration::from_millis(60);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DeliveryRoute {
@@ -244,6 +250,19 @@ pub fn enabled() -> bool {
                         })
                 })
             }))
+}
+
+/// Whether background (isolated seat) input is admitted for `pid`'s windows,
+/// the check a background action makes before dispatch. `Err` carries the
+/// refusal reason (`client_not_qualified`, ...). Only meaningful while
+/// [`enabled`]: without the isolated seats the tools route background input
+/// elsewhere.
+pub fn background_admission(pid: u32) -> std::result::Result<(), &'static str> {
+    if protocol() == InputProtocol::Production {
+        super::hyprland_compatibility::qualify(pid)
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -668,6 +687,7 @@ impl Client {
                 && reply.get("delivery").is_none()
                 && attempt < MAX_STALE_GEOMETRY_RETRIES
             {
+                std::thread::sleep(STALE_GEOMETRY_BACKOFF * (attempt as u32 + 1));
                 continue;
             }
             if reply["ok"] == false && self.protocol == InputProtocol::Experiment {
@@ -1049,8 +1069,7 @@ fn execute_routed(
 ) -> Result<Value> {
     execute_actions_routed(
         owner,
-        pid,
-        address,
+        (pid, address),
         vec![action],
         started,
         cancellation,
@@ -1144,8 +1163,7 @@ fn execute_scroll_routed(
     let sequence = actions.len() > 1;
     execute_actions_routed(
         owner,
-        pid,
-        address,
+        (pid, address),
         actions,
         None,
         cancellation,
@@ -1170,8 +1188,7 @@ fn execute_text_routed(
     );
     execute_actions_routed(
         owner,
-        pid,
-        address,
+        (pid, address),
         actions,
         None,
         cancellation,
@@ -1180,16 +1197,17 @@ fn execute_text_routed(
     )
 }
 
+/// `target` is the exact (pid, Hyprland window address) the actions go to.
 fn execute_actions_routed(
     owner: Option<String>,
-    pid: u32,
-    address: u64,
+    target: (u32, u64),
     actions: Vec<Action>,
     started: Option<tokio::sync::oneshot::Sender<()>>,
     cancellation: ActionCancellation,
     route: DeliveryRoute,
     text: bool,
 ) -> Result<Value> {
+    let (pid, address) = target;
     cancellation.check()?;
     ensure!(enabled(), "Hyprland isolated input is unavailable");
     ensure!(
@@ -1893,10 +1911,16 @@ mod tests {
             reset_test_attestations();
             let (client, peer) = production_test_client();
             let acknowledgement = route.acknowledgement();
+            // Success on the second attempt, or every attempt refused.
+            let attempts = if succeeds {
+                2
+            } else {
+                MAX_STALE_GEOMETRY_RETRIES as u64 + 1
+            };
             let server = std::thread::spawn(move || {
-                for (sequence, revision) in [(1, 11), (2, 22)] {
-                    serve_key_target(&peer, route, sequence, revision);
-                    let reply = if sequence == 2 && succeeds {
+                for sequence in 1..=attempts {
+                    serve_key_target(&peer, route, sequence, sequence * 11);
+                    let reply = if sequence == attempts && succeeds {
                         json!({"ok":true,"effect":"unverifiable","route":acknowledgement})
                     } else {
                         json!({"ok":false,"code":"stale_geometry","detail":"stale_geometry"})
@@ -1911,15 +1935,26 @@ mod tests {
             });
 
             let mut slot = Some(client);
+            let started = Instant::now();
             let reply = dispatch_production_key(&mut slot, route).unwrap();
             assert_eq!(reply["ok"], succeeds);
+            // Each retry waits for the window to settle, a little longer
+            // every time.
+            let waited: Duration = (1..attempts as u32)
+                .map(|n| STALE_GEOMETRY_BACKOFF * n)
+                .sum();
+            assert!(
+                started.elapsed() >= waited,
+                "{:?} < {waited:?}",
+                started.elapsed()
+            );
             if !succeeds {
                 assert_eq!(reply["code"], "stale_geometry");
                 assert!(reply.get("effect").is_none());
                 assert!(reply.get("delivery").is_none());
             }
-            assert_eq!(slot.as_ref().unwrap().sequence, 2);
-            assert_eq!(test_attestations(), 2);
+            assert_eq!(slot.as_ref().unwrap().sequence, attempts);
+            assert_eq!(test_attestations(), attempts as usize);
             drop(slot);
             server.join().unwrap();
         }
@@ -2748,6 +2783,10 @@ mod tests {
     }
 
     #[tokio::test]
+    // Holding the lane's std mutex across the awaits is the scenario under
+    // test: the queued call contends for it from a blocking-pool thread, never
+    // from this runtime, so the lint's deadlock does not apply.
+    #[allow(clippy::await_holding_lock)]
     async fn aborted_queued_invocation_never_targets_or_changes_the_active_connection() {
         let (client, peer) = test_connection();
         let session = Arc::new(SessionClient {

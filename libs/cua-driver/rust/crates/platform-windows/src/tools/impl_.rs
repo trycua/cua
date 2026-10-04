@@ -638,12 +638,7 @@ fn screenshot_scale(
 ) -> Result<f64, ToolResult> {
     state
         .snapshots
-        .screenshot_context(
-            pid as i32,
-            window_id,
-            args.get("_session_id").and_then(Value::as_str),
-        )
-        .map(|context| context.scale)
+        .screenshot_scale(pid as i32, window_id, args)
 }
 
 fn capture_admission_refusal(error: anyhow::Error) -> ToolResult {
@@ -1233,36 +1228,40 @@ impl Tool for GetWindowStateTool {
                  the target app's windows, or read `launch_app`'s `windows` array.",
                 ),
             };
-        // Validate window belongs to pid — Swift's hard error.
-        let windows_for_pid =
-            tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
+        // Validate window belongs to pid — Swift's hard error. The exact HWND is
+        // probed through Win32 first; the desktop-wide UIA union (2 s deadline)
+        // is consulted only on a miss (#4416).
+        use crate::win32::PidWindowLookup;
+        let lookup =
+            tokio::task::spawn_blocking(move || crate::win32::lookup_window_for_pid(pid, hwnd))
                 .await
-                .unwrap_or_default();
-        if !windows_for_pid.iter().any(|w| w.hwnd == hwnd) {
-            // Check if the window exists under a different pid.
-            let all = tokio::task::spawn_blocking(|| crate::win32::list_windows(None))
-                .await
-                .unwrap_or_default();
-            if let Some(w) = all.iter().find(|w| w.hwnd == hwnd) {
+                .unwrap_or(PidWindowLookup::Missing);
+        let window = match lookup {
+            PidWindowLookup::Found(window) => window,
+            PidWindowLookup::OtherPid(owner) => {
                 return ToolResult::error(format!(
-                    "window_id {hwnd} belongs to pid {}, not pid {pid}. Call \
-                     `list_windows({{\"pid\": {pid}}})` to get this pid's own windows.",
-                    w.pid
+                    "window_id {hwnd} belongs to pid {owner}, not pid {pid}. Call \
+                     `list_windows({{\"pid\": {pid}}})` to get this pid's own windows."
                 ));
             }
-            return ToolResult::error(format!(
-                "No window with window_id {hwnd} exists. Call `list_windows({{\"pid\": \
-                 {pid}}})` for candidates."
-            ));
-        }
+            PidWindowLookup::Missing => {
+                return ToolResult::error(format!(
+                    "No window with window_id {hwnd} exists. Call `list_windows({{\"pid\": \
+                     {pid}}})` for candidates."
+                ));
+            }
+        };
         // Window identity metadata (additive): title + on-screen rectangle from
-        // the enumeration we already did, plus the owning process's executable
+        // the lookup we already did, plus the owning process's executable
         // name. Names the surface on the capture-only path, where no UIA tree
         // identifies it.
-        let win_geom = windows_for_pid
-            .iter()
-            .find(|w| w.hwnd == hwnd)
-            .map(|w| (w.title.clone(), w.x, w.y, w.width, w.height));
+        let win_geom = Some((
+            window.title.clone(),
+            window.x,
+            window.y,
+            window.width,
+            window.height,
+        ));
         let app_name = tokio::task::spawn_blocking(move || {
             crate::win32::list_processes()
                 .into_iter()
@@ -2771,9 +2770,10 @@ impl Tool for LaunchAppTool {
             if !windows_json.is_empty() {
                 break;
             }
-            let wins = tokio::task::spawn_blocking(move || crate::win32::list_windows(Some(pid)))
-                .await
-                .unwrap_or_default();
+            let wins =
+                tokio::task::spawn_blocking(move || crate::win32::list_windows_win32_first(pid))
+                    .await
+                    .unwrap_or_default();
             if !wins.is_empty() {
                 let window_count = wins.len();
                 windows_json = wins.iter().enumerate().map(|(position, w)| json!({
@@ -2831,7 +2831,7 @@ impl Tool for LaunchAppTool {
                     for _ in 0..max_candidate_attempts {
                         total_attempts += 1;
                         let wins = tokio::task::spawn_blocking(move || {
-                            crate::win32::list_windows(Some(candidate_pid))
+                            crate::win32::list_windows_win32_first(candidate_pid)
                         })
                         .await
                         .unwrap_or_default();
@@ -3246,7 +3246,7 @@ impl Tool for ClickTool {
                     "count":{"type":"integer","minimum":1,"maximum":3,"description":"Click count — 1 (single), 2 (double), 3 (triple). Default 1."},
                     "modifier": cua_driver_core::tool_schema::modifier_schema(),
                     "from_zoom":{"type":"boolean","description":"When true, x and y are pixel coordinates in the last `zoom` image for this pid. The driver maps them back to window coords."},
-                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window","description":"Coordinate frame (default \"window\"). Pass \"desktop\" with x,y and no pid/window_id for a screen-absolute click in get_desktop_state coordinates."},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -4062,9 +4062,7 @@ impl Tool for ClickTool {
                 cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
             );
             let btn = button.clone();
-            // Vision-mode (x, y) dispatch is **layered**, mirroring the
-            // trope-cua reference impl
-            // (`src/CuaDriver.Win/Tools/ClickTool.cs::InvokePixelClickAsync`):
+            // Vision-mode (x, y) dispatch is **layered**:
             //
             //   1. UIA hit-test in the target HWND's subtree. If the
             //      deepest InvokePattern-bearing element at (sx, sy) is
@@ -4483,7 +4481,7 @@ impl Tool for TypeTextTool {
                     "pid":{"type":"integer","description":"Target process ID."},
                     "text":{"type":"string","description":"Text to insert at the focused element's cursor."},
                     "window_id":{"type":"integer","description":"HWND of the target window. Omit when element_token is supplied (the token carries it)."},
-                    "element_token":{"type":"string","description":"Opaque element handle from get_window_state. When supplied, type_text writes through UIA ValuePattern and reads that exact element back by handle. The shared ActionResult is confirmed only when the complete expected value is synchronously visible. If SetValue succeeds but read-back is stale or unavailable, the result is unverifiable with no escalation; take a fresh snapshot before retrying because deferred providers may publish only after this call returns."},
+                    "element_token":{"type":"string","pattern":"^s[0-9a-f]{8}:[0-9]+$","description":"Opaque element handle from get_window_state. When supplied, type_text writes through UIA ValuePattern and reads that exact element back by handle. The shared ActionResult is confirmed only when the complete expected value is synchronously visible. If SetValue succeeds but read-back is stale or unavailable, the result is unverifiable with no escalation; take a fresh snapshot before retrying because deferred providers may publish only after this call returns."},
                     "x":{"type":"number","description":"Window-local screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_token) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the UIA/WM_CHAR path can't reach. Read straight off the get_window_state PNG, same convention as click."},
                     "y":{"type":"number","description":"Window-local screenshot-pixel Y of the field (see x)."},
                     "delay_ms":{"type":"integer","minimum":0,"maximum":200,"description":"Milliseconds between characters. Default 30."},
@@ -6060,7 +6058,7 @@ impl Tool for ScrollTool {
                 "type":"object","required":["direction"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer","description":"Target process ID for window scope. Omit with scope=desktop for screen-absolute coordinates from get_desktop_state."},
-                    "direction":{"type":"string","enum":["up","down","left","right"]},
+                    "direction":{"type":"string","enum":["up","down","left","right"],"description":"Scroll direction."},
                     "by":{"type":"string","enum":["line","page"],"description":"Scroll granularity. Default: line."},
                     "amount":{"type":"integer","minimum":1,"maximum":50,
                         "description":"Number of scroll ticks. Default 3."},
@@ -6068,7 +6066,7 @@ impl Tool for ScrollTool {
                     "y":{"type":"number","description":"With pid/window_id: window-local screenshot Y used to target a nested scroll surface in foreground mode. Without pid/window_id: screen-absolute Y for desktop scope. Must be paired with x."},
                     "window_id":{"type":"integer","description":"HWND of the target window. Omit when element_token is supplied; otherwise auto-resolves the pid's first visible window."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window","description":"Use \"desktop\" with x,y and no pid/window_id for screen-absolute coordinates from get_desktop_state. Default \"window\"."},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -7958,7 +7956,9 @@ impl Tool for MoveCursorTool {
             input_schema: json!({"type":"object","required":["x","y"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "scope":{"type":"string","enum":["window","desktop"],"description":"desktop moves the real OS pointer; window moves only the agent overlay."},
-                "x":{"type":"number"},"y":{"type":"number"},"cursor_id":{"type":"string"}
+                "x":{"type":"number","description":"Destination X. Window scope: screen coordinates of the agent cursor overlay. Desktop scope: get_desktop_state screenshot pixels."},
+                "y":{"type":"number","description":"Destination Y, in the same space as x."},
+                "cursor_id":{"type":"string","description":"Cursor instance to move. Default: 'default'."}
             },"additionalProperties":false}),
             read_only: false,
             destructive: false,
@@ -8900,9 +8900,9 @@ impl Tool for TypeTextCharsTool {
                 Otherwise identical to type_text (WM_CHAR, no focus steal).".into(),
             input_schema: json!({
                 "type":"object","required":["pid","text"],"properties":{
-                    "pid":{"type":"integer"},
-                    "window_id":{"type":"integer"},
-                    "text":{"type":"string"},
+                    "pid":{"type":"integer","description":"Target process ID."},
+                    "window_id":{"type":"integer","description":"HWND of the target window. Required with element_index."},
+                    "text":{"type":"string","description":"Text to type, one character at a time."},
                     "delay_ms":{"type":"integer","description":"Milliseconds between chars (default 30)."},
                     "type_chars_only":{"type":"boolean","description":"Skip element focus, type directly. Default false."}
                 },"additionalProperties":false

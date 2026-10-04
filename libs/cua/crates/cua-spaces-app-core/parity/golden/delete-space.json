@@ -1,0 +1,516 @@
+{
+  "flow": "delete-space",
+  "frames": [
+    {
+      "banner": null,
+      "deleting": [
+        "local:demo"
+      ],
+      "frame": {
+        "activity": {
+          "kind": "deleting",
+          "label": "Deleting 1 Space",
+          "permille": null
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Delete Space (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Deleting…",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Deleting…",
+            "progress": null,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:keep",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "local:demo",
+          "local:keep"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Demo [Deleting…] - -",
+          "os-linux Keep [Running] - -"
+        ],
+        "tiles": [
+          "os-linux Demo, Linux, This Mac, Deleting… - Deleting…",
+          "os-linux Keep, Linux, This Mac, Running - -"
+        ]
+      },
+      "isDeleting": true,
+      "step": "delete demo"
+    },
+    {
+      "banner": null,
+      "deleting": [
+        "local:demo"
+      ],
+      "frame": {
+        "activity": {
+          "kind": "deleting",
+          "label": "Deleting 1 Space",
+          "permille": null
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Delete Space (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Deleting…",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Deleting…",
+            "progress": null,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:keep",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "local:demo",
+          "local:keep"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Demo [Deleting…] - -",
+          "os-linux Keep [Running] - -"
+        ],
+        "tiles": [
+          "os-linux Demo, Linux, This Mac, Deleting… - Deleting…",
+          "os-linux Keep, Linux, This Mac, Running - -"
+        ]
+      },
+      "isDeleting": null,
+      "step": "probe: demo timed out"
+    },
+    {
+      "banner": null,
+      "deleting": [
+        "local:demo"
+      ],
+      "frame": {
+        "activity": {
+          "kind": "deleting",
+          "label": "Deleting 1 Space",
+          "permille": null
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Delete Space (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Deleting…",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Deleting…",
+            "progress": null,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:keep",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "local:demo",
+          "local:keep"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Demo [Deleting…] - -",
+          "os-linux Keep [Running] - -"
+        ],
+        "tiles": [
+          "os-linux Demo, Linux, This Mac, Deleting… - Deleting…",
+          "os-linux Keep, Linux, This Mac, Running - -"
+        ]
+      },
+      "isDeleting": null,
+      "step": "probe: demo running"
+    },
+    {
+      "banner": null,
+      "deleting": [
+        "local:demo"
+      ],
+      "frame": {
+        "activity": {
+          "kind": "deleting",
+          "label": "Deleting 1 Space",
+          "permille": null
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Delete Space (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Deleting…",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Deleting…",
+            "progress": null,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:keep",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "local:demo",
+          "local:keep"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Demo [Deleting…] - -",
+          "os-linux Keep [Running] - -"
+        ],
+        "tiles": [
+          "os-linux Demo, Linux, This Mac, Deleting… - Deleting…",
+          "os-linux Keep, Linux, This Mac, Running - -"
+        ]
+      },
+      "isDeleting": true,
+      "step": "delete demo again"
+    },
+    {
+      "banner": null,
+      "deleting": [
+        "local:demo done"
+      ],
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:keep",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "local:keep"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Keep [Running] - -"
+        ],
+        "tiles": [
+          "os-linux Keep, Linux, This Mac, Running - -"
+        ]
+      },
+      "isDeleting": true,
+      "step": "delete demo done"
+    },
+    {
+      "banner": null,
+      "deleting": [
+        "local:demo done"
+      ],
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:keep",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "local:keep"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Keep [Running] - -"
+        ],
+        "tiles": [
+          "os-linux Keep, Linux, This Mac, Running - -"
+        ]
+      },
+      "isDeleting": null,
+      "step": "refresh still lists demo"
+    },
+    {
+      "banner": null,
+      "deleting": [],
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:keep",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "local:keep"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Keep [Running] - -"
+        ],
+        "tiles": [
+          "os-linux Keep, Linux, This Mac, Running - -"
+        ]
+      },
+      "isDeleting": null,
+      "step": "refresh without demo"
+    },
+    {
+      "banner": null,
+      "deleting": [
+        "local:keep"
+      ],
+      "frame": {
+        "activity": {
+          "kind": "deleting",
+          "label": "Deleting 1 Space",
+          "permille": null
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Delete Space (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Deleting…",
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:keep",
+            "previewText": "Deleting…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "local:keep"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Keep [Deleting…] - -"
+        ],
+        "tiles": [
+          "os-linux Keep, Linux, This Mac, Deleting… - Deleting…"
+        ]
+      },
+      "isDeleting": true,
+      "step": "delete keep"
+    },
+    {
+      "banner": "Could not delete Keep: lume is not running",
+      "deleting": [],
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:keep",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "local:keep"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Keep [Running] - -"
+        ],
+        "tiles": [
+          "os-linux Keep, Linux, This Mac, Running - -"
+        ]
+      },
+      "isDeleting": false,
+      "step": "delete keep fails"
+    }
+  ]
+}

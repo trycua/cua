@@ -1,0 +1,28 @@
+{
+  "name": "openkoalabot-example-ts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenKoalaBots on @trycua/cua: a Node agent loop, a local server, and a web UI that streams a Space over the wasm/gRPC-Web client and WebCodecs",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:web": "vite build web",
+    "dev:web": "vite web",
+    "serve": "node dist/server/main.js",
+    "scenario": "node dist/scenario/cli.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@trycua/cua": "file:../../libs/cua/typescript",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.12",
+    "happy-dom": "^20.14.5",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  }
+}

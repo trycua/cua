@@ -1,5 +1,6 @@
 //! Parity check for the `describe` CLI subcommand.
 
+#[cfg(target_os = "windows")]
 use std::process::Command;
 
 #[cfg(target_os = "windows")]

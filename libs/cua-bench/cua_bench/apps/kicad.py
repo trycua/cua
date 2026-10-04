@@ -24,6 +24,14 @@ _SPICE_TYPE_MAP = {
 }
 
 
+def _output_tail(result, limit: int = 800) -> str:
+    """The end of a run_command result's stdout and stderr, for errors."""
+    if not isinstance(result, dict):
+        return str(result)[-limit:]
+    text = "\n".join(p for p in (result.get("stdout"), result.get("stderr")) if p).strip()
+    return text[-limit:] or f"exit code {result.get('return_code')}"
+
+
 def _stdout(result) -> str:
     """Extract stdout string from a run_command result."""
     return (result.get("stdout", "") if isinstance(result, dict) else str(result)).strip()
@@ -39,9 +47,7 @@ def _parse_spice_components(netlist: str) -> List[dict]:
         parts = line.split()
         ref = parts[0]
         ctype = _SPICE_TYPE_MAP.get(ref[0].upper(), "unknown")
-        components.append(
-            {"ref": ref, "type": ctype, "value": parts[-1], "nodes": parts[1:-1]}
-        )
+        components.append({"ref": ref, "type": ctype, "value": parts[-1], "nodes": parts[1:-1]})
     return components
 
 
@@ -135,14 +141,16 @@ def _collect_comp_refs(node: Any, out: List[dict]) -> None:
         lib, part = _get_libsource(node)
         if ref is not None:
             prefix = ref[0].upper() if ref else ""
-            out.append({
-                "ref": ref,
-                "type": _SPICE_TYPE_MAP.get(prefix, "unknown"),
-                "value": value or "",
-                "lib": lib or "",
-                "part": part or "",
-                "nodes": [],
-            })
+            out.append(
+                {
+                    "ref": ref,
+                    "type": _SPICE_TYPE_MAP.get(prefix, "unknown"),
+                    "value": value or "",
+                    "lib": lib or "",
+                    "part": part or "",
+                    "nodes": [],
+                }
+            )
         return
     for child in node:
         _collect_comp_refs(child, out)
@@ -228,8 +236,10 @@ def _compare_kicad_netlists(
     scores: List[float] = []
     if require_same_components:
         scores.append(
-            1.0 if sorted(_component_key(c) for c in ref["components"])
-            == sorted(_component_key(c) for c in cand["components"]) else 0.0
+            1.0
+            if sorted(_component_key(c) for c in ref["components"])
+            == sorted(_component_key(c) for c in cand["components"])
+            else 0.0
         )
     if require_same_nets:
         scores.append(1.0 if set(ref["nets"]) == set(cand["nets"]) else 0.0)
@@ -268,20 +278,25 @@ class KiCad(App):
             check=False,
         )
         if _stdout(verify) != "FOUND":
+            # The canonical desktop image has no add-apt-repository
+            # (software-properties-common): install it first when missing.
             result = await self.session.run_command(
-                "sudo add-apt-repository --yes ppa:kicad/kicad-9.0-releases && "
-                "sudo apt update && "
-                "sudo apt install -y --install-recommends kicad",
+                "export DEBIAN_FRONTEND=noninteractive; "
+                "{ command -v add-apt-repository >/dev/null 2>&1 || "
+                "{ sudo -E apt-get update && "
+                "sudo -E apt-get install -y software-properties-common; }; } && "
+                "sudo -E add-apt-repository --yes ppa:kicad/kicad-9.0-releases && "
+                "sudo -E apt-get update && "
+                "sudo -E apt-get install -y --install-recommends kicad",
                 check=False,
+                timeout=1800,
             )
             verify = await self.session.run_command(
                 "command -v kicad >/dev/null 2>&1 && echo FOUND || echo NOT_FOUND",
                 check=False,
             )
         if _stdout(verify) != "FOUND":
-            raise RuntimeError(
-                f"KiCad install failed: {_stdout(result)}"
-            )
+            raise RuntimeError(f"KiCad install failed: {_output_tail(result)}")
 
         if with_shortcut:
             await self.session.run_command(
@@ -321,7 +336,7 @@ class KiCad(App):
             "stdout=open('/dev/null', 'w'), "
             "stderr=open('/dev/null', 'w'))"
         )
-        await self.session.run_command(f"python3 -c \"{launch_script}\"", check=False)
+        await self.session.run_command(f'python3 -c "{launch_script}"', check=False)
         await asyncio.sleep(15)
 
     @uninstall("linux")
@@ -457,13 +472,12 @@ class KiCad(App):
             Raw text content of the netlist.
         """
         result = await self.session.run_command(
-            f'cat "{netlist_path}"', check=False,
+            f'cat "{netlist_path}"',
+            check=False,
         )
         return _stdout(result)
 
-    async def get_components(
-        self: "BoundApp", *, netlist_path: str
-    ) -> List[dict]:
+    async def get_components(self: "BoundApp", *, netlist_path: str) -> List[dict]:
         """Read and parse a netlist into structured components.
 
         Supports SPICE (.cir) and KiCad (.net) formats.
@@ -577,9 +591,7 @@ class KiCad(App):
         parser = SpiceParser(source=netlist)
         circuit = parser.build_circuit(ground=ground)
         simulator = circuit.simulator(temperature=25, nominal_temperature=25)
-        analysis = simulator.transient(
-            step_time=step_time_us @ u_us, end_time=end_time_us @ u_us
-        )
+        analysis = simulator.transient(step_time=step_time_us @ u_us, end_time=end_time_us @ u_us)
         result: Dict[str, list] = {
             "time": [float(t) for t in analysis.time],
         }

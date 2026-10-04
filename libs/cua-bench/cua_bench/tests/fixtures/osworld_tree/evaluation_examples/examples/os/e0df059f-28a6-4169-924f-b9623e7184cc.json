@@ -1,0 +1,5 @@
+{"id": "e0df059f-28a6-4169-924f-b9623e7184cc", "instruction": "Rename todo_list_Jan_1 to todo_list_Jan_2.",
+ "config": [{"type": "execute", "parameters": {"command": "echo {CLIENT_PASSWORD} | sudo -S mkdir ~/Desktop/todo_list_Jan_1", "shell": true}}],
+ "evaluator": {"func": "exact_match",
+   "result": {"type": "vm_command_line", "command": "[ -d ~/Desktop/todo_list_Jan_2 ] && echo 'Directory exists.' || echo 'Directory does not exist.'", "shell": true},
+   "expected": {"type": "rule", "rules": {"expected": "Directory exists.\n"}}}}

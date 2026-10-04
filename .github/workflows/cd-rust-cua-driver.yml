@@ -84,6 +84,11 @@ concurrency:
   group: cd-cua-driver-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
 jobs:
   # Certify PR-first attribution from the exact immutable candidate before
   # starting any platform build. Manual build-only dispatches intentionally
@@ -230,12 +235,13 @@ jobs:
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian-security/20260901T000000Z/ bullseye-security main
           EOF
           # Ignore any additional image-provided sources for this bootstrap.
-          apt-get -o Dir::Etc::sourceparts=- update
+          # snapshot.debian.org answers 504 under load; retry each fetch.
+          apt-get -o Dir::Etc::sourceparts=- -o Acquire::Retries=5 update
           # PipeWire ScreenCast capture remains Nix/modern-build only because
           # bullseye's 0.3.19 headers are too old for libspa-sys 0.8. Portal
           # RemoteDesktop/libei input is pure Rust plus libxkbcommon and ships
           # in these portable release binaries.
-          apt-get -o Dir::Etc::sourceparts=- install -y --no-install-recommends \
+          apt-get -o Dir::Etc::sourceparts=- -o Acquire::Retries=5 install -y --no-install-recommends \
             git ca-certificates curl python3 build-essential pkg-config \
             libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev \
             libxkbcommon-dev
@@ -299,6 +305,7 @@ jobs:
           cp include/cua_driver_abi.h "release/${STAGE}/"
           cp -R ../wayland-helper "release/${STAGE}/wayland-helper"
           cp ../../../LICENSE.md "release/${STAGE}/LICENSE"
+          cp THIRD_PARTY_NOTICES.md "release/${STAGE}/THIRD_PARTY_NOTICES.md"
           (cd release && tar -czf "${STAGE}.tar.gz" "${STAGE}")
           # Bare runtime tarball: CLI plus the UniFFI library consumed by the
           # Python and Node imported-SDK packages.
@@ -477,6 +484,7 @@ jobs:
           Copy-Item "target/$target/release/cua_driver_node_runtime.node" "release/$stage/"
           Copy-Item "include/cua_driver_abi.h" "release/$stage/"
           Copy-Item "../../../LICENSE.md" "release/$stage/LICENSE" -ErrorAction Stop
+          Copy-Item "THIRD_PARTY_NOTICES.md" "release/$stage/THIRD_PARTY_NOTICES.md" -ErrorAction Stop
           # Zip the directory itself (no trailing /*) so the archive contains
           # the top-level "$stage" wrapper dir — install.ps1 walks into
           # extracted/cua-driver-rs-<v>-<arch>/cua-driver.exe to find the
@@ -965,6 +973,7 @@ jobs:
             # the bare binary can grab the *-binary.tar.gz below.
             cp -R release/CuaDriver.app "release/${STAGE}/CuaDriver.app"
             cp ../../../LICENSE.md "release/${STAGE}/LICENSE"
+            cp THIRD_PARTY_NOTICES.md "release/${STAGE}/THIRD_PARTY_NOTICES.md"
             (cd release && tar -czf "${STAGE}.tar.gz" "${STAGE}")
           done
           # Bare runtime tarball: universal CLI plus universal UniFFI library.
@@ -1245,6 +1254,13 @@ jobs:
       - e2e-standalone-browsers
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
     runs-on: ubuntu-latest
+    # id-token: keyless Sigstore bundles for every release asset. The
+    # attribution collector reads pull requests and issues.
+    permissions:
+      contents: write
+      id-token: write
+      issues: read
+      pull-requests: read
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -1410,6 +1426,30 @@ jobs:
             shasum -a 256 cua-driver-rs-*.{tar.gz,zip} cua-hyprland-plugin-*.tar.gz 2>/dev/null | sort
             echo '```'
           } > checksums.txt
+
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+
+      # install.sh / install.ps1 verify every download against SHA256SUMS
+      # and, when cosign is installed, against the asset's keyless Sigstore
+      # bundle (<asset>.sigstore.json) issued to this workflow at this tag.
+      - name: Publish SHA256SUMS and Sigstore bundles
+        run: |
+          set -euo pipefail
+          cd release-upload
+          shopt -s nullglob
+          ASSETS=()
+          for f in *; do
+            case "$f" in
+              checksums.txt|SHA256SUMS|*.sigstore.json) ;;
+              *) ASSETS+=("$f") ;;
+            esac
+          done
+          test "${#ASSETS[@]}" -gt 0
+          sha256sum "${ASSETS[@]}" | sort -k2 > SHA256SUMS
+          for f in "${ASSETS[@]}" SHA256SUMS; do
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f" >/dev/null
+          done
+          cat SHA256SUMS
 
       - name: Collect PR-first release attribution
         env:

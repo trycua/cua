@@ -24,6 +24,11 @@ concurrency:
   group: nightly-lume
   cancel-in-progress: false
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
 jobs:
   plan:
     uses: ./.github/workflows/nightly-component-plan.yml

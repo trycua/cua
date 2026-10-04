@@ -1,0 +1,72 @@
+[package]
+name = "cua-spaces-ext"
+description = "Cua Spaces extensions: session and app teleport, the Cua Volume tools and persistent agents, registered into the MIT Spaces runtime through its extension points."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+[features]
+# The Cua Volume on an S3-compatible bucket or the Cua cloud (the AWS SDK);
+# the local store needs no feature.
+s3 = ["cua-volume/s3"]
+# This machine's mount of Cua Volume: the localhost NFS server macOS mounts,
+# FUSE on Linux. (A Space's guest mount needs neither: NFS for macOS guests
+# is always built.)
+mount = ["cua-volume/nfs", "cua-volume/fuse"]
+
+[dependencies]
+cua-spaces = { path = "../cua-spaces" }
+cua-spaces-contract = { path = "../cua-spaces-contract" }
+cua-spacesd-client.workspace = true
+cua-volume = { workspace = true, features = ["nfs"] }
+cua-keyvault.workspace = true
+# Persistent-agent adoption counts (fixed words only).
+cua-telemetry.workspace = true
+cua-daemon = { workspace = true, features = ["server", "client", "spaces"] }
+cua-fleet.workspace = true
+cua-auth.workspace = true
+cua-teleport.workspace = true
+cua-chromium-storage.workspace = true
+# The reserved `cookies.json` bundle entry format (`daemon::keyvault`'s
+# per-site cookie capture): shared, effect-free wire format, not re-exported
+# by `cua-teleport` (whose own `cookies` module is the unrelated site filter).
+cua-teleport-bundle.workspace = true
+cua-home.workspace = true
+cua-agents.workspace = true
+cua-sandbox-core.workspace = true
+cua-media-client.workspace = true
+cua-media-protocol.workspace = true
+cua-media-transport = { workspace = true, features = ["quic"] }
+quinn.workspace = true
+url.workspace = true
+sha2.workspace = true
+hex.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+futures-util.workspace = true
+http.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tar = "0.4"
+tempfile.workspace = true
+tokio = { workspace = true }
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
+png = "0.18"
+cua-host = { workspace = true, features = ["testing"] }
+tracing-subscriber.workspace = true
+cua-sdk = { workspace = true, features = ["local", "spaces", "host", "media"] }
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+cua-sandbox-core = { workspace = true, features = ["testing"] }
+cua-proto = { workspace = true, features = ["client", "server", "serde"] }
+tonic = { workspace = true, default-features = false, features = ["codegen", "server", "router", "channel"] }
+tokio-stream = { workspace = true, features = ["net"] }

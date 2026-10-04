@@ -21,8 +21,8 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_children, copy_number_attr, copy_string_attr, kAXErrorSuccess, perform_action,
-    set_number_attr, set_string_attr, AXUIElementRef,
+    copy_bool_attr, copy_children, copy_number_attr, copy_string_attr, copy_url_attr,
+    kAXErrorSuccess, perform_action, set_number_attr, set_string_attr, AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
@@ -57,6 +57,12 @@ fn def() -> &'static ToolDef {
              - **All other elements**: writes AXValue directly (sliders, steppers, \
              date pickers, native text fields that expose settable AXValue).\n\
              \n\
+             - **A file's name as Finder lists it** (a text field carrying \
+             AXFilename and a file URL, not being edited): refused with \
+             `file_name_needs_rename`, because the write changes only what \
+             Finder shows, never the file. The refusal names the keyboard \
+             route that renames it.\n\
+             \n\
              For free-form text entry into web inputs, prefer `type_text_chars` \
              which synthesises key events — AXValue writes are ignored by WebKit."
             .into(),
@@ -65,7 +71,7 @@ fn def() -> &'static ToolDef {
             "required": ["pid", "value"],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid": { "type": "integer" },
+                "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": {
                     "type": "integer",
                     "description": "CGWindowID. Omit when element_token is supplied (the token carries it)."
@@ -137,6 +143,17 @@ impl Tool for SetValueTool {
             Ok(lease) => lease,
             Err(refusal_result) => return refusal_result,
         };
+
+        // A file's name as Finder lists it takes an AXValue write and reads it
+        // back, but the file is never renamed. Refuse before anything moves.
+        let name_guard = element_guard.clone();
+        if let Ok(true) = tokio::task::spawn_blocking(move || unsafe {
+            file_name_cell(name_guard.as_ptr() as AXUIElementRef)
+        })
+        .await
+        {
+            return file_name_needs_rename(pid, window_id);
+        }
 
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
         let center_guard = element_guard.clone();
@@ -213,6 +230,48 @@ impl Tool for SetValueTool {
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
+}
+
+// ── File name cells ──────────────────────────────────────────────────────────
+
+const FILE_NAME_NEEDS_RENAME: &str = "file_name_needs_rename";
+
+/// Whether `element` is a file's name as a list shows it (Finder's list and
+/// icon views): a text field that names a file and is not being edited.
+/// Finder's inline rename editor is focused, so it stays writable.
+unsafe fn file_name_cell(element: AXUIElementRef) -> bool {
+    copy_string_attr(element, "AXRole").as_deref() == Some("AXTextField")
+        && is_file_name_cell(
+            copy_string_attr(element, "AXFilename").as_deref(),
+            copy_url_attr(element).as_deref(),
+            copy_bool_attr(element, "AXFocused"),
+        )
+}
+
+fn is_file_name_cell(filename: Option<&str>, url: Option<&str>, focused: Option<bool>) -> bool {
+    filename.is_some_and(|name| !name.is_empty())
+        && url.is_some_and(|url| url.starts_with("file://"))
+        && focused != Some(true)
+}
+
+fn file_name_needs_rename(pid: i32, window_id: u32) -> ToolResult {
+    let reason = "This is a file's name as the list shows it. Writing its AXValue changes only \
+                  what the list shows, never the file, so nothing was written. To rename the \
+                  file: click this element to select the item, then with Finder frontmost send \
+                  press_key return, hotkey cmd+a (Finder selects the name without its \
+                  extension), type_text the full new name, and press_key return, each with \
+                  scope:\"desktop\". Then check the new name in a fresh get_window_state.";
+    ToolResult::error(format!(
+        "set_value refused ({FILE_NAME_NEEDS_RENAME}): {reason}"
+    ))
+    .with_structured(serde_json::json!({
+        "code": FILE_NAME_NEEDS_RENAME,
+        "effect": "refused",
+        "path": "ax",
+        "pid": pid,
+        "window_id": window_id,
+        "reason": reason,
+    }))
 }
 
 // ── Blocking implementation (runs on spawn_blocking thread) ─────────────────
@@ -638,7 +697,57 @@ fn hex_digit(n: u8) -> char {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_surface_trust, apply_verification_label, classify_write, SetValueOutcome};
+    use super::{
+        apply_surface_trust, apply_verification_label, classify_write, file_name_needs_rename,
+        is_file_name_cell, SetValueOutcome,
+    };
+
+    #[test]
+    fn a_listed_file_name_is_a_file_name_cell() {
+        let url = Some("file:///Users/me/lab/charlie.bin");
+        assert!(is_file_name_cell(Some("charlie.bin"), url, Some(false)));
+        assert!(is_file_name_cell(Some("charlie.bin"), url, None));
+    }
+
+    #[test]
+    fn rename_editor_and_ordinary_fields_stay_writable() {
+        let url = Some("file:///Users/me/lab/charlie.bin");
+        // Finder's inline rename editor is focused while editing.
+        assert!(!is_file_name_cell(Some("charlie.bin"), url, Some(true)));
+        // A plain text field names no file.
+        assert!(!is_file_name_cell(None, None, Some(false)));
+        assert!(!is_file_name_cell(Some(""), url, Some(false)));
+        assert!(!is_file_name_cell(Some("charlie.bin"), None, Some(false)));
+        assert!(!is_file_name_cell(
+            Some("page"),
+            Some("https://example.com/page"),
+            None
+        ));
+    }
+
+    #[test]
+    fn file_name_refusal_names_the_rename_route() {
+        let result = file_name_needs_rename(7, 42);
+        assert_eq!(result.is_error, Some(true));
+        let data = result.structured_content.unwrap();
+        assert_eq!(data["code"], "file_name_needs_rename");
+        assert_eq!(data["effect"], "refused");
+        assert_eq!(
+            (data["pid"].as_i64(), data["window_id"].as_u64()),
+            (Some(7), Some(42))
+        );
+        let reason = data["reason"].as_str().unwrap();
+        for needed in [
+            "never the file",
+            "nothing was written",
+            "return",
+            "cmd+a",
+            "type_text",
+            "desktop",
+        ] {
+            assert!(reason.contains(needed), "missing {needed:?}: {reason}");
+        }
+    }
 
     #[test]
     fn unreadable_value_reports_neither_verified_nor_changed() {

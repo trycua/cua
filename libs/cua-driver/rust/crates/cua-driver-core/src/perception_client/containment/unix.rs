@@ -164,7 +164,9 @@ impl ProcessGroupGuard {
     }
 
     /// A flag a supervisor task sets when it kills the worker for exceeding its
-    /// memory ceiling, so the exit is reported as a resource limit.
+    /// memory ceiling, so the exit is reported as a resource limit. Only the
+    /// macOS supervisor (`watch_memory`) sets it.
+    #[cfg(target_os = "macos")]
     pub(super) fn memory_flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.memory_ceiling_exceeded)
     }

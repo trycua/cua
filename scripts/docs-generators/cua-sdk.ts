@@ -321,7 +321,8 @@ export const PAGES: PageSpec[] = [
     title: 'Spacesd client',
     description: 'SpacesdClient: the cua-spacesd client for processes, files, the desktop and media in a sandbox.',
     intro:
-      '`sandbox.spacesd()` (or `cua.spacesd(url, token)` for any spacesd) returns a `SpacesdClient`. It picks native gRPC or gRPC-Web, sends the token and chunks transfers. Methods by task: [processes](/cua-sdk/reference/spacesd/shell), [files](/cua-sdk/reference/spacesd/files), [computer](/cua-sdk/reference/spacesd/computer) and [media](/cua-sdk/reference/spacesd/media).',
+      '`sandbox.spacesd()`, `space.spacesd()` (or `cua.spacesd(url, token)` for any spacesd) returns a `SpacesdClient`. It picks native gRPC or gRPC-Web, sends the token and chunks transfers. Methods by task: [processes](/cua-sdk/reference/spacesd/shell), [files](/cua-sdk/reference/spacesd/files), [computer](/cua-sdk/reference/spacesd/computer) and [media](/cua-sdk/reference/spacesd/media).',
+    members: [{ object: 'Space', title: 'From a Space', methods: ['spacesd'] }],
     items: ['SpacesdClient', 'SpacesdCapabilities', 'SpacesdFeature', 'SpacesdHttpRequest', 'SpacesdHttpResponse', 'SpacesdHttpHeader'],
     modules: ['spacesd', 'types'],
     python: [['`cua_sandbox` interfaces', `${PY}/interfaces`]],

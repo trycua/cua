@@ -1307,6 +1307,8 @@ external fun uniffi_cua_sdk_checksum_method_space_share(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_shares(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_space_spacesd(
+): Short
 external fun uniffi_cua_sdk_checksum_method_space_start_hotspot(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_stop_hotspot(
@@ -2218,6 +2220,8 @@ external fun uniffi_cua_sdk_fn_method_space_set_presence_settings(`ptr`: Long,`c
 external fun uniffi_cua_sdk_fn_method_space_share(`ptr`: Long,`who`: RustBuffer.ByValue,`role`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_shares(`ptr`: Long,
+): Long
+external fun uniffi_cua_sdk_fn_method_space_spacesd(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_start_hotspot(`ptr`: Long,`setSystemProxy`: RustBuffer.ByValue,`bypass`: RustBuffer.ByValue,
 ): Long
@@ -3627,6 +3631,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_shares() != 19234.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_space_spacesd() != 47873.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_start_hotspot() != 44744.toShort()) {
@@ -16295,6 +16302,11 @@ public interface SpaceInterface {
     suspend fun `shares`(): SpaceShares
 
     /**
+     * The cua-spacesd client over the connection this Space authenticated.
+     */
+    fun `spacesd`(): SpacesdClient
+
+    /**
      * Starts the reverse-SOCKS hotspot: this host serves the Space's
      * egress. `set_system_proxy` points the guest's proxy settings at it
      * (default false here).
@@ -17223,6 +17235,23 @@ open class Space: Disposable, AutoCloseable, SpaceInterface
         CuaException.ErrorHandler,
     )
     }
+
+
+    /**
+     * The cua-spacesd client over the connection this Space authenticated.
+     */
+    @Throws(CuaException::class)override fun `spacesd`(): SpacesdClient {
+            return FfiConverterTypeSpacesdClient.lift(
+    callWithHandle {
+    uniffiRustCallWithError(CuaException) { _status ->
+    UniffiLib.uniffi_cua_sdk_fn_method_space_spacesd(
+        it,
+        _status)
+}
+    }
+    )
+    }
+
 
 
     /**

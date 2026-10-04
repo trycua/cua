@@ -30629,6 +30629,10 @@ export interface SpaceLike {
  */
     shares(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceShares>;
 /**
+ * The cua-spacesd client over the connection this Space authenticated.
+ */
+    spacesd() /*throws*/: SpacesdClientLike;
+/**
  * Starts the reverse-SOCKS hotspot: this host serves the Space's
  * egress. `set_system_proxy` points the guest's proxy settings at it
  * (default false here).
@@ -31755,6 +31759,21 @@ private constructor(pointer: UniffiHandle) {
         }
         throw __error;
     }
+    }
+
+/**
+ * The cua-spacesd client over the connection this Space authenticated.
+ */
+    spacesd(): SpacesdClientLike /*throws*/ {
+    return FfiConverterTypeSpacesdClient.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_sdk_fn_method_space_spacesd(
+                uniffiTypeSpaceObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
     }
 
 /**
@@ -37608,6 +37627,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_shares() !== 19234) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_shares");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_space_spacesd() !== 47873) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_spacesd");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_start_hotspot() !== 44744) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_start_hotspot");

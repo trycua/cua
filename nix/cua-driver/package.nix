@@ -98,6 +98,19 @@ pkgs.rustPlatform.buildRustPackage {
   # Skip tests that require a running X11 display or AT-SPI bus
   doCheck = false;
 
+  postInstall = ''
+    mkdir -p "$out/share/applications"
+    cat > "$out/share/applications/ai.cua.driver.desktop" <<EOF
+    [Desktop Entry]
+    Type=Application
+    Name=Cua Driver
+    Exec=$out/bin/cua-driver serve
+    NoDisplay=true
+    X-KDE-Wayland-Interfaces=org_kde_plasma_window_management
+    X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
+    EOF
+  '';
+
   meta = with pkgs.lib; {
     description = "Cross-platform MCP server for computer-use automation";
     homepage = "https://github.com/trycua/cua";

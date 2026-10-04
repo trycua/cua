@@ -479,9 +479,7 @@ fn visible_cores_for_output<'a>(
     let mut visible_cores: Vec<_> = cores
         .iter()
         .filter(|(_, core)| {
-            core.visible
-                && core.pos.0 >= -100.0
-                && core.idle_alpha >= 0.004
+            core.is_revealed()
                 && select_output(layouts, core.pos.0, core.pos.1)
                     .is_some_and(|selected| selected.id == output_id)
         })
@@ -837,7 +835,7 @@ fn tick_all_cores(cores: &mut CursorMap<RenderStateCore>, dt: f64) -> Vec<Cursor
 /// gated on a shown, placed cursor: a hidden cursor's motion is quiesced by
 /// [`quiesce_hidden`] and never repaints a layer surface.
 fn needs_frame_tick(core: &RenderStateCore) -> bool {
-    core.visible && core.pos.0 >= -100.0 && core.needs_frame_tick()
+    core.visible && cursor_overlay::render_state::is_placed(core.pos) && core.needs_frame_tick()
 }
 
 fn quiesce_hidden(core: &mut RenderStateCore) {
@@ -875,7 +873,7 @@ fn redraw(
         .render
         .cursors
         .values()
-        .filter(|core| core.visible && core.pos.0 >= -100.0 && core.idle_alpha >= 0.004)
+        .filter(|core| core.is_revealed())
         .map(|core| core.pos);
     let (selected, targets) = frame_plan(
         &layouts,
@@ -1477,6 +1475,42 @@ mod tests {
     }
 
     #[test]
+    fn a_cursor_on_a_monitor_left_of_the_origin_is_drawn_there() {
+        // A left-hand monitor puts real cursor positions far below zero; they
+        // must not be mistaken for the never-placed sentinel.
+        let layouts = vec![
+            OutputLayout {
+                id: 3,
+                origin_x: -3840,
+                origin_y: 0,
+                width: 3840,
+                height: 2160,
+            },
+            OutputLayout {
+                id: 4,
+                origin_x: 0,
+                origin_y: 0,
+                width: 3840,
+                height: 2160,
+            },
+        ];
+        let mut core = positioned_core();
+        core.pos = (-2220.0, 980.0);
+        let cores = CursorMap::from([("session".to_owned(), core)]);
+        assert_eq!(visible_cores_for_output(&cores, &layouts, 3).len(), 1);
+        assert!(visible_cores_for_output(&cores, &layouts, 4).is_empty());
+        // And it paints there: a 160 px crop of the left monitor around it.
+        let mut crop = tiny_skia::Pixmap::new(160, 160).unwrap();
+        cursor_overlay::paint_cursor(&mut crop, &cores["session"], -2300.0, 900.0, None, 1.0);
+        assert!(crop.pixels().iter().any(|pixel| pixel.alpha() > 0));
+        let unplaced = CursorMap::from([(
+            "session".to_owned(),
+            RenderStateCore::new(CursorConfig::default()),
+        )]);
+        assert!(visible_cores_for_output(&unplaced, &layouts, 3).is_empty());
+    }
+
+    #[test]
     fn initial_configured_outputs_each_plan_one_transparent_frame() {
         let layouts = three_monitor_layout();
         let (selected, targets) = frame_plan(
@@ -1804,7 +1838,7 @@ mod tests {
         ));
         let core = state.render.cursors.get("session-a").unwrap();
         assert_eq!(core.session_label.as_deref(), Some("Synthetic session"));
-        assert!(core.pos.0 < -50.0);
+        assert!(!cursor_overlay::render_state::is_placed(core.pos));
         assert!(state.outputs.is_empty());
         assert!(matches!(
             rx.try_recv(),

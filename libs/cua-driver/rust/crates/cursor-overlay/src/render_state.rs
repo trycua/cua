@@ -44,6 +44,17 @@ use std::sync::Arc;
 pub const SESSION_BADGE_HOLD_SECS: f64 = 2.0;
 pub const SESSION_BADGE_FADE_SECS: f64 = 0.4;
 
+/// Position of a cursor that has never been placed. It lies far outside any
+/// compositor layout: layouts reach negative coordinates when a monitor sits
+/// left of or above the primary one, so a small negative sentinel (the old
+/// `(-200, -200)`) is indistinguishable from a real position there.
+pub const UNPLACED_POS: (f64, f64) = (-1.0e9, -1.0e9);
+
+/// Whether `pos` is a real position rather than [`UNPLACED_POS`].
+pub fn is_placed(pos: (f64, f64)) -> bool {
+    pos.0 > -1.0e8
+}
+
 /// Platform-agnostic render state shared by macOS / Windows / Linux overlays.
 ///
 /// Each platform wraps this in its own struct that adds OS-specific fields
@@ -137,7 +148,7 @@ impl RenderStateCore {
             semantic_cue: false,
             theme,
             theme_fallback,
-            pos: (-200.0, -200.0),
+            pos: UNPLACED_POS,
             heading: std::f64::consts::FRAC_PI_4,
             path: None,
             dist: 0.0,
@@ -158,10 +169,10 @@ impl RenderStateCore {
         }
     }
 
-    /// Whether the cursor currently paints pixels: user-visible, placed on
-    /// screen (not the `(-200, -200)` sentinel), and not fully idle-faded.
+    /// Whether the cursor currently paints pixels: user-visible, placed
+    /// (not [`UNPLACED_POS`]), and not fully idle-faded.
     pub fn is_revealed(&self) -> bool {
-        self.visible && self.pos.0 >= -100.0 && self.idle_alpha >= 0.004
+        self.visible && is_placed(self.pos) && self.idle_alpha >= 0.004
     }
 
     /// Whether a revealed cursor keeps changing pixels while it rests.
@@ -202,10 +213,8 @@ impl RenderStateCore {
     /// `motion.idle_hide_ms` of inactivity) is currently animating.
     pub fn idle_fade_in_progress(&self) -> bool {
         self.motion.idle_hide_ms > 0.0
-            && self.visible
-            && self.pos.0 >= -100.0
+            && self.is_revealed()
             && self.idle_secs >= self.motion.idle_hide_ms / 1000.0
-            && self.idle_alpha >= 0.004
     }
 
     /// The shared frame-tick predicate: true while the next tick can change
@@ -231,7 +240,7 @@ impl RenderStateCore {
     /// the fade has already started.
     pub fn idle_fade_wait(&self) -> Option<std::time::Duration> {
         if !self.visible
-            || self.pos.0 < -100.0
+            || !is_placed(self.pos)
             || self.motion.idle_hide_ms <= 0.0
             || self.path.is_some()
             || self.spring.is_some()
@@ -631,7 +640,7 @@ impl RenderStateCore {
     ///
     /// `move_to_snap_sentinel` controls macOS-only behaviour: when `true`,
     /// `MoveTo` snaps `self.pos` to the offset target if the cursor is
-    /// still at the off-screen sentinel (`pos.0 < -50.0`).  Windows/Linux
+    /// still at [`UNPLACED_POS`].  Windows/Linux
     /// pass `false` here.
     ///
     /// `click_pulse_sentinel_only` likewise controls macOS-only behaviour:
@@ -660,7 +669,7 @@ impl RenderStateCore {
 
                 // macOS-only: if the cursor is still at the initial off-screen
                 // sentinel, snap it to the offset target so the path starts on-screen.
-                if move_to_snap_sentinel && self.pos.0 < -50.0 {
+                if move_to_snap_sentinel && !is_placed(self.pos) {
                     self.pos = (tx, ty);
                 }
                 let (x0, y0) = self.pos;
@@ -724,7 +733,7 @@ impl RenderStateCore {
                 // that the cursor stays where the animation landed. Windows
                 // and Linux always snap. Both anchor the click point so the
                 // hotspot stays on it instead of jumping by the anchor offset.
-                if !click_pulse_sentinel_only || self.pos.0 < -50.0 {
+                if !click_pulse_sentinel_only || !is_placed(self.pos) {
                     self.pos = crate::anchor_for_pointer(x, y, self.heading);
                 }
                 self.click_t = Some(0.0);
@@ -904,11 +913,7 @@ pub fn paint_cursor(
     focus_rect: Option<FocusRect>,
     backing_scale: f32,
 ) {
-    if !core.visible
-        || core.pinned_target_off_workspace
-        || core.pos.0 < -100.0
-        || core.idle_alpha < 0.004
-    {
+    if !core.is_revealed() || core.pinned_target_off_workspace {
         return;
     }
 

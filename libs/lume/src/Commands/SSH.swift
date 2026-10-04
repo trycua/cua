@@ -95,7 +95,7 @@ struct SSH: AsyncParsableCommand {
         if command.isEmpty {
             try await sshClient.interactive()
         } else {
-            let fullCommand = command.joined(separator: " ")
+            let fullCommand = formatRemoteCommand(command)
             let result = try await sshClient.execute(
                 command: fullCommand,
                 timeout: TimeInterval(timeout)
@@ -123,7 +123,7 @@ struct SSH: AsyncParsableCommand {
         if command.isEmpty {
             try systemClient.interactive()
         } else {
-            let fullCommand = command.joined(separator: " ")
+            let fullCommand = formatRemoteCommand(command)
             let result = try systemClient.execute(
                 command: fullCommand,
                 timeout: TimeInterval(timeout)
@@ -137,5 +137,28 @@ struct SSH: AsyncParsableCommand {
                 throw ExitCode(result.exitCode)
             }
         }
+    }
+
+    /// Quote and join arguments safely for POSIX remote shell execution
+    static func formatRemoteCommand(_ args: [String]) -> String {
+        return args.map { shellEscape($0) }.joined(separator: " ")
+    }
+
+    /// Escape a single argument so that the remote shell interprets it literally
+    static func shellEscape(_ arg: String) -> String {
+        if arg.isEmpty {
+            return "''"
+        }
+        // Safe characters that require no quoting
+        let safeCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./:=+,@")
+        if arg.rangeOfCharacter(from: safeCharacters.inverted) == nil {
+            return arg
+        }
+        // Wrap in single quotes, replacing internal ' with '\''
+        return "'" + arg.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private func formatRemoteCommand(_ args: [String]) -> String {
+        Self.formatRemoteCommand(args)
     }
 }

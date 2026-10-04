@@ -7,6 +7,8 @@ use cua_driver_contract::{
     CAPABILITY_VERSION, CONTRACT_VERSION, MCP_PROTOCOL_VERSION, TOOLS_LIST_SCHEMA_VERSION,
 };
 use cua_driver_core::daemon::{request_daemon_metadata, DaemonMetadata};
+use cua_driver_core::key_pacing::KEY_GAP_ENV;
+use cua_driver_core::window_observation::{WINDOW_CHANGE_POLL_ENV, WINDOW_CHANGE_TIMEOUT_ENV};
 use std::collections::BTreeMap;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -53,6 +55,8 @@ pub struct EmbeddedDriverHostOptions {
     pub dangerously_bypass_approvals: bool,
     pub environment: Vec<EmbeddedEnvironmentVariable>,
     pub inherit_stderr: bool,
+    #[uniffi(default = false)]
+    pub no_overlay: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -121,6 +125,7 @@ struct ValidatedOptions {
     dangerously_bypass_approvals: bool,
     environment: Vec<EmbeddedEnvironmentVariable>,
     inherit_stderr: bool,
+    no_overlay: bool,
 }
 
 #[cfg(unix)]
@@ -263,6 +268,7 @@ impl EmbeddedCuaDriverHost {
             dangerously_bypass_approvals: false,
             environment: Vec::new(),
             inherit_stderr: true,
+            no_overlay: false,
         })
     }
 
@@ -648,6 +654,9 @@ impl EmbeddedCuaDriverHost {
         if self.options.dangerously_bypass_approvals {
             args.push("--dangerously-bypass-approvals".into());
         }
+        if self.options.no_overlay {
+            args.push("--no-overlay".into());
+        }
         args
     }
 
@@ -815,6 +824,7 @@ fn validate_options(
         dangerously_bypass_approvals: options.dangerously_bypass_approvals,
         environment: options.environment,
         inherit_stderr: options.inherit_stderr,
+        no_overlay: options.no_overlay,
     })
 }
 
@@ -827,6 +837,9 @@ fn configuration_error<T>(reason: impl Into<String>) -> Result<T, EmbeddedDriver
 pub(crate) fn allowed_environment_name(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
     upper.starts_with("LC_")
+        || upper == WINDOW_CHANGE_TIMEOUT_ENV
+        || upper == WINDOW_CHANGE_POLL_ENV
+        || upper == KEY_GAP_ENV
         || matches!(
             upper.as_str(),
             "PATH"
@@ -852,6 +865,8 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
                 | "DBUS_SESSION_BUS_ADDRESS"
                 | "XAUTHORITY"
                 | "CUA_LOG"
+                | "CUA_DRIVER_RS_TELEMETRY_ENABLED"
+                | "CUA_TELEMETRY_ENABLED"
         )
 }
 
@@ -1146,6 +1161,7 @@ mod tests {
             dangerously_bypass_approvals: false,
             environment: Vec::new(),
             inherit_stderr: false,
+            no_overlay: false,
         }
     }
 
@@ -1179,6 +1195,22 @@ mod tests {
     }
 
     #[test]
+    fn no_overlay_is_opt_in_on_the_owned_daemon() {
+        let default_host =
+            EmbeddedCuaDriverHost::with_options(options(EmbeddedPermissionMode::Standard)).unwrap();
+        assert!(!default_host
+            .serve_args("/tmp/cua-default.sock")
+            .contains(&"--no-overlay".into()));
+
+        let mut configured = options(EmbeddedPermissionMode::Standard);
+        configured.no_overlay = true;
+        let configured_host = EmbeddedCuaDriverHost::with_options(configured).unwrap();
+        assert!(configured_host
+            .serve_args("/tmp/cua-no-overlay.sock")
+            .contains(&"--no-overlay".into()));
+    }
+
+    #[test]
     fn capability_manifest_aliases_must_not_conflict() {
         let mut options = options(EmbeddedPermissionMode::Standard);
         options.capability_manifest_path = Some("capabilities-v3.yaml".into());
@@ -1194,6 +1226,49 @@ mod tests {
         assert!(!allowed_environment_name("CUA_DRIVER_PERMISSION_MODE"));
         assert!(!allowed_environment_name("LD_PRELOAD"));
         assert!(!allowed_environment_name("NODE_OPTIONS"));
+        assert!(allowed_environment_name(
+            "CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS"
+        ));
+        assert!(allowed_environment_name("CUA_DRIVER_WINDOW_CHANGE_POLL_MS"));
+    }
+
+    #[test]
+    fn telemetry_preferences_are_inherited_and_overridable() {
+        assert!(allowed_environment_name("CUA_DRIVER_RS_TELEMETRY_ENABLED"));
+        assert!(allowed_environment_name("cua_telemetry_enabled"));
+
+        let inherited = [
+            ("CUA_DRIVER_RS_TELEMETRY_ENABLED".into(), "1".into()),
+            ("CUA_TELEMETRY_ENABLED".into(), "true".into()),
+        ];
+        let values = merge_safe_environment(inherited.clone(), &[]);
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_TELEMETRY_ENABLED" && variable.value == "1"
+        }));
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_TELEMETRY_ENABLED" && variable.value == "true"
+        }));
+
+        let values = merge_safe_environment(
+            inherited,
+            &[
+                EmbeddedEnvironmentVariable {
+                    name: "CUA_DRIVER_RS_TELEMETRY_ENABLED".into(),
+                    value: "0".into(),
+                },
+                EmbeddedEnvironmentVariable {
+                    name: "CUA_TELEMETRY_ENABLED".into(),
+                    value: "false".into(),
+                },
+            ],
+        );
+
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_TELEMETRY_ENABLED" && variable.value == "0"
+        }));
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_TELEMETRY_ENABLED" && variable.value == "false"
+        }));
     }
 
     #[test]
@@ -1357,5 +1432,27 @@ mod tests {
 
         assert_eq!(host.state(), EmbeddedDriverHostState::Stopped);
         assert!(!socket_path.exists());
+    }
+
+    /// `CUA_DRIVER_KEY_GAP_MS` must survive both propagation paths into a child launch —
+    /// inherited from the parent environment and supplied as an explicit
+    /// override. An allowlist miss silently strips the deployment's
+    /// override in embedded/worker modes.
+    #[test]
+    fn key_gap_env_propagates() {
+        assert!(allowed_environment_name("CUA_DRIVER_KEY_GAP_MS"));
+        let merged =
+            merge_safe_environment([("CUA_DRIVER_KEY_GAP_MS".to_owned(), "7".to_owned())], &[]);
+        assert!(merged
+            .iter()
+            .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_KEY_GAP_MS") && v.value == "7"));
+        let overrides = vec![EmbeddedEnvironmentVariable {
+            name: "CUA_DRIVER_KEY_GAP_MS".to_owned(),
+            value: "3".to_owned(),
+        }];
+        let merged = merge_safe_environment(std::iter::empty(), &overrides);
+        assert!(merged
+            .iter()
+            .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_KEY_GAP_MS") && v.value == "3"));
     }
 }

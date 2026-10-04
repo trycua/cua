@@ -3,13 +3,13 @@
   "root": true,
   "pages": [
     "index",
-    "---Learn---",
-    "tutorials",
-    "concepts",
-    "---Connect---",
-    "use-cua-with",
-    "---Do---",
-    "how-to-guides",
-    "reference"
+    "start-here",
+    "cua-sdk",
+    "cua-driver",
+    "spaces",
+    "fleets",
+    "cua-bench",
+    "lume",
+    "cua-cli"
   ]
 }

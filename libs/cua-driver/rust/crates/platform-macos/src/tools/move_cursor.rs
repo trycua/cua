@@ -33,9 +33,9 @@ fn def() -> &'static ToolDef {
             "required": ["x", "y"],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "x": { "type": "number" },
-                "y": { "type": "number" },
-                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window" },
+                "x": { "type": "number", "description": "Destination X. Window scope: screen points for the agent cursor overlay. Desktop scope: native get_desktop_state screenshot pixels." },
+                "y": { "type": "number", "description": "Destination Y, in the same space as x." },
+                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "\"window\" (default) moves only the agent cursor overlay; \"desktop\" moves the real OS pointer." },
                 "cursor_id": { "type": "string", "description": "Cursor instance to move. Default: 'default'." }
             },
             "additionalProperties": false

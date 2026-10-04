@@ -1,0 +1,25 @@
+{
+  "title": "Guides",
+  "pages": [
+    "images",
+    "services",
+    "secrets",
+    "sidecars",
+    "lifecycle",
+    "desktop",
+    "thumbnails",
+    "spacesd",
+    "local-runtimes",
+    "disk-usage",
+    "cloud",
+    "your-cloud",
+    "your-cloud-resources",
+    "contrib-providers",
+    "test-in-ci",
+    "run-a-coding-agent",
+    "coding-agent-options",
+    "browse-the-web",
+    "agent-frameworks",
+    "omarchy"
+  ]
+}

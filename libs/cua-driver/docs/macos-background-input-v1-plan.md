@@ -720,7 +720,9 @@ requirements:
 - use a disposable worker cloned from the stopped private seed;
 - install with `install-local.sh --release --autostart
   --require-stable-signing`;
-- never edit `TCC.db`;
+- do not hand-edit `TCC.db`; a SIP-off Lume worker that is not cloned from a
+  granted seed may only use the checked-in `seed-tcc.sh` helper from the
+  canonical runner docs, before the GUI suite starts;
 - execute the GUI suite from the guest's logged-in Terminal, not SSH;
 - retain exact SHA, environment, code-signing requirement, permission status,
   structured results, fixture journals, screenshots/recording where allowed,
@@ -801,7 +803,8 @@ plugin because it can change independently of this plan.
    [`scripts/README.md`](../scripts/README.md), use an ephemeral
    certificate-backed local signing identity, and install with
    `--require-stable-signing`. Never copy a maintainer private key or signing
-   keychain to Namespace. Never edit `TCC.db` or bypass TCC.
+   keychain to Namespace. Never edit `TCC.db` or bypass macOS consent in
+   Namespace; the SIP-off Lume helper is not a Namespace substitute.
 9. Grant Accessibility and Screen Recording only through normal macOS UI if the
    disposable Namespace environment and explicit test approval support it.
    Record `permissions status --json` and the `codesign -d -r-` designated

@@ -31,7 +31,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::session::register_scoped_session_end_hook;
+use crate::session::register_scoped_fallible_session_end_hook;
 
 use super::binding::{
     cardinality_exact_candidate, correlate, selected_tab_target_id, BindingOutcome,
@@ -42,10 +42,10 @@ use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
 use super::mutation::{MutationGates, MutationKey};
 use super::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
-    BrowserVisualActionKind,
+    BrowserVisualActionKind, ExistingProfileSetupRequest,
 };
 use super::prepare::ManagedBrowsers;
-use super::reconnect::ReconnectGates;
+use super::reconnect::{ReconnectGates, ReconnectKey};
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::semantic::{
     build_dom_index, build_layout_index, compose_accessibility_tree, parse_viewport,
@@ -82,6 +82,7 @@ pub struct BrowserEngine {
     pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     mutation_gates: MutationGates,
     reconnect_gates: ReconnectGates,
+    pending_existing_profile_cleanups: Mutex<HashMap<String, Vec<ExistingProfileSetupRequest>>>,
     session_end_hook: Mutex<Option<crate::session::SessionEndHookRegistration>>,
 }
 
@@ -270,6 +271,14 @@ fn viewport_point_to_screen(
 /// be misread as a capability gap.
 fn is_method_unsupported(error: &anyhow::Error) -> bool {
     error.to_string().contains("(-32601)")
+}
+
+/// Chromium's answer for a page target that lives in no browser window (an
+/// extension side panel, an offscreen document): `-32000 Browser window not
+/// found`. Such a target is not a tab of ANY native window.
+fn is_window_not_found(error: &anyhow::Error) -> bool {
+    let message = error.to_string();
+    message.contains("(-32000)") && message.contains("Browser window not found")
 }
 
 fn is_semantic_document_size_error(error: &anyhow::Error) -> bool {
@@ -635,33 +644,70 @@ impl BrowserEngine {
             protected_resource_ownership,
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
+            pending_existing_profile_cleanups: Mutex::new(HashMap::new()),
             session_end_hook: Mutex::new(None),
         });
         let weak: Weak<Self> = Arc::downgrade(&engine);
-        let registration = register_scoped_session_end_hook(move |session_id| {
-            if let Some(engine) = weak.upgrade() {
-                engine.store.remove_session(session_id);
-                engine.cleanup_prepared_session(session_id);
-                for grant in engine.existing_profile_grants.remove_session(session_id) {
-                    engine.pool.release_claim_marker(&grant.endpoint_ws_url);
-                    if let Some(protected) = grant.protected_consent.as_ref() {
-                        protected.revoke();
-                    }
-                    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                        let engine = engine.clone();
-                        runtime.spawn(async move {
-                            engine
-                                .pool
-                                .release_existing(&grant.endpoint_ws_url, grant.generation)
-                                .await;
-                            if let Some(protected) = grant.protected_consent.as_ref() {
-                                engine.approval_broker.revoke(protected).await;
+        let registration =
+            register_scoped_fallible_session_end_hook("browser_state", move |session_id| {
+                let mut cleanup_errors = Vec::new();
+                if let Some(engine) = weak.upgrade() {
+                    engine.store.remove_session(session_id);
+                    engine.cleanup_prepared_session(session_id);
+                    let pending = {
+                        let mut pending = engine.pending_existing_profile_cleanups.lock().unwrap();
+                        let mut requests = pending.remove(session_id).unwrap_or_default();
+                        for grant in engine.existing_profile_grants.remove_session(session_id) {
+                            engine.pool.release_claim_marker(&grant.endpoint_ws_url);
+                            if grant.cleanup_remote_debugging {
+                                requests.push(ExistingProfileSetupRequest {
+                                    pid: grant.pid,
+                                    window_id: grant.window_id,
+                                    browser: grant.browser_product,
+                                });
                             }
-                        });
+                            if let Some(protected) = grant.protected_consent.as_ref() {
+                                protected.revoke();
+                            }
+                            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                                let engine = engine.clone();
+                                runtime.spawn(async move {
+                                    engine
+                                        .pool
+                                        .release_existing(&grant.endpoint_ws_url, grant.generation)
+                                        .await;
+                                    if let Some(protected) = grant.protected_consent.as_ref() {
+                                        engine.approval_broker.revoke(protected).await;
+                                    }
+                                });
+                            }
+                        }
+                        requests
+                    };
+
+                    let mut failed = Vec::new();
+                    for request in pending {
+                        if let Err(error) = engine
+                            .platform
+                            .cleanup_existing_profile_setup(request.clone())
+                        {
+                            cleanup_errors.push(error.message);
+                            failed.push(request);
+                        }
+                    }
+                    let mut pending = engine.pending_existing_profile_cleanups.lock().unwrap();
+                    if failed.is_empty() {
+                        pending.remove(session_id);
+                    } else {
+                        pending.insert(session_id.to_owned(), failed);
                     }
                 }
-            }
-        });
+                if cleanup_errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(cleanup_errors.join("; "))
+                }
+            });
         *engine.session_end_hook.lock().unwrap() = Some(registration);
         engine
     }
@@ -682,6 +728,25 @@ impl BrowserEngine {
             GrantLookup::Live(grant) => Ok(Some(grant)),
             GrantLookup::Expired(grant) => {
                 self.pool.release_claim_marker(&grant.endpoint_ws_url);
+                if grant.cleanup_remote_debugging {
+                    let request = ExistingProfileSetupRequest {
+                        pid: grant.pid,
+                        window_id: grant.window_id,
+                        browser: grant.browser_product,
+                    };
+                    if self
+                        .platform
+                        .cleanup_existing_profile_setup(request.clone())
+                        .is_err()
+                    {
+                        self.pending_existing_profile_cleanups
+                            .lock()
+                            .unwrap()
+                            .entry(session.to_owned())
+                            .or_default()
+                            .push(request);
+                    }
+                }
                 self.pool
                     .release_existing(&grant.endpoint_ws_url, grant.generation)
                     .await;
@@ -707,6 +772,25 @@ impl BrowserEngine {
             .revoke(session, transport_session, pid)
         {
             self.pool.release_claim_marker(&grant.endpoint_ws_url);
+            if grant.cleanup_remote_debugging {
+                let request = ExistingProfileSetupRequest {
+                    pid: grant.pid,
+                    window_id: grant.window_id,
+                    browser: grant.browser_product,
+                };
+                if self
+                    .platform
+                    .cleanup_existing_profile_setup(request.clone())
+                    .is_err()
+                {
+                    self.pending_existing_profile_cleanups
+                        .lock()
+                        .unwrap()
+                        .entry(session.to_owned())
+                        .or_default()
+                        .push(request);
+                }
+            }
             self.pool
                 .release_existing(&grant.endpoint_ws_url, grant.generation)
                 .await;
@@ -759,7 +843,10 @@ impl BrowserEngine {
         // socket rather than opening another browser-level connection.
         let _leader = self
             .reconnect_gates
-            .lock(&grant.fingerprint, &grant.endpoint_ws_url)
+            .lock(ReconnectKey::new(
+                &grant.fingerprint,
+                &grant.endpoint_ws_url,
+            ))
             .await;
         let mut grant = self
             .existing_profile_grant(session, transport_session, pid)
@@ -1087,6 +1174,12 @@ impl BrowserEngine {
                 // shape; every transient/vanished-target error fails the
                 // whole proof rather than shrinking it to a false unique set.
                 Err(error) if is_method_unsupported(&error) => None,
+                // A page target Chromium cannot map to any browser window (an
+                // extension side panel, an offscreen document) can never be the
+                // tab of the requested native window, so it is skipped: it enters
+                // neither the geometry correlation nor the title tie-break. Every
+                // other error still fails the whole proof.
+                Err(error) if is_window_not_found(&error) => continue,
                 Err(error) => {
                     return Err(route_err(
                         "Browser.getWindowForTarget failed while proving the native window",
@@ -2479,10 +2572,11 @@ impl BrowserEngine {
                 OopifStatus::Unsupported
             };
             let next_offset = page.next_offset;
+            let title = document.document_title().unwrap_or(&tab.title).to_owned();
             let (outcome, new_refs) = self.semantic_outcome(
                 snapshot.id,
                 snapshot.url.clone(),
-                tab.title,
+                title,
                 page,
                 document.complete,
                 "continuation",
@@ -2551,6 +2645,12 @@ impl BrowserEngine {
             .collect_semantic_session(&conn, &cdp_session, &document, local_tree.as_ref(), None)
             .await?;
         semantic.complete &= document_complete;
+        // The stored tab title is the bind-time one. Prefer the document's own
+        // title, then the browser's live target title.
+        let title = match semantic.document_title() {
+            Some(title) => title.to_owned(),
+            None => live_title(&conn, &tab.cdp_target_id, &tab.title).await,
+        };
 
         let oopif = if local_tree.is_some() {
             match self.attached_iframe_children(&conn, &cdp_session).await {
@@ -2646,7 +2746,7 @@ impl BrowserEngine {
         let (outcome, refs) = self.semantic_outcome(
             snapshot_id,
             url.clone(),
-            tab.title.clone(),
+            title.clone(),
             page,
             semantic.complete,
             scope,
@@ -2657,6 +2757,8 @@ impl BrowserEngine {
         self.store
             .update_target(session, target_id, |stored_target| {
                 if let Some(stored_tab) = stored_target.tabs.get_mut(tab_id) {
+                    stored_tab.url = url.clone();
+                    stored_tab.title = title;
                     let mut continuations = HashMap::new();
                     if let (Some(token), Some(offset)) = (continuation_token, next_offset) {
                         continuations.insert(
@@ -2800,6 +2902,27 @@ fn collect_interactive(
             .or_else(|| content_document.get("frameId"))
             .and_then(Value::as_str);
         collect_interactive(content_document, child_frame_id, false, out);
+    }
+}
+
+/// The page title as the browser reports it now (`Target.getTargetInfo`),
+/// or `fallback` (the title recorded at bind time) when it cannot say.
+async fn live_title(conn: &Arc<CdpConnection>, cdp_target_id: &str, fallback: &str) -> String {
+    match conn
+        .call(
+            None,
+            "Target.getTargetInfo",
+            json!({ "targetId": cdp_target_id }),
+        )
+        .await
+    {
+        Ok(info) => info
+            .pointer("/targetInfo/title")
+            .and_then(Value::as_str)
+            .filter(|t| !t.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| fallback.to_owned()),
+        Err(_) => fallback.to_owned(),
     }
 }
 

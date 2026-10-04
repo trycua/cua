@@ -1,0 +1,17 @@
+{
+  "_doc": "Image refs in docs that have no passing image-doctor ledger entry yet. Shrink-only: fix or remove, never add.",
+  "refs": {
+    "docker.io/trycua/cua-xfce:latest": "legacy Docker Hub image (TAG SAFETY: never re-published); replace or mark the example unverified",
+    "docker.io/trycua/winarena-base:latest": "legacy Docker Hub image (TAG SAFETY: never re-published); replace or mark the example unverified",
+    "docker.io/trycua/winarena:latest": "legacy Docker Hub image (TAG SAFETY: never re-published); replace or mark the example unverified",
+    "docker.io/trycua/xfce-cua:latest": "legacy Docker Hub image (TAG SAFETY: never re-published); replace or mark the example unverified",
+    "ghcr.io/trycua/bench-osworld:verified": "adapter benchmark image: cd-bench-images publishes dated staging tags; the moving tag and its doctor run land with the promote step; remove when the ledger records a pass",
+    "ghcr.io/trycua/bench-osworld:verified-disk": "adapter benchmark image: cd-bench-images publishes dated staging tags; the moving tag and its doctor run land with the promote step; remove when the ledger records a pass",
+    "ghcr.io/trycua/cua-desktop-linux:latest": "legacy repo (TAG SAFETY: never re-tagged); guides should move to ghcr.io/trycua/linux",
+    "ghcr.io/trycua/linux:22.04": "canonical Linux: the next cd-image-linux release (linux-image-v*) publishes it through doctor-attest; remove when the ledger records a pass",
+    "ghcr.io/trycua/macos:15": "macOS is Lume only: the lume lane needs a self-hosted Mac (vars.CUA_MACOS_LUME_RUNNER)",
+    "public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm:git-ee87f38043c043831a8761016015d6ef5ae783d9": "cloud-built image: gated by the cloud repo's reusable image-doctor job (follow-up)",
+    "public.ecr.aws/k5j5w0x5/cua-nixos-xfce:git-ee87f38043c043831a8761016015d6ef5ae783d9": "cloud-built image: gated by the cloud repo's reusable image-doctor job (follow-up)",
+    "public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:dd09f70f8cd35eca7871dff000538302baad63688a3008803f2238492802d743": "cloud-built image: gated by the cloud repo's reusable image-doctor job (follow-up)"
+  }
+}

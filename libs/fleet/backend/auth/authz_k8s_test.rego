@@ -721,9 +721,86 @@ test_core_writes_denied if {
 	not route_allow with input as spa_request("POST", "api/v1/namespaces/ns-a/persistentvolumeclaims")
 }
 
-# Known group, unknown resource; and known resource, unknown verb.
+# Claim secrets: create on the collection (the body's cua-claim-* name is
+# checked by tenant_secret_admission.rego) and delete by a cua-claim-* name.
+# Nothing else on Secrets is reachable, including reading back a claim secret.
+test_claim_secret_create_and_delete_allowed if {
+	route_allow with input as spa_request("POST", "api/v1/namespaces/ns-a/secrets")
+	route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-claim-claim-a")
+
+	user_key := object.union(
+		spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-claim-claim-a"),
+		{"user": {"sub": "user-1", "azp": "ukey-abc", "namespace": "", "email": ""}},
+	)
+	route_allow with input as user_key
+}
+
+test_claim_secret_surface_is_write_only_and_prefix_bound if {
+	not route_allow with input as spa_request("GET", "api/v1/namespaces/ns-a/secrets/cua-claim-claim-a")
+	not route_allow with input as spa_request("PUT", "api/v1/namespaces/ns-a/secrets/cua-claim-claim-a")
+	not route_allow with input as spa_request("PATCH", "api/v1/namespaces/ns-a/secrets/cua-claim-claim-a")
+	not route_allow with input as spa_request("POST", "api/v1/namespaces/ns-a/secrets/cua-claim-claim-a")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/ecr-credentials")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/osgym-claim-secrets-sandbox-1")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-claim-")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-claim-x/extra")
+	not route_allow with input as spa_request("GET", "api/v1/watch/namespaces/ns-a/secrets")
+	not route_allow with input as spa_request("POST", "api/v1/secrets")
+}
+
+test_github_oidc_cannot_write_claim_secrets if {
+	request := object.union(
+		spa_request("POST", "api/v1/namespaces/ns-a/secrets"),
+		{"user": {"sub": "repo:org/repo", "azp": "github", "principal_type": "github_oidc", "allowed_namespaces": ["ns-a"]}},
+	)
+	not route_allow with input as request
+}
+
+# Registry pull secrets: create on the collection (the body's cua-registry-*
+# name and dockerconfigjson type are checked by tenant_secret_admission.rego)
+# and delete by a cua-registry-* name. Nothing else on Secrets is reachable,
+# including reading back a registry secret.
+test_registry_secret_create_and_delete_allowed if {
+	route_allow with input as spa_request("POST", "api/v1/namespaces/ns-a/secrets")
+	route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-registry-ghcr")
+
+	user_key := object.union(
+		spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-registry-ghcr"),
+		{"user": {"sub": "user-1", "azp": "ukey-abc", "namespace": "", "email": ""}},
+	)
+	route_allow with input as user_key
+}
+
+test_registry_secret_surface_is_write_only_and_prefix_bound if {
+	not route_allow with input as spa_request("GET", "api/v1/namespaces/ns-a/secrets/cua-registry-ghcr")
+	not route_allow with input as spa_request("GET", "api/v1/namespaces/ns-a/secrets")
+	not route_allow with input as spa_request("PUT", "api/v1/namespaces/ns-a/secrets/cua-registry-ghcr")
+	not route_allow with input as spa_request("PATCH", "api/v1/namespaces/ns-a/secrets/cua-registry-ghcr")
+	not route_allow with input as spa_request("POST", "api/v1/namespaces/ns-a/secrets/cua-registry-ghcr")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/ecr-credentials")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/workload-oidc")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-registry-")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-registry-x/extra")
+	not route_allow with input as spa_request("GET", "api/v1/watch/namespaces/ns-a/secrets")
+	not route_allow with input as spa_request("POST", "api/v1/secrets")
+}
+
+test_github_oidc_cannot_write_registry_secrets if {
+	request := object.union(
+		spa_request("POST", "api/v1/namespaces/ns-a/secrets"),
+		{"user": {"sub": "repo:org/repo", "azp": "github", "principal_type": "github_oidc", "allowed_namespaces": ["ns-a"]}},
+	)
+	not route_allow with input as request
+}
+
+# Sandbox reads are customer-facing, but sandbox writes and unknown verbs stay
+# outside the allowlist.
 test_unenumerated_resource_and_verb_denied if {
-	not route_allow with input as spa_request("GET", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes")
+	route_allow with input as spa_request("GET", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes")
+	not route_allow with input as spa_request("POST", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes")
+	not route_allow with input as spa_request("DELETE", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1")
 	not route_allow with input as spa_request("PUT", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxclaims/claim-1")
 }
 
@@ -865,4 +942,87 @@ watch_admin_subs(admin) := ["admin-1"] if {
 
 watch_admin_subs(admin) := [] if {
 	not admin
+}
+
+# ── Bound-sandbox service exposure ──────────────────────────────────────────
+#
+# PATCH on a Sandbox item is the one write clients get on osgymsandboxes, so a
+# claim holder can expose an extra service port on a running sandbox by
+# appending to spec.vmTemplate.services. The body restriction (only that field
+# may move) is sandbox_services_admission.rego's job and is tested there; these
+# cases pin the route-authorization half.
+
+test_sandbox_item_patch_allowed if {
+	route_allow with input as spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1")
+}
+
+test_sandbox_item_patch_allowed_for_user_key if {
+	request := object.union(
+		spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1"),
+		{"user": {"sub": "user-1", "azp": "ukey-abc", "namespace": "", "email": ""}},
+	)
+
+	route_allow with input as request
+}
+
+# The item verb matrix stays otherwise closed: PATCH is the only write, and the
+# collection takes no writes at all.
+test_sandbox_write_matrix_stays_closed if {
+	not route_allow with input as spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes")
+	not route_allow with input as spa_request("PUT", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1")
+	not route_allow with input as spa_request("POST", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes")
+	not route_allow with input as spa_request("DELETE", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1")
+	not route_allow with input as spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1/status")
+}
+
+# An empty namespace or name segment must not satisfy the item shape.
+test_sandbox_patch_needs_namespace_and_name if {
+	not route_allow with input as spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces//osgymsandboxes/sandbox-1")
+	not route_allow with input as spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/")
+}
+
+# GitHub OIDC principals keep their own enumerated grant, which does not
+# include sandboxes at all.
+test_sandbox_patch_denied_for_github_oidc if {
+	request := object.union(
+		spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1"),
+		{"user": {
+			"sub": "repo:trycua/cloud",
+			"azp": "github-oidc",
+			"principal_type": "github_oidc",
+			"allowed_namespaces": ["ns-a"],
+		}},
+	)
+
+	not route_allow with input as request
+}
+
+# ── The service-write guidance query ────────────────────────────────────────
+#
+# not_direct_service_write is the Because(...) conjunct K8sRoutePolicy runs
+# before the allow leaf: it must deny exactly the core-Services writes (so the
+# 403 carries the guidance message) and allow everything else (so it never
+# shadows another rule's verdict or reason).
+
+test_direct_service_write_guidance_denies_writes if {
+	every method in ["POST", "PUT", "PATCH", "DELETE"] {
+		not authz_k8s.not_direct_service_write with input as spa_request(method, "api/v1/namespaces/ns-a/services")
+		not authz_k8s.not_direct_service_write with input as spa_request(method, "api/v1/namespaces/ns-a/services/sandbox-1-source-mcp")
+	}
+}
+
+test_direct_service_write_guidance_passes_everything_else if {
+	authz_k8s.not_direct_service_write with input as spa_request("GET", "api/v1/namespaces/ns-a/services")
+	authz_k8s.not_direct_service_write with input as spa_request("GET", "api/v1/namespaces/ns-a/services/sandbox-1")
+	authz_k8s.not_direct_service_write with input as spa_request("POST", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxclaims")
+	authz_k8s.not_direct_service_write with input as spa_request("POST", "api/v1/namespaces/ns-a/pods")
+	authz_k8s.not_direct_service_write with input as spa_request("PATCH", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1")
+}
+
+# The denial the guidance annotates is real with or without the annotation:
+# the allowlist itself never admits a core-Services write. This is the exact
+# request shape from the field report — POST a ClusterIP Service selecting the
+# sandbox — and it must stay denied by both conjuncts.
+test_direct_service_create_denied if {
+	not route_allow with input as spa_request("POST", "api/v1/namespaces/ns-a/services")
 }

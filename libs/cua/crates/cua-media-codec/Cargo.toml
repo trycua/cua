@@ -1,0 +1,93 @@
+[package]
+name = "cua-media-codec"
+description = "Video and audio codec layer for cua-spacesd: encoder probing, selection with fallback, and Opus audio"
+version.workspace = true
+edition = "2021"
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+# Every dependency is permissively licensed (MIT, Apache-2.0, BSD, ISC).
+# No x264, x265 or GPL ffmpeg. Hardware SDKs (NVENC, VA-API, oneVPL, AMF) are
+# loaded dynamically at runtime from the driver's own libraries; their
+# function signatures here are written from the vendors' public API
+# documentation.
+[features]
+# Decode-only by default: clients (SDK, CLI, viewer) never pull in capture.
+# The in-sandbox server (cua-spacesd-desktop) enables the capture + hw backends.
+default = ["openh264", "opus"]
+# Everything the in-sandbox server needs: encoders, hw probes, audio capture.
+server = ["openh264", "opus", "hw", "pulse", "sck-audio", "wasapi"]
+# OpenH264 software H.264 encoder/decoder, built from source (BSD-2-Clause).
+openh264 = ["dep:openh264", "dep:openh264-sys2"]
+# Load Cisco's prebuilt OpenH264 binary at runtime instead of the source build
+# (Cisco's binary carries their H.264 patent licence). Set
+# CUA_OPENH264_LIBRARY to the downloaded library path.
+openh264-cisco-binary = ["openh264", "openh264/libloading"]
+# libopus (BSD) through audiopus_sys (ISC).
+opus = ["dep:audiopus_sys"]
+# Hardware encoder probes/backends. All are dlopen-based and compile to a
+# clean "unavailable" on hosts without the runtime.
+hw = ["nvenc", "vaapi", "qsv", "amf", "mediafoundation"]
+nvenc = []
+vaapi = []
+qsv = []
+amf = []
+mediafoundation = []
+# Linux PulseAudio / PipeWire-pulse capture and uplink (libpulse-simple via
+# dlopen; no build-time dependency).
+pulse = []
+# macOS ScreenCaptureKit audio capture (desktop + per-app).
+sck-audio = ["dep:screencapturekit"]
+# Windows WASAPI loopback + process loopback.
+wasapi = []
+# Optional AV1 software encoder (rav1e, BSD-2-Clause).
+av1-rav1e = ["dep:rav1e"]
+# Optional AV1 software decoder (dav1d via the `dav1d` crate, MIT; links the
+# system libdav1d, BSD-2-Clause).
+av1-dav1d = ["dep:dav1d"]
+# `From` impls between the cua.env.v1 audio contract and the codec types.
+proto = ["dep:cua-proto"]
+
+[dependencies]
+libloading = "0.8"
+serde = { workspace = true }
+serde_json.workspace = true
+thiserror = "2"
+tracing.workspace = true
+openh264 = { version = "0.9.8", optional = true }
+openh264-sys2 = { version = "0.9", optional = true, default-features = false }
+audiopus_sys = { version = "0.2.2", optional = true }
+rav1e = { version = "0.8", optional = true, default-features = false, features = ["threading"] }
+dav1d = { version = "0.11", optional = true }
+cua-proto = { path = "../cua-proto", optional = true, default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# MUST stay in lockstep with cua-spacesd-desktop / platform-macos (see the note in
+# cua-spacesd-desktop/Cargo.toml): one Swift bridge archive per binary.
+screencapturekit = { version = "8.0.1", features = ["macos_15_0"], optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
+
+[dev-dependencies]
+rustfft = "6"
+criterion = { version = "0.5", default-features = false }
+
+[[bench]]
+name = "encode"
+harness = false
+
+[[bin]]
+name = "cua-codec-probe"
+path = "src/bin/cua-codec-probe.rs"

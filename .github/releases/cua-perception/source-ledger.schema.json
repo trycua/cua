@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/releases/cua-perception/source-ledger.schema.json",
+  "title": "Cua Perception bundled-source ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "sources"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifact", "artifactSha256", "artifactSize", "repository", "revision", "license", "durableLocation", "sourceOfferStatus", "contentKind", "format"],
+        "properties": {
+          "artifact": { "type": "string", "minLength": 1 },
+          "artifactSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "artifactSize": { "type": "integer", "minimum": 1 },
+          "repository": { "type": "string", "minLength": 1 },
+          "revision": { "type": "string", "minLength": 1 },
+          "license": { "type": "string", "minLength": 1 },
+          "durableLocation": { "type": "string", "minLength": 1 },
+          "sourceOfferStatus": { "enum": ["bundled", "bundled-review-only", "external-review-required"] },
+          "contentKind": { "enum": ["cua-source", "model-source-input", "exporter-source"] },
+          "format": { "enum": ["file", "tar.gz"] },
+          "requiredPaths": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "patches": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

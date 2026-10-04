@@ -3,6 +3,7 @@ package billing
 import (
 	"encoding/json"
 
+	"cyclops-cs-backend/productanalytics"
 	"github.com/stripe/stripe-go/v85"
 	"github.com/stripe/stripe-go/v85/webhook"
 )
@@ -11,6 +12,9 @@ type WebhookEvent struct {
 	ID              string
 	Type            string
 	Purpose         string
+	Subject         string
+	Source          string
+	IdentityClass   string
 	CustomerID      string
 	PaymentMethodID string
 	SetupGeneration string
@@ -37,7 +41,7 @@ func (StripeWebhookVerifier) Verify(payload []byte, signature, secret string) (W
 		return WebhookEvent{}, nil
 	}
 	event := WebhookEvent{ID: envelope.ID, Type: envelope.Type}
-	if envelope.Type != "setup_intent.succeeded" {
+	if envelope.Type != "setup_intent.succeeded" && envelope.Type != "setup_intent.setup_failed" {
 		return event, nil
 	}
 
@@ -47,6 +51,15 @@ func (StripeWebhookVerifier) Verify(payload []byte, signature, secret string) (W
 	}
 	event.Purpose = setupIntent.Metadata["purpose"]
 	event.SetupGeneration = setupIntent.Metadata[MetadataSetupGeneration]
+	source := setupIntent.Metadata[MetadataSetupSource]
+	if subject := setupIntent.Metadata[MetadataSubject]; subject != "" && (source == productanalytics.SourceSPA || source == productanalytics.SourceUserKey) {
+		event.Subject = subject
+		event.Source = source
+	}
+	identityClass := productanalytics.IdentityClass(setupIntent.Metadata[MetadataIdentityClass])
+	if identityClass == productanalytics.IdentityExternal || identityClass == productanalytics.IdentityInternal || identityClass == productanalytics.IdentityUnknown {
+		event.IdentityClass = string(identityClass)
+	}
 	if setupIntent.Customer != nil {
 		event.CustomerID = setupIntent.Customer.ID
 	}

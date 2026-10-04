@@ -4,9 +4,10 @@ use cua_driver_core::{
     tool::{ProtectedResourceOwnership, Tool, ToolDef},
 };
 use serde_json::Value;
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{future::Future, path::Path, sync::Arc, time::Duration};
 
 use super::ToolState;
+use crate::permission_observation::{DirectCaptureEvidenceStore, DirectCaptureVerification};
 use crate::permissions::status::{
     accessibility_granted, request_accessibility, request_screen_recording,
     screen_recording_granted,
@@ -47,6 +48,41 @@ fn driver_bundle_id_for_executable(executable: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+fn current_executable() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| std::fs::canonicalize(path).ok())
+        .and_then(|path| path.to_str().map(str::to_owned))
+        .unwrap_or_default()
+}
+
+fn direct_capture_evidence_store_for_identity(
+    executable: &str,
+    home: &Path,
+    attribution: Option<&str>,
+) -> Option<DirectCaptureEvidenceStore> {
+    if attribution != Some("driver-daemon") {
+        return None;
+    }
+    let bundle_id = driver_bundle_id_for_executable(executable)?;
+    let state_directory = match bundle_id {
+        "com.trycua.driver.local" => ".cua-driver-local",
+        "com.trycua.driver" => ".cua-driver",
+        _ => return None,
+    };
+    Some(DirectCaptureEvidenceStore::new(
+        home.join(state_directory)
+            .join("direct-capture-verification.json"),
+        bundle_id,
+    ))
+}
+
+fn current_direct_capture_evidence_store(source: &Value) -> Option<DirectCaptureEvidenceStore> {
+    let home = std::env::var_os("HOME")?;
+    let attribution = source.get("attribution").and_then(Value::as_str);
+    direct_capture_evidence_store_for_identity(&current_executable(), Path::new(&home), attribution)
 }
 
 /// (A) Real ScreenCaptureKit capability probe — what THIS process can
@@ -135,6 +171,46 @@ fn should_prompt_permissions(requested: bool, host_owns_permission_ux: bool) -> 
     requested && !cua_driver_core::embedded_mode() && !host_owns_permission_ux
 }
 
+fn resolve_direct_capture_verification(
+    store: Option<&DirectCaptureEvidenceStore>,
+    probe: Option<DirectCaptureProbeResult>,
+) -> Result<Option<DirectCaptureVerification>, Value> {
+    match probe {
+        None => Ok(store.and_then(DirectCaptureEvidenceStore::load)),
+        Some(DirectCaptureProbeResult::Ready) => {
+            let Some(store) = store else {
+                return Err(serde_json::json!({
+                    "code": "direct_capture_verification_store_unavailable",
+                    "message": "the installed product identity or user home directory is unavailable",
+                }));
+            };
+            store.record_now().map(Some).map_err(|error| {
+                let message = match store.clear() {
+                    Ok(()) => error,
+                    Err(clear_error) => {
+                        format!("{error}; clear prior direct-capture verification: {clear_error}")
+                    }
+                };
+                serde_json::json!({
+                    "code": "direct_capture_verification_store_failed",
+                    "message": message,
+                })
+            })
+        }
+        Some(_) => {
+            let Some(store) = store else {
+                return Ok(None);
+            };
+            store.clear().map(|()| None).map_err(|error| {
+                serde_json::json!({
+                    "code": "direct_capture_verification_store_failed",
+                    "message": error,
+                })
+            })
+        }
+    }
+}
+
 /// (B) Which TCC identity the booleans in this response reflect.
 ///
 /// macOS attributes Accessibility / Screen-Recording to the *responsible
@@ -150,11 +226,7 @@ fn permission_source(
 ) -> serde_json::Value {
     let pid = unsafe { libc::getpid() };
     let ppid = unsafe { libc::getppid() };
-    let exe = std::env::current_exe()
-        .ok()
-        .and_then(|p| std::fs::canonicalize(p).ok())
-        .and_then(|p| p.to_str().map(str::to_owned))
-        .unwrap_or_default();
+    let exe = current_executable();
     let disclaimed = std::env::var_os(cua_driver_core::RESPONSIBILITY_DISCLAIMED_ENV).is_some();
     // Embedded mode: the driver is a child in a host app's responsibility
     // chain, so the probes already answer for the host's TCC identity.
@@ -242,7 +314,9 @@ fn def() -> &'static ToolDef {
             probe when `prompt` is true; null on read-only calls), \
             `direct_capture_status` (`ready`, `unavailable`, `timed_out`, `probe_failed`, \
             `blocked_by_screen_recording`, or `not_checked`), `direct_capture_error` (a structured \
-            timeout/probe failure when applicable), and `source` (which TCC identity the \
+            timeout/probe failure when applicable), `direct_capture_verification` (validated \
+            source, UTC time, and bundle identity from an explicit grant probe), and `source` \
+            (which TCC identity the \
             booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). \
             macOS attributes grants to the responsible process, so a standalone call \
             from a terminal reports the terminal's grants, not the driver's. The \
@@ -319,27 +393,34 @@ impl Tool for CheckPermissionsTool {
         // private-window-picker bypass consent. A status/read-only call must
         // therefore never execute it. The explicit grant path opts in with
         // `prompt:true`, explains the dialog first, and verifies the result.
+        let direct_capture_probe =
+            if should_probe_direct_capture(should_prompt, screen_recording, probe_direct_capture) {
+                Some(bounded_screen_recording_capturable().await)
+            } else {
+                None
+            };
         let (screen_recording_capturable, direct_capture_status, direct_capture_error) =
-            if !should_prompt {
+            if !should_prompt || (screen_recording && !probe_direct_capture) {
                 (None, "not_checked", None)
             } else if !screen_recording {
                 (None, "blocked_by_screen_recording", None)
-            } else if should_probe_direct_capture(
-                should_prompt,
-                screen_recording,
-                probe_direct_capture,
-            ) {
-                bounded_screen_recording_capturable()
-                    .await
-                    .response_fields()
             } else {
-                (None, "not_checked", None)
+                direct_capture_probe
+                    .expect("eligible direct-capture probe must run")
+                    .response_fields()
             };
         // (B) Which identity the booleans above belong to.
         let source = permission_source(
             self.state.host_owns_permission_ux,
             self.state.host_bundle_id.as_deref(),
         );
+        let evidence_store = current_direct_capture_evidence_store(&source);
+        let (direct_capture_verification, direct_capture_verification_error) =
+            match resolve_direct_capture_verification(evidence_store.as_ref(), direct_capture_probe)
+            {
+                Ok(verification) => (verification, None),
+                Err(error) => (None, Some(error)),
+            };
         let is_caller = source.get("attribution").and_then(|v| v.as_str()) == Some("caller");
 
         // Text format mirrors Swift 1:1:
@@ -360,7 +441,9 @@ impl Tool for CheckPermissionsTool {
             "{ax_prefix} Accessibility: {ax_state}.\n{sr_prefix} Screen Recording: {sr_state}."
         );
         // Flag a preflight/probe disagreement (the false-positive tell).
-        if screen_recording_capturable == Some(false) {
+        if direct_capture_verification_error.is_some() {
+            summary.push_str("\n⚠️  Direct-capture verification evidence could not be updated.");
+        } else if screen_recording_capturable == Some(false) {
             summary.push_str(
                 "\n⚠️  Screen Recording reads granted but a live capture probe failed — \
                  the grant likely belongs to a different process, not this one.",
@@ -399,14 +482,21 @@ impl Tool for CheckPermissionsTool {
             );
         }
 
-        ToolResult::text(summary).with_structured(serde_json::json!({
+        let mut structured = serde_json::json!({
             "accessibility":               accessibility,
             "screen_recording":            screen_recording,
             "screen_recording_capturable": screen_recording_capturable,
             "direct_capture_status":        direct_capture_status,
             "direct_capture_error":         direct_capture_error,
             "source":                      source,
-        }))
+        });
+        if let Some(verification) = direct_capture_verification {
+            structured["direct_capture_verification"] = serde_json::json!(verification);
+        }
+        if let Some(error) = direct_capture_verification_error {
+            structured["direct_capture_verification_error"] = error;
+        }
+        ToolResult::text(summary).with_structured(structured)
     }
 }
 
@@ -436,6 +526,15 @@ mod tests {
         }
     }
 
+    fn release_evidence_store(home: &Path) -> DirectCaptureEvidenceStore {
+        direct_capture_evidence_store_for_identity(
+            "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
+            home,
+            Some("driver-daemon"),
+        )
+        .expect("release store")
+    }
+
     #[test]
     fn recognizes_release_and_local_driver_bundles() {
         assert_eq!(
@@ -454,6 +553,97 @@ mod tests {
             driver_bundle_id_for_executable("/Users/test/.local/bin/cua-driver-local"),
             None
         );
+    }
+
+    #[test]
+    fn evidence_store_is_scoped_to_the_current_driver_identity() {
+        let home =
+            std::env::temp_dir().join(format!("cua-direct-capture-test-{}", uuid::Uuid::new_v4()));
+        let release = release_evidence_store(&home);
+        let local = direct_capture_evidence_store_for_identity(
+            "/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local",
+            &home,
+            Some("driver-daemon"),
+        )
+        .expect("local store");
+
+        release.record_now().expect("record release verification");
+        assert!(release.load().is_some());
+        assert!(local.load().is_none());
+        assert!(direct_capture_evidence_store_for_identity(
+            "/usr/local/bin/cua-driver",
+            &home,
+            Some("driver-daemon"),
+        )
+        .is_none());
+        for attribution in [Some("caller"), Some("host"), None] {
+            assert!(direct_capture_evidence_store_for_identity(
+                "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
+                &home,
+                attribution,
+            )
+            .is_none());
+        }
+        std::fs::remove_dir_all(home).expect("remove test home");
+    }
+
+    #[test]
+    fn explicit_probe_resolves_one_evidence_transition() {
+        let home =
+            std::env::temp_dir().join(format!("cua-direct-capture-test-{}", uuid::Uuid::new_v4()));
+        let store = release_evidence_store(&home);
+
+        assert!(resolve_direct_capture_verification(
+            Some(&store),
+            Some(DirectCaptureProbeResult::Ready)
+        )
+        .expect("record evidence")
+        .is_some());
+        assert!(resolve_direct_capture_verification(Some(&store), None)
+            .expect("load evidence")
+            .is_some());
+        assert_eq!(
+            resolve_direct_capture_verification(
+                Some(&store),
+                Some(DirectCaptureProbeResult::Unavailable)
+            )
+            .expect("clear evidence"),
+            None
+        );
+        assert!(store.load().is_none());
+        assert_eq!(
+            resolve_direct_capture_verification(None, Some(DirectCaptureProbeResult::Ready))
+                .expect_err("missing-store error")["code"],
+            "direct_capture_verification_store_unavailable"
+        );
+        std::fs::remove_dir_all(home).expect("remove test home");
+    }
+
+    #[test]
+    fn failed_record_and_clear_returns_only_error() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let home =
+            std::env::temp_dir().join(format!("cua-direct-capture-test-{}", uuid::Uuid::new_v4()));
+        let store = release_evidence_store(&home);
+        store.record_now().expect("record prior evidence");
+        let state_directory = home.join(".cua-driver");
+        std::fs::set_permissions(&state_directory, std::fs::Permissions::from_mode(0o500))
+            .expect("make evidence directory read-only");
+
+        let result = resolve_direct_capture_verification(
+            Some(&store),
+            Some(DirectCaptureProbeResult::Ready),
+        );
+
+        std::fs::set_permissions(&state_directory, std::fs::Permissions::from_mode(0o700))
+            .expect("restore evidence directory permissions");
+        assert_eq!(
+            result.expect_err("record and clear must fail")["code"],
+            "direct_capture_verification_store_failed"
+        );
+        assert!(store.load().is_some());
+        std::fs::remove_dir_all(home).expect("remove test home");
     }
 
     #[test]

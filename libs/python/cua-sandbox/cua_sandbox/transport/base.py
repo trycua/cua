@@ -1,7 +1,9 @@
 """Abstract transport protocol.
 
 A Transport moves commands and data between the sandbox client and the
-underlying computer (local host, WebSocket to computer-server, or cloud API).
+underlying computer: cua-spacesd through the ``cua`` SDK (EnvTransport,
+FleetTransport) or an agentless legacy path (QMP, VNC, SSH, ADB, OSWorld,
+the local host).
 """
 
 from __future__ import annotations
@@ -73,10 +75,32 @@ class Transport(ABC):
         method: str,
         path: str,
         json_body: Any = None,
+        body: bytes | None = None,
         headers: Any = None,
+        timeout: float | None = None,
+        max_response_bytes: int | None = None,
     ) -> Any:
         """Request an auxiliary named service exposed by this sandbox."""
         raise NotImplementedError(f"{type(self).__name__} does not support named service requests.")
+
+    async def native_service(self, name: str) -> Any:
+        """The ``cua.Service`` handle for a named service (used by ``sb.mcp``)."""
+        raise NotImplementedError(f"{type(self).__name__} does not expose native service handles.")
+
+    async def create_signed_service_url(
+        self,
+        name: str,
+        *,
+        label: str | None,
+        expires_in_seconds: int,
+    ) -> Any:
+        raise NotImplementedError(f"{type(self).__name__} does not support signed service URLs.")
+
+    async def list_signed_service_urls(self) -> list[Any]:
+        raise NotImplementedError(f"{type(self).__name__} does not support signed service URLs.")
+
+    async def revoke_signed_service_url(self, signed_service_url: Any) -> None:
+        raise NotImplementedError(f"{type(self).__name__} does not support signed service URLs.")
 
     async def forward_tunnel(self, sandbox_port: int | str) -> "TunnelInfo":
         """Forward *sandbox_port* to an available host port and return info.
@@ -87,7 +111,7 @@ class Transport(ABC):
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support port forwarding. "
-            "Supported transports: ADBTransport, FleetCloudTransport, "
+            "Supported transports: ADBTransport, EnvTransport, FleetCloudTransport, FleetTransport, "
             "GRPCEmulatorTransport, SSHTransport."
         )
 

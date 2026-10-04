@@ -24,6 +24,59 @@ pub(crate) fn resolve_cursor_key(args: &Value) -> String {
     default_cursor_session()
 }
 
+/// Place and reveal a named session's cursor before keyboard or text input.
+///
+/// `explicit` is the targeted element's screen centre when the action has
+/// one. Without it the cursor reuses its remembered position, then falls back
+/// to the target window's centre, so the first keyboard action of a session
+/// is visible. Anonymous calls keep their existing behavior. Geometry and
+/// overlay failures are observational and never affect the input result.
+pub(crate) async fn position_keyboard_cursor(
+    state: &ToolState,
+    args: &Value,
+    window_id: Option<u32>,
+    explicit: Option<(f64, f64)>,
+) {
+    let Some(cursor_key) = cursor_overlay::named_session_cursor_key(args) else {
+        return;
+    };
+    let remembered = state
+        .cursor_registry
+        .get(&cursor_key)
+        .and_then(|cursor| cursor.position.map(|position| (position.x, position.y)));
+    let window_center = match window_id {
+        Some(wid)
+            if cursor_overlay::keyboard_cursor_target(explicit, remembered, None, None)
+                .is_none() =>
+        {
+            tokio::task::spawn_blocking(move || {
+                let bounds = crate::windows::window_bounds_by_id(wid)?;
+                (bounds.width > 0.0 && bounds.height > 0.0).then_some((
+                    bounds.x + bounds.width / 2.0,
+                    bounds.y + bounds.height / 2.0,
+                ))
+            })
+            .await
+            .ok()
+            .flatten()
+        }
+        _ => None,
+    };
+    let Some((x, y)) =
+        cursor_overlay::keyboard_cursor_target(explicit, remembered, window_center, None)
+    else {
+        return;
+    };
+    if let Some(wid) = window_id {
+        crate::cursor::overlay::send_command(
+            cursor_key.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(u64::from(wid)),
+        );
+    }
+    crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), x, y).await;
+    state.cursor_registry.update_position(&cursor_key, x, y);
+}
+
 fn default_cursor_session() -> String {
     static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     ID.get_or_init(|| format!("auto-{:x}", std::process::id()))

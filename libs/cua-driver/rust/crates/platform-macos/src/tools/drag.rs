@@ -35,6 +35,30 @@ impl DragTool {
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+const DELIVERY_MODE_DESCRIPTION: &str = "Window-scoped drag on macOS supports only \"foreground\": \
+     briefly front the exact window (window_id required), drive the physical pointer through the \
+     gesture, then restore the prior frontmost app. The default \"background\" is refused with \
+     background_unavailable because macOS has no background drag route. Desktop scope ignores this field.";
+
+const BACKGROUND_DRAG_UNAVAILABLE: &str = "Background drag is unavailable on macOS: a drag is \
+     delivered as real pointer events to the frontmost window, so it cannot run without fronting \
+     the target. Nothing was sent. Retry with delivery_mode:\"foreground\" and window_id; the \
+     driver briefly fronts that window, moves the pointer along the path, and restores the prior \
+     frontmost app.";
+
+fn background_drag_refusal() -> ToolResult {
+    cua_driver_core::delivery::background_unavailable_result(
+        BACKGROUND_DRAG_UNAVAILABLE,
+        "background_unavailable",
+        "macOS has no background drag route; drag moves the physical pointer",
+        serde_json::json!({
+            "effect": "refused",
+            "event_kind": "mouse_drag",
+            "requires": ["delivery_mode:foreground", "window_id"],
+        }),
+    )
+}
+
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "drag".into(),
@@ -50,7 +74,12 @@ fn def() -> &'static ToolDef {
              slower, more human drags; decrease for snap gestures.\n\n\
              `modifier` keys (cmd/shift/option/ctrl) are held across the entire gesture.\n\n\
              When `from_zoom` is true, coordinates are in the last zoom image for this \
-             pid; the driver maps them back to window coordinates before dispatching."
+             pid; the driver maps them back to window coordinates before dispatching.\n\n\
+             macOS has no background drag: a window-scoped drag needs \
+             delivery_mode:\"foreground\" and window_id. It briefly fronts the exact \
+             window, moves the physical pointer along the path, then restores the prior \
+             frontmost app. Without delivery_mode:\"foreground\" the call is refused with \
+             background_unavailable and nothing is sent."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -93,7 +122,7 @@ fn def() -> &'static ToolDef {
                     "description": "When true, coordinates are in the last zoom image for this pid; driver maps back to window coordinates."
                 },
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id for native get_desktop_state screenshot coordinates." },
-                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema_with(DELIVERY_MODE_DESCRIPTION)
             },
             "additionalProperties": false
         }),
@@ -189,11 +218,7 @@ impl Tool for DragTool {
         // uses. Requires a window_id to have a window to front.
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         if !delivery_mode.is_foreground() {
-            return ToolResult::error(
-                "Background drag is unavailable on macOS; use delivery_mode:\"foreground\"."
-                    .to_owned(),
-            )
-            .with_structured(serde_json::json!({ "code": "background_unavailable" }));
+            return background_drag_refusal();
         }
         // Coerce integer or float from JSON for coordinate fields.
         let coerce = |key: &str| -> Option<f64> {
@@ -219,6 +244,15 @@ impl Tool for DragTool {
         };
 
         let window_id = args.opt_u64("window_id").map(|v| v as u32);
+        if delivery_mode.is_foreground() && window_id.is_none() {
+            return ToolResult::error(
+                "delivery_mode=foreground requires window_id for drag on macOS".to_owned(),
+            )
+            .with_structured(serde_json::json!({
+                "code": "window_id_required",
+                "effect": "refused"
+            }));
+        }
         let duration_ms = args.u64_or("duration_ms", 500);
         let steps = args.u64_or("steps", 20) as usize;
         let from_zoom = args.bool_or("from_zoom", false);
@@ -238,8 +272,8 @@ impl Tool for DragTool {
 
         // from_zoom: translate from last zoom crop context.
         if from_zoom {
-            match self.state.zoom_registry.get(pid) {
-                Some(ctx) => {
+            match super::zoom_context(&self.state, &args, pid, window_id) {
+                Ok(ctx) => {
                     let (wx, wy) = ctx.zoom_to_window(from_x, from_y);
                     let (wx2, wy2) = ctx.zoom_to_window(to_x, to_y);
                     from_x = wx;
@@ -247,13 +281,13 @@ impl Tool for DragTool {
                     to_x = wx2;
                     to_y = wy2;
                 }
-                None => {
-                    return ToolResult::error(format!(
-                        "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
-                    ))
-                }
+                Err(refusal) => return refusal,
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
+        } else {
+            let ratio = match super::screenshot_scale(&self.state, &args, pid, window_id) {
+                Ok(ratio) => ratio,
+                Err(refusal) => return refusal,
+            };
             from_x *= ratio;
             from_y *= ratio;
             to_x *= ratio;
@@ -297,16 +331,17 @@ impl Tool for DragTool {
 
         // Dispatch blocking drag synthesis.
         let mods_owned = modifiers.clone();
-        let fg = delivery_mode.is_foreground() && window_id.is_some();
+        let fg = delivery_mode.is_foreground();
+        let foreground_window_id = window_id;
         let cursor_for_drag = cursor_key.clone();
         crate::cursor::overlay::send_command(
             cursor_key.clone(),
             cursor_overlay::OverlayCommand::SetPressed(true),
         );
         let drag_input = focus_guard::with_focus_suppressed(
-            // Foreground drag deliberately activates the target so the global
-            // HID stream carries the pressed-button state. A suppression lease
-            // here would race that activation and restore the prior app before
+            // Foreground drag deliberately activates the target while the
+            // HID gesture is delivered. A suppression lease here
+            // would race that activation and restore the prior app before
             // Chromium receives the gesture.
             if fg { None } else { Some(pid) },
             prior_front,
@@ -315,29 +350,36 @@ impl Tool for DragTool {
                 tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                     let do_it = move || -> anyhow::Result<()> {
                         let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                        if fg {
-                            // HID delivery is global, so foreground mode must
-                            // establish a real active application before the
-                            // gesture begins. The SkyLight flash can be
-                            // unavailable for Electron child windows; the
-                            // documented Cocoa activation is the fallback.
-                            apps::activate_pid(pid);
-                            std::thread::sleep(std::time::Duration::from_millis(40));
-                            let observed_cursor = cursor_for_drag.clone();
-                            return crate::input::mouse::drag_at_xy_foreground_observed(
-                                from_sx,
-                                from_sy,
-                                to_sx,
-                                to_sy,
-                                duration_ms,
-                                steps,
-                                &m,
-                                button,
-                                move |x, y| {
-                                    crate::cursor::overlay::send_command(
-                                        observed_cursor.clone(),
-                                        cursor_overlay::track_pointer_command(x, y),
-                                    );
+                        if let Some(wid) = foreground_window_id {
+                            // Keep the exact target window active for the
+                            // complete HID gesture, then restore the prior
+                            // front process.
+                            return crate::input::skylight::with_foreground_hid_activation(
+                                pid as libc::pid_t,
+                                wid,
+                                || {
+                                    let observed_cursor = cursor_for_drag.clone();
+                                    crate::input::mouse::drag_at_xy_observed(
+                                        pid,
+                                        from_sx,
+                                        from_sy,
+                                        to_sx,
+                                        to_sy,
+                                        Some((from_lx, from_ly)),
+                                        Some((to_lx, to_ly)),
+                                        Some(wid),
+                                        duration_ms,
+                                        steps,
+                                        &m,
+                                        button,
+                                        true,
+                                        move |x, y| {
+                                            crate::cursor::overlay::send_command(
+                                                observed_cursor.clone(),
+                                                cursor_overlay::track_pointer_command(x, y),
+                                            );
+                                        },
+                                    )
                                 },
                             );
                         }
@@ -363,22 +405,7 @@ impl Tool for DragTool {
                             },
                         )
                     };
-                    // Foreground rung: activate for the complete HID gesture,
-                    // then restore the prior app after pointer capture settles.
-                    match (fg, window_id) {
-                        (true, Some(_wid)) => {
-                            let result = do_it();
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            if let Some(previous_pid) = prior_front {
-                                if previous_pid != pid {
-                                    apps::activate_pid(previous_pid);
-                                }
-                            }
-                            result?;
-                            Ok(())
-                        }
-                        _ => do_it(),
-                    }
+                    do_it()
                 })
                 .await
             },
@@ -395,7 +422,7 @@ impl Tool for DragTool {
                 .update_position(&cursor_key, to_sx, to_sy);
         }
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
+        let changes = super::finish_window_observation(snapshot).await;
 
         if let Some(wid) = window_id {
             crate::cursor::overlay::send_command(
@@ -426,18 +453,63 @@ impl Tool for DragTool {
                  from window-pixel ({}, {}) → ({}, {}), \
                  screen ({}, {}) → ({}, {}) \
                  in {duration_ms}ms / {steps} steps{mode_label} \
-                 (background CGEvent; not driver-verified — confirm via screenshot).{}",
-                from_x as i64, from_y as i64,
-                to_x   as i64, to_y   as i64,
-                from_sx as i64, from_sy as i64,
-                to_sx   as i64, to_sy   as i64,
+                 (foreground HID CGEvent; not driver-verified — confirm via screenshot).{}",
+                from_x as i64,
+                from_y as i64,
+                to_x as i64,
+                to_y as i64,
+                from_sx as i64,
+                from_sy as i64,
+                to_sx as i64,
+                to_sy as i64,
                 changes.result_suffix(),
             ))
             .with_structured(serde_json::json!({
-                "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
+                "path": "cgevent_hid", "verified": false, "effect": "unverifiable"
             })),
             Ok(Err(e)) => ToolResult::error(format!("drag failed: {e}")),
-            Err(e)     => ToolResult::error(format!("Task error: {e}")),
+            Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn background_drag_refusal_is_structured_and_names_the_retry() {
+        let tool = DragTool::new(Arc::new(ToolState::new(false, false, None)));
+        for delivery_mode in [None, Some("background")] {
+            let mut args = serde_json::json!({
+                "pid": 4242,
+                "window_id": 7,
+                "from_x": 1, "from_y": 2, "to_x": 3, "to_y": 4,
+            });
+            if let Some(mode) = delivery_mode {
+                args["delivery_mode"] = serde_json::json!(mode);
+            }
+            let result = tool.invoke(args).await;
+            assert_eq!(result.is_error, Some(true));
+            let structured = result.structured_content.expect("structured refusal");
+            assert_eq!(structured["code"], "background_unavailable");
+            assert_eq!(structured["effect"], "refused");
+            assert_eq!(structured["escalation"]["recommended"], "foreground");
+            assert_eq!(
+                structured["suggestion"],
+                cua_driver_core::delivery::FOREGROUND_RETRY_SUGGESTION
+            );
+        }
+    }
+
+    #[test]
+    fn schema_says_macos_drag_is_foreground_only() {
+        let def = def();
+        assert!(def.description.contains("macOS has no background drag"));
+        let mode = &def.input_schema["properties"]["delivery_mode"]["description"];
+        assert!(mode
+            .as_str()
+            .unwrap()
+            .contains("supports only \"foreground\""));
     }
 }

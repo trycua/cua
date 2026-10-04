@@ -48,8 +48,10 @@
 # (~/.cua-driver/packages/, legacy ~/.cua-driver-rs/, CuaDriverRs.app,
 # the LaunchAgent/systemd unit, or current Rust telemetry state).
 #
-# Also scrubs Claude MCP registrations in ~/.claude.json that match
-# the active backend.
+# Also scrubs release-owned Claude MCP registrations in ~/.claude.json.
+# Entries are removed only when their original absolute command resolves to a
+# live file in a directory selected for recursive deletion. Unproven entries
+# (including missing, relative and legacy-name-only commands) are kept.
 #
 # Revokes TCC grants on macOS by default (Accessibility + Screen Recording)
 # so the next install prompts cleanly under the new signing identity. Pass
@@ -109,6 +111,37 @@ fi
 # ----------------------------------------------------------------------
 log() { printf '==> %s\n' "$*"; }
 
+report_surviving_local_install() {
+    local local_home="${CUA_DRIVER_LOCAL_HOME:-$HOME/.cua-driver-local}"
+    local local_bin_dir="${CUA_DRIVER_LOCAL_INSTALL_DIR:-$HOME/.local/bin}"
+    local local_cli="$local_bin_dir/cua-driver-local"
+    local local_marker="$local_home/packages/current/cua-driver-local"
+    local path_cli=""
+    local survivor=""
+
+    path_cli="$(command -v cua-driver-local 2>/dev/null || true)"
+    if [[ -e "$local_cli" || -L "$local_cli" ]]; then
+        survivor="$local_cli"
+    elif [[ -e "$local_marker" || -L "$local_marker" ]]; then
+        survivor="$local_marker"
+    elif [[ -n "$path_cli" ]]; then
+        survivor="$path_cli"
+    elif [[ "$OS" == "Darwin" && -x "/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local" ]]; then
+        survivor="/Applications/CuaDriverLocal.app"
+    else
+        return 0
+    fi
+
+    cat <<LOCALUNMSG
+
+Note: a separate source-built cua-driver-local installation remains at $survivor.
+The cua-driver uninstaller intentionally leaves this local product untouched.
+To remove it, run from your Cua checkout:
+
+  ./libs/cua-driver/scripts/uninstall-local.sh
+LOCALUNMSG
+}
+
 purge_macos_history() {
     local app_bundle="$1"
     local helper="$2"
@@ -119,7 +152,6 @@ purge_macos_history() {
         printf 'history_purge_incomplete: installed signed Cua Driver helper unavailable; preserved history state for retry\n' >&2
         return 1
     fi
-    "$helper" stop >/dev/null 2>&1 || true
     if ! "$helper" history purge-offline --yes; then
         printf 'history_purge_incomplete: exact-namespace key destruction was not verified; preserved history state and app for retry\n' >&2
         return 1
@@ -133,11 +165,189 @@ purge_linux_history() {
         printf 'history_purge_incomplete: installed Cua Driver helper unavailable; preserved history state for retry\n' >&2
         return 1
     fi
-    "$helper" stop >/dev/null 2>&1 || true
     if ! "$helper" history purge-offline --yes; then
         printf 'history_purge_incomplete: exact-namespace Secret Service key destruction was not verified; preserved history state and runtime for retry\n' >&2
         return 1
     fi
+}
+
+daemon_pid_file_path() {
+    case "$OS" in
+        Darwin) printf '%s/Library/Caches/cua-driver/cua-driver.pid' "$HOME" ;;
+        Linux)  printf '%s/.cache/cua-driver/cua-driver.pid' "$HOME" ;;
+        *)      printf '/tmp/cua-driver.pid' ;;
+    esac
+}
+
+read_daemon_pid() {
+    local pid
+    [[ -r "$1" ]] || return 1
+    IFS= read -r pid < "$1" || true
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    printf '%s' "$pid"
+}
+
+daemon_pid_alive() { kill -0 "$1" 2>/dev/null; }
+
+daemon_process_generation() {
+    local start=""
+    command -v ps >/dev/null 2>&1 || return 2
+    start="$(LC_ALL=C ps -ww -o lstart= -p "$1" 2>/dev/null)" || return 2
+    start="${start#"${start%%[![:space:]]*}"}"
+    start="${start%"${start##*[![:space:]]}"}"
+    [[ -n "$start" ]] || return 2
+    printf '%s' "$start"
+}
+
+daemon_pid_matches_generation() {
+    local pid="$1" expected="$2" current="" identity_status=0
+    daemon_pid_alive "$pid" || return 1
+    current="$(daemon_process_generation "$pid")" || return 2
+    [[ "$current" == "$expected" ]] || return 1
+    daemon_pid_is_release "$pid" || identity_status=$?
+    [[ "$identity_status" == "0" ]] && return 0
+    [[ "$identity_status" == "2" ]] && return 2
+    return 1
+}
+
+daemon_signal_if_current() {
+    local status=0
+    daemon_pid_matches_generation "$1" "$2" || status=$?
+    [[ "$status" == "2" ]] && return 2
+    [[ "$status" == "0" ]] || return 1
+    kill -"$3" "$1" 2>/dev/null || return 1
+}
+
+daemon_wait_for_exit() {
+    local pid="$1" attempts=0
+    while daemon_pid_alive "$pid"; do
+        [[ "$attempts" -lt 20 ]] || return 1
+        sleep 0.1 2>/dev/null || sleep 1 || true
+        attempts=$((attempts + 1))
+    done
+}
+
+daemon_process_identity() {
+    local pid="$1" identity=""
+    if [[ -L "/proc/$pid/exe" ]]; then
+        identity="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+        identity="${identity% (deleted)}"
+    fi
+    if [[ -z "$identity" ]]; then
+        command -v ps >/dev/null 2>&1 || return 2
+        identity="$(ps -ww -o command= -p "$pid" 2>/dev/null)" || return 2
+    fi
+    identity="${identity#"${identity%%[![:space:]]*}"}"
+    identity="${identity%"${identity##*[![:space:]]}"}"
+    [[ -n "$identity" ]] || return 1
+    printf '%s' "$identity"
+}
+
+daemon_identity_matches_install() {
+    case "$1" in
+        "$APP_BUNDLE"/Contents/MacOS/cua-driver|"$APP_BUNDLE"/Contents/MacOS/cua-driver[[:space:]]*|\
+        "$LEGACY_APP_BUNDLE"/Contents/MacOS/cua-driver|"$LEGACY_APP_BUNDLE"/Contents/MacOS/cua-driver[[:space:]]*|\
+        "$USER_BIN_LINK"|"$USER_BIN_LINK"[[:space:]]*|\
+        "$HOME_DIR"/packages/current/cua-driver|"$HOME_DIR"/packages/current/cua-driver[[:space:]]*|\
+        "$HOME_DIR"/packages/releases/*/cua-driver|"$HOME_DIR"/packages/releases/*/cua-driver[[:space:]]*|\
+        "$LEGACY_HOME_DIR"/packages/current/cua-driver|"$LEGACY_HOME_DIR"/packages/current/cua-driver[[:space:]]*|\
+        "$LEGACY_HOME_DIR"/packages/releases/*/cua-driver|"$LEGACY_HOME_DIR"/packages/releases/*/cua-driver[[:space:]]*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+daemon_pid_is_release() {
+    local identity
+    identity="$(daemon_process_identity "$1" 2>/dev/null)" || return 2
+    daemon_identity_matches_install "$identity"
+}
+
+release_daemon_fallback_pids() {
+    command -v pgrep >/dev/null 2>&1 || return 2
+    command -v ps >/dev/null 2>&1 || return 2
+    local uid pid identity candidates="" pgrep_status=0
+    uid="$(id -u 2>/dev/null || true)"
+    [[ "$uid" =~ ^[0-9]+$ ]] || return 2
+
+    candidates="$(pgrep -U "$uid" -f '(^|[[:space:]/])cua-driver([[:space:]]|$)' 2>/dev/null)" || pgrep_status=$?
+    case "$pgrep_status" in
+        0) ;;
+        1) return 0 ;;
+        *) return 2 ;;
+    esac
+
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] || continue
+        [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 2
+        identity="$(daemon_process_identity "$pid" 2>/dev/null)" || return 2
+        if daemon_identity_matches_install "$identity"; then
+            printf '%s\n' "$pid"
+        fi
+    done <<< "$candidates"
+}
+
+verify_release_daemon_absent() {
+    local pids="" status=0
+    pids="$(release_daemon_fallback_pids 2>/dev/null)" || status=$?
+    if [[ "$status" != "0" ]]; then
+        printf 'daemon_stop_incomplete: process inspection failed while verifying release daemon shutdown.\n' >&2
+        return 1
+    fi
+    if [[ -n "$pids" ]]; then
+        printf 'daemon_stop_incomplete: release cua-driver process remains but cannot be safely classified or signalled.\n' >&2
+        return 1
+    fi
+}
+
+stop_release_daemon() {
+    local pid="" helper="${DAEMON_STOP_HELPER:-}" generation="" status=0 helper_stderr=""
+    if [[ -n "${DAEMON_PID_FILE:-}" ]] \
+        && pid="$(read_daemon_pid "$DAEMON_PID_FILE" 2>/dev/null)" \
+        && daemon_pid_alive "$pid"; then
+        daemon_pid_is_release "$pid" || status=$?
+        if [[ "$status" == "2" ]]; then
+            printf 'daemon_stop_incomplete: failed to identify live daemon pid %s safely.\n' "$pid" >&2
+            return 1
+        fi
+        if [[ "$status" == "0" ]]; then
+            [[ -n "$helper" && -x "$helper" ]] || {
+                printf 'daemon_stop_incomplete: trusted installed cua-driver stop helper is unavailable for pid %s.\n' "$pid" >&2
+                return 1
+            }
+            generation="$(daemon_process_generation "$pid")" || {
+                printf 'daemon_stop_incomplete: failed to capture process generation for daemon pid %s.\n' "$pid" >&2
+                return 1
+            }
+            status=0
+            helper_stderr="$("$helper" --expected-pid "$pid" stop 2>&1 >/dev/null)" || status=$?
+            if [[ "$status" != "0" ]]; then
+                printf 'note: trusted stop helper exited %s for pid %s; falling back to signals.\n' "$status" "$pid" >&2
+                [[ -z "$helper_stderr" ]] || printf '%s\n' "$helper_stderr" >&2
+            fi
+            if ! daemon_wait_for_exit "$pid"; then
+                status=0
+                daemon_signal_if_current "$pid" "$generation" TERM || status=$?
+                [[ "$status" != "2" ]] || {
+                    printf 'daemon_stop_incomplete: failed to revalidate daemon pid %s before TERM.\n' "$pid" >&2
+                    return 1
+                }
+                if [[ "$status" == "0" ]] && ! daemon_wait_for_exit "$pid"; then
+                    status=0
+                    daemon_signal_if_current "$pid" "$generation" KILL || status=$?
+                    [[ "$status" != "2" ]] || {
+                        printf 'daemon_stop_incomplete: failed to revalidate daemon pid %s before KILL.\n' "$pid" >&2
+                        return 1
+                    }
+                    if [[ "$status" == "0" ]] && ! daemon_wait_for_exit "$pid"; then
+                        printf 'daemon_stop_incomplete: validated release daemon pid %s is still running.\n' "$pid" >&2
+                        return 1
+                    fi
+                fi
+            fi
+        fi
+    fi
+    sleep 0.2 2>/dev/null || true
+    verify_release_daemon_absent
 }
 
 reject_root_invocation() {
@@ -147,16 +357,6 @@ reject_root_invocation() {
         return 77
     fi
 }
-
-# Narrow source-only seam for the synthetic uninstall fixture. Production
-# execution never sets this variable and continues through the full script.
-if [[ "${CUA_DRIVER_UNINSTALL_TEST_SOURCE_ONLY:-0}" == "1" ]]; then
-    return 0
-fi
-
-if ! reject_root_invocation "$(id -u)"; then
-    exit 77
-fi
 
 # TCC revocation is on by default so uninstall leaves the next macOS install
 # in a clean promptable state. The bundle id com.trycua.driver is shared with
@@ -222,6 +422,219 @@ resolve_link() {
     esac
 }
 
+select_daemon_stop_helper() {
+    local candidate resolved
+    for candidate in \
+        "$APP_BUNDLE/Contents/MacOS/cua-driver" \
+        "$LEGACY_APP_BUNDLE/Contents/MacOS/cua-driver" \
+        "$PACKAGES_DIR/current/cua-driver" \
+        "$LEGACY_HOME_DIR/packages/current/cua-driver"; do
+        [[ -x "$candidate" ]] || continue
+        resolved="$(realpath "$candidate" 2>/dev/null || true)"
+        [[ -n "$resolved" ]] || resolved="$candidate"
+        case "$resolved" in
+            "$APP_BUNDLE/Contents/MacOS/cua-driver"|"$LEGACY_APP_BUNDLE/Contents/MacOS/cua-driver"|\
+            "$HOME_DIR"/packages/releases/*/cua-driver|"$LEGACY_HOME_DIR"/packages/releases/*/cua-driver)
+                printf '%s' "$resolved"
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+release_supervisor() {
+    local action="$1" path name found=0
+    case "$OS" in
+        Linux)
+            for path in "$SYSTEMD_USER_UNIT" "$LEGACY_SYSTEMD_USER_UNIT"; do
+                [[ -f "$path" ]] || continue
+                found=1
+                name="${path##*/}"
+                if [[ "$action" == "stop" ]]; then
+                    command -v systemctl >/dev/null 2>&1 \
+                        && systemctl --user stop "$name" >/dev/null 2>&1 || {
+                            printf 'daemon_stop_incomplete: failed to stop systemd user unit %s.\n' "$name" >&2
+                            return 1
+                        }
+                else
+                    command -v systemctl >/dev/null 2>&1 \
+                        && systemctl --user disable "$name" >/dev/null 2>&1 || true
+                    rm -f "$path"
+                    log "disabled + removed systemd --user unit $name"
+                fi
+            done
+            if [[ "$action" == "remove" ]]; then
+                [[ "$found" == "1" ]] || log "no current or legacy systemd --user unit found (skipping)"
+                command -v systemctl >/dev/null 2>&1 \
+                    && systemctl --user daemon-reload >/dev/null 2>&1 || true
+            fi
+            ;;
+        Darwin)
+            for path in "$LAUNCHAGENT_PLIST" "$LEGACY_LAUNCHAGENT_PLIST"; do
+                [[ -f "$path" ]] || continue
+                found=1
+                if [[ "$action" == "stop" ]]; then
+                    command -v launchctl >/dev/null 2>&1 \
+                        && launchctl unload "$path" >/dev/null 2>&1 || {
+                            printf 'daemon_stop_incomplete: failed to unload LaunchAgent %s.\n' "$path" >&2
+                            return 1
+                        }
+                else
+                    rm -f "$path"
+                    log "removed LaunchAgent $path"
+                fi
+            done
+            if [[ "$action" == "remove" && "$found" == "0" ]]; then
+                log "no current or legacy LaunchAgent found (skipping)"
+            fi
+            ;;
+    esac
+}
+
+# One standalone helper for preflight and fresh cleanup. Keep its heredoc out of
+# command substitution: macOS Bash 3.2 parses quotes differently inside $().
+claude_release_config() {
+    local mode="$1"
+    shift
+    if [[ ! -e "$CLAUDE_JSON" && ! -L "$CLAUDE_JSON" ]]; then
+        return 0
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        printf 'error: python3 is required to safely inspect Claude MCP ownership before uninstalling a release with %s; install python3 and retry. No release files were removed.\n' "$CLAUDE_JSON" >&2
+        return 1
+    fi
+    python3 - "$mode" "$CLAUDE_JSON" "$@" <<'PYCLAUDE'
+import io
+import json
+import os
+import shutil
+import stat
+import sys
+import tempfile
+
+
+def clean():
+    mode, path, *payloads = sys.argv[1:]
+    try:
+        with open(path, "rb") as handle:
+            original = handle.read()
+        data = json.loads(original.decode("utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("top-level value must be a JSON object")
+    except Exception as exc:
+        raise ValueError(f"could not read Claude config {path}: {exc}") from exc
+
+    # These exact operands also drive rm below. A final symlink is only
+    # unlinked; symlinks in its parent directories are traversed by rm.
+    roots = set()
+    for payload in payloads:
+        if not payload:
+            continue
+        try:
+            before = os.lstat(payload)
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISDIR(before.st_mode):
+            continue
+        resolved = os.path.realpath(payload)
+        after = os.stat(resolved)
+        if resolved == os.path.sep or not os.path.samestat(before, after):
+            raise ValueError(f"unsafe release removal operand: {payload}")
+        roots.add(resolved)
+    if mode == "check":
+        return
+
+    def owned(server):
+        if not isinstance(server, dict):
+            return False
+        command = server.get("command")
+        if not isinstance(command, str) or not os.path.isabs(command):
+            return False
+        try:
+            # stat ORIGINAL spelling first: missing/../file cannot be repaired
+            # into an executable, nor can symlink/.. be collapsed lexically.
+            before = os.stat(command)
+            if not stat.S_ISREG(before.st_mode):
+                return False
+            resolved = os.path.realpath(command)
+            if not os.path.samestat(before, os.stat(resolved)):
+                return False
+            return any(os.path.commonpath((resolved, root)) == root for root in roots)
+        except (OSError, ValueError):
+            return False
+
+    removed, kept, local = [], [], []
+
+    def scrub(servers, scope):
+        if not isinstance(servers, dict):
+            return
+        for name in list(servers):
+            server = servers[name]
+            if owned(server):
+                del servers[name]
+                removed.append(f"{scope}:{name}")
+            else:
+                command = server.get("command") if isinstance(server, dict) else None
+                basename = os.path.basename(command) if isinstance(command, str) else ""
+                if basename == "cua-driver-local":
+                    local.append(f"{scope}:{name}")
+                elif name in ("cua-driver", "cua-driver-rs", "cua-computer-use") or basename == "cua-driver":
+                    kept.append(f"{scope}:{name}")
+
+    scrub(data.get("mcpServers"), "user")
+    projects = data.get("projects")
+    if isinstance(projects, dict):
+        for project_name, project in projects.items():
+            if isinstance(project, dict):
+                scrub(project.get("mcpServers"), f"project:{project_name}")
+
+    if removed:
+        directory = os.path.dirname(path) or "."
+        fd, backup = tempfile.mkstemp(
+            prefix=os.path.basename(path) + ".bak-cua-driver-rs-uninstall-", dir=directory
+        )
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                shutil.copyfileobj(io.BytesIO(original), handle)
+        except Exception:
+            os.unlink(backup)
+            raise
+        fd, temporary = tempfile.mkstemp(prefix=".claude.json.", suffix=".tmp", dir=directory)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, indent=2, ensure_ascii=False)
+                handle.write("\n")
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+        print("==> removed Claude MCP registration(s): " + ", ".join(removed))
+        print(f"==> backed up Claude config to {backup}")
+    if local:
+        print("==> preserved local Claude MCP registration(s): " + ", ".join(local)
+              + "; remove cua-driver-local with libs/cua-driver/scripts/uninstall-local.sh from the source checkout")
+    if kept:
+        print("==> preserved unproven Claude MCP registration(s): " + ", ".join(kept)
+              + "; inspect the exact entry before removing it manually")
+
+
+try:
+    clean()
+except Exception as exc:
+    print(f"error: Claude MCP cleanup failed: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+PYCLAUDE
+}
+
+if [[ "${CUA_DRIVER_UNINSTALL_TEST_SOURCE_ONLY:-0}" == "1" ]]; then
+    return 0
+fi
+
+if ! reject_root_invocation "$(id -u)"; then
+    exit 77
+fi
+
 # ----------------------------------------------------------------------
 # Rust uninstall branch (default on Linux + macOS).
 # ----------------------------------------------------------------------
@@ -276,6 +689,105 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         RUST_INSTALL_PRESENT=1
     fi
 
+    # Select executable-bearing removals once; proof and deletion consume the
+    # same operands. Empty slots mean this invocation will not remove that tree.
+    APP_PAYLOAD="" LEGACY_APP_PAYLOAD="" HOME_PAYLOAD="" LEGACY_HOME_PAYLOAD=""
+    if [[ "$OS" == "Darwin" ]]; then
+        if [[ -d "$LEGACY_APP_BUNDLE" ]]; then LEGACY_APP_PAYLOAD="$LEGACY_APP_BUNDLE"; fi
+        if [[ -d "$APP_BUNDLE" && "$RUST_INSTALL_PRESENT" == "1" ]]; then APP_PAYLOAD="$APP_BUNDLE"; fi
+    fi
+    if [[ -d "$HOME_DIR" && ( "$RUST_INSTALL_PRESENT" == "1" || "$PURGE_DATA" == "1" ) ]]; then
+        if [[ "$PURGE_DATA" == "1" ]]; then HOME_PAYLOAD="$HOME_DIR"; else HOME_PAYLOAD="$PACKAGES_DIR"; fi
+    fi
+    if [[ -d "$LEGACY_HOME_DIR" ]]; then
+        if [[ "$PURGE_DATA" == "1" ]]; then LEGACY_HOME_PAYLOAD="$LEGACY_HOME_DIR"; else LEGACY_HOME_PAYLOAD="$LEGACY_HOME_DIR/packages"; fi
+    fi
+    # Freeze physical parent traversal before any earlier removal can unlink an
+    # alias used by a later slot. Preserve a final symlink as an unlink operand;
+    # it must never grant ownership of its target. No Python is needed here.
+    prepare_payload_operand() {
+        local payload="$1" parent
+        if [[ -z "$payload" ]]; then printf -v "$2" '%s' ""; return 0; fi
+        case "$payload" in
+            */|.|..|./*|../*|*/./*|*/../*|*/.|*/..)
+                printf 'error: unsafe release removal operand: %s\n' "$payload" >&2
+                return 1 ;;
+        esac
+        if [[ -d "$payload" && ! -L "$payload" ]]; then
+            if [[ ! -r "$payload" || ! -x "$payload" ]]; then
+                printf 'error: inaccessible release removal operand: %s\n' "$payload" >&2
+                return 1
+            fi
+            # A sentinel protects trailing newlines from command substitution.
+            payload="$(CDPATH= cd -- "$payload" && pwd -P && printf '.')" || return 1
+            payload="${payload%$'\n.'}"
+            if [[ "$payload" == "/" ]]; then
+                printf 'error: unsafe release removal operand: /\n' >&2
+                return 1
+            fi
+        elif [[ -L "$payload" ]]; then
+            case "$payload" in
+                */*) parent="${payload%/*}"; [[ -n "$parent" ]] || parent="/" ;;
+                *) parent="." ;;
+            esac
+            parent="$(CDPATH= cd -- "$parent" && pwd -P && printf '.')" || return 1
+            parent="${parent%$'\n.'}"
+            payload="$parent/${payload##*/}"
+        fi
+        # printf -v avoids another lossy command substitution at the call site.
+        printf -v "$2" '%s' "$payload"
+    }
+    prepare_payload_operand "$APP_PAYLOAD" APP_PAYLOAD || exit 1
+    prepare_payload_operand "$LEGACY_APP_PAYLOAD" LEGACY_APP_PAYLOAD || exit 1
+    prepare_payload_operand "$HOME_PAYLOAD" HOME_PAYLOAD || exit 1
+    prepare_payload_operand "$LEGACY_HOME_PAYLOAD" LEGACY_HOME_PAYLOAD || exit 1
+    CLAUDE_JSON="$HOME/.claude.json"
+    claude_release_config check "$APP_PAYLOAD" "$LEGACY_APP_PAYLOAD" "$HOME_PAYLOAD" "$LEGACY_HOME_PAYLOAD" || exit 1
+
+    DAEMON_PID_FILE="$(daemon_pid_file_path)"
+    DAEMON_STOP_HELPER="$(select_daemon_stop_helper || true)"
+
+    if [[ "$RUST_INSTALL_PRESENT" == "1" ]]; then
+        if ! release_supervisor stop; then
+            log "could not stop the release supervisor; runtime preserved"
+            exit 1
+        fi
+        if ! stop_release_daemon; then
+            log "could not safely stop and verify the release daemon; runtime preserved"
+            exit 1
+        fi
+        log "verified no running release cua-driver daemon"
+    else
+        log "no Rust install marker; leaving any running cua-driver process untouched"
+    fi
+
+    # Cryptographic history purge must run while the exact installed helper
+    # executable still exists. The helper uses the production KeyProvider and
+    # its own bundle-derived namespace, then takes the exclusive writer lease;
+    # failure leaves the runtime and all retryable history state in place.
+    if [[ "$OS" == "Darwin" && "$PURGE_DATA" == "1" ]]; then
+        HISTORY_PURGE_HELPER="$APP_BUNDLE/Contents/MacOS/cua-driver"
+        if ! purge_macos_history \
+            "$APP_BUNDLE" "$HISTORY_PURGE_HELPER" "$RUST_INSTALL_PRESENT" /usr/bin/codesign; then
+            exit 1
+        fi
+        log "cryptographically purged release Computer History key and local history state"
+    elif [[ "$OS" == "Darwin" ]]; then
+        log "preserved encrypted Computer History if present; reinstall to reopen it or run uninstall.sh --purge to destroy it"
+    elif [[ "$OS" == "Linux" && "$PURGE_DATA" == "1" ]]; then
+        HISTORY_PURGE_HELPER="$PACKAGES_DIR/current/cua-driver"
+        if ! purge_linux_history "$HISTORY_PURGE_HELPER" "$RUST_INSTALL_PRESENT"; then
+            exit 1
+        fi
+        log "cryptographically purged release Computer History Secret Service key and local history state"
+    elif [[ "$OS" == "Linux" ]]; then
+        log "preserved encrypted Computer History if present; reinstall to reopen it or run uninstall.sh --purge to destroy it"
+    fi
+
+    # Fresh proof while payloads still exist. No name-only CLI fallback may
+    # bypass this per-entry decision, including for the legacy server name.
+    claude_release_config apply "$APP_PAYLOAD" "$LEGACY_APP_PAYLOAD" "$HOME_PAYLOAD" "$LEGACY_HOME_PAYLOAD" || exit 1
+
     # --- CLI symlink ---
     # Only remove ~/.local/bin/cua-driver when it resolves into a
     # cua-driver-rs install. Pre-rename installs at
@@ -310,76 +822,7 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         log "no CLI symlink at $USER_BIN_LINK (skipping)"
     fi
 
-    # --- Autostart (Linux systemd --user) ---
-    # install-local.sh --autostart registers
-    # ~/.config/systemd/user/cua-driver.service. Stop + disable + remove it,
-    # plus the pre-rename cua-driver-rs.service when present, so neither daemon
-    # comes back at next logon.
-    # systemctl --user no-ops gracefully on a non-systemd host.
-    if [[ "$OS" == "Linux" ]]; then
-        FOUND_SYSTEMD_USER_UNIT=0
-        for SYSTEMD_USER_UNIT_PATH in "$SYSTEMD_USER_UNIT" "$LEGACY_SYSTEMD_USER_UNIT"; do
-            if [[ -f "$SYSTEMD_USER_UNIT_PATH" ]]; then
-                FOUND_SYSTEMD_USER_UNIT=1
-                SYSTEMD_USER_UNIT_NAME="${SYSTEMD_USER_UNIT_PATH##*/}"
-                if command -v systemctl >/dev/null 2>&1; then
-                    systemctl --user stop "$SYSTEMD_USER_UNIT_NAME" 2>/dev/null || true
-                    systemctl --user disable "$SYSTEMD_USER_UNIT_NAME" 2>/dev/null || true
-                    log "stopped + disabled systemd --user unit $SYSTEMD_USER_UNIT_NAME"
-                fi
-                rm -f "$SYSTEMD_USER_UNIT_PATH"
-                log "removed $SYSTEMD_USER_UNIT_PATH"
-            fi
-        done
-        if [[ "$FOUND_SYSTEMD_USER_UNIT" == "0" ]]; then
-            log "no current or legacy systemd --user unit found (skipping)"
-        elif command -v systemctl >/dev/null 2>&1; then
-            systemctl --user daemon-reload 2>/dev/null || true
-        fi
-    fi
-
-    # --- Autostart (macOS LaunchAgent) ---
-    # install-local.sh --autostart on macOS registers
-    # ~/Library/LaunchAgents/com.trycua.cua-driver.plist. Unload (so the
-    # running daemon stops) + remove it, plus the pre-rename
-    # com.trycua.cua-driver-rs.plist when present.
-    if [[ "$OS" == "Darwin" ]]; then
-        FOUND_LAUNCHAGENT_PLIST=0
-        for LAUNCHAGENT_PLIST_PATH in "$LAUNCHAGENT_PLIST" "$LEGACY_LAUNCHAGENT_PLIST"; do
-            if [[ -f "$LAUNCHAGENT_PLIST_PATH" ]]; then
-                FOUND_LAUNCHAGENT_PLIST=1
-                launchctl unload "$LAUNCHAGENT_PLIST_PATH" 2>/dev/null || true
-                rm -f "$LAUNCHAGENT_PLIST_PATH"
-                log "removed LaunchAgent $LAUNCHAGENT_PLIST_PATH"
-            fi
-        done
-        if [[ "$FOUND_LAUNCHAGENT_PLIST" == "0" ]]; then
-            log "no current or legacy LaunchAgent found (skipping)"
-        fi
-    fi
-
-    # Cryptographic history purge must run while the exact installed helper
-    # executable still exists. The helper uses the production KeyProvider and
-    # its own bundle-derived namespace, then takes the exclusive writer lease;
-    # failure leaves the runtime and all retryable history state in place.
-    if [[ "$OS" == "Darwin" && "$PURGE_DATA" == "1" ]]; then
-        HISTORY_PURGE_HELPER="$APP_BUNDLE/Contents/MacOS/cua-driver"
-        if ! purge_macos_history \
-            "$APP_BUNDLE" "$HISTORY_PURGE_HELPER" "$RUST_INSTALL_PRESENT" /usr/bin/codesign; then
-            exit 1
-        fi
-        log "cryptographically purged release Computer History key and local history state"
-    elif [[ "$OS" == "Darwin" ]]; then
-        log "preserved encrypted Computer History if present; reinstall to reopen it or run uninstall.sh --purge to destroy it"
-    elif [[ "$OS" == "Linux" && "$PURGE_DATA" == "1" ]]; then
-        HISTORY_PURGE_HELPER="$PACKAGES_DIR/current/cua-driver"
-        if ! purge_linux_history "$HISTORY_PURGE_HELPER" "$RUST_INSTALL_PRESENT"; then
-            exit 1
-        fi
-        log "cryptographically purged release Computer History Secret Service key and local history state"
-    elif [[ "$OS" == "Linux" ]]; then
-        log "preserved encrypted Computer History if present; reinstall to reopen it or run uninstall.sh --purge to destroy it"
-    fi
+    release_supervisor remove
 
     # --- Revoke TCC grants BEFORE removing the app ---
     # tccutil resolves com.trycua.driver through LaunchServices, so the reset
@@ -388,40 +831,14 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     # take — otherwise it fails with -10814 and the grant silently survives.
     maybe_reset_tcc
 
-    # --- .app bundle (macOS only) ---
-    # Legacy /Applications/CuaDriverRs.app is unambiguously Rust and
-    # always removed when present. /Applications/CuaDriver.app is the
-    # current canonical Rust path BUT also where the Swift driver
-    # lives (same bundle id `com.trycua.driver`), so we only remove
-    # it when $RUST_INSTALL_PRESENT — protects a Swift-only Mac from
-    # losing its bundle if `uninstall.sh --experimental-rust` is run
-    # by mistake.
-    if [[ "$OS" == "Darwin" ]]; then
-        if [[ -d "$LEGACY_APP_BUNDLE" ]]; then
-            SUDO=""
-            if [[ ! -w "$(dirname "$LEGACY_APP_BUNDLE")" ]]; then
-                SUDO="sudo"
-            fi
-            $SUDO rm -rf "$LEGACY_APP_BUNDLE"
-            log "removed $LEGACY_APP_BUNDLE"
-        else
-            log "no app bundle at $LEGACY_APP_BUNDLE (skipping)"
-        fi
-        if [[ -d "$APP_BUNDLE" ]]; then
-            if [[ "$RUST_INSTALL_PRESENT" == "1" ]]; then
-                SUDO=""
-                if [[ ! -w "$(dirname "$APP_BUNDLE")" ]]; then
-                    SUDO="sudo"
-                fi
-                $SUDO rm -rf "$APP_BUNDLE"
-                log "removed $APP_BUNDLE"
-            else
-                log "$APP_BUNDLE exists but no Rust marker on disk (~/.cua-driver/packages/, ~/.cua-driver-rs/, CuaDriverRs.app, current/legacy LaunchAgent or systemd unit); leaving it (looks like a Swift-only install)"
-            fi
-        else
-            log "no app bundle at $APP_BUNDLE (skipping)"
-        fi
-    fi
+    # --- Selected app bundles (macOS only) ---
+    for PAYLOAD in "$LEGACY_APP_PAYLOAD" "$APP_PAYLOAD"; do
+        [[ -n "$PAYLOAD" ]] || continue
+        SUDO=""
+        if [[ ! -w "$(dirname "$PAYLOAD")" ]]; then SUDO="sudo"; fi
+        $SUDO rm -rf -- "$PAYLOAD"
+        log "removed $PAYLOAD"
+    done
 
     # --- Package home ---
     # A normal uninstall deliberately keeps the pseudonymous installation ID,
@@ -430,41 +847,26 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     # any events while disabled. `--purge` is the explicit identity reset.
     # All removal remains gated on the Rust marker so a mistaken invocation
     # cannot damage a Swift-only Mac's shared ~/.cua-driver state.
-    if [[ -d "$HOME_DIR" ]]; then
-        if [[ "$RUST_INSTALL_PRESENT" == "1" || "$PURGE_DATA" == "1" ]]; then
-            if [[ "$PURGE_DATA" == "1" ]]; then
-                rm -rf "$HOME_DIR"
-                log "purged $HOME_DIR (including telemetry identity and preference)"
-            else
-                # Remove only installer/runtime-owned payloads. Unknown files
-                # and all telemetry state remain untouched.
-                rm -rf "$HOME_DIR/packages" "$HOME_DIR/skills"
-                rm -f \
-                    "$HOME_DIR/.tcc-signing-identity" \
-                    "$HOME_DIR/serve.out.log" \
-                    "$HOME_DIR/serve.err.log"
-                log "removed runtime payloads from $HOME_DIR"
-                log "preserved telemetry identity, preference, and registration markers"
-            fi
+    if [[ -n "$HOME_PAYLOAD" ]]; then
+        rm -rf -- "$HOME_PAYLOAD"
+        if [[ "$PURGE_DATA" == "1" ]]; then
+            log "purged $HOME_DIR (including telemetry identity and preference)"
         else
-            log "$HOME_DIR exists but no Rust marker on disk; leaving it (looks like a Swift-only / shared config dir)"
+            rm -rf -- "$HOME_DIR/skills"
+            rm -f -- "$HOME_DIR/.tcc-signing-identity" "$HOME_DIR/serve.out.log" "$HOME_DIR/serve.err.log"
+            log "removed runtime payloads from $HOME_DIR"
+            log "preserved telemetry identity, preference, and registration markers"
         fi
     else
-        log "no package home at $HOME_DIR (skipping)"
+        log "no selected release package home at $HOME_DIR (skipping)"
     fi
-    # Preserve legacy telemetry state during a normal uninstall so the
-    # runtime's existing one-shot migration can carry the same identity into
-    # ~/.cua-driver on reinstall.
-    if [[ -d "$LEGACY_HOME_DIR" ]]; then
+    if [[ -n "$LEGACY_HOME_PAYLOAD" ]]; then
+        rm -rf -- "$LEGACY_HOME_PAYLOAD"
         if [[ "$PURGE_DATA" == "1" ]]; then
-            rm -rf "$LEGACY_HOME_DIR"
             log "purged legacy package home $LEGACY_HOME_DIR"
         else
-            rm -rf "$LEGACY_HOME_DIR/packages" "$LEGACY_HOME_DIR/skills"
-            rm -f \
-                "$LEGACY_HOME_DIR/.tcc-signing-identity" \
-                "$LEGACY_HOME_DIR/serve.out.log" \
-                "$LEGACY_HOME_DIR/serve.err.log"
+            rm -rf -- "$LEGACY_HOME_DIR/skills"
+            rm -f -- "$LEGACY_HOME_DIR/.tcc-signing-identity" "$LEGACY_HOME_DIR/serve.out.log" "$LEGACY_HOME_DIR/serve.err.log"
             log "removed legacy runtime payloads and preserved legacy telemetry state"
         fi
     fi
@@ -522,137 +924,6 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         log "no Rust install marker; leaving agent skill symlinks untouched"
     fi
 
-    # --- Claude Code MCP registrations ---
-    # Same scrub shape as the Swift branch, keyed on the cua-driver-rs
-    # binary name + the per-platform install paths. Unrelated MCP
-    # servers are left alone.
-    CLAUDE_JSON="$HOME/.claude.json"
-    if [[ -f "$CLAUDE_JSON" ]] && command -v python3 >/dev/null 2>&1; then
-        PY_OUTPUT="$(
-            CLAUDE_JSON="$CLAUDE_JSON" HOME_DIR="$HOME_DIR" RUST_INSTALL_PRESENT="$RUST_INSTALL_PRESENT" python3 <<'PY'
-import json
-import os
-import shutil
-import sys
-import tempfile
-import time
-
-path = os.environ["CLAUDE_JSON"]
-home_dir = os.environ.get("HOME_DIR", "")
-rust_install_present = os.environ.get("RUST_INSTALL_PRESENT", "0") == "1"
-
-try:
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-except Exception as exc:
-    print(f"could not read Claude config {path}: {exc}", file=sys.stderr)
-    raise SystemExit(0)
-
-removed = []
-
-def text_parts(value):
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, str)]
-    return []
-
-def invokes_cua_driver_rs(server):
-    if not isinstance(server, dict):
-        return False
-    parts = []
-    parts.extend(text_parts(server.get("command")))
-    parts.extend(text_parts(server.get("args")))
-    joined = " ".join(parts)
-    # Match the Rust-port-specific anchors: bundle name, package home,
-    # explicit ".cua-driver-rs" segment. Plain "cua-driver" alone is
-    # ambiguous (the Swift binary uses the same filename). The shared
-    # /Applications/CuaDriver.app path is ALSO ambiguous (Rust took
-    # over the Swift bundle id) — only count it as Rust when a Rust
-    # install marker is on disk; otherwise it is almost certainly a
-    # Swift registration we should not scrub.
-    if home_dir and home_dir in joined:
-        return True
-    if "CuaDriverRs.app" in joined or ".cua-driver-rs" in joined or "cua-driver-rs" in joined:
-        return True
-    if rust_install_present and "/Applications/CuaDriver.app" in joined:
-        return True
-    return False
-
-def should_remove(name, server):
-    return name in {"cua-driver-rs"} or invokes_cua_driver_rs(server)
-
-def scrub_servers(servers, scope):
-    if not isinstance(servers, dict):
-        return
-    for name in list(servers.keys()):
-        if should_remove(name, servers[name]):
-            del servers[name]
-            removed.append(f"{scope}:{name}")
-
-scrub_servers(data.get("mcpServers"), "user")
-
-projects = data.get("projects")
-if isinstance(projects, dict):
-    for project in projects.values():
-        if isinstance(project, dict):
-            scrub_servers(project.get("mcpServers"), "project")
-
-if not removed:
-    raise SystemExit(0)
-
-backup = f"{path}.bak-cua-driver-rs-uninstall-{int(time.time())}"
-shutil.copy2(path, backup)
-
-directory = os.path.dirname(path) or "."
-fd, tmp_path = tempfile.mkstemp(
-    prefix=".claude.json.",
-    suffix=".tmp",
-    dir=directory,
-    text=True,
-)
-try:
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    os.replace(tmp_path, path)
-except Exception:
-    try:
-        os.unlink(tmp_path)
-    except OSError:
-        pass
-    raise
-
-print(f"removed Claude MCP registration(s): {', '.join(removed)}")
-print(f"backed up Claude config to {backup}")
-PY
-        )"
-        if [[ -n "$PY_OUTPUT" ]]; then
-            while IFS= read -r line; do
-                log "$line"
-            done <<< "$PY_OUTPUT"
-        else
-            log "no Claude MCP registrations for cua-driver-rs found in $CLAUDE_JSON"
-        fi
-    else
-        log "no Claude config cleanup via python3 (missing $CLAUDE_JSON or python3)"
-    fi
-
-    # Best-effort CLI cleanup. `claude mcp remove` only touches the
-    # active project / user scopes — fine to run; it's a no-op when the
-    # entries were already scrubbed above.
-    if command -v claude >/dev/null 2>&1; then
-        for SERVER in cua-driver-rs; do
-            for SCOPE in local project user; do
-                if claude mcp remove "$SERVER" -s "$SCOPE" >/dev/null 2>&1; then
-                    log "removed Claude MCP server $SERVER from $SCOPE scope"
-                fi
-            done
-        done
-    else
-        log "claude CLI not found (skipping Claude MCP CLI cleanup)"
-    fi
-
     # --- Closing message ---
     # TCC grants were already revoked above, before the app was removed, so
     # the reset could still resolve the bundle id through LaunchServices.
@@ -694,6 +965,7 @@ To delete them too, re-run with --purge:
 TELEMETRYUNMSG
         fi
     fi
+    report_surviving_local_install
     exit 0
 fi
 

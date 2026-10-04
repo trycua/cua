@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"cyclops-cs-backend/identity"
+	backendmetrics "cyclops-cs-backend/metrics"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -115,9 +117,7 @@ func initK8sClient() {
 func (h Handlers) k8sImpersonate(
 	ctx context.Context, method, path string, body io.Reader, userSub string,
 ) (*http.Response, error) {
-	if k8sClient == nil {
-		initK8sClient()
-	}
+	initK8sClient()
 	if k8sClient == nil {
 		return nil, fmt.Errorf("k8s client not initialised (missing SA token)")
 	}
@@ -136,8 +136,10 @@ func (h Handlers) k8sImpersonate(
 	// on users and groups (granted by cyclops-cs-impersonator ClusterRole).
 	// Prefixes resolve from OpenFeature (see package identity) so the backend,
 	// standalone Tenant controller, and apiserver flags stay aligned.
-	req.Header.Set("Impersonate-User", identity.ImpersonateUser(ctx, userSub))
-	req.Header.Set("Impersonate-Group", identity.ImpersonateGroup(ctx, userSub))
+	if userSub != "" {
+		req.Header.Set("Impersonate-User", identity.ImpersonateUser(ctx, userSub))
+		req.Header.Set("Impersonate-Group", identity.ImpersonateGroup(ctx, userSub))
+	}
 
 	return k8sClient.Do(req)
 }
@@ -171,7 +173,7 @@ const (
 // cluster-wide to system:authenticated, so that probe succeeds instantly and
 // gates nothing.) Best-effort by design: failures are logged, never
 // surfaced — the namespace was created either way.
-func (h Handlers) waitForNamespaceAdoption(ctx context.Context, name, userSub string) {
+func (h Handlers) waitForNamespaceAdoption(ctx context.Context, name, userSub string) (string, error) {
 	adoptionCtx, cancel := context.WithTimeout(ctx, adoptionWaitTimeout)
 	defer cancel()
 	for {
@@ -182,18 +184,27 @@ func (h Handlers) waitForNamespaceAdoption(ctx context.Context, name, userSub st
 			_, _ = io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				return
+				return "success", nil
 			}
 		}
-		if adoptionCtx.Err() != nil {
-			slog.Warn("namespace create: adoption wait timed out; returning anyway",
-				"namespace", name)
-			return
+		if ctxErr := adoptionCtx.Err(); ctxErr != nil {
+			result := "canceled"
+			if ctxErr == context.DeadlineExceeded {
+				result = "timeout"
+			}
+			slog.Warn("namespace create: adoption wait ended; returning anyway",
+				"namespace", name, "result", result, "err", ctxErr)
+			return result, errors.Join(ctxErr, err)
 		}
 		select {
 		case <-time.After(adoptionWaitStep):
 		case <-adoptionCtx.Done():
-			return
+			ctxErr := adoptionCtx.Err()
+			result := "canceled"
+			if ctxErr == context.DeadlineExceeded {
+				result = "timeout"
+			}
+			return result, errors.Join(ctxErr, err)
 		}
 	}
 }
@@ -222,75 +233,57 @@ func (h Handlers) ListNamespaces(w http.ResponseWriter, r *http.Request) {
 		attribute.String("user.id", user.ID),
 	))
 	defer span.End()
-
-	// Scope the list to the caller's own Tenant. Every namespace owned by a
-	// Tenant carries capsule.clastix.io/tenant=<tenant> (set on create — see
-	// CreateNamespace — and enforced by Capsule). Selecting on it makes this
-	// fail-closed: even if Capsule Proxy isn't filtering (e.g. while
-	// CapsuleConfiguration.userGroups is being reconciled, or right after a
-	// capsule-proxy restart with a cold cache), the apiserver only returns the
-	// caller's namespaces. The Tenant name follows the standalone controller
-	// convention "user-<sub>" and is derived from the authenticated subject,
-	// so a caller can never widen it to another tenant.
-	selector := "capsule.clastix.io/tenant=" + identity.PersonalGroup(ctx, user.ID)
-	path := "/api/v1/namespaces?labelSelector=" + url.QueryEscape(selector)
-	resp, err := h.k8sImpersonate(ctx, "GET", path, nil, user.ID)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "namespace list request failed")
-		slog.Warn("namespace list: k8s request failed", "err", err)
-		writeErr(w, http.StatusBadGateway, "kubectl-proxy unavailable")
-		return
+	enabled := namespacePostgresEnabled(ctx, user.ID)
+	tenant := namespaceTenant(ctx, user.ID)
+	span.SetAttributes(attribute.Bool("feature_flag.ff-list-ns-read-pg", enabled), attribute.Bool("read.fallback", false))
+	var items []namespaceObject
+	var err error
+	backend := "kubernetes"
+	if enabled {
+		items, err = h.readNamespacesPostgres(ctx, tenant)
+		if err == nil {
+			backend = "postgres"
+		} else {
+			span.SetAttributes(attribute.Bool("read.fallback", true), attribute.String("read.fallback.reason", "postgres_error"))
+			span.AddEvent("namespaces.read.fallback", trace.WithAttributes(attribute.String("read.fallback.reason", "postgres_error")))
+			slog.ErrorContext(ctx, "namespace PostgreSQL read failed; falling back to Kubernetes", "err", err, "trace_id", span.SpanContext().TraceID().String())
+		}
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		span.SetStatus(codes.Error, "namespace list returned non-200")
-		span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
-		slog.Warn("namespace list: k8s error", "status", resp.StatusCode, "body", string(body))
-		writeErr(w, resp.StatusCode, "k8s: "+string(body))
-		return
+	span.SetAttributes(attribute.String("read.backend", backend))
+	if backend == "kubernetes" {
+		var status int
+		items, status, err = h.readNamespacesK8s(ctx, tenant, user.ID)
+		if err != nil {
+			span.SetAttributes(attribute.String("error.type", fmt.Sprintf("%T", err)))
+			span.SetStatus(codes.Error, "namespace list failed")
+			span.SetAttributes(attribute.Int("http.status_code", status))
+			writeErr(w, status, err.Error())
+			return
+		}
 	}
-
-	// Parse K8s NamespaceList.
-	var nsList struct {
-		Items []struct {
-			Metadata struct {
-				Name              string            `json:"name"`
-				Labels            map[string]string `json:"labels"`
-				CreationTimestamp string            `json:"creationTimestamp"`
-			} `json:"metadata"`
-			Status struct {
-				Phase string `json:"phase"`
-			} `json:"status"`
-		} `json:"items"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&nsList); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "namespace list decode failed")
-		slog.Warn("namespace list: decode error", "err", err)
-		writeErr(w, http.StatusBadGateway, "bad response from k8s")
-		return
-	}
-
-	out := make([]NamespaceResponse, 0, len(nsList.Items))
-	for _, ns := range nsList.Items {
+	_, filterSpan := handlerTracer().Start(ctx, "namespaces.filter")
+	out := make([]NamespaceResponse, 0, len(items))
+	for _, ns := range items {
 		if isGitHubPrincipal(user) && !namespaceAllowed(user, ns.Metadata.Name) {
 			continue
 		}
 		out = append(out, NamespaceResponse{
-			Name:      ns.Metadata.Name,
-			Status:    ns.Status.Phase,
-			CreatedAt: ns.Metadata.CreationTimestamp,
-			Labels:    ns.Metadata.Labels,
+			Name: ns.Metadata.Name, Status: ns.Status.Phase,
+			CreatedAt: ns.Metadata.CreationTimestamp, Labels: ns.Metadata.Labels,
 		})
 	}
-	span.SetAttributes(
-		attribute.Int("http.status_code", http.StatusOK),
-		attribute.Int("namespaces.count", len(out)),
-	)
-	writeJSON(w, http.StatusOK, out)
+	filterSpan.SetAttributes(attribute.Int("namespaces.input_count", len(items)), attribute.Int("namespaces.count", len(out)), attribute.Int("namespaces.excluded_count", len(items)-len(out)))
+	filterSpan.End()
+	span.SetAttributes(attribute.Int("http.status_code", http.StatusOK), attribute.Int("namespaces.count", len(out)))
+	_, responseSpan := handlerTracer().Start(ctx, "response.encode_write")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	err = json.NewEncoder(w).Encode(out)
+	finishNamespaceSpan(responseSpan, err)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "namespace response write failed")
+	}
 }
 
 // GetNamespace godoc
@@ -443,8 +436,14 @@ func (h Handlers) CreateNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.k8sImpersonate(ctx, "POST", "/api/v1/namespaces", bytes.NewReader(body), user.ID)
+	k8sStart := time.Now()
+	k8sCtx, k8sSpan := handlerTracer().Start(ctx, "namespaces.create.k8s")
+	resp, err := h.k8sImpersonate(k8sCtx, "POST", "/api/v1/namespaces", bytes.NewReader(body), user.ID)
 	if err != nil {
+		k8sSpan.RecordError(err)
+		k8sSpan.SetStatus(codes.Error, "Kubernetes namespace create failed")
+		k8sSpan.End()
+		backendmetrics.RecordNamespaceCreatePhase("k8s_create", "error", time.Since(k8sStart))
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "namespace create request failed")
 		slog.Warn("namespace create: k8s request failed", "err", err)
@@ -454,6 +453,17 @@ func (h Handlers) CreateNamespace(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	respBody, err := readBoundedK8sBody(resp.Body)
+	k8sResult := fmt.Sprintf("http_%d", resp.StatusCode)
+	k8sSpan.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
+	if err != nil {
+		k8sResult = "body_error"
+		k8sSpan.RecordError(err)
+		k8sSpan.SetStatus(codes.Error, "Kubernetes namespace response failed")
+	} else if resp.StatusCode != http.StatusCreated {
+		k8sSpan.SetStatus(codes.Error, "Kubernetes namespace create returned unexpected status")
+	}
+	k8sSpan.End()
+	backendmetrics.RecordNamespaceCreatePhase("k8s_create", k8sResult, time.Since(k8sStart))
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "namespace create response failed")
@@ -484,12 +494,28 @@ func (h Handlers) CreateNamespace(w http.ResponseWriter, r *http.Request) {
 	// it only succeeds once the RoleBindings exist — the same instant any other
 	// in-namespace call becomes authorized. Best-effort: on timeout we still
 	// return 201 (the namespace exists; adoption is merely late).
-	h.waitForNamespaceAdoption(ctx, req.Name, user.ID)
+	adoptionStart := time.Now()
+	adoptionCtx, adoptionSpan := handlerTracer().Start(ctx, "namespaces.create.adoption_wait")
+	adoptionResult, adoptionErr := h.waitForNamespaceAdoption(adoptionCtx, req.Name, user.ID)
+	if adoptionErr != nil {
+		adoptionSpan.RecordError(adoptionErr)
+		adoptionSpan.SetStatus(codes.Error, adoptionResult)
+	}
+	adoptionSpan.End()
+	backendmetrics.RecordNamespaceCreatePhase("adoption_wait", adoptionResult, time.Since(adoptionStart))
 
 	// Best-effort: provision the tenant's workload-OIDC credentials into the
 	// new namespace so OSGym pool VMs here can mint a tenant-scoped OIDC
 	// token (see provisionWorkloadOIDC; no-op when the feature is disabled).
-	h.provisionWorkloadOIDC(ctx, user.ID, req.Name)
+	oidcStart := time.Now()
+	oidcCtx, oidcSpan := handlerTracer().Start(ctx, "namespaces.create.workload_oidc")
+	oidcResult, oidcErr := h.provisionWorkloadOIDC(oidcCtx, user.ID, req.Name)
+	if oidcErr != nil {
+		oidcSpan.RecordError(oidcErr)
+		oidcSpan.SetStatus(codes.Error, oidcResult)
+	}
+	oidcSpan.End()
+	backendmetrics.RecordNamespaceCreatePhase("workload_oidc", oidcResult, time.Since(oidcStart))
 
 	// Parse the created namespace.
 	var created struct {

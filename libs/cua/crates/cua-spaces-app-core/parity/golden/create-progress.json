@@ -1,0 +1,1327 @@
+{
+  "flow": "provisioning",
+  "frames": [
+    {
+      "creates": "initial",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [],
+        "ids": [],
+        "pending": true,
+        "rows": [],
+        "tiles": []
+      }
+    },
+    {
+      "creates": "start pending:1",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-omarchy New Space [Starting] 10 1%"
+        ],
+        "tiles": [
+          "os-omarchy New Space, Linux, This Mac, Starting 10 Starting…"
+        ]
+      }
+    },
+    {
+      "creates": "tick",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 11
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting…",
+            "progress": 11,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-omarchy New Space [Starting] 11 1%"
+        ],
+        "tiles": [
+          "os-omarchy New Space, Linux, This Mac, Starting 11 Starting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 preparing",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 11
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting…",
+            "progress": 11,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-omarchy New Space [Starting] 11 1%"
+        ],
+        "tiles": [
+          "os-omarchy New Space, Linux, This Mac, Starting 11 Starting…"
+        ]
+      }
+    },
+    {
+      "creates": "tick",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 15
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting…",
+            "progress": 15,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-omarchy New Space [Starting] 15 1%"
+        ],
+        "tiles": [
+          "os-omarchy New Space, Linux, This Mac, Starting 15 Starting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 pulling",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 18
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Downloading image… 1%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Downloading image…",
+            "progress": 18,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-omarchy New Space [Starting] 18 1%"
+        ],
+        "tiles": [
+          "os-omarchy New Space, Linux, This Mac, Starting 18 Downloading image…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 pulling",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 104
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Downloading image… 10%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Downloading image…",
+            "progress": 104,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-omarchy New Space [Starting] 104 10%"
+        ],
+        "tiles": [
+          "os-omarchy New Space, Linux, This Mac, Starting 104 Downloading image…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 pulling",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 360
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Downloading image… 36%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Downloading image…",
+            "progress": 360,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-omarchy New Space [Starting] 360 36%"
+        ],
+        "tiles": [
+          "os-omarchy New Space, Linux, This Mac, Starting 360 Downloading image…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 booting",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 360
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Booting… 36%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Booting…",
+            "progress": 360,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-omarchy New Space [Starting] 360 36%"
+        ],
+        "tiles": [
+          "os-omarchy New Space, Linux, This Mac, Starting 360 Booting…"
+        ]
+      }
+    },
+    {
+      "creates": "tick",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 361
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Booting… 36%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Booting…",
+            "progress": 361,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-omarchy New Space [Starting] 361 36%"
+        ],
+        "tiles": [
+          "os-omarchy New Space, Linux, This Mac, Starting 361 Booting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 waiting_for_services",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 362
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting services… 36%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting services…",
+            "progress": 362,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-omarchy New Space [Starting] 362 36%"
+        ],
+        "tiles": [
+          "os-omarchy New Space, Linux, This Mac, Starting 362 Starting services…"
+        ]
+      }
+    },
+    {
+      "creates": "tick",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 525
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting services… 52%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting services…",
+            "progress": 525,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-omarchy New Space [Starting] 525 52%"
+        ],
+        "tiles": [
+          "os-omarchy New Space, Linux, This Mac, Starting 525 Starting services…"
+        ]
+      }
+    },
+    {
+      "creates": "tick",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 851
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting services… 85%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting services…",
+            "progress": 851,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-omarchy New Space [Starting] 851 85%"
+        ],
+        "tiles": [
+          "os-omarchy New Space, Linux, This Mac, Starting 851 Starting services…"
+        ]
+      }
+    },
+    {
+      "creates": "tick",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 963
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting services… 96%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting services…",
+            "progress": 963,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-omarchy New Space [Starting] 963 96%"
+        ],
+        "tiles": [
+          "os-omarchy New Space, Linux, This Mac, Starting 963 Starting services…"
+        ]
+      }
+    },
+    {
+      "creates": "tick",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 968
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting services… 96%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting services…",
+            "progress": 968,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-omarchy New Space [Starting] 968 96%"
+        ],
+        "tiles": [
+          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting services…"
+        ]
+      }
+    },
+    {
+      "creates": "start pending:2",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Container",
+              "Architecture: ARM"
+            ],
+            "id": "pending:2",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting services… 96%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting services…",
+            "progress": 968,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu New Space [Starting] 10 1%",
+          "os-omarchy New Space [Starting] 968 96%"
+        ],
+        "tiles": [
+          "os-ubuntu New Space, Linux, This Mac, Starting 10 Starting…",
+          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting services…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:2 creating",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 59
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Creating… 5%",
+              "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Container",
+              "Architecture: ARM"
+            ],
+            "id": "pending:2",
+            "previewText": "Creating…",
+            "progress": 59,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting services… 96%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting services…",
+            "progress": 968,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu New Space [Starting] 59 5%",
+          "os-omarchy New Space [Starting] 968 96%"
+        ],
+        "tiles": [
+          "os-ubuntu New Space, Linux, This Mac, Starting 59 Creating…",
+          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting services…"
+        ]
+      }
+    },
+    {
+      "creates": "tick",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 124
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Creating… 12%",
+              "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Container",
+              "Architecture: ARM"
+            ],
+            "id": "pending:2",
+            "previewText": "Creating…",
+            "progress": 124,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting services… 96%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting services…",
+            "progress": 968,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu New Space [Starting] 124 12%",
+          "os-omarchy New Space [Starting] 968 96%"
+        ],
+        "tiles": [
+          "os-ubuntu New Space, Linux, This Mac, Starting 124 Creating…",
+          "os-omarchy New Space, Linux, This Mac, Starting 968 Starting services…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 connecting",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 124
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Creating… 12%",
+              "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Container",
+              "Architecture: ARM"
+            ],
+            "id": "pending:2",
+            "previewText": "Creating…",
+            "progress": 124,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Connecting… 98%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Connecting…",
+            "progress": 987,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu New Space [Starting] 124 12%",
+          "os-omarchy New Space [Starting] 987 98%"
+        ],
+        "tiles": [
+          "os-ubuntu New Space, Linux, This Mac, Starting 124 Creating…",
+          "os-omarchy New Space, Linux, This Mac, Starting 987 Connecting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:2 waiting_for_services",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 172
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting services… 17%",
+              "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Container",
+              "Architecture: ARM"
+            ],
+            "id": "pending:2",
+            "previewText": "Starting services…",
+            "progress": 172,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Connecting… 98%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Connecting…",
+            "progress": 987,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu New Space [Starting] 172 17%",
+          "os-omarchy New Space [Starting] 987 98%"
+        ],
+        "tiles": [
+          "os-ubuntu New Space, Linux, This Mac, Starting 172 Starting services…",
+          "os-omarchy New Space, Linux, This Mac, Starting 987 Connecting…"
+        ]
+      }
+    },
+    {
+      "creates": "tick",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 831
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting services… 83%",
+              "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Container",
+              "Architecture: ARM"
+            ],
+            "id": "pending:2",
+            "previewText": "Starting services…",
+            "progress": 831,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Connecting… 98%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Connecting…",
+            "progress": 989,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu New Space [Starting] 831 83%",
+          "os-omarchy New Space [Starting] 989 98%"
+        ],
+        "tiles": [
+          "os-ubuntu New Space, Linux, This Mac, Starting 831 Starting services…",
+          "os-omarchy New Space, Linux, This Mac, Starting 989 Connecting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 pulling",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 831
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting services… 83%",
+              "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Container",
+              "Architecture: ARM"
+            ],
+            "id": "pending:2",
+            "previewText": "Starting services…",
+            "progress": 831,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Downloading image… 98%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Downloading image…",
+            "progress": 989,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu New Space [Starting] 831 83%",
+          "os-omarchy New Space [Starting] 989 98%"
+        ],
+        "tiles": [
+          "os-ubuntu New Space, Linux, This Mac, Starting 831 Starting services…",
+          "os-omarchy New Space, Linux, This Mac, Starting 989 Downloading image…"
+        ]
+      }
+    },
+    {
+      "creates": "finish pending:1",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 831
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting services… 83%",
+              "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Container",
+              "Architecture: ARM"
+            ],
+            "id": "pending:2",
+            "previewText": "Starting services…",
+            "progress": 831,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Ready 100%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Ready",
+            "progress": 1000,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu New Space [Starting] 831 83%",
+          "os-omarchy New Space [Starting] 1000 100%"
+        ],
+        "tiles": [
+          "os-ubuntu New Space, Linux, This Mac, Starting 831 Starting services…",
+          "os-omarchy New Space, Linux, This Mac, Starting 1000 Ready"
+        ]
+      }
+    },
+    {
+      "creates": "tick",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 900
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting services… 90%",
+              "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Container",
+              "Architecture: ARM"
+            ],
+            "id": "pending:2",
+            "previewText": "Starting services…",
+            "progress": 900,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Ready 100%",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "pending:1",
+            "previewText": "Ready",
+            "progress": 1000,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu New Space [Starting] 900 90%",
+          "os-omarchy New Space [Starting] 1000 100%"
+        ],
+        "tiles": [
+          "os-ubuntu New Space, Linux, This Mac, Starting 900 Starting services…",
+          "os-omarchy New Space, Linux, This Mac, Starting 1000 Ready"
+        ]
+      }
+    },
+    {
+      "creates": "refreshed",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 900
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting services… 90%",
+              "Image: ghcr.io/trycua/linux:24.04-slim [copy ghcr.io/trycua/linux:24.04-slim doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Ubuntu 24.04",
+              "Kind: Container",
+              "Architecture: ARM"
+            ],
+            "id": "pending:2",
+            "previewText": "Starting services…",
+            "progress": 900,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: local:omarchy [copy local:omarchy doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Omarchy",
+              "Kind: Virtual machine",
+              "Architecture: x64"
+            ],
+            "id": "local:omarchy",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "local:omarchy"
+        ],
+        "pending": true,
+        "rows": [
+          "os-ubuntu New Space [Starting] 900 90%",
+          "os-omarchy Omarchy [Running] - -"
+        ],
+        "tiles": [
+          "os-ubuntu New Space, Linux, This Mac, Starting 900 Starting services…",
+          "os-omarchy Omarchy, Linux, This Mac, Running - -"
+        ]
+      }
+    }
+  ]
+}

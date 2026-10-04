@@ -2,6 +2,7 @@
 name = "cua-driver-uia"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Windows uiAccess-elevated worker for cua-driver-rs (Calculator / UWP automation)"
 
 # Tiny uiAccess-marked binary that hosts the Windows tool registry over a named

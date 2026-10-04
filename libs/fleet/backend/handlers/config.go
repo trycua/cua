@@ -9,14 +9,21 @@ import (
 
 // ConfigResponse is the payload returned by GET /api/config.
 // The frontend uses this to select the correct UI strategy (admin vs customer).
+type UsagePricingConfig struct {
+	VCPUHourUSD      float64 `json:"vcpu_hour_usd"`
+	MemoryGiBHourUSD float64 `json:"memory_gib_hour_usd"`
+}
+
 type ConfigResponse struct {
 	// Admin is true when the caller is in input.flags.admin_subs (OPA-evaluated).
 	// Non-admins get the customer view: infra-only nav (Nodes, Operator events)
 	// is hidden in the SPA and the corresponding kubectl-proxy paths are denied
 	// server-side by authz.rego.
-	Admin   bool `json:"admin"`
-	Billing bool `json:"billing"`
-	Chat    bool `json:"chat"`
+	Admin        bool               `json:"admin"`
+	Billing      bool               `json:"billing"`
+	Chat         bool               `json:"chat"`
+	Usage        bool               `json:"usage"`
+	UsagePricing UsagePricingConfig `json:"usage_pricing"`
 }
 
 // GetConfig returns per-user feature flags evaluated by OPA.
@@ -33,7 +40,7 @@ func (h Handlers) GetConfig(w http.ResponseWriter, r *http.Request) {
 	user := currentUser(r)
 	ctx := r.Context()
 
-	isAdmin, err := auth.EvalIsAdmin(ctx, user)
+	isAdmin, err := h.isAdmin(ctx, user)
 	if err != nil {
 		// Fail closed to the most restrictive view, and log so a
 		// misconfigured OPA store / provider is visible to operators.
@@ -47,11 +54,20 @@ func (h Handlers) GetConfig(w http.ResponseWriter, r *http.Request) {
 		billingEnabled = false
 	}
 
+	pricing, err := h.usagePricing(ctx, user)
+	if err != nil {
+		slog.WarnContext(ctx, "usage pricing flag eval failed; using defaults for invalid values", "err", err)
+	}
+
 	chatEnabled, err := h.chatEnabled(ctx, user)
 	if err != nil {
 		slog.WarnContext(ctx, "chat access eval failed; defaulting off", "err", err)
 		chatEnabled = false
 	}
+	chatEnabled = chatEnabled && h.Conversations != nil && h.Model != nil
 
-	writeJSON(w, http.StatusOK, ConfigResponse{Admin: isAdmin, Billing: billingEnabled, Chat: chatEnabled})
+	writeJSON(w, http.StatusOK, ConfigResponse{
+		Admin: isAdmin, Billing: billingEnabled, Chat: chatEnabled, Usage: h.Usage != nil,
+		UsagePricing: UsagePricingConfig{VCPUHourUSD: pricing.VCPUHourUSD, MemoryGiBHourUSD: pricing.MemoryGiBHourUSD},
+	})
 }

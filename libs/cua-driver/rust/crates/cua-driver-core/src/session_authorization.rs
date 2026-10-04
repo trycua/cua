@@ -518,6 +518,17 @@ impl SessionAuthorizationRegistry {
         &self.ceiling
     }
 
+    /// The runtime-private key dispatch through this registry's contexts
+    /// gives `public_session` (see
+    /// [`EffectiveAuthorizationContext::runtime_session_key`]).
+    #[doc(hidden)]
+    pub fn runtime_session_key(&self, public_session: &str) -> String {
+        format!(
+            "__cua_runtime_{}:{public_session}",
+            self.daemon_generation.0.simple()
+        )
+    }
+
     pub fn legacy_context(&self) -> Result<Arc<EffectiveAuthorizationContext>, String> {
         let mode = crate::authorization::configured_permission_mode()?;
         let capability_manifest = crate::session_manifest::configured_capability_manifest()?
@@ -784,13 +795,24 @@ impl SessionAuthorizationRegistry {
     }
 }
 
-static CONFIGURED_REGISTRY: OnceLock<Result<SessionAuthorizationRegistry, String>> =
-    OnceLock::new();
+/// The process registry, or the configuration error that prevented it.
+type ConfiguredRegistry = Result<Arc<SessionAuthorizationRegistry>, String>;
 
-pub fn configured_registry() -> Result<&'static SessionAuthorizationRegistry, String> {
-    match CONFIGURED_REGISTRY.get_or_init(SessionAuthorizationRegistry::process) {
-        Ok(registry) => Ok(registry),
-        Err(error) => Err(error.clone()),
+static CONFIGURED_REGISTRY: OnceLock<Mutex<Option<ConfiguredRegistry>>> = OnceLock::new();
+
+pub fn configured_registry() -> Result<Arc<SessionAuthorizationRegistry>, String> {
+    CONFIGURED_REGISTRY
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap()
+        .get_or_insert_with(|| SessionAuthorizationRegistry::process().map(Arc::new))
+        .clone()
+}
+
+#[doc(hidden)]
+pub fn release_configured_registry_for_shutdown() {
+    if let Some(registry) = CONFIGURED_REGISTRY.get() {
+        *registry.lock().unwrap() = None;
     }
 }
 

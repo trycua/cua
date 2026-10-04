@@ -45,8 +45,10 @@ type fakeGitHubTrustStore struct {
 
 func (f *fakeGitHubTrustStore) List(ctx context.Context, ownerSub string) ([]*githubtrust.Policy, error) {
 	f.listContext = ctx
-	if f.listErr != nil {
-		return nil, f.listErr
+	listErr := f.listErr
+	if listErr != nil {
+		return nil, listErr
+
 	}
 	out := make([]*githubtrust.Policy, len(f.listByOwner))
 	copy(out, f.listByOwner)
@@ -55,8 +57,10 @@ func (f *fakeGitHubTrustStore) List(ctx context.Context, ownerSub string) ([]*gi
 
 func (f *fakeGitHubTrustStore) Create(ctx context.Context, policy *githubtrust.Policy) error {
 	f.createContext = ctx
-	if f.createErr != nil {
-		return f.createErr
+	createErr := f.createErr
+	if createErr != nil {
+		return createErr
+
 	}
 	cp := *policy
 	f.createInput = &cp
@@ -67,8 +71,10 @@ func (f *fakeGitHubTrustStore) Get(ctx context.Context, ownerSub, id string) (*g
 	f.getContext = ctx
 	_ = ownerSub
 	_ = id
-	if f.getErr != nil {
-		return nil, f.getErr
+	getErr := f.getErr
+	if getErr != nil {
+		return nil, getErr
+
 	}
 	if f.getResult == nil {
 		return nil, nil
@@ -79,8 +85,10 @@ func (f *fakeGitHubTrustStore) Get(ctx context.Context, ownerSub, id string) (*g
 
 func (f *fakeGitHubTrustStore) Update(ctx context.Context, policy *githubtrust.Policy) error {
 	f.updateContext = ctx
-	if f.updateErr != nil {
-		return f.updateErr
+	updateErr := f.updateErr
+	if updateErr != nil {
+		return updateErr
+
 	}
 	cp := *policy
 	f.updateInput = &cp
@@ -91,8 +99,10 @@ func (f *fakeGitHubTrustStore) Delete(ctx context.Context, ownerSub, id string) 
 	f.deleteContext = ctx
 	f.deleteOwner = ownerSub
 	f.deleteID = id
-	if f.deleteErr != nil {
-		return false, f.deleteErr
+	deleteErr := f.deleteErr
+	if deleteErr != nil {
+		return false, deleteErr
+
 	}
 	return f.deleteFound, nil
 }
@@ -100,8 +110,10 @@ func (f *fakeGitHubTrustStore) Delete(ctx context.Context, ownerSub, id string) 
 func (f *fakeGitHubTrustStore) ResolveByRepository(ctx context.Context, repository string) ([]*githubtrust.Policy, error) {
 	f.resolveContext = ctx
 	f.resolvedRepoName = repository
-	if f.resolveErr != nil {
-		return nil, f.resolveErr
+	resolveErr := f.resolveErr
+	if resolveErr != nil {
+		return nil, resolveErr
+
 	}
 	out := make([]*githubtrust.Policy, len(f.resolveResult))
 	copy(out, f.resolveResult)

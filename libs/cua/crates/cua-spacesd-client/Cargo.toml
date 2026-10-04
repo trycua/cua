@@ -1,0 +1,49 @@
+[package]
+name = "cua-spacesd-client"
+description = "Ergonomic async client for cua-spacesd (cua.env.v1) over native gRPC or gRPC-Web."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+# In-process mock spacesd (`cua_spacesd_client::testing`) for this crate's tests and
+# downstream crates' integration tests. Never enabled in release builds.
+testing = ["tonic/server", "tonic/router", "tokio-stream/net"]
+
+[dependencies]
+cua-proto.workspace = true
+tonic = { workspace = true, default-features = false, features = ["codegen", "channel", "tls-ring", "tls-webpki-roots"] }
+tonic-web.workspace = true
+tonic-prost.workspace = true
+prost.workspace = true
+pbjson-types.workspace = true
+http.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+hyper-rustls.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tower.workspace = true
+tokio = { workspace = true }
+tokio-stream.workspace = true
+futures-util.workspace = true
+bytes.workspace = true
+url.workspace = true
+sha2.workspace = true
+hex.workspace = true
+base64.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio-tungstenite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+cua-spacesd-client = { path = ".", features = ["testing"] }
+tempfile.workspace = true

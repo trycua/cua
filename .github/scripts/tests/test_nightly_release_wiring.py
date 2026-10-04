@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = ROOT / ".github/workflows"
+TAG_PUSH = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')"
 
 
 def source(name: str) -> str:
@@ -15,9 +16,47 @@ def source(name: str) -> str:
 def test_driver_stable_publish_gate_and_workflow_name_are_frozen():
     driver = source("cd-rust-cua-driver.yml")
     assert driver.startswith('name: "CD: Cua Driver (cross-platform)"')
-    assert "if: github.event_name == 'workflow_dispatch' && inputs.publish == true" in driver
+    release = driver.split("\n  release:\n", 1)[1].split("    steps:\n", 1)[0]
+    # Only the stable tag push publishes. Nightly workflow_call runs inherit
+    # the caller's schedule/workflow_dispatch event and can never match.
+    assert (
+        "    if: github.event_name == 'push' && "
+        "startsWith(github.ref, 'refs/tags/cua-driver-rs-v')\n"
+    ) in release
+    assert "inputs.publish" not in driver
     sdk = source("cd-py-cua-driver.yml")
     assert 'workflows: ["CD: Cua Driver (cross-platform)"]' in sdk
+
+
+def test_driver_nightly_publishes_only_after_the_desktop_e2e_gate():
+    nightly = source("nightly-cua-driver.yml")
+    driver = source("cd-rust-cua-driver.yml")
+    # The builder's E2E gate jobs need actions: read from the nightly caller.
+    assert "permissions:\n  # actions: read" in nightly
+    assert "\n  actions: read\n" in nightly
+    # Nightly builds run the same suites as the stable tag push, against the
+    # exact nightly source rather than the caller's workflow revision.
+    build = nightly.split("\n  build:\n", 1)[1].split("\n\n", 1)[0]
+    assert "      channel: nightly\n" in build
+    assert "      source_ref: ${{ inputs.source_sha || github.sha }}\n" in build
+    gate_sha = "${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}"
+    for job, sha_input in (
+        ("e2e-linux", "ref"),
+        ("e2e-windows", "ref"),
+        ("e2e-macos", "source_sha"),
+        ("e2e-standalone-browsers", "ref"),
+    ):
+        block = driver.split(f"\n  {job}:\n", 1)[1].split("\n\n", 1)[0]
+        assert f"    if: ({TAG_PUSH}) || inputs.channel == 'nightly'\n" in block
+        assert f"\n      {sha_input}: {gate_sha}" in block
+    # A failed suite fails the reusable build, and publish requires a
+    # successful build with no status-function bypass.
+    publish = nightly.split("\n  publish:\n", 1)[1].split("    steps:\n", 1)[0]
+    assert "    needs: [plan, build]\n" in publish
+    assert "needs.build.result == 'success'" in publish
+    for override in ("always()", "failure()", "cancelled()", "continue-on-error"):
+        assert override not in publish
+        assert override not in build
 
 
 def test_lume_stable_publish_gate_remains_tag_only():
@@ -40,7 +79,7 @@ def test_driver_nightly_reuses_builder_without_stable_state_mutation():
     assert "Collect PR-first attribution and render nightly body" in nightly
     assert "GH_TOKEN: ${{ github.token }}" in nightly
     assert "needs.plan.outputs.attribution_base_tag" in nightly
-    assert "issues: read" in nightly
+    assert "issues: write" in nightly
     assert "pull-requests: read" in nightly
     assert "release_channels.py apply-version" not in nightly
     assert "release_channels.py stage-versioned-tree" in nightly
@@ -60,7 +99,7 @@ def test_lume_nightly_reuses_notarized_builder_and_never_becomes_latest():
     assert "Collect PR-first attribution and render nightly body" in nightly
     assert "GH_TOKEN: ${{ github.token }}" in nightly
     assert "needs.plan.outputs.attribution_base_tag" in nightly
-    assert "issues: read" in nightly
+    assert "issues: write" in nightly
     assert "pull-requests: read" in nightly
     assert builder.index("- name: Set version") < builder.index(
         "- name: Stage nightly artifact version"
@@ -82,6 +121,11 @@ def test_planner_requires_main_ancestry_and_preserves_immutable_evidence():
     assert "fetch-depth: 0" in planner
     assert "nightly-plan-${{ inputs.component }}" in planner
     assert "attribution_base_tag" in planner
+    assert "attribution_issues" in planner
+    assert "--attribution-config .github/release-attribution-config.json" in planner
+    assert "needs.plan.outputs.reason == 'held-attribution'" in planner
+    assert "gh issue create" in planner
+    assert "gh issue edit" in planner
     assert "cancel-in-progress: false" in source("nightly-cua-driver.yml")
     assert "cancel-in-progress: false" in source("nightly-lume.yml")
 

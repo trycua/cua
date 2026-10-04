@@ -66,7 +66,7 @@ func LogMiddlewareWithLogger(logger *slog.Logger) func(http.Handler) http.Handle
 				"service_namespace", envOrDefault("OTEL_SERVICE_NAMESPACE", "cyclops-cs"),
 				"deployment_environment", envOrDefault("OTEL_ENVIRONMENT", "production"),
 				"method", r.Method,
-				"url", r.URL.Path,
+				"url", route,
 				"route", route,
 				"duration", time.Since(start),
 				"status", lw.statusCode,

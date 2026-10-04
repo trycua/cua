@@ -29,39 +29,8 @@
 
 use serde_json::Value;
 
-/// Input delivery modality — the agent-selected rung of the best-effort-
-/// background ladder, passed per call (never a stored/config setting). Mirrors
-/// macOS `tools::DeliveryMode` and Windows `input::delivery::DeliveryMode`.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
-pub enum DeliveryMode {
-    /// Inject without activating the target (X11 XTEST/MPX; Wayland libei-to-focus).
-    #[default]
-    Background,
-    /// Activate the target, inject, restore prior active window.
-    Foreground,
-}
-
-impl DeliveryMode {
-    /// Parse the per-call `delivery_mode` argument. Anything other than an
-    /// explicit case-insensitive `"foreground"` resolves to `Background` — the
-    /// correct default, so an omitted/garbage value never silently fronts.
-    /// Matches macOS / Windows `DeliveryMode::parse`.
-    pub fn parse(arg: Option<&str>) -> Self {
-        match arg {
-            Some(s) if s.eq_ignore_ascii_case("foreground") => Self::Foreground,
-            _ => Self::Background,
-        }
-    }
-
-    /// Parse from a tool's JSON args, reading the `delivery_mode` field.
-    pub fn from_args(args: &Value) -> Self {
-        Self::parse(args.get("delivery_mode").and_then(|v| v.as_str()))
-    }
-
-    pub fn is_foreground(self) -> bool {
-        matches!(self, Self::Foreground)
-    }
-}
+/// The shared per-call delivery mode; see [`cua_driver_core::delivery`].
+pub use cua_driver_core::delivery::DeliveryMode;
 
 /// JSON-schema fragment for the `delivery_mode` field. Include this in every
 /// input tool's `input_schema.properties.delivery_mode`. Two modes, matching
@@ -144,66 +113,22 @@ pub fn background_unavailable_error(
     reason: BackgroundUnavailable,
 ) -> cua_driver_core::protocol::ToolResult {
     let detail = reason.detail();
-    cua_driver_core::protocol::ToolResult::error(format!(
-        "Background delivery is not available: {detail}. Retry this action with \
-         delivery_mode:\"foreground\"; Cua Driver will activate the target for \
-         the action and restore the previous foreground afterward."
-    ))
-    .with_structured(serde_json::json!({
-        "code": reason.code(),
-        "detail": detail,
-        "suggestion": "Retry this action with delivery_mode:\"foreground\".",
-        "escalation": {
-            "recommended": "foreground",
-            "reason": "background input is unavailable on this surface; retry this \
-                       action with delivery_mode:\"foreground\".",
-        },
-    }))
+    cua_driver_core::delivery::background_unavailable_result(
+        format!(
+            "Background delivery is not available: {detail}. Retry this action with \
+             delivery_mode:\"foreground\"; Cua Driver will activate the target window, \
+             confirm it holds the input focus, and deliver real input to it."
+        ),
+        reason.code(),
+        "background input is unavailable on this surface; retry this \
+         action with delivery_mode:\"foreground\".",
+        serde_json::json!({ "detail": detail }),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn delivery_mode_parses_known_values() {
-        let j = |s: &str| serde_json::json!({"delivery_mode": s});
-        assert_eq!(
-            DeliveryMode::from_args(&j("background")),
-            DeliveryMode::Background
-        );
-        assert_eq!(
-            DeliveryMode::from_args(&j("foreground")),
-            DeliveryMode::Foreground
-        );
-        // Case-insensitive, matching macOS / Windows.
-        assert_eq!(
-            DeliveryMode::from_args(&j("Foreground")),
-            DeliveryMode::Foreground
-        );
-    }
-
-    #[test]
-    fn delivery_mode_defaults_to_background() {
-        // Missing field, garbage value, null, and the removed legacy "auto" all
-        // resolve to Background — the no-foreground-by-default contract.
-        assert_eq!(
-            DeliveryMode::from_args(&serde_json::json!({})),
-            DeliveryMode::Background
-        );
-        assert_eq!(
-            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "garbage"})),
-            DeliveryMode::Background
-        );
-        assert_eq!(
-            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": "auto"})),
-            DeliveryMode::Background
-        );
-        assert_eq!(
-            DeliveryMode::from_args(&serde_json::json!({"delivery_mode": null})),
-            DeliveryMode::Background
-        );
-    }
 
     #[test]
     fn delivery_mode_schema_advertises_two_modes() {
@@ -220,34 +145,5 @@ mod tests {
             .as_str()
             .expect("delivery_mode description");
         assert!(!description.contains("bring_to_front"));
-    }
-
-    #[test]
-    fn background_unavailable_error_carries_code() {
-        let r = background_unavailable_error(BackgroundUnavailable::NoLibeiBackend);
-        assert_eq!(r.is_error, Some(true));
-        assert_eq!(
-            r.structured_content.as_ref().unwrap()["code"],
-            serde_json::json!("background_unavailable")
-        );
-        let text = match &r.content[0] {
-            cua_driver_core::protocol::Content::Text { text, .. } => text,
-            _ => panic!("expected text content"),
-        };
-        let structured = r.structured_content.as_ref().unwrap();
-        assert!(text.contains("Retry this action with delivery_mode:\"foreground\""));
-        assert!(!text.contains("bring_to_front"));
-        assert_eq!(
-            structured["suggestion"].as_str(),
-            Some("Retry this action with delivery_mode:\"foreground\".")
-        );
-        assert_eq!(
-            structured["escalation"]["recommended"].as_str(),
-            Some("foreground")
-        );
-        assert!(!structured["escalation"]["reason"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("bring_to_front"));
     }
 }

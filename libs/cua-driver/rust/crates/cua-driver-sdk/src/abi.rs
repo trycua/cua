@@ -1121,6 +1121,9 @@ mod ffi {
             out_operation: *mut *mut Operation,
             out_error: *mut CuaDriverBuffer,
         ) -> CuaDriverStatus;
+        // Declared for parity with the exported surface; in-process
+        // shutdown runs on the caller's runtime (NativeAbiDriver::shutdown).
+        #[allow(dead_code)]
         #[link_name = "cua_driver_shutdown_v1"]
         pub(super) fn shutdown(
             handle: *mut Handle,
@@ -1447,49 +1450,28 @@ impl NativeAbiDriver {
         })
     }
 
+    /// Shut down on the caller's runtime. The exported `cua_driver_shutdown_v1`
+    /// runs the same `DriverRuntime::shutdown` on the ABI's private executor,
+    /// whose blocking-pool threads then outlive the call; a host process that
+    /// exits right after shutdown would leave them running (Memcheck reports
+    /// them as possibly lost). In-process callers skip that hop.
     pub(crate) async fn shutdown(&self) -> Result<(), DriverError> {
-        let (receiver, guard) = {
-            let (sender, receiver) = oneshot::channel();
-            let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
-            let mut operation = ptr::null_mut();
-            let mut error = CuaDriverBuffer::empty();
-            let status = unsafe {
-                ffi::shutdown(
-                    self.raw_handle(),
-                    Some(rust_completion),
-                    context,
-                    &mut operation,
-                    &mut error,
-                )
-            };
-            if status != CuaDriverStatus::Ok {
-                unsafe { drop(Box::from_raw(context.cast::<CallbackContext>())) };
-                status_result(status, &mut error, "shutdown embedded runtime")?;
-                return Err(DriverError::Protocol {
-                    reason: "shutdown ABI invocation failed without an error".into(),
-                });
+        let runtime = {
+            let handle = *self.handle.lock().unwrap();
+            if handle.is_null() {
+                return Err(DriverError::Shutdown);
             }
-            (
-                receiver,
-                OperationGuard {
-                    operation,
-                    completed: false,
-                },
-            )
+            unsafe {
+                handle
+                    .cast::<CuaDriverHandle>()
+                    .as_ref()
+                    .expect("live ABI handle is non-null")
+                    .runtime
+                    .clone()
+            }
         };
-        let completed = receiver.await.map_err(|_| DriverError::Protocol {
-            reason: "shutdown ABI completion callback was dropped".into(),
-        })?;
-        guard.complete();
-        if completed.status == CuaDriverStatus::Ok {
-            Ok(())
-        } else {
-            Err(map_status(
-                completed.status,
-                completed.error,
-                "shutdown embedded runtime",
-            ))
-        }
+        runtime.shutdown().await;
+        Ok(())
     }
 }
 
@@ -1691,7 +1673,7 @@ mod tests {
 
     #[test]
     fn owned_buffers_and_handles_are_idempotently_released() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.blocking_lock();
         let mut buffer = CuaDriverBuffer::from_string("owned".into());
         unsafe {
             cua_driver_buffer_free_v1(&mut buffer);
@@ -1712,7 +1694,7 @@ mod tests {
 
     #[test]
     fn abi_can_own_two_runtime_handles_concurrently() {
-        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.blocking_lock();
         let mut first = ptr::null_mut();
         let mut second = ptr::null_mut();
         let mut first_error = CuaDriverBuffer::empty();

@@ -53,10 +53,40 @@ pub struct SdkAdapter {
     runtime_prefix: String,
     runtime_scope: String,
     _session_end_hook: cua_driver_core::session::SessionEndHookRegistration,
+    _session_revive_hook: cua_driver_core::session::SessionReviveHookRegistration,
     session_lifecycle: tokio::sync::Mutex<()>,
 }
 
 impl SdkAdapter {
+    pub fn create_envelope_receiver(
+        &self,
+        mode: cua_driver_sdk::SessionPermissionMode,
+    ) -> Result<
+        (
+            Arc<cua_driver_sdk::remote_receiver::DriverEnvelopeReceiver>,
+            String,
+        ),
+        String,
+    > {
+        // Only the trusted launcher selects this mode. The runtime's immutable
+        // ceiling still rejects incompatible sessions.
+        let public_session = format!("http-{}", uuid::Uuid::new_v4());
+        let options = TrustedSessionOptions {
+            public_session: public_session.clone(),
+            mode,
+            ttl_seconds: 3600,
+            idle_ttl_seconds: 300,
+            capability_manifest_path: None,
+            bounded_manifest_path: None,
+        };
+        cua_driver_sdk::remote_receiver::DriverEnvelopeReceiver::for_driver(
+            self.driver.clone(),
+            options,
+        )
+        .map(|receiver| (receiver, public_session))
+        .map_err(|error| error.to_string())
+    }
+
     pub async fn load(driver: Arc<CuaDriver>) -> anyhow::Result<Arc<Self>> {
         let tools_json = driver
             .list_tools_json()
@@ -91,6 +121,16 @@ impl SdkAdapter {
                 sessions.scopes.entry(public.to_owned()).or_default();
                 sessions.mark_ended(public);
             });
+        // Core also revives an idle-reclaimed unnamed session on its next
+        // call, not only through start_session, so follow every revival.
+        let revive_sessions = public_sessions.clone();
+        let revive_prefix = runtime_prefix.clone();
+        let session_revive_hook =
+            cua_driver_core::session::register_scoped_session_revive_hook(move |session| {
+                if let Some(public) = session.strip_prefix(&revive_prefix) {
+                    revive_sessions.lock().unwrap().ended.remove(public);
+                }
+            });
         Ok(Arc::new(Self {
             driver,
             tools_list,
@@ -98,6 +138,7 @@ impl SdkAdapter {
             runtime_prefix,
             runtime_scope,
             _session_end_hook: session_end_hook,
+            _session_revive_hook: session_revive_hook,
             session_lifecycle: tokio::sync::Mutex::new(()),
         }))
     }
@@ -231,12 +272,21 @@ impl SdkAdapter {
         Ok(value)
     }
 
+    /// Whether the legacy socket must refuse a call on this ended session.
+    /// An unnamed transport session reclaimed by the idle sweep is not
+    /// refused: core recreates it on the call.
     pub fn is_session_ended(&self, session: &str) -> bool {
-        self.public_sessions
+        if !self
+            .public_sessions
             .lock()
             .unwrap()
             .ended
             .contains_key(session)
+        {
+            return false;
+        }
+        let internal = format!("{}{session}", self.runtime_prefix);
+        !cua_driver_core::session::recreates_on_next_call(&internal, &internal)
     }
 
     pub fn mark_all_sessions_ended(&self) {

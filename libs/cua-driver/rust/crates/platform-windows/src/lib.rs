@@ -9,12 +9,17 @@
 //!
 //! ## Provenance
 //!
-//! The Windows accessibility-tree walk, app/window enumeration, UIA
-//! InvokePattern click, and ValuePattern set-value all derive from prior art in
-//! Interface-Agent (github.com/francedot/Interface-Agent, packages/windows, 2024).
-//! trope-cua (MIT, github.com/voctory/trope-cua) was a useful cross-reference for
-//! some of the details during this Rust implementation — thanks to Victor Vannara
-//! for that work.
+//! Derived in part from Interface-Agent (MIT) and trope-cua (MIT); see
+//! THIRD_PARTY_NOTICES.md.
+
+// Off Windows the crate still builds its stubs (so workspace-wide checks
+// compile on every host) but the Win32 code is cfg'd out, which strands the
+// shared helpers and parameters it uses. They are live on Windows, where these
+// lints stay enforced.
+#![cfg_attr(not(target_os = "windows"), allow(dead_code, unused_variables))]
+// Tool helpers return `Result<_, ToolResult>`: the error arm is the finished
+// tool reply (see the note in cua-driver-core), not a propagated error.
+#![allow(clippy::result_large_err)]
 
 use cua_driver_core::tool::ToolRegistry;
 
@@ -43,6 +48,28 @@ mod keycodes;
 // pass that lives in this commit).
 pub mod lparam;
 
+/// UIA / `WM_NCHITTEST` / `IDC_*` -> cursor shape tables for presence (pure,
+/// every host).
+pub mod pointer_shape_map;
+
+#[cfg(target_os = "windows")]
+pub mod pointer_shape;
+
+/// Install the Windows presence pointer-shape backend (UIA hit-test,
+/// `GetCursorInfo` readout, `SetCursorPos` warp) into
+/// `cua_driver_core::pointer_shape`. Returns false off Windows or when a
+/// backend was already installed.
+pub fn install_pointer_shape_backend() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        pointer_shape::install()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
 #[cfg(target_os = "windows")]
 pub mod win32;
 
@@ -51,6 +78,29 @@ pub mod history;
 
 #[cfg(target_os = "windows")]
 pub mod browser_platform;
+
+// Pure isolated-browser selection decision; cfg-independent so its unit
+// tests run on any host.
+#[cfg(any(target_os = "windows", test))]
+mod browser_isolated_selection;
+
+// Pure path normalization and reparse-point resolution for the isolated
+// browser installation check; cfg-independent so its unit tests run on any
+// host.
+#[cfg(any(target_os = "windows", test))]
+mod browser_installation_path;
+
+// Pure launch-token decision and command-line quoting for isolated browsers;
+// cfg-independent so its unit tests run on any host.
+#[cfg(any(target_os = "windows", test))]
+mod browser_launch_token;
+
+#[cfg(target_os = "windows")]
+mod browser_standard_user;
+
+// De-elevated `launch_app` for an elevated Driver (#3607).
+#[cfg(target_os = "windows")]
+pub mod standard_user_launch;
 
 #[cfg(target_os = "windows")]
 mod browser_consent_ui;
@@ -68,6 +118,7 @@ pub mod input;
 
 #[cfg(target_os = "windows")]
 pub mod capture;
+mod capture_admission;
 #[cfg(target_os = "windows")]
 mod clipboard;
 

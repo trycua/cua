@@ -76,9 +76,7 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "description": "Target window. Required for delivery_mode:\"foreground\" (the NSMenu activation needs a window). Does NOT itself raise the window — raising is gated on delivery_mode."
                 },
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id to send the chord to the frontmost application." },
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
@@ -95,7 +93,17 @@ fn def() -> &'static ToolDef {
 fn is_modifier(k: &str) -> bool {
     matches!(
         k.to_lowercase().as_str(),
-        "cmd" | "command" | "shift" | "option" | "alt" | "ctrl" | "control" | "fn"
+        "cmd"
+            | "command"
+            | "super"
+            | "meta"
+            | "win"
+            | "shift"
+            | "option"
+            | "alt"
+            | "ctrl"
+            | "control"
+            | "fn"
     )
 }
 
@@ -228,27 +236,15 @@ impl Tool for HotkeyTool {
         // Use the last non-modifier key; if there are multiple, treat earlier ones as extra keys.
         let key = non_modifiers.last().unwrap().clone();
         let key_display = raw_keys.join("+");
-        let element_token_arg = args.opt_str("element_token");
-        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "hotkey",
-        ) {
+        let window_id_arg = args.opt_u64("window_id");
+        let resolved = match self.state.snapshots.resolve(pid, &args) {
             Ok(resolved) => resolved,
             Err(error) => return error,
         };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id,
-                element_index,
-                via_token: _,
-            } => (Some(element_index), window_id),
+        let (element_index, window_id, element_guard) = resolved.into_parts(window_id_arg);
+        let window_id = match super::native_window_id(window_id) {
+            Ok(window_id) => window_id,
+            Err(error) => return error,
         };
         // delivery_mode gates whether we raise: background (default) never fronts
         // the window — passing window_id only targets the combo. foreground is the
@@ -260,26 +256,10 @@ impl Tool for HotkeyTool {
         let py = args.get("y").and_then(|value| value.as_f64());
         if px.is_some() && py.is_some() && element_index.is_some() {
             return ToolResult::error(
-                "Pass either element_index (ax) or x,y (px) to hotkey, not both.",
+                "Pass either element_token (ax) or x,y (px) to hotkey, not both.",
             );
         }
 
-        let element_guard = if let (Some(index), Some(window_id)) = (element_index, window_id) {
-            match self
-                .state
-                .element_cache
-                .get_element_retained(pid, window_id, index)
-            {
-                Some(guard) => Some(guard),
-                None => {
-                    return ToolResult::error(format!(
-                        "Element index {index} not found. Call get_window_state first."
-                    ));
-                }
-            }
-        } else {
-            None
-        };
         let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
 
         let screen_sharing_target = crate::input::keyboard::is_screen_sharing_pid(pid);
@@ -327,32 +307,38 @@ impl Tool for HotkeyTool {
         // ladder for web areas. The request remains snapshot-bound AX
         // targeting; only the focus transport falls back through a hit-test
         // and, on the explicit foreground rung, a real click when required.
-        let web_ax_focus_xy =
-            if let (Some(ptr), Some(wid), Some(index)) = (element_ptr, window_id, element_index) {
-                let is_web = tokio::task::spawn_blocking(move || {
-                    super::type_text::target_in_web_area(pid, Some((ptr, Some(index))), Some(wid))
+        let web_ax_focus_xy = if let (Some(guard), Some(wid), Some(index)) =
+            (element_guard.clone(), window_id, element_index)
+        {
+            let web_guard = guard.clone();
+            let is_web = tokio::task::spawn_blocking(move || {
+                super::type_text::target_in_web_area(
+                    pid,
+                    Some((web_guard.as_ptr(), Some(index))),
+                    Some(wid),
+                )
+            })
+            .await
+            .unwrap_or(true);
+            if is_web {
+                tokio::task::spawn_blocking(move || unsafe {
+                    let (screen_x, screen_y) = crate::ax::bindings::element_screen_center(
+                        guard.as_ptr() as crate::ax::bindings::AXUIElementRef,
+                    )?;
+                    let frame = super::px_frame::resolve_window_px_frame(wid).ok()?;
+                    Some((
+                        (screen_x - frame.bounds.x) * frame.scale,
+                        (screen_y - frame.bounds.y) * frame.scale,
+                    ))
                 })
                 .await
-                .unwrap_or(true);
-                if is_web {
-                    tokio::task::spawn_blocking(move || unsafe {
-                        let (screen_x, screen_y) = crate::ax::bindings::element_screen_center(
-                            ptr as crate::ax::bindings::AXUIElementRef,
-                        )?;
-                        let frame = super::px_frame::resolve_window_px_frame(wid).ok()?;
-                        Some((
-                            (screen_x - frame.bounds.x) * frame.scale,
-                            (screen_y - frame.bounds.y) * frame.scale,
-                        ))
-                    })
-                    .await
-                    .unwrap_or(None)
-                } else {
-                    None
-                }
+                .unwrap_or(None)
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
         // PX form, plus the web-content AX fallback above: focus the field
         // before sending the combo. Foreground delivery still needs to front
@@ -391,6 +377,30 @@ impl Tool for HotkeyTool {
             }
         };
 
+        // A focus click already moved the cursor. Otherwise place a named
+        // session's cursor on the element, its remembered position, or the
+        // window centre, so a keyboard-first session stays visible.
+        if !coordinate_focus {
+            let element_center = match element_guard.clone() {
+                Some(guard) => tokio::task::spawn_blocking(move || unsafe {
+                    crate::ax::bindings::element_screen_center(
+                        guard.as_ptr() as crate::ax::bindings::AXUIElementRef
+                    )
+                })
+                .await
+                .ok()
+                .flatten(),
+                None => None,
+            };
+            super::cursor_tools::position_keyboard_cursor(
+                &self.state,
+                &args,
+                window_id,
+                element_center,
+            )
+            .await;
+        }
+
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // Hotkeys like Cmd+N, Cmd+W, Cmd+T explicitly open/close
         // windows. The NSMenu path also briefly activates the target via
@@ -406,6 +416,7 @@ impl Tool for HotkeyTool {
             "hotkey.CGEvent",
             || async move {
                 tokio::task::spawn_blocking(move || {
+                    let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
                     let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                     match (fg, coordinate_focus, window_id, element_ptr) {
                         // Chrome's native omnibox and Chromium/Electron inputs
@@ -479,7 +490,7 @@ impl Tool for HotkeyTool {
         )
         .await;
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
+        let changes = super::finish_window_observation(snapshot).await;
 
         match result {
             Ok(Ok(())) => {
@@ -526,9 +537,7 @@ mod tests {
         let properties = def().input_schema["properties"]
             .as_object()
             .expect("hotkey properties");
-        for field in ["element_index", "element_token", "snapshot_id"] {
-            assert!(properties.contains_key(field), "missing {field} schema");
-        }
+        assert!(properties.contains_key("element_token"));
     }
 
     #[test]

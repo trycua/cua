@@ -2,7 +2,9 @@ packages:
   - .
 
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true
+  "@mongodb-js/zstd": false
+  node-liblzma: false
 
 onlyBuiltDependencies:
   - esbuild

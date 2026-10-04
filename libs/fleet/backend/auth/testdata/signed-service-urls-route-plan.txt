@@ -1,0 +1,8 @@
+All
+  Leaf query=data.authz_base.allow source=registered:authz-base
+  Leaf query=data.authz_signed_service_urls.allow source=multi["registered:authz","registered:authz-signed-service-urls"]
+  Any
+    Leaf query=data.authz_ownership.claim_allow source=multi["registered:authz","registered:authz-ownership"]
+    All
+      Leaf query=data.authz_ownership.probe_eligible source=multi["registered:authz","registered:authz-ownership"]
+      Leaf query=data.authz_ownership.rbac_allow source=multi["registered:authz","registered:authz-ownership"] facts=namespace_rbac@registered-facts:namespace-rbac

@@ -44,6 +44,15 @@ chat_enabled {
 	input.flags.chat_subs[_] == input.user.sub
 }
 
+# Usage preview is restricted to administrators and the initial internal rollout set.
+usage_enabled {
+	is_admin
+}
+
+usage_enabled {
+	input.flags.usage_subs[_] == input.user.sub
+}
+
 # ── Token families ──────────────────────────────────────────────────────────
 #
 # Three families reach the policy, distinguished by `azp`. A fourth kind of
@@ -62,10 +71,24 @@ is_interactive_client {
 	input.user.azp == "cua-cli"
 }
 
+is_interactive_client {
+	input.user.azp == "cua-desktop"
+}
+
 # Per-key clients are Keycloak service accounts bound to one namespace by a
 # hardcoded `namespace` claim. Their sub owns nothing on its own, so every
 # surface that accepts them checks that claim against the route's parameters.
 is_per_key_client {
+	key_client_prefix := object.get(input.user, "key_client_prefix", "key-")
+	key_client_prefix != ""
+	startswith(input.user.azp, key_client_prefix)
+}
+
+# A default-prefix service account must not fall through as an ordinary user
+# when the deployment has moved per-key clients to another configured prefix.
+is_legacy_per_key_client {
+	key_client_prefix := object.get(input.user, "key_client_prefix", "key-")
+	key_client_prefix != "key-"
 	startswith(input.user.azp, "key-")
 }
 

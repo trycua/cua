@@ -25,8 +25,9 @@ pub struct WindowPxFrame {
 
 impl WindowPxFrame {
     /// Window-local capture pixels → `(screen_x, screen_y, local_pt_x,
-    /// local_pt_y)`. The local-point pair is what
-    /// `CGEventSetWindowLocation` needs for background delivery.
+    /// local_pt_y)`. Public PID event routes use the local-point pair for
+    /// `CGEventSetWindowLocation`; the SkyLight PID/window-routed click keeps
+    /// the screen-point pair because WindowServer derives local coordinates.
     pub fn to_screen(&self, cx: f64, cy: f64) -> (f64, f64, f64, f64) {
         let lx = cx / self.scale;
         let ly = cy / self.scale;

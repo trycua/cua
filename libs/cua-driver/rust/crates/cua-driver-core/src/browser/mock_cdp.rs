@@ -34,6 +34,9 @@ pub(crate) struct MockEvent {
 pub(crate) struct MockReply {
     pub events: Vec<MockEvent>,
     pub result: Result<Value, (i64, String)>,
+    /// Emit the events and then never answer, like a renderer whose main
+    /// thread is blocked inside a modal dialog.
+    pub hang: bool,
 }
 
 impl MockReply {
@@ -41,6 +44,16 @@ impl MockReply {
         Self {
             events: Vec::new(),
             result: Ok(result),
+            hang: false,
+        }
+    }
+
+    /// A command whose reply never comes; any attached events still go out.
+    pub fn hang() -> Self {
+        Self {
+            events: Vec::new(),
+            result: Ok(json!({})),
+            hang: true,
         }
     }
 
@@ -48,6 +61,7 @@ impl MockReply {
         Self {
             events: Vec::new(),
             result: Err((code, message.to_owned())),
+            hang: false,
         }
     }
 
@@ -116,6 +130,9 @@ impl MockCdpServer {
                             if ws.send(Message::Text(frame.to_string())).await.is_err() {
                                 return;
                             }
+                        }
+                        if reply.hang {
+                            continue;
                         }
                         let mut response = match reply.result {
                             Ok(result) => json!({ "id": id, "result": result }),

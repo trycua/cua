@@ -371,6 +371,16 @@ pub trait BrowserPlatform: Send + Sync {
         window_id: u64,
     ) -> Result<NativeWindowInfo, BrowserRefusal>;
 
+    /// Return the exact native window id only when `pid` owns one and only
+    /// one browser surface. This is intentionally narrower than public window
+    /// discovery: callers learn nothing about other processes (or even the
+    /// titles/geometry of this process), and ambiguity returns `None` rather
+    /// than selecting heuristically. Platforms that cannot prove this leave
+    /// the value unavailable.
+    async fn sole_exact_native_window_id(&self, _pid: i64) -> Result<Option<u64>, BrowserRefusal> {
+        Ok(None)
+    }
+
     /// Prove whether `window_id` is the only native top-level window owned by
     /// `pid`. `Some(true)` is an exact platform-attested cardinality proof;
     /// `Some(false)` means another window exists; `None` means this window

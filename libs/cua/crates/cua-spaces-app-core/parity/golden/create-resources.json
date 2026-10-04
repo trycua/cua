@@ -1191,7 +1191,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.4 GB)",
+          "Disk: 64 GB (download 5.7 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1249,7 +1249,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.4 GB)",
+          "Disk: 64 GB (download 5.7 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1303,7 +1303,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.4 GB)",
+          "Disk: 64 GB (download 5.7 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1361,7 +1361,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.4 GB)",
+          "Disk: 64 GB (download 5.7 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1384,7 +1384,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "150 GB (150-500) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "150 GB (150-500) ~Uses about 32 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
           "os: System",
           "image: Image [ghcr.io/org/app:tag]",
@@ -1442,7 +1442,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "150 GB (150-500) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "150 GB (150-500) ~Uses about 32 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -1497,7 +1497,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "200 GB (150-500) [Reset] ~The disk will be resized to 200 GB after downloading. Uses about 33 GB on this Mac at first, up to 200 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "200 GB (150-500) [Reset] ~The disk will be resized to 200 GB after downloading. Uses about 32 GB on this Mac at first, up to 200 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -1552,7 +1552,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "150 GB (150-500) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "150 GB (150-500) ~Uses about 32 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -1607,7 +1607,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "200 GB (150-500) [Reset] ~The disk will be resized to 200 GB after downloading. Uses about 33 GB on this Mac at first, up to 200 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "200 GB (150-500) [Reset] ~The disk will be resized to 200 GB after downloading. Uses about 32 GB on this Mac at first, up to 200 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
           "cpus: CPU cores",
           "memory: Memory",
@@ -1662,7 +1662,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "200 GB (150-500) [Reset] ~The disk will be resized to 200 GB after downloading. Uses about 33 GB on this Mac at first, up to 200 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "200 GB (150-500) [Reset] ~The disk will be resized to 200 GB after downloading. Uses about 32 GB on this Mac at first, up to 200 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
           "name: Name [Optional]",
           "open-when-ready: Open when ready"
@@ -1716,7 +1716,7 @@
         },
         "canContinue": true,
         "cpusText": "4 cores",
-        "disk": "200 GB (150-500) [Reset] ~The disk will be resized to 200 GB after downloading. Uses about 33 GB on this Mac at first, up to 200 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "disk": "200 GB (150-500) [Reset] ~The disk will be resized to 200 GB after downloading. Uses about 32 GB on this Mac at first, up to 200 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [],
         "gpu": null,
         "image": "ghcr.io/trycua/macos:26",

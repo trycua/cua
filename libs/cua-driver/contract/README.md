@@ -109,7 +109,7 @@ Compatibility is tracked separately at each boundary:
 
 | Field | Current | Meaning |
 | --- | --- | --- |
-| `contract_version` | `0.8.0` | Generated manifest and typed SDK shape |
+| `contract_version` | `0.9.0` | Generated manifest and typed SDK shape |
 | `tools_list_schema_version` | `1` | cua-driver `tools/list` extension shape |
 | `capability_version` | `1` | Additive capability-token vocabulary |
 | `mcp_protocol_version` | `2025-06-18` | Legacy `initialize.params.protocolVersion` and loopback HTTP compatibility version; modern stdio negotiation is endpoint-owned |

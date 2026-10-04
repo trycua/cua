@@ -4618,8 +4618,11 @@ fn run_upload(spec: &BrowserSpec) {
 fn run_pointer_actions(spec: &BrowserSpec) {
     let scenario = format!("{}-{}-standalone-pointer", std::env::consts::OS, spec.name);
     execute_case(case(&spec.name, "browser_pointer_actions"), |evidence| {
-        let mut fixture =
-            launch_browser_with_html(spec, &scenario, standalone_browser_completeness_html());
+        let html = standalone_browser_completeness_html().replace(
+            "</head>",
+            "<style>#scroll-tall { scroll-behavior: smooth; }</style></head>",
+        );
+        let mut fixture = launch_browser_with_html(spec, &scenario, html);
         *evidence = recording_evidence(fixture.driver.recording_dir());
         run_with_background_oracles(&mut fixture, |fixture| {
             let session = format!("standalone-pointer-{}", fixture.pid);
@@ -4686,12 +4689,41 @@ fn run_pointer_actions(spec: &BrowserSpec) {
                 "last_action=double_click",
             );
 
+            let scroll_ref = semantic_ref_by_name(&snapshot, "scroll-tall", "scroll");
+            let exhausted = fixture.driver.call(
+                "browser_pointer",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "ref": scroll_ref,
+                    "action": "scroll",
+                    "input_route": "dom_event",
+                    "delta_y": -240,
+                    "session": session,
+                }),
+            );
+            assert_eq!(
+                exhausted.action_effect(),
+                Some("refused"),
+                "{}",
+                exhausted.raw
+            );
+            assert!(
+                exhausted.text().contains("browser_action_unavailable"),
+                "{}",
+                exhausted.raw
+            );
+            assert_eq!(
+                fixture.server.text("lbl-scroll-offset").as_deref(),
+                Some("scroll_offset=0")
+            );
+
             let scrolled = fixture.driver.call(
                 "browser_pointer",
                 serde_json::json!({
                     "target_id": target,
                     "tab_id": tab,
-                    "ref": semantic_ref_by_name(&snapshot, "scroll-tall", "scroll"),
+                    "ref": scroll_ref,
                     "action": "scroll",
                     "input_route": "dom_event",
                     "delta_y": 240,

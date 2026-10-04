@@ -58,10 +58,11 @@ fn def() -> &'static ToolDef {
              date pickers, native text fields that expose settable AXValue).\n\
              \n\
              - **A file's name as Finder lists it** (a text field carrying \
-             AXFilename and a file URL, not being edited): refused with \
-             `file_name_needs_rename`, because the write changes only what \
-             Finder shows, never the file. The refusal names the keyboard \
-             route that renames it.\n\
+             AXFilename and a file URL, not being edited) or **as Finder's Get \
+             Info window shows it** (Finder's text field with AXIdentifier \
+             `Name`, not being edited): refused with `file_name_needs_rename`, \
+             because the write changes only what Finder shows, never the file. \
+             The refusal names the keyboard route that renames it.\n\
              \n\
              For free-form text entry into web inputs, prefer `type_text_chars` \
              which synthesises key events — AXValue writes are ignored by WebKit."
@@ -146,13 +147,21 @@ impl Tool for SetValueTool {
 
         // A file's name as Finder lists it takes an AXValue write and reads it
         // back, but the file is never renamed. Refuse before anything moves.
+        // Finder's Get Info Name field does the same.
         let name_guard = element_guard.clone();
-        if let Ok(true) = tokio::task::spawn_blocking(move || unsafe {
-            file_name_cell(name_guard.as_ptr() as AXUIElementRef)
+        if let Ok(Some(reason)) = tokio::task::spawn_blocking(move || unsafe {
+            let element = name_guard.as_ptr() as AXUIElementRef;
+            if file_name_cell(element) {
+                Some(LIST_RENAME_ROUTE)
+            } else if get_info_name_field(pid, element) {
+                Some(GET_INFO_RENAME_ROUTE)
+            } else {
+                None
+            }
         })
         .await
         {
-            return file_name_needs_rename(pid, window_id);
+            return file_name_needs_rename(pid, window_id, reason);
         }
 
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
@@ -254,13 +263,47 @@ fn is_file_name_cell(filename: Option<&str>, url: Option<&str>, focused: Option<
         && focused != Some(true)
 }
 
-fn file_name_needs_rename(pid: i32, window_id: u32) -> ToolResult {
-    let reason = "This is a file's name as the list shows it. Writing its AXValue changes only \
-                  what the list shows, never the file, so nothing was written. To rename the \
-                  file: click this element to select the item, then with Finder frontmost send \
-                  press_key return, hotkey cmd+a (Finder selects the name without its \
-                  extension), type_text the full new name, and press_key return, each with \
-                  scope:\"desktop\". Then check the new name in a fresh get_window_state.";
+/// Whether `element` is the Name & Extension field of Finder's Get Info
+/// window. It names no file through AXFilename or AXURL, so `file_name_cell`
+/// misses it, yet an AXValue write there renames nothing either.
+unsafe fn get_info_name_field(pid: i32, element: AXUIElementRef) -> bool {
+    is_get_info_name_field(
+        crate::apps::bundle_id_for_pid(pid).as_deref(),
+        copy_string_attr(element, "AXRole").as_deref(),
+        copy_string_attr(element, "AXIdentifier").as_deref(),
+        copy_bool_attr(element, "AXFocused"),
+    )
+}
+
+fn is_get_info_name_field(
+    bundle_id: Option<&str>,
+    role: Option<&str>,
+    identifier: Option<&str>,
+    focused: Option<bool>,
+) -> bool {
+    bundle_id == Some("com.apple.finder")
+        && role == Some("AXTextField")
+        && identifier == Some("Name")
+        && focused != Some(true)
+}
+
+const LIST_RENAME_ROUTE: &str = "This is a file's name as the list shows it. Writing its AXValue \
+    changes only what the list shows, never the file, so nothing was written. To rename the \
+    file: click this element to select the item, then with Finder frontmost send press_key \
+    return, hotkey cmd+a (Finder selects the name without its extension), type_text the full \
+    new name, and press_key return, each with scope:\"desktop\". Then check the new name in a \
+    fresh get_window_state.";
+
+const GET_INFO_RENAME_ROUTE: &str = "This is the Name & Extension field of Finder's Get Info \
+    window. Writing its AXValue changes only what the field shows, never the file, so nothing \
+    was written. To rename the file: take a fresh get_window_state of this window and click the \
+    field's centre in its screenshot pixels (pass its capture_id), then hotkey cmd+a, type_text \
+    the full new name with its extension, and press_key return, each with \
+    delivery_mode:\"foreground\" on this window. A changed extension makes Finder ask for \
+    confirmation in a dialog first. Then check the new name in a fresh listing of the folder; \
+    this window's title changes with it.";
+
+fn file_name_needs_rename(pid: i32, window_id: u32, reason: &str) -> ToolResult {
     ToolResult::error(format!(
         "set_value refused ({FILE_NAME_NEEDS_RENAME}): {reason}"
     ))
@@ -699,7 +742,8 @@ fn hex_digit(n: u8) -> char {
 mod tests {
     use super::{
         apply_surface_trust, apply_verification_label, classify_write, file_name_needs_rename,
-        is_file_name_cell, SetValueOutcome,
+        is_file_name_cell, is_get_info_name_field, SetValueOutcome, GET_INFO_RENAME_ROUTE,
+        LIST_RENAME_ROUTE,
     };
 
     #[test]
@@ -726,8 +770,71 @@ mod tests {
     }
 
     #[test]
+    fn get_info_name_field_is_refused_and_its_neighbours_are_not() {
+        const FINDER: Option<&str> = Some("com.apple.finder");
+        // (bundle id, role, AXIdentifier, AXFocused, refused). Identifiers are
+        // the ones Finder reported on macOS 26.4.
+        let cases = [
+            (FINDER, "AXTextField", Some("Name"), Some(false), true),
+            (FINDER, "AXTextField", Some("Name"), None, true),
+            // A real click starts an edit session; Return then commits an
+            // AXValue write, so the focused field stays writable.
+            (FINDER, "AXTextField", Some("Name"), Some(true), false),
+            // The "Name & Extension" disclosure triangle shares the identifier.
+            (FINDER, "AXDisclosureTriangle", Some("Name"), None, false),
+            // Tags field, list inline rename editor, list name cell.
+            (FINDER, "AXTextField", Some("_NS:34"), None, false),
+            (
+                FINDER,
+                "AXTextField",
+                Some("ShrinkToFit Text Field"),
+                Some(true),
+                false,
+            ),
+            (FINDER, "AXTextField", None, Some(false), false),
+            (FINDER, "AXTextArea", Some("Comments"), None, false),
+            // The same field shape in another app.
+            (
+                Some("com.example.notes"),
+                "AXTextField",
+                Some("Name"),
+                None,
+                false,
+            ),
+            (None, "AXTextField", Some("Name"), None, false),
+        ];
+        for (bundle, role, identifier, focused, refused) in cases {
+            assert_eq!(
+                is_get_info_name_field(bundle, Some(role), identifier, focused),
+                refused,
+                "{bundle:?} {role} {identifier:?} {focused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn get_info_refusal_names_the_foreground_route() {
+        let result = file_name_needs_rename(7, 42, GET_INFO_RENAME_ROUTE);
+        let data = result.structured_content.unwrap();
+        assert_eq!(data["code"], "file_name_needs_rename");
+        let reason = data["reason"].as_str().unwrap();
+        for needed in [
+            "Get Info",
+            "nothing was written",
+            "screenshot pixels",
+            "capture_id",
+            "cmd+a",
+            "type_text",
+            "return",
+            "delivery_mode:\"foreground\"",
+        ] {
+            assert!(reason.contains(needed), "missing {needed:?}: {reason}");
+        }
+    }
+
+    #[test]
     fn file_name_refusal_names_the_rename_route() {
-        let result = file_name_needs_rename(7, 42);
+        let result = file_name_needs_rename(7, 42, LIST_RENAME_ROUTE);
         assert_eq!(result.is_error, Some(true));
         let data = result.structured_content.unwrap();
         assert_eq!(data["code"], "file_name_needs_rename");

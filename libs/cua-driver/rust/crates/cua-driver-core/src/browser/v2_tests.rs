@@ -2062,7 +2062,7 @@ async fn stale_profile_path_redials_only_the_exact_endpoint() {
     let f = fixture().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    let server = tokio::spawn(async move {
+    let mut server = tokio::spawn(async move {
         let mut paths = Vec::new();
         for _ in 0..2 {
             let (stream, _) = listener.accept().await.unwrap();
@@ -2094,18 +2094,20 @@ async fn stale_profile_path_redials_only_the_exact_endpoint() {
                 detail: None,
             },
         })));
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        GetBrowserStateTool::new(f.engine.clone())
-            .invoke(json!({ "pid": 1, "window_id": 7, "session": SESSION })),
-    )
-    .await
-    .unwrap();
+    let exchange = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let result = GetBrowserStateTool::new(f.engine.clone())
+            .invoke(json!({ "pid": 1, "window_id": 7, "session": SESSION }))
+            .await;
+        (result, (&mut server).await.unwrap())
+    })
+    .await;
+    server.abort();
+    let (result, paths) = exchange.expect("both exact-path attempts must finish");
     assert_eq!(
         structured(&result)["refusal"]["code"],
         "browser_route_unavailable"
     );
-    assert_eq!(server.await.unwrap(), ["/devtools/browser/stale"; 2]);
+    assert_eq!(paths, ["/devtools/browser/stale"; 2]);
     assert!(f.state.lock().unwrap().calls.is_empty());
 }
 

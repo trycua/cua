@@ -40,6 +40,7 @@ pub(crate) fn job_pid(print: &str) -> Option<u32> {
 }
 
 /// `gui/<uid>/<label>`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn target(uid: u32, label: &str) -> String {
     format!("gui/{uid}/{label}")
 }

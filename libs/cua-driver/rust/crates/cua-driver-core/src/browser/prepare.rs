@@ -1354,6 +1354,58 @@ impl BrowserEngine {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn spawned_attestation_retries_absence_but_propagates_profile_errors() {
+        use super::super::types::EndpointTransport;
+        use super::super::v2_tests::fixture;
+        for case in ["missing", "wrong_url", "malformed", "unreadable"] {
+            let f = fixture().await;
+            let endpoint = OwnedEndpoint {
+                ws_url: "ws://127.0.0.1:9222/devtools/browser/expected".into(),
+                http_port: Some(9222),
+                transport: EndpointTransport::DevToolsActivePort,
+                ownership: EndpointOwnershipProof {
+                    method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
+                    owner_pid: 1,
+                    listener_pid: None,
+                    detail: None,
+                },
+            };
+            let first = match case {
+                "missing" => Ok(None),
+                "wrong_url" => {
+                    let mut wrong = endpoint.clone();
+                    wrong.ws_url.push_str("-host");
+                    Ok(Some(wrong))
+                }
+                "malformed" => Err(refusal(
+                    BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    "malformed second read",
+                )),
+                _ => Err(refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "unreadable second read",
+                )),
+            };
+            f.state.lock().unwrap().endpoint_responses = [first, Ok(Some(endpoint.clone()))].into();
+            let result = attest_spawned_endpoint(&f.engine, 1, endpoint.clone()).await;
+            if matches!(case, "missing" | "wrong_url") {
+                assert_eq!(result.unwrap().ws_url, endpoint.ws_url);
+                assert_eq!(f.state.lock().unwrap().endpoint_discovery_count, 2);
+            } else {
+                assert_eq!(
+                    result.unwrap_err().code,
+                    if case == "malformed" {
+                        BrowserRefusalCode::BrowserEndpointOwnerMismatch
+                    } else {
+                        BrowserRefusalCode::BrowserRouteUnavailable
+                    }
+                );
+                assert_eq!(f.state.lock().unwrap().endpoint_discovery_count, 1);
+            }
+        }
+    }
+
     struct DropSignal(Arc<std::sync::atomic::AtomicBool>);
 
     impl Drop for DropSignal {

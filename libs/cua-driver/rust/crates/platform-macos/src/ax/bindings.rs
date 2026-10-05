@@ -607,6 +607,21 @@ pub unsafe fn copy_element_attr(
     Some(value as AXUIElementRef)
 }
 
+/// Whether `element` no longer exists: a read answers `kAXErrorInvalidUIElement`.
+///
+/// # Safety
+///
+/// `element` must be a valid (retained) `AXUIElementRef`.
+pub unsafe fn element_destroyed(element: AXUIElementRef) -> bool {
+    let attr = CFStr::new("AXRole");
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if !value.is_null() {
+        CFRelease(value);
+    }
+    err == kAXErrorInvalidUIElement
+}
+
 /// Perform an AX action using a string attribute name.
 ///
 /// # Safety

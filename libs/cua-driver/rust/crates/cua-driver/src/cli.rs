@@ -4651,9 +4651,10 @@ pub fn run_dump_docs_with_type(tools_list: &serde_json::Value, pretty: bool, doc
     println!("{}", out.unwrap_or_else(|_| "{}".into()));
 }
 
-/// `cua-driver diagnose` — print a paste-able bundle-path / install-layout / TCC report.
+/// `cua-driver diagnose` — print a paste-able platform diagnostic report.
 ///
-/// Mirrors Swift `DiagnoseCommand`. Covers:
+/// Windows reuses the native doctor probes and reports named-pipe availability.
+/// The macOS report mirrors Swift `DiagnoseCommand`. Covers:
 ///   - running process identity (path, pid, version)
 ///   - codesign info (cdhash, team-id, authority) via `codesign -dvvv`
 ///   - AX + screen recording TCC status (check_permissions tool)
@@ -4661,15 +4662,56 @@ pub fn run_dump_docs_with_type(tools_list: &serde_json::Value, pretty: bool, doc
 ///   - TCC DB rows for com.trycua.driver (sqlite3, best-effort)
 ///   - config + state paths with existence booleans
 pub fn run_diagnose_cmd() {
-    let sections = [
-        diagnose_runtime_section(),
-        diagnose_signature_section(),
-        diagnose_tcc_section(),
-        diagnose_install_layout_section(),
-        diagnose_tcc_db_section(),
-        diagnose_config_paths_section(),
-    ];
-    println!("{}", sections.join("\n\n"));
+    #[cfg(target_os = "windows")]
+    {
+        let socket = crate::serve::default_socket_path();
+        println!(
+            "{}",
+            windows_diagnose_report(
+                &diagnose_runtime_section(),
+                &crate::doctor::run(),
+                &socket,
+                crate::serve::is_daemon_listening(&socket),
+            )
+        );
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let sections = [
+            diagnose_runtime_section(),
+            diagnose_signature_section(),
+            diagnose_tcc_section(),
+            diagnose_install_layout_section(),
+            diagnose_tcc_db_section(),
+            diagnose_config_paths_section(),
+        ];
+        println!("{}", sections.join("\n\n"));
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_diagnose_report(
+    runtime: &str,
+    report: &crate::doctor::Report,
+    socket: &str,
+    pipe_available: bool,
+) -> String {
+    // WaitNamedPipe only establishes whether an instance is available. It does
+    // not prove daemon health, and a busy pipe is not an absent daemon.
+    let availability = if pipe_available {
+        "available"
+    } else {
+        "not available (absent, busy, or inaccessible)"
+    };
+    format!(
+        "{runtime}\n\n\
+         ## daemon endpoint\n\
+         named pipe: {socket}\n\
+         pipe instance: {availability}\n\n\
+         ## Windows diagnostics\n\
+         {}",
+        report.to_text().trim_end()
+    )
 }
 
 fn diagnose_runtime_section() -> String {
@@ -4691,6 +4733,7 @@ fn diagnose_runtime_section() -> String {
     )
 }
 
+#[cfg(not(target_os = "windows"))]
 fn diagnose_signature_section() -> String {
     let exe = std::env::current_exe()
         .ok()
@@ -4730,6 +4773,7 @@ fn diagnose_signature_section() -> String {
     )
 }
 
+#[cfg(not(target_os = "windows"))]
 fn diagnose_tcc_section() -> String {
     let socket = crate::serve::default_socket_path();
     let status = crate::serve::is_daemon_listening(&socket)
@@ -4771,6 +4815,7 @@ fn diagnose_tcc_section() -> String {
     )
 }
 
+#[cfg(not(target_os = "windows"))]
 fn diagnose_install_layout_section() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let mut lines = vec!["## install layout".to_owned()];
@@ -4827,6 +4872,7 @@ fn diagnose_install_layout_section() -> String {
     lines.join("\n")
 }
 
+#[cfg(not(target_os = "windows"))]
 fn diagnose_tcc_db_section() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let db = format!("{home}/Library/Application Support/com.apple.TCC/TCC.db");
@@ -4867,6 +4913,7 @@ fn diagnose_tcc_db_section() -> String {
     lines.join("\n")
 }
 
+#[cfg(not(target_os = "windows"))]
 fn diagnose_config_paths_section() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let paths: &[(&str, String)] = &[
@@ -5149,6 +5196,59 @@ fn first_sentence(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn windows_diagnose_preserves_native_probes_and_pipe_uncertainty() {
+        use crate::doctor::{Probe, Report};
+
+        let mut report = Report::default();
+        report.push(Probe::ok("home dir", r"C:\Users\Test User\.cua-driver"));
+        report.push(
+            Probe::warn(
+                "UI Automation",
+                "UI Automation desktop enumeration exceeded 4000ms",
+            )
+            .with_detail("Window tools will fall back to Win32-only enumeration."),
+        );
+        report.push(Probe::err("Screen capture", "D3D11 device unavailable"));
+
+        for (available, expected) in [
+            (true, "pipe instance: available"),
+            (
+                false,
+                "pipe instance: not available (absent, busy, or inaccessible)",
+            ),
+        ] {
+            let text = super::windows_diagnose_report(
+                "## running process\nversion: test",
+                &report,
+                r"\\.\pipe\cua-driver-local",
+                available,
+            );
+            assert!(text.contains(r"named pipe: \\.\pipe\cua-driver-local"));
+            assert!(text.contains(expected));
+            assert!(text.contains(r"[ok  ] home dir: C:\Users\Test User\.cua-driver"));
+            assert!(text.contains(
+                "[warn] UI Automation: UI Automation desktop enumeration exceeded 4000ms"
+            ));
+            assert!(text.contains("Window tools will fall back to Win32-only enumeration."));
+            assert!(text.contains("[err ] Screen capture: D3D11 device unavailable"));
+            for macos_only in [
+                "/Applications/",
+                "/tmp/",
+                "TCC",
+                "codesign",
+                "LaunchAgents",
+                "daemon unavailable",
+                "permissions grant",
+            ] {
+                assert!(
+                    !text.contains(macos_only),
+                    "Windows report contains {macos_only}: {text}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn cli_docs_json_examples_cover_every_command() {

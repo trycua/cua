@@ -964,6 +964,36 @@
               "dwell_after_click_ms": {
                 "type": "number"
               },
+              "effects": {
+                "properties": {
+                  "glow": {
+                    "type": "boolean"
+                  },
+                  "magnet": {
+                    "type": "boolean"
+                  },
+                  "ripple": {
+                    "type": "boolean"
+                  },
+                  "squish": {
+                    "type": "boolean"
+                  },
+                  "trail": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "trail",
+                  "glow",
+                  "magnet",
+                  "ripple",
+                  "squish"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
               "end_handle": {
                 "type": "number"
               },
@@ -978,6 +1008,25 @@
               },
               "start_handle": {
                 "type": "number"
+              },
+              "style": {
+                "enum": [
+                  "signature_arc",
+                  "spring_settle",
+                  "magnetic",
+                  "comet_swoop",
+                  "adaptive",
+                  "classic"
+                ],
+                "type": "string"
+              },
+              "timing": {
+                "enum": [
+                  "native",
+                  "fitts",
+                  "fixed"
+                ],
+                "type": "string"
               },
               "turn_radius": {
                 "type": "number"
@@ -4088,7 +4137,7 @@
     },
     {
       "name": "set_agent_cursor_motion",
-      "description": "Configure only movement physics and visibility timing for a session cursor.",
+      "description": "Configure the movement style, timing, effects and visibility timing for a session cursor.",
       "platforms": [
         "macos",
         "windows",
@@ -4108,14 +4157,14 @@
         "additionalProperties": false,
         "properties": {
           "arc_flow": {
-            "description": "Arc asymmetry: positive puts the apex near the destination, negative near the start.\nClamped to -1..1 (default 0).",
+            "description": "Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`:\npositive moves the apex toward the destination. Clamped to -1..1 (default 0).",
             "type": [
               "number",
               "null"
             ]
           },
           "arc_size": {
-            "description": "Sideways arc deflection as a fraction of the distance. Clamped to 0..1 (default 0.25).",
+            "description": "Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default)\nkeeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1.",
             "type": [
               "number",
               "null"
@@ -4128,15 +4177,60 @@
               "null"
             ]
           },
+          "effects": {
+            "additionalProperties": false,
+            "description": "Turn single effects on or off. An omitted effect keeps its current setting; null\nrestores the style's default.",
+            "properties": {
+              "glow": {
+                "description": "Soft glow around the cursor that grows with speed.",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "magnet": {
+                "description": "Target glow when the `magnetic` style locks on.",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "ripple": {
+                "description": "Ring that expands from the hotspot on click.",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "squish": {
+                "description": "Brief scale-down of the cursor on click.",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "trail": {
+                "description": "Short fading trail behind the cursor.",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "end_handle": {
-            "description": "Path control-point offset from the end, as a fraction of the distance. Clamped to 0..1\n(default 0.3).",
+            "description": "Arc control-point offset from the end, as a fraction of the distance, for\n`signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).",
             "type": [
               "number",
               "null"
             ]
           },
           "glide_duration_ms": {
-            "description": "Fixed glide duration in milliseconds. 0 (the default) uses speed-based timing. Clamped\nto 0..5000.",
+            "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` timing also fixes the duration. Clamped to 0..5000.",
             "type": [
               "number",
               "null"
@@ -4154,21 +4248,42 @@
             "type": "string"
           },
           "spring": {
-            "description": "Post-arrival spring damping: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1\n(default 0.72).",
+            "description": "Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped\nto 0.3..1 (default 0.72).",
             "type": [
               "number",
               "null"
             ]
           },
           "start_handle": {
-            "description": "Path control-point offset from the start, as a fraction of the distance. Clamped to\n0..1 (default 0.3).",
+            "description": "Arc control-point offset from the start, as a fraction of the distance, for\n`signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).",
             "type": [
               "number",
               "null"
             ]
           },
+          "style": {
+            "description": "Trajectory style. `signature_arc` (default) is one arc with a small follow-through;\n`spring_settle` lands with one soft bounce; `magnetic` is pulled into the target;\n`comet_swoop` is a wide arc with a short trail; `adaptive` picks a careful approach for\nsmall targets and a swoop for long moves; `classic` is the previous Dubins glide. When\nthe theme's reduced motion is on, every move is a short straight glide with no effects.",
+            "enum": [
+              "signature_arc",
+              "spring_settle",
+              "magnetic",
+              "comet_swoop",
+              "adaptive",
+              "classic"
+            ],
+            "type": "string"
+          },
+          "timing": {
+            "description": "`native` uses the style's own timing; `fitts` scales the move time with distance and\ntarget size; `fixed` uses glide_duration_ms (1430 ms when 0).",
+            "enum": [
+              "native",
+              "fitts",
+              "fixed"
+            ],
+            "type": "string"
+          },
           "turn_radius": {
-            "description": "Minimum turning radius of the glide path, in points; smaller turns tighter. Clamped to\n1..1000 (default 80).",
+            "description": "Minimum turning radius of the `classic` glide path, in points; smaller turns tighter.\nClamped to 1..1000 (default 80).",
             "type": [
               "number",
               "null"
@@ -4194,6 +4309,36 @@
               "dwell_after_click_ms": {
                 "type": "number"
               },
+              "effects": {
+                "properties": {
+                  "glow": {
+                    "type": "boolean"
+                  },
+                  "magnet": {
+                    "type": "boolean"
+                  },
+                  "ripple": {
+                    "type": "boolean"
+                  },
+                  "squish": {
+                    "type": "boolean"
+                  },
+                  "trail": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "trail",
+                  "glow",
+                  "magnet",
+                  "ripple",
+                  "squish"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
               "end_handle": {
                 "type": "number"
               },
@@ -4208,6 +4353,25 @@
               },
               "start_handle": {
                 "type": "number"
+              },
+              "style": {
+                "enum": [
+                  "signature_arc",
+                  "spring_settle",
+                  "magnetic",
+                  "comet_swoop",
+                  "adaptive",
+                  "classic"
+                ],
+                "type": "string"
+              },
+              "timing": {
+                "enum": [
+                  "native",
+                  "fitts",
+                  "fixed"
+                ],
+                "type": "string"
               },
               "turn_radius": {
                 "type": "number"

@@ -274,7 +274,11 @@ cua-driver get_agent_cursor_state '{"session":"research"}'
 ```
 
 `set_agent_cursor_enabled` hides or shows it; `set_agent_cursor_motion` tunes
-movement. Labels longer than 28 characters are shortened.
+movement: `style` picks the trajectory (`signature_arc` by default, or
+`spring_settle`, `magnetic`, `comet_swoop`, `adaptive`, `classic`), `timing`
+picks `native`, `fitts`, or `fixed`, and `effects` turns the trail, glow,
+magnet, ripple, and squish on or off. The shell shortcut is
+`cua-driver cursor motion --session research --style comet_swoop`. Labels longer than 28 characters are shortened.
 
 A custom theme is a dotLottie archive with a `cua/theme.json` manifest
 (`"schema": "cua.cursor-theme/2"`), 128×128 30 fps animations for all twelve

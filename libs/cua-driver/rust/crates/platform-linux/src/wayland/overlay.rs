@@ -471,17 +471,53 @@ fn frame_plan(
     (selected, targets)
 }
 
+/// Whether a global logical `[x, y, w, h]` effect rect overlaps an output.
+fn effect_rect_intersects_output(layout: &OutputLayout, [x, y, w, h]: [f64; 4]) -> bool {
+    let left = f64::from(layout.origin_x);
+    let top = f64::from(layout.origin_y);
+    w > 0.0
+        && h > 0.0
+        && x < left + f64::from(layout.width)
+        && x + w > left
+        && y < top + f64::from(layout.height)
+        && y + h > top
+}
+
+/// Outputs touched by any effect rect, beyond the one each cursor sits on.
+fn effect_spill_outputs(
+    layouts: &[OutputLayout],
+    effect_rects: impl IntoIterator<Item = [f64; 4]>,
+) -> HashSet<u32> {
+    let rects: Vec<[f64; 4]> = effect_rects.into_iter().collect();
+    layouts
+        .iter()
+        .filter(|layout| {
+            rects
+                .iter()
+                .any(|rect| effect_rect_intersects_output(layout, *rect))
+        })
+        .map(|layout| layout.id)
+        .collect()
+}
+
 fn visible_cores_for_output<'a>(
     cores: &'a CursorMap<RenderStateCore>,
     layouts: &[OutputLayout],
     output_id: u32,
 ) -> Vec<(&'a CursorKey, &'a RenderStateCore)> {
+    let output = layouts.iter().find(|layout| layout.id == output_id);
     let mut visible_cores: Vec<_> = cores
         .iter()
         .filter(|(_, core)| {
             core.is_revealed()
-                && select_output(layouts, core.pos.0, core.pos.1)
+                && (select_output(layouts, core.pos.0, core.pos.1)
                     .is_some_and(|selected| selected.id == output_id)
+                    // A cursor on another output whose trail or glow reaches
+                    // this one is painted here too, at this output's origin.
+                    || output.is_some_and(|layout| {
+                        core.effect_bounds()
+                            .is_some_and(|rect| effect_rect_intersects_output(layout, rect))
+                    }))
         })
         .collect();
     visible_cores.sort_by_key(|(left, _)| *left);
@@ -839,9 +875,8 @@ fn needs_frame_tick(core: &RenderStateCore) -> bool {
 }
 
 fn quiesce_hidden(core: &mut RenderStateCore) {
-    core.path = None;
-    core.spring = None;
-    core.spring_tgt = None;
+    core.cancel_motion();
+    core.click_age = None;
     core.click_t = None;
 }
 
@@ -875,12 +910,27 @@ fn redraw(
         .values()
         .filter(|core| core.is_revealed())
         .map(|core| core.pos);
-    let (selected, targets) = frame_plan(
+    let (mut selected, mut targets) = frame_plan(
         &layouts,
         &state.painted_outputs,
         &state.initialized_outputs,
         cursor_positions,
     );
+    // Each surface is a full-output buffer with full damage, so effects on the
+    // cursor's own output are drawn and erased with no extra bookkeeping. A
+    // trail or glow can spill onto a neighbouring output, though: paint those
+    // outputs too, and record them as painted so they are cleared next frame.
+    let effect_rects = state
+        .render
+        .cursors
+        .values()
+        .filter(|core| core.is_revealed())
+        .filter_map(|core| core.effect_bounds());
+    for id in effect_spill_outputs(&layouts, effect_rects) {
+        if selected.insert(id) && !targets.iter().any(|target| target.id == id) {
+            targets.push(FrameTarget { id });
+        }
+    }
 
     for target in targets {
         redraw_output(state, shm, qh, target, &layouts)?;
@@ -1396,6 +1446,7 @@ mod tests {
                 x: 400.0,
                 y: 300.0,
                 end_heading_radians: std::f64::consts::FRAC_PI_4,
+                target: None,
             },
         );
         let mut still = positioned_core();
@@ -1408,7 +1459,7 @@ mod tests {
         }
         assert_eq!(arrivals, vec!["mover".to_owned()]);
         assert!(
-            render.cursors["mover"].path.is_none(),
+            render.cursors["mover"].trajectory.is_none(),
             "the planned glide has ended"
         );
     }
@@ -1587,6 +1638,32 @@ mod tests {
     }
 
     #[test]
+    fn effects_spilling_across_an_output_edge_select_the_neighbour() {
+        let layouts = three_monitor_layout();
+        let first = layouts[0];
+        let right_edge = f64::from(first.origin_x) + f64::from(first.width);
+        let top = f64::from(first.origin_y);
+
+        // A trail straddling the edge between output 1 and its neighbour.
+        let straddle = [right_edge - 100.0, top + 10.0, 200.0, 50.0];
+        assert_eq!(
+            effect_spill_outputs(&layouts, Some(straddle)),
+            HashSet::from([1, 2]),
+            "the neighbour output must be painted too"
+        );
+
+        // An effect wholly inside output 1 touches no other output, and
+        // degenerate rects touch nothing.
+        let inside = [f64::from(first.origin_x) + 10.0, top + 10.0, 50.0, 50.0];
+        assert_eq!(
+            effect_spill_outputs(&layouts, Some(inside)),
+            HashSet::from([first.id])
+        );
+        assert!(effect_spill_outputs(&layouts, Some([0.0, 0.0, 0.0, 0.0])).is_empty());
+        assert!(effect_spill_outputs(&layouts, std::iter::empty()).is_empty());
+    }
+
+    #[test]
     fn hide_or_session_removal_clears_every_previously_painted_output() {
         let layouts = three_monitor_layout();
         let painted = HashSet::from([1, 2, 3]);
@@ -1684,11 +1761,12 @@ mod tests {
                 x: 50.0,
                 y: 50.0,
                 end_heading_radians: 0.0,
+                target: None,
             },
         ));
         let core = &render.cursors["session-a"];
         assert_eq!(core.pos, (2.0, 2.0));
-        assert!(core.path.is_some());
+        assert!(core.trajectory.is_some());
     }
 
     #[test]
@@ -1714,8 +1792,7 @@ mod tests {
         core.visible = false;
         quiesce_hidden(&mut core);
         assert!(core.click_t.is_none());
-        assert!(core.path.is_none());
-        assert!(core.spring.is_none());
+        assert!(core.trajectory.is_none());
         let cores = CursorMap::from([("cursor-a".to_owned(), core)]);
         assert_eq!(
             next_wait(&cores, false, false),

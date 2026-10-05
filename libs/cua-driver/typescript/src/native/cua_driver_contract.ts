@@ -1316,6 +1316,211 @@ const FfiConverterTypeClipboardWriteOutput = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * Per-effect overrides for the agent cursor. Unset fields are omitted on the wire, so they
+ * keep their current setting.
+ */
+export type CursorMotionEffects = {
+    /**
+     * Short fading trail behind the cursor.
+     */
+    trail?: boolean,
+    /**
+     * Soft glow around the cursor that grows with speed.
+     */
+    glow?: boolean,
+    /**
+     * Target glow when the `magnetic` style locks on.
+     */
+    magnet?: boolean,
+    /**
+     * Ring that expands from the hotspot on click.
+     */
+    ripple?: boolean,
+    /**
+     * Brief scale-down of the cursor on click.
+     */
+    squish?: boolean
+}
+
+/**
+ * Generated factory for {@link CursorMotionEffects} record objects.
+ */
+export const CursorMotionEffects = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorMotionEffects, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorMotionEffects>,
+    });
+})();
+
+const FfiConverterTypeCursorMotionEffects = (() => {
+    type TypeName = CursorMotionEffects;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                trail: FfiConverterOptionalBoolean.read(from),
+                glow: FfiConverterOptionalBoolean.read(from),
+                magnet: FfiConverterOptionalBoolean.read(from),
+                ripple: FfiConverterOptionalBoolean.read(from),
+                squish: FfiConverterOptionalBoolean.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalBoolean.write(value.trail, into);
+            FfiConverterOptionalBoolean.write(value.glow, into);
+            FfiConverterOptionalBoolean.write(value.magnet, into);
+            FfiConverterOptionalBoolean.write(value.ripple, into);
+            FfiConverterOptionalBoolean.write(value.squish, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalBoolean.allocationSize(value.trail) +
+             FfiConverterOptionalBoolean.allocationSize(value.glow) +
+             FfiConverterOptionalBoolean.allocationSize(value.magnet) +
+             FfiConverterOptionalBoolean.allocationSize(value.ripple) +
+             FfiConverterOptionalBoolean.allocationSize(value.squish);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * Effects in use after applying overrides to the style's defaults.
+ */
+export type CursorMotionEffectsOutput = {
+    trail: boolean,
+    glow: boolean,
+    magnet: boolean,
+    ripple: boolean,
+    squish: boolean
+}
+
+/**
+ * Generated factory for {@link CursorMotionEffectsOutput} record objects.
+ */
+export const CursorMotionEffectsOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorMotionEffectsOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorMotionEffectsOutput>,
+    });
+})();
+
+const FfiConverterTypeCursorMotionEffectsOutput = (() => {
+    type TypeName = CursorMotionEffectsOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                trail: FfiConverterBool.read(from),
+                glow: FfiConverterBool.read(from),
+                magnet: FfiConverterBool.read(from),
+                ripple: FfiConverterBool.read(from),
+                squish: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.trail, into);
+            FfiConverterBool.write(value.glow, into);
+            FfiConverterBool.write(value.magnet, into);
+            FfiConverterBool.write(value.ripple, into);
+            FfiConverterBool.write(value.squish, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.trail) +
+             FfiConverterBool.allocationSize(value.glow) +
+             FfiConverterBool.allocationSize(value.magnet) +
+             FfiConverterBool.allocationSize(value.ripple) +
+             FfiConverterBool.allocationSize(value.squish);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum CursorMotionStyle {
+    SignatureArc,
+    SpringSettle,
+    Magnetic,
+    CometSwoop,
+    Adaptive,
+    Classic
+}
+
+const FfiConverterTypeCursorMotionStyle = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = CursorMotionStyle;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return CursorMotionStyle.SignatureArc;
+                case 2: return CursorMotionStyle.SpringSettle;
+                case 3: return CursorMotionStyle.Magnetic;
+                case 4: return CursorMotionStyle.CometSwoop;
+                case 5: return CursorMotionStyle.Adaptive;
+                case 6: return CursorMotionStyle.Classic;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case CursorMotionStyle.SignatureArc: return ordinalConverter.write(1, into);
+                case CursorMotionStyle.SpringSettle: return ordinalConverter.write(2, into);
+                case CursorMotionStyle.Magnetic: return ordinalConverter.write(3, into);
+                case CursorMotionStyle.CometSwoop: return ordinalConverter.write(4, into);
+                case CursorMotionStyle.Adaptive: return ordinalConverter.write(5, into);
+                case CursorMotionStyle.Classic: return ordinalConverter.write(6, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export enum CursorMotionTiming {
+    Native,
+    Fitts,
+    Fixed
+}
+
+const FfiConverterTypeCursorMotionTiming = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = CursorMotionTiming;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return CursorMotionTiming.Native;
+                case 2: return CursorMotionTiming.Fitts;
+                case 3: return CursorMotionTiming.Fixed;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case CursorMotionTiming.Native: return ordinalConverter.write(1, into);
+                case CursorMotionTiming.Fitts: return ordinalConverter.write(2, into);
+                case CursorMotionTiming.Fixed: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
 export type CursorMotionOutput = {
     startHandle: number,
     endHandle: number,
@@ -1325,7 +1530,20 @@ export type CursorMotionOutput = {
     glideDurationMs: number,
     dwellAfterClickMs: number,
     idleHideMs: number,
-    turnRadius: number
+    turnRadius: number,
+    /**
+     * Trajectory style. Absent from daemons that predate motion styles.
+     */
+    style?: CursorMotionStyle,
+    /**
+     * Move duration model. Absent from daemons that predate motion styles.
+     */
+    timing?: CursorMotionTiming,
+    /**
+     * Effects in use after the style defaults. Absent from daemons that
+     * predate motion styles.
+     */
+    effects?: CursorMotionEffectsOutput
 }
 
 /**
@@ -1357,7 +1575,10 @@ const FfiConverterTypeCursorMotionOutput = (() => {
                 glideDurationMs: FfiConverterFloat64.read(from),
                 dwellAfterClickMs: FfiConverterFloat64.read(from),
                 idleHideMs: FfiConverterFloat64.read(from),
-                turnRadius: FfiConverterFloat64.read(from)
+                turnRadius: FfiConverterFloat64.read(from),
+                style: FfiConverterOptionalTypeCursorMotionStyle.read(from),
+                timing: FfiConverterOptionalTypeCursorMotionTiming.read(from),
+                effects: FfiConverterOptionalTypeCursorMotionEffectsOutput.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -1370,6 +1591,9 @@ const FfiConverterTypeCursorMotionOutput = (() => {
             FfiConverterFloat64.write(value.dwellAfterClickMs, into);
             FfiConverterFloat64.write(value.idleHideMs, into);
             FfiConverterFloat64.write(value.turnRadius, into);
+            FfiConverterOptionalTypeCursorMotionStyle.write(value.style, into);
+            FfiConverterOptionalTypeCursorMotionTiming.write(value.timing, into);
+            FfiConverterOptionalTypeCursorMotionEffectsOutput.write(value.effects, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterFloat64.allocationSize(value.startHandle) +
@@ -1380,7 +1604,10 @@ const FfiConverterTypeCursorMotionOutput = (() => {
              FfiConverterFloat64.allocationSize(value.glideDurationMs) +
              FfiConverterFloat64.allocationSize(value.dwellAfterClickMs) +
              FfiConverterFloat64.allocationSize(value.idleHideMs) +
-             FfiConverterFloat64.allocationSize(value.turnRadius);
+             FfiConverterFloat64.allocationSize(value.turnRadius) +
+             FfiConverterOptionalTypeCursorMotionStyle.allocationSize(value.style) +
+             FfiConverterOptionalTypeCursorMotionTiming.allocationSize(value.timing) +
+             FfiConverterOptionalTypeCursorMotionEffectsOutput.allocationSize(value.effects);
 
         }
     };
@@ -4851,32 +5078,51 @@ export type SetAgentCursorMotionInput = {
      */
     session: string,
     /**
-     * Path control-point offset from the start, as a fraction of the distance. Clamped to
-     * 0..1 (default 0.3).
+     * Trajectory style. `signature_arc` (default) is one arc with a small follow-through;
+     * `spring_settle` lands with one soft bounce; `magnetic` is pulled into the target;
+     * `comet_swoop` is a wide arc with a short trail; `adaptive` picks a careful approach for
+     * small targets and a swoop for long moves; `classic` is the previous Dubins glide. When
+     * the theme's reduced motion is on, every move is a short straight glide with no effects.
+     */
+    style?: CursorMotionStyle,
+    /**
+     * `native` uses the style's own timing; `fitts` scales the move time with distance and
+     * target size; `fixed` uses glide_duration_ms (1430 ms when 0).
+     */
+    timing?: CursorMotionTiming,
+    /**
+     * Turn single effects on or off. An omitted effect keeps its current setting; null
+     * restores the style's default.
+     */
+    effects?: CursorMotionEffects,
+    /**
+     * Arc control-point offset from the start, as a fraction of the distance, for
+     * `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).
      */
     startHandle?: number,
     /**
-     * Path control-point offset from the end, as a fraction of the distance. Clamped to 0..1
-     * (default 0.3).
+     * Arc control-point offset from the end, as a fraction of the distance, for
+     * `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).
      */
     endHandle?: number,
     /**
-     * Sideways arc deflection as a fraction of the distance. Clamped to 0..1 (default 0.25).
+     * Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default)
+     * keeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1.
      */
     arcSize?: number,
     /**
-     * Arc asymmetry: positive puts the apex near the destination, negative near the start.
-     * Clamped to -1..1 (default 0).
+     * Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`:
+     * positive moves the apex toward the destination. Clamped to -1..1 (default 0).
      */
     arcFlow?: number,
     /**
-     * Post-arrival spring damping: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1
-     * (default 0.72).
+     * Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped
+     * to 0.3..1 (default 0.72).
      */
     spring?: number,
     /**
-     * Fixed glide duration in milliseconds. 0 (the default) uses speed-based timing. Clamped
-     * to 0..5000.
+     * Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A
+     * nonzero value with `native` timing also fixes the duration. Clamped to 0..5000.
      */
     glideDurationMs?: number,
     /**
@@ -4889,8 +5135,8 @@ export type SetAgentCursorMotionInput = {
      */
     idleHideMs?: number,
     /**
-     * Minimum turning radius of the glide path, in points; smaller turns tighter. Clamped to
-     * 1..1000 (default 80).
+     * Minimum turning radius of the `classic` glide path, in points; smaller turns tighter.
+     * Clamped to 1..1000 (default 80).
      */
     turnRadius?: number
 }
@@ -4917,6 +5163,9 @@ const FfiConverterTypeSetAgentCursorMotionInput = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 session: FfiConverterString.read(from),
+                style: FfiConverterOptionalTypeCursorMotionStyle.read(from),
+                timing: FfiConverterOptionalTypeCursorMotionTiming.read(from),
+                effects: FfiConverterOptionalTypeCursorMotionEffects.read(from),
                 startHandle: FfiConverterOptionalFloat64.read(from),
                 endHandle: FfiConverterOptionalFloat64.read(from),
                 arcSize: FfiConverterOptionalFloat64.read(from),
@@ -4930,6 +5179,9 @@ const FfiConverterTypeSetAgentCursorMotionInput = (() => {
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterString.write(value.session, into);
+            FfiConverterOptionalTypeCursorMotionStyle.write(value.style, into);
+            FfiConverterOptionalTypeCursorMotionTiming.write(value.timing, into);
+            FfiConverterOptionalTypeCursorMotionEffects.write(value.effects, into);
             FfiConverterOptionalFloat64.write(value.startHandle, into);
             FfiConverterOptionalFloat64.write(value.endHandle, into);
             FfiConverterOptionalFloat64.write(value.arcSize, into);
@@ -4942,6 +5194,9 @@ const FfiConverterTypeSetAgentCursorMotionInput = (() => {
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.session) +
+             FfiConverterOptionalTypeCursorMotionStyle.allocationSize(value.style) +
+             FfiConverterOptionalTypeCursorMotionTiming.allocationSize(value.timing) +
+             FfiConverterOptionalTypeCursorMotionEffects.allocationSize(value.effects) +
              FfiConverterOptionalFloat64.allocationSize(value.startHandle) +
              FfiConverterOptionalFloat64.allocationSize(value.endHandle) +
              FfiConverterOptionalFloat64.allocationSize(value.arcSize) +
@@ -6044,6 +6299,18 @@ const FfiConverterOptionalTypeClickButton = new FfiConverterOptional(FfiConverte
 // FfiConverter for Array<string>
 const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 
+// FfiConverter for boolean | undefined
+const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
+
+// FfiConverter for CursorMotionStyle | undefined
+const FfiConverterOptionalTypeCursorMotionStyle = new FfiConverterOptional(FfiConverterTypeCursorMotionStyle);
+
+// FfiConverter for CursorMotionTiming | undefined
+const FfiConverterOptionalTypeCursorMotionTiming = new FfiConverterOptional(FfiConverterTypeCursorMotionTiming);
+
+// FfiConverter for CursorMotionEffectsOutput | undefined
+const FfiConverterOptionalTypeCursorMotionEffectsOutput = new FfiConverterOptional(FfiConverterTypeCursorMotionEffectsOutput);
+
 // FfiConverter for ActionTarget | undefined
 const FfiConverterOptionalTypeActionTarget = new FfiConverterOptional(FfiConverterTypeActionTarget);
 
@@ -6055,9 +6322,6 @@ const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 
 // FfiConverter for Array<string> | undefined
 const FfiConverterOptionalSequenceString = new FfiConverterOptional(FfiConverterSequenceString);
-
-// FfiConverter for boolean | undefined
-const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
 
 // FfiConverter for CursorPointOutput | undefined
 const FfiConverterOptionalTypeCursorPointOutput = new FfiConverterOptional(FfiConverterTypeCursorPointOutput);
@@ -6103,6 +6367,9 @@ const FfiConverterOptionalTypeScrollBy = new FfiConverterOptional(FfiConverterTy
 
 // FfiConverter for EscalationReason | undefined
 const FfiConverterOptionalTypeEscalationReason = new FfiConverterOptional(FfiConverterTypeEscalationReason);
+
+// FfiConverter for CursorMotionEffects | undefined
+const FfiConverterOptionalTypeCursorMotionEffects = new FfiConverterOptional(FfiConverterTypeCursorMotionEffects);
 
 // FfiConverter for CaptureScope | undefined
 const FfiConverterOptionalTypeCaptureScope = new FfiConverterOptional(FfiConverterTypeCaptureScope);
@@ -6188,7 +6455,11 @@ export default Object.freeze({
     FfiConverterTypeClipboardWriteInput,
     FfiConverterTypeClipboardWriteOutput,
     FfiConverterTypeCursorAction,
+    FfiConverterTypeCursorMotionEffects,
+    FfiConverterTypeCursorMotionEffectsOutput,
     FfiConverterTypeCursorMotionOutput,
+    FfiConverterTypeCursorMotionStyle,
+    FfiConverterTypeCursorMotionTiming,
     FfiConverterTypeCursorPointOutput,
     FfiConverterTypeCursorReducedMotion,
     FfiConverterTypeCursorThemeOutput,

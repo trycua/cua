@@ -32,6 +32,9 @@ struct WheelTarget {
     screen_y: f64,
     win_local: Option<(f64, f64)>,
     wid: Option<u32>,
+    /// Element screen rect `[x, y, w, h]` for the cursor glide; `None` for
+    /// pixel targets.
+    rect: Option<[f64; 4]>,
 }
 
 pub struct ScrollTool {
@@ -380,6 +383,9 @@ impl Tool for ScrollTool {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(40));
                 let center = unsafe { element_screen_center(element_ptr as AXUIElementRef) };
+                let rect = unsafe {
+                    crate::ax::bindings::element_screen_rect(element_ptr as AXUIElementRef)
+                };
                 Ok(center.map(|(cx, cy)| {
                     let win_local = wid
                         .and_then(crate::windows::window_bounds_by_id)
@@ -389,6 +395,7 @@ impl Tool for ScrollTool {
                         screen_y: cy,
                         win_local,
                         wid,
+                        rect,
                     }
                 }))
             });
@@ -431,6 +438,7 @@ impl Tool for ScrollTool {
                         screen_y: sy,
                         win_local: Some((lx, ly)),
                         wid: Some(wid),
+                        rect: None,
                     })
                 }
                 Err(refusal) => return refusal,
@@ -492,10 +500,11 @@ impl Tool for ScrollTool {
                     cursor_overlay::OverlayCommand::PinAbove(wid as u64),
                 );
             }
-            crate::cursor::overlay::animate_cursor_to(
+            crate::cursor::overlay::animate_cursor_to_target(
                 cursor_key.clone(),
                 target.screen_x,
                 target.screen_y,
+                target.rect,
             )
             .await;
             self.state.cursor_registry.update_position(
@@ -512,6 +521,7 @@ impl Tool for ScrollTool {
                 screen_y,
                 win_local,
                 wid,
+                ..
             } = target;
             let amount_ticks = amount;
             let fg = delivery_mode.is_foreground() && wid.is_some();

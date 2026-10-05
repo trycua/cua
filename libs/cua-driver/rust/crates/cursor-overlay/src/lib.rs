@@ -20,11 +20,15 @@ pub mod session_badge;
 pub mod surface_fit;
 pub mod theme;
 pub mod theme_artifact;
+pub mod trajectory;
 pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
 pub use bezier::CubicBezier;
-pub use motion::{MotionConfig, Spring};
+pub use motion::{
+    MotionConfig, MotionEffects, MotionStyle, MotionTiming, ResolvedEffects, Spring,
+    DEFAULT_FIXED_MS,
+};
 pub use path_planner::{PathPlanner, PathState, PlannedPath};
 pub use render_map::{
     keyed_config, seed_position, CursorMap, MsgOutcome, RenderEntry, RenderMap, ScreenFrame,
@@ -349,6 +353,10 @@ pub enum OverlayCommand {
         x: f64,
         y: f64,
         end_heading_radians: f64,
+        /// Screen rect `[x, y, width, height]` of the element being targeted,
+        /// when known (AX frame, browser element box). Drives Fitts timing,
+        /// adaptive dispatch and the magnet glow; `None` uses a 24 pt box.
+        target: Option<[f64; 4]>,
     },
     /// Snap the cursor immediately to a screen position, optionally updating heading.
     SnapTo {

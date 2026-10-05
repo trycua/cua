@@ -355,6 +355,7 @@ mod tests {
                 x,
                 y,
                 end_heading_radians: 0.0,
+                target: None,
             },
         })
     }
@@ -368,7 +369,9 @@ mod tests {
     fn settle(core: &mut RenderStateCore) {
         for _ in 0..2000 {
             core.tick_motion(1.0 / 60.0);
-            if core.path.is_none() && core.spring.is_none() && core.click_t.is_none() {
+            if !core.needs_frame_tick()
+                || (core.trajectory.is_none() && core.click_t.is_none() && core.click_age.is_none())
+            {
                 break;
             }
         }
@@ -696,11 +699,15 @@ mod tests {
         let mut map = map();
         let core = placed(&mut map, DEFAULT_CURSOR_KEY);
         core.visual.reduced_motion = ReducedMotion::On;
+        // Longer than the move plus its 1.6 s navigate cue, so the opaque
+        // delay is still running once every animation has finished.
+        core.motion.idle_hide_ms = 2500.0;
         core.apply_command_base(
             OverlayCommand::MoveTo {
                 x: 250.0,
                 y: 150.0,
                 end_heading_radians: 0.0,
+                target: None,
             },
             false,
             false,
@@ -716,7 +723,7 @@ mod tests {
 
         let wait = map.idle_fade_wait().expect("idle fade deadline");
         let core = &mut map.cursors[DEFAULT_CURSOR_KEY];
-        assert!(wait > Duration::ZERO && wait <= Duration::from_millis(500));
+        assert!(wait > Duration::ZERO && wait <= Duration::from_millis(2500));
         // Wake just past the deadline, as a parked loop's timeout does.
         core.tick_motion(wait.as_secs_f64() + 0.001);
         assert!(core.idle_fade_in_progress());

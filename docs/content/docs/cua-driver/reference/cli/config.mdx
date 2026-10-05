@@ -1,6 +1,6 @@
 ---
 title: "Configuration"
-description: "Driver configuration, telemetry and cursor themes."
+description: "Driver configuration, telemetry, cursor themes and cursor motion."
 ---
 
 {/*
@@ -31,6 +31,8 @@ description: "Driver configuration, telemetry and cursor themes."
 | [`cua-driver cursor-theme install`](#cua-driver-cursor-theme-install) | Install a compiled theme into the current user's theme store. |
 | [`cua-driver cursor-theme list`](#cua-driver-cursor-theme-list) | List the built-in and installed cursor themes. |
 | [`cua-driver cursor-theme uninstall`](#cua-driver-cursor-theme-uninstall) | Remove a custom theme from the current user's theme store. |
+| [`cua-driver cursor`](#cua-driver-cursor) | Configure a session's agent cursor from the command line. |
+| [`cua-driver cursor motion`](#cua-driver-cursor-motion) | Set the cursor's motion style, timing and effects. |
 
 Every command also accepts the [global options](/cua-driver/reference/cli#global-options).
 
@@ -403,6 +405,55 @@ cua-driver cursor-theme uninstall <theme-id>
 ```bash test="cli-shape" id="ref-cua-driver-cursor-theme-uninstall"
 # Remove an installed theme
 cua-driver cursor-theme uninstall com.example.my-cursor
+```
+
+## `cua-driver cursor`
+
+Configure a session's agent cursor from the command line.
+
+Forwards to the set_agent_cursor_motion tool on the running daemon. Fields you leave out keep their current value.
+
+```text output
+cua-driver cursor <COMMAND>
+```
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-driver-cursor"
+# Use the magnetic cursor motion
+cua-driver cursor motion --session demo --style magnetic
+```
+
+### `cua-driver cursor motion`
+
+Set the cursor's motion style, timing and effects.
+
+Effects take on, off, or default (the style's own choice).
+
+```text output
+cua-driver cursor motion [OPTIONS]
+```
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-driver-cursor-motion--session"></span>`--session` | string | required | Public label of the session that owns the cursor. |
+| <span id="cua-driver-cursor-motion--style"></span>`--style` | string |  | signature_arc, spring_settle, magnetic, comet_swoop, adaptive, or classic. |
+| <span id="cua-driver-cursor-motion--timing"></span>`--timing` | string |  | native, fitts, or fixed. |
+| <span id="cua-driver-cursor-motion--effects"></span>`--effects` | string |  | Comma-separated name=on\|off\|default for trail, glow, magnet, ripple, squish. |
+| <span id="cua-driver-cursor-motion--glide-ms"></span>`--glide-ms` | number |  | Move duration in milliseconds for fixed timing (1430 when 0). |
+| <span id="cua-driver-cursor-motion--socket"></span>`--socket` | path |  | Override the daemon socket path. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-driver-cursor-motion"
+# Use the comet swoop cursor motion
+cua-driver cursor motion --session demo --style comet_swoop
+
+# Make every move take 900 ms
+cua-driver cursor motion --session demo --timing fixed --glide-ms 900
+
+# Turn off the trail and reset the click ripple
+cua-driver cursor motion --session demo --effects trail=off,ripple=default
 ```
 
 ## Exit codes

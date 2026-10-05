@@ -292,6 +292,32 @@ pub struct CursorMotionOutput {
     pub dwell_after_click_ms: f64,
     pub idle_hide_ms: f64,
     pub turn_radius: f64,
+    /// Trajectory style. Absent from daemons that predate motion styles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "cursor_motion_style_output_schema")]
+    pub style: Option<crate::CursorMotionStyle>,
+    /// Move duration model. Absent from daemons that predate motion styles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "cursor_motion_timing_output_schema")]
+    pub timing: Option<crate::CursorMotionTiming>,
+    /// Effects in use after the style defaults. Absent from daemons that
+    /// predate motion styles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effects: Option<crate::CursorMotionEffectsOutput>,
+}
+
+// Optional enums advertise the bare string enum (Gemini rejects `null` in
+// `enum`); an older daemon simply omits the field.
+fn cursor_motion_style_output_schema(
+    generator: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
+    <crate::CursorMotionStyle as JsonSchema>::json_schema(generator)
+}
+
+fn cursor_motion_timing_output_schema(
+    generator: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
+    <crate::CursorMotionTiming as JsonSchema>::json_schema(generator)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]

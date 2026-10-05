@@ -37,7 +37,7 @@ fn main() {
 
     let r = req(
         &mut pipe,
-        r#"{"method":"call","name":"get_agent_cursor_state","args":{}}"#,
+        r#"{"method":"call","name":"get_agent_cursor_state","args":{"session":"parity"}}"#,
     );
     let v: serde_json::Value = serde_json::from_str(r.trim()).unwrap();
     let text = v
@@ -46,26 +46,20 @@ fn main() {
         .unwrap_or("");
     println!("State text: {text:?}");
 
-    // Verify Swift's exact key=value vocabulary.
-    let needed = [
-        "✅ cursor: enabled=",
-        "startHandle=",
-        "endHandle=",
-        "arcSize=",
-        "arcFlow=",
-        "spring=",
-        "glideDurationMs=",
-        "dwellAfterClickMs=",
-        "idleHideMs=",
-    ];
-    for k in needed {
-        assert!(text.contains(k), "Missing key {k:?} in text: {text:?}");
-    }
-
-    // Verify structuredContent.
+    // Verify the canonical structuredContent shape.
     let sc = v.pointer("/result/structuredContent").unwrap();
     for k in &[
+        "session",
         "enabled",
+        "position",
+        "theme",
+        "visual_state",
+        "motion",
+    ] {
+        assert!(sc.get(k).is_some(), "structuredContent missing {k}");
+    }
+    let motion = &sc["motion"];
+    for k in &[
         "start_handle",
         "end_handle",
         "arc_size",
@@ -74,12 +68,21 @@ fn main() {
         "glide_duration_ms",
         "dwell_after_click_ms",
         "idle_hide_ms",
-        "cursors",
+        "turn_radius",
+        "style",
+        "timing",
+        "effects",
     ] {
-        assert!(sc.get(k).is_some(), "structuredContent missing {k}");
+        assert!(motion.get(k).is_some(), "motion missing {k}");
+    }
+    for k in &["trail", "glow", "magnet", "ripple", "squish"] {
+        assert!(
+            motion["effects"][k].is_boolean(),
+            "motion.effects.{k} is not a boolean"
+        );
     }
 
-    println!("\n✅ PASS: get_agent_cursor_state matches Swift vocabulary + structuredContent");
+    println!("\n✅ PASS: get_agent_cursor_state structuredContent matches the contract");
 }
 
 #[cfg(not(target_os = "windows"))]

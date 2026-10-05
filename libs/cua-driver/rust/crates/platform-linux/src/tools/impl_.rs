@@ -2398,11 +2398,37 @@ fn checked_element_local_coords(
 }
 
 fn element_screen_center(pid: u32, idx: usize, xid: Option<u64>) -> anyhow::Result<(f64, f64)> {
+    element_screen_center_and_rect(pid, idx, xid).map(|(center, _)| center)
+}
+
+/// The element's screen centre plus its AT-SPI extents as the overlay's
+/// `[x, y, width, height]`, both from one bounds lookup (same screen space).
+fn element_screen_center_and_rect(
+    pid: u32,
+    idx: usize,
+    xid: Option<u64>,
+) -> anyhow::Result<((f64, f64), [f64; 4])> {
     let (bx, by, bw, bh) = match xid {
         Some(xid) => crate::atspi::get_element_bounds_for_window(pid, xid, idx)?,
         None => crate::atspi::get_element_bounds(pid, idx)?,
     };
-    Ok((bx as f64 + bw as f64 / 2.0, by as f64 + bh as f64 / 2.0))
+    let rect = [bx as f64, by as f64, bw as f64, bh as f64];
+    Ok(((rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0), rect))
+}
+
+/// A snapshot frame `(x, y, w, h)` as the overlay target rect, only when it
+/// is non-empty and actually contains the glide point (a redirected press or
+/// a frame in another space gets no rect rather than a wrong one).
+fn frame_target_rect(bounds: Option<(i32, i32, u32, u32)>, sx: f64, sy: f64) -> Option<[f64; 4]> {
+    let (x, y, w, h) = bounds?;
+    let rect = [f64::from(x), f64::from(y), f64::from(w), f64::from(h)];
+    (w > 0
+        && h > 0
+        && sx >= rect[0]
+        && sy >= rect[1]
+        && sx <= rect[0] + rect[2]
+        && sy <= rect[1] + rect[3])
+        .then_some(rect)
 }
 
 /// Shared schema for the optional `coordinate_frame` of pointer tools.
@@ -5319,17 +5345,36 @@ fn overlay_snap_to_for(cursor_id: &str, sx: f64, sy: f64, heading: Option<f64>) 
 }
 
 fn overlay_move_to_for(cursor_id: &str, sx: f64, sy: f64, heading: Option<f64>) {
+    overlay_move_to_target_for(cursor_id, sx, sy, heading, None);
+}
+
+/// [`overlay_move_to_for`] with the targeted element's screen rect
+/// `[x, y, width, height]` (same space as `sx`/`sy`).
+fn overlay_move_to_target_for(
+    cursor_id: &str,
+    sx: f64,
+    sy: f64,
+    heading: Option<f64>,
+    target: Option<[f64; 4]>,
+) {
     crate::overlay::send_command_for(
         cursor_id.to_owned(),
         cursor_overlay::OverlayCommand::MoveTo {
             x: sx,
             y: sy,
             end_heading_radians: heading.unwrap_or(std::f64::consts::FRAC_PI_4),
+            target,
         },
     );
 }
 
 async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
+    overlay_glide_to_target_for(cursor_id, sx, sy, None).await;
+}
+
+/// [`overlay_glide_to_for`] with the targeted element's screen rect
+/// `[x, y, width, height]` (same space as `sx`/`sy`); `None` for pixel actions.
+async fn overlay_glide_to_target_for(cursor_id: &str, sx: f64, sy: f64, target: Option<[f64; 4]>) {
     // Input always revives its agent cursor. Hiding it is useful while idle,
     // but a hidden cursor must not make pointer or keyboard control invisible.
     crate::overlay::send_command_for(
@@ -5340,7 +5385,7 @@ async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
     // let the Linux overlay layer select the semantic helper, layer-shell, or
     // older helper fallback without an interpolated stream fighting it.
     if crate::wayland::is_wayland() {
-        overlay_move_to_for(cursor_id, sx, sy, None);
+        overlay_move_to_target_for(cursor_id, sx, sy, None, target);
         return;
     }
     let pos = crate::overlay::current_position_for(cursor_id);
@@ -5351,7 +5396,7 @@ async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
         );
         return;
     }
-    crate::overlay::animate_cursor_to_for(cursor_id.to_owned(), sx, sy).await;
+    crate::overlay::animate_cursor_to_target_for(cursor_id.to_owned(), sx, sy, target).await;
 }
 
 /// The compositor snapshot a desktop-scope action is addressed in. One
@@ -5376,13 +5421,26 @@ async fn reveal_pointer_action_for(
     sy: f64,
     click_pulse: bool,
 ) {
+    reveal_pointer_action_target_for(state, cursor_id, sx, sy, click_pulse, None).await;
+}
+
+/// [`reveal_pointer_action_for`] with the targeted element's screen rect
+/// `[x, y, width, height]` (same space as `sx`/`sy`).
+async fn reveal_pointer_action_target_for(
+    state: &ToolState,
+    cursor_id: &str,
+    sx: f64,
+    sy: f64,
+    click_pulse: bool,
+    target: Option<[f64; 4]>,
+) {
     if !sx.is_finite() || !sy.is_finite() {
         return;
     }
     state.cursor_registry.set_enabled(cursor_id, true);
     state.cursor_registry.update_position(cursor_id, sx, sy);
     emit_cursor_hook(cursor_id, sx, sy, false);
-    overlay_glide_to_for(cursor_id, sx, sy).await;
+    overlay_glide_to_target_for(cursor_id, sx, sy, target).await;
     if click_pulse {
         emit_cursor_hook(cursor_id, sx, sy, true);
         crate::overlay::send_command_for(
@@ -5891,7 +5949,13 @@ impl ClickTool {
                     cursor_id.to_owned(),
                     cursor_overlay::OverlayCommand::PinAbove(xid),
                 );
-                reveal_pointer_action_for(&self.state, cursor_id, sx, sy, true).await;
+                // A redirected press targets another control: no rect.
+                let target_rect = redirect_note
+                    .is_none()
+                    .then(|| frame_target_rect(observed.bounds, sx, sy))
+                    .flatten();
+                reveal_pointer_action_target_for(&self.state, cursor_id, sx, sy, true, target_rect)
+                    .await;
                 let modifier_owned = modifiers.to_vec();
                 let result = spawn_blocking_bounded(
                     "foreground element click",
@@ -6445,7 +6509,15 @@ impl Tool for ClickTool {
                         cursor_overlay::OverlayCommand::PinAbove(xid),
                     );
                 }
-                reveal_pointer_action_for(&self.state, &cursor_id, sx, sy, true).await;
+                reveal_pointer_action_target_for(
+                    &self.state,
+                    &cursor_id,
+                    sx,
+                    sy,
+                    true,
+                    frame_target_rect(observed.bounds, sx, sy),
+                )
+                .await;
             }
 
             // Chromium can execute a genuine AT-SPI action without focus. Try
@@ -9973,8 +10045,8 @@ impl Tool for DoubleClickTool {
             .await;
             return match result {
                 Ok(Ok((xid, lx, ly))) => {
-                    if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || {
-                        element_screen_center(pid, idx, Some(xid))
+                    if let Ok(Ok(((sx, sy), rect))) = tokio::task::spawn_blocking(move || {
+                        element_screen_center_and_rect(pid, idx, Some(xid))
                     })
                     .await
                     {
@@ -9982,7 +10054,15 @@ impl Tool for DoubleClickTool {
                             cursor_id.clone(),
                             cursor_overlay::OverlayCommand::PinAbove(xid),
                         );
-                        reveal_pointer_action_for(&self.state, &cursor_id, sx, sy, true).await;
+                        reveal_pointer_action_target_for(
+                            &self.state,
+                            &cursor_id,
+                            sx,
+                            sy,
+                            true,
+                            Some(rect),
+                        )
+                        .await;
                     }
                     let lxi = lx as i32;
                     let lyi = ly as i32;
@@ -10252,8 +10332,8 @@ impl Tool for RightClickTool {
             .await;
             return match result {
                 Ok(Ok((xid, lx, ly))) => {
-                    if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || {
-                        element_screen_center(pid, idx, Some(xid))
+                    if let Ok(Ok(((sx, sy), rect))) = tokio::task::spawn_blocking(move || {
+                        element_screen_center_and_rect(pid, idx, Some(xid))
                     })
                     .await
                     {
@@ -10261,7 +10341,15 @@ impl Tool for RightClickTool {
                             cursor_id.clone(),
                             cursor_overlay::OverlayCommand::PinAbove(xid),
                         );
-                        reveal_pointer_action_for(&self.state, &cursor_id, sx, sy, true).await;
+                        reveal_pointer_action_target_for(
+                            &self.state,
+                            &cursor_id,
+                            sx,
+                            sy,
+                            true,
+                            Some(rect),
+                        )
+                        .await;
                     }
                     let lxi = lx as i32;
                     let lyi = ly as i32;
@@ -12708,6 +12796,10 @@ impl Tool for SetAgentCursorMotionV2Tool {
             None,
             cursor_number(args.get("turn_radius")),
         );
+        let motion = match motion.with_style_args(&args) {
+            Ok(motion) => motion,
+            Err(message) => return ToolResult::error(message),
+        };
         crate::overlay::send_command_for(
             session.clone(),
             cursor_overlay::OverlayCommand::SetMotion(motion.clone()),
@@ -12715,17 +12807,7 @@ impl Tool for SetAgentCursorMotionV2Tool {
         ToolResult::text(format!(
             "Agent cursor motion updated for session '{session}'."
         ))
-        .with_structured(json!({"session":session,"motion":{
-            "start_handle":motion.start_handle,
-            "end_handle":motion.end_handle,
-            "arc_size":motion.arc_size,
-            "arc_flow":motion.arc_flow,
-            "spring":motion.spring,
-            "glide_duration_ms":motion.glide_duration_ms,
-            "dwell_after_click_ms":motion.dwell_after_click_ms,
-            "idle_hide_ms":motion.idle_hide_ms,
-            "turn_radius":motion.turn_radius
-        }}))
+        .with_structured(json!({"session":session,"motion":motion.output_json()}))
     }
 }
 
@@ -12858,17 +12940,7 @@ impl Tool for GetAgentCursorStateV2Tool {
                     "frame":visual.frame(),
                     "preempted_count":visual.preempted_count
                 },
-                "motion":{
-                    "start_handle":motion.start_handle,
-                    "end_handle":motion.end_handle,
-                    "arc_size":motion.arc_size,
-                    "arc_flow":motion.arc_flow,
-                    "spring":motion.spring,
-                    "glide_duration_ms":motion.glide_duration_ms,
-                    "dwell_after_click_ms":motion.dwell_after_click_ms,
-                    "idle_hide_ms":motion.idle_hide_ms,
-                    "turn_radius":motion.turn_radius
-                }
+                "motion":motion.output_json()
             }),
         )
     }

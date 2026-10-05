@@ -173,11 +173,29 @@ fn session_owned_cursor_state_is_independent() {
     driver.send(&serde_json::json!({
         "jsonrpc":"2.0","id":4,"method":"tools/call",
         "params":{"name":"set_agent_cursor_motion","arguments":{
-            "session":"agent1","spring":0.7
+            "session":"agent1","spring":0.7,"style":"dc-magnetic","timing":"fitts",
+            "effects":{"ripple":false}
         }}
     }));
     let motion = driver.recv();
     assert!(!motion["result"]["isError"].as_bool().unwrap_or(false));
+    let echoed = &motion["result"]["structuredContent"]["motion"];
+    assert_eq!(echoed["style"], "magnetic");
+    assert_eq!(echoed["timing"], "fitts");
+    assert_eq!(echoed["effects"]["ripple"], false);
+    assert_eq!(echoed["effects"]["magnet"], true);
+
+    driver.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":40,"method":"tools/call",
+        "params":{"name":"set_agent_cursor_motion","arguments":{
+            "session":"agent1","style":"zigzag"
+        }}
+    }));
+    let rejected = driver.recv();
+    assert!(
+        rejected["result"]["isError"].as_bool().unwrap_or(false),
+        "unknown style was accepted: {rejected:?}"
+    );
 
     driver.send(&serde_json::json!({
         "jsonrpc":"2.0","id":5,"method":"tools/call",
@@ -202,6 +220,12 @@ fn session_owned_cursor_state_is_independent() {
         assert_eq!(state["session"].as_str(), Some(session));
         assert_eq!(state["enabled"].as_bool(), Some(expected_enabled));
         assert_eq!(state["theme"]["id"].as_str(), Some("cua.default"));
+        let expected_style = if session == "agent1" {
+            "magnetic"
+        } else {
+            "signature_arc"
+        };
+        assert_eq!(state["motion"]["style"].as_str(), Some(expected_style));
     }
 }
 

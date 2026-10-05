@@ -641,7 +641,7 @@
       "paths": [
         ".github/workflows/cd-image-linux.yml",
         "docs/public/img/SOURCES.md",
-        "docs/scripts/tests/test_openai_agents_fleet_example.py",
+        "docs/scripts/tests/test_openai_agents_example.py",
         "libs/cua/bench/streaming/results/baseline-macos-arm64.json",
         "libs/cua/bench/streaming/results/baseline-macos-arm64.md",
         "libs/cua/crates/cua-cli/src/image_build.rs",

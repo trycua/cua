@@ -11,31 +11,37 @@
 //! `HOME` (and the platform state variables) at a temporary directory before
 //! any daemon starts. The real user's files are never touched.
 //!
-//! Windows is excluded: its History root derives from `LOCALAPPDATA`, which the
-//! testkit must leave on the host because `shell:AppsFolder` app resolution
-//! depends on it (see `cua-driver-testkit/src/host_state.rs`).
-#![cfg(not(target_os = "windows"))]
+//! Windows keeps its OS profile folders unchanged in the testkit. The driver's
+//! own `CUA_DRIVER_RS_HOME` must isolate History there too (#4137), and must not
+//! leak an inherited override on any platform.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use cua_driver_testkit::{driver_binary, CliDriver, McpDriver, RawDriver, SHARE_HOST_STATE};
+use cua_driver_testkit::{
+    driver_binary, ensure_driver_binary, CliDriver, McpDriver, RawDriver, SHARE_HOST_STATE,
+};
 
 /// Every per-user history root the driver may resolve for `home`.
 fn history_roots(home: &Path) -> Vec<PathBuf> {
-    let base = if cfg!(target_os = "macos") {
+    let base = if cfg!(target_os = "windows") {
+        home.join("AppData").join("Local")
+    } else if cfg!(target_os = "macos") {
         home.join("Library").join("Application Support")
     } else {
         home.join(".local").join("state")
     };
-    ["cua-driver", "cua-driver-local"]
+    let mut roots: Vec<_> = ["cua-driver", "cua-driver-local"]
         .into_iter()
         .map(|namespace| base.join(namespace).join("computer-history"))
-        .collect()
+        .collect();
+    roots.push(home.join(".cua-driver").join("computer-history"));
+    roots
 }
 
 fn seed_admitted_host_home() -> tempfile::TempDir {
     let home = tempfile::Builder::new()
-        .prefix("cua-host-home-")
+        .prefix("cua host home-")
         .tempdir()
         .expect("temporary host home");
     for root in history_roots(home.path()) {
@@ -49,19 +55,66 @@ fn seed_admitted_host_home() -> tempfile::TempDir {
     // Only this single-test binary's process environment changes; it runs
     // before any thread or child exists.
     std::env::set_var("HOME", home.path());
-    if !cfg!(target_os = "macos") {
+    std::env::set_var("CUA_DRIVER_RS_HOME", home.path().join(".cua-driver"));
+    if cfg!(target_os = "windows") {
+        // Simulate a host entirely inside a disposable profile. Testkit must
+        // leave these values alone while isolating the driver-owned root.
+        std::env::set_var("USERPROFILE", home.path());
+        std::env::set_var("APPDATA", home.path().join("AppData").join("Roaming"));
+        std::env::set_var("LOCALAPPDATA", home.path().join("AppData").join("Local"));
+    } else if !cfg!(target_os = "macos") {
         std::env::set_var("XDG_STATE_HOME", home.path().join(".local").join("state"));
     }
     home
 }
 
+/// With no daemon on this private endpoint, the status command reports whether
+/// the selected admission preference requires an experimental-history launch.
+/// This observes the real CLI's path resolution without admitting History or
+/// accessing an OS credential store.
+fn assert_admission_hint(driver_home: Option<&Path>, admitted: bool) {
+    #[cfg(windows)]
+    let socket = format!(r"\\.\pipe\cua-history-missing-{}", uuid::Uuid::new_v4());
+    #[cfg(unix)]
+    let socket = format!("/tmp/cua-history-missing-{}.sock", uuid::Uuid::new_v4());
+
+    let mut command = Command::new(driver_binary());
+    command
+        .args(["history", "status", "--socket", &socket])
+        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false");
+    match driver_home {
+        Some(path) => command.env("CUA_DRIVER_RS_HOME", path),
+        None => command.env_remove("CUA_DRIVER_RS_HOME"),
+    };
+    let output = command.output().expect("history status command");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("Cua Driver daemon is not running."),
+        "{stderr}"
+    );
+    assert_eq!(
+        stderr.contains(" --experimental-history"),
+        admitted,
+        "{stderr}"
+    );
+}
+
 #[test]
 fn testkit_daemons_ignore_host_history_admission() {
-    if !driver_binary().exists() {
-        eprintln!("[skip] driver binary not built at {:?}", driver_binary());
+    if !ensure_driver_binary(&driver_binary()) {
         return;
     }
     let host_home = seed_admitted_host_home();
+
+    // Default locations and an empty override retain the existing behavior.
+    // A nonempty override must ignore the admitted OS-profile state, and use
+    // the preference under the selected driver home when one is present.
+    assert_admission_hint(None, true);
+    assert_admission_hint(Some(Path::new("")), true);
+    let empty_home = tempfile::tempdir().expect("empty driver home");
+    assert_admission_hint(Some(empty_home.path()), false);
+    assert_admission_hint(Some(&host_home.path().join(".cua-driver")), true);
 
     // Control: sharing the seeded host state reproduces the original failure,
     // proving the seed is the state that used to leak into test daemons.
@@ -90,6 +143,9 @@ fn testkit_daemons_ignore_host_history_admission() {
 
     // The seeded host preference is still intact: isolation is read-side only.
     for root in history_roots(host_home.path()) {
-        assert!(root.join("admission.json").is_file());
+        assert_eq!(
+            std::fs::read(root.join("admission.json")).unwrap(),
+            br#"{"history_preview_admitted":true}"#
+        );
     }
 }

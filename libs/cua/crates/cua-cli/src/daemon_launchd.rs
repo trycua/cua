@@ -30,6 +30,7 @@ pub(crate) fn label(env: Option<&str>, default_args: bool, exe_is_self: bool) ->
 
 /// The running process of a job, from `launchctl print <target>`: its
 /// top-level `pid = N` line (a job that is loaded but not running has none).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn job_pid(print: &str) -> Option<u32> {
     print.lines().find_map(|l| {
         // Top-level properties are indented by exactly one tab; nested

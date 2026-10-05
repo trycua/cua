@@ -2165,11 +2165,23 @@ async fn daemon_start(
         // The Cua Spaces app's start runs its launchd agent, so the daemon
         // keeps the app's Local Network permission after the app quits
         // ([`daemon_launchd`]).
+        let default_args = socket.is_none() && cli.state_dir.is_none() && loopback == "127.0.0.1:0";
         let launchd = daemon_launchd::label(
             std::env::var(daemon_launchd::LABEL_ENV).ok().as_deref(),
-            socket.is_none() && cli.state_dir.is_none() && loopback == "127.0.0.1:0",
+            default_args,
             exe == current,
-        );
+        )
+        .or_else(|| {
+            let home = std::env::var("HOME").ok();
+            (daemon_launchd::may_use_app_agent(
+                default_args,
+                &current,
+                std::env::var_os("CUA_HOME").is_some(),
+                home.as_deref(),
+                daemon_launchd::account_home().as_deref(),
+            ) && daemon_launchd::loaded(daemon_launchd::APP_AGENT_LABEL))
+            .then(|| daemon_launchd::APP_AGENT_LABEL.to_string())
+        });
         let mut args = vec!["daemon".to_string(), "start".into(), "--foreground".into()];
         if let Some(s) = &socket {
             args.push("--socket".into());

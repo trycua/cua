@@ -9,8 +9,14 @@
 //! macOS ties to the app's bundle and its Local Network permission whether
 //! or not the app runs, and passes the agent's label in
 //! [`LABEL_ENV`]. Then `cua daemon start` has launchd run the daemon
-//! instead of spawning it; anything else (a terminal, an agent's MCP
-//! server, a start with non-default arguments) spawns it as before.
+//! instead of spawning it.
+//!
+//! A start from elsewhere (a terminal, the relay host's cua-spacesd, an
+//! agent's MCP server) uses the app's agent too when it is loaded: a
+//! daemon spawned there would answer to that process instead, often one
+//! with no Local Network permission of its own (a LaunchAgent is
+//! responsible for itself). A `cua` inside another app's bundle, a start
+//! with non-default arguments, and a run with its own home spawn as before.
 
 /// The launchd label of the app's daemon agent, set by the app when the
 /// agent is registered.
@@ -26,6 +32,69 @@ pub(crate) fn label(env: Option<&str>, default_args: bool, exe_is_self: bool) ->
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
     (valid && default_args && exe_is_self).then(|| label.to_string())
+}
+
+/// The label `SMAppService` registers the Cua Spaces app's daemon agent
+/// under (`Contents/Library/LaunchAgents/com.trycua.spaces.daemon.plist`).
+pub(crate) const APP_AGENT_LABEL: &str = "com.trycua.spaces.daemon";
+
+/// Whether a start the app did not ask for may use the app's agent: default
+/// arguments, a `cua` outside any app bundle (another app runs its own
+/// daemon), and this user's own home (no `CUA_HOME`, `HOME` the account's),
+/// which is the one the agent's daemon uses.
+pub(crate) fn may_use_app_agent(
+    default_args: bool,
+    exe: &std::path::Path,
+    cua_home_set: bool,
+    home: Option<&str>,
+    account_home: Option<&str>,
+) -> bool {
+    let in_bundle = exe.to_string_lossy().contains(".app/Contents/");
+    default_args
+        && !in_bundle
+        && !cua_home_set
+        && matches!((home, account_home), (Some(h), Some(a)) if h.trim_end_matches('/') == a.trim_end_matches('/'))
+}
+
+/// Whether launchd has `label` loaded in this user's GUI session.
+#[cfg(target_os = "macos")]
+pub(crate) fn loaded(label: &str) -> bool {
+    // SAFETY: getuid has no preconditions.
+    let target = target(unsafe { libc::getuid() }, label);
+    std::process::Command::new("/bin/launchctl")
+        .args(["print", &target])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn loaded(_label: &str) -> bool {
+    false
+}
+
+/// This user's home from the account database.
+#[cfg(unix)]
+pub(crate) fn account_home() -> Option<String> {
+    // SAFETY: getpwuid returns a pointer into static storage or null; it is
+    // read at once and copied.
+    unsafe {
+        let pw = libc::getpwuid(libc::getuid());
+        if pw.is_null() || (*pw).pw_dir.is_null() {
+            return None;
+        }
+        Some(
+            std::ffi::CStr::from_ptr((*pw).pw_dir)
+                .to_string_lossy()
+                .into_owned(),
+        )
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn account_home() -> Option<String> {
+    None
 }
 
 /// The running process of a job, from `launchctl print <target>`: its
@@ -109,6 +178,31 @@ mod tests {
         // Never a target path of its own.
         assert_eq!(label(Some("gui/501/x"), true, true), None);
         assert_eq!(label(Some("a b"), true, true), None);
+    }
+
+    #[test]
+    fn other_starts_use_the_apps_agent_only_for_this_users_own_daemon() {
+        use std::path::Path;
+        let cli = Path::new("/Users/me/.local/bin/cua");
+        let home = Some("/Users/me");
+        assert!(may_use_app_agent(true, cli, false, home, home));
+        assert!(may_use_app_agent(
+            true,
+            cli,
+            false,
+            Some("/Users/me/"),
+            home
+        ));
+        // Non-default arguments.
+        assert!(!may_use_app_agent(false, cli, false, home, home));
+        // Another app's bundled `cua` runs its own daemon.
+        let other = Path::new("/Applications/Other.app/Contents/MacOS/cua");
+        assert!(!may_use_app_agent(true, other, false, home, home));
+        // A throwaway home (tests, end-to-end runs).
+        assert!(!may_use_app_agent(true, cli, true, home, home));
+        assert!(!may_use_app_agent(true, cli, false, Some("/tmp/h"), home));
+        assert!(!may_use_app_agent(true, cli, false, None, home));
+        assert!(!may_use_app_agent(true, cli, false, home, None));
     }
 
     #[test]

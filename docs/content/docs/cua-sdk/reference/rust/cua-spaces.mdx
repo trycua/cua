@@ -2263,6 +2263,10 @@ pub fn input_refusal_text(message: &str) -> Option<&'static str>
 /// Registers the streaming client for this ...
 pub fn register_stream_client(client: Arc<dyn StreamClient>)
 
+// mod thumbnails
+/// The `desktop_stream` feature of a host ...
+pub fn desktop_not_shared(caps: &GetCapabilitiesResponse) -> Option<&Feature>
+
 // mod walk
 /// A single file as a walk entry named ...
 pub fn single(path: &Path, name: &str) -> Result<WalkEntry>

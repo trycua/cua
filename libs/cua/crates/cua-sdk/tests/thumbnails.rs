@@ -59,3 +59,41 @@ async fn thumbnails_come_from_the_cache_within_max_age() {
     assert_eq!(shared.image, fresh.image);
     assert_eq!(shots(), 2);
 }
+
+/// A host that does not share its desktop says so in its capabilities
+/// (cua-spacesd with `share_desktop` off): no capture is asked of it at
+/// all, so its owner's access log shows no refused ComputerService calls.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_host_that_does_not_share_its_desktop_is_never_asked_for_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockServer::start(Default::default()).await;
+    server.state.withhold(
+        "desktop_stream",
+        "this machine does not share its desktop (it only provides Spaces)",
+    );
+    let shots = || server.state.observed.screenshots.lock().unwrap().len();
+    let c = cua(&dir);
+    let info = c
+        .spaces()
+        .add(server.url(), None, Some("spare".into()))
+        .await
+        .unwrap();
+    let space = c.spaces().space(info.id.clone()).await.unwrap();
+    assert!(space.thumbnail(None).await.is_err());
+    assert!(space.thumbnail(Some(0)).await.is_err());
+    assert_eq!(shots(), 0, "no screenshot was asked for");
+
+    // A stream unsupported for another reason still takes screenshots.
+    let other = MockServer::start(Default::default()).await;
+    other
+        .state
+        .withhold("desktop_stream", "no encoder in this image");
+    let info = c
+        .spaces()
+        .add(other.url(), None, Some("headless".into()))
+        .await
+        .unwrap();
+    let space = c.spaces().space(info.id).await.unwrap();
+    assert!(space.thumbnail(None).await.is_ok());
+    assert_eq!(other.state.observed.screenshots.lock().unwrap().len(), 1);
+}

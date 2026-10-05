@@ -140,6 +140,22 @@ impl std::fmt::Debug for ThumbnailCache {
     }
 }
 
+/// The `desktop_stream` feature of a host that does not share its desktop
+/// (cua-spacesd with `share_desktop` off reports every desktop feature
+/// unsupported to a relayed caller, saying why): there is no desktop to
+/// capture, so a thumbnail is not asked for. `None` for any other Space,
+/// including one whose stream is unsupported for another reason (it may
+/// still take screenshots).
+pub fn desktop_not_shared(
+    caps: &cua_proto::env::v1::GetCapabilitiesResponse,
+) -> Option<&cua_proto::env::v1::Feature> {
+    caps.features.iter().find(|f| {
+        f.name == "desktop_stream"
+            && !f.supported
+            && f.limitation.contains("does not share its desktop")
+    })
+}
+
 /// The file stem of a Space id (hex of its SHA-256, 32 chars).
 fn stem(space: &str) -> String {
     hex::encode(&Sha256::digest(space.as_bytes())[..16])

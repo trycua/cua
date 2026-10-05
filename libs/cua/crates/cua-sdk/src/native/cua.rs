@@ -190,6 +190,32 @@ impl Cua {
     }
 }
 
+/// The relay account `cua daemon` lists the account's machines with: the
+/// signed-in session (read per call, so a later sign-in works without a
+/// new runtime) on the relay this machine uses, as this enrolled device.
+/// An embedded runtime on the session gets the same, so a Spaces app that
+/// runs Spaces in-process (its daemon could not be started) still lists
+/// "My machines".
+#[cfg(all(feature = "spaces", feature = "host"))]
+fn session_relay_account(home: &std::path::Path) -> cua_spaces::RelayAccount {
+    let url = cua_host::relay_url_for(None, home);
+    let session = Arc::new(cua_auth::Session::from_env());
+    let tokens: Arc<dyn cua_host::AccountTokens> =
+        Arc::new(super::host::SessionTokens(session.clone()));
+    let account = cua_spaces::RelayAccount::new(url.clone(), tokens.clone());
+    match cua_host::DeviceAuth::new(
+        &url,
+        tokens,
+        Arc::new(session.store().clone()),
+        cua_host::device_name(),
+    ) {
+        Ok(device) => account.with_device(Arc::new(
+            device.with_pending_file(cua_host::device_pending_file(home)),
+        )),
+        Err(_) => account,
+    }
+}
+
 #[uniffi::export]
 impl Cua {
     /// Runs the SDK runtime in this process. Performs no I/O beyond
@@ -229,6 +255,15 @@ impl Cua {
             let _guard = runtime().enter();
             Runtime::new(rc)?
         };
+        #[cfg(all(feature = "spaces", feature = "host"))]
+        if config.fleet_from_session && std::env::var_os("CUA_DAEMON_NO_RELAY").is_none() {
+            let home = config
+                .spaces_home
+                .clone()
+                .map(PathBuf::from)
+                .unwrap_or_else(cua_daemon::cua_home);
+            rt.spaces().set_relay(Some(session_relay_account(&home)));
+        }
         Ok(Arc::new(Self {
             backend: Backend::Embedded(rt),
             config,

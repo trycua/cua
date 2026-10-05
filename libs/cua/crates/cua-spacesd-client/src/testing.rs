@@ -149,6 +149,9 @@ pub struct MockState {
     /// Extra supported features reported by `GetCapabilities` (for clients
     /// that gate on stream / window features).
     extra_features: Mutex<Vec<String>>,
+    /// Features reported unsupported, with their limitation (a host that
+    /// does not share its desktop).
+    withheld_features: Mutex<Vec<(String, String)>>,
     /// `GetCapabilities.version` (default `0.0.0-mock`).
     version: Mutex<Option<String>>,
     /// `GetCapabilitiesResponse::machine_seal_public_key` (S1); empty (an
@@ -293,6 +296,15 @@ impl MockState {
             .lock()
             .unwrap()
             .retain(|f| !names.contains(&f.as_str()));
+    }
+
+    /// Also report `name` as unsupported, saying `limitation` (cua-spacesd
+    /// with `share_desktop` off reports its desktop features so).
+    pub fn withhold(&self, name: &str, limitation: &str) {
+        self.withheld_features
+            .lock()
+            .unwrap()
+            .push((name.to_string(), limitation.to_string()));
     }
 
     /// Report `version` as this mock's cua-spacesd version.
@@ -631,6 +643,19 @@ impl SystemService for Svc {
                     .map(|n| pb::Feature {
                         name: n.clone(),
                         supported: true,
+                        ..Default::default()
+                    }),
+            )
+            .chain(
+                self.0
+                    .withheld_features
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|(n, why)| pb::Feature {
+                        name: n.clone(),
+                        supported: false,
+                        limitation: why.clone(),
                         ..Default::default()
                     }),
             )

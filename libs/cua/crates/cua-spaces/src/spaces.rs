@@ -2530,6 +2530,16 @@ impl Spaces {
     async fn capture_thumbnail_once(&self, id: &str) -> Result<crate::thumbnails::Thumbnail> {
         use crate::thumbnails::{MAX_DIMENSION, QUALITY, Thumbnail};
         let space = self.space(id).await?;
+        // A machine that does not share its desktop says so in its
+        // capabilities: never ask its ComputerService (each refusal is a
+        // line in its owner's access log). The refusal still backs off.
+        if let Some(f) = crate::thumbnails::desktop_not_shared(space.capabilities()) {
+            return Err(Error::CapabilityMissing {
+                space: id.to_string(),
+                feature: f.name.clone(),
+                limitation: f.limitation.clone(),
+            });
+        }
         let shot = space
             .spacesd()?
             .screenshot(cua_spacesd_client::ScreenshotOptions {

@@ -210,13 +210,24 @@ public enum AppEnvironment {
     /// between, the SDK refuses it with `DaemonNotRunning`, and one more
     /// start replaces it. Without a daemon the SDK runs Spaces in the app.
     static func makeLiveBackend(supervisor: DaemonSupervisor?, daemonError: inout String?) throws -> LiveSpacesBackend {
-        daemonError = supervisor?.start()
+        daemonError = startDaemon(supervisor)
         do {
             return try LiveSpacesBackend.make()
         } catch CuaError.DaemonNotRunning(let message) where supervisor != nil {
             if let error = supervisor?.start() { throw CuaError.DaemonNotRunning(message: "\(message) (\(error))") }
             return try LiveSpacesBackend.make()
         }
+    }
+
+    /// `cua daemon start`, once more when it failed: a daemon of the build
+    /// before an update that was slow to stop is gone by then, and the
+    /// second start brings up this build's instead of leaving the app to
+    /// run Spaces in-process.
+    static func startDaemon(_ supervisor: DaemonSupervisor?) -> String? {
+        guard let supervisor else { return nil }
+        guard let first = supervisor.start() else { return nil }
+        NSLog("Cua Spaces: starting the cua daemon failed, trying again: %@", first)
+        return supervisor.start()
     }
 
     /// The `cua` this app bundles, when it has one.

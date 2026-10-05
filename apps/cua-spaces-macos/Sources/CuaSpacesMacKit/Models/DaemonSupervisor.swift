@@ -37,8 +37,10 @@ public final class DaemonSupervisor: @unchecked Sendable {
     }
 
     /// Runs `cua daemon start`, bounded by `timeout`: `nil` when this app's
-    /// daemon runs afterwards, else why not.
-    public func start(timeout: TimeInterval = 30) -> String? {
+    /// daemon runs afterwards, else why not. Replacing a daemon of another
+    /// build waits up to 30 s for it to stop (one with Spaces running takes
+    /// that long), then up to 10 s for this build's to start.
+    public func start(timeout: TimeInterval = 60) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: cua)
         process.arguments = ["daemon", "start"]

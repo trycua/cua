@@ -1297,8 +1297,8 @@ pub enum DragButton {
 /// Middle-click at `(x, y)` with optional modifier keys.
 ///
 /// Posts an `OtherMouseDown` / `OtherMouseUp` pair with `CGMouseButton::Center`
-/// to the target pid through the same SkyLight + public-API postBoth path the
-/// left- and right-click primitives use. Window-local stamping mirrors
+/// to the target pid, each event once through SkyLight (the public API only
+/// when the SPI is absent). Window-local stamping mirrors
 /// `right_click_at_xy_with_window_local`.
 pub fn middle_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow::Result<()> {
     middle_click_at_xy_inner(pid, x, y, None, modifiers)
@@ -1338,7 +1338,17 @@ fn middle_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         down.set_flags(flags);
     }
-    post_mouse_event(pid, &down, window_local, None, None, 1, 2, 3);
+    post_mouse_event_with_mode(
+        pid,
+        &down,
+        window_local,
+        None,
+        None,
+        1,
+        2,
+        3,
+        MousePostMode::SkyLightPreferred,
+    );
     std::thread::sleep(std::time::Duration::from_millis(16));
 
     let up = CGEvent::new_mouse_event(
@@ -1351,7 +1361,17 @@ fn middle_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         up.set_flags(flags);
     }
-    post_mouse_event(pid, &up, window_local, None, None, 1, 2, 3);
+    post_mouse_event_with_mode(
+        pid,
+        &up,
+        window_local,
+        None,
+        None,
+        1,
+        2,
+        3,
+        MousePostMode::SkyLightPreferred,
+    );
 
     Ok(())
 }
@@ -2160,5 +2180,49 @@ mod tests {
         let expected =
             CGEventFlags::CGEventFlagCommand.bits() | CGEventFlags::CGEventFlagShift.bits();
         assert_eq!(&modifiers[1..], [expected, expected]);
+    }
+
+    /// `(event type, transport)` for every event the capture saw, in order.
+    fn sequence(capture: &Capture) -> Vec<(String, PostRoute)> {
+        capture
+            .posted()
+            .into_iter()
+            .map(|posted| (posted.event, posted.route))
+            .collect()
+    }
+
+    fn expected(events: &[&str], route: PostRoute) -> Vec<(String, PostRoute)> {
+        events
+            .iter()
+            .map(|event| ((*event).to_owned(), route))
+            .collect()
+    }
+
+    #[test]
+    fn middle_click_posts_one_down_up_pair_through_skylight() {
+        let capture = Capture::start(true);
+        middle_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, &[]).unwrap();
+        assert_eq!(
+            sequence(&capture),
+            expected(&["OtherMouseDown", "OtherMouseUp"], PostRoute::SkyLight)
+        );
+    }
+
+    #[test]
+    fn middle_click_falls_back_to_the_public_api_once_without_the_spi() {
+        let capture = Capture::start(false);
+        middle_click_at_xy(1, 100.0, 100.0, &[]).unwrap();
+        assert_eq!(
+            sequence(&capture),
+            expected(&["OtherMouseDown", "OtherMouseUp"], PostRoute::PublicPid)
+        );
+    }
+
+    #[test]
+    fn middle_click_modifiers_ride_on_the_single_down_and_up() {
+        let capture = Capture::start(true);
+        middle_click_at_xy(1, 100.0, 100.0, &["ctrl"]).unwrap();
+        let control = CGEventFlags::CGEventFlagControl.bits();
+        assert_eq!(capture.modifiers(), [control, control]);
     }
 }

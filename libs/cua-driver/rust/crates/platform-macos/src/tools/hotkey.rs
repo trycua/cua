@@ -499,28 +499,12 @@ impl Tool for HotkeyTool {
                 } else {
                     ""
                 };
-                // A combo is never read-back-verifiable. On the background rung,
-                // point the agent at the foreground escalation for menu shortcuts
-                // an app drops in the background — same contract as type_text.
-                let mut structured = serde_json::json!({
-                    "path": if fg { "key_events_fg" } else { "key_events" },
-                    "verified": false,
-                    "effect": "unverifiable",
-                });
-                if !fg && window_id.is_some() {
-                    structured["escalation"] = serde_json::json!({
-                        "recommended": "foreground",
-                        "reason": "a background combo didn't land? menu key-equivalents \
-                                   often need the window fronted — re-call with \
-                                   delivery_mode:\"foreground\". (To type into a field, \
-                                   pixel-click to focus then type_text instead.)"
-                    });
-                }
                 ToolResult::text(format!(
-                    "Pressed {key_display} on pid {pid}{label}.{}",
+                    "Pressed {key_display} on pid {pid}{label}. Read the window before \
+                     sending it again.{}",
                     changes.result_suffix()
                 ))
-                .with_structured(structured)
+                .with_structured(delivered_structured(fg))
             }
             Ok(Err(e)) => ToolResult::error(format!("hotkey failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -528,9 +512,31 @@ impl Tool for HotkeyTool {
     }
 }
 
+/// Structured result of a delivered combo. A combo is never read back, so its
+/// effect is unverifiable, and delivery is no evidence that it was missed: no
+/// escalation. Resending a chord that landed (cmd+n, cmd+t, a toggle) repeats
+/// it.
+fn delivered_structured(foreground: bool) -> Value {
+    serde_json::json!({
+        "path": if foreground { "key_events_fg" } else { "key_events" },
+        "verified": false,
+        "effect": "unverifiable",
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_delivered_combo_suggests_no_resend() {
+        for foreground in [false, true] {
+            let structured = delivered_structured(foreground);
+            assert!(structured.get("escalation").is_none());
+            assert_eq!(structured["effect"], "unverifiable");
+            assert_eq!(structured["verified"], false);
+        }
+    }
 
     #[test]
     fn hotkey_contract_accepts_snapshot_bound_ax_targets() {

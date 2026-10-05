@@ -965,12 +965,13 @@ impl BrowserEngine {
         } else {
             return Err(refusal(
                 BrowserRefusalCode::BrowserConsentRequired,
-                "existing-profile attachment in standard mode requires --grant existing-profile or an embedding authorization host; bounded mode requires a matching manifest",
+                "existing-profile attachment in standard mode requires --grant existing-profile or an embedding authorization host; bounded mode requires a matching manifest. A running daemon cannot gain the grant: restart it with detail.recovery.grant_restart_command, or use profile isolated_new for a separate signed-out browser",
             )
             .with_detail(serde_json::json!({
                 "permission_mode": mode.as_str(),
                 "authorization_required": true,
                 "authorization_host": self.approval_broker.provider_id(),
+                "recovery": super::refusal::existing_profile_recovery(),
             })));
         };
         if request.profile.is_some() || request.allow_launch {

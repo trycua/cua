@@ -238,9 +238,57 @@ impl BrowserRefusal {
     }
 }
 
+/// The two ways out of an unapproved existing-profile attachment, for the
+/// agent to relay to the person. Neither is something a tool call can do:
+/// the grant is fixed when the runtime starts.
+pub(crate) fn existing_profile_recovery() -> Value {
+    // An embedding host owns its runtime's launch, so a standalone restart
+    // command would point at the wrong daemon.
+    let restart = if crate::embedded_mode() {
+        Value::Null
+    } else {
+        Value::String(grant_restart_command().to_owned())
+    };
+    serde_json::json!({
+        "grant_restart_command": restart,
+        "isolated_alternative": {
+            "tool": "browser_prepare",
+            "arguments": {"allow_launch": true, "profile": {"mode": "isolated_new"}},
+            "note": "a separate, signed-out browser profile; needs no grant",
+        },
+    })
+}
+
+fn grant_restart_command() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "cua-driver stop && open -n -g -a CuaDriver --args serve --grant existing-profile"
+    } else if cfg!(windows) {
+        "cua-driver stop; cua-driver serve --grant existing-profile"
+    } else {
+        "cua-driver stop && cua-driver serve --grant existing-profile"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn existing_profile_recovery_names_the_grant_restart_and_the_isolated_route() {
+        let recovery = existing_profile_recovery();
+        let restart = recovery["grant_restart_command"].as_str().unwrap();
+        assert!(restart.starts_with("cua-driver stop"));
+        assert!(restart.ends_with("serve --grant existing-profile"));
+        if cfg!(target_os = "macos") {
+            // TCC grants follow the app bundle, so the daemon must start
+            // through LaunchServices rather than the bare binary.
+            assert!(restart.contains("open -n -g -a CuaDriver --args serve"));
+        }
+        assert_eq!(
+            recovery["isolated_alternative"]["arguments"],
+            serde_json::json!({"allow_launch": true, "profile": {"mode": "isolated_new"}})
+        );
+    }
 
     #[test]
     fn every_code_serializes_to_the_documented_snake_case_string() {

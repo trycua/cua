@@ -2868,6 +2868,12 @@ mod tests {
             "consumer_profile_endpoint_requires_grant"
         );
         assert_eq!(s["refusal"]["detail"]["next_action"], "browser_prepare");
+        assert_eq!(
+            s["refusal"]["detail"]["recovery"]["isolated_alternative"]["tool"],
+            "browser_prepare"
+        );
+        let message = s["refusal"]["message"].as_str().unwrap();
+        assert!(message.contains("isolated_new"), "{message}");
     }
 
     #[tokio::test]
@@ -2953,6 +2959,14 @@ mod tests {
         assert_eq!(
             structured["refusal"]["detail"]["authorization_required"],
             true
+        );
+        let recovery = &structured["refusal"]["detail"]["recovery"];
+        assert!(recovery["grant_restart_command"]
+            .as_str()
+            .is_some_and(|command| command.contains("--grant existing-profile")));
+        assert_eq!(
+            recovery["isolated_alternative"]["arguments"]["profile"]["mode"],
+            "isolated_new"
         );
     }
 

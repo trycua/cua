@@ -272,19 +272,35 @@ impl RenderStateCore {
             }
             if fx.trail && self.effects_capable {
                 const STEPS: usize = 26;
-                let mut prev = traj.sample_at(t - TRAIL_SECS);
-                for i in 1..=STEPS {
-                    let k = i as f64 / STEPS as f64;
-                    let q = traj.sample_at(t - TRAIL_SECS + TRAIL_SECS * k);
-                    if (q.x - prev.x).hypot(q.y - prev.y) > 0.3 {
+                // The trail follows the arrow's body (the anchor, which sits
+                // POINTER_ANCHOR_OFFSET behind the tip along the arrow's own
+                // axis), not the hotspot. It is painted under the artwork, so
+                // the body hides the head of the trail: it flows out from behind
+                // the arrow and the tip stays clean.
+                let anchor_at = |k: f64| {
+                    let s = traj.sample_at(t - TRAIL_SECS + TRAIL_SECS * k);
+                    crate::anchor_for_pointer(s.x, s.y, s.heading)
+                };
+                let pts: Vec<(f64, f64)> = (0..=STEPS)
+                    .map(|i| anchor_at(i as f64 / STEPS as f64))
+                    .collect();
+                let length: f64 = pts
+                    .windows(2)
+                    .map(|w| (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1))
+                    .sum();
+                // A very short trail (move start, landing) fades out instead of
+                // showing a stub.
+                let fade = (length / TRAIL_FADE_LEN).min(1.0);
+                for (i, w) in pts.windows(2).enumerate() {
+                    let k = (i + 1) as f64 / STEPS as f64;
+                    if (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1) > 0.3 {
                         frame.trail.push(TrailSeg {
-                            a: (prev.x, prev.y),
-                            b: (q.x, q.y),
+                            a: w[0],
+                            b: w[1],
                             width: 2.0 + 10.0 * k,
-                            alpha: 0.38 * k * k,
+                            alpha: 0.38 * k * k * fade,
                         });
                     }
-                    prev = q;
                 }
             }
             if fx.magnet {
@@ -846,6 +862,8 @@ impl RenderStateCore {
 
 /// Comet trail length.
 const TRAIL_SECS: f64 = 0.18;
+/// Trail path length (points) at which the trail reaches full strength.
+const TRAIL_FADE_LEN: f64 = 60.0;
 /// Magnet glow fade after lock-on.
 const MAGNET_SECS: f64 = 0.7;
 /// Magnet glow distance outside the target rect.
@@ -1356,6 +1374,88 @@ mod glide_duration_tests {
         assert!(core.trajectory.is_none());
         let (px, py) = crate::pointer_for_anchor(core.pos.0, core.pos.1, core.heading);
         assert!((px - 700.0).abs() < 1e-6 && (py - 400.0).abs() < 1e-6);
+    }
+
+    /// The comet trail starts at the arrow's body, under the artwork, not at
+    /// the tip: the head sits `POINTER_ANCHOR_OFFSET` behind the hotspot along
+    /// the arrow's axis, so the tip stays clean.
+    #[test]
+    fn the_comet_trail_starts_behind_the_tip() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.style = MotionStyle::CometSwoop;
+        core.pos = (100.0, 100.0);
+        core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: 900.0,
+                y: 500.0,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+                target: None,
+            },
+            false,
+            false,
+        );
+        let mut checked = 0;
+        for _ in 0..240 {
+            core.tick_motion(1.0 / 120.0);
+            let frame = core.effect_frame();
+            // The head segment (full width) is the one that ends at the cursor;
+            // a slow last step leaves it out.
+            let Some(head) = frame.trail.last().filter(|seg| seg.width > 11.99) else {
+                continue;
+            };
+            let tip = crate::pointer_for_anchor(core.pos.0, core.pos.1, core.heading);
+            let to_tip = (head.b.0 - tip.0).hypot(head.b.1 - tip.1);
+            assert!(
+                (to_tip - crate::POINTER_ANCHOR_OFFSET).abs() < 1e-6,
+                "trail head {:?} is {to_tip} from the tip {tip:?}",
+                head.b
+            );
+            assert!(
+                (head.b.0 - core.pos.0).hypot(head.b.1 - core.pos.1) < 1e-6,
+                "the head is the cursor's anchor"
+            );
+            checked += 1;
+        }
+        assert!(checked > 20, "the trail was only drawn {checked} times");
+    }
+
+    /// A very short trail (the first frames of a move) fades out instead of
+    /// showing a stub.
+    #[test]
+    fn a_very_short_comet_trail_is_faint() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.style = MotionStyle::CometSwoop;
+        core.pos = (100.0, 100.0);
+        core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: 900.0,
+                y: 500.0,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+                target: None,
+            },
+            false,
+            false,
+        );
+        let mut strongest_early = 0.0_f64;
+        let mut strongest_cruise = 0.0_f64;
+        for frame_no in 0..240 {
+            core.tick_motion(1.0 / 120.0);
+            let alpha = core
+                .effect_frame()
+                .trail
+                .iter()
+                .map(|seg| seg.alpha)
+                .fold(0.0_f64, f64::max);
+            if frame_no < 4 {
+                strongest_early = strongest_early.max(alpha);
+            } else if frame_no > 40 {
+                strongest_cruise = strongest_cruise.max(alpha);
+            }
+        }
+        assert!(
+            strongest_early < strongest_cruise * 0.5,
+            "early {strongest_early} vs cruising {strongest_cruise}"
+        );
     }
 
     #[test]

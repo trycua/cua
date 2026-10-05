@@ -637,6 +637,18 @@ pub async fn animate_cursor_to(x: f64, y: f64) {
 }
 
 pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
+    animate_cursor_to_target_for(key, x, y, None).await;
+}
+
+/// [`animate_cursor_to_for`] with the targeted element's screen rect
+/// `[x, y, width, height]` in the same space as `x`/`y`, so motion styles can
+/// use Fitts timing and highlight the target. `None` for pixel actions.
+pub async fn animate_cursor_to_target_for(
+    key: CursorKey,
+    x: f64,
+    y: f64,
+    target: Option<[f64; 4]>,
+) {
     if !draws_cursor(&key) {
         return;
     }
@@ -663,6 +675,7 @@ pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
             x,
             y,
             end_heading_radians: std::f64::consts::FRAC_PI_4,
+            target,
         },
     ) {
         // A full or disconnected channel cannot ever produce an arrival. Drop
@@ -832,6 +845,18 @@ impl RenderEntry for RenderState {
     // sentinel cursor is quiescent, so an idle MCP server parks on bounded
     // maintenance waits instead of repainting X11 cursor tiles at 60 fps,
     // while a revealed cursor with resting motion keeps its float bob alive.
+}
+
+/// Trail and glow are wide translucent washes. Without a compositing manager
+/// the server cannot blend them, and software-compositing them would mean a
+/// root read of every effect rect each frame, so they are disabled there.
+/// `software_only` windows are 24-bit for the session, so a compositor that
+/// appears later still cannot show translucency through them.
+#[cfg(target_os = "linux")]
+fn set_x11_effects_capable(map: &mut RenderMap, capable: bool) {
+    for rs in map.cursors.values_mut() {
+        rs.core.effects_capable = capable;
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1475,6 +1500,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
                     maintenance_timeout,
                     frame_tick_needed,
                 );
+                set_x11_effects_capable(map, compositor_present && !software_only);
                 let mut hover_changed = false;
                 for rs in map.cursors.values_mut() {
                     hover_changed |= rs.core.update_session_badge_hover(hardware_pointer);
@@ -1574,8 +1600,13 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         {
             repaint_after_capture = false;
             let tiles = {
-                let guard = RENDER.lock().unwrap();
-                guard.as_ref().map(render_x11_tiles)
+                let mut guard = RENDER.lock().unwrap();
+                guard.as_mut().map(|map| {
+                    // A cursor created since the tick above must not paint
+                    // translucent effects for one frame on bare X11.
+                    set_x11_effects_capable(map, compositor_present && !software_only);
+                    render_x11_tiles(map)
+                })
             };
 
             if let Some(tiles) = tiles {
@@ -2292,6 +2323,22 @@ fn cursor_tile_bounds(
     screen_width: u32,
     screen_height: u32,
 ) -> Option<X11TileBounds> {
+    cursor_tile_bounds_with_effects(core, screen_width, screen_height, core.effect_bounds())
+}
+
+/// The cursor tile grown to cover this frame's motion effects (trail, glow,
+/// magnet target glow, click ripple), which `paint_cursor` draws into the same
+/// pixmap and which can reach far past the 128 px cursor tile. Stale effect
+/// pixels need no explicit clear: every paint SETs the bounding shape to the
+/// current frame's visible runs, so whatever an effect covered last frame is
+/// clipped away as soon as it shrinks or ends.
+#[cfg(target_os = "linux")]
+fn cursor_tile_bounds_with_effects(
+    core: &RenderStateCore,
+    screen_width: u32,
+    screen_height: u32,
+    effect: Option<[f64; 4]>,
+) -> Option<X11TileBounds> {
     if !core.is_revealed() {
         return None;
     }
@@ -2307,6 +2354,28 @@ fn cursor_tile_bounds(
     let top = (core.pos.1 - X11_CURSOR_TILE_MARGIN).floor() as i32;
     let right = (core.pos.0 + horizontal_margin).ceil() as i32;
     let bottom = (core.pos.1 + X11_CURSOR_TILE_MARGIN).ceil() as i32;
+    let (left, top, right, bottom) = match effect {
+        Some([x, y, w, h])
+            if x.is_finite()
+                && y.is_finite()
+                && w.is_finite()
+                && h.is_finite()
+                && w > 0.0
+                && h > 0.0 =>
+        {
+            // Clamp before the cast so an off-screen effect cannot saturate
+            // into a bogus union.
+            let clamp_x = |v: f64| v.clamp(0.0, f64::from(screen_width));
+            let clamp_y = |v: f64| v.clamp(0.0, f64::from(screen_height));
+            (
+                left.min(clamp_x(x.floor()) as i32),
+                top.min(clamp_y(y.floor()) as i32),
+                right.max(clamp_x((x + w).ceil()) as i32),
+                bottom.max(clamp_y((y + h).ceil()) as i32),
+            )
+        }
+        _ => (left, top, right, bottom),
+    };
 
     let left = left.clamp(0, screen_width);
     let top = top.clamp(0, screen_height);
@@ -3263,6 +3332,7 @@ mod tests {
             x: 240.0,
             y: 240.0,
             end_heading_radians: std::f64::consts::FRAC_PI_4,
+            target: None,
         });
         wait_for_cursor_move_from(160.0, 160.0, "cursor move")?;
         wait_for_bounding_shape(&conn, overlay, false, "cursor move")?;
@@ -4089,6 +4159,7 @@ mod tests {
             x: 250.0,
             y: 150.0,
             end_heading_radians: 0.0,
+            target: None,
         });
 
         for _ in 0..1200 {
@@ -4100,9 +4171,8 @@ mod tests {
 
         assert!(
             !cursor.needs_frame_tick(),
-            "cursor did not quiesce: path={}, spring={}, click={}, idle_secs={:.3}, idle_alpha={:.3}, pos={:?}",
-            cursor.core.path.is_some(),
-            cursor.core.spring.is_some(),
+            "cursor did not quiesce: moving={}, click={}, idle_secs={:.3}, idle_alpha={:.3}, pos={:?}",
+            cursor.core.trajectory.is_some(),
             cursor.core.click_t.is_some(),
             cursor.core.idle_secs,
             cursor.core.idle_alpha,
@@ -4174,6 +4244,7 @@ mod tests {
                 x: 250.0,
                 y: 150.0,
                 end_heading_radians: 0.0,
+                target: None,
             },
         }))
         .unwrap();
@@ -4184,9 +4255,9 @@ mod tests {
         assert!(had_msg);
         assert_eq!(map.cursors["default"].core.idle_secs, 0.08);
         let other = &map.cursors["other"].core;
-        assert!(other.path.is_some());
+        assert!(other.trajectory.is_some());
         assert_eq!(other.pos, (20.0, 20.0));
-        assert_eq!(other.dist, 0.0);
+        assert_eq!(other.motion_t, 0.0);
     }
 
     #[test]
@@ -4224,11 +4295,12 @@ mod tests {
                 x: 80.0,
                 y: 80.0,
                 end_heading_radians: 0.0,
+                target: None,
             });
-            let old_path_len = cursor.core.path.as_ref().unwrap().length.max(1.0);
-            // The old path would finish on the next 16 ms tick if active-frame
+            let old_arrival = cursor.core.trajectory.as_ref().unwrap().arrival_t;
+            // The old move would arrive on the next 16 ms tick if active-frame
             // wakes were globally changed to tick before applying commands.
-            cursor.core.dist = old_path_len - 0.001;
+            cursor.core.motion_t = old_arrival - 0.001;
         }
 
         let (tx, rx) = std::sync::mpsc::channel();
@@ -4238,6 +4310,7 @@ mod tests {
                 x: 250.0,
                 y: 150.0,
                 end_heading_radians: 0.0,
+                target: None,
             },
         }))
         .unwrap();
@@ -4247,9 +4320,9 @@ mod tests {
         assert!(arrived.is_empty());
         assert!(had_msg);
         let cursor = &map.cursors["default"].core;
-        let replacement_path_len = cursor.path.as_ref().unwrap().length.max(1.0);
-        assert!(cursor.dist > 0.0);
-        assert!(cursor.dist < replacement_path_len);
+        let replacement = cursor.trajectory.as_ref().unwrap();
+        assert!(cursor.motion_t > 0.0);
+        assert!(cursor.motion_t < replacement.arrival_t);
     }
 
     #[test]
@@ -4376,6 +4449,81 @@ mod tests {
 
         map.cursors.get_mut("default").unwrap().core.visible = false;
         assert!(render_x11_tiles(&map).is_empty());
+    }
+
+    #[test]
+    fn effect_rect_expands_the_cursor_tile_and_clamps_to_screen() {
+        let mut map = default_render_map();
+        map.platform.scr_w = 1920;
+        map.platform.scr_h = 1080;
+        let cursor = map.cursors.get_mut("default").unwrap();
+        cursor.core.pos = (1000.0, 500.0);
+
+        // A comet trail stretching back up-left of the cursor.
+        let trail = cursor_tile_bounds_with_effects(
+            &cursor.core,
+            1920,
+            1080,
+            Some([700.5, 300.25, 320.0, 210.0]),
+        )
+        .unwrap();
+        assert_eq!(
+            trail,
+            X11TileBounds {
+                x: 700,
+                y: 300,
+                width: 364,
+                height: 264,
+            }
+        );
+
+        // An effect running off the screen edge is clipped to the root.
+        let clipped = cursor_tile_bounds_with_effects(
+            &cursor.core,
+            1920,
+            1080,
+            Some([-50.0, 400.0, 2100.0, 900.0]),
+        )
+        .unwrap();
+        assert_eq!(
+            clipped,
+            X11TileBounds {
+                x: 0,
+                y: 400,
+                width: 1920,
+                height: 680,
+            }
+        );
+
+        // Degenerate or non-finite effect rects leave the cursor tile alone.
+        for bogus in [[f64::NAN, 0.0, 10.0, 10.0], [990.0, 490.0, 0.0, 0.0]] {
+            assert_eq!(
+                cursor_tile_bounds_with_effects(&cursor.core, 1920, 1080, Some(bogus)),
+                cursor_tile_bounds_with_effects(&cursor.core, 1920, 1080, None)
+            );
+        }
+
+        // Effects never reveal a hidden cursor.
+        cursor.core.visible = false;
+        assert!(cursor_tile_bounds_with_effects(
+            &cursor.core,
+            1920,
+            1080,
+            Some([0.0, 0.0, 100.0, 100.0])
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn effects_capability_follows_the_compositor_for_every_cursor() {
+        let mut map = default_render_map();
+        let other = map.state_for_key("other");
+        map.cursors.insert("other".to_owned(), other);
+
+        set_x11_effects_capable(&mut map, false);
+        assert!(map.cursors.values().all(|rs| !rs.core.effects_capable));
+        set_x11_effects_capable(&mut map, true);
+        assert!(map.cursors.values().all(|rs| rs.core.effects_capable));
     }
 
     #[test]

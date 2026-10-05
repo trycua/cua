@@ -298,6 +298,12 @@ fn screen_to_bitmap(hwnd: u64, sx: i32, sy: i32) -> (i32, i32) {
 /// is possible only for a direct platform call without lifecycle metadata; in
 /// that case every overlay operation short-circuits.
 async fn overlay_glide_to(key: &str, sx: f64, sy: f64) {
+    overlay_glide_to_target(key, sx, sy, None).await;
+}
+
+/// [`overlay_glide_to`] with the targeted element's screen rect
+/// `[x, y, width, height]` (same space as `sx`/`sy`); `None` for pixel actions.
+async fn overlay_glide_to_target(key: &str, sx: f64, sy: f64, target: Option<[f64; 4]>) {
     if key.is_empty() {
         return;
     }
@@ -330,6 +336,7 @@ async fn overlay_glide_to(key: &str, sx: f64, sy: f64) {
                 x: sx,
                 y: sy,
                 end_heading_radians: std::f64::consts::FRAC_PI_4,
+                target,
             },
         );
         tokio::time::sleep(std::time::Duration::from_millis(
@@ -338,7 +345,26 @@ async fn overlay_glide_to(key: &str, sx: f64, sy: f64) {
         .await;
         return;
     }
-    crate::overlay::animate_cursor_to(key.to_owned(), sx, sy).await;
+    crate::overlay::animate_cursor_to_target(key.to_owned(), sx, sy, target).await;
+}
+
+/// The admitted element's cached UIA/MSAA bounding rect as the overlay's
+/// `[x, y, width, height]`, in the same screen space as its cached `center`
+/// (and so as the glide point). `(dx, dy)` shifts it when the glide point
+/// moved off the cached center (scroll-into-view re-resolution).
+fn element_target_rect(
+    element: Option<&crate::uia::snapshot::RetainedElement>,
+    (dx, dy): (i32, i32),
+) -> Option<[f64; 4]> {
+    let (l, t, r, b) = element?.rect?;
+    (r > l && b > t).then(|| {
+        [
+            (l + dx) as f64,
+            (t + dy) as f64,
+            (r - l) as f64,
+            (b - t) as f64,
+        ]
+    })
 }
 
 async fn track_overlay_drag(
@@ -3569,7 +3595,13 @@ impl Tool for ClickTool {
                     }
                 };
                 pin_overlay_above(&cursor_key, hwnd);
-                overlay_glide_to(&cursor_key, tx as f64, ty as f64).await;
+                overlay_glide_to_target(
+                    &cursor_key,
+                    tx as f64,
+                    ty as f64,
+                    element_target_rect(admitted.as_ref(), (0, 0)),
+                )
+                .await;
                 crate::overlay::send_command(
                     cursor_key.clone(),
                     cursor_overlay::OverlayCommand::ClickPulse {
@@ -3631,7 +3663,13 @@ impl Tool for ClickTool {
             // from an off-screen button.
             // Step 2: pin overlay to target window, then animate to screen coords.
             pin_overlay_above(&cursor_key, hwnd);
-            overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
+            overlay_glide_to_target(
+                &cursor_key,
+                cx as f64,
+                cy as f64,
+                element_target_rect(admitted.as_ref(), (0, 0)),
+            )
+            .await;
             // Step 3: click pulse + actual click.
             crate::overlay::send_command(
                 cursor_key.clone(),
@@ -4628,7 +4666,13 @@ impl Tool for TypeTextTool {
         if let Some(element) = admitted.as_ref() {
             let (cx, cy) = element.center;
             pin_overlay_above(&cursor_key, hwnd);
-            overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
+            overlay_glide_to_target(
+                &cursor_key,
+                cx as f64,
+                cy as f64,
+                element_target_rect(Some(element), (0, 0)),
+            )
+            .await;
             self.state
                 .cursor_registry
                 .update_position(&cursor_key, cx as f64, cy as f64);
@@ -4747,7 +4791,13 @@ impl Tool for TypeTextTool {
         // the focused-element path has no resolvable position to point at.
         if let Some(element) = admitted.as_ref() {
             let (cx, cy) = element.center;
-            overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
+            overlay_glide_to_target(
+                &cursor_key,
+                cx as f64,
+                cy as f64,
+                element_target_rect(Some(element), (0, 0)),
+            )
+            .await;
             crate::overlay::send_command(
                 cursor_key.clone(),
                 cursor_overlay::OverlayCommand::ClickPulse {
@@ -5949,7 +5999,13 @@ impl Tool for SetValueTool {
         {
             let (cx, cy) = admitted.center;
             pin_overlay_above(&cursor_key, hwnd);
-            overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
+            overlay_glide_to_target(
+                &cursor_key,
+                cx as f64,
+                cy as f64,
+                element_target_rect(Some(&admitted), (0, 0)),
+            )
+            .await;
             crate::overlay::send_command(
                 cursor_key.clone(),
                 cursor_overlay::OverlayCommand::ClickPulse {
@@ -6717,7 +6773,16 @@ impl Tool for DoubleClickTool {
                 Err(result) => return result,
             };
             pin_overlay_above(&cursor_key, hwnd);
-            overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
+            overlay_glide_to_target(
+                &cursor_key,
+                cx as f64,
+                cy as f64,
+                element_target_rect(
+                    admitted.as_ref(),
+                    (cx - recorded_center.0, cy - recorded_center.1),
+                ),
+            )
+            .await;
             crate::overlay::send_command(
                 cursor_key.clone(),
                 cursor_overlay::OverlayCommand::ClickPulse {
@@ -7075,7 +7140,16 @@ impl Tool for RightClickTool {
                 Err(result) => return result,
             };
             pin_overlay_above(&cursor_key, hwnd);
-            overlay_glide_to(&cursor_key, cx as f64, cy as f64).await;
+            overlay_glide_to_target(
+                &cursor_key,
+                cx as f64,
+                cy as f64,
+                element_target_rect(
+                    admitted.as_ref(),
+                    (cx - recorded_center.0, cy - recorded_center.1),
+                ),
+            )
+            .await;
             crate::overlay::send_command(
                 cursor_key.clone(),
                 cursor_overlay::OverlayCommand::ClickPulse {
@@ -8082,6 +8156,10 @@ impl Tool for SetAgentCursorMotionV2Tool {
             None,
             cursor_number(args.get("turn_radius")),
         );
+        let motion = match motion.with_style_args(&args) {
+            Ok(motion) => motion,
+            Err(message) => return ToolResult::error(message),
+        };
         crate::overlay::send_command(
             session.clone(),
             cursor_overlay::OverlayCommand::SetMotion(motion.clone()),
@@ -8089,17 +8167,7 @@ impl Tool for SetAgentCursorMotionV2Tool {
         ToolResult::text(format!(
             "Agent cursor motion updated for session '{session}'."
         ))
-        .with_structured(json!({"session":session,"motion":{
-            "start_handle":motion.start_handle,
-            "end_handle":motion.end_handle,
-            "arc_size":motion.arc_size,
-            "arc_flow":motion.arc_flow,
-            "spring":motion.spring,
-            "glide_duration_ms":motion.glide_duration_ms,
-            "dwell_after_click_ms":motion.dwell_after_click_ms,
-            "idle_hide_ms":motion.idle_hide_ms,
-            "turn_radius":motion.turn_radius
-        }}))
+        .with_structured(json!({"session":session,"motion":motion.output_json()}))
     }
 }
 
@@ -8238,17 +8306,7 @@ impl Tool for GetAgentCursorStateV2Tool {
                     "frame":visual.frame(),
                     "preempted_count":visual.preempted_count
                 },
-                "motion":{
-                    "start_handle":motion.start_handle,
-                    "end_handle":motion.end_handle,
-                    "arc_size":motion.arc_size,
-                    "arc_flow":motion.arc_flow,
-                    "spring":motion.spring,
-                    "glide_duration_ms":motion.glide_duration_ms,
-                    "dwell_after_click_ms":motion.dwell_after_click_ms,
-                    "idle_hide_ms":motion.idle_hide_ms,
-                    "turn_radius":motion.turn_radius
-                }
+                "motion":motion.output_json()
             }),
         )
     }

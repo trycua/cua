@@ -2110,6 +2110,94 @@
    ]
   },
   {
+   "abstract": "Configure a session's agent cursor from the command line.",
+   "arguments": [],
+   "discussion": "Forwards to the set_agent_cursor_motion tool on the running daemon. Fields you leave out keep their current value.",
+   "examples": [
+    {
+     "command": "cua-driver cursor motion --session demo --style magnetic",
+     "description": "Use the magnetic cursor motion"
+    }
+   ],
+   "flags": [],
+   "name": "cursor",
+   "options": [],
+   "subcommands": [
+    {
+     "abstract": "Set the cursor's motion style, timing and effects.",
+     "arguments": [],
+     "discussion": "Effects take on, off, or default (the style's own choice).",
+     "examples": [
+      {
+       "command": "cua-driver cursor motion --session demo --style comet_swoop",
+       "description": "Use the comet swoop cursor motion"
+      },
+      {
+       "command": "cua-driver cursor motion --session demo --timing fixed --glide-ms 900",
+       "description": "Make every move take 900 ms"
+      },
+      {
+       "command": "cua-driver cursor motion --session demo --effects trail=off,ripple=default",
+       "description": "Turn off the trail and reset the click ripple"
+      }
+     ],
+     "flags": [],
+     "name": "motion",
+     "options": [
+      {
+       "default_value": null,
+       "help": "Public label of the session that owns the cursor.",
+       "is_optional": false,
+       "name": "session",
+       "short_name": null,
+       "type": "String"
+      },
+      {
+       "default_value": null,
+       "help": "signature_arc, spring_settle, magnetic, comet_swoop, adaptive, or classic.",
+       "is_optional": true,
+       "name": "style",
+       "short_name": null,
+       "type": "String"
+      },
+      {
+       "default_value": null,
+       "help": "native, fitts, or fixed.",
+       "is_optional": true,
+       "name": "timing",
+       "short_name": null,
+       "type": "String"
+      },
+      {
+       "default_value": null,
+       "help": "Comma-separated name=on|off|default for trail, glow, magnet, ripple, squish.",
+       "is_optional": true,
+       "name": "effects",
+       "short_name": null,
+       "type": "String"
+      },
+      {
+       "default_value": null,
+       "help": "Move duration in milliseconds for fixed timing (1430 when 0).",
+       "is_optional": true,
+       "name": "glide-ms",
+       "short_name": null,
+       "type": "Number"
+      },
+      {
+       "default_value": null,
+       "help": "Override the daemon socket path.",
+       "is_optional": true,
+       "name": "socket",
+       "short_name": null,
+       "type": "Path"
+      }
+     ],
+     "subcommands": []
+    }
+   ]
+  },
+  {
    "abstract": "Output machine-readable CLI and MCP documentation JSON.",
    "arguments": [],
    "discussion": "Used by the docs generator to keep reference pages in sync with the live binary.",

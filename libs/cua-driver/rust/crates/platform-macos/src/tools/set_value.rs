@@ -166,16 +166,27 @@ impl Tool for SetValueTool {
 
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
         let center_guard = element_guard.clone();
-        if let Ok(Some((screen_x, screen_y))) = tokio::task::spawn_blocking(move || unsafe {
-            crate::ax::bindings::element_screen_center(center_guard.as_ptr() as AXUIElementRef)
-        })
-        .await
+        if let Ok((Some((screen_x, screen_y)), target_rect)) =
+            tokio::task::spawn_blocking(move || unsafe {
+                let el = center_guard.as_ptr() as AXUIElementRef;
+                (
+                    crate::ax::bindings::element_screen_center(el),
+                    crate::ax::bindings::element_screen_rect(el),
+                )
+            })
+            .await
         {
             crate::cursor::overlay::send_command(
                 cursor_key.clone(),
                 cursor_overlay::OverlayCommand::PinAbove(window_id as u64),
             );
-            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
+            crate::cursor::overlay::animate_cursor_to_target(
+                cursor_key.clone(),
+                screen_x,
+                screen_y,
+                target_rect,
+            )
+            .await;
             self.state
                 .cursor_registry
                 .update_position(&cursor_key, screen_x, screen_y);

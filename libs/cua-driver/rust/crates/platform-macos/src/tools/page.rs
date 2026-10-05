@@ -133,6 +133,8 @@ impl PageBackend for MacOsPageBackend {
   return JSON.stringify({{
     vx: r.left + r.width / 2,
     vy: r.top + r.height / 2,
+    vw: r.width,
+    vh: r.height,
     sx: window.screenX + (window.outerWidth - window.innerWidth) / 2,
     sy: window.screenY + (window.outerHeight - window.innerHeight),
     dpr: window.devicePixelRatio || 1
@@ -154,12 +156,30 @@ impl PageBackend for MacOsPageBackend {
 
         let screen_x = sx + vx * dpr;
         let screen_y = sy + vy * dpr;
+        // Element box in the same space as the click point (optional: an
+        // older probe without vw/vh simply glides without a target rect).
+        let finite = |key: &str| {
+            parsed
+                .get(key)
+                .and_then(serde_json::Value::as_f64)
+                .filter(|v| v.is_finite() && *v >= 0.0)
+        };
+        let target_rect = finite("vw").zip(finite("vh")).map(|(vw, vh)| {
+            let (w, h) = (vw * dpr, vh * dpr);
+            [screen_x - w / 2.0, screen_y - h / 2.0, w, h]
+        });
         let cursor_key = "default".to_owned();
         crate::cursor::overlay::send_command(
             cursor_key.clone(),
             cursor_overlay::OverlayCommand::PinAbove(window_id),
         );
-        crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
+        crate::cursor::overlay::animate_cursor_to_target(
+            cursor_key.clone(),
+            screen_x,
+            screen_y,
+            target_rect,
+        )
+        .await;
         self.state
             .cursor_registry
             .update_position(&cursor_key, screen_x, screen_y);

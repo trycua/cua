@@ -320,18 +320,28 @@ impl Tool for TypeTextTool {
 
         if let (Some((element, _)), Some(wid)) = (element_guard.as_ref(), window_id) {
             let center_guard = element.clone();
-            if let Ok(Some((screen_x, screen_y))) = tokio::task::spawn_blocking(move || unsafe {
-                crate::ax::bindings::element_screen_center(center_guard.as_ptr() as AXUIElementRef)
-            })
-            .await
+            if let Ok((Some((screen_x, screen_y)), target_rect)) =
+                tokio::task::spawn_blocking(move || unsafe {
+                    let el = center_guard.as_ptr() as AXUIElementRef;
+                    (
+                        crate::ax::bindings::element_screen_center(el),
+                        crate::ax::bindings::element_screen_rect(el),
+                    )
+                })
+                .await
             {
                 let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
                 crate::cursor::overlay::send_command(
                     cursor_key.clone(),
                     cursor_overlay::OverlayCommand::PinAbove(wid as u64),
                 );
-                crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y)
-                    .await;
+                crate::cursor::overlay::animate_cursor_to_target(
+                    cursor_key.clone(),
+                    screen_x,
+                    screen_y,
+                    target_rect,
+                )
+                .await;
                 self.state
                     .cursor_registry
                     .update_position(&cursor_key, screen_x, screen_y);

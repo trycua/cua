@@ -2429,9 +2429,269 @@ class _UniffiFfiConverterTypeClipboardWriteOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.privacy_sensitive, buf)
         _UniffiFfiConverterBoolean.write(value.content_redacted_from_telemetry, buf)
 
+class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterBoolean.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterBoolean.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterBoolean.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class CursorMotionEffects:
+    """
+    Per-effect overrides for the agent cursor. Unset fields are omitted on the wire, so they
+    keep their current setting.
+"""
+    def __init__(self, *, trail:typing.Optional[bool], glow:typing.Optional[bool], magnet:typing.Optional[bool], ripple:typing.Optional[bool], squish:typing.Optional[bool]):
+        self.trail = trail
+        self.glow = glow
+        self.magnet = magnet
+        self.ripple = ripple
+        self.squish = squish
+
+
+
+
+    def __str__(self):
+        return "CursorMotionEffects(trail={}, glow={}, magnet={}, ripple={}, squish={})".format(self.trail, self.glow, self.magnet, self.ripple, self.squish)
+    def __eq__(self, other):
+        if self.trail != other.trail:
+            return False
+        if self.glow != other.glow:
+            return False
+        if self.magnet != other.magnet:
+            return False
+        if self.ripple != other.ripple:
+            return False
+        if self.squish != other.squish:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorMotionEffects(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorMotionEffects(
+            trail=_UniffiFfiConverterOptionalBoolean.read(buf),
+            glow=_UniffiFfiConverterOptionalBoolean.read(buf),
+            magnet=_UniffiFfiConverterOptionalBoolean.read(buf),
+            ripple=_UniffiFfiConverterOptionalBoolean.read(buf),
+            squish=_UniffiFfiConverterOptionalBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.trail)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.glow)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.magnet)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.ripple)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.squish)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterOptionalBoolean.write(value.trail, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.glow, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.magnet, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.ripple, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.squish, buf)
+
+@dataclass
+class CursorMotionEffectsOutput:
+    """
+    Effects in use after applying overrides to the style's defaults.
+"""
+    def __init__(self, *, trail:bool, glow:bool, magnet:bool, ripple:bool, squish:bool):
+        self.trail = trail
+        self.glow = glow
+        self.magnet = magnet
+        self.ripple = ripple
+        self.squish = squish
+
+
+
+
+    def __str__(self):
+        return "CursorMotionEffectsOutput(trail={}, glow={}, magnet={}, ripple={}, squish={})".format(self.trail, self.glow, self.magnet, self.ripple, self.squish)
+    def __eq__(self, other):
+        if self.trail != other.trail:
+            return False
+        if self.glow != other.glow:
+            return False
+        if self.magnet != other.magnet:
+            return False
+        if self.ripple != other.ripple:
+            return False
+        if self.squish != other.squish:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorMotionEffectsOutput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorMotionEffectsOutput(
+            trail=_UniffiFfiConverterBoolean.read(buf),
+            glow=_UniffiFfiConverterBoolean.read(buf),
+            magnet=_UniffiFfiConverterBoolean.read(buf),
+            ripple=_UniffiFfiConverterBoolean.read(buf),
+            squish=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterBoolean.check_lower(value.trail)
+        _UniffiFfiConverterBoolean.check_lower(value.glow)
+        _UniffiFfiConverterBoolean.check_lower(value.magnet)
+        _UniffiFfiConverterBoolean.check_lower(value.ripple)
+        _UniffiFfiConverterBoolean.check_lower(value.squish)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterBoolean.write(value.trail, buf)
+        _UniffiFfiConverterBoolean.write(value.glow, buf)
+        _UniffiFfiConverterBoolean.write(value.magnet, buf)
+        _UniffiFfiConverterBoolean.write(value.ripple, buf)
+        _UniffiFfiConverterBoolean.write(value.squish, buf)
+
+
+
+
+
+
+class CursorMotionStyle(enum.Enum):
+
+    SIGNATURE_ARC = 0
+
+    SPRING_SETTLE = 1
+
+    MAGNETIC = 2
+
+    COMET_SWOOP = 3
+
+    ADAPTIVE = 4
+
+    CLASSIC = 5
+
+
+
+class _UniffiFfiConverterTypeCursorMotionStyle(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return CursorMotionStyle.SIGNATURE_ARC
+        if variant == 2:
+            return CursorMotionStyle.SPRING_SETTLE
+        if variant == 3:
+            return CursorMotionStyle.MAGNETIC
+        if variant == 4:
+            return CursorMotionStyle.COMET_SWOOP
+        if variant == 5:
+            return CursorMotionStyle.ADAPTIVE
+        if variant == 6:
+            return CursorMotionStyle.CLASSIC
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == CursorMotionStyle.SIGNATURE_ARC:
+            return
+        if value == CursorMotionStyle.SPRING_SETTLE:
+            return
+        if value == CursorMotionStyle.MAGNETIC:
+            return
+        if value == CursorMotionStyle.COMET_SWOOP:
+            return
+        if value == CursorMotionStyle.ADAPTIVE:
+            return
+        if value == CursorMotionStyle.CLASSIC:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == CursorMotionStyle.SIGNATURE_ARC:
+            buf.write_i32(1)
+        if value == CursorMotionStyle.SPRING_SETTLE:
+            buf.write_i32(2)
+        if value == CursorMotionStyle.MAGNETIC:
+            buf.write_i32(3)
+        if value == CursorMotionStyle.COMET_SWOOP:
+            buf.write_i32(4)
+        if value == CursorMotionStyle.ADAPTIVE:
+            buf.write_i32(5)
+        if value == CursorMotionStyle.CLASSIC:
+            buf.write_i32(6)
+
+
+
+
+
+
+
+
+class CursorMotionTiming(enum.Enum):
+
+    NATIVE = 0
+
+    FITTS = 1
+
+    FIXED = 2
+
+
+
+class _UniffiFfiConverterTypeCursorMotionTiming(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return CursorMotionTiming.NATIVE
+        if variant == 2:
+            return CursorMotionTiming.FITTS
+        if variant == 3:
+            return CursorMotionTiming.FIXED
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == CursorMotionTiming.NATIVE:
+            return
+        if value == CursorMotionTiming.FITTS:
+            return
+        if value == CursorMotionTiming.FIXED:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == CursorMotionTiming.NATIVE:
+            buf.write_i32(1)
+        if value == CursorMotionTiming.FITTS:
+            buf.write_i32(2)
+        if value == CursorMotionTiming.FIXED:
+            buf.write_i32(3)
+
+
+
 @dataclass
 class CursorMotionOutput:
-    def __init__(self, *, start_handle:float, end_handle:float, arc_size:float, arc_flow:float, spring:float, glide_duration_ms:float, dwell_after_click_ms:float, idle_hide_ms:float, turn_radius:float):
+    def __init__(self, *, start_handle:float, end_handle:float, arc_size:float, arc_flow:float, spring:float, glide_duration_ms:float, dwell_after_click_ms:float, idle_hide_ms:float, turn_radius:float, style:CursorMotionStyle, timing:CursorMotionTiming, effects:CursorMotionEffectsOutput):
         self.start_handle = start_handle
         self.end_handle = end_handle
         self.arc_size = arc_size
@@ -2441,12 +2701,15 @@ class CursorMotionOutput:
         self.dwell_after_click_ms = dwell_after_click_ms
         self.idle_hide_ms = idle_hide_ms
         self.turn_radius = turn_radius
+        self.style = style
+        self.timing = timing
+        self.effects = effects
 
 
 
 
     def __str__(self):
-        return "CursorMotionOutput(start_handle={}, end_handle={}, arc_size={}, arc_flow={}, spring={}, glide_duration_ms={}, dwell_after_click_ms={}, idle_hide_ms={}, turn_radius={})".format(self.start_handle, self.end_handle, self.arc_size, self.arc_flow, self.spring, self.glide_duration_ms, self.dwell_after_click_ms, self.idle_hide_ms, self.turn_radius)
+        return "CursorMotionOutput(start_handle={}, end_handle={}, arc_size={}, arc_flow={}, spring={}, glide_duration_ms={}, dwell_after_click_ms={}, idle_hide_ms={}, turn_radius={}, style={}, timing={}, effects={})".format(self.start_handle, self.end_handle, self.arc_size, self.arc_flow, self.spring, self.glide_duration_ms, self.dwell_after_click_ms, self.idle_hide_ms, self.turn_radius, self.style, self.timing, self.effects)
     def __eq__(self, other):
         if self.start_handle != other.start_handle:
             return False
@@ -2466,6 +2729,12 @@ class CursorMotionOutput:
             return False
         if self.turn_radius != other.turn_radius:
             return False
+        if self.style != other.style:
+            return False
+        if self.timing != other.timing:
+            return False
+        if self.effects != other.effects:
+            return False
         return True
 
 class _UniffiFfiConverterTypeCursorMotionOutput(_UniffiConverterRustBuffer):
@@ -2481,6 +2750,9 @@ class _UniffiFfiConverterTypeCursorMotionOutput(_UniffiConverterRustBuffer):
             dwell_after_click_ms=_UniffiFfiConverterFloat64.read(buf),
             idle_hide_ms=_UniffiFfiConverterFloat64.read(buf),
             turn_radius=_UniffiFfiConverterFloat64.read(buf),
+            style=_UniffiFfiConverterTypeCursorMotionStyle.read(buf),
+            timing=_UniffiFfiConverterTypeCursorMotionTiming.read(buf),
+            effects=_UniffiFfiConverterTypeCursorMotionEffectsOutput.read(buf),
         )
 
     @staticmethod
@@ -2494,6 +2766,9 @@ class _UniffiFfiConverterTypeCursorMotionOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterFloat64.check_lower(value.dwell_after_click_ms)
         _UniffiFfiConverterFloat64.check_lower(value.idle_hide_ms)
         _UniffiFfiConverterFloat64.check_lower(value.turn_radius)
+        _UniffiFfiConverterTypeCursorMotionStyle.check_lower(value.style)
+        _UniffiFfiConverterTypeCursorMotionTiming.check_lower(value.timing)
+        _UniffiFfiConverterTypeCursorMotionEffectsOutput.check_lower(value.effects)
 
     @staticmethod
     def write(value, buf):
@@ -2506,6 +2781,9 @@ class _UniffiFfiConverterTypeCursorMotionOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterFloat64.write(value.dwell_after_click_ms, buf)
         _UniffiFfiConverterFloat64.write(value.idle_hide_ms, buf)
         _UniffiFfiConverterFloat64.write(value.turn_radius, buf)
+        _UniffiFfiConverterTypeCursorMotionStyle.write(value.style, buf)
+        _UniffiFfiConverterTypeCursorMotionTiming.write(value.timing, buf)
+        _UniffiFfiConverterTypeCursorMotionEffectsOutput.write(value.effects, buf)
 
 @dataclass
 class CursorPointOutput:
@@ -3166,31 +3444,6 @@ class _UniffiFfiConverterTypeElementSelector(_UniffiConverterRustBuffer):
     def write(value, buf):
         _UniffiFfiConverterOptionalString.write(value.role, buf)
         _UniffiFfiConverterOptionalString.write(value.label_contains, buf)
-
-class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterBoolean.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterBoolean.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterBoolean.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
 
 @dataclass
 class ElementPredicate:
@@ -6448,10 +6701,88 @@ class _UniffiFfiConverterTypeSetAgentCursorEnabledOutput(_UniffiConverterRustBuf
         _UniffiFfiConverterString.write(value.session, buf)
         _UniffiFfiConverterBoolean.write(value.enabled, buf)
 
+class _UniffiFfiConverterOptionalTypeCursorMotionStyle(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorMotionStyle.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorMotionStyle.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorMotionStyle.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+class _UniffiFfiConverterOptionalTypeCursorMotionTiming(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorMotionTiming.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorMotionTiming.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorMotionTiming.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+class _UniffiFfiConverterOptionalTypeCursorMotionEffects(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorMotionEffects.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorMotionEffects.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorMotionEffects.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class SetAgentCursorMotionInput:
-    def __init__(self, *, session:str, start_handle:typing.Optional[float], end_handle:typing.Optional[float], arc_size:typing.Optional[float], arc_flow:typing.Optional[float], spring:typing.Optional[float], glide_duration_ms:typing.Optional[float], dwell_after_click_ms:typing.Optional[float], idle_hide_ms:typing.Optional[float], turn_radius:typing.Optional[float]):
+    def __init__(self, *, session:str, style:typing.Optional[CursorMotionStyle], timing:typing.Optional[CursorMotionTiming], effects:typing.Optional[CursorMotionEffects], start_handle:typing.Optional[float], end_handle:typing.Optional[float], arc_size:typing.Optional[float], arc_flow:typing.Optional[float], spring:typing.Optional[float], glide_duration_ms:typing.Optional[float], dwell_after_click_ms:typing.Optional[float], idle_hide_ms:typing.Optional[float], turn_radius:typing.Optional[float]):
         self.session = session
+        self.style = style
+        self.timing = timing
+        self.effects = effects
         self.start_handle = start_handle
         self.end_handle = end_handle
         self.arc_size = arc_size
@@ -6466,9 +6797,15 @@ class SetAgentCursorMotionInput:
 
 
     def __str__(self):
-        return "SetAgentCursorMotionInput(session={}, start_handle={}, end_handle={}, arc_size={}, arc_flow={}, spring={}, glide_duration_ms={}, dwell_after_click_ms={}, idle_hide_ms={}, turn_radius={})".format(self.session, self.start_handle, self.end_handle, self.arc_size, self.arc_flow, self.spring, self.glide_duration_ms, self.dwell_after_click_ms, self.idle_hide_ms, self.turn_radius)
+        return "SetAgentCursorMotionInput(session={}, style={}, timing={}, effects={}, start_handle={}, end_handle={}, arc_size={}, arc_flow={}, spring={}, glide_duration_ms={}, dwell_after_click_ms={}, idle_hide_ms={}, turn_radius={})".format(self.session, self.style, self.timing, self.effects, self.start_handle, self.end_handle, self.arc_size, self.arc_flow, self.spring, self.glide_duration_ms, self.dwell_after_click_ms, self.idle_hide_ms, self.turn_radius)
     def __eq__(self, other):
         if self.session != other.session:
+            return False
+        if self.style != other.style:
+            return False
+        if self.timing != other.timing:
+            return False
+        if self.effects != other.effects:
             return False
         if self.start_handle != other.start_handle:
             return False
@@ -6495,6 +6832,9 @@ class _UniffiFfiConverterTypeSetAgentCursorMotionInput(_UniffiConverterRustBuffe
     def read(buf):
         return SetAgentCursorMotionInput(
             session=_UniffiFfiConverterString.read(buf),
+            style=_UniffiFfiConverterOptionalTypeCursorMotionStyle.read(buf),
+            timing=_UniffiFfiConverterOptionalTypeCursorMotionTiming.read(buf),
+            effects=_UniffiFfiConverterOptionalTypeCursorMotionEffects.read(buf),
             start_handle=_UniffiFfiConverterOptionalFloat64.read(buf),
             end_handle=_UniffiFfiConverterOptionalFloat64.read(buf),
             arc_size=_UniffiFfiConverterOptionalFloat64.read(buf),
@@ -6509,6 +6849,9 @@ class _UniffiFfiConverterTypeSetAgentCursorMotionInput(_UniffiConverterRustBuffe
     @staticmethod
     def check_lower(value):
         _UniffiFfiConverterString.check_lower(value.session)
+        _UniffiFfiConverterOptionalTypeCursorMotionStyle.check_lower(value.style)
+        _UniffiFfiConverterOptionalTypeCursorMotionTiming.check_lower(value.timing)
+        _UniffiFfiConverterOptionalTypeCursorMotionEffects.check_lower(value.effects)
         _UniffiFfiConverterOptionalFloat64.check_lower(value.start_handle)
         _UniffiFfiConverterOptionalFloat64.check_lower(value.end_handle)
         _UniffiFfiConverterOptionalFloat64.check_lower(value.arc_size)
@@ -6522,6 +6865,9 @@ class _UniffiFfiConverterTypeSetAgentCursorMotionInput(_UniffiConverterRustBuffe
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterString.write(value.session, buf)
+        _UniffiFfiConverterOptionalTypeCursorMotionStyle.write(value.style, buf)
+        _UniffiFfiConverterOptionalTypeCursorMotionTiming.write(value.timing, buf)
+        _UniffiFfiConverterOptionalTypeCursorMotionEffects.write(value.effects, buf)
         _UniffiFfiConverterOptionalFloat64.write(value.start_handle, buf)
         _UniffiFfiConverterOptionalFloat64.write(value.end_handle, buf)
         _UniffiFfiConverterOptionalFloat64.write(value.arc_size, buf)
@@ -7925,6 +8271,8 @@ __all__ = [
     "ClickPosition",
     "InputDeliveryMode",
     "ClickButton",
+    "CursorMotionStyle",
+    "CursorMotionTiming",
     "CursorReducedMotion",
     "CursorAction",
     "DesktopScope",
@@ -7955,6 +8303,8 @@ __all__ = [
     "ClipboardReadOutput",
     "ClipboardWriteInput",
     "ClipboardWriteOutput",
+    "CursorMotionEffects",
+    "CursorMotionEffectsOutput",
     "CursorMotionOutput",
     "CursorPointOutput",
     "CursorThemeOutput",

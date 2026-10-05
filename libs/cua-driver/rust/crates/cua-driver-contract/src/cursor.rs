@@ -166,6 +166,147 @@ pub struct CursorThemeSelection {
     pub reduced_motion: CursorReducedMotion,
 }
 
+// Trajectory style of the agent cursor. The motion-lab candidate ids are
+// accepted as aliases on input; outputs always use the snake_case names.
+// Variants carry no doc comments so the schema stays a plain string enum.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    PartialEq,
+    Eq,
+    Hash,
+    uniffi::Enum,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorMotionStyle {
+    #[default]
+    #[serde(alias = "dc-signature-arc")]
+    SignatureArc,
+    #[serde(alias = "dc-spring-settle")]
+    SpringSettle,
+    #[serde(alias = "dc-magnetic")]
+    Magnetic,
+    #[serde(alias = "dc-comet-swoop")]
+    CometSwoop,
+    #[serde(alias = "adaptive-auto")]
+    Adaptive,
+    #[serde(alias = "dubins-glide", alias = "dubins")]
+    Classic,
+}
+
+impl CursorMotionStyle {
+    pub const ALL: [Self; 6] = [
+        Self::SignatureArc,
+        Self::SpringSettle,
+        Self::Magnetic,
+        Self::CometSwoop,
+        Self::Adaptive,
+        Self::Classic,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SignatureArc => "signature_arc",
+            Self::SpringSettle => "spring_settle",
+            Self::Magnetic => "magnetic",
+            Self::CometSwoop => "comet_swoop",
+            Self::Adaptive => "adaptive",
+            Self::Classic => "classic",
+        }
+    }
+}
+
+// How long each agent cursor move takes.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    PartialEq,
+    Eq,
+    Hash,
+    uniffi::Enum,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorMotionTiming {
+    #[default]
+    Native,
+    Fitts,
+    Fixed,
+}
+
+impl CursorMotionTiming {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Native => "native",
+            Self::Fitts => "fitts",
+            Self::Fixed => "fixed",
+        }
+    }
+}
+
+/// Per-effect overrides for the agent cursor. Unset fields are omitted on the wire, so they
+/// keep their current setting.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    PartialEq,
+    Eq,
+    uniffi::Record,
+)]
+#[serde(deny_unknown_fields)]
+pub struct CursorMotionEffects {
+    /// Short fading trail behind the cursor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trail: Option<bool>,
+    /// Soft glow around the cursor that grows with speed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glow: Option<bool>,
+    /// Target glow when the `magnetic` style locks on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub magnet: Option<bool>,
+    /// Ring that expands from the hotspot on click.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ripple: Option<bool>,
+    /// Brief scale-down of the cursor on click.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub squish: Option<bool>,
+}
+
+/// Effects in use after applying overrides to the style's defaults.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    PartialEq,
+    Eq,
+    uniffi::Record,
+)]
+pub struct CursorMotionEffectsOutput {
+    pub trail: bool,
+    pub glow: bool,
+    pub magnet: bool,
+    pub ripple: bool,
+    pub squish: bool,
+}
+
 impl CursorTarget {
     pub const fn as_str(self) -> &'static str {
         match self {

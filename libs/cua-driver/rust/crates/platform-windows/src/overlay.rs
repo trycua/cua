@@ -395,6 +395,13 @@ fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool
 /// on-screen via [`seed_start_if_sentinel`] so its FIRST action glides in.
 /// Mirrors `platform_macos::cursor::overlay::animate_cursor_to`.
 pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
+    animate_cursor_to_target(key, x, y, None).await;
+}
+
+/// [`animate_cursor_to`] with the targeted element's screen rect
+/// `[x, y, width, height]` in the same space as `x`/`y`, so motion styles can
+/// use Fitts timing and highlight the target. `None` for pixel actions.
+pub async fn animate_cursor_to_target(key: CursorKey, x: f64, y: f64, target: Option<[f64; 4]>) {
     if key.is_empty() {
         return;
     }
@@ -427,6 +434,7 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
             // Arrive pointing upper-left (45°) — same convention as macOS /
             // Swift reference (`endAngleDegrees: 45`).
             end_heading_radians: std::f64::consts::FRAC_PI_4,
+            target,
         },
     );
 
@@ -510,9 +518,9 @@ impl RenderState {
     /// WM_TIMER handler, which compensates for the 0.05 s motion-dt clamp.
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     fn in_idle_countdown(&self) -> bool {
-        self.core.path.is_none()
-            && self.core.spring.is_none()
+        self.core.trajectory.is_none()
             && self.core.click_t.is_none()
+            && self.core.click_age.is_none()
             && self.core.motion.idle_hide_ms > 0.0
             && self.core.visible
             && cursor_overlay::render_state::is_placed(self.core.pos)
@@ -749,6 +757,81 @@ impl DirtyRect {
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const CURSOR_PAD: i32 = cursor_overlay::session_badge::BADGE_MAX_WIDTH as i32 + 12;
 
+/// Window-local region one cursor paints this frame: the cursor/badge
+/// envelope plus its motion effects (trail, glow, magnet target glow, click
+/// ripple), which `paint_cursor` draws into the same surface and which can
+/// reach far past `CURSOR_PAD`. `composite_dirty` keeps this frame's union in
+/// `PREV_DIRTY`, so the next frame clears and re-presents the area an effect
+/// covered after it shrinks or ends. `None` when the cursor paints nothing.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn cursor_dirty_rect(
+    core: &RenderStateCore,
+    virt_x: i32,
+    virt_y: i32,
+    w: i32,
+    h: i32,
+) -> Option<DirtyRect> {
+    // Mirrors paint_cursor's own visibility early-return.
+    if !core.is_revealed() {
+        return None;
+    }
+    let custom_theme = core
+        .theme
+        .as_deref()
+        .is_some_and(|theme| theme.id != cursor_overlay::DEFAULT_THEME_ID);
+    if custom_theme {
+        return DirtyRect {
+            x0: 0,
+            y0: 0,
+            x1: w,
+            y1: h,
+        }
+        .clamped(w, h);
+    }
+    let cx = (core.pos.0 - f64::from(virt_x)).round() as i32;
+    let cy = (core.pos.1 - f64::from(virt_y)).round() as i32;
+    let cursor = DirtyRect {
+        x0: cx - CURSOR_PAD,
+        y0: cy - CURSOR_PAD,
+        x1: cx + CURSOR_PAD,
+        y1: cy + CURSOR_PAD,
+    }
+    .clamped(w, h);
+    let effect = core
+        .effect_bounds()
+        .and_then(|rect| effect_dirty_rect(rect, virt_x, virt_y, w, h));
+    DirtyRect::union(cursor, effect)
+}
+
+/// Convert a global `[x, y, w, h]` effect rect to a clamped window-local
+/// dirty rect, applying the same virtual-screen origin offset `paint_cursor`
+/// uses, with a pixel of antialiasing slack.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn effect_dirty_rect(
+    [x, y, ew, eh]: [f64; 4],
+    virt_x: i32,
+    virt_y: i32,
+    w: i32,
+    h: i32,
+) -> Option<DirtyRect> {
+    if !(x.is_finite() && y.is_finite() && ew.is_finite() && eh.is_finite())
+        || ew <= 0.0
+        || eh <= 0.0
+    {
+        return None;
+    }
+    // Clamp in f64 before the cast so a far off-screen rect cannot saturate.
+    let local_x = |v: f64| (v - f64::from(virt_x)).clamp(-1.0, f64::from(w) + 1.0);
+    let local_y = |v: f64| (v - f64::from(virt_y)).clamp(-1.0, f64::from(h) + 1.0);
+    DirtyRect {
+        x0: local_x(x).floor() as i32 - 1,
+        y0: local_y(y).floor() as i32 - 1,
+        x1: local_x(x + ew).ceil() as i32 + 1,
+        y1: local_y(y + eh).ceil() as i32 + 1,
+    }
+    .clamped(w, h)
+}
+
 #[cfg(target_os = "windows")]
 struct WinSurface {
     pixmap: tiny_skia::Pixmap,
@@ -897,33 +980,10 @@ fn composite_dirty(map: &RenderMap) -> Option<DirtyRect> {
         // (mirrors paint_cursor's own visibility early-return).
         let mut current: Option<DirtyRect> = None;
         for rs in map.cursors.values() {
-            if !rs.core.is_revealed() {
-                continue;
-            }
-            let cx = (rs.core.pos.0 - screen.virt_x as f64).round() as i32;
-            let cy = (rs.core.pos.1 - screen.virt_y as f64).round() as i32;
-            let custom_theme = rs
-                .core
-                .theme
-                .as_deref()
-                .is_some_and(|theme| theme.id != cursor_overlay::DEFAULT_THEME_ID);
-            let r = if custom_theme {
-                Some(DirtyRect {
-                    x0: 0,
-                    y0: 0,
-                    x1: w,
-                    y1: h,
-                })
-            } else {
-                DirtyRect {
-                    x0: cx - CURSOR_PAD,
-                    y0: cy - CURSOR_PAD,
-                    x1: cx + CURSOR_PAD,
-                    y1: cy + CURSOR_PAD,
-                }
-                .clamped(w, h)
-            };
-            current = DirtyRect::union(current, r);
+            current = DirtyRect::union(
+                current,
+                cursor_dirty_rect(&rs.core, screen.virt_x, screen.virt_y, w, h),
+            );
         }
 
         let prev = PREV_DIRTY.with(std::cell::Cell::get);
@@ -1618,6 +1678,7 @@ mod tests {
                 x,
                 y,
                 end_heading_radians: 0.0,
+                target: None,
             },
         })
     }
@@ -1626,7 +1687,9 @@ mod tests {
         for _ in 0..2000 {
             map.tick_all(0.016);
             if map.cursors.values().all(|rs| {
-                rs.core.path.is_none() && rs.core.spring.is_none() && rs.core.click_t.is_none()
+                rs.core.trajectory.is_none()
+                    && rs.core.click_t.is_none()
+                    && rs.core.click_age.is_none()
             }) {
                 break;
             }
@@ -1639,6 +1702,58 @@ mod tests {
             CURSOR_PAD as f32 >= cursor_overlay::session_badge::BADGE_MAX_WIDTH + 8.0,
             "a cursor at a display edge can have the entire badge on one side"
         );
+    }
+
+    #[test]
+    fn effect_area_widens_the_dirty_rect_in_window_local_coordinates() {
+        let mut map = empty_map();
+        map.platform.virt_x = -1920;
+        map.platform.virt_w = 3840;
+        map.platform.virt_h = 1080;
+        let core = &mut map.cursors.get_mut("default").unwrap().core;
+        core.pos = (-1000.0, 500.0);
+        let (vx, vy, w, h) = (-1920, 0, 3840, 1080);
+
+        let cursor_only = cursor_dirty_rect(core, vx, vy, w, h).unwrap();
+        assert_eq!(
+            cursor_only,
+            DirtyRect {
+                x0: 920 - CURSOR_PAD,
+                y0: 500 - CURSOR_PAD,
+                x1: 920 + CURSOR_PAD,
+                y1: 500 + CURSOR_PAD,
+            }
+        );
+
+        // A trail behind the cursor, in global coordinates left of the
+        // primary display, lands at its window-local spot with 1 px slack.
+        assert_eq!(
+            effect_dirty_rect([-1500.0, 100.0, 520.5, 420.0], vx, vy, w, h),
+            Some(DirtyRect {
+                x0: 419,
+                y0: 99,
+                x1: 942,
+                y1: 521,
+            })
+        );
+        // Off-surface, degenerate, and non-finite rects clamp or vanish.
+        assert_eq!(
+            effect_dirty_rect([-5000.0, -50.0, 3200.0, 100.0], vx, vy, w, h),
+            Some(DirtyRect {
+                x0: 0,
+                y0: 0,
+                x1: 121,
+                y1: 51,
+            })
+        );
+        assert_eq!(effect_dirty_rect([0.0, 0.0, 0.0, 10.0], vx, vy, w, h), None);
+        assert_eq!(
+            effect_dirty_rect([f64::NAN, 0.0, 1.0, 1.0], vx, vy, w, h),
+            None
+        );
+
+        core.visible = false;
+        assert_eq!(cursor_dirty_rect(core, vx, vy, w, h), None);
     }
 
     #[test]
@@ -1678,7 +1793,7 @@ mod tests {
         apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
         settle(&mut map);
         let rs = &map.cursors["sessA"];
-        assert!(rs.core.path.is_none() && rs.core.spring.is_none());
+        assert!(rs.core.trajectory.is_none());
         assert_eq!(rs.core.idle_alpha, 1.0);
         assert!(rs.core.has_resting_motion());
         assert!(map.needs_frame_tick(), "the resting bob needs frames");
@@ -1706,7 +1821,7 @@ mod tests {
         // cannot change, so it must NOT demand frame ticks (the render-gate
         // fix), but it must still be ticked for wall-clock accrual.
         let rs = &map.cursors["sessA"];
-        assert!(rs.core.path.is_none() && rs.core.spring.is_none());
+        assert!(rs.core.trajectory.is_none());
         assert_eq!(rs.core.idle_alpha, 1.0);
         assert!(!map.needs_frame_tick());
         assert!(rs.in_idle_countdown());

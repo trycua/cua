@@ -45,8 +45,9 @@ fn drop_schemars_numeric_format(schema: &mut Schema) {
 }
 
 pub use cursor::{
-    classify_cursor_semantics, CursorAction, CursorDelivery, CursorPlayback, CursorReducedMotion,
-    CursorSemantics, CursorTarget, CursorThemeSelection,
+    classify_cursor_semantics, CursorAction, CursorDelivery, CursorMotionEffects,
+    CursorMotionEffectsOutput, CursorMotionStyle, CursorMotionTiming, CursorPlayback,
+    CursorReducedMotion, CursorSemantics, CursorTarget, CursorThemeSelection,
 };
 pub use inputs::{
     action_target_schema, ActionTarget, CaptureScope, ClickButton, ClickInput, ClickPosition,

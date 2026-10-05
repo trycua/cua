@@ -292,6 +292,9 @@ pub struct CursorMotionOutput {
     pub dwell_after_click_ms: f64,
     pub idle_hide_ms: f64,
     pub turn_radius: f64,
+    pub style: crate::CursorMotionStyle,
+    pub timing: crate::CursorMotionTiming,
+    pub effects: crate::CursorMotionEffectsOutput,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]

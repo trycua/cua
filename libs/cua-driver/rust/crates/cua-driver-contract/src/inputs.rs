@@ -97,6 +97,16 @@ fn positive_integer_schema(_: &mut SchemaGenerator) -> Schema {
     json_schema!({ "type": "integer", "minimum": 1 })
 }
 
+// Optional enums advertise the bare string enum: Gemini rejects a `null`
+// entry in `enum`, and an omitted field already means "keep".
+fn cursor_motion_style_schema(generator: &mut SchemaGenerator) -> Schema {
+    crate::CursorMotionStyle::json_schema(generator)
+}
+
+fn cursor_motion_timing_schema(generator: &mut SchemaGenerator) -> Schema {
+    crate::CursorMotionTiming::json_schema(generator)
+}
+
 fn click_button_schema(generator: &mut SchemaGenerator) -> Schema {
     ClickButton::json_schema(generator)
 }
@@ -409,30 +419,48 @@ pub struct SetAgentCursorMotionInput {
     /// Public label of the session that owns the cursor. Omitted or null motion fields keep
     /// their current value.
     pub session: String,
-    /// Path control-point offset from the start, as a fraction of the distance. Clamped to
-    /// 0..1 (default 0.3).
+    /// Trajectory style. `signature_arc` (default) is one arc with a small follow-through;
+    /// `spring_settle` lands with one soft bounce; `magnetic` is pulled into the target;
+    /// `comet_swoop` is a wide arc with a short trail; `adaptive` picks a careful approach for
+    /// small targets and a swoop for long moves; `classic` is the previous Dubins glide. When
+    /// the theme's reduced motion is on, every move is a short straight glide with no effects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "cursor_motion_style_schema")]
+    pub style: Option<crate::CursorMotionStyle>,
+    /// `native` uses the style's own timing; `fitts` scales the move time with distance and
+    /// target size; `fixed` uses glide_duration_ms (1430 ms when 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "cursor_motion_timing_schema")]
+    pub timing: Option<crate::CursorMotionTiming>,
+    /// Turn single effects on or off. An omitted effect keeps its current setting; null
+    /// restores the style's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effects: Option<crate::CursorMotionEffects>,
+    /// Arc control-point offset from the start, as a fraction of the distance, for
+    /// `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).
     pub start_handle: Option<f64>,
-    /// Path control-point offset from the end, as a fraction of the distance. Clamped to 0..1
-    /// (default 0.3).
+    /// Arc control-point offset from the end, as a fraction of the distance, for
+    /// `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).
     pub end_handle: Option<f64>,
-    /// Sideways arc deflection as a fraction of the distance. Clamped to 0..1 (default 0.25).
+    /// Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default)
+    /// keeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1.
     pub arc_size: Option<f64>,
-    /// Arc asymmetry: positive puts the apex near the destination, negative near the start.
-    /// Clamped to -1..1 (default 0).
+    /// Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`:
+    /// positive moves the apex toward the destination. Clamped to -1..1 (default 0).
     pub arc_flow: Option<f64>,
-    /// Post-arrival spring damping: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1
-    /// (default 0.72).
+    /// Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped
+    /// to 0.3..1 (default 0.72).
     pub spring: Option<f64>,
-    /// Fixed glide duration in milliseconds. 0 (the default) uses speed-based timing. Clamped
-    /// to 0..5000.
+    /// Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A
+    /// nonzero value with `native` timing also fixes the duration. Clamped to 0..5000.
     pub glide_duration_ms: Option<f64>,
     /// Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).
     pub dwell_after_click_ms: Option<f64>,
     /// Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to
     /// 0..60000 (default 15000).
     pub idle_hide_ms: Option<f64>,
-    /// Minimum turning radius of the glide path, in points; smaller turns tighter. Clamped to
-    /// 1..1000 (default 80).
+    /// Minimum turning radius of the `classic` glide path, in points; smaller turns tighter.
+    /// Clamped to 1..1000 (default 80).
     pub turn_radius: Option<f64>,
 }
 

@@ -1,0 +1,19 @@
+{
+  "cua_driver_version": "0.34.0",
+  "cua_driver_version_string": "cua-driver 0.34.0",
+  "cua_driver_binary_sha256": "54e5d48128fb62323366c49b6be480ccef83cdee23bd7fc1f19431347a5df86b",
+  "cua_driver_git_sha": "b0968e1b12834e485dda68789541a3cc57664a9f",
+  "cua_driver_tarball": "cua-driver-rs-0.34.0-darwin-universal.tar.gz",
+  "cua_driver_tarball_sha256": "2d0ade531c07b4d16e8078844fe1b63a0dfa0ee19677c9dcc079b4d3460ab387",
+  "cua_skills_tarball": "cua-driver-rs-v0.34.0-skills.tar.gz",
+  "cua_skills_tarball_sha256": "4ea2bfc2d833af791c8a6d9c5904f468bd35552728b4608e151b106ace02292f",
+  "cua_skills_tree_sha256": "aed1bc3a73badfb0b988e613095ff3307b5186e2ad5a08d421eb8ac62635275d",
+  "release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
+  "claude_code_version": "2.1.289 (Claude Code)",
+  "macos_version": "26.6.1",
+  "macos_build": "25G76",
+  "chatgpt_app_version": "26.930.51102",
+  "unified_computer_use_plugin_version": "26.930.51102",
+  "cua_repl_package_version": "0.1.0",
+  "codex_computer_use_service_version": "26.929.1001365"
+}

@@ -4,6 +4,7 @@
 
 ### Bug Fixes
 
+* **cua-driver:** delete orphaned `isolated_new` browser profiles left behind when a daemon exited before ending the session (Unix, older than 1 h, no running browser).
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.
 
 ## [0.33.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.33.3...cua-driver-rs-v0.33.4) (2026-10-05)

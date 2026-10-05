@@ -12,7 +12,7 @@ on:
       - "docs/scripts/tests/test_fleet_driver_guide.py"
       - "docs/scripts/tests/test_sandbox_secret_example.py"
       - "docs/scripts/tests/test_fleet_docs_version_facts.py"
-      - "docs/scripts/tests/test_openai_agents_fleet_example.py"
+      - "docs/scripts/tests/test_openai_agents_example.py"
       - "libs/python/cua-sandbox/**"
       - "libs/cua/VERSION"
       - "libs/cua/python/pyproject.toml"
@@ -50,4 +50,4 @@ jobs:
           docs/scripts/tests/test_fleet_driver_guide.py
           docs/scripts/tests/test_sandbox_secret_example.py
           docs/scripts/tests/test_fleet_docs_version_facts.py
-          docs/scripts/tests/test_openai_agents_fleet_example.py
+          docs/scripts/tests/test_openai_agents_example.py

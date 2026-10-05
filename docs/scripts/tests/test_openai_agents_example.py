@@ -10,7 +10,7 @@ from unittest.mock import patch
 DOCS_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = (
     DOCS_ROOT
-    / "public/scripts/openai-agents-fleet/run_openai_agents_fleet.py"
+    / "public/scripts/openai-agents/run_openai_agents.py"
 )
 GUIDE = (
     DOCS_ROOT
@@ -19,19 +19,27 @@ GUIDE = (
 META = DOCS_ROOT / "content/docs/cua-sdk/guides/meta.json"
 
 
-def test_disposable_pool_name_ignores_existing_pool_override() -> None:
+def test_disposable_sandbox_name_ignores_existing_sandbox() -> None:
     tree = ast.parse(SCRIPT.read_text())
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
-                    and node.name == "pool_name")
+                    and node.name == "sandbox_name")
     namespace = {"os": os, "secrets": secrets}
     exec(compile(ast.Module(body=[function], type_ignores=[]), str(SCRIPT), "exec"), namespace)
-    with patch.dict(os.environ, {"CUA_POOL_NAME": "existing-production-pool"}):
-        first = namespace["pool_name"]()
-        second = namespace["pool_name"]()
+    with patch.dict(os.environ, {"CUA_SANDBOX_NAME": "existing-sandbox"}):
+        first = namespace["sandbox_name"]()
+        second = namespace["sandbox_name"]()
     assert first != second
-    assert first.startswith("cua-openai-agents-")
-    assert len(first.removeprefix("cua-openai-agents-")) == 24
-    assert len(f"{first}-a84951d4-server".encode()) <= 63
+    assert first.startswith("openai-agents-")
+    assert len(first.removeprefix("openai-agents-")) == 12
+
+
+def test_controller_does_not_use_fleets() -> None:
+    source = SCRIPT.read_text()
+    assert "Pool" not in source
+    assert "claim(" not in source
+    assert "await Sandbox.create(" in source
+    assert 'LOCATION = os.environ.get("CUA_ON", "local")' in source
+    assert "on=LOCATION" in source
 
 
 def test_controller_uses_the_spacesd_image_and_default_services() -> None:
@@ -65,11 +73,11 @@ def test_controller_covers_reconnect_artifact_and_cleanup() -> None:
     assert 'wait_for_type("agent.session.environment.disconnected")' in source
     assert source.count("await start_executor(") >= 2
     assert "await sandbox.files.read_bytes(ARTIFACT_PATH)" in source
-    assert "Agent-created Fleet artifact content did not match" in source
+    assert "Agent-created artifact content did not match" in source
     assert 'page.get("has_more")' in source
     assert 'page.get("last_id")' in source
     assert "await agents.delete_session" in source
-    assert "await pool.delete()" in source
+    assert "await sandbox.destroy()" in source
     assert 'response.status_code == 409' in source
     assert "contextlib.suppress(Exception)" not in source
     assert 'raise ExceptionGroup("Resource cleanup failed", cleanup_errors)' in source
@@ -105,7 +113,7 @@ def test_controller_registers_cua_driver_as_required_stdio_mcp() -> None:
 def test_guide_links_the_download_and_navigation_entry() -> None:
     guide = GUIDE.read_text()
     meta = META.read_text()
-    assert "https://cua.ai/docs-assets/scripts/openai-agents-fleet/run_openai_agents_fleet.py" in guide
-    assert "https://cua.ai/scripts/openai-agents-fleet/" not in guide
+    assert "https://cua.ai/docs-assets/scripts/openai-agents/run_openai_agents.py" in guide
+    assert "openai-agents-fleet" not in guide
     assert '"agent-frameworks"' in meta
     assert "## OpenAI Agents API" in guide

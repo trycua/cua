@@ -5,25 +5,30 @@ description: Run OpenAI Agents, Codex, Cursor, OpenClaw, an Omarchy desktop and 
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Each recipe gives a third-party agent its own desktop instead of yours. The
-cloud recipes need [cloud credentials](/cua-sdk/guides/cloud#credentials), and
-Python `>=3.11,<3.14` with [`uv`](https://docs.astral.sh/uv/) for the scripts,
-which pin `cua-sandbox==0.9.0`. Your controller owns the sandbox and must
-release it.
+Each recipe gives a third-party agent its own desktop instead of yours.
+Sandboxes run on this machine by default; to run them in your own AWS, Google
+Cloud or Modal account, see [Use your own cloud](/cua-sdk/guides/your-cloud).
+The Python script needs Python `>=3.11,<3.14` with
+[`uv`](https://docs.astral.sh/uv/) and pins `cua-sandbox==0.9.0`. Your
+controller owns the sandbox and must delete it.
 
 ## OpenAI Agents API
 
-A controller claims `Image.linux()`, starts `codex exec-server` in it as an
-OpenAI `self_hosted` environment, and gives the agent Cua Driver as a stdio
+A controller creates an `Image.linux()` sandbox, starts `codex exec-server` in
+it as an OpenAI `self_hosted` environment, and gives the agent Cua Driver as a stdio
 MCP server. It needs an OpenAI application key (`OPENAI_API_KEY`) and a
 separate environment key with only `api.agents.environments.connect`
 (`CODEX_API_KEY`), which is written to a mode-`600` file and deleted after the
 executor reads it.
 
 ```bash skip="third-party-cli"
-curl -fsSLO https://cua.ai/docs-assets/scripts/openai-agents-fleet/run_openai_agents_fleet.py
-uv run run_openai_agents_fleet.py
+curl -fsSLO https://cua.ai/docs-assets/scripts/openai-agents/run_openai_agents.py
+uv run run_openai_agents.py
 ```
+
+The sandbox runs on this machine. To run it in your own cloud, connect the
+account with `cua cloud connect` and set `CUA_ON=aws` (or `gcp`, `modal`)
+before `uv run`.
 
 The run drives an XFCE terminal through Cua Driver, reconnects the same
 environment ID, downloads an artifact, and deletes the session and the
@@ -99,85 +104,21 @@ OpenClaw needs X11 (not Wayland) and a vision-capable model.
 
 ## Omarchy desktop
 
-An amd64 Omarchy (Hyprland) containerDisk that ships cua-spacesd runs as a
-KubeVirt VM on a pool you apply. `OMARCHY_IMAGE` names the image (pin a
-digest) and `CUA_POOL_NAME` a globally unique pool name:
+`ghcr.io/trycua/omarchy:edge` is an amd64 Omarchy (Hyprland) VM image that
+ships Cua Driver and cua-spacesd. Run it as a local VM and drive it with the
+cua CLI:
 
-```python title="run_omarchy_fleet.py" test="fleet" id="omarchy-fleet"
-# /// script
-# requires-python = ">=3.11,<3.14"
-# dependencies = [
-#   "cua-sandbox[driver]==0.9.0",
-# ]
-# [[tool.uv.index]]
-# name = "cua-wheels"
-# url = "https://wheels.cua.ai/simple"
-# ///
-
-import asyncio
-import os
-from pathlib import Path
-
-from cua_driver import GetScreenSizeInput
-from cua_sandbox import Image, Pool
-
-IMAGE = os.environ["OMARCHY_IMAGE"]
-POOL_NAME = os.environ["CUA_POOL_NAME"]
-
-
-async def main() -> None:
-    pool = await Pool.apply(
-        Image.from_registry(IMAGE, os_type="linux", kind="vm"),
-        name=POOL_NAME,
-        replicas=1,
-        cpu=4,
-        memory_mb=6144,
-        runtime="kubevirt",
-        ttl_seconds_after_created=21600,
-    )
-
-    try:
-        async with pool.claim(time_to_start=1800) as sandbox:
-            width, height = await sandbox.get_dimensions()
-            print(f"Sandbox: {sandbox.name}, screen {width}x{height}")
-
-            result = await sandbox.shell.run("pgrep -a Hyprland")
-            if not result.success:
-                raise RuntimeError(result.stderr)
-            print(result.stdout.strip())
-
-            screenshot = Path("omarchy-fleet.png")
-            screenshot.write_bytes(await sandbox.screenshot())
-            print(f"Screenshot: {screenshot.resolve()}")
-
-            await sandbox.clipboard.set("hello from Omarchy Fleet")
-            if await sandbox.clipboard.get() != "hello from Omarchy Fleet":
-                raise RuntimeError("clipboard round trip failed")
-
-            await sandbox.mouse.click(width // 2, height // 2)
-            await sandbox.keyboard.keypress(["super", "2"])
-
-            # Typed Cua Driver over the spacesd's /mcp endpoint.
-            async with sandbox.driver.connect() as driver:
-                size = await driver.get_screen_size(GetScreenSizeInput(session=None))
-                print(f"Driver screen size: {size.text}")
-
-            print("Shell, screenshot, clipboard, click, hotkey and Driver passed")
-    finally:
-        await pool.delete()
-
-
-asyncio.run(main())
+```bash skip="local-vm"
+cua sb create ghcr.io/trycua/omarchy:edge --kind vm --name omarchy --cpu 4 --memory 4GB
+cua sb view omarchy
+cua do switch omarchy
+cua do screenshot --save omarchy.png
+cua sb rm omarchy -f
 ```
 
-`PoolAccessDeniedError` means the pool name is taken or the image is not
-admitted; a black screenshot means Hyprland did not start. To keep the pool
-warm between runs, drop the `finally` and delete it later:
-
-```python test="docs" id="delete-pool" prelude="fakefleet,pool-applied"
-await pool.delete()
-```
-
+It boots under QEMU: KVM on Linux, TCG (slow) on Apple silicon. A black
+screenshot means Hyprland did not start. The full walkthrough, including
+Omarchy's own Cua Driver, is in [Omarchy with Cua Driver](/cua-sdk/guides/omarchy).
 For Omarchy on Apple silicon, see [Lume](/lume).
 
 ## Minecraft

@@ -9,10 +9,14 @@
 # name = "cua-wheels"
 # url = "https://wheels.cua.ai/simple"
 # ///
-"""Run an OpenAI Agents API self-hosted session on Cua Cloud Fleet.
+"""Run an OpenAI Agents API self-hosted session in a Cua sandbox.
+
+The sandbox runs on this machine by default. Set CUA_ON to "aws", "gcp" or
+"modal" to run it in your own cloud account instead (connect it first with
+`cua cloud connect`; see https://cua.ai/docs/cua-sdk/guides/your-cloud).
 
 The application API key remains on the controller. Only the restricted
-environment key is copied into the claimed VM, and its temporary file is
+environment key is copied into the sandbox, and its temporary file is
 removed as soon as the detached executor starts. The guest is the canonical
 Image.linux() (ghcr.io/trycua/linux:24.04): Ubuntu 24.04 with XFCE on X11 and
 cua-spacesd on port 3211, which carries the SDK's shell and file calls. Commands run as the
@@ -31,17 +35,19 @@ import shlex
 from typing import Any, AsyncIterator, Callable
 
 import httpx
-from cua_sandbox import Image, Pool
+from cua_sandbox import Image, Sandbox
 
 
 AGENTS_BASE_URL = "https://api.openai.com/v1/agents/"
 AGENTS_BETA_HEADER = "agents=v1"
-# Unset: Image.linux() (ghcr.io/trycua/linux:24.04), run as a gVisor pod.
-IMAGE = os.environ.get("CUA_FLEET_IMAGE")
+# Unset: Image.linux() (ghcr.io/trycua/linux:24.04).
+IMAGE = os.environ.get("CUA_IMAGE")
+# "local" (this machine), or "aws", "gcp" or "modal" (your own cloud).
+LOCATION = os.environ.get("CUA_ON", "local")
 CODEX_VERSION = "0.155.0-alpha.3"
 CUA_DRIVER_VERSION = "0.27.0"
-ARTIFACT_PATH = "/workspace/outputs/openai-cua-fleet-e2e.txt"
-ARTIFACT_CONTENT = "OPENAI AGENTS API ON CUA CLOUD FLEET PASSED\n"
+ARTIFACT_PATH = "/workspace/outputs/openai-cua-e2e.txt"
+ARTIFACT_CONTENT = "OPENAI AGENTS API ON CUA PASSED\n"
 RUNTIME_DIR = "/run/cua-agents"
 EXECUTOR_ENV_PATH = f"{RUNTIME_DIR}/executor.env"
 EXECUTOR_LAUNCHER_PATH = f"{RUNTIME_DIR}/launch-executor"
@@ -65,10 +71,9 @@ def required_env(name: str) -> str:
     return value
 
 
-def pool_name() -> str:
-    # This example deletes its pool. Never reconcile a caller's existing pool.
-    # Fleet appends an instance suffix and service name; leave room under 63 bytes.
-    return f"cua-openai-agents-{secrets.token_hex(12)}"
+def sandbox_name() -> str:
+    # This example deletes its sandbox. Never reuse a caller's existing one.
+    return f"openai-agents-{secrets.token_hex(6)}"
 
 
 def root_turn(event: dict[str, Any]) -> bool:
@@ -91,7 +96,7 @@ async def checked_read(
     timeout: int = 300,
     attempts: int = 3,
 ) -> str:
-    """Retry a read-only shell probe after transient Fleet transport failures."""
+    """Retry a read-only shell probe after transient transport failures."""
     for attempt in range(1, attempts + 1):
         try:
             return await checked(sandbox, command, timeout=timeout)
@@ -356,12 +361,12 @@ def e2e_terminal_launcher() -> str:
     return f'''#!/bin/bash
 set -euo pipefail
 rm -f {shlex.quote(E2E_TARGET_PATH)}
-xfce4-terminal --disable-server --title='OPENAI CUA FLEET E2E' --hold \\
-  --command="bash -lc 'printf \\\"OPENAI CUA FLEET E2E\\\\n\\\"; sleep 3600'" &
+xfce4-terminal --disable-server --title='OPENAI CUA E2E' --hold \\
+  --command="bash -lc 'printf \\\"OPENAI CUA E2E\\\\n\\\"; sleep 3600'" &
 terminal_pid=$!
 window_id=''
 for _attempt in $(seq 1 50); do
-  window_id=$(xwininfo -root -tree 2>/dev/null | awk '/"OPENAI CUA FLEET E2E"/ && /xfce4-terminal/ {{print $1; exit}}')
+  window_id=$(xwininfo -root -tree 2>/dev/null | awk '/"OPENAI CUA E2E"/ && /xfce4-terminal/ {{print $1; exit}}')
   test -n "$window_id" && break
   sleep 0.1
 done
@@ -547,7 +552,7 @@ async def cleanup_resources(
     agents: AgentsClient,
     *,
     session: dict[str, Any] | None,
-    pool: Pool | None,
+    sandbox: Sandbox | None,
 ) -> list[Exception]:
     errors: list[Exception] = []
     if session is not None:
@@ -559,9 +564,9 @@ async def cleanup_resources(
         await agents.close()
     except Exception as error:
         errors.append(error)
-    if pool is not None:
+    if sandbox is not None:
         try:
-            await pool.delete()
+            await sandbox.destroy()
         except Exception as error:
             errors.append(error)
     return errors
@@ -570,52 +575,112 @@ async def cleanup_resources(
 async def main() -> None:
     application_key = required_env("OPENAI_API_KEY")
     environment_key = required_env("CODEX_API_KEY")
-    selected_pool_name = pool_name()
     output_path = Path(
-        os.environ.get("CUA_ARTIFACT_DESTINATION", "openai-cua-fleet-e2e.txt")
+        os.environ.get("CUA_ARTIFACT_DESTINATION", "openai-cua-e2e.txt")
     ).resolve()
     agents = AgentsClient(application_key)
-    pool: Pool | None = None
     session: dict[str, Any] | None = None
-    sandbox: Any = None
+    sandbox: Sandbox | None = None
     executor_running = False
     run_error: Exception | None = None
 
     try:
         # Default services: cua-spacesd published as `env` on port 3211.
-        pool = await Pool.apply(
+        sandbox = await Sandbox.create(
             Image.from_registry(IMAGE, os_type="linux", kind="container")
             if IMAGE
             else Image.linux(),
-            name=selected_pool_name,
-            replicas=1,
+            name=sandbox_name(),
+            on=LOCATION,
             cpu=4,
             memory_mb=8192,
-            ttl_seconds_after_created=7200,
-        )
-        async with pool.claim(
-            name=f"session-{secrets.token_hex(4)}",
             time_to_start=1800,
-            ttl_seconds_after_created=3600,
-        ) as sandbox:
-            print(f"Cua pool: {sandbox.pool_name}")
-            print(f"Cua claim: {sandbox.claim_name}")
-            codex_path, driver_path = await install_runtime(sandbox)
-            display = (await checked(sandbox, "printf %s \"${DISPLAY:-:1}\"")).strip() or ":1"
+        )
+        print(f"Cua sandbox: {sandbox.id}")
+        codex_path, driver_path = await install_runtime(sandbox)
+        display = (await checked(sandbox, "printf %s \"${DISPLAY:-:1}\"")).strip() or ":1"
 
-            session = await agents.create_session(driver_path)
-            session_id = session["id"]
-            environment = session["environment"]
-            launcher = executor_launcher(
-                codex_path=codex_path,
-                remote_url=environment["remote_url"],
-                environment_id=environment["id"],
-                display=display,
-            )
+        session = await agents.create_session(driver_path)
+        session_id = session["id"]
+        environment = session["environment"]
+        launcher = executor_launcher(
+            codex_path=codex_path,
+            remote_url=environment["remote_url"],
+            environment_id=environment["id"],
+            display=display,
+        )
 
-            async with agents.event_lines(session_id) as lines:
-                monitor = EventMonitor(lines)
+        async with agents.event_lines(session_id) as lines:
+            monitor = EventMonitor(lines)
+            try:
+                await start_executor(
+                    sandbox,
+                    environment_key=environment_key,
+                    launcher=launcher,
+                )
+                executor_running = True
+                await monitor.wait_for_type("agent.session.environment.connected")
+                print("Executor connection: PASS")
+
+                await agents.send_message(
+                    session_id,
+                    f"Write exactly {ARTIFACT_CONTENT.strip()!r} followed by a newline "
+                    f"to {ARTIFACT_PATH}. Read the file back and report the exact "
+                    "contents. Then perform this desktop check with the cua_driver MCP "
+                    f"tools. (1) Call `launch_app` with name `/bin/bash` and "
+                    f"additional_arguments [`{E2E_TERMINAL_PATH}`]. (2) Use the shell to "
+                    f"wait up to 10 seconds for `{E2E_TARGET_PATH}` to become non-empty, "
+                    "then read its two integers; they are the terminal's owner PID and "
+                    "window ID. This read is discovery only, not UI automation. (3) Call "
+                    "`get_window_state` for that exact PID and window ID. (4) Call `click` "
+                    "on the `File` menu using the element token from that snapshot, not "
+                    "coordinates. (5) Call `get_window_state` again, then call `click` on "
+                    "`Close Terminal` or `Close Window` using the fresh element token from "
+                    "the second snapshot. (6) Use the shell only to verify that the "
+                    "published terminal PID is no longer running. Do not report success "
+                    "unless every step completed.",
+                )
+                first_turn = await monitor.wait_for_root_turn()
+                if first_turn["type"] != "agent.session.turn.completed":
+                    raise RuntimeError(
+                        "First turn did not complete: "
+                        + json.dumps(first_turn, sort_keys=True)
+                    )
+                initial_artifact = await sandbox.files.read_bytes(ARTIFACT_PATH)
+                if initial_artifact != ARTIFACT_CONTENT.encode():
+                    raise RuntimeError(
+                        "Agent-created artifact content did not match"
+                    )
+                await verify_desktop_evidence(sandbox)
+                print("Cua Driver MCP evidence: PASS")
+
+                await stop_executor(sandbox)
+                executor_running = False
+                await monitor.wait_for_type("agent.session.environment.disconnected")
+                print("Executor disconnect observation: PASS")
+
+                second_submission = asyncio.create_task(
+                    agents.send_message(
+                        session_id,
+                        f"Read {ARTIFACT_PATH} and report its exact contents, including "
+                        "whether it ends with a newline.",
+                    )
+                )
                 try:
+                    await monitor.wait_for_type(
+                        "agent.session.requires_action", timeout=60
+                    )
+                    pending_session = await agents.retrieve_session(session_id)
+                    required_actions = pending_session.get("required_actions", [])
+                    if not any(
+                        action.get("type") == "environment_connection"
+                        and action.get("environment_id") == environment["id"]
+                        for action in required_actions
+                        if isinstance(action, dict)
+                    ):
+                        raise RuntimeError(
+                            "Session did not request the original environment connection"
+                        )
                     await start_executor(
                         sandbox,
                         environment_key=environment_key,
@@ -623,104 +688,36 @@ async def main() -> None:
                     )
                     executor_running = True
                     await monitor.wait_for_type("agent.session.environment.connected")
-                    print("Executor connection: PASS")
+                    print("Same-environment reconnect: PASS")
+                    await second_submission
+                finally:
+                    if not second_submission.done():
+                        second_submission.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await second_submission
 
-                    await agents.send_message(
-                        session_id,
-                        f"Write exactly {ARTIFACT_CONTENT.strip()!r} followed by a newline "
-                        f"to {ARTIFACT_PATH}. Read the file back and report the exact "
-                        "contents. Then perform this desktop check with the cua_driver MCP "
-                        f"tools. (1) Call `launch_app` with name `/bin/bash` and "
-                        f"additional_arguments [`{E2E_TERMINAL_PATH}`]. (2) Use the shell to "
-                        f"wait up to 10 seconds for `{E2E_TARGET_PATH}` to become non-empty, "
-                        "then read its two integers; they are the terminal's owner PID and "
-                        "window ID. This read is discovery only, not UI automation. (3) Call "
-                        "`get_window_state` for that exact PID and window ID. (4) Call `click` "
-                        "on the `File` menu using the element token from that snapshot, not "
-                        "coordinates. (5) Call `get_window_state` again, then call `click` on "
-                        "`Close Terminal` or `Close Window` using the fresh element token from "
-                        "the second snapshot. (6) Use the shell only to verify that the "
-                        "published terminal PID is no longer running. Do not report success "
-                        "unless every step completed.",
+                second_turn = await monitor.wait_for_root_turn()
+                if second_turn["type"] != "agent.session.turn.completed":
+                    raise RuntimeError(
+                        "Second turn did not complete: "
+                        + json.dumps(second_turn, sort_keys=True)
                     )
-                    first_turn = await monitor.wait_for_root_turn()
-                    if first_turn["type"] != "agent.session.turn.completed":
-                        raise RuntimeError(
-                            "First turn did not complete: "
-                            + json.dumps(first_turn, sort_keys=True)
-                        )
-                    initial_artifact = await sandbox.files.read_bytes(ARTIFACT_PATH)
-                    if initial_artifact != ARTIFACT_CONTENT.encode():
-                        raise RuntimeError(
-                            "Agent-created Fleet artifact content did not match"
-                        )
-                    await verify_desktop_evidence(sandbox)
-                    print("Cua Driver MCP evidence: PASS")
 
+                await agents.list_items(session_id)
+                artifact = await sandbox.files.read_bytes(ARTIFACT_PATH)
+                if artifact != ARTIFACT_CONTENT.encode():
+                    raise RuntimeError("Retrieved artifact content did not match")
+                output_path.write_bytes(artifact)
+                print(f"Artifact retrieval: PASS ({output_path})")
+            finally:
+                await monitor.close()
+                if executor_running:
                     await stop_executor(sandbox)
                     executor_running = False
-                    await monitor.wait_for_type("agent.session.environment.disconnected")
-                    print("Executor disconnect observation: PASS")
-
-                    second_submission = asyncio.create_task(
-                        agents.send_message(
-                            session_id,
-                            f"Read {ARTIFACT_PATH} and report its exact contents, including "
-                            "whether it ends with a newline.",
-                        )
-                    )
-                    try:
-                        await monitor.wait_for_type(
-                            "agent.session.requires_action", timeout=60
-                        )
-                        pending_session = await agents.retrieve_session(session_id)
-                        required_actions = pending_session.get("required_actions", [])
-                        if not any(
-                            action.get("type") == "environment_connection"
-                            and action.get("environment_id") == environment["id"]
-                            for action in required_actions
-                            if isinstance(action, dict)
-                        ):
-                            raise RuntimeError(
-                                "Session did not request the original environment connection"
-                            )
-                        await start_executor(
-                            sandbox,
-                            environment_key=environment_key,
-                            launcher=launcher,
-                        )
-                        executor_running = True
-                        await monitor.wait_for_type("agent.session.environment.connected")
-                        print("Same-environment reconnect: PASS")
-                        await second_submission
-                    finally:
-                        if not second_submission.done():
-                            second_submission.cancel()
-                            with contextlib.suppress(asyncio.CancelledError):
-                                await second_submission
-
-                    second_turn = await monitor.wait_for_root_turn()
-                    if second_turn["type"] != "agent.session.turn.completed":
-                        raise RuntimeError(
-                            "Second turn did not complete: "
-                            + json.dumps(second_turn, sort_keys=True)
-                        )
-
-                    await agents.list_items(session_id)
-                    artifact = await sandbox.files.read_bytes(ARTIFACT_PATH)
-                    if artifact != ARTIFACT_CONTENT.encode():
-                        raise RuntimeError("Retrieved Fleet artifact content did not match")
-                    output_path.write_bytes(artifact)
-                    print(f"Artifact retrieval: PASS ({output_path})")
-                finally:
-                    await monitor.close()
-                    if executor_running:
-                        await stop_executor(sandbox)
-                        executor_running = False
     except Exception as error:
         run_error = error
     finally:
-        cleanup_errors = await cleanup_resources(agents, session=session, pool=pool)
+        cleanup_errors = await cleanup_resources(agents, session=session, sandbox=sandbox)
 
     if run_error is not None:
         if cleanup_errors:
@@ -732,7 +729,7 @@ async def main() -> None:
     if cleanup_errors:
         raise ExceptionGroup("Resource cleanup failed", cleanup_errors)
 
-    print("OpenAI session, Fleet claim, and Fleet pool cleanup: PASS")
+    print("OpenAI session and sandbox cleanup: PASS")
 
 
 if __name__ == "__main__":

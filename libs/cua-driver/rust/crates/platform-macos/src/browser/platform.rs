@@ -221,6 +221,52 @@ impl MacOsBrowserPlatform {
             browser_cursors: Arc::new(Mutex::new(BrowserCursorTracker::default())),
         }
     }
+
+    async fn discover_endpoint(
+        &self,
+        pid: i64,
+        existing_profile: bool,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        // Profile evidence distinguishes the browser from an inherited host listener.
+        let classification = self.classify_browser(pid).await?;
+        if let Some(endpoint) = active_port_endpoint_with_relative_fallback(
+            pid,
+            classification.product_kind,
+            !existing_profile,
+        )
+        .await?
+        {
+            return Ok(Some(endpoint));
+        }
+        let mut discovered = None;
+        for port in loopback_ports_for_pid(pid).await? {
+            let Some(ws_url) = browser_websocket_url(port).await else {
+                continue;
+            };
+            if discovered.is_some() {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserBindingAmbiguous,
+                    "multiple browser-level DevTools endpoints are owned by the approved process",
+                ));
+            }
+            let endpoint = OwnedEndpoint {
+                ws_url,
+                http_port: Some(port),
+                transport: EndpointTransport::LegacyJsonVersion,
+                ownership: EndpointOwnershipProof {
+                    method: EndpointOwnershipMethod::ListeningSocketPid,
+                    owner_pid: pid,
+                    listener_pid: None,
+                    detail: Some("lsof loopback listener owner plus /json/version".to_owned()),
+                },
+            };
+            if !existing_profile {
+                return Ok(Some(endpoint));
+            }
+            discovered = Some(endpoint);
+        }
+        Ok(discovered)
+    }
 }
 
 impl Default for MacOsBrowserPlatform {
@@ -947,80 +993,14 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
-        // Prefer the exact isolated-profile endpoint (process arguments plus
-        // the DevToolsActivePort-proven port) over listener order: a spawned
-        // browser inherits its host's listening descriptor, so the host's
-        // endpoint can answer /json/version first and the ownership check
-        // against the expected WebSocket URL then fails for the whole retry
-        // window (see #4342). Listener discovery below remains the fallback.
-        let classification = self.classify_browser(pid).await?;
-        // A relative profile cannot be located from argv alone. Only this
-        // owned-app route may fall back to independently PID-proven listeners;
-        // existing-profile consent routes retain strict path attestation.
-        if let Some(endpoint) =
-            active_port_endpoint_with_relative_fallback(pid, classification.product_kind, true)
-                .await?
-        {
-            return Ok(Some(endpoint));
-        }
-        for port in loopback_ports_for_pid(pid).await? {
-            if let Some(ws_url) = browser_websocket_url(port).await {
-                return Ok(Some(OwnedEndpoint {
-                    ws_url,
-                    http_port: Some(port),
-                    transport: EndpointTransport::LegacyJsonVersion,
-                    ownership: EndpointOwnershipProof {
-                        method: EndpointOwnershipMethod::ListeningSocketPid,
-                        owner_pid: pid,
-                        listener_pid: None,
-                        detail: Some("lsof loopback listener owner".to_owned()),
-                    },
-                }));
-            }
-        }
-        Ok(None)
+        self.discover_endpoint(pid, false).await
     }
 
     async fn discover_existing_profile_endpoint(
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
-        let classification = self.classify_browser(pid).await?;
-        if let Some(endpoint) = active_port_endpoint(pid, classification.product_kind).await? {
-            return Ok(Some(endpoint));
-        }
-        let ports = loopback_ports_for_pid(pid).await?;
-        let mut discovered = Vec::new();
-        for port in &ports {
-            if let Some(ws_url) = browser_websocket_url(*port).await {
-                discovered.push((*port, ws_url));
-            }
-        }
-        if discovered.len() == 1 {
-            let (port, ws_url) = discovered.pop().expect("one discovered endpoint");
-            return Ok(Some(OwnedEndpoint {
-                ws_url,
-                http_port: Some(port),
-                transport: EndpointTransport::LegacyJsonVersion,
-                ownership: EndpointOwnershipProof {
-                    method: EndpointOwnershipMethod::ListeningSocketPid,
-                    owner_pid: pid,
-                    listener_pid: None,
-                    detail: Some("lsof loopback listener owner plus /json/version".to_owned()),
-                },
-            }));
-        }
-        if discovered.len() > 1 {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserBindingAmbiguous,
-                "multiple browser-level DevTools endpoints are owned by the approved process",
-            ));
-        }
-        // A bare listener is not enough to identify DevTools before approval:
-        // Chromium can own unrelated loopback services. The setup path below
-        // correlates a listener with the exact checkbox transition and the
-        // pooled WebSocket claim proves the protocol before attachment.
-        Ok(None)
+        self.discover_endpoint(pid, true).await
     }
 
     async fn reprove_existing_profile_endpoint(
@@ -1704,6 +1684,7 @@ mod tests {
     async fn assert_owned_discovery_profile_case(case: &str) {
         use std::os::fd::AsRawFd;
         use std::os::unix::process::CommandExt;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         struct ChildGuard(std::process::Child);
         impl Drop for ChildGuard {
@@ -1712,33 +1693,46 @@ mod tests {
                 let _ = self.0.wait();
             }
         }
-
-        // Both descriptors are inherited by the child, reproducing an embedded
-        // host's listener alongside the browser's own listener. Give the host
-        // the lower port so listener-order discovery chooses the wrong endpoint.
-        let first = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let second = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let (host, owned) =
-            if first.local_addr().unwrap().port() < second.local_addr().unwrap().port() {
-                (first, second)
-            } else {
-                (second, first)
-            };
-        let host_port = host.local_addr().unwrap().port();
-        let owned_port = owned.local_addr().unwrap().port();
+        let mut listeners = (0..3)
+            .map(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap())
+            .collect::<Vec<_>>();
+        listeners.sort_by_key(|listener| listener.local_addr().unwrap().port());
+        let ports = listeners
+            .iter()
+            .map(|listener| listener.local_addr().unwrap().port())
+            .collect::<Vec<_>>();
+        let urls = ports
+            .iter()
+            .enumerate()
+            .map(|(index, port)| format!("ws://127.0.0.1:{port}/devtools/browser/endpoint-{index}"))
+            .collect::<Vec<_>>();
         let profile = tempfile::tempdir().unwrap();
         let active_port = profile.path().join("DevToolsActivePort");
         std::fs::write(
             &active_port,
-            format!("{owned_port}\n/devtools/browser/owned\n"),
+            format!("{}\n/devtools/browser/endpoint-1\n", ports[1]),
         )
         .unwrap();
+        let unrelated = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         match case {
-            "missing_file" | "non_loopback" => std::fs::remove_file(&active_port).unwrap(),
+            "missing_file" | "non_loopback" | "wrong_port" | "multiple" | "one_valid"
+            | "no_valid" => std::fs::remove_file(&active_port).unwrap(),
             "malformed" => std::fs::write(&active_port, "not-a-port\n").unwrap(),
+            "unreadable" => {
+                std::fs::remove_file(&active_port).unwrap();
+                std::fs::create_dir(&active_port).unwrap();
+            }
+            "uncorroborated" => std::fs::write(
+                &active_port,
+                format!(
+                    "{}\n/devtools/browser/foreign\n",
+                    unrelated.local_addr().unwrap().port()
+                ),
+            )
+            .unwrap(),
             _ => {}
         }
-        let descriptors = [host.as_raw_fd(), owned.as_raw_fd()];
+        let descriptors = listeners.iter().map(AsRawFd::as_raw_fd).collect::<Vec<_>>();
         let mut command = std::process::Command::new("/bin/sh");
         command
             .args(["-c", "read -r line", "endpoint-fixture"])
@@ -1757,11 +1751,10 @@ mod tests {
                 command.arg(format!("--user-data-dir={}", profile.path().display()));
             }
         }
-        // Only the forked child loses CLOEXEC; the parent's descriptors remain
-        // private to this test. The shell waits on its pipe without a GUI.
+        // Only the child's explicitly named listeners lose CLOEXEC.
         unsafe {
             command.pre_exec(move || {
-                for fd in descriptors {
+                for &fd in &descriptors {
                     if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
                         return Err(std::io::Error::last_os_error());
                     }
@@ -1771,77 +1764,90 @@ mod tests {
         }
         let child = ChildGuard(command.spawn().unwrap());
         let pid = i64::from(child.0.id());
-        assert_eq!(
-            loopback_ports_for_pid(pid).await.unwrap(),
-            vec![host_port, owned_port],
-            "fixture must actually inherit both native listeners"
-        );
-        host.set_nonblocking(true).unwrap();
-        let host = tokio::net::TcpListener::from_std(host).unwrap();
-        let host_url = format!("ws://127.0.0.1:{host_port}/devtools/browser/host");
-        let response_url = if case == "non_loopback" {
-            format!("ws://example.invalid:{host_port}/devtools/browser/host")
-        } else {
-            host_url.clone()
-        };
-        let body = serde_json::json!({"webSocketDebuggerUrl": response_url}).to_string();
-        let server = tokio::spawn(async move {
-            while let Ok((mut stream, _)) = host.accept().await {
-                let mut request = [0; 4096];
-                let _ = stream.read(&mut request).await;
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = stream.write_all(response.as_bytes()).await;
-            }
-        });
+        assert_eq!(loopback_ports_for_pid(pid).await.unwrap(), ports);
+        let counts = Arc::new([
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+            AtomicUsize::new(0),
+        ]);
+        let mut servers = Vec::new();
+        for (index, listener) in listeners.into_iter().enumerate() {
+            listener.set_nonblocking(true).unwrap();
+            let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+            let url = match case {
+                "non_loopback" => format!(
+                    "ws://example.invalid:{}/devtools/browser/foreign",
+                    ports[index]
+                ),
+                "wrong_port" => urls[(index + 1) % 3].clone(),
+                "one_valid" if index == 0 => urls[1].clone(),
+                "one_valid" if index == 2 => {
+                    "ws://example.invalid:1/devtools/browser/foreign".into()
+                }
+                _ => urls[index].clone(),
+            };
+            let body = if case == "no_valid" {
+                "{}".to_owned()
+            } else {
+                serde_json::json!({"webSocketDebuggerUrl": url}).to_string()
+            };
+            let counts = counts.clone();
+            servers.push(tokio::spawn(async move {
+                while let Ok((mut stream, _)) = listener.accept().await {
+                    let mut request = [0; 4096];
+                    let _ = stream.read(&mut request).await;
+                    counts[index].fetch_add(1, Ordering::SeqCst);
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                }
+            }));
+        }
+        let take_counts =
+            || std::array::from_fn::<_, 3, _>(|index| counts[index].swap(0, Ordering::SeqCst));
         let platform = MacOsBrowserPlatform::new(Arc::new(crate::cursor::CursorRegistry::new()));
         let endpoint = platform.discover_owned_endpoint(pid).await;
-        if case == "relative" {
-            assert_eq!(
-                platform
+        let expected_counts = match case {
+            "absolute" | "conflicting" | "malformed" | "unreadable" => [0, 0, 0],
+            "non_loopback" | "wrong_port" | "no_valid" => [1, 1, 1],
+            "one_valid" => [1, 1, 0],
+            _ => [1, 0, 0],
+        };
+        assert_eq!(take_counts(), expected_counts, "owned probes: {case}");
+        match case {
+            "conflicting" | "malformed" | "unreadable" => {
+                let code = match case {
+                    "conflicting" => BrowserRefusalCode::BrowserBindingAmbiguous,
+                    "malformed" => BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    _ => BrowserRefusalCode::BrowserRouteUnavailable,
+                };
+                assert_eq!(endpoint.unwrap_err().code, code);
+                assert_eq!(
+                    platform
+                        .discover_existing_profile_endpoint(pid)
+                        .await
+                        .unwrap_err()
+                        .code,
+                    code
+                );
+                assert_eq!(take_counts(), [0, 0, 0]);
+            }
+            "non_loopback" | "wrong_port" | "no_valid" => {
+                assert!(endpoint.unwrap().is_none());
+                assert!(platform
                     .discover_existing_profile_endpoint(pid)
                     .await
-                    .unwrap_err()
-                    .code,
-                BrowserRefusalCode::BrowserRouteUnavailable,
-            );
-            assert_eq!(
-                platform
-                    .reprove_existing_profile_endpoint(pid, &host_url)
-                    .await
-                    .unwrap_err()
-                    .code,
-                BrowserRefusalCode::BrowserRouteUnavailable,
-            );
-        }
-        if case == "absolute" {
-            assert!(platform
-                .discover_spawned_endpoint(pid, &host_url)
-                .await
-                .unwrap()
-                .is_none());
-        }
-        server.abort();
-        match case {
-            "conflicting" => assert_eq!(
-                endpoint.unwrap_err().code,
-                BrowserRefusalCode::BrowserBindingAmbiguous
-            ),
-            "malformed" => assert_eq!(
-                endpoint.unwrap_err().code,
-                BrowserRefusalCode::BrowserEndpointOwnerMismatch
-            ),
-            "non_loopback" => assert!(endpoint.unwrap().is_none()),
+                    .unwrap()
+                    .is_none());
+                assert_eq!(take_counts(), [1, 1, 1]);
+            }
             _ => {
                 let endpoint = endpoint.unwrap().unwrap();
-                let expected = if case == "absolute" {
-                    format!("ws://127.0.0.1:{owned_port}/devtools/browser/owned")
-                } else {
-                    host_url
-                };
-                assert_eq!(endpoint.ws_url, expected);
+                let index = usize::from(matches!(case, "absolute" | "one_valid"));
+                assert_eq!(endpoint.ws_url, urls[index]);
+                assert_eq!(endpoint.ownership.owner_pid, pid);
                 assert_eq!(
                     endpoint.transport,
                     if case == "absolute" {
@@ -1850,8 +1856,105 @@ mod tests {
                         EndpointTransport::LegacyJsonVersion
                     }
                 );
-                assert_eq!(endpoint.ownership.owner_pid, pid);
+                if case != "absolute" {
+                    assert_eq!(
+                        endpoint.ownership.detail.as_deref(),
+                        Some("lsof loopback listener owner plus /json/version")
+                    );
+                }
             }
+        }
+        match case {
+            "absolute" => {
+                assert_eq!(
+                    platform
+                        .discover_existing_profile_endpoint(pid)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .ws_url,
+                    urls[1]
+                );
+                assert_eq!(
+                    platform
+                        .discover_spawned_endpoint(pid, &urls[1])
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .ws_url,
+                    urls[1]
+                );
+                assert!(platform
+                    .discover_spawned_endpoint(pid, &urls[0])
+                    .await
+                    .unwrap()
+                    .is_none());
+                assert_eq!(
+                    platform
+                        .reprove_existing_profile_endpoint(pid, &urls[0])
+                        .await
+                        .unwrap_err()
+                        .code,
+                    BrowserRefusalCode::BrowserEndpointOwnerMismatch
+                );
+                assert_eq!(take_counts(), [0, 0, 0]);
+            }
+            "relative" => {
+                assert_eq!(
+                    platform
+                        .discover_existing_profile_endpoint(pid)
+                        .await
+                        .unwrap_err()
+                        .code,
+                    BrowserRefusalCode::BrowserRouteUnavailable
+                );
+                assert_eq!(
+                    platform
+                        .reprove_existing_profile_endpoint(pid, &urls[0])
+                        .await
+                        .unwrap_err()
+                        .code,
+                    BrowserRefusalCode::BrowserRouteUnavailable
+                );
+                assert_eq!(take_counts(), [0, 0, 0]);
+            }
+            "multiple" => {
+                assert_eq!(
+                    platform
+                        .discover_existing_profile_endpoint(pid)
+                        .await
+                        .unwrap_err()
+                        .code,
+                    BrowserRefusalCode::BrowserBindingAmbiguous
+                );
+                assert_eq!(take_counts(), [1, 1, 0]);
+                assert_eq!(
+                    platform
+                        .reprove_existing_profile_endpoint(pid, &urls[0])
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .ws_url,
+                    urls[0]
+                );
+                assert_eq!(take_counts(), [0, 0, 0]);
+            }
+            "one_valid" => {
+                assert_eq!(
+                    platform
+                        .discover_existing_profile_endpoint(pid)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .ws_url,
+                    urls[1]
+                );
+                assert_eq!(take_counts(), [1, 1, 1]);
+            }
+            _ => {}
+        }
+        for server in servers {
+            server.abort();
         }
     }
 
@@ -1869,17 +1972,27 @@ mod tests {
     async fn owned_discovery_missing_profile_or_file_keeps_listener_fallback() {
         assert_owned_discovery_profile_case("absent_profile").await;
         assert_owned_discovery_profile_case("missing_file").await;
+        assert_owned_discovery_profile_case("uncorroborated").await;
     }
 
     #[tokio::test]
     async fn owned_discovery_rejects_conflicting_profiles_and_malformed_port_file() {
         assert_owned_discovery_profile_case("conflicting").await;
         assert_owned_discovery_profile_case("malformed").await;
+        assert_owned_discovery_profile_case("unreadable").await;
     }
 
     #[tokio::test]
     async fn owned_discovery_rejects_non_loopback_fallback() {
         assert_owned_discovery_profile_case("non_loopback").await;
+        assert_owned_discovery_profile_case("wrong_port").await;
+    }
+
+    #[tokio::test]
+    async fn existing_discovery_requires_one_endpoint_but_reproof_keeps_exact_approval() {
+        for case in ["multiple", "one_valid", "no_valid"] {
+            assert_owned_discovery_profile_case(case).await;
+        }
     }
 
     #[test]

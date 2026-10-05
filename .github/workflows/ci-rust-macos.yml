@@ -7,6 +7,8 @@ on:
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
       - "libs/cua-driver/rust/rust-toolchain.toml"
+      - "libs/cua-driver/rust/crates/cua-driver/**"
+      - "libs/cua-driver/rust/crates/cua-driver-sdk/**"
       - "libs/cua-driver/rust/crates/cua-driver-contract/**"
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
@@ -22,6 +24,8 @@ on:
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
       - "libs/cua-driver/rust/rust-toolchain.toml"
+      - "libs/cua-driver/rust/crates/cua-driver/**"
+      - "libs/cua-driver/rust/crates/cua-driver-sdk/**"
       - "libs/cua-driver/rust/crates/cua-driver-contract/**"
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
@@ -66,6 +70,14 @@ jobs:
       - name: Run cua-driver-core unit tests on macOS
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver-core --lib
+      - name: Run macOS protocol schema contract
+        working-directory: libs/cua-driver/rust
+        env:
+          CUA_TEST_REQUIRE_DRIVER_BIN: "1"
+          CUA_TEST_DRIVER_STDERR: "1"
+        run: |
+          cargo build --locked -p cua-driver
+          cargo test --locked -p cua-driver --test protocol_schema_test
       # Desktop E2E suites are #[ignore] and run in the Lume harness. Their
       # hermetic oracle and parser tests run here as a whole crate, including
       # the macOS-gated ones that have no other runner: the harness's FIFO

@@ -13,6 +13,7 @@ pub mod bezier;
 pub mod capture_exclusion;
 pub mod capture_utils;
 pub mod motion;
+pub mod motion_defaults;
 pub mod path_planner;
 pub mod render_map;
 pub mod render_state;
@@ -108,6 +109,9 @@ impl CursorConfig {
     /// ```
     pub fn from_args() -> Self {
         let args: Vec<String> = std::env::args().collect();
+        // Load the saved `cursor.motion.*` defaults; the render map layers
+        // them under each cursor it creates.
+        motion_defaults::load_active();
         Self::parse(&args[1..])
     }
 
@@ -372,6 +376,10 @@ pub enum OverlayCommand {
     SetEnabled(bool),
     /// Update the motion/timing config live.
     SetMotion(MotionConfig),
+    /// Apply `set_agent_cursor_motion`-shaped fields on top of the cursor's
+    /// current motion (the `cursor_motion` of `start_session`). Invalid
+    /// values are ignored; the tool boundary already rejected them.
+    ApplyMotion(serde_json::Value),
     /// Pin the overlay above a specific window (by platform window id).
     PinAbove(u64),
     /// Begin a best-effort semantic cursor cue.

@@ -8531,6 +8531,7 @@ impl Tool for GetConfigTool {
             "capture_mode":        cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
             "agent_cursor":        { "enabled": cursor_enabled },
+            "cursor":              { "motion": cursor_overlay::motion_defaults::read_saved().config_json() },
             "experimental_pip":    pip_enabled,
             "experimental_pip_geometry": pip_geometry,
         });
@@ -8541,6 +8542,13 @@ impl Tool for GetConfigTool {
 }
 
 // ── set_config ────────────────────────────────────────────────────────────────
+
+fn with_cursor_motion_config_properties(mut schema: Value) -> Value {
+    if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
+    }
+    schema
+}
 
 pub struct SetConfigTool {
     state: Arc<ToolState>,
@@ -8569,15 +8577,16 @@ impl Tool for SetConfigTool {
                 - `max_image_dimension` (integer)\n\
                 - `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n\
                 - `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n\
+                - `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>` — saved default cursor motion for sessions started afterwards (see the cursor docs).\n\n\
                 Returns the full updated config in the same shape as `get_config`.".into(),
-            input_schema: json!({"type":"object","properties":{
+            input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
                 "key":{"type":"string","description":"Dotted snake_case path to a leaf config field (Swift-compatible shape). Pair with `value`."},
                 "value":{"description":"New value for `key`. JSON type depends on the key."},
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"DEPRECATED and ignored — get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Legacy per-field shape."},
                 "experimental_pip":{"type":"boolean","description":"Legacy per-field shape. Enables PiP preview (applies next restart)."},
                 "experimental_pip_geometry":{"type":"string","description":"Legacy per-field shape. PiP window size + optional position."}
-            },"additionalProperties":false}),
+            },"additionalProperties":false})),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
     }
@@ -8594,8 +8603,12 @@ impl Tool for SetConfigTool {
                 "replacement": "action.target",
             }));
         }
+        let motion_keys = match cursor_overlay::motion_defaults::apply_config_args(&args) {
+            Ok(keys) => keys,
+            Err(message) => return ToolResult::error(message),
+        };
         let mut cfg = self.state.config.write().unwrap();
-        let mut applied = false;
+        let mut applied = !motion_keys.is_empty();
         // Swift-compatible {key, value} shape.
         if let (Some(key), Some(val)) =
             (args.get("key").and_then(|v| v.as_str()), args.get("value"))
@@ -8644,8 +8657,9 @@ impl Tool for SetConfigTool {
                     }
                     None => return ToolResult::error(format!("`experimental_pip_geometry` must be a string, got {val}.")),
                 },
+                other if motion_keys.iter().any(|written| written == other) => {}
                 other => return ToolResult::error(format!(
-                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, experimental_pip, experimental_pip_geometry."
+                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, experimental_pip, experimental_pip_geometry, cursor.motion.style, cursor.motion.timing, cursor.motion.effects.<name>."
                 )),
             }
         }

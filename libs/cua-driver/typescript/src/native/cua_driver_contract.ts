@@ -1614,6 +1614,144 @@ const FfiConverterTypeCursorMotionOutput = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * Cursor motion for a session, with the fields of `set_agent_cursor_motion` minus `session`.
+ * Omitted or null fields keep the saved default (`cursor.motion.*` in the driver config), then
+ * the built-in `signature_arc`.
+ */
+export type CursorMotionSelection = {
+    /**
+     * Trajectory style. `signature_arc` (default) is one arc with a small follow-through;
+     * `spring_settle` lands with one soft bounce; `magnetic` is pulled into the target;
+     * `comet_swoop` is a wide arc with a short trail; `adaptive` picks a careful approach for
+     * small targets and a swoop for long moves; `classic` is the previous Dubins glide. When
+     * the theme's reduced motion is on, every move is a short straight glide with no effects.
+     */
+    style?: CursorMotionStyle,
+    /**
+     * `native` uses the style's own timing; `fitts` scales the move time with distance and
+     * target size; `fixed` uses glide_duration_ms (1430 ms when 0).
+     */
+    timing?: CursorMotionTiming,
+    /**
+     * Turn single effects on or off. An omitted effect keeps its current setting; null
+     * restores the style's default.
+     */
+    effects?: CursorMotionEffects,
+    /**
+     * Arc control-point offset from the start, as a fraction of the distance, for
+     * `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).
+     */
+    startHandle?: number,
+    /**
+     * Arc control-point offset from the end, as a fraction of the distance, for
+     * `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).
+     */
+    endHandle?: number,
+    /**
+     * Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default)
+     * keeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1.
+     */
+    arcSize?: number,
+    /**
+     * Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`:
+     * positive moves the apex toward the destination. Clamped to -1..1 (default 0).
+     */
+    arcFlow?: number,
+    /**
+     * Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped
+     * to 0.3..1 (default 0.72).
+     */
+    spring?: number,
+    /**
+     * Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A
+     * nonzero value with `native` timing also fixes the duration. Clamped to 0..5000.
+     */
+    glideDurationMs?: number,
+    /**
+     * Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).
+     */
+    dwellAfterClickMs?: number,
+    /**
+     * Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to
+     * 0..60000 (default 15000).
+     */
+    idleHideMs?: number,
+    /**
+     * Minimum turning radius of the `classic` glide path, in points; smaller turns tighter.
+     * Clamped to 1..1000 (default 80).
+     */
+    turnRadius?: number
+}
+
+/**
+ * Generated factory for {@link CursorMotionSelection} record objects.
+ */
+export const CursorMotionSelection = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorMotionSelection, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorMotionSelection>,
+    });
+})();
+
+const FfiConverterTypeCursorMotionSelection = (() => {
+    type TypeName = CursorMotionSelection;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                style: FfiConverterOptionalTypeCursorMotionStyle.read(from),
+                timing: FfiConverterOptionalTypeCursorMotionTiming.read(from),
+                effects: FfiConverterOptionalTypeCursorMotionEffects.read(from),
+                startHandle: FfiConverterOptionalFloat64.read(from),
+                endHandle: FfiConverterOptionalFloat64.read(from),
+                arcSize: FfiConverterOptionalFloat64.read(from),
+                arcFlow: FfiConverterOptionalFloat64.read(from),
+                spring: FfiConverterOptionalFloat64.read(from),
+                glideDurationMs: FfiConverterOptionalFloat64.read(from),
+                dwellAfterClickMs: FfiConverterOptionalFloat64.read(from),
+                idleHideMs: FfiConverterOptionalFloat64.read(from),
+                turnRadius: FfiConverterOptionalFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalTypeCursorMotionStyle.write(value.style, into);
+            FfiConverterOptionalTypeCursorMotionTiming.write(value.timing, into);
+            FfiConverterOptionalTypeCursorMotionEffects.write(value.effects, into);
+            FfiConverterOptionalFloat64.write(value.startHandle, into);
+            FfiConverterOptionalFloat64.write(value.endHandle, into);
+            FfiConverterOptionalFloat64.write(value.arcSize, into);
+            FfiConverterOptionalFloat64.write(value.arcFlow, into);
+            FfiConverterOptionalFloat64.write(value.spring, into);
+            FfiConverterOptionalFloat64.write(value.glideDurationMs, into);
+            FfiConverterOptionalFloat64.write(value.dwellAfterClickMs, into);
+            FfiConverterOptionalFloat64.write(value.idleHideMs, into);
+            FfiConverterOptionalFloat64.write(value.turnRadius, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalTypeCursorMotionStyle.allocationSize(value.style) +
+             FfiConverterOptionalTypeCursorMotionTiming.allocationSize(value.timing) +
+             FfiConverterOptionalTypeCursorMotionEffects.allocationSize(value.effects) +
+             FfiConverterOptionalFloat64.allocationSize(value.startHandle) +
+             FfiConverterOptionalFloat64.allocationSize(value.endHandle) +
+             FfiConverterOptionalFloat64.allocationSize(value.arcSize) +
+             FfiConverterOptionalFloat64.allocationSize(value.arcFlow) +
+             FfiConverterOptionalFloat64.allocationSize(value.spring) +
+             FfiConverterOptionalFloat64.allocationSize(value.glideDurationMs) +
+             FfiConverterOptionalFloat64.allocationSize(value.dwellAfterClickMs) +
+             FfiConverterOptionalFloat64.allocationSize(value.idleHideMs) +
+             FfiConverterOptionalFloat64.allocationSize(value.turnRadius);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type CursorPointOutput = {
     x: number,
     y: number
@@ -5499,7 +5637,14 @@ export type StartSessionInput = {
      * Optional initial cursor theme. The host applies it before the cursor is
      * first made visible, avoiding a flash of the default theme.
      */
-    cursorTheme?: CursorThemeSelection
+    cursorTheme?: CursorThemeSelection,
+    /**
+     * Optional initial cursor motion (style, timing, effects and tuning). The host applies it
+     * before the cursor is first made visible. A later `set_agent_cursor_motion` call wins;
+     * this wins over the saved default (`cursor.motion.*` in the driver config) and the
+     * built-in `signature_arc`. Reduced motion always wins.
+     */
+    cursorMotion?: CursorMotionSelection
 }
 
 /**
@@ -5525,18 +5670,21 @@ const FfiConverterTypeStartSessionInput = (() => {
             return {
                 session: FfiConverterOptionalString.read(from),
                 captureScope: FfiConverterOptionalTypeCaptureScope.read(from),
-                cursorTheme: FfiConverterOptionalTypeCursorThemeSelection.read(from)
+                cursorTheme: FfiConverterOptionalTypeCursorThemeSelection.read(from),
+                cursorMotion: FfiConverterOptionalTypeCursorMotionSelection.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterOptionalString.write(value.session, into);
             FfiConverterOptionalTypeCaptureScope.write(value.captureScope, into);
             FfiConverterOptionalTypeCursorThemeSelection.write(value.cursorTheme, into);
+            FfiConverterOptionalTypeCursorMotionSelection.write(value.cursorMotion, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalString.allocationSize(value.session) +
              FfiConverterOptionalTypeCaptureScope.allocationSize(value.captureScope) +
-             FfiConverterOptionalTypeCursorThemeSelection.allocationSize(value.cursorTheme);
+             FfiConverterOptionalTypeCursorThemeSelection.allocationSize(value.cursorTheme) +
+             FfiConverterOptionalTypeCursorMotionSelection.allocationSize(value.cursorMotion);
 
         }
     };
@@ -5549,7 +5697,11 @@ const FfiConverterTypeStartSessionInput = (() => {
 export type StartSessionOutput = {
     state: SessionStateOutput,
     active: boolean,
-    revived: boolean
+    revived: boolean,
+    /**
+     * The `cursor_motion` this call applied, echoed as sent. Absent when the call did not set one.
+     */
+    cursorMotion?: CursorMotionSelection
 }
 
 /**
@@ -5575,18 +5727,21 @@ const FfiConverterTypeStartSessionOutput = (() => {
             return {
                 state: FfiConverterTypeSessionStateOutput.read(from),
                 active: FfiConverterBool.read(from),
-                revived: FfiConverterBool.read(from)
+                revived: FfiConverterBool.read(from),
+                cursorMotion: FfiConverterOptionalTypeCursorMotionSelection.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterTypeSessionStateOutput.write(value.state, into);
             FfiConverterBool.write(value.active, into);
             FfiConverterBool.write(value.revived, into);
+            FfiConverterOptionalTypeCursorMotionSelection.write(value.cursorMotion, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeSessionStateOutput.allocationSize(value.state) +
              FfiConverterBool.allocationSize(value.active) +
-             FfiConverterBool.allocationSize(value.revived);
+             FfiConverterBool.allocationSize(value.revived) +
+             FfiConverterOptionalTypeCursorMotionSelection.allocationSize(value.cursorMotion);
 
         }
     };
@@ -6311,6 +6466,9 @@ const FfiConverterOptionalTypeCursorMotionTiming = new FfiConverterOptional(FfiC
 // FfiConverter for CursorMotionEffectsOutput | undefined
 const FfiConverterOptionalTypeCursorMotionEffectsOutput = new FfiConverterOptional(FfiConverterTypeCursorMotionEffectsOutput);
 
+// FfiConverter for CursorMotionEffects | undefined
+const FfiConverterOptionalTypeCursorMotionEffects = new FfiConverterOptional(FfiConverterTypeCursorMotionEffects);
+
 // FfiConverter for ActionTarget | undefined
 const FfiConverterOptionalTypeActionTarget = new FfiConverterOptional(FfiConverterTypeActionTarget);
 
@@ -6368,14 +6526,14 @@ const FfiConverterOptionalTypeScrollBy = new FfiConverterOptional(FfiConverterTy
 // FfiConverter for EscalationReason | undefined
 const FfiConverterOptionalTypeEscalationReason = new FfiConverterOptional(FfiConverterTypeEscalationReason);
 
-// FfiConverter for CursorMotionEffects | undefined
-const FfiConverterOptionalTypeCursorMotionEffects = new FfiConverterOptional(FfiConverterTypeCursorMotionEffects);
-
 // FfiConverter for CaptureScope | undefined
 const FfiConverterOptionalTypeCaptureScope = new FfiConverterOptional(FfiConverterTypeCaptureScope);
 
 // FfiConverter for CursorThemeSelection | undefined
 const FfiConverterOptionalTypeCursorThemeSelection = new FfiConverterOptional(FfiConverterTypeCursorThemeSelection);
+
+// FfiConverter for CursorMotionSelection | undefined
+const FfiConverterOptionalTypeCursorMotionSelection = new FfiConverterOptional(FfiConverterTypeCursorMotionSelection);
 
 // FfiConverter for BoundsExpectation | undefined
 const FfiConverterOptionalTypeBoundsExpectation = new FfiConverterOptional(FfiConverterTypeBoundsExpectation);
@@ -6458,6 +6616,7 @@ export default Object.freeze({
     FfiConverterTypeCursorMotionEffects,
     FfiConverterTypeCursorMotionEffectsOutput,
     FfiConverterTypeCursorMotionOutput,
+    FfiConverterTypeCursorMotionSelection,
     FfiConverterTypeCursorMotionStyle,
     FfiConverterTypeCursorMotionTiming,
     FfiConverterTypeCursorPointOutput,

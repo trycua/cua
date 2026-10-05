@@ -97,6 +97,8 @@ cua-driver config get max_image_dimension
 
 Set one config key.
 
+Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.&lt;trail|glow|magnet|ripple|squish&gt; (true, false). Use null for a key to clear it, or cursor.motion null to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default.
+
 ```text output
 cua-driver config set <key> <value>
 ```
@@ -111,6 +113,15 @@ cua-driver config set <key> <value>
 ```bash test="cli-shape" id="ref-cua-driver-config-set"
 # Downscale screenshots to at most 1568 px
 cua-driver config set max_image_dimension 1568
+
+# Make magnetic the default cursor motion for new sessions
+cua-driver config set cursor.motion.style magnetic
+
+# Scale cursor move time with distance and target size
+cua-driver config set cursor.motion.timing fitts
+
+# Turn the cursor trail on by default
+cua-driver config set cursor.motion.effects.trail true
 ```
 
 ### `cua-driver config reset`

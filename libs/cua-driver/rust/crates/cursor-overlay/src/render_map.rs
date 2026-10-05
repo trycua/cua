@@ -181,6 +181,8 @@ pub fn seed_position(target_x: f64, target_y: f64, frame: Option<ScreenFrame>) -
 pub fn keyed_config(template: &CursorConfig, key: &str) -> CursorConfig {
     let mut config = template.clone();
     config.cursor_id = key.to_owned();
+    // A saved default changed after launch reaches sessions created from now on.
+    crate::motion_defaults::active().apply(&mut config.motion);
     config
 }
 
@@ -206,9 +208,11 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
     /// own `cursor_id`.
     pub fn new(template: CursorConfig, platform: P) -> Self {
         let mut cursors = CursorMap::new();
+        let mut default_config = template.clone();
+        crate::motion_defaults::active().apply(&mut default_config.motion);
         cursors.insert(
             DEFAULT_CURSOR_KEY.to_owned(),
-            S::from_config(template.clone()),
+            S::from_config(default_config),
         );
         Self {
             cursors,

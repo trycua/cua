@@ -51,13 +51,14 @@ pub use cursor::{
 };
 pub use inputs::{
     action_target_schema, ActionTarget, CaptureScope, ClickButton, ClickInput, ClickPosition,
-    ClipboardReadInput, ClipboardWriteInput, DesktopScope, DragInput, EndSessionInput,
-    EscalateSessionInput, EscalationReason, GetAgentCursorStateInput, GetCursorPositionInput,
-    GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput,
-    InputDeliveryMode, InvokeMenuInput, LegacyClickInput, ListSessionsInput, MoveCursorInput,
-    PressKeyInput, ScrollBy, ScrollDirection, ScrollInput, SetAgentCursorEnabledInput,
-    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, StartSessionInput,
-    ToolInput, TypeTextInput, MULTI_CALL_SESSION_DESCRIPTION,
+    ClipboardReadInput, ClipboardWriteInput, CursorMotionSelection, DesktopScope, DragInput,
+    EndSessionInput, EscalateSessionInput, EscalationReason, GetAgentCursorStateInput,
+    GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, GetSessionInput,
+    GetSessionStateInput, HotkeyInput, InputDeliveryMode, InvokeMenuInput, LegacyClickInput,
+    ListSessionsInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
+    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
+    SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
+    MULTI_CALL_SESSION_DESCRIPTION,
 };
 pub use outputs::{
     advertised_output_schema, conforming_error_envelope, is_refusal_envelope,

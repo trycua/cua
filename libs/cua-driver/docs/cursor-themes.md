@@ -111,6 +111,14 @@ The same four typed operations are available on `CuaDriver` and
 is created. `reduced_motion` is `auto`, `on`, or `off`. `auto` follows the host
 accessibility preference where the platform exposes one.
 
+`StartSessionInput.cursor_motion` sets the session's motion (the fields of
+`set_agent_cursor_motion` without `session`) before the cursor is first shown,
+and `start_session` echoes it. A saved default comes from
+`cua-driver config set cursor.motion.style|timing|effects.<name>`. Precedence:
+`set_agent_cursor_motion`, then `start_session.cursor_motion`, then the saved
+default, then the built-in `signature_arc`. Reduced motion wins over all of
+them.
+
 ## Semantic profile
 
 A full custom theme must provide all twelve action animations:

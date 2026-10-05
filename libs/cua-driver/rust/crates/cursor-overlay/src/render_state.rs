@@ -780,6 +780,12 @@ impl RenderStateCore {
                 self.motion = m;
                 true
             }
+            OverlayCommand::ApplyMotion(args) => {
+                if let Ok(motion) = self.motion.with_motion_args(&args) {
+                    self.motion = motion;
+                }
+                true
+            }
             OverlayCommand::PinAbove(wid) => {
                 self.pinned_wid = Some(wid);
                 true

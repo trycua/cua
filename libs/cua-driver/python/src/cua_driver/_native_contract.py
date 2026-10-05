@@ -2860,6 +2860,132 @@ class _UniffiFfiConverterTypeCursorMotionOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeCursorMotionTiming.write(value.timing, buf)
         _UniffiFfiConverterOptionalTypeCursorMotionEffectsOutput.write(value.effects, buf)
 
+class _UniffiFfiConverterOptionalTypeCursorMotionEffects(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorMotionEffects.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorMotionEffects.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorMotionEffects.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class CursorMotionSelection:
+    """
+    Cursor motion for a session, with the fields of `set_agent_cursor_motion` minus `session`.
+    Omitted or null fields keep the saved default (`cursor.motion.*` in the driver config), then
+    the built-in `signature_arc`.
+"""
+    def __init__(self, *, style:typing.Optional[CursorMotionStyle], timing:typing.Optional[CursorMotionTiming], effects:typing.Optional[CursorMotionEffects], start_handle:typing.Optional[float], end_handle:typing.Optional[float], arc_size:typing.Optional[float], arc_flow:typing.Optional[float], spring:typing.Optional[float], glide_duration_ms:typing.Optional[float], dwell_after_click_ms:typing.Optional[float], idle_hide_ms:typing.Optional[float], turn_radius:typing.Optional[float]):
+        self.style = style
+        self.timing = timing
+        self.effects = effects
+        self.start_handle = start_handle
+        self.end_handle = end_handle
+        self.arc_size = arc_size
+        self.arc_flow = arc_flow
+        self.spring = spring
+        self.glide_duration_ms = glide_duration_ms
+        self.dwell_after_click_ms = dwell_after_click_ms
+        self.idle_hide_ms = idle_hide_ms
+        self.turn_radius = turn_radius
+
+
+
+
+    def __str__(self):
+        return "CursorMotionSelection(style={}, timing={}, effects={}, start_handle={}, end_handle={}, arc_size={}, arc_flow={}, spring={}, glide_duration_ms={}, dwell_after_click_ms={}, idle_hide_ms={}, turn_radius={})".format(self.style, self.timing, self.effects, self.start_handle, self.end_handle, self.arc_size, self.arc_flow, self.spring, self.glide_duration_ms, self.dwell_after_click_ms, self.idle_hide_ms, self.turn_radius)
+    def __eq__(self, other):
+        if self.style != other.style:
+            return False
+        if self.timing != other.timing:
+            return False
+        if self.effects != other.effects:
+            return False
+        if self.start_handle != other.start_handle:
+            return False
+        if self.end_handle != other.end_handle:
+            return False
+        if self.arc_size != other.arc_size:
+            return False
+        if self.arc_flow != other.arc_flow:
+            return False
+        if self.spring != other.spring:
+            return False
+        if self.glide_duration_ms != other.glide_duration_ms:
+            return False
+        if self.dwell_after_click_ms != other.dwell_after_click_ms:
+            return False
+        if self.idle_hide_ms != other.idle_hide_ms:
+            return False
+        if self.turn_radius != other.turn_radius:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCursorMotionSelection(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CursorMotionSelection(
+            style=_UniffiFfiConverterOptionalTypeCursorMotionStyle.read(buf),
+            timing=_UniffiFfiConverterOptionalTypeCursorMotionTiming.read(buf),
+            effects=_UniffiFfiConverterOptionalTypeCursorMotionEffects.read(buf),
+            start_handle=_UniffiFfiConverterOptionalFloat64.read(buf),
+            end_handle=_UniffiFfiConverterOptionalFloat64.read(buf),
+            arc_size=_UniffiFfiConverterOptionalFloat64.read(buf),
+            arc_flow=_UniffiFfiConverterOptionalFloat64.read(buf),
+            spring=_UniffiFfiConverterOptionalFloat64.read(buf),
+            glide_duration_ms=_UniffiFfiConverterOptionalFloat64.read(buf),
+            dwell_after_click_ms=_UniffiFfiConverterOptionalFloat64.read(buf),
+            idle_hide_ms=_UniffiFfiConverterOptionalFloat64.read(buf),
+            turn_radius=_UniffiFfiConverterOptionalFloat64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterOptionalTypeCursorMotionStyle.check_lower(value.style)
+        _UniffiFfiConverterOptionalTypeCursorMotionTiming.check_lower(value.timing)
+        _UniffiFfiConverterOptionalTypeCursorMotionEffects.check_lower(value.effects)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.start_handle)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.end_handle)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.arc_size)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.arc_flow)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.spring)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.glide_duration_ms)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.dwell_after_click_ms)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.idle_hide_ms)
+        _UniffiFfiConverterOptionalFloat64.check_lower(value.turn_radius)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterOptionalTypeCursorMotionStyle.write(value.style, buf)
+        _UniffiFfiConverterOptionalTypeCursorMotionTiming.write(value.timing, buf)
+        _UniffiFfiConverterOptionalTypeCursorMotionEffects.write(value.effects, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.start_handle, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.end_handle, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.arc_size, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.arc_flow, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.spring, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.glide_duration_ms, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.dwell_after_click_ms, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.idle_hide_ms, buf)
+        _UniffiFfiConverterOptionalFloat64.write(value.turn_radius, buf)
+
 @dataclass
 class CursorPointOutput:
     def __init__(self, *, x:float, y:float):
@@ -6776,31 +6902,6 @@ class _UniffiFfiConverterTypeSetAgentCursorEnabledOutput(_UniffiConverterRustBuf
         _UniffiFfiConverterString.write(value.session, buf)
         _UniffiFfiConverterBoolean.write(value.enabled, buf)
 
-class _UniffiFfiConverterOptionalTypeCursorMotionEffects(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterTypeCursorMotionEffects.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterTypeCursorMotionEffects.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterTypeCursorMotionEffects.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
-
 @dataclass
 class SetAgentCursorMotionInput:
     def __init__(self, *, session:str, style:typing.Optional[CursorMotionStyle], timing:typing.Optional[CursorMotionTiming], effects:typing.Optional[CursorMotionEffects], start_handle:typing.Optional[float], end_handle:typing.Optional[float], arc_size:typing.Optional[float], arc_flow:typing.Optional[float], spring:typing.Optional[float], glide_duration_ms:typing.Optional[float], dwell_after_click_ms:typing.Optional[float], idle_hide_ms:typing.Optional[float], turn_radius:typing.Optional[float]):
@@ -7169,24 +7270,52 @@ class _UniffiFfiConverterOptionalTypeCursorThemeSelection(_UniffiConverterRustBu
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+class _UniffiFfiConverterOptionalTypeCursorMotionSelection(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorMotionSelection.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorMotionSelection.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorMotionSelection.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class StartSessionInput:
-    def __init__(self, *, session:typing.Optional[str], capture_scope:typing.Optional[CaptureScope], cursor_theme:typing.Optional[CursorThemeSelection]):
+    def __init__(self, *, session:typing.Optional[str], capture_scope:typing.Optional[CaptureScope], cursor_theme:typing.Optional[CursorThemeSelection], cursor_motion:typing.Optional[CursorMotionSelection]):
         self.session = session
         self.capture_scope = capture_scope
         self.cursor_theme = cursor_theme
+        self.cursor_motion = cursor_motion
 
 
 
 
     def __str__(self):
-        return "StartSessionInput(session={}, capture_scope={}, cursor_theme={})".format(self.session, self.capture_scope, self.cursor_theme)
+        return "StartSessionInput(session={}, capture_scope={}, cursor_theme={}, cursor_motion={})".format(self.session, self.capture_scope, self.cursor_theme, self.cursor_motion)
     def __eq__(self, other):
         if self.session != other.session:
             return False
         if self.capture_scope != other.capture_scope:
             return False
         if self.cursor_theme != other.cursor_theme:
+            return False
+        if self.cursor_motion != other.cursor_motion:
             return False
         return True
 
@@ -7197,6 +7326,7 @@ class _UniffiFfiConverterTypeStartSessionInput(_UniffiConverterRustBuffer):
             session=_UniffiFfiConverterOptionalString.read(buf),
             capture_scope=_UniffiFfiConverterOptionalTypeCaptureScope.read(buf),
             cursor_theme=_UniffiFfiConverterOptionalTypeCursorThemeSelection.read(buf),
+            cursor_motion=_UniffiFfiConverterOptionalTypeCursorMotionSelection.read(buf),
         )
 
     @staticmethod
@@ -7204,34 +7334,39 @@ class _UniffiFfiConverterTypeStartSessionInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.session)
         _UniffiFfiConverterOptionalTypeCaptureScope.check_lower(value.capture_scope)
         _UniffiFfiConverterOptionalTypeCursorThemeSelection.check_lower(value.cursor_theme)
+        _UniffiFfiConverterOptionalTypeCursorMotionSelection.check_lower(value.cursor_motion)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterOptionalString.write(value.session, buf)
         _UniffiFfiConverterOptionalTypeCaptureScope.write(value.capture_scope, buf)
         _UniffiFfiConverterOptionalTypeCursorThemeSelection.write(value.cursor_theme, buf)
+        _UniffiFfiConverterOptionalTypeCursorMotionSelection.write(value.cursor_motion, buf)
 
 @dataclass
 class StartSessionOutput:
     """
     Successful structured result returned by `start_session`.
 """
-    def __init__(self, *, state:SessionStateOutput, active:bool, revived:bool):
+    def __init__(self, *, state:SessionStateOutput, active:bool, revived:bool, cursor_motion:typing.Optional[CursorMotionSelection]):
         self.state = state
         self.active = active
         self.revived = revived
+        self.cursor_motion = cursor_motion
 
 
 
 
     def __str__(self):
-        return "StartSessionOutput(state={}, active={}, revived={})".format(self.state, self.active, self.revived)
+        return "StartSessionOutput(state={}, active={}, revived={}, cursor_motion={})".format(self.state, self.active, self.revived, self.cursor_motion)
     def __eq__(self, other):
         if self.state != other.state:
             return False
         if self.active != other.active:
             return False
         if self.revived != other.revived:
+            return False
+        if self.cursor_motion != other.cursor_motion:
             return False
         return True
 
@@ -7242,6 +7377,7 @@ class _UniffiFfiConverterTypeStartSessionOutput(_UniffiConverterRustBuffer):
             state=_UniffiFfiConverterTypeSessionStateOutput.read(buf),
             active=_UniffiFfiConverterBoolean.read(buf),
             revived=_UniffiFfiConverterBoolean.read(buf),
+            cursor_motion=_UniffiFfiConverterOptionalTypeCursorMotionSelection.read(buf),
         )
 
     @staticmethod
@@ -7249,12 +7385,14 @@ class _UniffiFfiConverterTypeStartSessionOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterTypeSessionStateOutput.check_lower(value.state)
         _UniffiFfiConverterBoolean.check_lower(value.active)
         _UniffiFfiConverterBoolean.check_lower(value.revived)
+        _UniffiFfiConverterOptionalTypeCursorMotionSelection.check_lower(value.cursor_motion)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterTypeSessionStateOutput.write(value.state, buf)
         _UniffiFfiConverterBoolean.write(value.active, buf)
         _UniffiFfiConverterBoolean.write(value.revived, buf)
+        _UniffiFfiConverterOptionalTypeCursorMotionSelection.write(value.cursor_motion, buf)
 
 class _UniffiFfiConverterOptionalTypeBoundsExpectation(_UniffiConverterRustBuffer):
     @classmethod
@@ -8331,6 +8469,7 @@ __all__ = [
     "CursorMotionEffects",
     "CursorMotionEffectsOutput",
     "CursorMotionOutput",
+    "CursorMotionSelection",
     "CursorPointOutput",
     "CursorThemeOutput",
     "CursorThemeSelection",

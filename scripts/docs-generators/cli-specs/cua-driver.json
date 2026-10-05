@@ -1001,11 +1001,23 @@
        "type": "String"
       }
      ],
-     "discussion": "",
+     "discussion": "Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (true, false). Use null for a key to clear it, or cursor.motion null to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default.",
      "examples": [
       {
        "command": "cua-driver config set max_image_dimension 1568",
        "description": "Downscale screenshots to at most 1568 px"
+      },
+      {
+       "command": "cua-driver config set cursor.motion.style magnetic",
+       "description": "Make magnetic the default cursor motion for new sessions"
+      },
+      {
+       "command": "cua-driver config set cursor.motion.timing fitts",
+       "description": "Scale cursor move time with distance and target size"
+      },
+      {
+       "command": "cua-driver config set cursor.motion.effects.trail true",
+       "description": "Turn the cursor trail on by default"
       }
      ],
      "flags": [],

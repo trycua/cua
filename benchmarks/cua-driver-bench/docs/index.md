@@ -28,7 +28,7 @@ the interfaces. Explanation pages discuss the design and tradeoffs of the benchm
 ## Explanation
 
 - [Benchmark design](explanation/benchmark-design.md)
-- [Fleet execution boundary](fleet-boundary.md)
+- [Execution boundary](execution-boundary.md)
 - [Outcome, participation, certification, and comparison](explanation/outcome-participation-certification-and-comparison.md)
 - [Profiles, systems, and comparisons](explanation/profiles-systems-and-comparisons.md)
 - [Task-difficulty calibration](explanation/task-difficulty-calibration.md)
@@ -40,10 +40,8 @@ the interfaces. Explanation pages discuss the design and tradeoffs of the benchm
 
 ## Active benchmark paths
 
-- Local comparisons write results under `artifacts/automated-eval/`.
-- Fleet comparisons use isolated Linux/X11 workers and write results under `automated-eval/fleet-results/`.
+- Runs write results under `artifacts/automated-eval/` unless you pass `--output`.
 - Task shards can run in parallel, but each shard runs its baseline before its candidate.
-- Fleet defaults to two active task shards. Local execution defaults to one.
-- Parallel local execution requires one prestarted Linux/X11 display for each active shard.
-- The manual GitHub Actions workflow builds driver refs, retrieves selected private tasks, runs Fleet, and preserves the result bundle.
-- S3 publishing uploads the static report. The GitHub Actions artifact remains the fallback for public-access failures.
+- Execution defaults to one shard at a time. Parallel execution requires one prestarted Linux/X11 display for each active shard.
+- The manual GitHub Actions workflow downloads a driver release, retrieves selected private tasks, runs the local runner on a runner you choose, and preserves the result bundle.
+- S3 publishing is opt-in. It uploads the static report only when you pass `--publish` or run `publish`. The GitHub Actions artifact is always available.

@@ -8,7 +8,7 @@ The tools can test one release or compare two releases. They support the four sh
 
 ## Scope
 
-These runs are non-certifying. They can run on one local desktop or on isolated Cua Fleet workers.
+These runs are non-certifying. They run on a local desktop, or on a runner you control through the manual GitHub Actions workflow. No hosted execution backend is involved.
 
 The runner does not change task evaluators. Each task evaluator grades the final trial state independently.
 
@@ -16,7 +16,8 @@ Each selected release uses its explicit binary path. The runner does not use a g
 
 ## Requirements
 
-- Use Python 3.11 or newer with this project installed.
+- Use Python 3.11 or newer with this project installed. From the monorepo root, run
+  `uv sync --project libs/cua-bench-runtime`.
 - Install and configure Codex CLI.
 - Obtain an authorized task pack and pass its `tasks/` directory with
   `--tasks-root`.
@@ -36,6 +37,16 @@ cua-drivers/
 ```
 
 Use `cua-driver.exe` in the `binary/` directory on Windows.
+
+To fetch a released macOS build into this layout, download
+`cua-driver-rs-<version>-darwin-universal.tar.gz` and
+`cua-driver-rs-v<version>-skills.tar.gz` from the `cua-driver-rs-v<version>`
+GitHub release, verify them against `checksums.txt`, copy `cua-driver` into
+`binary/`, and write a `release-manifest.json` with `version`, `binaryVersion`,
+and `product`. The manual workflow does exactly this.
+
+On macOS, grant Accessibility and Screen Recording to the app that starts the
+runner, such as Terminal.
 
 ## Check the Plan
 
@@ -100,9 +111,9 @@ Completion order does not change report order. If another shard has an infrastru
 
 Use `--max-parallel-tasks` to set the maximum number of active task shards.
 
-- Fleet runs use `2` by default.
-- Local runs use `1` by default.
-- Parallel local runs require one independent Linux/X11 display for each active shard.
+- The default is `1`, which runs every shard in sequence.
+- Parallel runs require Linux/X11 and one independent display for each active shard.
+- macOS, Windows, and a single shared desktop run serially.
 
 Use `--max-parallel-tasks 1` to run all task shards in sequence.
 
@@ -152,71 +163,44 @@ shell-based substitutes for state changes that the task requires through a GUI.
 If the required GUI interaction fails, the agent must leave it incomplete and
 report the blocker as a papercut.
 
-## Run on Cua Fleet
-
-Fleet runs the same comparison logic on isolated Linux/X11 workers. Each active task shard uses one worker.
-
-The worker runs the baseline and candidate in sequence for its task. The controller can run multiple task shards at the same time.
-
-The controller uploads only the public benchmark source, runtime, selected drivers, and selected authorized tasks. Task content remains separate from the public source archive.
-
-From the monorepo root, install the Fleet extra:
-
-```bash
-python -m pip install -e 'libs/cua-bench-runtime[fleet]'
-```
-
-Put Fleet and model credentials in `benchmarks/cua-driver-bench/automated-eval/.env`. If `OPENAI_BASE_URL` is reachable only through a tailnet, set `OPENAI_FLEET_BASE_URL` to a provider URL that the worker can reach.
-
-Run the controller from the benchmark directory:
-
-```bash
-cd benchmarks/cua-driver-bench
-python automated-eval/cli.py fleet \
-  --model small \
-  --reasoning-effort high \
-  --tasks-root /absolute/path/to/authorized/tasks \
-  --drivers-root cua-drivers \
-  --baseline 0.28.0 \
-  --candidate 0.26.1 \
-  --task CDB-S01 \
-  --task CDB-S04 \
-  --max-parallel-tasks 2
-```
-
-Fleet reads the selected task descriptors and provisions the required external applications. Each worker returns a self-contained task result bundle.
-
-The controller aggregates all bundles into the standard report files. It releases each worker after result retrieval and on error paths.
-
-Fleet results are written to `automated-eval/fleet-results/<UTC timestamp>/`.
-
 ## Manual GitHub Actions Run
 
 The `Cua Driver Benchmark` workflow is manual. Start it with `workflow_dispatch` and provide these inputs:
 
-- baseline Git ref
-- candidate Git ref
+- suite: `driver-comparison` or `macos-head-to-head`
+- runner label, such as a self-hosted macOS runner
+- Cua Driver release, and an optional candidate release
 - comma-separated task IDs
-- maximum parallel task shards
+- arms and runs per task (head-to-head only)
+- model or provider tier
+- whether to publish the report to S3
 
-The workflow builds isolated Linux drivers from both refs. It retrieves only the selected authorized tasks from an access-controlled source.
+GUI runs need a desktop session with Accessibility and Screen Recording granted. GitHub-hosted runners cannot grant them, so use a self-hosted macOS runner for real runs.
 
-The task pack stays in runner temporary storage. A cleanup step removes it, and the result artifact does not include it.
+The workflow downloads the selected release from GitHub and verifies its checksum. It retrieves only the selected authorized tasks from an access-controlled source. The task pack stays in runner temporary storage, a cleanup step removes it, and the result artifact does not include it.
 
-The workflow starts the Fleet comparison and publishes the report to S3. It also uploads the complete result bundle as a GitHub artifact.
+Configure these repository settings before you run the `driver-comparison` suite:
 
-The artifact name is `cua-driver-bench-<run-id>`. The workflow summary includes refs, resolved SHAs, tasks, benchmark status, S3 status, and artifact status.
+| Setting | Kind | Purpose |
+| --- | --- | --- |
+| `CDB_TASK_PACK_GH_TOKEN` | secret | Read access to the task-pack repository |
+| `CDB_TASK_PACK_REPOSITORY` | variable | Task-pack repository, as `owner/name` |
+| `CDB_TASK_PACK_REF` | variable | Task-pack ref to check out |
+| `OPENAI_API_KEY` | secret | Model gateway key |
+| `OPENAI_BASE_URL` | variable | Model gateway URL |
+
+The workflow uploads the complete result bundle as the GitHub artifact `cua-driver-bench-<run-id>` and writes refs, tasks, benchmark status, and artifact status to the run summary.
 
 ## Publish a Static Report
 
-Publishing uses the AWS CLI and the standard AWS credential chain. Configure the
-`cua-artifacts` profile locally, then set these non-secret values in
-`automated-eval/.env`:
+Publishing is off by default. It runs only when you pass `--publish`, or when you run the `publish` command. Neither path runs without an `AWS_S3_BUCKET` value.
+
+Publishing uses the AWS CLI and the standard AWS credential chain. No credentials or bucket names live in this repository. Set these values in your environment or in `automated-eval/.env`, which Git ignores:
 
 ```env
-AWS_PROFILE=cua-artifacts
-AWS_REGION=us-west-2
-AWS_S3_BUCKET=cua-agent-artifacts
+AWS_PROFILE=<your profile>
+AWS_REGION=<your region>
+AWS_S3_BUCKET=<your bucket>
 AWS_S3_REPORT_PREFIX=cua-driver-bench
 ```
 
@@ -224,11 +208,10 @@ Publish an existing completed run without rerunning the benchmark:
 
 ```bash
 python automated-eval/cli.py publish \
-  --run-dir automated-eval/fleet-results/<run>
+  --run-dir artifacts/automated-eval/<run>
 ```
 
-Or publish automatically after a local comparison or Fleet run by passing
-`--publish` to the `compare` or `fleet` command.
+Or publish automatically after a local comparison by passing `--publish` to the `compare` command.
 
 The publisher uploads only `report/`, `comparison.md`, and `comparison.json`.
 It keeps the local run unchanged and prints one machine-readable line:
@@ -242,7 +225,7 @@ the generated HTTP URL. If S3 returns `403` or `404`, the public URL check fails
 The publisher does not change bucket policy, Block Public Access, ACLs, or
 CloudFront configuration.
 
-The manual workflow treats a successful upload with an HTTP `403` as a public-access failure. The GitHub artifact remains available as the fallback.
+The manual workflow publishes only when `publish_report` is set, the `CDB_REPORT_S3_BUCKET` variable exists, and the `CDB_REPORT_AWS_ACCESS_KEY_ID` and `CDB_REPORT_AWS_SECRET_ACCESS_KEY` secrets exist. Otherwise it skips the step. The GitHub artifact remains available either way.
 
 ## Main Options
 
@@ -254,7 +237,7 @@ The manual workflow treats a successful upload with an HTTP `403` as a public-ac
 | `--model` | Select the Codex model or configured provider tier. |
 | `--reasoning-effort` | Set Codex reasoning effort to `low`, `medium`, or `high`. |
 | `--timeout` | Set the maximum seconds for each trial. The default is 1800 seconds. |
-| `--max-parallel-tasks` | Set the task-shard concurrency limit. Fleet defaults to `2`. Local runs default to `1`. |
+| `--max-parallel-tasks` | Set the task-shard concurrency limit. The default is `1`. |
 | `--local-display` | Assign one independent Linux/X11 display to a local task shard. Repeat this option for parallel local runs. |
 | `--output` | Select a new output directory. The directory must not exist. |
 | `--tasks-root` | Select the `tasks/` directory in the authorized task pack. Required. |
@@ -273,11 +256,9 @@ python automated-eval/compare_drivers --help
 
 ## Result Locations
 
-Local runs use `artifacts/automated-eval/<UTC timestamp>/` by default.
+Runs write to `artifacts/automated-eval/<UTC timestamp>/` by default. Use `--output` to choose another new directory.
 
-Fleet runs use `automated-eval/fleet-results/<UTC timestamp>/` by default.
-
-Both execution paths produce the same final report contract:
+Serial and parallel runs produce the same final report contract:
 
 ```text
 <output>/
@@ -311,7 +292,7 @@ The command exit code reports runner errors. Read the generated report for indiv
 ## Limits
 
 - The runner performs one attempt for each selected task and release.
-- Each concurrent task shard requires an isolated executor and desktop.
+- Each concurrent task shard requires its own isolated Linux/X11 display.
 - The reports are diagnostic and cannot support certification claims.
 - Foreground disturbance metrics are available only on Linux/X11.
 - Model and token values come from Codex telemetry and remain diagnostic.

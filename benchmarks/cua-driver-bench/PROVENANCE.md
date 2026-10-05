@@ -53,3 +53,15 @@ interfaces.
 Runtime tests use only synthetic task, application, store, and participation
 contracts. Tests that exercise a held-out task require an explicit authorized
 task root and remain with that task pack.
+
+## Later contributions
+
+Jainish Patel continued the automated-evaluation runner after the snapshot, in
+`trycua/cua#3847`: the HTML report and diagnostics, parallel task comparisons,
+S3 report publishing, and the manual GitHub Actions workflow. His commits are
+preserved in this repository's history.
+
+That work also included orchestration on Cua Fleet. Cua Fleet shuts down on
+16 October 2026, so the orchestration was removed and the benchmark runs on
+local machines. The remaining runner, report, publishing, and workflow code
+stay under his authorship.

@@ -15,6 +15,14 @@ authorized task root when running the benchmark; see [`tasks/README.md`](tasks/R
 Start with the [documentation index](docs/index.md) or the
 [benchmark definition](definition.md).
 
+## Run locally
+
+The benchmark runs on your own machine. Install the runtime with
+`uv sync --project libs/cua-bench-runtime`, then follow the
+[local runner guide](automated-eval/README.md) to compare Cua Driver releases,
+write the HTML report, and optionally publish it. Nothing depends on a hosted
+execution backend.
+
 ## Import status
 
 This is a sanitized snapshot import from Cua Driver Bench. The source revision,

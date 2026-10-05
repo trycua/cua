@@ -438,6 +438,27 @@ fn harness_appkit_cached_click_cannot_press_behind_sheet() {
             clicked.text()
         );
         fixture_state(directory.path(), |s| s["original_clicks"] == 1);
+        let menus = snapshot_elements(&mut driver, harness.pid, window);
+        let token = menus.structured()["elements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["role"] == "AXMenuItem" && e["label"] == "Increment original")
+            .expect("owned app menu item in scoped snapshot")["element_token"]
+            .clone();
+        let menu_click = driver.call(
+            "click",
+            serde_json::json!({
+                "pid": harness.pid, "window_id": window, "element_token": token,
+                "delivery_mode": "foreground"
+            }),
+        );
+        assert!(
+            !menu_click.is_error(),
+            "fresh foreground app menu: {}",
+            menu_click.text()
+        );
+        fixture_state(directory.path(), |s| s["original_clicks"] == 2);
         Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
     });
 }

@@ -36,6 +36,42 @@ use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
 use super::pixel_route::PixelClickRoute;
 use super::ToolState;
 
+#[derive(Debug)]
+struct SheetBlockedTarget;
+impl std::fmt::Display for SheetBlockedTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The addressed element is blocked by an attached sheet or its modal ancestry is unreadable; call get_window_state and target the sheet instead")
+    }
+}
+impl std::error::Error for SheetBlockedTarget {}
+
+fn ensure_sheet_target(
+    element: &crate::ax::snapshot::RetainedElement,
+    pid: i32,
+    wid: u32,
+    foreground: bool,
+) -> anyhow::Result<()> {
+    if unsafe {
+        crate::ax::exact_target::element_blocked_by_sheet(
+            element.as_ptr() as AXUIElementRef,
+            wid,
+            pid,
+            foreground,
+        )
+    } != Some(false)
+    {
+        anyhow::bail!(SheetBlockedTarget);
+    }
+    Ok(())
+}
+
+fn sheet_refusal() -> ToolResult {
+    let message = SheetBlockedTarget.to_string();
+    ToolResult::error(&message).with_structured(serde_json::json!({
+        "status": "refused", "refusal": { "code": "stale_element_token", "message": message }
+    }))
+}
+
 pub struct ClickTool {
     state: Arc<ToolState>,
 }
@@ -561,6 +597,8 @@ impl Tool for ClickTool {
                 crate::ax::exact_target::element_blocked_by_sheet(
                     sheet_guard.as_ptr() as AXUIElementRef,
                     wid,
+                    pid,
+                    delivery_mode.is_foreground(),
                 )
             })
             .await
@@ -638,12 +676,14 @@ impl Tool for ClickTool {
                             pid as libc::pid_t,
                             wid,
                             || {
+                                ensure_sheet_target(&element_guard, pid, wid, true)?;
                                 crate::input::mouse::click_at_xy_desktop_with_modifiers_preserving_cursor(
                                     cx, cy, 1, "middle", &m,
                                 )
                             },
                         )
                     } else {
+                        ensure_sheet_target(&element_guard, pid, wid, false)?;
                         crate::input::mouse::middle_click_at_xy(pid, cx, cy, &m)
                     }
                 })
@@ -654,6 +694,7 @@ impl Tool for ClickTool {
                          (background CGEvent; not driver-verified — confirm via screenshot)."
                     ))
                     .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
+                    Ok(Err(e)) if e.downcast_ref::<SheetBlockedTarget>().is_some() => sheet_refusal(),
                     Ok(Err(e)) => ToolResult::error(format!("Middle-click failed: {e}")),
                     Err(e)     => ToolResult::error(format!("Task error: {e}")),
                 };
@@ -764,6 +805,7 @@ impl Tool for ClickTool {
                             let mut outcome = None;
                             let has_modifiers = !selection_modifiers.is_empty();
                             let action = || {
+                                ensure_sheet_target(&element_guard, pid, wid, true)?;
                                 outcome = Some(perform_ax_click(
                                     (element_ptr, idx),
                                     (pid, wid),
@@ -795,6 +837,7 @@ impl Tool for ClickTool {
                             })?;
                             Ok((outcome, fronted))
                         } else {
+                            ensure_sheet_target(&element_guard, pid, wid, false)?;
                             perform_ax_click(
                                 (element_ptr, idx),
                                 (pid, wid),
@@ -874,6 +917,7 @@ impl Tool for ClickTool {
                     }
                     ToolResult::text(msg).with_structured(structured)
                 }
+                Ok(Err(e)) if e.downcast_ref::<SheetBlockedTarget>().is_some() => sheet_refusal(),
                 Ok(Err(e)) => ToolResult::error(format!("AX action failed: {e}")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }

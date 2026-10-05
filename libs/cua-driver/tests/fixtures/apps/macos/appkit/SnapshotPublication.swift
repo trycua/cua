@@ -51,6 +51,15 @@ final class SnapshotPublicationFixture: NSObject {
         original.frame = NSRect(x: 20, y: 630, width: 200, height: 36)
         original.setAccessibilityIdentifier("snapshot-original")
         content.addSubview(original)
+        let menu = NSMenu()
+        let root = NSMenuItem(title: "Fixture", action: nil, keyEquivalent: "")
+        let commands = NSMenu(title: "Fixture")
+        let increment = NSMenuItem(title: "Increment original", action: #selector(clickOriginal), keyEquivalent: "")
+        increment.target = self
+        commands.addItem(increment)
+        root.submenu = commands
+        menu.addItem(root)
+        NSApplication.shared.mainMenu = menu
     }
 
     func show() {

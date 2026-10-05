@@ -201,6 +201,23 @@ pub fn walk_tree_bounded(
     )
 }
 
+/// Inspect native browser chrome without walking every control in its web pages.
+/// Browser consent lives in AXSheet, never in the untrusted AXWebArea subtree.
+pub(crate) fn walk_native_chrome_bounded(
+    pid: i32,
+    window_id: u32,
+    max_elements: usize,
+) -> TreeWalkResult {
+    walk_tree_with_web_content(
+        pid,
+        Some(window_id),
+        None,
+        DEFAULT_MAX_DEPTH,
+        WalkBudget::nodes_only(max_elements),
+        false,
+    )
+}
+
 /// [`walk_tree_bounded`] under a caller's [`WalkBudget`]: the walk also stops
 /// when the budget's `timeout_ms` runs out, returning the partial tree. Each
 /// AX call is bounded by the per-element messaging timeout, so the walk
@@ -210,7 +227,18 @@ pub fn walk_tree_budgeted(
     window_id: Option<u32>,
     query: Option<&str>,
     max_depth: usize,
+    budget: WalkBudget,
+) -> TreeWalkResult {
+    walk_tree_with_web_content(pid, window_id, query, max_depth, budget, true)
+}
+
+fn walk_tree_with_web_content(
+    pid: i32,
+    window_id: Option<u32>,
+    query: Option<&str>,
+    max_depth: usize,
     mut budget: WalkBudget,
+    include_web_content: bool,
 ) -> TreeWalkResult {
     let mut nodes: Vec<AXNode> = Vec::new();
     let mut lines: Vec<(usize, String)> = Vec::new(); // (depth, line)
@@ -297,6 +325,7 @@ pub fn walk_tree_budgeted(
                 &mut index_counter,
                 &mut budget,
                 max_depth,
+                include_web_content,
             );
         }
 
@@ -412,6 +441,7 @@ unsafe fn walk_element(
     counter: &mut usize,
     budget: &mut WalkBudget,
     max_depth: usize,
+    include_web_content: bool,
 ) {
     if depth > max_depth {
         return;
@@ -429,6 +459,9 @@ unsafe fn walk_element(
     let role = copy_string_attr(element, "AXRole").unwrap_or_else(|| "AXUnknown".into());
 
     let in_web_content = in_web_content || is_web_content_role(&role);
+    if skip_web_subtree(in_web_content, include_web_content) {
+        return;
+    }
 
     // Skip pure layout containers that have no interesting content.
     if role == "AXScrollArea" || role == "AXGroup" {
@@ -447,6 +480,7 @@ unsafe fn walk_element(
                 counter,
                 budget,
                 max_depth,
+                include_web_content,
             );
             CFRelease(child as CFTypeRef);
         }
@@ -513,6 +547,7 @@ unsafe fn walk_element(
                 counter,
                 budget,
                 max_depth,
+                include_web_content,
             );
             CFRelease(child as CFTypeRef);
         }
@@ -648,9 +683,14 @@ unsafe fn walk_element(
             counter,
             budget,
             max_depth,
+            include_web_content,
         );
         CFRelease(child as CFTypeRef);
     }
+}
+
+fn skip_web_subtree(in_web_content: bool, include_web_content: bool) -> bool {
+    in_web_content && !include_web_content
 }
 
 fn is_web_content_role(role: &str) -> bool {
@@ -664,7 +704,7 @@ fn is_web_content_role(role: &str) -> bool {
 
 #[cfg(test)]
 mod web_content_role_tests {
-    use super::is_web_content_role;
+    use super::{is_web_content_role, skip_web_subtree};
 
     #[test]
     fn recognizes_native_web_document_roles_without_marking_app_chrome() {
@@ -674,6 +714,19 @@ mod web_content_role_tests {
         for role in ["AXWindow", "AXButton", "AXToolbar"] {
             assert!(!is_web_content_role(role), "{role} stays native");
         }
+    }
+
+    #[test]
+    fn consent_scan_keeps_native_sheets_and_skips_web_descendants() {
+        assert!(!skip_web_subtree(is_web_content_role("AXSheet"), false));
+        for role in ["AXWebArea", "AXDocumentWeb", "document"] {
+            assert!(skip_web_subtree(is_web_content_role(role), false));
+            assert!(!skip_web_subtree(is_web_content_role(role), true));
+        }
+        assert!(
+            skip_web_subtree(true, false),
+            "a sheet inside web content is untrusted"
+        );
     }
 }
 

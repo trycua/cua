@@ -140,7 +140,6 @@ impl std::fmt::Debug for ThumbnailCache {
     }
 }
 
-/// The file stem of a Space id (hex of its SHA-256, 32 chars).
 /// The `desktop_stream` feature of a host that does not share its desktop
 /// (cua-spacesd with `share_desktop` off reports every desktop feature
 /// unsupported to a relayed caller, saying why): there is no desktop to
@@ -157,6 +156,7 @@ pub fn desktop_not_shared(
     })
 }
 
+/// The file stem of a Space id (hex of its SHA-256, 32 chars).
 fn stem(space: &str) -> String {
     hex::encode(&Sha256::digest(space.as_bytes())[..16])
 }

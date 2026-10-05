@@ -26,11 +26,15 @@ impl ObservedIdentity {
         let element = ptr as AXUIElementRef;
         Some(Self {
             role: copy_string_attr(element, "AXRole")?,
-            title: copy_string_attr(element, "AXTitle"),
-            description: copy_string_attr(element, "AXDescription"),
+            title: normalized_label(copy_string_attr(element, "AXTitle")),
+            description: normalized_label(copy_string_attr(element, "AXDescription")),
             identifier: copy_string_attr(element, "AXIdentifier"),
         })
     }
+}
+
+fn normalized_label(value: Option<String>) -> Option<String> {
+    value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty())
 }
 
 pub struct RetainedElement(usize, Option<ObservedIdentity>);
@@ -152,6 +156,17 @@ mod tests {
             elements: vec![ptr],
             identities: vec![],
         }
+    }
+
+    #[test]
+    fn fresh_labels_match_tree_normalization() {
+        assert_eq!(normalized_label(None), None);
+        assert_eq!(normalized_label(Some(String::new())), None);
+        assert_eq!(normalized_label(Some("  ".into())), None);
+        assert_eq!(
+            normalized_label(Some("  Submit  ".into())),
+            Some("Submit".into())
+        );
     }
 
     #[test]

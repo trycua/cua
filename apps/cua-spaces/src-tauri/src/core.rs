@@ -464,15 +464,10 @@ impl SpaceRow {
 
     fn connected(info: SpaceInfo, space: &Space) -> Self {
         let mut row = Self::from_info(info);
-        if space.has_spacesd() {
-            row.os = os_name(space).map(str::to_string);
-            let os = space
-                .capabilities()
-                .os
-                .as_ref()
-                .filter(|_| row.os.is_some());
-            row.os_name = os.map(|o| o.name.clone()).filter(|s| !s.is_empty());
-            row.os_pretty_name = os.map(|o| o.pretty_name.clone()).filter(|s| !s.is_empty());
+        if let Some((family, name, pretty_name)) = space.reported_os() {
+            row.os = (!family.is_empty()).then(|| family.to_string());
+            row.os_name = (!name.is_empty()).then(|| name.to_string());
+            row.os_pretty_name = (!pretty_name.is_empty()).then(|| pretty_name.to_string());
         }
         if let Some((image, digest)) = space.image() {
             row.image = Some(image.to_string());
@@ -496,15 +491,6 @@ impl SpaceRow {
             .map(|f| f.name.clone())
             .collect();
         row
-    }
-}
-
-fn os_name(space: &Space) -> Option<&'static str> {
-    match space.os_family() {
-        pb::OsFamily::Macos => Some("macos"),
-        pb::OsFamily::Windows => Some("windows"),
-        pb::OsFamily::Linux => Some("linux"),
-        _ => None,
     }
 }
 

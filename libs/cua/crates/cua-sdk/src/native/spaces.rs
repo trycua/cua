@@ -2723,18 +2723,10 @@ impl Spaces {
             let (mut info, inner) = host.connect(&space).await?;
             // Relay discovery has no OS fields. Use the handshake already
             // fetched by either topology, without registering the machine.
-            if inner.has_spacesd() {
-                let os = inner.capabilities().os.as_ref();
-                info.os = match os.map(|o| o.family()) {
-                    Some(cua_proto::env::v1::OsFamily::Macos) => "macos",
-                    Some(cua_proto::env::v1::OsFamily::Windows) => "windows",
-                    Some(cua_proto::env::v1::OsFamily::Linux) => "linux",
-                    _ => "",
-                }
-                .into();
-                let os = os.filter(|_| !info.os.is_empty());
-                info.os_name = os.map(|o| o.name.clone()).unwrap_or_default();
-                info.os_pretty_name = os.map(|o| o.pretty_name.clone()).unwrap_or_default();
+            if let Some((family, name, pretty_name)) = inner.reported_os() {
+                info.os = family.into();
+                info.os_name = name.into();
+                info.os_pretty_name = pretty_name.into();
             }
             Ok(Arc::new(Space { host, info, inner }))
         })
@@ -2881,7 +2873,10 @@ impl Space {
         self.info.id.clone()
     }
 
-    /// The registry entry.
+    /// Connection-time snapshot; never refreshed. With spacesd, handshake
+    /// `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown
+    /// families clear them. Other fields and non-spacesd services retain
+    /// registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views.
     pub fn info(&self) -> SpaceInfo {
         self.info.clone()
     }

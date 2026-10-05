@@ -1065,8 +1065,6 @@ mod tests {
         }
     }
 
-    /// The first macOS create on a Mac without Lume: the built-in Lume's
-    /// download shows on the Space's own row, in words, with its bytes.
     #[test]
     fn unknown_os_cannot_start_a_create() {
         let state = CreatesState::default();
@@ -1076,6 +1074,8 @@ mod tests {
         );
     }
 
+    /// The first macOS create on a Mac without Lume: the built-in Lume's
+    /// download shows on the Space's own row, in words, with its bytes.
     #[test]
     fn the_runtime_set_up_on_first_use_shows_on_the_create() {
         let s = reduce(

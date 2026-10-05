@@ -1041,7 +1041,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_id() != 55610:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_space_info() != 1726:
+    if lib.uniffi_cua_sdk_checksum_method_space_info() != 20024:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_join_presence() != 56636:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -32227,7 +32227,10 @@ class SpaceProtocol(typing.Protocol):
         raise NotImplementedError
     def info(self, ) -> SpaceInfo:
         """
-        The registry entry.
+        Connection-time snapshot; never refreshed. With spacesd, handshake
+        `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown
+        families clear them. Other fields and non-spacesd services retain
+        registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views.
 """
         raise NotImplementedError
     async def join_presence(self, identity: PresenceIdentity,timeout_ms: typing.Optional[int]) -> SpacePresence:
@@ -32868,7 +32871,10 @@ class Space(SpaceProtocol):
         return _uniffi_lift_return(_uniffi_ffi_result)
     def info(self, ) -> SpaceInfo:
         """
-        The registry entry.
+        Connection-time snapshot; never refreshed. With spacesd, handshake
+        `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown
+        families clear them. Other fields and non-spacesd services retain
+        registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views.
 """
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),

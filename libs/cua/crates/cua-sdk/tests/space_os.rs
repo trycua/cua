@@ -161,6 +161,20 @@ async fn discovered_relay_os_survives_embedded_and_daemon_connections() {
                 );
                 assert_eq!(connected.info().id, key);
                 assert_eq!(connected.info().name, "Test host");
+                if !registered {
+                    // Connected info does not backfill discovery/resolve or
+                    // make those APIs probe a now-offline host.
+                    relay.set_online(id, false, "0.0.0-mock");
+                    let listed = spaces
+                        .list()
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .find(|r| r.id == key)
+                        .unwrap();
+                    assert!(listed.os.is_empty());
+                    assert!(spaces.resolve(key.clone()).await.unwrap().os.is_empty());
+                }
                 drop(connected);
                 drop(cua);
                 if let Some(server) = server {

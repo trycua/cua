@@ -148,6 +148,33 @@ async fn live_os_metadata_is_coherent_in_app_commands() {
 }
 
 #[tokio::test]
+async fn generic_space_keeps_registered_os_in_app_commands() {
+    let home = tempfile::tempdir().unwrap();
+    let id = "direct:127.0.0.1:9";
+    cua_spaces::registry::Registry::new(home.path())
+        .upsert(
+            cua_proto::daemon::v1::Space {
+                id: id.into(),
+                name: "Generic service".into(),
+                os: "macos".into(),
+                os_name: "Darwin".into(),
+                os_pretty_name: "macOS".into(),
+                ..Default::default()
+            },
+            cua_spaces::registry::Credential {
+                service_urls: [("service".into(), "http://127.0.0.1:9/mcp".into())].into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let app = core(home.path());
+    let row = app.space_info(id).await.unwrap();
+    assert_eq!(row.os.as_deref(), Some("macos"));
+    assert_eq!(row.os_name.as_deref(), Some("Darwin"));
+    assert_eq!(row.os_pretty_name.as_deref(), Some("macOS"));
+}
+
+#[tokio::test]
 async fn a_wrong_token_is_refused_and_nothing_is_registered() {
     let home = tempfile::tempdir().unwrap();
     let app = core(home.path());
@@ -240,6 +267,9 @@ async fn an_unreachable_space_is_listed_within_the_probe_bound() {
     assert_eq!(rows[0].id, row.id);
     assert!(!rows[0].reachable);
     assert!(rows[0].error.is_some());
+    assert_eq!(rows[0].os, row.os);
+    assert_eq!(rows[0].os_name, row.os_name);
+    assert_eq!(rows[0].os_pretty_name, row.os_pretty_name);
 }
 
 #[tokio::test]

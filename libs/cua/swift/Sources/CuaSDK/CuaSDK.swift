@@ -8337,7 +8337,10 @@ public protocol SpaceProtocol: AnyObject, Sendable {
     func id()  -> String
 
     /**
-     * The registry entry.
+     * Connection-time snapshot; never refreshed. With spacesd, handshake
+     * `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown
+     * families clear them. Other fields and non-spacesd services retain
+     * registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views.
      */
     func info()  -> SpaceInfo
 
@@ -8953,7 +8956,10 @@ open func id() -> String  {
 }
 
     /**
-     * The registry entry.
+     * Connection-time snapshot; never refreshed. With spacesd, handshake
+     * `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown
+     * families clear them. Other fields and non-spacesd services retain
+     * registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views.
      */
 open func info() -> SpaceInfo  {
     return try!  FfiConverterTypeSpaceInfo_lift(try! rustCall() {
@@ -40676,7 +40682,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_space_id() != 55610) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_space_info() != 1726) {
+    if (uniffi_cua_sdk_checksum_method_space_info() != 20024) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_join_presence() != 56636) {

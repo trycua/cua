@@ -435,6 +435,22 @@ impl Space {
             .unwrap_or(pb::OsFamily::Unspecified)
     }
 
+    /// The connected handshake's canonical (family, name, pretty name).
+    /// `None` means no spacesd: preserve the registry/discovery metadata.
+    /// A missing or unrecognized live family returns three empty strings,
+    /// so consumers clear stale OS metadata together. Never uses the image
+    /// catalog or refreshes the connection.
+    pub fn reported_os(&self) -> Option<(&'static str, &str, &str)> {
+        if !self.has_spacesd() {
+            return None;
+        }
+        let family = crate::spaces::os_family(self.capabilities());
+        match (family, self.capabilities().os.as_ref()) {
+            ("", _) | (_, None) => Some(("", "", "")),
+            (family, Some(os)) => Some((family, &os.name, &os.pretty_name)),
+        }
+    }
+
     /// Whether the guest is Windows (shell commands go through `cmd /C`).
     pub fn is_windows(&self) -> bool {
         self.os_family() == pb::OsFamily::Windows

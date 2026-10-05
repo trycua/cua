@@ -48,21 +48,19 @@ pub fn is_screen_sharing_pid(pid: i32) -> bool {
 /// Press and release a single key, delivered to `pid` without stealing focus.
 pub fn press_key(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
     // Handle "+" / "plus" → Shift+= (US keyboard layout).
-    if key == "+" || key.to_lowercase() == "plus" {
-        let flags = modifier_flags(&["shift"]);
-        let eq_code = key_name_to_code("=")?;
-        post_key(pid, eq_code, true, modifier_flags(modifiers) | flags)?;
-        key_gap_sleep();
-        post_key(pid, eq_code, false, modifier_flags(modifiers) | flags)?;
-        return Ok(());
-    }
+    let (key_code, flags) = if key == "+" || key.to_lowercase() == "plus" {
+        (
+            key_name_to_code("=")?,
+            modifier_flags(modifiers) | modifier_flags(&["shift"]),
+        )
+    } else {
+        (key_name_to_code(key)?, modifier_flags(modifiers))
+    };
 
-    let key_code = key_name_to_code(key)?;
-    let flags = modifier_flags(modifiers);
-
-    post_key(pid, key_code, true, flags)?;
+    let [down, up] = pid_key_press(key_code, flags);
+    post_key(pid, down.0, down.1, down.2)?;
     key_gap_sleep();
-    post_key(pid, key_code, false, flags)?;
+    post_key(pid, up.0, up.1, up.2)?;
     Ok(())
 }
 
@@ -101,6 +99,21 @@ fn char_key_events(source: &CGEventSource, ch: char) -> anyhow::Result<(CGEvent,
         Ok(event)
     };
     Ok((make(true)?, make(false)?))
+}
+
+/// The down and up events of a background PID-routed key press, with their
+/// flags.
+///
+/// The key-up omits Command. A Mac Catalyst app that is not frontmost drops a
+/// PID-routed key-up that carries Command, so UIKit keeps the key held and
+/// repeats its key command until another key event arrives (one background
+/// cmd+shift+[ fired a key command about 125 times in 3 s). Command matters
+/// only on the key-down, where key commands match it.
+fn pid_key_press(key_code: u16, flags: CGEventFlags) -> [(u16, bool, CGEventFlags); 2] {
+    [
+        (key_code, true, flags),
+        (key_code, false, flags & !CGEventFlags::CGEventFlagCommand),
+    ]
 }
 
 /// Type a string character-by-character to `pid`.
@@ -938,6 +951,29 @@ mod tests {
             z_down
                 .get_integer_value_field(core_graphics::event::EventField::KEYBOARD_EVENT_KEYCODE),
             6
+        );
+    }
+
+    #[test]
+    fn pid_key_press_releases_the_base_key_without_command() {
+        let chord = modifier_flags(&["cmd", "shift"]);
+        assert_eq!(
+            pid_key_press(33, chord),
+            [
+                (33, true, chord),
+                (33, false, CGEventFlags::CGEventFlagShift),
+            ]
+        );
+        let all = modifier_flags(&["cmd", "shift", "ctrl", "option"]);
+        assert_eq!(
+            pid_key_press(0, all)[1],
+            (0, false, modifier_flags(&["shift", "ctrl", "option"]))
+        );
+        // Chords without Command keep their flags on both halves.
+        let no_command = modifier_flags(&["ctrl", "shift"]);
+        assert_eq!(
+            pid_key_press(0, no_command),
+            [(0, true, no_command), (0, false, no_command)]
         );
     }
 

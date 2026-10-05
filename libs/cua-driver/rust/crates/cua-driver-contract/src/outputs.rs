@@ -308,11 +308,15 @@ pub struct CursorMotionOutput {
 
 // Optional enums advertise the bare string enum (Gemini rejects `null` in
 // `enum`); an older daemon simply omits the field.
-fn cursor_motion_style_output_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+fn cursor_motion_style_output_schema(
+    generator: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
     <crate::CursorMotionStyle as JsonSchema>::json_schema(generator)
 }
 
-fn cursor_motion_timing_output_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+fn cursor_motion_timing_output_schema(
+    generator: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
     <crate::CursorMotionTiming as JsonSchema>::json_schema(generator)
 }
 

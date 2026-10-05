@@ -19,13 +19,11 @@ use foreign_types::ForeignType;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MousePostMode {
-    /// Post the same event through SkyLight and again through the public API.
-    /// An AppKit target receives both copies, so one logical event arrives
-    /// twice. Kept only until the remaining callers move to
-    /// [`MousePostMode::SkyLightPreferred`].
-    Both,
     /// Post each event exactly once: through SkyLight `SLEventPostToPid`, or
     /// through the public `CGEvent::post_to_pid` only when the SPI is absent.
+    ///
+    /// Never post one event through both: an AppKit target receives both
+    /// copies, so one logical event arrives twice (#4679).
     SkyLightPreferred,
     PublicOnly,
     HidOnly,
@@ -35,17 +33,14 @@ enum MousePostMode {
 /// post mode, so the "how many times is this event delivered" question has one
 /// answer that unit tests can check without a window server.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PostRoute {
+pub(in crate::input) enum PostRoute {
     SkyLight,
     PublicPid,
     Hid,
-    /// Legacy duplicate delivery: SkyLight, then the public API.
-    SkyLightAndPublic,
 }
 
 fn post_route(mode: MousePostMode, skylight_available: bool) -> PostRoute {
     match mode {
-        MousePostMode::Both => PostRoute::SkyLightAndPublic,
         MousePostMode::SkyLightPreferred if skylight_available => PostRoute::SkyLight,
         MousePostMode::SkyLightPreferred | MousePostMode::PublicOnly => PostRoute::PublicPid,
         MousePostMode::HidOnly => PostRoute::Hid,
@@ -73,10 +68,6 @@ fn dispatch_mouse_event(route: PostRoute, pid: i32, event: &CGEvent) {
         }
         PostRoute::PublicPid => event.post_to_pid(pid as libc::pid_t),
         PostRoute::Hid => event.post(core_graphics::event::CGEventTapLocation::HID),
-        PostRoute::SkyLightAndPublic => {
-            crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
-            event.post_to_pid(pid as libc::pid_t);
-        }
     }
 }
 
@@ -868,7 +859,7 @@ where
     if flags != CGEventFlags::CGEventFlagNull {
         down.set_flags(flags);
     }
-    post_mouse_event_with_mode(
+    post_mouse_event(
         pid,
         &down,
         from_local,
@@ -877,7 +868,6 @@ where
         1,
         button_number,
         0,
-        MousePostMode::SkyLightPreferred,
     );
     observe(from_x, from_y);
     std::thread::sleep(std::time::Duration::from_millis(16));
@@ -896,17 +886,7 @@ where
         if flags != CGEventFlags::CGEventFlagNull {
             drag.set_flags(flags);
         }
-        post_mouse_event_with_mode(
-            pid,
-            &drag,
-            il,
-            wid,
-            click_group_id,
-            1,
-            button_number,
-            0,
-            MousePostMode::SkyLightPreferred,
-        );
+        post_mouse_event(pid, &drag, il, wid, click_group_id, 1, button_number, 0);
         observe(ix, iy);
         if step_delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
@@ -923,17 +903,7 @@ where
     if flags != CGEventFlags::CGEventFlagNull {
         up.set_flags(flags);
     }
-    post_mouse_event_with_mode(
-        pid,
-        &up,
-        to_local,
-        wid,
-        click_group_id,
-        1,
-        button_number,
-        0,
-        MousePostMode::SkyLightPreferred,
-    );
+    post_mouse_event(pid, &up, to_local, wid, click_group_id, 1, button_number, 0);
     // Chromium may process the final pointerup on the next run-loop turn. In
     // the foreground rung the caller restores the previous app immediately
     // after this function returns, so let the target consume the release and
@@ -1363,17 +1333,7 @@ fn middle_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         down.set_flags(flags);
     }
-    post_mouse_event_with_mode(
-        pid,
-        &down,
-        window_local,
-        None,
-        None,
-        1,
-        2,
-        3,
-        MousePostMode::SkyLightPreferred,
-    );
+    post_mouse_event(pid, &down, window_local, None, None, 1, 2, 3);
     std::thread::sleep(std::time::Duration::from_millis(16));
 
     let up = CGEvent::new_mouse_event(
@@ -1386,17 +1346,7 @@ fn middle_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         up.set_flags(flags);
     }
-    post_mouse_event_with_mode(
-        pid,
-        &up,
-        window_local,
-        None,
-        None,
-        1,
-        2,
-        3,
-        MousePostMode::SkyLightPreferred,
-    );
+    post_mouse_event(pid, &up, window_local, None, None, 1, 2, 3);
 
     Ok(())
 }
@@ -1479,17 +1429,7 @@ fn right_click_at_xy_inner(
     }
     // button_number = 1 (right). Stamping 0 here routes the event as a left
     // button-number on the receiving side even though the type is rightMouseDown.
-    post_mouse_event_with_mode(
-        pid,
-        &down,
-        window_local,
-        wid,
-        click_group_id,
-        1,
-        1,
-        3,
-        MousePostMode::SkyLightPreferred,
-    );
+    post_mouse_event(pid, &down, window_local, wid, click_group_id, 1, 1, 3);
     std::thread::sleep(std::time::Duration::from_millis(28));
 
     let up = CGEvent::new_mouse_event(
@@ -1502,29 +1442,18 @@ fn right_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         up.set_flags(flags);
     }
-    post_mouse_event_with_mode(
-        pid,
-        &up,
-        window_local,
-        wid,
-        click_group_id,
-        1,
-        1,
-        3,
-        MousePostMode::SkyLightPreferred,
-    );
+    post_mouse_event(pid, &up, window_local, wid, click_group_id, 1, 1, 3);
 
     Ok(())
 }
 
-/// Post a mouse event to `pid`.
+/// Post a mouse event to `pid`, once.
 ///
-/// Matches Swift's `MouseInput.postBoth(_:toPid:)`:
-/// - Fires `SLEventPostToPid` (SkyLight path — reaches backgrounded Chromium/Catalyst).
-/// - Also fires `CGEvent::post_to_pid` (public path — lands on AppKit targets where
-///   SkyLight mouse delivery drops).
-///
-/// Both are always posted in sequence regardless of whether the other succeeded.
+/// The event goes through `SLEventPostToPid` (SkyLight path — reaches
+/// backgrounded AppKit, Chromium and Catalyst targets), or through
+/// `CGEvent::post_to_pid` only when the SPI is absent. Swift's
+/// `MouseInput.postBoth` sent the same event through both; an AppKit target
+/// receives both copies, so every event arrived twice (#4679).
 ///
 /// Field stamps applied (always):
 /// - f40 = `pid`  (Chromium's synthetic-event filter)
@@ -1563,7 +1492,7 @@ pub(super) fn post_mouse_event(
         click_state,
         button_number,
         subtype,
-        MousePostMode::Both,
+        MousePostMode::SkyLightPreferred,
     );
 }
 
@@ -1793,7 +1722,7 @@ fn parse_modifier_flags(modifiers: &[&str]) -> CGEventFlags {
 /// event would have been handed to. Nothing is posted while a capture is
 /// active, so the tests need no window server, target app, or TCC grant.
 #[cfg(test)]
-mod post_sink {
+pub(in crate::input) mod post_sink {
     use super::PostRoute;
     use core_graphics::event::{CGEvent, EventField};
     use std::cell::RefCell;
@@ -1806,14 +1735,14 @@ mod post_sink {
     /// One event handed to a transport: its type name, the transport, and the
     /// button number stamped on it (0 left, 1 right, 2 middle).
     #[derive(Clone, Debug, Eq, PartialEq)]
-    pub(super) struct Posted {
+    pub(in crate::input) struct Posted {
         pub event: String,
         pub route: PostRoute,
         pub button: i64,
     }
 
     impl Posted {
-        pub(super) fn new(event: &str, route: PostRoute, button: i64) -> Self {
+        pub(in crate::input) fn new(event: &str, route: PostRoute, button: i64) -> Self {
             Self {
                 event: event.to_owned(),
                 route,
@@ -1833,12 +1762,12 @@ mod post_sink {
         static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
     }
 
-    pub(super) struct Capture;
+    pub(in crate::input) struct Capture;
 
     impl Capture {
         /// Start capturing on this thread, with the SkyLight SPI reported as
         /// present or absent.
-        pub(super) fn start(skylight_available: bool) -> Self {
+        pub(in crate::input) fn start(skylight_available: bool) -> Self {
             STATE.with(|state| {
                 *state.borrow_mut() = Some(State {
                     skylight_available,
@@ -1852,7 +1781,7 @@ mod post_sink {
         /// Shift/control/option/command flags of each posted event. The rest of
         /// the flag word reflects whatever keys the developer holds while the
         /// tests run, so it is masked out.
-        pub(super) fn modifiers(&self) -> Vec<u64> {
+        pub(in crate::input) fn modifiers(&self) -> Vec<u64> {
             STATE.with(|state| {
                 state
                     .borrow()
@@ -1862,7 +1791,7 @@ mod post_sink {
             })
         }
 
-        pub(super) fn posted(&self) -> Vec<Posted> {
+        pub(in crate::input) fn posted(&self) -> Vec<Posted> {
             STATE.with(|state| {
                 state
                     .borrow()

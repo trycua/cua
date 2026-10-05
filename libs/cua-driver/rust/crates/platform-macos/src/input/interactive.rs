@@ -698,4 +698,100 @@ mod tests {
         assert_eq!(chunks[0].len(), 19);
         assert_eq!(chunks[1], "😀".encode_utf16().collect::<Vec<_>>());
     }
+
+    /// A background session over a window that is never looked up: events are
+    /// built and handed to the capture seam, nothing is posted.
+    fn background_state() -> NativeInputState {
+        let config = InteractiveInputConfig {
+            pid: 1,
+            window_id: 7,
+            region: None,
+            delivery_mode: InteractiveDeliveryMode::Background,
+            queue_capacity: 1,
+        };
+        let bounds = crate::windows::WindowBounds {
+            x: 100.0,
+            y: 100.0,
+            width: 400.0,
+            height: 300.0,
+        };
+        let source = CGEventSource::new(CGEventSourceStateID::Private).unwrap();
+        NativeInputState::new(config, source, bounds)
+    }
+
+    fn pointer(phase: PointerPhase, button: Option<PointerButton>) -> InteractiveInputEvent {
+        InteractiveInputEvent::Pointer {
+            phase,
+            button,
+            x_normalized: 0.5,
+            y_normalized: 0.5,
+            modifiers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn background_session_posts_one_event_per_pointer_sample() {
+        use super::super::mouse::{post_sink::Capture, post_sink::Posted, PostRoute};
+
+        let capture = Capture::start(true);
+        let mut state = background_state();
+        for event in [
+            pointer(PointerPhase::Move, None),
+            pointer(PointerPhase::Down, Some(PointerButton::Right)),
+            pointer(PointerPhase::Up, Some(PointerButton::Right)),
+            pointer(PointerPhase::Down, Some(PointerButton::Left)),
+            pointer(PointerPhase::Up, Some(PointerButton::Left)),
+        ] {
+            state.dispatch_event(&event).unwrap();
+        }
+        assert_eq!(
+            capture.posted(),
+            [
+                Posted::new("MouseMoved", PostRoute::SkyLight, 0),
+                Posted::new("RightMouseDown", PostRoute::SkyLight, 1),
+                Posted::new("RightMouseUp", PostRoute::SkyLight, 1),
+                Posted::new("LeftMouseDown", PostRoute::SkyLight, 0),
+                Posted::new("LeftMouseUp", PostRoute::SkyLight, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn background_session_posts_one_wheel_event_per_scroll_sample() {
+        use super::super::mouse::{post_sink::Capture, PostRoute};
+
+        let capture = Capture::start(true);
+        let mut state = background_state();
+        state
+            .dispatch_event(&InteractiveInputEvent::Scroll {
+                x_normalized: 0.5,
+                y_normalized: 0.5,
+                delta_x: 0.0,
+                delta_y: -3.0,
+                phase: GesturePhase::None,
+                momentum_phase: GesturePhase::None,
+                precise: false,
+            })
+            .unwrap();
+        let posted = capture.posted();
+        assert_eq!(posted.len(), 1);
+        assert_eq!(posted[0].event, "ScrollWheel");
+        assert_eq!(posted[0].route, PostRoute::SkyLight);
+    }
+
+    #[test]
+    fn background_session_falls_back_to_the_public_api_once_without_the_spi() {
+        use super::super::mouse::{post_sink::Capture, PostRoute};
+
+        let capture = Capture::start(false);
+        let mut state = background_state();
+        state
+            .dispatch_event(&pointer(PointerPhase::Down, Some(PointerButton::Left)))
+            .unwrap();
+        state
+            .dispatch_event(&pointer(PointerPhase::Up, Some(PointerButton::Left)))
+            .unwrap();
+        let routes: Vec<_> = capture.posted().into_iter().map(|p| p.route).collect();
+        assert_eq!(routes, [PostRoute::PublicPid, PostRoute::PublicPid]);
+    }
 }

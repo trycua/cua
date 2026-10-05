@@ -41,6 +41,42 @@ use cua_driver_core::security_prompt::PromptInput;
 use super::pixel_route::PixelClickRoute;
 use super::ToolState;
 
+#[derive(Debug)]
+struct SheetBlockedTarget;
+impl std::fmt::Display for SheetBlockedTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The addressed element is blocked by an attached sheet or its modal ancestry is unreadable; call get_window_state and target the sheet instead")
+    }
+}
+impl std::error::Error for SheetBlockedTarget {}
+
+fn ensure_sheet_target(
+    element: &crate::ax::snapshot::RetainedElement,
+    pid: i32,
+    wid: u32,
+    foreground: bool,
+) -> anyhow::Result<()> {
+    if unsafe {
+        crate::ax::exact_target::element_blocked_by_sheet(
+            element.as_ptr() as AXUIElementRef,
+            wid,
+            pid,
+            foreground,
+        )
+    } != Some(false)
+    {
+        anyhow::bail!(SheetBlockedTarget);
+    }
+    Ok(())
+}
+
+fn sheet_refusal() -> ToolResult {
+    let message = SheetBlockedTarget.to_string();
+    ToolResult::error(&message).with_structured(serde_json::json!({
+        "status": "refused", "refusal": { "code": "stale_element_token", "message": message }
+    }))
+}
+
 pub struct ClickTool {
     state: Arc<ToolState>,
 }
@@ -718,21 +754,14 @@ impl ClickTool {
             }
 
             let sheet_guard = element_guard.clone();
-            let blocked = tokio::task::spawn_blocking(move || unsafe {
-                crate::ax::exact_target::element_blocked_by_sheet(
-                    sheet_guard.as_ptr() as AXUIElementRef,
-                    wid,
-                )
+            let foreground = delivery_mode.is_foreground();
+            let admitted = tokio::task::spawn_blocking(move || {
+                ensure_sheet_target(&sheet_guard, pid, wid, foreground).is_ok()
             })
             .await
-            .ok()
-            .flatten();
-            if blocked != Some(false) {
-                let message = "The addressed element is blocked by an attached sheet or its modal ancestry is unreadable; call get_window_state and target the sheet instead";
-                return ToolResult::error(message).with_structured(serde_json::json!({
-                    "status": "refused",
-                    "refusal": { "code": "stale_element_token", "message": message }
-                }));
+            .unwrap_or(false);
+            if !admitted {
+                return sheet_refusal();
             }
 
             // Surface 5: button=right on the AX path → AXShowMenu (the same surface
@@ -844,6 +873,7 @@ impl ClickTool {
                     // Re-read after any activation: the early read skips a
                     // foreground call into a background app.
                     let ensure_enabled = || {
+                        ensure_sheet_target(&middle_guard, pid, wid, foreground)?;
                         if foreground {
                             crate::input::ax_actions::ensure_ax_action_enabled_after_activation(
                                 middle_guard.as_ptr(),
@@ -889,6 +919,7 @@ impl ClickTool {
                          (background CGEvent; not driver-verified — confirm via screenshot)."
                     ))
                     .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
+                    Ok(Err(e)) if e.downcast_ref::<SheetBlockedTarget>().is_some() => sheet_refusal(),
                     Ok(Err(e)) => crate::security_prompt::tool_result(&e)
                         .or_else(|| super::element_disabled_error(pid, wid, &e, foreground))
                         .unwrap_or_else(|| ToolResult::error(format!("Middle-click failed: {e}"))),
@@ -1004,6 +1035,7 @@ impl ClickTool {
                             let mut outcome = None;
                             let has_modifiers = !selection_modifiers.is_empty();
                             let action = || {
+                                ensure_sheet_target(&element_guard, pid, wid, true)?;
                                 outcome = Some(perform_ax_click(
                                     (element_ptr, idx),
                                     (pid, wid),
@@ -1039,6 +1071,7 @@ impl ClickTool {
                             })?;
                             Ok((outcome, fronted))
                         } else {
+                            ensure_sheet_target(&element_guard, pid, wid, false)?;
                             perform_ax_click(
                                 (element_ptr, idx),
                                 (pid, wid),
@@ -1116,6 +1149,7 @@ impl ClickTool {
                         ax_click_structured(path, selection_verified, suspicion, &changes);
                     ToolResult::text(msg).with_structured(structured)
                 }
+                Ok(Err(e)) if e.downcast_ref::<SheetBlockedTarget>().is_some() => sheet_refusal(),
                 Ok(Err(e)) => match e.downcast_ref::<crate::input::ax_actions::ElementDisabled>() {
                     Some(disabled) => {
                         super::element_disabled_result(pid, wid, disabled, foreground)

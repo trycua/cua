@@ -396,15 +396,35 @@ function velocityAt(points, t) {
   return { x: (b.x - a.x) / 0.024, y: (b.y - a.y) / 0.024 };
 }
 
-function drawTrail(g, points, t, { ms = 240, opacity = 0.45 } = {}) {
+// Trail anchor: the back of the arrow body (55% of the way from the hotspot down the arrow's axis), not the hotspot. The trail
+// is painted before the cursor, so the body covers where it starts: it flows out from behind the arrow and the tip stays clean.
+// The offset follows the velocity, ramped in with the same weight as the tangent heading (full speed -> the arrow's real axis).
+const TRAIL_BACK = Math.hypot(0.55 * (91 - 55), 0.55 * (79.5 - 30)); // art units, hotspot -> arrow back
+function drawTrail(g, points, t, { ms = 240, opacity = 0.45 } = {}, scale = 1) {
   const steps = 26;
-  let prev = sampleAt(points, t - ms);
+  const d = TRAIL_BACK * CURSOR_SCALE * scale;
+  const anchor = (tt) => {
+    const q = sampleAt(points, tt);
+    const v = velocityAt(points, tt);
+    const sp = Math.hypot(v.x, v.y);
+    const w = Math.min(1, Math.max(0, (sp - 40) / 260));
+    return sp > 1 ? { x: q.x - (v.x / sp) * d * w, y: q.y - (v.y / sp) * d * w } : { x: q.x, y: q.y };
+  };
+  const pts = [];
+  let len = 0;
+  for (let i = 0; i <= steps; i++) {
+    const p = anchor(t - ms + (ms * i) / steps);
+    if (i) len += Math.hypot(p.x - pts[i - 1].x, p.y - pts[i - 1].y);
+    pts.push(p);
+  }
+  const fade = Math.min(1, len / 60); // a very short trail (start, landing) fades out instead of showing a stub
+  let prev = pts[0];
   for (let i = 1; i <= steps; i++) {
-    const q = sampleAt(points, t - ms + (ms * i) / steps);
+    const q = pts[i];
     const k = i / steps;
-    const d = Math.hypot(q.x - prev.x, q.y - prev.y);
-    if (d > 0.3) {
-      g.strokeStyle = `rgba(159,215,255,${opacity * k * k})`;
+    const dd = Math.hypot(q.x - prev.x, q.y - prev.y);
+    if (dd > 0.3) {
+      g.strokeStyle = `rgba(159,215,255,${opacity * k * k * fade})`;
       g.lineWidth = 2 + 12 * k;
       g.lineCap = 'round';
       g.beginPath();
@@ -547,7 +567,7 @@ export function renderFrame(g, w, h, { plan, scene, candidate, t, showPath = fal
     g.stroke();
     g.restore();
   }
-  if (fx.trail) drawTrail(g, plan.points, t, fx.trail === true ? {} : fx.trail);
+  if (fx.trail) drawTrail(g, plan.points, t, fx.trail === true ? {} : fx.trail, boostFor(s));
   for (const r of st.ripples) {
     if (r.age > r.ms) continue;
     const k = r.age / r.ms;

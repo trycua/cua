@@ -393,6 +393,9 @@
       "package-name": "cua-spaces",
       "bump-minor-pre-major": true,
       "version-file": "VERSION",
+      "additional-paths": [
+        "libs/cua"
+      ],
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
         {

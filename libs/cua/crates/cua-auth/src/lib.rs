@@ -29,6 +29,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -372,6 +373,23 @@ impl Store {
 
     fn unmark(&self) {
         let _ = std::fs::remove_file(self.marker_path());
+    }
+
+    /// The lock file that serialises token refreshes across processes using
+    /// this store (no token material).
+    fn refresh_lock_path(&self) -> PathBuf {
+        match self {
+            Store::File(p) => {
+                let name = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "credentials".into());
+                p.with_file_name(format!(".{name}.refresh.lock"))
+            }
+            Store::TestKeychain(d) => d.join("refresh.lock"),
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            Store::Keyring => cua_home().join("auth-refresh.lock"),
+        }
     }
 
     /// Human description.
@@ -953,9 +971,11 @@ impl Oidc {
             .await?;
         if status != 200 {
             let msg = describe(&v, "your session expired; run 'cua auth login' again");
-            // 4xx from the token endpoint means the grant is dead; anything
-            // else may be transient.
-            return Err(if (400..500).contains(&status) {
+            // Only a refusal of the grant itself (`invalid_grant`, or a 401)
+            // means the session is dead. Throttling, timeouts and other 4xx
+            // or 5xx answers are transient and must never sign the user out.
+            let dead = status == 401 || (status == 400 && v["error"] == "invalid_grant");
+            return Err(if dead {
                 Error::Unauthenticated(msg)
             } else {
                 Error::Http(msg)
@@ -1411,11 +1431,61 @@ async fn await_callback(listener: &tokio::net::TcpListener, state: &str) -> Resu
 
 // ---------------------------------------------------------------- session
 
+/// Longest a refresh waits for another process's refresh to finish.
+const REFRESH_LOCK_WAIT: Duration = Duration::from_secs(100);
+/// How often the background keep-alive checks the session.
+const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(120);
+/// The keep-alive refreshes when the access token expires within this.
+const KEEP_ALIVE_WINDOW: Duration = Duration::from_secs(300);
+
+/// An exclusive advisory file lock held while refreshing, shared by every
+/// process that uses the same store. Released on drop (or process exit).
+struct RefreshLock(#[allow(dead_code)] std::fs::File);
+
+impl RefreshLock {
+    async fn acquire(store: &Store) -> Result<Self> {
+        let path = store.refresh_lock_path();
+        tokio::task::spawn_blocking(move || {
+            cua_home::guard_write(&path).map_err(store_err)?;
+            if let Some(d) = path.parent() {
+                std::fs::create_dir_all(d).map_err(store_err)?;
+            }
+            let f = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(&path)
+                .map_err(store_err)?;
+            let deadline = std::time::Instant::now() + REFRESH_LOCK_WAIT;
+            loop {
+                match f.try_lock() {
+                    Ok(()) => return Ok(Self(f)),
+                    Err(std::fs::TryLockError::WouldBlock) => {
+                        if std::time::Instant::now() >= deadline {
+                            // Transient: the other refresh is still running.
+                            return Err(Error::Http(
+                                "another Cua process is refreshing the session; try again".into(),
+                            ));
+                        }
+                        std::thread::sleep(Duration::from_millis(25));
+                    }
+                    Err(std::fs::TryLockError::Error(e)) => return Err(store_err(e)),
+                }
+            }
+        })
+        .await
+        .map_err(store_err)?
+    }
+}
+
 /// The shared, refreshing user session.
 pub struct Session {
     oidc: Oidc,
     store: Store,
     cached: tokio::sync::Mutex<Option<Credentials>>,
+    /// A refresh succeeded but the store refused the write: the cached copy
+    /// holds the only valid (rotated) refresh token and must be saved again.
+    unsaved: std::sync::atomic::AtomicBool,
 }
 
 impl Session {
@@ -1425,6 +1495,7 @@ impl Session {
             oidc,
             store,
             cached: tokio::sync::Mutex::new(None),
+            unsaved: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -1453,7 +1524,16 @@ impl Session {
 
     /// Who is signed in (no network).
     pub fn identity(&self) -> Option<Identity> {
-        self.store.load().ok().flatten().map(|c| c.identity())
+        match self.store.load() {
+            Ok(c) => c.map(|c| c.identity()),
+            // A store that cannot be read right now (locked keychain after
+            // sleep) is not a sign-out: report the last identity seen.
+            Err(_) => self
+                .cached
+                .try_lock()
+                .ok()
+                .and_then(|g| g.as_ref().map(|c| c.identity())),
+        }
     }
 
     /// Starts a sign-in.
@@ -1469,23 +1549,60 @@ impl Session {
         Ok(id)
     }
 
-    /// A valid access token, refreshed (and persisted) when it expires
-    /// within a minute or `force`. `Error::NotLoggedIn` without a session;
-    /// a refresh the provider refuses clears the session.
-    pub async fn access_token(&self, force: bool) -> Result<String> {
-        let mut guard = self.cached.lock().await;
-        // The store is the source of truth: another process may have signed
-        // out, or refreshed and rotated the tokens. A store that cannot be
-        // read right now falls back to the last good copy.
-        let stored = match self.store.load() {
-            Ok(Some(c)) => c,
+    /// Reads the store (the source of truth: another process may have
+    /// signed out, or refreshed and rotated the tokens). A store that cannot
+    /// be read right now (locked keychain, I/O error) falls back to the last
+    /// good copy and is never read as signed out.
+    fn read_stored(&self, guard: &mut Option<Credentials>) -> Result<Credentials> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.unsaved.load(SeqCst)
+            && let Some(c) = guard.clone()
+        {
+            // The store still holds the superseded refresh token.
+            if self.store.save(&c).is_ok() {
+                self.unsaved.store(false, SeqCst);
+            }
+            return Ok(c);
+        }
+        match self.store.load() {
+            Ok(Some(c)) => Ok(c),
             Ok(None) => {
                 *guard = None;
-                return Err(Error::NotLoggedIn);
+                Err(Error::NotLoggedIn)
             }
-            Err(Error::Store(e)) => guard.clone().ok_or(Error::Store(e))?,
-            Err(e) => return Err(e),
-        };
+            Err(Error::Store(e)) => guard.clone().ok_or(Error::Store(e)),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Saves rotated credentials, retrying; if the store keeps refusing, the
+    /// cached copy is kept and saved again on the next call.
+    async fn persist(&self, c: &Credentials) {
+        for attempt in 0..4u64 {
+            if self.store.save(c).is_ok() {
+                self.unsaved
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100 * (attempt + 1))).await;
+        }
+        self.unsaved
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// A valid access token, refreshed (and persisted) when it expires
+    /// within [`REFRESH_SKEW_SECS`] or `force`. `Error::NotLoggedIn` without
+    /// a session. Only a refresh the provider refuses as a dead grant clears
+    /// the session; network and store failures are returned as such.
+    ///
+    /// Refreshing is single-flight across processes: the app, the daemon and
+    /// the CLI share one store, and a rotated refresh token that a second
+    /// process then presents makes the provider revoke the whole session. A
+    /// file lock serialises refreshes and the store is re-read under it, so
+    /// the second process uses the first one's result instead.
+    pub async fn access_token(&self, force: bool) -> Result<String> {
+        let mut guard = self.cached.lock().await;
+        let stored = self.read_stored(&mut guard)?;
         let rotated = guard
             .as_ref()
             .is_some_and(|c| c.access_token != stored.access_token);
@@ -1494,24 +1611,31 @@ impl Session {
             *guard = Some(stored);
             return Ok(t);
         }
-        match self.oidc.refresh(&stored).await {
+        let _lock = RefreshLock::acquire(&self.store).await?;
+        // Another process may have refreshed while we waited for the lock.
+        let current = self.read_stored(&mut guard)?;
+        if current.access_token != stored.access_token && !current.needs_refresh() {
+            let t = current.access_token.clone();
+            *guard = Some(current);
+            return Ok(t);
+        }
+        match self.oidc.refresh(&current).await {
             Ok(n) => {
-                self.store.save(&n)?;
+                // Persist before anything else: the old refresh token is
+                // already spent.
+                self.persist(&n).await;
                 let t = n.access_token.clone();
                 *guard = Some(n);
                 Ok(t)
             }
             Err(Error::Unauthenticated(m)) => {
-                // Another process may have refreshed (and rotated the
-                // refresh token) while ours was in flight, so the provider
-                // refused the one we sent. Its fresh session is in the store
-                // now: use it rather than signing the user out. Only a store
-                // that still holds the refused session is cleared.
+                // The grant is dead. Clear only a store that still holds the
+                // refused session; one a sign-in just replaced is kept.
                 match self.store.load() {
-                    Ok(Some(current)) if current != stored => {
-                        if !current.needs_refresh() {
-                            let t = current.access_token.clone();
-                            *guard = Some(current);
+                    Ok(Some(now)) if now != current => {
+                        if !now.needs_refresh() {
+                            let t = now.access_token.clone();
+                            *guard = Some(now);
                             return Ok(t);
                         }
                         *guard = None;
@@ -1522,14 +1646,60 @@ impl Session {
                         let _ = self.store.clear();
                         Err(Error::Unauthenticated(m))
                     }
-                    _ => {
+                    // Unreadable store: not proof the session is gone.
+                    Err(_) => Err(Error::Http(m)),
+                    Ok(None) => {
                         *guard = None;
-                        Err(Error::Unauthenticated(m))
+                        Err(Error::NotLoggedIn)
                     }
                 }
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Refreshes now when the access token expires within `window`, so a
+    /// session that is not otherwise used stays alive. Errors are transient
+    /// or already signed-out; callers ignore them.
+    pub async fn refresh_if_due(&self, window: Duration) -> Result<()> {
+        let due = match self.store.load() {
+            Ok(Some(c)) => c.expires().map_or(true, |e| {
+                e <= chrono::Utc::now() + chrono::Duration::from_std(window).unwrap_or_default()
+            }),
+            Ok(None) => return Ok(()),
+            Err(_) => return Ok(()),
+        };
+        if due {
+            self.access_token(true).await.map(|_| ())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Keeps the session fresh in the background (proactive refresh, ahead of
+    /// expiry and of the provider's idle timeout) until the session is
+    /// dropped. A no-op outside a tokio runtime.
+    pub fn spawn_keep_alive(self: &Arc<Self>) {
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let weak = Arc::downgrade(self);
+        rt.spawn(async move {
+            loop {
+                tokio::time::sleep(KEEP_ALIVE_INTERVAL).await;
+                let Some(s) = weak.upgrade() else { return };
+                let _ = s.refresh_if_due(KEEP_ALIVE_WINDOW).await;
+            }
+        });
+    }
+
+    /// Whether the stored session holds an offline refresh token (granted
+    /// `offline_access`), which outlives the provider's SSO session limits.
+    /// `None` when unknown (nothing stored or no scope recorded).
+    pub fn is_offline(&self) -> Option<bool> {
+        let c = self.store.load().ok().flatten()?;
+        let scope = c.scope?;
+        Some(scope.split_whitespace().any(|s| s == "offline_access"))
     }
 
     /// Revokes (best effort) and clears the session. Returns whether a

@@ -551,6 +551,55 @@ pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
     }
 }
 
+/// Whether `pid`'s keyboard focus is in an inline editor of `target`: a text
+/// field drawn in its own WindowServer window whose parent is `target`.
+/// Finder's rename field is one: its AX parent is the application (it has no
+/// `AXWindow`), so only WindowServer's parent record ties it to the window.
+pub fn inline_editor_open(pid: i32, target: u32) -> bool {
+    let (role, window) = focused_role_and_window(pid);
+    is_inline_editor(
+        role.as_deref(),
+        window,
+        target,
+        crate::input::skylight::window_parent_id,
+    )
+}
+
+/// The role and own WindowServer window of `pid`'s focused element.
+fn focused_role_and_window(pid: i32) -> (Option<String>, Option<u32>) {
+    // Short reads: a busy app must not stretch foreground delivery.
+    const READ_TIMEOUT_SECONDS: f32 = 0.2;
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return (None, None);
+        }
+        AXUIElementSetMessagingTimeout(app, READ_TIMEOUT_SECONDS);
+        let element = copy_element_attr(app, "AXFocusedUIElement");
+        CFRelease(app as CFTypeRef);
+        let Some(element) = element else {
+            return (None, None);
+        };
+        AXUIElementSetMessagingTimeout(element, READ_TIMEOUT_SECONDS);
+        let role = copy_string_attr(element, "AXRole");
+        let window = ax_get_window_id(element);
+        CFRelease(element as CFTypeRef);
+        (role, window)
+    }
+}
+
+/// [`inline_editor_open`]'s decision, with an injectable WindowServer parent
+/// lookup.
+fn is_inline_editor(
+    role: Option<&str>,
+    window: Option<u32>,
+    target: u32,
+    parent_of: impl Fn(u32) -> Option<u32>,
+) -> bool {
+    role == Some("AXTextField")
+        && window.is_some_and(|window| window != target && parent_of(window) == Some(target))
+}
+
 /// Get the children of an AX element.
 ///
 /// # Safety
@@ -948,6 +997,46 @@ pub unsafe fn copy_ax_windows_including(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Window 70 is a child of window 7; 71 is a child of 70.
+    fn parent_of(window: u32) -> Option<u32> {
+        match window {
+            70 => Some(7),
+            71 => Some(70),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_focused_text_field_in_a_child_window_is_an_inline_editor() {
+        assert!(is_inline_editor(
+            Some("AXTextField"),
+            Some(70),
+            7,
+            parent_of
+        ));
+    }
+
+    #[test]
+    fn other_focus_is_not_an_inline_editor() {
+        // A field in the window itself (a toolbar search field), a button in
+        // the child, a field in another window's child, a field in an
+        // unrelated window, an unknown window, an unreadable role.
+        for (role, window) in [
+            (Some("AXTextField"), Some(7)),
+            (Some("AXButton"), Some(70)),
+            (Some("AXTextField"), Some(71)),
+            (Some("AXTextField"), Some(80)),
+            (Some("AXTextField"), None),
+            (None, Some(70)),
+        ] {
+            assert!(!is_inline_editor(role, window, 7, parent_of));
+        }
+        // The parent lookup failed.
+        assert!(!is_inline_editor(Some("AXTextField"), Some(70), 7, |_| {
+            None
+        }));
+    }
     use crate::windows::WindowSpaceView;
     use core_foundation::{boolean::CFBoolean, number::CFNumber};
 

@@ -461,6 +461,21 @@ fn exact_window_is_ready(
     frontmost_pid == Some(target_pid) && focused_window_id == Some(target_window_id)
 }
 
+/// Whether invoke_menu puts the previously key window back after the call.
+/// Another application's window always comes back. Within the target app the
+/// requested window stays key once the command was dispatched: AppKit runs
+/// some menu actions after the press returns, against the key window then
+/// (TextEdit's File > Save), so re-keying a sibling would retarget them.
+fn restores_prior_window(
+    prior_pid: i32,
+    prior_window_id: Option<u32>,
+    target_pid: i32,
+    target_window_id: u32,
+    dispatched: bool,
+) -> bool {
+    prior_pid != target_pid || (!dispatched && prior_window_id != Some(target_window_id))
+}
+
 fn refusal(message: String) -> ToolResult {
     ToolResult::error(message.clone()).with_structured(serde_json::json!({
         "status": "refused",
@@ -512,9 +527,13 @@ impl Tool for InvokeMenuTool {
             // including across applications. Falling back to app activation
             // preserves the previous behavior for apps without an AX window.
             if let Some(prior_pid) = prior_frontmost {
-                let already_restored =
-                    prior_pid == pid && prior_frontmost_window == Some(window_id);
-                if !already_restored {
+                if restores_prior_window(
+                    prior_pid,
+                    prior_frontmost_window,
+                    pid,
+                    window_id,
+                    result.is_ok(),
+                ) {
                     let restored_exact = prior_frontmost_window.is_some_and(|prior_window_id| {
                         focus_exact_window(prior_pid, prior_window_id).is_ok()
                     });
@@ -605,6 +624,19 @@ mod tests {
         assert!(!exact_window_is_ready(Some(8), 7, Some(42), 42));
         assert!(!exact_window_is_ready(Some(7), 7, Some(41), 42));
         assert!(!exact_window_is_ready(Some(7), 7, None, 42));
+    }
+
+    #[test]
+    fn a_dispatched_command_keeps_its_window_key_within_the_app() {
+        // Another app was in front: it comes back, dispatched or not.
+        assert!(restores_prior_window(8, Some(5), 7, 42, true));
+        assert!(restores_prior_window(8, None, 7, 42, false));
+        // A sibling window of the target app was key: it stays behind once
+        // the command was dispatched, and comes back after a refusal.
+        assert!(!restores_prior_window(7, Some(41), 7, 42, true));
+        assert!(restores_prior_window(7, Some(41), 7, 42, false));
+        // The requested window was already key: nothing to put back.
+        assert!(!restores_prior_window(7, Some(42), 7, 42, false));
     }
 
     fn workspace_frontmost_must_not_be_read() -> Option<i32> {

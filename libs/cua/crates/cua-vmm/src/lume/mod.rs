@@ -1640,6 +1640,10 @@ impl Runtime for LumeRuntime {
     }
 
     async fn endpoints(&self, name: &str) -> Result<Endpoints> {
+        // As in `delete`: a `lume serve` that exited (a crash, an update,
+        // `lume stop` on a VM it hosted) is started again rather than leave a
+        // running Space that cannot be opened.
+        self.ensure_serving().await?;
         let vm = self
             .client
             .get(name)
@@ -1653,6 +1657,7 @@ impl Runtime for LumeRuntime {
     /// Linux disk VMs use the SSH endpoint from their spec, so callers should
     /// build an [`crate::SshExec`] from `Instance::endpoints.ssh`.
     async fn guest_exec(&self, name: &str) -> Result<Option<Arc<dyn GuestExec>>> {
+        self.ensure_serving().await?;
         let vm = self
             .client
             .get(name)

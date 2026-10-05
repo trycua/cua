@@ -40,6 +40,29 @@ use cua_vmm::{
 };
 use std::{path::Path, sync::Arc};
 
+/// The engine that answered for `name` among `answers` (each engine's
+/// status lookup, in the order asked). Not found only when every engine
+/// answered and none has it: an engine that could not be asked (`lume serve`
+/// gone, say) may own the instance, so its error is returned instead of a
+/// "not found" that sends the caller to recreate a Space that still exists.
+fn pick_owner<R>(
+    name: &str,
+    answers: Vec<(BackendKind, std::result::Result<(), VmmError>, R)>,
+) -> RuntimeResult<(BackendKind, R)> {
+    let mut unreachable = None;
+    for (kind, status, rt) in answers {
+        match status {
+            Ok(()) => return Ok((kind, rt)),
+            Err(VmmError::NotFound(_)) => {}
+            Err(e) => unreachable = unreachable.or(Some(e)),
+        }
+    }
+    Err(match unreachable {
+        Some(e) => rt_err(e),
+        None => RuntimeError::NotFound(name.into()),
+    })
+}
+
 fn rt_err(e: VmmError) -> RuntimeError {
     match e {
         VmmError::NotFound(n) => RuntimeError::NotFound(n),
@@ -510,6 +533,7 @@ impl VmmLocal {
 
     /// The backend that owns `name`.
     async fn owner(&self, name: &str) -> RuntimeResult<(BackendKind, Arc<dyn VmmRuntime>)> {
+        let mut answers = Vec::new();
         for kind in [BackendKind::Container, BackendKind::Qemu, BackendKind::Lume] {
             let Ok(rt) = self.runtime(kind).await else {
                 continue;
@@ -517,12 +541,10 @@ impl VmmLocal {
             if kind == BackendKind::Lume && !cfg!(target_os = "macos") {
                 continue;
             }
-            match rt.status(name).await {
-                Ok(_) => return Ok((kind, rt)),
-                Err(_) => continue,
-            }
+            let status = rt.status(name).await.map(|_| ());
+            answers.push((kind, status, rt));
         }
-        Err(RuntimeError::NotFound(name.into()))
+        pick_owner(name, answers)
     }
 }
 
@@ -1414,6 +1436,60 @@ async fn build_with(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn an_engine_that_could_not_be_asked_is_not_reported_as_not_found() {
+        use super::{BackendKind, RuntimeError, VmmError, pick_owner};
+        let gone = || VmmError::missing("lume serve at http://127.0.0.1:7777", "not reachable");
+        // `lume serve` exited: the Lume Space still exists, so the caller hears
+        // why it could not be reached, not that it is gone.
+        let r = pick_owner(
+            "space",
+            vec![
+                (
+                    BackendKind::Container,
+                    Err(VmmError::NotFound("space".into())),
+                    (),
+                ),
+                (
+                    BackendKind::Qemu,
+                    Err(VmmError::NotFound("space".into())),
+                    (),
+                ),
+                (BackendKind::Lume, Err(gone()), ()),
+            ],
+        );
+        match r {
+            Err(RuntimeError::Other(why)) => assert!(why.contains("lume serve"), "{why}"),
+            other => panic!("expected the Lume error, got {other:?}"),
+        }
+        // Every engine answered and none has it: not found.
+        let r = pick_owner(
+            "space",
+            vec![
+                (
+                    BackendKind::Container,
+                    Err(VmmError::NotFound("space".into())),
+                    (),
+                ),
+                (
+                    BackendKind::Lume,
+                    Err(VmmError::NotFound("space".into())),
+                    (),
+                ),
+            ],
+        );
+        assert!(matches!(r, Err(RuntimeError::NotFound(n)) if n == "space"));
+        // An unreachable engine does not hide the one that owns it.
+        let r = pick_owner(
+            "space",
+            vec![
+                (BackendKind::Container, Err(gone()), ()),
+                (BackendKind::Lume, Ok(()), ()),
+            ],
+        );
+        assert!(matches!(r, Ok((BackendKind::Lume, ()))));
+    }
 
     #[test]
     fn containers_under_gvisor_report_the_gvisor_runtime() {

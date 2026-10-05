@@ -26,11 +26,7 @@ public struct MainWindow: View {
                     VStack(spacing: 0) {
                         DevicesBanner(devices: model.devices)
                         if let error = model.rosterError {
-                            Text(error)
-                                .foregroundStyle(.red)
-                                .padding()
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .accessibilityIdentifier("spaces-discovery-error")
+                            SpacesDiscoveryNotice(error: error)
                         }
                     }
                 }
@@ -398,5 +394,18 @@ struct EmptySpaces: View {
             Button(chrome.emptyAction) { Task { await model.openNewSpace() } }
                 .buttonStyle(.glassProminent)
         }
+    }
+}
+
+/// Persistent discovery failure notice above the selected Space.
+struct SpacesDiscoveryNotice: View {
+    let error: String
+
+    var body: some View {
+        Text(error)
+            .foregroundStyle(.red)
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("spaces-discovery-error")
     }
 }

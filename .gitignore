@@ -225,3 +225,8 @@ docs/scripts/check-mdx-links.py
 
 # Local Cua Driver benchmark inputs and results
 benchmarks/cua-driver-bench/cua-drivers/
+
+# Raw benchmark output is evidence and stays out of git
+benchmarks/cua-driver-bench/**/results/
+benchmarks/cua-driver-bench/**/evidence/
+benchmarks/cua-driver-bench/**/observer/

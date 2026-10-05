@@ -747,18 +747,26 @@ impl Spaces {
         Ok(out)
     }
 
-    /// Refreshes the relay directory (when a relay account is configured;
-    /// a failure is logged, not fatal) and lists every Space.
+    /// Refreshes the relay directory when an account is configured, then
+    /// lists every Space. A failed refresh is an error, not an empty or
+    /// current directory. [`Self::list`] remains the cached, local read.
     pub async fn list_all(&self) -> Result<Vec<SpaceInfo>> {
-        if self.relay_account().is_some()
-            && let Err(e) = self.relay_machines().await
-        {
-            // Not signed in is the normal state of many hosts.
-            if e.tag() == "unauthenticated" {
-                tracing::debug!(error = %e, "relay directory skipped");
-            } else {
-                tracing::warn!(error = %e, "relay directory unavailable");
-            }
+        if self.relay_account().is_some() {
+            self.relay_machines().await.map_err(|e| {
+                // Relay errors can contain server bodies and credential-bearing
+                // URLs. Discovery's public error needs only the stable kind.
+                Error::Relay(match e.tag() {
+                    "unauthenticated" => cua_host::Error::Unauthenticated(
+                        "Relay authentication failed. Sign in again to refresh your machines."
+                            .into(),
+                    ),
+                    "permission_denied" => cua_host::Error::PermissionDenied(
+                        "This device could not list relay machines. Check its account access."
+                            .into(),
+                    ),
+                    _ => cua_host::Error::Relay("Could not refresh relay machines.".into()),
+                })
+            })?;
         }
         self.list()
     }

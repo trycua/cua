@@ -146,12 +146,27 @@ impl Spaces {
         if let Err(e) = self.space(&id).await {
             tracing::warn!(space = %id, "the new cloud Space did not answer its handshake yet: {e}");
         }
-        let info = self
-            .list_all()
-            .await?
+        // Provisioning has already succeeded. A directory outage must not
+        // conceal a recorded target or imply that creation should be retried.
+        let listed = match self.list_all().await {
+            Ok(rows) => Ok(rows),
+            Err(Error::Relay(_)) => self.list(),
+            Err(e) => Err(e),
+        };
+        let unavailable = || {
+            Error::Relay(cua_host::Error::Relay(
+                concat!(
+                    "The cloud sandbox was created, but its Space details could not be read. ",
+                    "Inspect the existing sandbox before retrying creation."
+                )
+                .into(),
+            ))
+        };
+        let info = listed
+            .map_err(|_| unavailable())?
             .into_iter()
             .find(|i| i.id == id)
-            .ok_or_else(|| Error::NotFound(format!("{id} on the relay")))?;
+            .ok_or_else(unavailable)?;
         Ok(info)
     }
 

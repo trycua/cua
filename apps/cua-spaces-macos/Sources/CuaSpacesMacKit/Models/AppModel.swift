@@ -44,6 +44,7 @@ public final class AppModel {
     public private(set) var roster: AppRosterState
     public var query = ""
     public var selection: MainSelection?
+    public var rosterError: String?
     public var banner: String?
     public var bannerIsError = false
     public var showingNewSpace = false
@@ -385,13 +386,17 @@ public final class AppModel {
             creates = appCreatesSettle(state: creates, spaces: registrySpaces)
             recompose()
             loaded = true
+            rosterError = nil
             if selection == nil, let first = sidebar.selectedId { selection = .space(first) }
             // A preview for every running Space from the daemon's cache
             // (it survives restarts), before one is opened.
             let running = streamableSpaceIds
             Task { await thumbnails.warm(running) }
         } catch {
-            show(error: "Could not list Spaces: \(LiveSpacesBackend.words(error))")
+            // Errors may contain server bodies or credential-bearing URLs.
+            rosterError = loaded
+                ? "Could not refresh Spaces. Previously loaded rows may be out of date."
+                : "Could not load Spaces. Try refreshing again."
         }
     }
 

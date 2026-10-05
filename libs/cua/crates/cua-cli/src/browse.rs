@@ -198,6 +198,13 @@ pub async fn start(
 pub async fn register_space(cua: &Arc<Cua>, sb: &str) -> Result<(), CuaError> {
     let spaces = cua.spaces();
     let listed = spaces.call_tool_json("list_spaces".into(), None).await?;
+    if listed.is_error {
+        // A tool error is not evidence that the target is absent. Do not
+        // interpret its payload or start registration from a failed list.
+        return Err(CuaError::Env(
+            "Could not list Spaces. Registration was not attempted.".into(),
+        ));
+    }
     let known = listed.content_json.contains(&format!("\"{sb}\""));
     if known {
         return Ok(());
@@ -217,6 +224,35 @@ pub async fn register_space(cua: &Arc<Cua>, sb: &str) -> Result<(), CuaError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn failed_directory_listing_never_attempts_registration() {
+        let home = tempfile::tempdir().unwrap();
+        let relay = cua_host::testing::FakeRelay::start().await;
+        let target = cua_spacesd_client::testing::MockServer::start(Default::default()).await;
+        let runtime = cua_daemon::Runtime::new(cua_daemon::RuntimeConfig {
+            spaces_home: Some(home.path().join("spaces")),
+            state_dir: Some(home.path().join("sandboxes")),
+            ..Default::default()
+        })
+        .unwrap();
+        runtime
+            .spaces()
+            .set_relay(Some(cua_spaces::RelayAccount::new(
+                &relay.url,
+                Arc::new(cua_host::StaticToken("invalid-token".into())),
+            )));
+        let cua = Cua::from_runtime(runtime.clone());
+        let error = register_space(&cua, &target.url()).await.unwrap_err();
+        match error {
+            CuaError::Env(message) => assert_eq!(
+                message,
+                "Could not list Spaces. Registration was not attempted."
+            ),
+            other => panic!("unexpected registration error: {other:?}"),
+        }
+        assert!(runtime.spaces().registry().list().unwrap().is_empty());
+    }
 
     #[test]
     fn picks_the_launched_window_and_the_active_tab() {

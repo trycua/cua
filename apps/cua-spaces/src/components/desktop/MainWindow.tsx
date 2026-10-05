@@ -647,7 +647,7 @@ export function MainWindow({
               </ul>
             </div>
           ))}
-          {sidebar.emptyText && !sidebar.thisMachine && (
+          {sidebar.emptyText && !sidebar.thisMachine && !sync.rosterError && (
             <p className="dw-hint dw-nav-section">{sidebar.emptyText}</p>
           )}
           <ul className="dw-nav-list" aria-label="Agents">
@@ -797,6 +797,12 @@ export function MainWindow({
               />
             )}
 
+            {sync.rosterError && (
+              <div className="dw-banner" data-tone="error" role="alert">
+                {sync.rosterError}
+              </div>
+            )}
+
             {banner && (
               <div
                 className="dw-banner"
@@ -874,7 +880,7 @@ export function MainWindow({
                   <span className="dw-empty-art">
                     <Sym name="square.grid.2x2" />
                   </span>
-                  <h2>{chrome.emptyTitle}</h2>
+                  <h2>{sync.rosterError ? "Spaces could not be loaded" : chrome.emptyTitle}</h2>
                   <button
                     type="button"
                     className="dw-btn dw-btn-primary dw-btn-lg"

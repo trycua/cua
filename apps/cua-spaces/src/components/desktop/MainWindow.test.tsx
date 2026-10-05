@@ -552,3 +552,38 @@ describe("MainWindow launch at login", () => {
     expect(loginItem.calls).toEqual([]);
   });
 });
+
+describe("discovery failures", () => {
+  it("shows a safe cold error and recovers to a valid empty roster", async () => {
+    let changed: (() => void) | undefined;
+    let fails = true;
+    setup({
+      listSpaces: async () => { if (fails) throw new Error("https://user:secret@relay.invalid/?token=private"); return []; },
+      onSpacesChanged: async (handler) => { changed = handler; return () => {}; },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not load Spaces. Try refreshing again.");
+    expect(document.body).not.toHaveTextContent("token=private");
+    fails = false;
+    await act(async () => { changed!(); });
+    await waitFor(() => expect(screen.queryByText("Could not load Spaces. Try refreshing again.")).toBeNull());
+    expect(screen.queryByRole("option", { name: /Aurora/ })).toBeNull();
+  });
+
+  it("retains warm rows during failure, then removes them after empty success", async () => {
+    let changed: (() => void) | undefined;
+    let result: SpaceRow[] | Error = ROWS;
+    setup({
+      listSpaces: async () => { if (result instanceof Error) throw result; return result; },
+      onSpacesChanged: async (handler) => { changed = handler; return () => {}; },
+    });
+    await screen.findByRole("option", { name: /Aurora/ });
+    result = new Error("transport failed: secret");
+    await act(async () => { changed!(); });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not refresh Spaces. Previously loaded rows may be out of date.");
+    expect(screen.getByRole("option", { name: /Aurora/ })).toBeInTheDocument();
+    result = [];
+    await act(async () => { changed!(); });
+    await waitFor(() => expect(screen.queryByRole("option", { name: /Aurora/ })).toBeNull());
+    expect(screen.queryByText("Could not refresh Spaces. Previously loaded rows may be out of date.")).toBeNull();
+  });
+});

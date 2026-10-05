@@ -49,6 +49,7 @@ cua host setup [OPTIONS]
 | <span id="cua-host-setup--runner"></span>`--runner` | string | `auto` | auto \| systemd \| launchd \| windows-task \| process. |
 | <span id="cua-host-setup--profile"></span>`--profile` | `desktop` \| `spare` | `desktop` | What this machine is for: `desktop` (share this desktop; the default) or `spare` (do not share the desktop; provide Spaces). |
 | <span id="cua-host-setup--max-spaces"></span>`--max-spaces` | integer |  | Provided Spaces at once (default 4; 0: no limit). |
+| <span id="cua-host-setup--remote"></span>`--remote` | boolean | `false` | When sign-in is needed, use a device code to approve it in a browser on another machine. The account session is not saved. |
 | <span id="cua-host-setup--desktop"></span>`--desktop` | boolean | `false` | Share this machine's own desktop as a Space. |
 | <span id="cua-host-setup--no-desktop"></span>`--no-desktop` | boolean | `false` | Do not share this machine's own desktop (screen, input, shell, files): relayed callers reach only the Spaces it provides. |
 | <span id="cua-host-setup--provide-spaces"></span>`--provide-spaces` | boolean | `false` | Create Spaces for your enrolled devices on this machine's runtimes (Lume macOS VMs, Docker Linux containers). |

@@ -1615,7 +1615,12 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
     match cli.command {
         Command::Host(cmd) => {
             let home = util::cua_home();
-            let tokens = host::SetupTokens::session_or_sign_in();
+            let flow = if matches!(&cmd, host::HostCmd::Setup { remote: true, .. }) {
+                cua_auth::Flow::Device
+            } else {
+                cua_auth::Flow::Auto
+            };
+            let tokens = host::SetupTokens::session_or_sign_in(flow);
             let device = devices_cmd::device_auth(&host::relay_url(None, &home)).ok();
             let code =
                 host::run_host(cmd, &home, &tokens, device.as_deref(), None, json, out).await?;

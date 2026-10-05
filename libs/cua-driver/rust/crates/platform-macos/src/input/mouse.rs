@@ -19,9 +19,65 @@ use foreign_types::ForeignType;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MousePostMode {
+    /// Post the same event through SkyLight and again through the public API.
+    /// An AppKit target receives both copies, so one logical event arrives
+    /// twice. Kept only until the remaining callers move to
+    /// [`MousePostMode::SkyLightPreferred`].
     Both,
+    /// Post each event exactly once: through SkyLight `SLEventPostToPid`, or
+    /// through the public `CGEvent::post_to_pid` only when the SPI is absent.
+    SkyLightPreferred,
     PublicOnly,
     HidOnly,
+}
+
+/// The transport an event is handed to. [`post_route`] decides it from the
+/// post mode, so the "how many times is this event delivered" question has one
+/// answer that unit tests can check without a window server.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PostRoute {
+    SkyLight,
+    PublicPid,
+    Hid,
+    /// Legacy duplicate delivery: SkyLight, then the public API.
+    SkyLightAndPublic,
+}
+
+fn post_route(mode: MousePostMode, skylight_available: bool) -> PostRoute {
+    match mode {
+        MousePostMode::Both => PostRoute::SkyLightAndPublic,
+        MousePostMode::SkyLightPreferred if skylight_available => PostRoute::SkyLight,
+        MousePostMode::SkyLightPreferred | MousePostMode::PublicOnly => PostRoute::PublicPid,
+        MousePostMode::HidOnly => PostRoute::Hid,
+    }
+}
+
+fn skylight_available() -> bool {
+    #[cfg(test)]
+    if let Some(available) = post_sink::skylight_override() {
+        return available;
+    }
+    crate::input::skylight::is_available()
+}
+
+/// Hand one stamped event to its transport.
+fn dispatch_mouse_event(route: PostRoute, pid: i32, event: &CGEvent) {
+    #[cfg(test)]
+    if post_sink::record(route, event) {
+        return;
+    }
+    let event_ptr = event.as_ptr() as *mut std::ffi::c_void;
+    match route {
+        PostRoute::SkyLight => {
+            crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
+        }
+        PostRoute::PublicPid => event.post_to_pid(pid as libc::pid_t),
+        PostRoute::Hid => event.post(core_graphics::event::CGEventTapLocation::HID),
+        PostRoute::SkyLightAndPublic => {
+            crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
+            event.post_to_pid(pid as libc::pid_t);
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -614,10 +670,11 @@ pub fn click_at_xy_chromium(
     };
 
     let post = |event: &CGEvent, _step: &ChromiumClickRouteStep| {
-        let ptr = event.as_ptr() as *mut std::ffi::c_void;
-        if !crate::input::skylight::post_to_pid(pid as libc::pid_t, ptr, false) {
-            event.post_to_pid(pid as libc::pid_t);
-        }
+        dispatch_mouse_event(
+            post_route(MousePostMode::SkyLightPreferred, skylight_available()),
+            pid,
+            event,
+        );
     };
 
     for step in route_plan {
@@ -1477,15 +1534,7 @@ fn post_mouse_event_with_mode(
     // Always stamp f40 = target pid (Chromium synthetic-event filter).
     crate::input::skylight::set_integer_field(event_ptr, 40, pid as i64);
 
-    match mode {
-        MousePostMode::Both => {
-            // Preserve the established transport for non-left-click callers.
-            crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
-            event.post_to_pid(pid as libc::pid_t);
-        }
-        MousePostMode::PublicOnly => event.post_to_pid(pid as libc::pid_t),
-        MousePostMode::HidOnly => event.post(core_graphics::event::CGEventTapLocation::HID),
-    }
+    dispatch_mouse_event(post_route(mode, skylight_available()), pid, event);
 }
 
 /// Post a stamped `mouseMoved` to `pid` at `point` before a down/up pair.
@@ -1664,8 +1713,105 @@ fn parse_modifier_flags(modifiers: &[&str]) -> CGEventFlags {
     flags
 }
 
+/// Test seam for [`dispatch_mouse_event`]. A test starts a [`Capture`] on its
+/// own thread, runs a real input primitive, and reads back the transport each
+/// event would have been handed to. Nothing is posted while a capture is
+/// active, so the tests need no window server, target app, or TCC grant.
+#[cfg(test)]
+mod post_sink {
+    use super::PostRoute;
+    use core_graphics::event::{CGEvent, EventField};
+    use std::cell::RefCell;
+
+    /// One event handed to a transport: its type name, the transport, and the
+    /// button number stamped on it (0 left, 1 right, 2 middle).
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub(super) struct Posted {
+        pub event: String,
+        pub route: PostRoute,
+        pub button: i64,
+    }
+
+    impl Posted {
+        pub(super) fn new(event: &str, route: PostRoute, button: i64) -> Self {
+            Self {
+                event: event.to_owned(),
+                route,
+                button,
+            }
+        }
+    }
+
+    struct State {
+        skylight_available: bool,
+        posted: Vec<Posted>,
+    }
+
+    thread_local! {
+        static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
+    }
+
+    pub(super) struct Capture;
+
+    impl Capture {
+        /// Start capturing on this thread, with the SkyLight SPI reported as
+        /// present or absent.
+        pub(super) fn start(skylight_available: bool) -> Self {
+            STATE.with(|state| {
+                *state.borrow_mut() = Some(State {
+                    skylight_available,
+                    posted: Vec::new(),
+                });
+            });
+            Self
+        }
+
+        pub(super) fn posted(&self) -> Vec<Posted> {
+            STATE.with(|state| {
+                state
+                    .borrow()
+                    .as_ref()
+                    .map(|state| state.posted.clone())
+                    .unwrap_or_default()
+            })
+        }
+    }
+
+    impl Drop for Capture {
+        fn drop(&mut self) {
+            STATE.with(|state| *state.borrow_mut() = None);
+        }
+    }
+
+    pub(super) fn skylight_override() -> Option<bool> {
+        STATE.with(|state| {
+            state
+                .borrow()
+                .as_ref()
+                .map(|state| state.skylight_available)
+        })
+    }
+
+    /// Record `event` when a capture is active; returns whether it did.
+    pub(super) fn record(route: PostRoute, event: &CGEvent) -> bool {
+        STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(state) = state.as_mut() else {
+                return false;
+            };
+            state.posted.push(Posted {
+                event: format!("{:?}", event.get_type()),
+                route,
+                button: event.get_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER),
+            });
+            true
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::post_sink::{Capture, Posted};
     use super::*;
 
     #[test]
@@ -1859,5 +2005,50 @@ mod tests {
                 pressure
             );
         }
+    }
+
+    #[test]
+    fn skylight_preferred_posts_once_and_never_through_both_transports() {
+        use MousePostMode::*;
+        use PostRoute::*;
+        assert_eq!(post_route(SkyLightPreferred, true), SkyLight);
+        assert_eq!(
+            post_route(SkyLightPreferred, false),
+            PublicPid,
+            "the public API is only a fallback for a missing SPI"
+        );
+        for available in [true, false] {
+            assert_eq!(post_route(PublicOnly, available), PublicPid);
+            assert_eq!(post_route(HidOnly, available), Hid);
+        }
+    }
+
+    /// The left background click has posted each event once since the
+    /// duplicate-delivery fix. This pins that sequence so the other pointer
+    /// primitives can be held to the same shape.
+    #[test]
+    fn background_left_click_posts_one_move_and_one_down_up_pair_through_skylight() {
+        let capture = Capture::start(true);
+        click_at_xy_chromium(1, 100.0, 100.0, 10.0, 10.0, 7, 1, &[]).unwrap();
+        assert_eq!(
+            capture.posted(),
+            [
+                Posted::new("MouseMoved", PostRoute::SkyLight, 0),
+                // Off-screen primer pair that satisfies Chromium's activation gate.
+                Posted::new("LeftMouseDown", PostRoute::SkyLight, 0),
+                Posted::new("LeftMouseUp", PostRoute::SkyLight, 0),
+                Posted::new("LeftMouseDown", PostRoute::SkyLight, 0),
+                Posted::new("LeftMouseUp", PostRoute::SkyLight, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn background_left_click_falls_back_to_the_public_api_once_without_the_spi() {
+        let capture = Capture::start(false);
+        click_at_xy_chromium(1, 100.0, 100.0, 10.0, 10.0, 7, 1, &[]).unwrap();
+        let posted = capture.posted();
+        assert_eq!(posted.len(), 5);
+        assert!(posted.iter().all(|p| p.route == PostRoute::PublicPid));
     }
 }

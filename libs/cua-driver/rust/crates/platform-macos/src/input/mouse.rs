@@ -96,7 +96,9 @@ impl WindowClickDelivery {
     }
 }
 
-/// Left-click at `(x, y)` screen coordinates, posted to `pid`.
+/// Left-click at `(x, y)` screen coordinates, posted to `pid` without window
+/// routing. Each event is posted once, through SkyLight (the public API only
+/// when the SPI is absent).
 ///
 /// Window-local coordinates for backgrounded targets: if `window_local` is
 /// `Some((wx, wy))`, stamps a window-local point via `CGEventSetWindowLocation`
@@ -115,7 +117,7 @@ pub fn click_at_xy(
         None,
         count,
         modifiers,
-        MousePostMode::Both,
+        MousePostMode::SkyLightPreferred,
     )
 }
 
@@ -2349,6 +2351,51 @@ mod tests {
             sequence(&capture),
             expected(
                 &["MouseMoved", "ScrollWheel", "ScrollWheel"],
+                PostRoute::PublicPid
+            )
+        );
+    }
+
+    #[test]
+    fn window_less_left_click_posts_one_primer_and_one_down_up_pair() {
+        let capture = Capture::start(true);
+        click_at_xy(1, 100.0, 100.0, 1, &[]).unwrap();
+        assert_eq!(
+            sequence(&capture),
+            expected(
+                &["MouseMoved", "LeftMouseDown", "LeftMouseUp"],
+                PostRoute::SkyLight
+            )
+        );
+    }
+
+    #[test]
+    fn window_less_double_click_posts_two_down_up_pairs_and_no_extras() {
+        let capture = Capture::start(true);
+        click_at_xy(1, 100.0, 100.0, 2, &[]).unwrap();
+        assert_eq!(
+            sequence(&capture),
+            expected(
+                &[
+                    "MouseMoved",
+                    "LeftMouseDown",
+                    "LeftMouseUp",
+                    "LeftMouseDown",
+                    "LeftMouseUp",
+                ],
+                PostRoute::SkyLight
+            )
+        );
+    }
+
+    #[test]
+    fn window_less_left_click_falls_back_to_the_public_api_once_without_the_spi() {
+        let capture = Capture::start(false);
+        click_at_xy(1, 100.0, 100.0, 1, &[]).unwrap();
+        assert_eq!(
+            sequence(&capture),
+            expected(
+                &["MouseMoved", "LeftMouseDown", "LeftMouseUp"],
                 PostRoute::PublicPid
             )
         );

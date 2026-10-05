@@ -66,9 +66,9 @@ class S3PublishTests(unittest.TestCase):
             ):
                 url = s3_publish.publish_report(
                     run_dir,
-                    bucket="cua-agent-artifacts",
+                    bucket="example-bucket",
                     prefix="cua-driver-bench",
-                    profile="cua-artifacts",
+                    profile="example-profile",
                     region="us-west-2",
                 )
             after = {path: path.read_bytes() for path in run_dir.rglob("*") if path.is_file()}
@@ -76,7 +76,7 @@ class S3PublishTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(
             url,
-            "https://cua-agent-artifacts.s3.us-west-2.amazonaws.com/"
+            "https://example-bucket.s3.us-west-2.amazonaws.com/"
             "cua-driver-bench/20260927T120000Z-a18f39c/index.html",
         )
         self.assertEqual(run.call_count, 3)
@@ -90,7 +90,7 @@ class S3PublishTests(unittest.TestCase):
         for command in commands:
             self.assertEqual(
                 command[-4:],
-                ["--profile", "cua-artifacts", "--region", "us-west-2"],
+                ["--profile", "example-profile", "--region", "us-west-2"],
             )
 
     def test_rejects_incomplete_report_before_running_aws(self) -> None:
@@ -101,7 +101,7 @@ class S3PublishTests(unittest.TestCase):
         ):
             s3_publish.publish_report(
                 Path(temporary),
-                bucket="cua-agent-artifacts",
+                bucket="example-bucket",
                 prefix="cua-driver-bench",
                 profile=None,
                 region="us-west-2",
@@ -118,7 +118,7 @@ class S3PublishTests(unittest.TestCase):
             ):
                 s3_publish.publish_report(
                     run_dir,
-                    bucket="cua-agent-artifacts",
+                    bucket="example-bucket",
                     prefix="cua-driver-bench",
                     profile=None,
                     region="us-west-2",
@@ -141,7 +141,7 @@ class S3PublishTests(unittest.TestCase):
             ):
                 s3_publish.publish_report(
                     run_dir,
-                    bucket="cua-agent-artifacts",
+                    bucket="example-bucket",
                     prefix="cua-driver-bench",
                     profile=None,
                     region="us-west-2",
@@ -158,12 +158,12 @@ class S3PublishTests(unittest.TestCase):
                 patch.object(s3_publish.subprocess, "run", return_value=failed),
                 self.assertRaisesRegex(
                     RuntimeError,
-                    r"s3://cua-agent-artifacts/cua-driver-bench/run/.*AccessDenied",
+                    r"s3://example-bucket/cua-driver-bench/run/.*AccessDenied",
                 ),
             ):
                 s3_publish.publish_report(
                     run_dir,
-                    bucket="cua-agent-artifacts",
+                    bucket="example-bucket",
                     prefix="cua-driver-bench",
                     profile=None,
                     region="us-west-2",
@@ -199,9 +199,9 @@ class S3PublishTests(unittest.TestCase):
     def test_publish_configuration_uses_safe_environment_values(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             environment = {
-                "AWS_PROFILE": "cua-artifacts",
+                "AWS_PROFILE": "example-profile",
                 "AWS_REGION": "us-west-2",
-                "AWS_S3_BUCKET": "cua-agent-artifacts",
+                "AWS_S3_BUCKET": "example-bucket",
                 "AWS_S3_REPORT_PREFIX": "cua-driver-bench",
             }
             with (
@@ -213,9 +213,9 @@ class S3PublishTests(unittest.TestCase):
         self.assertEqual(url, "https://example.test")
         publish.assert_called_once_with(
             Path(temporary),
-            bucket="cua-agent-artifacts",
+            bucket="example-bucket",
             prefix="cua-driver-bench",
-            profile="cua-artifacts",
+            profile="example-profile",
             region="us-west-2",
         )
 

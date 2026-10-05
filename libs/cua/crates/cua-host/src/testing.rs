@@ -613,6 +613,9 @@ async fn device_session(
     {
         return err(StatusCode::UNAUTHORIZED, "invalid device signature");
     }
+    if device.state == crate::relay::DeviceState::Revoked {
+        return err(StatusCode::FORBIDDEN, "this device was revoked");
+    }
     if device.state != crate::relay::DeviceState::Enrolled {
         return err(
             StatusCode::FORBIDDEN,

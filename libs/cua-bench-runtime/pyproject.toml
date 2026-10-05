@@ -20,11 +20,6 @@ dependencies = [
   "rfc8785==0.1.4",
 ]
 
-[project.optional-dependencies]
-fleet = [
-  "cua-sandbox==0.4.3; sys_platform == 'linux'",
-]
-
 [dependency-groups]
 test = [
   "pytest>=8.0",

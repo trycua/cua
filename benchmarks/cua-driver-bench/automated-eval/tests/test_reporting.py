@@ -141,7 +141,7 @@ class ReportingTests(unittest.TestCase):
                 ],
                 "comparisons": [],
                 "execution": {
-                    "backend": "fleet",
+                    "backend": "local",
                     "max_parallel_tasks": 2,
                     "complete": False,
                     "infrastructure_failures": [{"task": "CDB-S02", "error": "worker unavailable"}],

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import ctypes
 import ctypes.util
@@ -24,7 +23,7 @@ import tomllib
 import urllib.error
 import urllib.request
 import uuid
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -3455,27 +3454,6 @@ def schedule_task_shards(
     with ThreadPoolExecutor(max_workers=min(max_parallel_tasks, len(shards))) as executor:
         futures = [executor.submit(capture, shard) for shard in shards]
         return tuple(future.result() for future in futures)
-
-
-async def schedule_task_shards_async(
-    shards: Sequence[TaskShard],
-    run_shard: Callable[[TaskShard], Awaitable[ShardOutput]],
-    *,
-    max_parallel_tasks: int = 2,
-) -> tuple[TaskShardResult[ShardOutput], ...]:
-    if max_parallel_tasks < 1:
-        raise ValueError("max parallel tasks must be at least 1")
-
-    semaphore = asyncio.Semaphore(max_parallel_tasks)
-
-    async def capture(shard: TaskShard) -> TaskShardResult[ShardOutput]:
-        async with semaphore:
-            try:
-                return TaskShardResult(shard=shard, output=await run_shard(shard))
-            except Exception as error:  # noqa: BLE001 - preserve other completed shards
-                return TaskShardResult(shard=shard, error=error)
-
-    return tuple(await asyncio.gather(*(capture(shard) for shard in shards)))
 
 
 def _run_trial(

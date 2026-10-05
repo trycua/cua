@@ -33,9 +33,7 @@ def _environment() -> Environment:
 def _redaction_values() -> tuple[str, ...]:
     values = []
     for name in (
-        "CUA_CLIENT_SECRET",
         "OPENAI_API_KEY",
-        "FLEETS_TOKEN",
         "AWS_SECRET_ACCESS_KEY",
         "AWS_ACCESS_KEY_ID",
     ):

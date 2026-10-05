@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import importlib.util
 import json
 from dataclasses import asdict
@@ -1208,38 +1207,6 @@ command = "unrelated"
         self.assertIsInstance(results[1].error, RuntimeError)
         self.assertEqual(len(results[2].output or ()), 1)
 
-    def test_async_task_shards_limit_concurrency_and_keep_order(self) -> None:
-        release = self._release("0.23.2")
-        shards = compare_drivers.build_task_shards(("CDB-S03", "CDB-S01", "CDB-S02"), (release,))
-        active = 0
-        peak = 0
-        lock = asyncio.Lock()
-
-        async def run_shard(shard: compare_drivers.TaskShard):
-            nonlocal active, peak
-            async with lock:
-                active += 1
-                peak = max(peak, active)
-            await asyncio.sleep(0.01)
-            async with lock:
-                active -= 1
-            if shard.task == "CDB-S02":
-                raise RuntimeError("worker unavailable")
-            return shard.task
-
-        results = asyncio.run(
-            compare_drivers.schedule_task_shards_async(shards, run_shard, max_parallel_tasks=2)
-        )
-
-        self.assertEqual(peak, 2)
-        self.assertEqual(
-            [result.shard.task for result in results],
-            ["CDB-S01", "CDB-S02", "CDB-S03"],
-        )
-        self.assertEqual(results[0].output, "CDB-S01")
-        self.assertIsInstance(results[1].error, RuntimeError)
-        self.assertEqual(results[2].output, "CDB-S03")
-
     def test_local_parallel_displays_are_unique_and_preserve_gui_environment(self) -> None:
         config = SimpleNamespace(
             platform="linux",
@@ -1370,7 +1337,7 @@ if __name__ == "__main__":
         markdown = compare_drivers.render_markdown(
             {
                 "execution": {
-                    "backend": "fleet",
+                    "backend": "local",
                     "max_parallel_tasks": 2,
                     "complete": False,
                     "infrastructure_failures": [{"task": "CDB-S02", "error": "worker unavailable"}],
@@ -1415,10 +1382,6 @@ if __name__ == "__main__":
 
         required = ["--tasks-root", "/tasks", "--model", "small", "--codex", sys.executable]
         local_arguments = cli.build_parser().parse_args(required)
-        fleet_arguments = cli.build_parser(fleet=True).parse_args(required)
-        serial_arguments = cli.build_parser(fleet=True).parse_args(
-            [*required, "--max-parallel-tasks", "1"]
-        )
         parallel_local_arguments = cli.build_parser().parse_args(
             [
                 *required,
@@ -1433,8 +1396,6 @@ if __name__ == "__main__":
 
         self.assertEqual(local_arguments.max_parallel_tasks, 1)
         self.assertIsNone(local_arguments.local_displays)
-        self.assertEqual(fleet_arguments.max_parallel_tasks, 2)
-        self.assertEqual(serial_arguments.max_parallel_tasks, 1)
         self.assertEqual(parallel_local_arguments.max_parallel_tasks, 2)
         self.assertEqual(parallel_local_arguments.local_displays, [":91", ":92"])
 

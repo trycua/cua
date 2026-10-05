@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
-import json
 import os
 import shutil
 import sys
@@ -42,22 +40,12 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
-def build_parser(*, fleet: bool = False) -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="compare_drivers fleet" if fleet else "compare_drivers",
-        description=(
-            "Run one or compare two Cua Driver releases on one Fleet worker. "
-            "Fleet provisions supported external Linux apps required by the "
-            "selected task descriptors."
-            if fleet
-            else "Run one or compare two local Cua Driver releases."
-        ),
+        prog="compare_drivers",
+        description="Run one or compare two local Cua Driver releases.",
         epilog=(
-            "example: python automated-eval/cli.py fleet --model small "
-            "--reasoning-effort high --tasks-root tasks --baseline 0.28.0 "
-            "--candidate 0.26.1 --task CDB-S01 --task CDB-S04"
-            if fleet
-            else "example: python automated-eval/compare_drivers --model large "
+            "example: python automated-eval/compare_drivers --model large "
             "--reasoning-effort high --tasks-root tasks --task CDB-S01"
         ),
     )
@@ -146,43 +134,37 @@ def build_parser(*, fleet: bool = False) -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-parallel-tasks",
         type=_positive_int,
-        default=2 if fleet else 1,
+        default=1,
         help=(
-            "maximum task shards to run concurrently (default: 2; use 1 for serial)"
-            if fleet
-            else (
-                "maximum local task shards to run concurrently; parallel runs "
-                "require one --local-display for each active shard (default: 1)"
-            )
+            "maximum local task shards to run concurrently; parallel runs "
+            "require one --local-display for each active shard (default: 1)"
         ),
     )
-    if not fleet:
-        parser.add_argument(
-            "--local-display",
-            action="append",
-            dest="local_displays",
-            metavar="DISPLAY",
-            help=(
-                "isolated Linux/X11 display for a local task shard; repeat the "
-                "option for parallel local runs"
-            ),
-        )
+    parser.add_argument(
+        "--local-display",
+        action="append",
+        dest="local_displays",
+        metavar="DISPLAY",
+        help=(
+            "isolated Linux/X11 display for a local task shard; repeat the "
+            "option for parallel local runs"
+        ),
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help=(
             "validate release and task selection and print the trial matrix "
-            + (
-                "without claiming or provisioning a Fleet worker"
-                if fleet
-                else "without launching apps, drivers, Codex, or evaluators"
-            )
+            "without launching apps, drivers, Codex, or evaluators"
         ),
     )
     parser.add_argument(
         "--publish",
         action="store_true",
-        help="publish the generated static report bundle to the configured S3 bucket",
+        help=(
+            "publish the generated static report bundle to the S3 bucket named by "
+            "AWS_S3_BUCKET (off by default)"
+        ),
     )
     return parser
 
@@ -201,15 +183,10 @@ def build_publish_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _config(arguments: argparse.Namespace, *, fleet: bool = False) -> ComparisonConfig:
+def _config(arguments: argparse.Namespace) -> ComparisonConfig:
     repo_root = Path(__file__).resolve().parents[1]
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    default_output = (
-        repo_root / "automated-eval" / "fleet-results" / stamp
-        if fleet
-        else repo_root / "artifacts" / "automated-eval" / stamp
-    )
-    output = arguments.output or default_output
+    output = arguments.output or repo_root / "artifacts" / "automated-eval" / stamp
     codex_home = arguments.codex_home or Path.home() / ".codex"
     baseline, candidate = normalize_release_selection(arguments.baseline, arguments.candidate)
     return ComparisonConfig(
@@ -220,9 +197,7 @@ def _config(arguments: argparse.Namespace, *, fleet: bool = False) -> Comparison
         candidate=candidate,
         tasks=normalize_tasks(arguments.tasks or SHARED_TASKS),
         output=output.expanduser().resolve(),
-        platform=(
-            _fleet_platform(arguments.platform) if fleet else resolve_platform(arguments.platform)
-        ),
+        platform=resolve_platform(arguments.platform),
         codex=arguments.codex,
         codex_home=codex_home.expanduser().resolve(),
         model=arguments.model,
@@ -233,12 +208,6 @@ def _config(arguments: argparse.Namespace, *, fleet: bool = False) -> Comparison
     )
 
 
-def _fleet_platform(value: str) -> str:
-    if value not in {"auto", "linux"}:
-        raise ValueError("Fleet evaluation currently supports only Linux/X11")
-    return "linux"
-
-
 def _load_environment() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     load_dotenv(repo_root / ".env")
@@ -247,7 +216,7 @@ def _load_environment() -> None:
 
 def _command_mode(argv: list[str] | None) -> tuple[str, list[str]]:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if arguments[:1] and arguments[0] in {"compare", "fleet", "publish"}:
+    if arguments[:1] and arguments[0] in {"compare", "publish"}:
         return arguments[0], arguments[1:]
     return "compare", arguments
 
@@ -281,11 +250,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"REPORT_URL={report_url}")
         return 0
 
-    fleet_mode = mode == "fleet"
-    parser = build_parser(fleet=fleet_mode)
+    parser = build_parser()
     try:
         arguments = parser.parse_args(arguments_list)
-        config = _config(arguments, fleet=fleet_mode)
+        config = _config(arguments)
         if config.timeout_seconds <= 30:
             raise ValueError("timeout must be greater than 30 seconds")
         if arguments.dry_run:
@@ -296,13 +264,7 @@ def main(argv: list[str] | None = None) -> int:
             for trial in plan["trials"]:
                 print(f"{trial['task']} | {trial['version']}")
             return 0
-        if fleet_mode:
-            from fleet import run_on_fleet
-
-            json_path, markdown_path = asyncio.run(run_on_fleet(config))
-            report = json.loads(json_path.read_text(encoding="utf-8"))
-        else:
-            report, json_path, markdown_path = run_comparison(config)
+        report, json_path, markdown_path = run_comparison(config)
     except (OSError, RuntimeError, ValueError) as error:
         parser.error(str(error))
     passed = sum(1 for trial in report["trials"] if trial["passed"])

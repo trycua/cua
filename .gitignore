@@ -222,4 +222,3 @@ docs/scripts/check-mdx-links.py
 
 # Local Cua Driver benchmark inputs and results
 benchmarks/cua-driver-bench/cua-drivers/
-benchmarks/cua-driver-bench/automated-eval/fleet-results/

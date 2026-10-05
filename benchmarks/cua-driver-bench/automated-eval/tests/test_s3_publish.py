@@ -52,7 +52,7 @@ class S3PublishTests(unittest.TestCase):
 
     def test_publishes_only_report_bundle_and_comparison_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            run_dir = Path(temporary)
+            run_dir = Path(temporary).resolve()
             self._report_bundle(run_dir)
             secret = run_dir / ".env"
             secret.write_text("AWS_SECRET_ACCESS_KEY=secret", encoding="utf-8")
@@ -177,7 +177,6 @@ class S3PublishTests(unittest.TestCase):
 
     def test_cli_supports_explicit_and_legacy_compare_modes(self) -> None:
         self.assertEqual(cli._command_mode(["compare", "--dry-run"]), ("compare", ["--dry-run"]))
-        self.assertEqual(cli._command_mode(["fleet", "--dry-run"]), ("fleet", ["--dry-run"]))
         self.assertEqual(
             cli._command_mode(["publish", "--run-dir", "run"]),
             ("publish", ["--run-dir", "run"]),

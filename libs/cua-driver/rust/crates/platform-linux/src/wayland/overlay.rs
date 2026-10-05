@@ -128,6 +128,9 @@ pub fn ensure_started() -> bool {
                 if let Err(e) = owner_thread(rx) {
                     tracing::warn!("cua-overlay-wl thread exited with error: {e}");
                 }
+                // No frame will ever be painted again: unblock every pointer
+                // action still waiting for its glide to arrive.
+                crate::overlay::release_arrivals();
             })
             .expect("spawn cua-overlay-wl thread");
         tx
@@ -476,14 +479,12 @@ fn visible_cores_for_output<'a>(
     let mut visible_cores: Vec<_> = cores
         .iter()
         .filter(|(_, core)| {
-            core.visible
-                && core.pos.0 >= -100.0
-                && core.idle_alpha >= 0.004
+            core.is_revealed()
                 && select_output(layouts, core.pos.0, core.pos.1)
                     .is_some_and(|selected| selected.id == output_id)
         })
         .collect();
-    visible_cores.sort_by(|(left, _), (right, _)| left.cmp(right));
+    visible_cores.sort_by_key(|(left, _)| *left);
     visible_cores
 }
 
@@ -703,14 +704,15 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         // Advance only on a scheduled animation/fade wake. A command wake
         // applies the new state at dt=0, avoiding a jump proportional to how
         // long the loop was parked.
+        let mut arrived = Vec::new();
         if let Some(timeout_kind) = timed_out {
             match timeout_kind {
                 WlWait::Frame => {
-                    tick_all_cores(&mut state.render.cursors, elapsed.min(0.05));
+                    arrived.extend(tick_all_cores(&mut state.render.cursors, elapsed.min(0.05)));
                     dirty = true;
                 }
                 WlWait::Deadline(_) => {
-                    tick_all_cores(&mut state.render.cursors, elapsed);
+                    arrived.extend(tick_all_cores(&mut state.render.cursors, elapsed));
                     dirty = true;
                 }
                 WlWait::Maintenance(_) => {
@@ -720,7 +722,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                         .iter()
                         .map(|(key, core)| (key.clone(), core.idle_alpha))
                         .collect();
-                    tick_all_cores(&mut state.render.cursors, elapsed);
+                    arrived.extend(tick_all_cores(&mut state.render.cursors, elapsed));
                     dirty |= state.render.cursors.iter().any(|(key, core)| {
                         before
                             .get(key)
@@ -744,6 +746,12 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
             // parking. The buffer map remains authoritative until release, so
             // no mmap/fd can be reclaimed while the compositor still uses it.
             queue.roundtrip(&mut state)?;
+        }
+        // Report arrivals only once the frame at the target is committed, so
+        // a pointer action lands after the viewer saw the glide end (the X11
+        // renderer's contract).
+        for key in arrived {
+            crate::overlay::fire_arrival(&key);
         }
         frame_tick_needed = next_frame_tick_needed;
     }
@@ -815,17 +823,19 @@ fn earliest_idle_fade_wait(cores: &CursorMap<RenderStateCore>) -> Option<Duratio
         .min()
 }
 
-fn tick_all_cores(cores: &mut CursorMap<RenderStateCore>, dt: f64) {
-    for core in cores.values_mut() {
-        core.tick_motion(dt);
-    }
+/// Advance every cursor and return the keys whose planned glide just ended.
+fn tick_all_cores(cores: &mut CursorMap<RenderStateCore>, dt: f64) -> Vec<CursorKey> {
+    cores
+        .iter_mut()
+        .filter_map(|(key, core)| core.tick_motion(dt).then(|| key.clone()))
+        .collect()
 }
 
 /// The shared frame-tick predicate, including resting motion (the float bob),
 /// gated on a shown, placed cursor: a hidden cursor's motion is quiesced by
 /// [`quiesce_hidden`] and never repaints a layer surface.
 fn needs_frame_tick(core: &RenderStateCore) -> bool {
-    core.visible && core.pos.0 >= -100.0 && core.needs_frame_tick()
+    core.visible && cursor_overlay::render_state::is_placed(core.pos) && core.needs_frame_tick()
 }
 
 fn quiesce_hidden(core: &mut RenderStateCore) {
@@ -863,7 +873,7 @@ fn redraw(
         .render
         .cursors
         .values()
-        .filter(|core| core.visible && core.pos.0 >= -100.0 && core.idle_alpha >= 0.004)
+        .filter(|core| core.is_revealed())
         .map(|core| core.pos);
     let (selected, targets) = frame_plan(
         &layouts,
@@ -1372,6 +1382,37 @@ mod tests {
         ]
     }
 
+    /// The layer-shell renderer reports a glide's end exactly once, for the
+    /// key that moved, so pointer actions can wait for it like on X11.
+    #[test]
+    fn ticking_reports_each_glide_arrival_once() {
+        let mut render = WlRenderMap::new(CursorConfig::default(), ());
+        let frame = Some(ScreenFrame::new(0.0, 0.0, 1920.0, 1080.0));
+        apply_keyed_command(
+            &mut render,
+            frame,
+            "mover".to_owned(),
+            OverlayCommand::MoveTo {
+                x: 400.0,
+                y: 300.0,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+            },
+        );
+        let mut still = positioned_core();
+        still.motion.idle_hide_ms = 0.0;
+        render.cursors.insert("still".to_owned(), still);
+
+        let mut arrivals = Vec::new();
+        for _ in 0..600 {
+            arrivals.extend(tick_all_cores(&mut render.cursors, 1.0 / 60.0));
+        }
+        assert_eq!(arrivals, vec!["mover".to_owned()]);
+        assert!(
+            render.cursors["mover"].path.is_none(),
+            "the planned glide has ended"
+        );
+    }
+
     fn initialized(layouts: &[OutputLayout]) -> HashSet<u32> {
         layouts.iter().map(|layout| layout.id).collect()
     }
@@ -1431,6 +1472,42 @@ mod tests {
         assert_eq!(select_output(&layouts, 400.0, 300.0).unwrap().id, 4);
         assert_eq!(visible_cores_for_output(&cores, &layouts, 4).len(), 1);
         assert!(visible_cores_for_output(&cores, &layouts, 8).is_empty());
+    }
+
+    #[test]
+    fn a_cursor_on_a_monitor_left_of_the_origin_is_drawn_there() {
+        // A left-hand monitor puts real cursor positions far below zero; they
+        // must not be mistaken for the never-placed sentinel.
+        let layouts = vec![
+            OutputLayout {
+                id: 3,
+                origin_x: -3840,
+                origin_y: 0,
+                width: 3840,
+                height: 2160,
+            },
+            OutputLayout {
+                id: 4,
+                origin_x: 0,
+                origin_y: 0,
+                width: 3840,
+                height: 2160,
+            },
+        ];
+        let mut core = positioned_core();
+        core.pos = (-2220.0, 980.0);
+        let cores = CursorMap::from([("session".to_owned(), core)]);
+        assert_eq!(visible_cores_for_output(&cores, &layouts, 3).len(), 1);
+        assert!(visible_cores_for_output(&cores, &layouts, 4).is_empty());
+        // And it paints there: a 160 px crop of the left monitor around it.
+        let mut crop = tiny_skia::Pixmap::new(160, 160).unwrap();
+        cursor_overlay::paint_cursor(&mut crop, &cores["session"], -2300.0, 900.0, None, 1.0);
+        assert!(crop.pixels().iter().any(|pixel| pixel.alpha() > 0));
+        let unplaced = CursorMap::from([(
+            "session".to_owned(),
+            RenderStateCore::new(CursorConfig::default()),
+        )]);
+        assert!(visible_cores_for_output(&unplaced, &layouts, 3).is_empty());
     }
 
     #[test]
@@ -1761,7 +1838,7 @@ mod tests {
         ));
         let core = state.render.cursors.get("session-a").unwrap();
         assert_eq!(core.session_label.as_deref(), Some("Synthetic session"));
-        assert!(core.pos.0 < -50.0);
+        assert!(!cursor_overlay::render_state::is_placed(core.pos));
         assert!(state.outputs.is_empty());
         assert!(matches!(
             rx.try_recv(),

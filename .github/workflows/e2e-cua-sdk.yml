@@ -1,0 +1,203 @@
+name: "E2E: cua SDK"
+
+# The guides as tests (plan §3.5), in Python, TypeScript and Rust:
+# tests/e2e/cua-sdk (see its scenarios.json for the guide x lane registry).
+#
+#   pull_request   hermetic (fixtures, daemon) + container (docker + gVisor on
+#                  the locally built reference images) + docs blocks.
+#   nightly        live Fleet (+ the spacesd image lane when
+#                  vars.CUA_E2E_FLEET_ENV_IMAGE names an image Fleet can pull),
+#                  cua-sandbox, and local QEMU (KVM) on the reference disk.
+#   dispatch       any lane set.
+#
+# Lume needs a macOS host with nested virtualization, which hosted runners
+# lack: run `tests/e2e/cua-sdk/run.py --lanes lume --langs rust` on a Mac.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua/**"
+      - "libs/cua-spacesd/**"
+      - "libs/images/**"
+      - "tests/e2e/cua-sdk/**"
+      # The browse-the-web scenario's MCP client session.
+      - "tests/e2e/browse/**"
+      # Every docs page: tagged blocks run in the docs lane, and any page
+      # (reference/**, cua-sdk/index.mdx, how-to-guides/spaces/**, ...) can gain one.
+      - "docs/content/docs/**"
+      - "docs/code-block-policy.json"
+      - ".github/workflows/e2e-cua-sdk.yml"
+  schedule:
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+    inputs:
+      lanes:
+        description: "Lanes (comma list: hermetic,container,qemu,fleet,fleet-env,cua-sandbox,conformance)"
+        default: "hermetic,container"
+      langs:
+        description: "Languages (py,ts,rust,go)"
+        default: "py,ts,rust,go"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-cua-sdk-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "4"
+  CUA_E2E_RUN: gh${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  local:
+    name: hermetic + container (${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }})
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    # A cold build of the SDK, fixtures, bindings, images and runtimes alone
+    # took 86 minutes; the suite then ran into the old 120-minute limit.
+    timeout-minutes: 180
+    env:
+      # Optional: an authenticated Docker Hub keeps anonymous manifest-read
+      # rate limits from failing the docs blocks' runtime inspection.
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      # The debug builds, images and the suite's own image builds share the
+      # runner's disk: line tables only and no incremental cache.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: |
+            libs/cua
+            tests/e2e/cua-sdk/rust
+            libs/cua-spacesd
+          key: cua-e2e
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: "1.24"
+      - name: Log in to Docker Hub (docs blocks read image manifests)
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build the SDK, fixtures, bindings, images and runtimes
+        run: tests/e2e/cua-sdk/ci-setup.sh --images
+      # The suite builds container images and cua keeps 5 GiB free: give the
+      # build cache back (the built images stay).
+      - name: Reclaim build space
+        run: |
+          df -h / | tail -1
+          docker builder prune --all --force >/dev/null
+          docker image prune --force >/dev/null
+          df -h / | tail -1
+      - name: Run the suite
+        env:
+          LANES: ${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }}
+          LANGS: ${{ github.event_name == 'workflow_dispatch' && inputs.langs || 'py,ts,rust,go' }}
+          CUA_CLIENT_ID: ${{ contains(inputs.lanes, 'fleet') && secrets.CUA_CLIENT_ID || '' }}
+          CUA_CLIENT_SECRET: ${{ contains(inputs.lanes, 'fleet') && secrets.CUA_CLIENT_SECRET || '' }}
+          CUA_E2E_FLEET_ENV_IMAGE: ${{ vars.CUA_E2E_FLEET_ENV_IMAGE }}
+          CUA_E2E_PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
+          # cua keeps 5 GiB free by default. On this disposable runner, after
+          # the setup and the Rust half's own debug build, that refused the
+          # suite's 4 GiB image builds with 7.5 GiB still free.
+          CUA_DISK_MIN_FREE: 2GiB
+        run: python3 tests/e2e/cua-sdk/run.py --lanes "$LANES" --langs "$LANGS" --strict --out "$RUNNER_TEMP/cua-e2e"
+      - name: Matrix summary
+        if: always()
+        run: |
+          cat "$RUNNER_TEMP/cua-e2e/matrix.md" >>"$GITHUB_STEP_SUMMARY" || true
+          if [ -f "$RUNNER_TEMP/cua-e2e/docs-coverage.md" ]; then
+            printf '\n## Docs code-block coverage\n\n' >>"$GITHUB_STEP_SUMMARY"
+            cat "$RUNNER_TEMP/cua-e2e/docs-coverage.md" >>"$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: cua-e2e-local
+          path: ${{ runner.temp }}/cua-e2e
+
+  live:
+    name: nightly (fleet, cua-sandbox, qemu)
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CUA_CLIENT_ID: ${{ secrets.CUA_CLIENT_ID }}
+      CUA_CLIENT_SECRET: ${{ secrets.CUA_CLIENT_SECRET }}
+      CUA_E2E_FLEET_ENV_IMAGE: ${{ vars.CUA_E2E_FLEET_ENV_IMAGE }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      # The runner context is not available in job-level env (it made every
+      # push of this file a startup failure); set it for the later steps here.
+      - run: echo "CUA_E2E_PLAYWRIGHT_DIR=$RUNNER_TEMP/pw" >>"$GITHUB_ENV"
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: |
+            libs/cua
+            tests/e2e/cua-sdk/rust
+            libs/cua-spacesd
+          key: cua-e2e
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: "1.24"
+      - name: Build the SDK, fixtures, bindings, images, disks and runtimes
+        run: tests/e2e/cua-sdk/ci-setup.sh --images --disks
+      - name: Lanes
+        id: lanes
+        run: |
+          lanes="fleet,cua-sandbox,qemu"
+          [ -n "$CUA_E2E_FLEET_ENV_IMAGE" ] && lanes="$lanes,fleet-env"
+          echo "lanes=$lanes" >>"$GITHUB_OUTPUT"
+      - name: Run the suite
+        run: >
+          python3 tests/e2e/cua-sdk/run.py --lanes "${{ steps.lanes.outputs.lanes }}"
+          --langs py,ts,rust,go --strict --out "$RUNNER_TEMP/cua-e2e"
+      - name: Matrix summary
+        if: always()
+        run: |
+          cat "$RUNNER_TEMP/cua-e2e/matrix.md" >>"$GITHUB_STEP_SUMMARY" || true
+          if [ -f "$RUNNER_TEMP/cua-e2e/docs-coverage.md" ]; then
+            printf '\n## Docs code-block coverage\n\n' >>"$GITHUB_STEP_SUMMARY"
+            cat "$RUNNER_TEMP/cua-e2e/docs-coverage.md" >>"$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: cua-e2e-nightly
+          path: ${{ runner.temp }}/cua-e2e

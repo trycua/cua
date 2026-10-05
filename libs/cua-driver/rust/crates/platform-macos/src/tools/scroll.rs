@@ -81,7 +81,7 @@ fn def() -> &'static ToolDef {
             "required": ["direction"],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid": { "type": "integer" },
+                "pid": { "type": "integer", "description": "Target process ID. Required unless scope is \"desktop\"." },
                 "direction": {
                     "type": "string",
                     "enum": ["up", "down", "left", "right"],
@@ -98,7 +98,7 @@ fn def() -> &'static ToolDef {
                     "maximum": AMOUNT_MAX,
                     "description": "Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Larger requests are clamped to the maximum. Default: 3."
                 },
-                "window_id": { "type": "integer" },
+                "window_id": { "type": "integer", "description": "CGWindowID of the target window. Required with x/y; optional with element_token (the token carries it)." },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "x": { "type": "number", "description": "Window-local screenshot X (top-left origin of the PNG from get_window_state). With `y`, routes through the pixel-wheel path at this point — use for a scrollable surface that isn't in the AX tree. Requires window_id to anchor the window→screen conversion." },
                 "y": { "type": "number", "description": "Window-local screenshot Y. See `x`." },

@@ -1,0 +1,42 @@
+[package]
+name = "cua-relay"
+description = "Reverse-tunnel relay for cua-spacesd machines behind NAT"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+base64.workspace = true
+bytes.workspace = true
+clap.workspace = true
+futures-util.workspace = true
+http.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+# Account mode: OIDC access-token validation (JWKS) and relay-signed
+# EdDSA principal assertions. ring is already the workspace's TLS crypto.
+jsonwebtoken = "9"
+ring = "0.17"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+subtle.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+tokio-util = { workspace = true, features = ["compat", "rt"] }
+hex.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+uuid.workspace = true
+yamux.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

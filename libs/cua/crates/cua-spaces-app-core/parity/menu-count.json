@@ -1,0 +1,592 @@
+{
+  "name": "menu-count",
+  "about": "The menu bar item and the notch tab count the same Spaces (This machine only while it is shared and reachable; a provider's Spaces count), and the menu shows Cua Volume's sync state next to the count when sync applies: synced, syncing, conflicts (they open the Volume page) and offline; nothing on this Mac's store with one device; a bucket that has not answered for 30 s is offline.",
+  "now": 1800000000000,
+  "cases": [
+    {
+      "name": "this machine not hosting",
+      "hostState": {
+        "configured": false,
+        "sharing": false,
+        "serviceInstalled": false,
+        "serviceRunning": false,
+        "serviceKind": "process",
+        "clients": [],
+        "permissions": []
+      },
+      "rows": [],
+      "sync": null,
+      "nowMs": 1800000000000,
+      "backend": null
+    },
+    {
+      "name": "this machine hosting",
+      "hostState": {
+        "configured": true,
+        "mode": "relay",
+        "relayUrl": "https://relay.cua.ai",
+        "name": "Studio",
+        "sharing": true,
+        "serviceInstalled": true,
+        "serviceRunning": true,
+        "serviceKind": "launchd",
+        "online": true,
+        "clients": [
+          {
+            "id": "u1",
+            "email": "ada@example.com",
+            "name": "Ada",
+            "streams": 2
+          },
+          {
+            "id": "u2",
+            "email": "grace@example.com"
+          }
+        ],
+        "permissions": [
+          {
+            "id": "screen-recording",
+            "title": "Screen Recording",
+            "settingsUrl": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            "instructions": "Turn on Cua Spaces"
+          },
+          {
+            "id": "accessibility",
+            "title": "Accessibility",
+            "settingsUrl": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            "granted": true
+          }
+        ]
+      },
+      "rows": [],
+      "sync": null,
+      "nowMs": 1800000000000,
+      "backend": null
+    },
+    {
+      "name": "hosting stopped",
+      "hostState": {
+        "configured": true,
+        "mode": "relay",
+        "relayUrl": "https://relay.cua.ai",
+        "name": "Studio",
+        "sharing": true,
+        "serviceInstalled": true,
+        "serviceRunning": false,
+        "serviceKind": "launchd",
+        "online": true,
+        "clients": [
+          {
+            "id": "u1",
+            "email": "ada@example.com",
+            "name": "Ada",
+            "streams": 2
+          },
+          {
+            "id": "u2",
+            "email": "grace@example.com"
+          }
+        ],
+        "permissions": [
+          {
+            "id": "screen-recording",
+            "title": "Screen Recording",
+            "settingsUrl": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            "instructions": "Turn on Cua Spaces"
+          },
+          {
+            "id": "accessibility",
+            "title": "Accessibility",
+            "settingsUrl": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            "granted": true
+          }
+        ]
+      },
+      "rows": [
+        {
+          "id": "local:aurora",
+          "name": "0123456789ab",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null
+        }
+      ],
+      "sync": null,
+      "nowMs": 1800000000000,
+      "backend": null
+    },
+    {
+      "name": "provider only",
+      "hostState": {
+        "configured": false,
+        "sharing": false,
+        "serviceInstalled": false,
+        "serviceRunning": false,
+        "serviceKind": "process",
+        "clients": [],
+        "permissions": []
+      },
+      "rows": [
+        {
+          "id": "cloud:aws-ci",
+          "name": "aws-ci",
+          "provider": "cloud",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null
+        }
+      ],
+      "sync": null,
+      "nowMs": 1800000000000,
+      "backend": null
+    },
+    {
+      "name": "remote spaces",
+      "hostState": {
+        "configured": false,
+        "sharing": false,
+        "serviceInstalled": false,
+        "serviceRunning": false,
+        "serviceKind": "process",
+        "clients": [],
+        "permissions": []
+      },
+      "rows": [
+        {
+          "id": "local:aurora",
+          "name": "0123456789ab",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null
+        },
+        {
+          "id": "relay:studio-linux",
+          "name": "studio-linux",
+          "provider": "relay",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null
+        },
+        {
+          "id": "cloud:aws-ci",
+          "name": "aws-ci",
+          "provider": "cloud",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null
+        }
+      ],
+      "sync": null,
+      "nowMs": 1800000000000,
+      "backend": null
+    },
+    {
+      "name": "remote spaces and hosting",
+      "hostState": {
+        "configured": true,
+        "mode": "relay",
+        "relayUrl": "https://relay.cua.ai",
+        "name": "Studio",
+        "sharing": true,
+        "serviceInstalled": true,
+        "serviceRunning": true,
+        "serviceKind": "launchd",
+        "online": true,
+        "clients": [
+          {
+            "id": "u1",
+            "email": "ada@example.com",
+            "name": "Ada",
+            "streams": 2
+          },
+          {
+            "id": "u2",
+            "email": "grace@example.com"
+          }
+        ],
+        "permissions": [
+          {
+            "id": "screen-recording",
+            "title": "Screen Recording",
+            "settingsUrl": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            "instructions": "Turn on Cua Spaces"
+          },
+          {
+            "id": "accessibility",
+            "title": "Accessibility",
+            "settingsUrl": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            "granted": true
+          }
+        ]
+      },
+      "rows": [
+        {
+          "id": "local:aurora",
+          "name": "0123456789ab",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null
+        },
+        {
+          "id": "relay:studio-linux",
+          "name": "studio-linux",
+          "provider": "relay",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null
+        }
+      ],
+      "sync": null,
+      "nowMs": 1800000000000,
+      "backend": null
+    },
+    {
+      "name": "volume on this mac, one device",
+      "hostState": {
+        "configured": false,
+        "sharing": false,
+        "serviceInstalled": false,
+        "serviceRunning": false,
+        "serviceKind": "process",
+        "clients": [],
+        "permissions": []
+      },
+      "rows": [
+        {
+          "id": "local:aurora",
+          "name": "0123456789ab",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null
+        }
+      ],
+      "sync": {
+        "device_id": "d1",
+        "device_name": "maya-mbp",
+        "feed": "live",
+        "last_poll_ms": 1799999997000,
+        "pending_uploads": 0,
+        "conflicts": [],
+        "devices": [
+          {
+            "id": "d1",
+            "name": "maya-mbp",
+            "this_device": true
+          }
+        ]
+      },
+      "nowMs": 1800000000000,
+      "backend": "fs"
+    },
+    {
+      "name": "volume synced",
+      "hostState": {
+        "configured": false,
+        "sharing": false,
+        "serviceInstalled": false,
+        "serviceRunning": false,
+        "serviceKind": "process",
+        "clients": [],
+        "permissions": []
+      },
+      "rows": [
+        {
+          "id": "local:aurora",
+          "name": "0123456789ab",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null
+        }
+      ],
+      "sync": {
+        "device_id": "d1",
+        "device_name": "maya-mbp",
+        "feed": "live",
+        "last_poll_ms": 1799999997000,
+        "pending_uploads": 0,
+        "conflicts": [],
+        "devices": [
+          {
+            "id": "d1",
+            "name": "maya-mbp",
+            "this_device": true
+          },
+          {
+            "id": "d2",
+            "name": "maya-linux"
+          }
+        ]
+      },
+      "nowMs": 1800000000000,
+      "backend": "s3"
+    },
+    {
+      "name": "volume syncing",
+      "hostState": {
+        "configured": false,
+        "sharing": false,
+        "serviceInstalled": false,
+        "serviceRunning": false,
+        "serviceKind": "process",
+        "clients": [],
+        "permissions": []
+      },
+      "rows": [
+        {
+          "id": "local:aurora",
+          "name": "0123456789ab",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null
+        }
+      ],
+      "sync": {
+        "device_id": "d1",
+        "device_name": "maya-mbp",
+        "feed": "live",
+        "last_poll_ms": 1799999997000,
+        "pending_uploads": 3,
+        "conflicts": [],
+        "devices": [
+          {
+            "id": "d1",
+            "name": "maya-mbp",
+            "this_device": true
+          },
+          {
+            "id": "d2",
+            "name": "maya-linux"
+          }
+        ]
+      },
+      "nowMs": 1800000000000,
+      "backend": "s3"
+    },
+    {
+      "name": "volume conflicts",
+      "hostState": {
+        "configured": false,
+        "sharing": false,
+        "serviceInstalled": false,
+        "serviceRunning": false,
+        "serviceKind": "process",
+        "clients": [],
+        "permissions": []
+      },
+      "rows": [
+        {
+          "id": "local:aurora",
+          "name": "0123456789ab",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null
+        }
+      ],
+      "sync": {
+        "device_id": "d1",
+        "device_name": "maya-mbp",
+        "feed": "live",
+        "last_poll_ms": 1799999997000,
+        "pending_uploads": 0,
+        "conflicts": [
+          {
+            "path": "public/plan.md",
+            "conflict_path": "public/plan (conflict from maya-linux 2026-09-29 14.02.11).md",
+            "winner_device": "d1",
+            "loser_device": "d2",
+            "ts_ms": 1799999940000
+          },
+          {
+            "path": "public/notes.md",
+            "conflict_path": "public/notes (conflict from maya-linux 2026-09-29 14.05.00).md",
+            "winner_device": "d1",
+            "loser_device": "d2",
+            "ts_ms": 1799999970000
+          }
+        ],
+        "devices": [
+          {
+            "id": "d1",
+            "name": "maya-mbp",
+            "this_device": true
+          },
+          {
+            "id": "d2",
+            "name": "maya-linux"
+          }
+        ]
+      },
+      "nowMs": 1800000000000,
+      "backend": "s3"
+    },
+    {
+      "name": "volume offline",
+      "hostState": {
+        "configured": false,
+        "sharing": false,
+        "serviceInstalled": false,
+        "serviceRunning": false,
+        "serviceKind": "process",
+        "clients": [],
+        "permissions": []
+      },
+      "rows": [
+        {
+          "id": "local:aurora",
+          "name": "0123456789ab",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null
+        }
+      ],
+      "sync": {
+        "device_id": "d1",
+        "device_name": "maya-mbp",
+        "feed": "error",
+        "last_poll_ms": 1799999997000,
+        "pending_uploads": 0,
+        "conflicts": [],
+        "devices": [
+          {
+            "id": "d1",
+            "name": "maya-mbp",
+            "this_device": true
+          },
+          {
+            "id": "d2",
+            "name": "maya-linux"
+          }
+        ],
+        "last_error": "The endpoint did not answer."
+      },
+      "nowMs": 1800000000000,
+      "backend": "s3"
+    },
+    {
+      "name": "volume unreachable",
+      "hostState": {
+        "configured": false,
+        "sharing": false,
+        "serviceInstalled": false,
+        "serviceRunning": false,
+        "serviceKind": "process",
+        "clients": [],
+        "permissions": []
+      },
+      "rows": [
+        {
+          "id": "local:aurora",
+          "name": "0123456789ab",
+          "provider": "local",
+          "spacesdVersion": "0.4.0",
+          "features": [
+            "desktop_stream",
+            "window_stream"
+          ],
+          "addedAt": "2026-09-25T08:00:00Z",
+          "os": "linux",
+          "reachable": true,
+          "error": null
+        }
+      ],
+      "nowMs": 1800000000000,
+      "sync": {
+        "device_id": "d1",
+        "device_name": "maya-mbp",
+        "feed": "live",
+        "last_poll_ms": 1799999910000,
+        "pending_uploads": 19,
+        "conflicts": [],
+        "devices": [
+          {
+            "id": "d1",
+            "name": "maya-mbp",
+            "this_device": true
+          },
+          {
+            "id": "d2",
+            "name": "maya-linux"
+          }
+        ],
+        "last_error": "public/datasets/batch-7-3.bin: backend: tcp connect error: Connection refused"
+      },
+      "backend": "s3"
+    }
+  ]
+}

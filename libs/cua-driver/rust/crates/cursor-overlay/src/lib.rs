@@ -5,6 +5,8 @@
 //! - `MotionConfig` — glide duration, spring, dwell, idle-hide timings
 //! - `CubicBezier` + `PathPlanner` — Bezier path math (ported 1:1 from C#)
 //! - `OverlayCommand` — messages sent from MCP tools to the overlay thread
+//! - `SurfaceFit` — keeps each platform's overlay surface fitted to the live
+//!   display geometry, so screen-coordinate cursors stay on the pointer
 
 pub mod badge_glyphs;
 pub mod bezier;
@@ -15,6 +17,7 @@ pub mod path_planner;
 pub mod render_map;
 pub mod render_state;
 pub mod session_badge;
+pub mod surface_fit;
 pub mod theme;
 pub mod theme_artifact;
 pub mod z_order;
@@ -37,6 +40,7 @@ pub use session_badge::{
     BADGE_CHIP_GROUP_GAP, BADGE_CHIP_SIZE, BADGE_CURSOR_GAP, BADGE_HEIGHT, BADGE_MAX_WIDTH,
     MAX_SESSION_LABEL_CHARS,
 };
+pub use surface_fit::{SurfaceFit, SurfaceGeometry, SURFACE_REFIT_INTERVAL};
 pub use theme::{
     session_fill_hex, session_fill_rgba, CursorAction, CursorVisualState, DeliveryModifier,
     PlaybackKind, ReducedMotion, TargetModifier, DEFAULT_CURSOR_FILL, DEFAULT_THEME_ID,

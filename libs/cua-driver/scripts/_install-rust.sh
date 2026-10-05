@@ -22,6 +22,14 @@
 #                        instead of ~/.local/bin
 #   --no-modify-path     skip auto-appending an `export PATH=...` line
 #   --channel <name>     persist and install the latest stable or nightly release
+#   --require-signature  fail unless the archive's Sigstore bundle verifies
+#                        with cosign (needs cosign on PATH)
+#
+# Every download is checked against the release's SHA256SUMS (or the older
+# checksums.txt); releases from CHECKSUMS_REQUIRED_FROM on must publish one.
+# Releases that publish SHA256SUMS, and every release from
+# SIGSTORE_REQUIRED_FROM on, must publish a Sigstore bundle per asset too
+# (verified whenever cosign is installed).
 #
 # Env overrides:
 #   CUA_DRIVER_RS_VERSION=0.1.2          pin a stable release
@@ -40,6 +48,7 @@
 #                                        and is reconciled here; a stale
 #                                        ~/.cua-driver-rs is swept post-install.
 #   CUA_DRIVER_RS_NO_MODIFY_PATH=1       same as --no-modify-path
+#   CUA_DRIVER_RS_REQUIRE_SIGNATURE=1    same as --require-signature
 #   CUA_DRIVER_RS_KEEP_VERSIONS=N        keep the N most recent per-version
 #                                        release dirs after install; older
 #                                        ones are deleted (default 5; set 0
@@ -138,6 +147,7 @@ KEEP_VERSIONS_DEFAULT=5
 KEEP_VERSIONS="${CUA_DRIVER_RS_KEEP_VERSIONS:-$KEEP_VERSIONS_DEFAULT}"
 CHANNEL_ARG=""
 CHANNEL_EXPLICIT=0
+REQUIRE_SIGNATURE="${CUA_DRIVER_RS_REQUIRE_SIGNATURE:-0}"
 
 # macOS-only: name and install location of the .app bundle that wraps
 # the bare binary so the TCC auto-relaunch path in `cua-driver mcp` has
@@ -159,6 +169,7 @@ while [[ $# -gt 0 ]]; do
             [[ -n "${2:-}" ]] || { printf 'error: --channel requires stable or nightly\n' >&2; exit 2; }
             CHANNEL_ARG="$2"; CHANNEL_EXPLICIT=1; shift 2 ;;
         --channel=*) CHANNEL_ARG="${1#*=}"; CHANNEL_EXPLICIT=1; shift ;;
+        --require-signature) REQUIRE_SIGNATURE=1; shift ;;
         *) shift ;;
     esac
 done
@@ -615,7 +626,7 @@ done
 # asset — see the recovery at the download step below.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.30.4" # published-installer-version
+CUA_DRIVER_RS_BAKED_VERSION="0.33.3" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 #
 # Withdrawn releases (for example, a macOS archive published unsigned) are
@@ -658,6 +669,8 @@ extract_published_release_versions() {
     # harnesses that predate persistent channel selection.
     local selected_channel="${SELECTED_CHANNEL:-stable}"
     local selected_tag_prefix="${SELECTED_TAG_PREFIX:-$TAG_PREFIX}"
+    # The nightly date is eight spelled-out digits: mawk 1.3.4 20200120 (the
+    # awk on Debian 12 and Ubuntu 22.04) does not support {n} intervals.
     awk -v prefix="$selected_tag_prefix" -v channel="$selected_channel" '
         /"tag_name"[[:space:]]*:/ {
             tag = $0
@@ -671,7 +684,7 @@ extract_published_release_versions() {
                 if (index(version, prefix) == 1) {
                     version = substr(version, length(prefix) + 1)
                     if ((channel == "stable" && version ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) ||
-                        (channel == "nightly" && version ~ /^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*$/)) {
+                        (channel == "nightly" && version ~ /^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]\.[1-9][0-9]*$/)) {
                         print version
                     }
                 }
@@ -909,6 +922,132 @@ download_release_tarball() {
     return 1
 }
 
+# --- Release integrity --------------------------------------------------
+#
+# Stable releases from CHECKSUMS_REQUIRED_FROM on publish a checksum file:
+# SHA256SUMS, or (0.31.0, from the older release workflow) checksums.txt,
+# the same "<sha256>  <asset>" lines inside a Markdown fence. The release
+# workflow that publishes SHA256SUMS also publishes a keyless Sigstore bundle
+# (<asset>.sigstore.json) per asset, issued to that workflow at that exact
+# tag, so a stable release with SHA256SUMS must have one. A release cut by the
+# older workflow (checksums.txt only) needs none until SIGSTORE_REQUIRED_FROM,
+# the first version that can only come from the signing workflow; keying the
+# requirement on the next patch instead would refuse a patch release cut
+# before the signing workflow landed on main. A missing checksum file or
+# bundle for such a release fails the install. Older releases and nightlies
+# predate them: they are checked when the files exist and otherwise install
+# with a warning.
+CHECKSUMS_REQUIRED_FROM="0.31.0"
+SIGSTORE_REQUIRED_FROM="0.32.0"
+COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
+
+# Fetches one small release asset (SHA256SUMS, a bundle) to $2.
+# 0 = fetched, 44 = HTTP 404, 1 = any other failure (after retries).
+fetch_release_file() {
+    local name="$1" dest="$2" url http_code curl_status attempt
+    url="https://github.com/$REPO/releases/download/${TAG}/$name"
+    for attempt in 1 2 3; do
+        curl_status=0
+        http_code="$(curl -sSL -o "$dest" -w '%{http_code}' "$url")" || curl_status=$?
+        if (( curl_status == 0 )) && [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+            return 0
+        fi
+        rm -f "$dest" 2>/dev/null || true
+        [[ "$http_code" == "404" ]] && return 44
+        (( attempt < 3 )) && sleep "$attempt"
+    done
+    err "could not download $url (HTTP ${http_code:-unknown}, curl exit $curl_status)"
+    return 1
+}
+
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        return 1
+    fi
+}
+
+verify_release_tarball() {
+    local version="$1" tarball="$2" required=0 signed_required=0 status sums_name expected actual bundle
+    if [[ "$TAG" == "$TAG_PREFIX"* ]] && version_is_at_least "$version" "$CHECKSUMS_REQUIRED_FROM"; then
+        required=1
+    fi
+    if [[ "$TAG" == "$TAG_PREFIX"* ]] && version_is_at_least "$version" "$SIGSTORE_REQUIRED_FROM"; then
+        signed_required=1
+    fi
+
+    # SHA256SUMS, else the older release workflow's checksums.txt.
+    for sums_name in SHA256SUMS checksums.txt; do
+        status=0
+        fetch_release_file "$sums_name" "$TMP_DIR/$sums_name" || status=$?
+        (( status == 44 )) || break
+    done
+    if (( status == 0 )) && [[ "$sums_name" == SHA256SUMS && "$TAG" == "$TAG_PREFIX"* ]]; then
+        signed_required=1
+    fi
+    if (( status == 0 )); then
+        expected="$(awk -v f="$tarball" '$2 == f || $2 == "*" f { print $1; exit }' "$TMP_DIR/$sums_name")"
+        if [[ -z "$expected" && "$sums_name" == checksums.txt && $required == 0 ]]; then
+            printf "warning: %s is not listed in %s's checksums.txt; installing it without a checksum check\n" "$tarball" "$TAG" >&2
+        elif [[ -z "$expected" ]]; then
+            err "$tarball is not listed in $TAG's $sums_name; refusing to install it"
+            exit 1
+        else
+            if ! actual="$(sha256_of "$TMP_DIR/$tarball")"; then
+                err "sha256sum or shasum is required to verify $tarball"
+                exit 1
+            fi
+            if [[ "$actual" != "$expected" ]]; then
+                err "$tarball does not match $TAG's $sums_name (expected $expected, got $actual); refusing to install it"
+                exit 1
+            fi
+            log "verified $tarball against $sums_name"
+        fi
+    elif (( status == 44 && required == 0 )); then
+        printf 'warning: %s predates published SHA256SUMS; installing %s without a checksum check\n' "$TAG" "$tarball" >&2
+    elif (( status == 44 )); then
+        err "$TAG has no SHA256SUMS; releases from $CHECKSUMS_REQUIRED_FROM on must publish one. Refusing to install."
+        exit 1
+    else
+        exit 1
+    fi
+
+    bundle="$TMP_DIR/$tarball.sigstore.json"
+    status=0
+    fetch_release_file "$tarball.sigstore.json" "$bundle" || status=$?
+    if (( status == 0 )); then
+        if command -v cosign >/dev/null 2>&1; then
+            if ! cosign verify-blob --bundle "$bundle" \
+                --certificate-identity "https://github.com/$REPO/.github/workflows/cd-rust-cua-driver.yml@refs/tags/$TAG" \
+                --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
+                "$TMP_DIR/$tarball" >/dev/null 2>&1; then
+                err "the Sigstore signature of $tarball did not verify for $TAG; refusing to install it"
+                exit 1
+            fi
+            log "verified the Sigstore signature of $tarball"
+        elif [[ "$REQUIRE_SIGNATURE" == "1" ]]; then
+            err "--require-signature needs cosign on PATH to verify $tarball"
+            exit 1
+        else
+            printf 'warning: %s is signed, but cosign is not installed; verified its sha256 only (install cosign, or pass --require-signature to insist)\n' "$tarball" >&2
+        fi
+    elif (( status == 44 )); then
+        if [[ "$REQUIRE_SIGNATURE" == "1" ]]; then
+            err "$TAG publishes no Sigstore bundle for $tarball; --require-signature cannot be met"
+            exit 1
+        fi
+        if (( signed_required == 1 )); then
+            err "$TAG has no Sigstore bundle for $tarball; releases that publish SHA256SUMS, and every release from $SIGSTORE_REQUIRED_FROM on, must publish one. Refusing to install."
+            exit 1
+        fi
+    else
+        exit 1
+    fi
+}
+
 DOWNLOAD_STATUS=0
 download_release_tarball "$VERSION" || DOWNLOAD_STATUS=$?
 if (( DOWNLOAD_STATUS != 0 )); then
@@ -947,6 +1086,7 @@ if (( DOWNLOAD_STATUS != 0 )); then
     fi
 fi
 TARBALL="$(release_tarball_name "$VERSION")"
+verify_release_tarball "$VERSION" "$TARBALL"
 
 log "extracting"
 tar -xzf "$TMP_DIR/$TARBALL" -C "$TMP_DIR"
@@ -957,7 +1097,8 @@ tar -xzf "$TMP_DIR/$TARBALL" -C "$TMP_DIR"
 #       ├── cua-driver           (bare universal binary)
 #       ├── CuaDriver.app/     (minimal bundle; copy of the same binary
 #       │                         lives at Contents/MacOS/cua-driver)
-#       └── LICENSE
+#       ├── LICENSE
+#       └── THIRD_PARTY_NOTICES.md
 #   Linux bare-runtime tarball expands to:
 #     cua-driver and libcua_driver_sdk.so at the archive root. The installer
 #     consumes the CLI; SDK packaging consumes the colocated library.

@@ -24,6 +24,12 @@ class Mouse:
         await self._t.send("move_cursor", x=x, y=y)
 
     async def scroll(self, x: int, y: int, scroll_x: int = 0, scroll_y: int = 3) -> None:
+        """Scroll the wheel with the pointer at (x, y).
+
+        ``scroll_x``/``scroll_y`` are wheel notches, not a position: positive
+        ``scroll_y`` scrolls up, negative scrolls down; positive ``scroll_x``
+        scrolls right.
+        """
         await self._t.send("scroll", x=x, y=y, scroll_x=scroll_x, scroll_y=scroll_y)
 
     async def mouse_down(self, x: int, y: int, button: str = "left") -> None:

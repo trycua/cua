@@ -106,7 +106,7 @@ For an expressible exact-window postcondition, use `verify_state` with bounded p
 cua-driver verify_state '{"pid":844,"window_id":10725,"expect":[{"element":{"selector":{"label_contains":"Saved"},"exists":true}}],"include_screenshot":true,"session":"run-1"}'
 ```
 
-This example proves a matching trusted element exists, not that every application has a meaningful “Saved” indicator. Choose predicates that establish this task. Use fresh `get_window_state` for outcomes the predicate language cannot express, and fresh `get_desktop_state` for desktop proof. `verify_state` remains an exact-window tool; a previous desktop action does not disable it.
+This example proves a matching trusted element exists, not that every application has a meaningful “Saved” indicator. `label_contains` matches an element's accessible name, which for label-less text is its value. On macOS a selector also reaches display-only text (static text, read-only values) when no addressable control matches it. Text inside web content stays `unknown` with `untrusted_source`; read it from a fresh snapshot instead. Choose predicates that establish this task. Use fresh `get_window_state` for outcomes the predicate language cannot express, and fresh `get_desktop_state` for desktop proof. `verify_state` remains an exact-window tool; a previous desktop action does not disable it.
 
 Action facts are not task outcomes:
 

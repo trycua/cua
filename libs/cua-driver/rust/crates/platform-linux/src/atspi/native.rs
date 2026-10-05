@@ -23,6 +23,7 @@ use atspi::{CoordType, Interface, State, StateSet};
 
 use super::{AtspiIdentity, AtspiNode};
 
+pub mod hit;
 pub(crate) mod hit_test;
 
 /// Per-call D-Bus timeout: a single unresponsive accessible (common in large,
@@ -994,8 +995,11 @@ const FRAME_MATCH_MARGIN_PX: u64 = 24;
 /// coordinates against the X11 outer geometry the caller already named. This
 /// refuses ties rather than guessing, because callers use the result to decide
 /// which window they are about to act inside.
+/// An AT-SPI frame ordinal and its screen extents (x, y, width, height).
+type FrameExtents = (usize, (i32, i32, i32, i32));
+
 fn correlate_frame_to_window(
-    candidates: &[(usize, (i32, i32, i32, i32))],
+    candidates: &[FrameExtents],
     window: &crate::x11::WindowInfo,
 ) -> Option<usize> {
     let mut scored: Vec<(u64, usize)> = candidates
@@ -1288,6 +1292,7 @@ async fn resolve_window_frame(
 /// - `max_elements = None` keeps the historical 5 000-node budget.
 /// - `max_depth = None` keeps depth uncapped (the historical behaviour);
 ///   `Some(d)` skips enqueueing children whose depth would exceed `d`.
+///
 /// Issue #22865: caps protect against Electron / large web apps that produce
 /// 10k+ element trees and blow context windows.
 async fn collect_visited_bounded<'a>(
@@ -1728,7 +1733,7 @@ async fn collect_visited_bounded_opts<'a>(
         // Enqueue children (fetched above) before moving `acc` into `visited`.
         // Honor max_depth (#22865): skip enqueueing descendants whose depth
         // would exceed the cap.
-        let descend = max_depth.map(|d| depth + 1 <= d).unwrap_or(true);
+        let descend = max_depth.map(|d| depth < d).unwrap_or(true);
         // A menu that is not open (a menubar entry that is not expanded, or
         // any menu that is not showing) keeps its child count and is not
         // walked: its items are hidden, never indexed, and cost a round-trip
@@ -2694,6 +2699,7 @@ fn list_windows_blocking(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo>
 ///      chrome),
 ///   3. the first editable anywhere (covers single-field apps like a GTK dialog
 ///      entry, or a GTK4 GtkEntry).
+///
 /// Choose the editable to write into. `complete` says whether `visited` is the
 /// whole tree: on a *partial* walk the "first editable anywhere" fallback is
 /// withheld, because the field the user means (the focused one) may simply not
@@ -2960,7 +2966,7 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
                             dlog!("GTK3 fallback: window XID {xid}, local coords ({wx},{wy})");
 
                             // Click the entry to focus the widget (widget focus, not window focus).
-                            if let Err(e) = crate::input::send_click(xid as u64, wx, wy, 1, 1) {
+                            if let Err(e) = crate::input::send_click(xid, wx, wy, 1, 1) {
                                 dlog!("GTK3 fallback: click failed: {e}");
                                 return Ok(false);
                             };
@@ -2970,7 +2976,7 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
 
                             // Now type via X11 XSendEvent — the entry widget has internal focus
                             // so it should accept the keystrokes even though the window is unfocused.
-                            if let Err(e) = crate::input::send_type_text(xid as u64, text) {
+                            if let Err(e) = crate::input::send_type_text(xid, text) {
                                 dlog!("GTK3 fallback: send_type_text failed: {e}");
                                 return Ok(false);
                             }
@@ -3326,9 +3332,7 @@ fn exact_menu_path_matches(visited: &[Visited<'_>], path: &[String]) -> Vec<usiz
             parent_at_depth.push(None);
         }
         parent_at_depth[node.depth] = Some(index);
-        for deeper in (node.depth + 1)..parent_at_depth.len() {
-            parent_at_depth[deeper] = None;
-        }
+        parent_at_depth[node.depth + 1..].fill(None);
     }
 
     visited
@@ -3683,6 +3687,7 @@ pub fn element_bounds_ref(
     let display = (!crate::wayland::is_wayland())
         .then(x11_display_size)
         .flatten();
+    let origin_attested = native_wayland_origin_attested(pid, xid);
     bounded_for(
         REF_ACTION_BUDGET,
         async {
@@ -3700,7 +3705,7 @@ pub fn element_bounds_ref(
             };
             if coord == CoordType::Window {
                 if let Some(Ok(raw)) = call(component.get_extents(CoordType::Screen)).await {
-                    if screen_extents_trusted(raw, display) {
+                    if screen_answer_overrides_window(raw, display, origin_attested) {
                         return project_screen_extents(raw, (0, 0), None)
                             .ok_or_else(|| anyhow!("cached element reports no on-screen extents"));
                     }
@@ -4477,7 +4482,7 @@ mod page_scroll_tests {
         );
         assert!(descendant_indices([0, 1, 1].into_iter(), 1).is_empty());
         assert_eq!(
-            descendant_indices(std::iter::once(0).chain(std::iter::repeat(1).take(100)), 0).len(),
+            descendant_indices(std::iter::once(0).chain(std::iter::repeat_n(1, 100)), 0).len(),
             64
         );
     }
@@ -5554,6 +5559,31 @@ pub(crate) fn screen_extents_trusted(
     }
 }
 
+/// Whether a `CoordType::Screen` answer may override the Window-relative
+/// reconstruction. GTK3 on native Wayland reports window-local values as
+/// `Screen` (no display bounds exist to reject them), so a compositor-attested
+/// native client's origin plus `Window` extents must win. XWayland clients
+/// report true screen extents and are never attested.
+fn screen_answer_overrides_window(
+    raw: (i32, i32, i32, i32),
+    display: Option<(u32, u32)>,
+    native_origin_attested: bool,
+) -> bool {
+    !native_origin_attested && screen_extents_trusted(raw, display)
+}
+
+/// True only when the Hyprland compositor identifies this exact client
+/// (nonzero address `xid` AND `pid`) as native Wayland, not XWayland. Missing,
+/// mismatched, or unreported clients fail closed, so `Screen` extents keep
+/// winning, which is correct for XWayland GTK and LibreOffice. Performs
+/// blocking compositor IPC: async callers must use `bounded_blocking`.
+fn native_wayland_origin_attested(pid: u32, xid: u64) -> bool {
+    xid != 0
+        && crate::wayland::is_wayland()
+        && crate::wayland::hyprland::is_session()
+        && crate::wayland::hyprland::native_client_attested(xid, pid)
+}
+
 pub(crate) fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
     use x11rb::protocol::xproto::*;
     use x11rb::rust_connection::RustConnection;
@@ -6079,6 +6109,9 @@ async fn element_bounds_for_visited(
     // Bounds are independent read-only queries. Overlap a bounded number of
     // calls instead of serializing thousands of unrealized menu components.
     // Preserve original indices, all extents checks, and per-call timeouts.
+    let origin_attested = bounded_blocking(move || native_wayland_origin_attested(pid, xid))
+        .await
+        .unwrap_or(false);
     let queries = scoped_component_nodes(&action_nodes, scoped_frame, |node| {
         (node.frame_ordinal, node.has_component)
     })
@@ -6090,7 +6123,7 @@ async fn element_bounds_for_visited(
         // origin path.
         if coord == CoordType::Window && !node.in_web_doc {
             if let Some(Ok(raw)) = call(comp.get_extents(CoordType::Screen)).await {
-                if screen_extents_trusted(raw, display) {
+                if screen_answer_overrides_window(raw, display, origin_attested) {
                     return project_screen_extents(raw, (0, 0), None).map(|bounds| (idx, bounds));
                 }
             }
@@ -6196,6 +6229,85 @@ mod screen_extents_tests {
             (-500, 10, 40, 20),
             Some((1920, 1080))
         ));
+    }
+}
+
+#[cfg(test)]
+mod screen_override_tests {
+    use super::{project_screen_extents, screen_answer_overrides_window};
+
+    #[test]
+    fn attested_origin_rejects_window_local_screen_answer() {
+        // GTK3 on Hyprland reports window-local (12,211) as Screen; with no
+        // display bounds it would otherwise pass `screen_extents_trusted`.
+        let local = (12, 211, 917, 34);
+        assert!(screen_answer_overrides_window(local, None, false));
+        assert!(!screen_answer_overrides_window(local, None, true));
+        // Window extents plus the attested nonzero origin give screen space.
+        assert_eq!(
+            project_screen_extents(local, (955, 349), None),
+            Some((967, 560, 917, 34))
+        );
+    }
+
+    #[test]
+    fn xwayland_or_unattested_screen_answer_wins() {
+        // XWayland GTK/LibreOffice report true screen extents; without an
+        // exact native-client attestation they must not be discarded. A zero
+        // address never attests, without consulting the compositor.
+        assert!(!super::native_wayland_origin_attested(1, 0));
+        assert!(super::screen_answer_overrides_window(
+            (967, 560, 917, 34),
+            None,
+            super::native_wayland_origin_attested(1, 0)
+        ));
+    }
+
+    #[test]
+    fn native_attested_window_local_screen_answer_loses_to_window_extents() {
+        assert!(!super::screen_answer_overrides_window(
+            (10, 20, 800, 600),
+            None,
+            true
+        ));
+    }
+
+    #[test]
+    fn x11_screen_answer_still_wins_with_display_bounds() {
+        let screen = (70, 110, 848, 433);
+        assert!(screen_answer_overrides_window(
+            screen,
+            Some((1920, 1080)),
+            false
+        ));
+    }
+
+    #[test]
+    fn invalid_screen_answers_never_override() {
+        for attested in [false, true] {
+            assert!(!screen_answer_overrides_window(
+                (i32::MIN, i32::MIN, 1, 1),
+                None,
+                attested
+            ));
+            assert!(!screen_answer_overrides_window(
+                (0, 0, 100, 20),
+                None,
+                attested
+            ));
+        }
+        assert_eq!(
+            project_screen_extents((i32::MIN, i32::MIN, 1, 1), (955, 349), None),
+            None
+        );
+    }
+
+    #[test]
+    fn web_document_origin_is_added_after_window_offset() {
+        assert_eq!(
+            project_screen_extents((10, 20, 30, 40), (955, 349), Some((0, 80))),
+            Some((965, 449, 30, 40))
+        );
     }
 }
 

@@ -1,0 +1,51 @@
+# XcodeGen project for the XCUITests (SwiftPM cannot build UI test bundles).
+#   brew install xcodegen && xcodegen generate
+#   xcodebuild test -project CuaSpacesMac.xcodeproj -scheme CuaSpacesMacUITests \
+#     -destination 'platform=macOS'
+# Needs the cua SDK dylib staged in libs/cua/swift/lib (see README).
+name: CuaSpacesMac
+options:
+  bundleIdPrefix: com.trycua
+  deploymentTarget:
+    macOS: "26.0"
+packages:
+  CuaSpacesMacPackage:
+    path: .
+targets:
+  CuaSpacesMacApp:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/CuaSpacesMac
+    dependencies:
+      - package: CuaSpacesMacPackage
+        product: CuaSpacesMacKit
+    info:
+      path: Support/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.trycua.spaces.macos
+        PRODUCT_NAME: Cua Spaces
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: NO
+  CuaSpacesMacUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: CuaSpacesMacApp
+    settings:
+      base:
+        TEST_TARGET_NAME: CuaSpacesMacApp
+        CODE_SIGN_IDENTITY: "-"
+schemes:
+  CuaSpacesMacUITests:
+    build:
+      targets:
+        CuaSpacesMacApp: all
+        CuaSpacesMacUITests: [test]
+    test:
+      targets:
+        - CuaSpacesMacUITests

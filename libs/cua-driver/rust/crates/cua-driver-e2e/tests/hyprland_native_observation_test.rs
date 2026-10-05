@@ -95,6 +95,7 @@ fn native_window_capture_and_background_ax_keep_exact_identity() {
         baseline.target_z,
         TargetZ::BackgroundVisible | TargetZ::BackgroundOccluded
     ));
+    driver.start_behavior_recording();
     let (clicked, delta) = observer
         .observe(
             &[OracleKind::Focus, OracleKind::ZOrder, OracleKind::Cursor],

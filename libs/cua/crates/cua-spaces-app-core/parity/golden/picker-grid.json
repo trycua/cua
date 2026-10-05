@@ -1,0 +1,123 @@
+{
+  "flow": "picker-grid",
+  "frames": [
+    {
+      "tabs": [
+        {
+          "label": "Apps",
+          "tab": "apps"
+        },
+        {
+          "label": "Open windows",
+          "tab": "windows"
+        },
+        {
+          "label": "From Aurora",
+          "tab": "space"
+        }
+      ]
+    },
+    {
+      "apps": "loaded",
+      "grid": {
+        "emptyText": null,
+        "tiles": [
+          "# Recent",
+          "slack | Slack | host /Applications/Slack.app | window 41 | App and signed-in state (selected)",
+          "# Apps",
+          "code | Visual Studio Code | host /Applications/Visual Studio Code.app | window 12 | App, empty or with files",
+          "# Not available",
+          "unsupported-app | Figma | host /Applications/Figma.app | - | no Linux build (dim)"
+        ]
+      }
+    },
+    {
+      "selected": "code",
+      "step": 1
+    },
+    {
+      "selected": "code",
+      "step": 1
+    },
+    {
+      "selected": "code",
+      "step": 1
+    },
+    {
+      "selected": "slack",
+      "step": -1
+    },
+    {
+      "selected": "code",
+      "step": 5
+    },
+    {
+      "apps": "query code",
+      "grid": {
+        "emptyText": null,
+        "tiles": [
+          "# Apps",
+          "code | Visual Studio Code | host /Applications/Visual Studio Code.app | window 12 | App, empty or with files (selected)"
+        ]
+      }
+    },
+    {
+      "grid": {
+        "emptyText": null,
+        "tiles": [
+          "41 | general - Acme | host /Applications/Slack.app | window 41 | Slack · general - Acme",
+          "40 | Huddle | host /Applications/Slack.app | window 40 | Slack · Huddle",
+          "12 | main.rs - cua | - | window 12 | Code · main.rs - cua (selected)",
+          "7 | Finder | - | window 7 | Finder"
+        ]
+      },
+      "windows": "all"
+    },
+    {
+      "grid": {
+        "emptyText": "No windows match.",
+        "tiles": []
+      },
+      "windows": "no match"
+    },
+    {
+      "grid": {
+        "emptyText": null,
+        "tiles": [
+          "w-1 | Mozilla Firefox | guest Firefox firefox 812 | guest w-1@3 | Firefox · Mozilla Firefox",
+          "w-2 | xterm | guest xterm xterm 904 | guest w-2@1 | xterm"
+        ]
+      },
+      "remote": "all"
+    },
+    {
+      "grid": {
+        "emptyText": null,
+        "tiles": [
+          "w-1 | Mozilla Firefox | guest Firefox firefox 812 | guest w-1@3 | Firefox · Mozilla Firefox (selected)"
+        ]
+      },
+      "remote": "query fire"
+    },
+    {
+      "enabled": true,
+      "label": "Continue",
+      "primary": "apps"
+    },
+    {
+      "enabled": true,
+      "label": "Teleport to Aurora",
+      "primary": "windows"
+    },
+    {
+      "enabled": false,
+      "label": "Teleport to Aurora",
+      "primary": "windows"
+    },
+    {
+      "enabled": true,
+      "label": "Stream to This Mac",
+      "primary": "space"
+    }
+  ]
+}

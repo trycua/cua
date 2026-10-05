@@ -27,7 +27,7 @@ try:
 
     # Check if telemetry is enabled
     if is_telemetry_enabled():
-        logger.info("Telemetry is enabled")
+        logger.debug("Telemetry is enabled")
 
         # Record package initialization
         record_event(
@@ -35,15 +35,15 @@ try:
             {
                 "module": "agent",
                 "version": __version__,
-                "python_version": sys.version,
+                "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
             },
         )
 
     else:
-        logger.info("Telemetry is disabled")
+        logger.debug("Telemetry is disabled")
 except ImportError as e:
     # Telemetry not available
-    logger.warning(f"Telemetry not available: {e}")
+    logger.debug(f"Telemetry not available: {type(e).__name__}")
 except Exception as e:
     # Other issues with telemetry
-    logger.warning(f"Error initializing telemetry: {e}")
+    logger.debug(f"Error initializing telemetry: {type(e).__name__}")

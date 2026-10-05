@@ -1,0 +1,5 @@
+[toolchain]
+# Keep in lockstep with libs/cua-driver/rust/rust-toolchain.toml.
+channel = "1.97.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

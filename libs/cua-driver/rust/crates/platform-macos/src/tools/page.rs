@@ -252,10 +252,14 @@ async fn resolve_cdp_port(pid: i32, cdp_port: Option<u16>, action: &str) -> anyh
              the browser to have been launched with a CDP port on a NON-default profile — \
              Chrome refuses to open --remote-debugging-port on its default data directory \
              (even if you pass --user-data-dir explicitly pointing at that same default \
-             path). Relaunch via launch_app with cdp_debugging_port AND \
-             additional_arguments: [\"--user-data-dir=<some other path>\"], e.g. a \
-             dedicated automation profile — this will not have the user's existing \
-             logins/session. Alternatively, if you already enabled Chrome's own \
+             path). Call browser_prepare instead: profile.mode isolated_new with \
+             allow_launch true starts a driver-owned automation profile (no existing \
+             logins/session), and \
+             strategy.kind existing_profile with this browser's pid and window_id drives \
+             the browser's own remote-debugging toggle under explicit approval when the \
+             authenticated profile is required. Do not relaunch \
+             with remote-debugging flags through launch_app — it refuses them, so that \
+             route cannot succeed. Alternatively, if you already enabled Chrome's own \
              remote-debugging toggle for this profile (chrome://inspect/#remote-debugging), \
              pass that port explicitly via cdp_port — auto-discovery can't confirm it."
         )
@@ -267,7 +271,7 @@ async fn execute_js(js: &str, bundle_id: &str, pid: i32, window_id: u64) -> anyh
     if BrowserJs::supports(bundle_id) {
         let window_id = u32::try_from(window_id)
             .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
-        return BrowserJs::execute(js, bundle_id, window_id).await;
+        return BrowserJs::execute(js, bundle_id, pid, window_id).await;
     }
     let is_electron = tokio::task::spawn_blocking(move || ElectronJs::is_electron(pid)).await?;
     if is_electron {

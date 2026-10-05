@@ -92,6 +92,7 @@ fn bind_foreground_target(pid: u32, window_id: u64) -> ForegroundTargetGuard {
     ForegroundTargetGuard(previous)
 }
 
+#[cfg(feature = "portal-input")]
 fn current_foreground_target() -> Option<(u32, u64)> {
     CURRENT_FOREGROUND_TARGET.with(std::cell::Cell::get)
 }
@@ -393,8 +394,12 @@ struct State {
     // button press at the output centre (over the just-activated window).
     vptr_manager: Option<ZwlrVirtualPointerManagerV1>,
     output: Option<WlOutput>,
+    // Logical (post-transform) output size: virtual-pointer absolute motion
+    // maps onto the output's logical box, so rotated outputs swap axes.
     output_w: u32,
     output_h: u32,
+    output_mode: (u32, u32),
+    output_transform: u32,
     // Native screencopy capture state.
     scrcopy_manager: Option<ZwlrScreencopyManagerV1>,
     shm: Option<WlShm>,
@@ -476,10 +481,22 @@ impl Dispatch<WlOutput, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         // Remember the output resolution so `click` can aim at its centre.
-        if let wl_output::Event::Mode { width, height, .. } = event {
-            state.output_w = width.max(0) as u32;
-            state.output_h = height.max(0) as u32;
+        // Modes are reported in the panel's native orientation; the geometry
+        // transform turns them into the logical frame input coordinates use.
+        match event {
+            wl_output::Event::Mode { width, height, .. } => {
+                state.output_mode = (width.max(0) as u32, height.max(0) as u32);
+            }
+            wl_output::Event::Geometry {
+                transform: WEnum::Value(transform),
+                ..
+            } => {
+                state.output_transform = transform as u32;
+            }
+            _ => return,
         }
+        (state.output_w, state.output_h) =
+            logical_output_size(state.output_mode, state.output_transform);
     }
 }
 
@@ -581,10 +598,10 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for State {
                 state.capture.height = height;
                 state.capture.stride = stride;
             }
-            scrcopy_frame::Event::Flags { flags } => {
-                if let WEnum::Value(f) = flags {
-                    state.capture.y_invert = f.contains(scrcopy_frame::Flags::YInvert);
-                }
+            scrcopy_frame::Event::Flags {
+                flags: WEnum::Value(f),
+            } => {
+                state.capture.y_invert = f.contains(scrcopy_frame::Flags::YInvert);
             }
             scrcopy_frame::Event::Ready { .. } => {
                 state.capture.ready = true;
@@ -792,10 +809,10 @@ fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
             break;
         }
         // Once we know the buffer params, allocate + send copy exactly once.
-        if buffer.is_none()
-            && state.capture.format.is_some()
-            && state.capture.stride > 0
-            && state.capture.height > 0
+        if let Some(fmt_raw) = state
+            .capture
+            .format
+            .filter(|_| buffer.is_none() && state.capture.stride > 0 && state.capture.height > 0)
         {
             let size = (state.capture.stride as usize)
                 .checked_mul(state.capture.height as usize)
@@ -807,7 +824,6 @@ fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
             use std::os::fd::AsFd as _;
             let pool_fd = unsafe { borrowed_fd(fd) };
             let p = shm.create_pool(pool_fd.as_fd(), size as i32, &qh, ());
-            let fmt_raw = state.capture.format.unwrap();
             let fmt: wl_shm::Format = match wl_shm::Format::try_from(fmt_raw) {
                 Ok(f) => f,
                 Err(_) => {
@@ -1138,6 +1154,14 @@ fn crop_png_to_rect(
 ///    first use per session.
 /// 5. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
+    if is_wayland() && hyprland::is_session() {
+        // The desktop action frame spans every powered output. The cascade
+        // below copies only the first output, so a multi-monitor layout is
+        // composed per output; a single output keeps the cascade.
+        if let Some(capture) = hyprland::composite_desktop_capture() {
+            return capture;
+        }
+    }
     if is_wayland() {
         // Tier 1: the opt-in GNOME compositor helper. It avoids probing
         // wlroots-only protocols and captures the Shell stage without consent.
@@ -1152,7 +1176,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
         }
         // Tier 2: native wlroots screencopy (fast, zero consent).
         match screenshot_bytes() {
-            Ok(bytes) => return Ok(bytes),
+            Ok(bytes) => return orient_hyprland_display_png(bytes),
             Err(e) => {
                 tracing::debug!(
                     "wlroots screencopy unavailable ({e}); trying ext-image-copy-capture-v1"
@@ -1162,7 +1186,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
         // Tier 3: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+, niri,
         // hyprland, KDE 6.2+, GNOME 47+).
         match ext_screencopy::screenshot_via_ext_copy() {
-            Ok(bytes) => return Ok(bytes),
+            Ok(bytes) => return orient_hyprland_display_png(bytes),
             Err(e) => {
                 tracing::debug!(
                     "ext-image-copy-capture-v1 unavailable ({e}); trying xdg-desktop-portal"
@@ -1183,6 +1207,43 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
     // so we don't re-enter screenshot_display_bytes (which routes back here
     // on Wayland — would loop forever).
     crate::capture::screenshot_display_bytes_x11()
+}
+
+/// Logical size of an output whose native mode is `mode` under wl_output
+/// `transform`: quarter turns (odd transforms) swap the axes.
+pub(crate) fn logical_output_size(mode: (u32, u32), transform: u32) -> (u32, u32) {
+    if transform % 2 == 1 {
+        (mode.1, mode.0)
+    } else {
+        mode
+    }
+}
+
+/// Rotate a native-orientation output capture into the logical frame for a
+/// wl_output transform. `image::rotate90` is clockwise, which is what a
+/// transform-1 (portrait) Hyprland output needs. Flipped transforms refuse.
+fn rotate_png_for_output_transform(png: Vec<u8>, transform: u32) -> anyhow::Result<Vec<u8>> {
+    let rotate: fn(&image::DynamicImage) -> image::DynamicImage = match transform {
+        0 => return Ok(png),
+        1 => image::DynamicImage::rotate90,
+        2 => image::DynamicImage::rotate180,
+        3 => image::DynamicImage::rotate270,
+        other => anyhow::bail!("flipped output transform {other} is not supported"),
+    };
+    let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png)?;
+    let mut out = Vec::new();
+    rotate(&img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
+    Ok(out)
+}
+
+/// Full-display screencopy returns the output buffer in the panel's native
+/// orientation. On Hyprland, turn it into the logical desktop frame so the
+/// screenshot matches what the user sees and what desktop-scope input uses.
+fn orient_hyprland_display_png(png: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+    if !hyprland::is_session() {
+        return Ok(png);
+    }
+    rotate_png_for_output_transform(png, hyprland::single_output_transform()?)
 }
 
 fn checked_shell_helper_capture(
@@ -1255,9 +1316,116 @@ pub struct VptrSession {
     pub seat: WlSeat,
     pub vptr: ZwlrVirtualPointerV1,
     /// `motion_absolute` extent, in the same frame as caller coordinates.
-    /// See [`virtual_pointer_extent`].
+    /// See [`virtual_pointer_space`].
     pub output_w: u32,
     pub output_h: u32,
+    /// Layout position of pointer-space (0, 0). Callers pass layout
+    /// coordinates; [`VptrSession::abs`] converts them for `motion_absolute`.
+    pub origin_x: i32,
+    pub origin_y: i32,
+}
+
+impl VptrSession {
+    /// Layout point -> clamped `motion_absolute` coordinates.
+    pub fn abs(&self, x: i32, y: i32) -> (u32, u32) {
+        pointer_abs(
+            self.origin_x,
+            self.origin_y,
+            self.output_w,
+            self.output_h,
+            x,
+            y,
+        )
+    }
+}
+
+pub(crate) fn pointer_abs(
+    origin_x: i32,
+    origin_y: i32,
+    w: u32,
+    h: u32,
+    x: i32,
+    y: i32,
+) -> (u32, u32) {
+    (
+        x.saturating_sub(origin_x)
+            .clamp(0, (w as i32).saturating_sub(1)) as u32,
+        y.saturating_sub(origin_y)
+            .clamp(0, (h as i32).saturating_sub(1)) as u32,
+    )
+}
+
+/// How one desktop-scope action is addressed: desktop-frame points (from
+/// `get_desktop_state`) convert to layout coordinates, and the virtual pointer
+/// is sized, from a single compositor snapshot. Other compositors keep the
+/// frame at the layout origin and the pointer on the output's own mode.
+#[derive(Clone, Debug, Default)]
+pub struct DesktopInputSpace {
+    snapshot: Option<hyprland::DesktopSnapshot>,
+}
+
+impl DesktopInputSpace {
+    pub fn current() -> anyhow::Result<Self> {
+        let snapshot = if is_wayland() && hyprland::is_session() {
+            Some(hyprland::desktop_snapshot()?)
+        } else {
+            None
+        };
+        Ok(Self { snapshot })
+    }
+
+    /// Layout coordinates of a desktop-frame point.
+    pub fn to_layout(&self, x: i32, y: i32) -> (i32, i32) {
+        self.snapshot
+            .as_ref()
+            .map_or((x, y), |snapshot| snapshot.frame.to_layout(x, y))
+    }
+
+    /// Layout coordinates of a desktop-frame point that input may target.
+    /// On a multi-monitor frame a point in a gap or on an output in standby
+    /// is refused rather than left for the compositor to move to another
+    /// output edge. A single output keeps the existing edge clamping.
+    pub fn input_layout(&self, x: i32, y: i32) -> anyhow::Result<(i32, i32)> {
+        let Some(snapshot) = self.snapshot.as_ref() else {
+            return Ok((x, y));
+        };
+        let (layout_x, layout_y) = snapshot.frame.to_layout(x, y);
+        anyhow::ensure!(
+            snapshot.frame.outputs.len() <= 1
+                || snapshot.frame.output_contains_layout(layout_x, layout_y),
+            "desktop point ({x}, {y}) is not on a powered monitor in the current layout; call get_desktop_state again"
+        );
+        Ok((layout_x, layout_y))
+    }
+}
+
+impl VptrSession {
+    /// Puts the pointer at output pixel `(px, py)` so the compositor picks
+    /// the surface under it. A `motion_absolute` to where the pointer already
+    /// is carries no motion, and Hyprland re-picks pointer focus only on
+    /// motion: a window mapped under a stationary pointer (a terminal opened
+    /// from the keyboard) never got the wheel or the button that followed.
+    /// Approaching from the next pixel always moves the pointer.
+    fn point_at(&mut self, px: u32, py: u32) -> anyhow::Result<()> {
+        let (w, h) = (self.output_w, self.output_h);
+        self.vptr
+            .motion_absolute(event_time_ms(), approach_pixel(px, w), py, w, h);
+        self.vptr.frame();
+        self.queue.roundtrip(&mut self.state)?;
+        self.vptr.motion_absolute(event_time_ms(), px, py, w, h);
+        self.vptr.frame();
+        self.queue.roundtrip(&mut self.state)?;
+        Ok(())
+    }
+}
+
+/// A pixel next to `px` on an output `extent` pixels wide.
+fn approach_pixel(px: u32, extent: u32) -> u32 {
+    if px > 0 {
+        px - 1
+    } else {
+        (px + 1).min(extent.saturating_sub(1))
+    }
 }
 
 /// Logical desktop frame published by a compositor adapter whose geometry is
@@ -1270,31 +1438,31 @@ pub(crate) fn compositor_logical_frame() -> Option<anyhow::Result<(u32, u32)>> {
         .then(|| hyprland::screen_size().map(|(width, height, _scale)| (width, height)))
 }
 
-/// Extent to pass with `zwlr_virtual_pointer_v1::motion_absolute`. The
-/// compositor maps `x / x_extent` onto its logical layout, so the extent must
-/// be in the caller's coordinate frame. Hyprland window geometry, window
-/// captures, and desktop captures are logical; a scaled output's `wl_output`
-/// mode is physical and would land every motion at `1 / scale` of its target.
-/// Layouts the Hyprland adapter cannot qualify (rotated, off-origin, or
-/// multiple outputs) keep the first output's mode until that adapter
-/// publishes a frame for them.
-fn virtual_pointer_extent(output_mode: (u32, u32)) -> (u32, u32) {
-    let logical = compositor_logical_frame().and_then(|frame| {
-        frame
-            .map_err(|error| {
-                tracing::debug!("virtual pointer keeps the wl_output mode extent: {error:#}")
-            })
-            .ok()
-    });
-    select_virtual_pointer_extent(output_mode, logical)
+/// Pointer space for `zwlr_virtual_pointer_v1::motion_absolute`, as
+/// `(origin_x, origin_y, extent_w, extent_h)`. The compositor maps
+/// `x / x_extent` onto its logical layout, so the extent must be in the
+/// caller's coordinate frame. Hyprland maps absolute motion across the
+/// bounding box of every enabled output's logical rectangle, not just the
+/// first `wl_output`; a scaled output's `wl_output` mode is physical and
+/// would land every motion at `1 / scale` of its target. A single output
+/// the Hyprland adapter cannot qualify (a rotated one) keeps its own mode
+/// until that adapter publishes a layout for it; with several outputs that
+/// fallback would misplace every motion, so it is an error instead.
+fn virtual_pointer_space(output_mode: (u32, u32)) -> anyhow::Result<(i32, i32, u32, u32)> {
+    let layout = if hyprland::is_session() {
+        hyprland::pointer_space()?
+    } else {
+        None
+    };
+    Ok(select_virtual_pointer_space(output_mode, layout))
 }
 
-fn select_virtual_pointer_extent(
+fn select_virtual_pointer_space(
     output_mode: (u32, u32),
-    compositor_logical: Option<(u32, u32)>,
-) -> (u32, u32) {
-    let (width, height) = compositor_logical.unwrap_or(output_mode);
-    (width.max(1), height.max(1))
+    compositor_layout: Option<(i32, i32, u32, u32)>,
+) -> (i32, i32, u32, u32) {
+    let (x, y, width, height) = compositor_layout.unwrap_or((0, 0, output_mode.0, output_mode.1));
+    (x, y, width.max(1), height.max(1))
 }
 
 /// Bind manager + seat + virtual-pointer + first output, optionally activate a
@@ -1304,6 +1472,15 @@ fn select_virtual_pointer_extent(
 /// pointer event in *output* coordinates and rely on the activated toplevel
 /// covering the centre.
 pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<VptrSession> {
+    open_vptr_session_in(activate_window_id, None)
+}
+
+/// [`open_vptr_session`] sized from `snapshot` when a desktop action was
+/// addressed in one.
+fn open_vptr_session_in(
+    activate_window_id: Option<u64>,
+    snapshot: Option<&hyprland::DesktopSnapshot>,
+) -> anyhow::Result<VptrSession> {
     let conn = Connection::connect_to_env()?;
     let mut queue = conn.new_event_queue::<State>();
     let qh = queue.handle();
@@ -1363,7 +1540,12 @@ pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<Vptr
     }
 
     let vptr = mgr.create_virtual_pointer(Some(&seat), &qh, ());
-    let (output_w, output_h) = virtual_pointer_extent((state.output_w, state.output_h));
+    let (origin_x, origin_y, output_w, output_h) = match snapshot {
+        Some(snapshot) => {
+            select_virtual_pointer_space((state.output_w, state.output_h), snapshot.pointer)
+        }
+        None => virtual_pointer_space((state.output_w, state.output_h))?,
+    };
     Ok(VptrSession {
         conn,
         queue,
@@ -1372,6 +1554,8 @@ pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<Vptr
         vptr,
         output_w,
         output_h,
+        origin_x,
+        origin_y,
     })
 }
 
@@ -1557,7 +1741,7 @@ fn event_time_ms() -> u32 {
 /// to discriminate single vs. double clicks.
 pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
     with_libei_fallback(
-        || click_vptr(Some(window_id), x, y, count, button),
+        || click_vptr(Some(window_id), x, y, count, button, None),
         || {
             libei_wait_pointer_ready()?;
             activate_window_for_input(window_id)?;
@@ -1575,7 +1759,7 @@ pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::
 #[cfg(feature = "portal-input")]
 pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
     with_libei_fallback(
-        || click_vptr(None, x, y, count, button),
+        || click_vptr(None, x, y, count, button, None),
         || {
             libei_wait_pointer_ready()?;
             if let Some((pid, window_id)) = current_foreground_target() {
@@ -1588,19 +1772,26 @@ pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<(
 
 #[cfg(not(feature = "portal-input"))]
 pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
-    click_vptr(None, x, y, count, button)
+    click_vptr(None, x, y, count, button, None)
 }
 
 /// Click a desktop-absolute point without selecting or activating a toplevel.
 /// This is the Wayland peer of an XTest root-window click and is used only by
 /// the explicit desktop capture scope.
-pub fn click_desktop(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+pub fn click_desktop(
+    space: &DesktopInputSpace,
+    x: i32,
+    y: i32,
+    count: u32,
+    button: u8,
+) -> anyhow::Result<()> {
     if is_inject_mode() {
         let btn = evdev_button(button as u32);
         return inject_send(&[format!("d {x} {y} {} {btn}", count.max(1))]);
     }
+    let (x, y) = space.input_layout(x, y)?;
     with_libei_fallback(
-        || click_vptr(None, x, y, count, button),
+        || click_vptr(None, x, y, count, button, space.snapshot.as_ref()),
         || libei_click(x, y, count, button),
     )
 }
@@ -1613,25 +1804,28 @@ fn click_vptr(
     y: i32,
     count: u32,
     button: u8,
+    snapshot: Option<&hyprland::DesktopSnapshot>,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(window_id)?;
+    let mut sess = open_vptr_session_in(window_id, snapshot)?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
-    let (px, py) = if x == 0 && y == 0 {
-        ((w / 2) as i32, (h / 2) as i32)
+    let (px, py) = if x == 0 && y == 0 && !hyprland::is_session() {
+        (w / 2, h / 2)
     } else {
-        (x, y)
+        sess.abs(x, y)
     };
-    let px = px.clamp(0, w as i32 - 1) as u32;
-    let py = py.clamp(0, h as i32 - 1) as u32;
     let btn = evdev_pointer_button(button);
     for i in 0..count.max(1) {
         if i > 0 {
             std::thread::sleep(std::time::Duration::from_millis(80));
         }
-        sess.vptr.motion_absolute(event_time_ms(), px, py, w, h);
-        sess.vptr.frame();
-        sess.queue.roundtrip(&mut sess.state)?;
+        if i == 0 {
+            sess.point_at(px, py)?;
+        } else {
+            sess.vptr.motion_absolute(event_time_ms(), px, py, w, h);
+            sess.vptr.frame();
+            sess.queue.roundtrip(&mut sess.state)?;
+        }
         std::thread::sleep(std::time::Duration::from_millis(15));
         sess.vptr.button(event_time_ms(), btn, ButtonState::Pressed);
         sess.vptr.frame();
@@ -1644,7 +1838,7 @@ fn click_vptr(
     }
     // Keep the synthetic-cursor registry in sync with the warp we just
     // performed so a subsequent `get_cursor_position` reflects reality.
-    record_synth_cursor(px as i32, py as i32);
+    record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
     sess.vptr.destroy();
     sess.queue.roundtrip(&mut sess.state)?;
     Ok(())
@@ -1748,7 +1942,7 @@ pub fn scroll_at(
 ) -> anyhow::Result<()> {
     let direction = direction.to_string();
     with_libei_fallback(
-        || scroll_vptr(Some(window_id), point, &direction, amount),
+        || scroll_vptr(Some(window_id), point, &direction, amount, None),
         || {
             libei_wait_scroll_ready()?;
             activate_window_for_input(window_id)?;
@@ -1761,13 +1955,28 @@ pub fn scroll_at(
 }
 
 /// Scroll at a desktop-absolute point without activating a named toplevel.
-pub fn scroll_desktop(x: i32, y: i32, direction: &str, amount: u32) -> anyhow::Result<()> {
+pub fn scroll_desktop(
+    space: &DesktopInputSpace,
+    x: i32,
+    y: i32,
+    direction: &str,
+    amount: u32,
+) -> anyhow::Result<()> {
     if is_inject_mode() {
         return inject_scroll_desktop(x, y, direction, amount);
     }
+    let (x, y) = space.input_layout(x, y)?;
     let direction = direction.to_string();
     with_libei_fallback(
-        || scroll_vptr(None, Some((x, y)), &direction, amount),
+        || {
+            scroll_vptr(
+                None,
+                Some((x, y)),
+                &direction,
+                amount,
+                space.snapshot.as_ref(),
+            )
+        },
         || {
             libei_wait_scroll_ready()?;
             libei_move_absolute(x, y)?;
@@ -1782,16 +1991,13 @@ fn scroll_vptr(
     point: Option<(i32, i32)>,
     direction: &str,
     amount: u32,
+    snapshot: Option<&hyprland::DesktopSnapshot>,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(window_id)?;
+    let mut sess = open_vptr_session_in(window_id, snapshot)?;
     if let Some((x, y)) = point {
-        let px = x.clamp(0, (sess.output_w as i32).saturating_sub(1)) as u32;
-        let py = y.clamp(0, (sess.output_h as i32).saturating_sub(1)) as u32;
-        sess.vptr
-            .motion_absolute(event_time_ms(), px, py, sess.output_w, sess.output_h);
-        sess.vptr.frame();
-        sess.queue.roundtrip(&mut sess.state)?;
-        record_synth_cursor(px as i32, py as i32);
+        let (px, py) = sess.abs(x, y);
+        sess.point_at(px, py)?;
+        record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
         std::thread::sleep(std::time::Duration::from_millis(15));
     }
     let (axis, sign): (Axis, i32) = match direction.to_ascii_lowercase().as_str() {
@@ -1854,21 +2060,34 @@ pub fn last_synth_cursor_pos() -> Option<(i32, i32)> {
 /// the synthetic-cursor registry so `last_synth_cursor_pos` can report it.
 pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::Result<()> {
     with_libei_fallback(
-        || move_cursor_absolute_vptr(window_id, x, y),
+        || move_cursor_absolute_vptr(window_id, x, y, None),
+        || libei_move_absolute(x, y),
+    )
+}
+
+/// Warp the cursor to a desktop-frame point (the `get_desktop_state` frame).
+pub fn move_cursor_desktop(space: &DesktopInputSpace, x: i32, y: i32) -> anyhow::Result<()> {
+    let (x, y) = space.input_layout(x, y)?;
+    with_libei_fallback(
+        || move_cursor_absolute_vptr(None, x, y, space.snapshot.as_ref()),
         || libei_move_absolute(x, y),
     )
 }
 
 /// wlroots virtual-pointer implementation of [`move_cursor_absolute`].
-fn move_cursor_absolute_vptr(window_id: Option<u64>, x: i32, y: i32) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(window_id)?;
+fn move_cursor_absolute_vptr(
+    window_id: Option<u64>,
+    x: i32,
+    y: i32,
+    snapshot: Option<&hyprland::DesktopSnapshot>,
+) -> anyhow::Result<()> {
+    let mut sess = open_vptr_session_in(window_id, snapshot)?;
     let (w, h) = (sess.output_w, sess.output_h);
-    let px = x.clamp(0, (w as i32).saturating_sub(1)) as u32;
-    let py = y.clamp(0, (h as i32).saturating_sub(1)) as u32;
+    let (px, py) = sess.abs(x, y);
     sess.vptr.motion_absolute(event_time_ms(), px, py, w, h);
     sess.vptr.frame();
     sess.queue.roundtrip(&mut sess.state)?;
-    record_synth_cursor(px as i32, py as i32);
+    record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
     sess.vptr.destroy();
     sess.queue.roundtrip(&mut sess.state)?;
     Ok(())
@@ -1881,16 +2100,26 @@ fn move_cursor_absolute_vptr(window_id: Option<u64>, x: i32, y: i32) -> anyhow::
 /// injection socket (`CUA_INJECT_SOCKET`).
 pub fn drag(
     window_id: u64,
-    from_x: i32,
-    from_y: i32,
-    to_x: i32,
-    to_y: i32,
+    from: (i32, i32),
+    to: (i32, i32),
     steps: u32,
     duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
+    let ((from_x, from_y), (to_x, to_y)) = (from, to);
     with_libei_fallback(
-        || drag_vptr(Some(window_id), from_x, from_y, to_x, to_y, steps, button),
+        || {
+            drag_vptr(
+                Some(window_id),
+                from_x,
+                from_y,
+                to_x,
+                to_y,
+                steps,
+                button,
+                None,
+            )
+        },
         || {
             libei_wait_pointer_ready()?;
             activate_window_for_input(window_id)?;
@@ -1901,6 +2130,7 @@ pub fn drag(
 
 /// Drag through desktop-absolute points without activating a named toplevel.
 pub fn drag_desktop(
+    space: &DesktopInputSpace,
     from_x: i32,
     from_y: i32,
     to_x: i32,
@@ -1909,8 +2139,21 @@ pub fn drag_desktop(
     duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
+    let (from_x, from_y) = space.input_layout(from_x, from_y)?;
+    let (to_x, to_y) = space.input_layout(to_x, to_y)?;
     with_libei_fallback(
-        || drag_vptr(None, from_x, from_y, to_x, to_y, steps, button),
+        || {
+            drag_vptr(
+                None,
+                from_x,
+                from_y,
+                to_x,
+                to_y,
+                steps,
+                button,
+                space.snapshot.as_ref(),
+            )
+        },
         || {
             libei_wait_pointer_ready()?;
             libei_drag(from_x, from_y, to_x, to_y, steps, duration_ms, button)
@@ -1928,17 +2171,14 @@ fn drag_vptr(
     to_y: i32,
     steps: u32,
     button: u8,
+    snapshot: Option<&hyprland::DesktopSnapshot>,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(window_id)?;
+    let mut sess = open_vptr_session_in(window_id, snapshot)?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
     let btn = evdev_pointer_button(button);
-    let clamp_xy = |x: i32, y: i32| -> (u32, u32) {
-        (
-            x.clamp(0, w as i32 - 1) as u32,
-            y.clamp(0, h as i32 - 1) as u32,
-        )
-    };
+    let (origin_x, origin_y) = (sess.origin_x, sess.origin_y);
+    let clamp_xy = |x: i32, y: i32| pointer_abs(origin_x, origin_y, w, h, x, y);
     let (fx, fy) = clamp_xy(from_x, from_y);
     sess.vptr.motion_absolute(event_time_ms(), fx, fy, w, h);
     sess.vptr.frame();
@@ -1967,7 +2207,7 @@ fn drag_vptr(
     sess.vptr.frame();
     // Sync the synthetic-cursor registry with the drag endpoint so a
     // subsequent `get_cursor_position` reports where we left the pointer.
-    record_synth_cursor(tx as i32, ty as i32);
+    record_synth_cursor(origin_x + tx as i32, origin_y + ty as i32);
     sess.queue.roundtrip(&mut sess.state)?;
     sess.vptr.destroy();
     sess.queue.roundtrip(&mut sess.state)?;
@@ -3329,7 +3569,7 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
         let seen: std::collections::HashSet<u32> = ws.iter().filter_map(|w| w.pid).collect();
         // A specific pid already resolved via X11 needs no AT-SPI walk (a full
         // D-Bus enumeration of every registered app): it can only add duplicates.
-        let already_covered = filter_pid.map_or(false, |p| seen.contains(&p));
+        let already_covered = filter_pid.is_some_and(|p| seen.contains(&p));
         if !already_covered {
             merge_atspi_windows(&mut ws, &seen, wayland_atspi_windows(filter_pid));
         }
@@ -3528,7 +3768,76 @@ impl Dispatch<wl_registry::WlRegistry, ()> for ExtProbeState {
 const _BTN_LEFT_ALIAS: u32 = BTN_LEFT;
 
 #[cfg(test)]
+mod output_transform_tests {
+    use super::{logical_output_size, rotate_png_for_output_transform};
+
+    #[test]
+    fn logical_output_size_swaps_axes_for_quarter_turns() {
+        assert_eq!(logical_output_size((2560, 1080), 0), (2560, 1080));
+        assert_eq!(logical_output_size((2560, 1080), 1), (1080, 2560));
+        assert_eq!(logical_output_size((2560, 1080), 2), (2560, 1080));
+        assert_eq!(logical_output_size((2560, 1080), 3), (1080, 2560));
+        assert_eq!(logical_output_size((2560, 1080), 5), (1080, 2560));
+    }
+
+    fn two_pixel_png() -> Vec<u8> {
+        // Native frame: red on the left, blue on the right.
+        let mut img = image::RgbaImage::new(2, 1);
+        img.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
+        img.put_pixel(1, 0, image::Rgba([0, 0, 255, 255]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        png
+    }
+
+    fn decode(png: &[u8]) -> image::RgbaImage {
+        image::load_from_memory_with_format(png, image::ImageFormat::Png)
+            .unwrap()
+            .to_rgba8()
+    }
+
+    #[test]
+    fn capture_rotation_follows_the_output_transform() {
+        let red = image::Rgba([255, 0, 0, 255]);
+        let blue = image::Rgba([0, 0, 255, 255]);
+        let same = rotate_png_for_output_transform(two_pixel_png(), 0).unwrap();
+        assert_eq!(same, two_pixel_png());
+        let quarter = decode(&rotate_png_for_output_transform(two_pixel_png(), 1).unwrap());
+        assert_eq!(quarter.dimensions(), (1, 2));
+        assert_eq!(
+            (*quarter.get_pixel(0, 0), *quarter.get_pixel(0, 1)),
+            (red, blue)
+        );
+        let half = decode(&rotate_png_for_output_transform(two_pixel_png(), 2).unwrap());
+        assert_eq!((*half.get_pixel(0, 0), *half.get_pixel(1, 0)), (blue, red));
+        let three = decode(&rotate_png_for_output_transform(two_pixel_png(), 3).unwrap());
+        assert_eq!(three.dimensions(), (1, 2));
+        assert_eq!(
+            (*three.get_pixel(0, 0), *three.get_pixel(0, 1)),
+            (blue, red)
+        );
+        assert!(rotate_png_for_output_transform(two_pixel_png(), 5).is_err());
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    /// The pointer always moves before a desktop click or scroll, even when
+    /// it already sits on the target pixel (corners and 1-pixel outputs too).
+    #[test]
+    fn approach_pixel_is_a_different_pixel_on_the_output() {
+        assert_eq!(super::approach_pixel(640, 1280), 639);
+        assert_eq!(super::approach_pixel(0, 1280), 1);
+        assert_eq!(super::approach_pixel(1279, 1280), 1278);
+        assert_eq!(
+            super::approach_pixel(0, 1),
+            0,
+            "a 1-pixel output has nowhere else"
+        );
+    }
+
     use super::*;
 
     fn window(xid: u64, pid: Option<u32>, title: &str) -> WindowInfo {
@@ -3742,7 +4051,7 @@ mod tests {
     #[test]
     fn listed_wayland_identity_remains_valid_when_current_enumeration_hides_it() {
         let pid = std::process::id();
-        let window_id = 0xf2962_0001;
+        let window_id = 0x000f_2962_0001;
         assert!(!window_was_listed_for_pid(pid, window_id));
 
         remember_listed_windows(&[WindowInfo {

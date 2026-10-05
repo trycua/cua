@@ -42,7 +42,10 @@ fn consent_surface_evidence(
         .into_iter()
         .filter(|window| {
             window.pid == pid
-                && window.title == "Allow remote debugging?"
+                && matches!(
+                    window.title.as_str(),
+                    "Allow remote debugging?" | super::consent_ui::CHINESE_PROMPT
+                )
                 && window.is_on_screen
                 && window.bounds.width > 0.0
                 && window.bounds.height > 0.0
@@ -124,10 +127,12 @@ where
         }
     }
 
-    let status = if retained_surfaces.is_empty() {
-        "dismissed"
-    } else {
+    let status = if !retained_surfaces.is_empty() {
         "retained"
+    } else if dismiss_error.is_some() {
+        "unverified"
+    } else {
+        "dismissed"
     };
     add_consent_cleanup_detail(
         error,
@@ -180,18 +185,23 @@ where
         }
     }
 
-    if !retained_surfaces.is_empty() {
-        let mut error = cleanup_error.unwrap_or_else(|| {
-            refusal(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                "remote-debugging cleanup retained browser consent UI",
-            )
-        });
-        error.detail = Some(serde_json::json!({
-            "status": "retained",
-            "retained_surfaces": retained_surfaces,
-            "dismiss_error": dismiss_error,
-        }));
+    if !retained_surfaces.is_empty() || dismiss_error.is_some() {
+        let mut error = cleanup_error
+            .or_else(|| dismiss_error.clone())
+            .unwrap_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "remote-debugging cleanup retained browser consent UI",
+                )
+            });
+        error = add_consent_cleanup_detail(
+            error,
+            serde_json::json!({
+                "status": if retained_surfaces.is_empty() { "unverified" } else { "retained" },
+                "retained_surfaces": retained_surfaces,
+                "dismiss_error": dismiss_error,
+            }),
+        );
         return Err(error);
     }
 
@@ -1470,9 +1480,12 @@ mod tests {
 
         let error = result.expect_err("retained consent UI must retain the core cleanup request");
         assert_eq!(error.code, BrowserRefusalCode::BrowserWrongTargetRefused);
-        assert_eq!(error.detail.as_ref().unwrap()["status"], "retained");
         assert_eq!(
-            error.detail.as_ref().unwrap()["retained_surfaces"][0]["window_id"],
+            error.detail.as_ref().unwrap()["consent_cleanup"]["status"],
+            "retained"
+        );
+        assert_eq!(
+            error.detail.as_ref().unwrap()["consent_cleanup"]["retained_surfaces"][0]["window_id"],
             90
         );
     }
@@ -1496,7 +1509,67 @@ mod tests {
             || {},
         );
 
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
+    }
+
+    #[test]
+    fn chinese_consent_surface_is_retained_without_an_ax_match() {
+        let surfaces = consent_surface_evidence(
+            [window(79, 42, super::super::consent_ui::CHINESE_PROMPT)],
+            42,
+        );
+        assert_eq!(surfaces.len(), 1);
+        assert_eq!(surfaces[0].window_id, 79);
+    }
+
+    #[test]
+    fn reported_scan_error_cannot_become_successful_cleanup() {
+        let error = run_committed_consent_cleanup(
+            1,
+            || {
+                Err(refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "truncated scan",
+                ))
+            },
+            || Ok(true),
+            Vec::new,
+            || {},
+        )
+        .unwrap_err();
+        assert_eq!(error.code, BrowserRefusalCode::BrowserWrongTargetRefused);
+        assert_eq!(error.message, "truncated scan");
+        assert_eq!(
+            error.detail.as_ref().unwrap()["consent_cleanup"]["status"],
+            "unverified"
+        );
+        let mut rolled_back = false;
+        let error = run_failed_prepare_consent_cleanup(
+            refusal(
+                BrowserRefusalCode::BrowserConsentRevoked,
+                "original prepare failure",
+            ),
+            1,
+            || {
+                Err(refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "truncated scan",
+                ))
+            },
+            |error| {
+                rolled_back = true;
+                error
+            },
+            Vec::new,
+            || {},
+        );
+        assert!(rolled_back);
+        assert_eq!(error.code, BrowserRefusalCode::BrowserConsentRevoked);
+        assert_eq!(error.message, "original prepare failure");
+        assert_eq!(
+            error.detail.as_ref().unwrap()["consent_cleanup"]["status"],
+            "unverified"
+        );
     }
 
     #[test]

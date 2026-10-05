@@ -37,7 +37,8 @@ use std::time::{Duration, Instant};
 
 use cursor_overlay::{
     CursorConfig, CursorKey, FocusRect, KeyedOverlayCommand, MotionConfig, MsgOutcome,
-    OverlayCommand, OverlayMsg, RenderEntry, RenderStateCore, ScreenFrame, ZOrderEnforcer,
+    OverlayCommand, OverlayMsg, RenderEntry, RenderStateCore, ScreenFrame, SurfaceFit,
+    SurfaceGeometry, ZOrderEnforcer,
 };
 
 // ── Arrival-signal channels (one waiter slot per cursor key) ──────────────
@@ -84,6 +85,15 @@ static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<OverlayMsg>> = OnceLock::new
 static CMD_RX_CELL: Mutex<Option<std::sync::mpsc::Receiver<OverlayMsg>>> = Mutex::new(None);
 static RENDER: Mutex<Option<RenderMap>> = Mutex::new(None);
 static OVERLAY_WINDOW_ID: AtomicU32 = AtomicU32::new(0);
+/// True while the render loop that fires arrival signals runs. Only
+/// [`run_on_main_thread`] (through `run_appkit`) starts it: a host that
+/// initializes the overlay but never hands it the main thread has no one to
+/// fire an arrival, so [`animate_cursor_to`] must not wait for one.
+static RENDER_LOOP_RUNNING: AtomicBool = AtomicBool::new(false);
+/// The longest [`animate_cursor_to`] waits for an arrival. A glide across the
+/// largest display at the reference peak speed (900 pt/s) plus the spring
+/// settles well inside it; a stalled render loop must never wedge a tool.
+const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(8);
 
 pub(crate) fn is_overlay_window(window_id: u32) -> bool {
     window_id != 0 && OVERLAY_WINDOW_ID.load(Ordering::Acquire) == window_id
@@ -127,19 +137,49 @@ pub(crate) fn overlay_may_show_pixels() -> bool {
         .is_some_and(|last| last.elapsed() < OVERLAY_CLEAR_GRACE)
 }
 
+/// Whether the macOS overlay, which covers the main screen from (0, 0), draws
+/// a cursor at `pos`. This is the existing visibility gate: a cursor more
+/// than 50 points left of or above the main screen's origin is not drawn,
+/// session badge included. One predicate decides both painting and pixel
+/// presence, so they cannot disagree.
+fn on_main_screen(pos: (f64, f64)) -> bool {
+    pos.0 > -50.0 && pos.1 > -50.0
+}
+
 fn cursor_may_paint(state: &RenderState) -> bool {
     state.focus_rect.is_some()
         || (state.core.cfg.enabled
             && state.core.visible
             && state.core.idle_alpha > 0.0
-            && state.core.pos.0 > -50.0
-            && state.core.pos.1 > -50.0)
+            && on_main_screen(state.core.pos))
+}
+
+/// Paint every cursor the main-screen overlay draws into `pm`.
+fn paint_main_screen(pm: &mut tiny_skia::Pixmap, map: &RenderMap, backing_scale: f32) {
+    for rs in map.cursors.values() {
+        if !on_main_screen(rs.core.pos) {
+            continue;
+        }
+        let focus = rs.focus_rect.map(|rect| FocusRect {
+            rect,
+            t: rs.focus_rect_t,
+        });
+        cursor_overlay::paint_cursor(
+            pm,
+            &rs.core,
+            0.0,
+            0.0, // macOS uses screen-local coords (no origin offset)
+            focus,
+            backing_scale,
+        );
+    }
 }
 
 /// Screen-global geometry kept beside the shared keyed render map
 /// ([`cursor_overlay::RenderMap`], which owns the per-session lifecycle:
 /// lazy creation, stable z-order, tombstones, revival, and the default guard).
-/// Written once in `run_appkit`.
+/// Written in `run_appkit`, then refitted by the render loop whenever the
+/// main display is reconfigured (see [`cursor_overlay::SurfaceFit`]).
 struct MacScreen {
     win_w: f64,
     win_h: f64,
@@ -219,12 +259,18 @@ pub fn init(cfg: CursorConfig) {
     ));
 }
 
+/// Whether commands for `key` reach the renderer: not the empty no-cursor
+/// key (direct platform calls that bypass lifecycle dispatch), and not a
+/// human-origin session, whose client draws the human's own cursor (see
+/// `cua_driver_core::agent_cursor`).
+pub(crate) fn draws_cursor(key: &str) -> bool {
+    !key.is_empty() && !cua_driver_core::agent_cursor::overlay_suppressed(key)
+}
+
 /// Send a keyed command from any thread (MCP tool, etc.).  Non-blocking; drops
 /// if the channel is full (old commands are less important than new ones).
 pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
-    // Empty key is the explicit no-cursor sentinel for direct platform calls
-    // that bypass lifecycle dispatch.
-    if key.is_empty() {
+    if !draws_cursor(&key) {
         return;
     }
     if let Some(tx) = CMD_TX.get() {
@@ -318,7 +364,7 @@ pub fn current_theme_state(
 /// the sentinel and only `ClickPulse` snapped a static arrow, which is easy to
 /// miss. See the AX-no-glide report.
 ///
-/// No-op when the cursor is already on-screen (pos.0 > -50.0) or absent. The
+/// No-op when the cursor is already placed (`is_placed`) or absent. The
 /// seed is clamped to the main screen frame so it never starts off-display.
 /// Returns true if a seed was applied (i.e. the cursor was at the sentinel and
 /// is now primed to glide).
@@ -349,7 +395,7 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
         return;
     }
     // Seed a sentinel cursor on-screen so the MoveTo below glides instead of
-    // being short-circuited. After this the cursor's pos.0 > -50.0, so the
+    // being short-circuited. After this the cursor is placed (`is_placed`), so the
     // should-animate check passes on the first action just like later ones.
     seed_start_if_sentinel(&key, x, y);
 
@@ -359,7 +405,7 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
         let guard = RENDER.lock().unwrap();
         matches!(
             guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled && rs.core.pos.0 > -50.0
+            Some(rs) if rs.core.cfg.enabled && cursor_overlay::render_state::is_placed(rs.core.pos)
         )
     };
     if !should_animate {
@@ -384,7 +430,41 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
     );
 
     // Await arrival signal (fired from render thread when Dubins path ends).
-    let _ = rx.await;
+    // Without a render loop nothing ever fires it (a daemon whose main
+    // thread never entered `run_on_main_thread`): the command stays queued
+    // for a loop that starts later, and the action proceeds now. Bounded
+    // either way.
+    wait_for_arrival(
+        rx,
+        RENDER_LOOP_RUNNING.load(Ordering::Acquire),
+        ARRIVAL_TIMEOUT,
+    )
+    .await;
+}
+
+/// Waits for `rx` only while a render loop runs, and never longer than
+/// `limit`. Returns whether the arrival came.
+async fn wait_for_arrival(
+    rx: tokio::sync::oneshot::Receiver<()>,
+    render_loop_running: bool,
+    limit: Duration,
+) -> bool {
+    if !render_loop_running {
+        return false;
+    }
+    match tokio::time::timeout(limit, rx).await {
+        Ok(_) => true,
+        Err(_) => {
+            tracing::warn!("cursor overlay: no arrival within {limit:?}; continuing without it");
+            false
+        }
+    }
+}
+
+/// Whether the overlay's render loop runs in this process (it fires the
+/// arrivals [`animate_cursor_to`] waits for).
+pub fn render_loop_running() -> bool {
+    RENDER_LOOP_RUNNING.load(Ordering::Acquire)
 }
 
 /// Block the calling thread (must be the OS main thread) running the AppKit
@@ -527,10 +607,7 @@ impl RenderEntry for RenderState {
     fn needs_frame_tick(&self) -> bool {
         self.core.needs_frame_tick()
             || self.focus_rect.is_some()
-            || (self.core.motion.idle_hide_ms > 0.0
-                && self.core.visible
-                && self.core.pos.0 >= -100.0
-                && self.core.idle_alpha >= 0.004)
+            || (self.core.motion.idle_hide_ms > 0.0 && self.core.is_revealed())
     }
 }
 
@@ -654,8 +731,10 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     // ---- Render thread (60 fps) ----
     let layer_ptr = layer as usize;
     let win_ptr = win as usize;
+    RENDER_LOOP_RUNNING.store(true, Ordering::Release);
     std::thread::spawn(move || {
         render_loop(layer_ptr, win_ptr, rx, win_w, win_h);
+        RENDER_LOOP_RUNNING.store(false, Ordering::Release);
     });
 
     // ---- NSApplication run loop (blocks until process exits) ----
@@ -679,6 +758,15 @@ fn render_loop(
     // the periodic defensive-repin (every ~60 active frames ≈ 1 s).
     let mut last_pinned: Option<u64> = None;
     let mut repin_frames: u32 = 0;
+    // The window and pixmap cover the main display as it was when AppKit
+    // started. Follow later reconfigurations (resolution switch, VM display
+    // resize) so cursor points keep landing where the pointer is.
+    let mut surface_fit = SurfaceFit::new(RENDER.lock().unwrap().as_ref().map(|map| {
+        SurfaceGeometry::new(
+            ScreenFrame::new(0.0, 0.0, map.platform.win_w, map.platform.win_h),
+            map.platform.backing_scale,
+        )
+    }));
 
     loop {
         // When no cursor animation/fade is active, block until the MCP side
@@ -710,6 +798,30 @@ fn render_loop(
             now.duration_since(last_tick).as_secs_f64().min(0.05)
         };
         last_tick = now;
+
+        // Refit before painting, so the frame after a display change (often
+        // the first one after an idle wake) is already drawn at the pointer.
+        let mut refit = false;
+        if surface_fit.due(now) {
+            let reading = main_display_geometry(surface_fit.applied());
+            if let Some(geometry) = surface_fit.observe(now, reading) {
+                if let Some(map) = RENDER.lock().unwrap().as_mut() {
+                    map.platform = MacScreen {
+                        win_w: geometry.frame.width,
+                        win_h: geometry.frame.height,
+                        backing_scale: geometry.scale,
+                    };
+                }
+                dispatch_fit_window(win_ptr, layer_ptr, geometry);
+                tracing::debug!(
+                    width = geometry.frame.width,
+                    height = geometry.frame.height,
+                    scale = geometry.scale,
+                    "macOS overlay refitted to the reconfigured main display"
+                );
+                refit = true;
+            }
+        }
 
         // ── Phase 1: drain + tick all cursors (one lock acquisition) ──────
         // `pinned_wid` follows the most-recently-updated cursor: a single
@@ -831,7 +943,7 @@ fn render_loop(
         // Render only when a command arrived or the previous/next tick can
         // change pixels. A final frame is emitted as animations/fades finish so
         // the layer is left in the completed/cleared state before blocking.
-        if had_msg || hover_changed || frame_tick_needed || next_frame_tick_needed {
+        if had_msg || refit || hover_changed || frame_tick_needed || next_frame_tick_needed {
             let pixmap = {
                 let guard = RENDER.lock().unwrap();
                 if let Some(map) = guard.as_ref() {
@@ -847,20 +959,7 @@ fn render_loop(
                         .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
                     let backing_scale_f32 = scale as f32;
                     note_overlay_frame(map.cursors.values().any(cursor_may_paint));
-                    for (_k, rs) in &map.cursors {
-                        let focus = rs.focus_rect.map(|rect| FocusRect {
-                            rect,
-                            t: rs.focus_rect_t,
-                        });
-                        cursor_overlay::paint_cursor(
-                            &mut pm,
-                            &rs.core,
-                            0.0,
-                            0.0, // macOS uses screen-local coords (no origin offset)
-                            focus,
-                            backing_scale_f32,
-                        );
-                    }
+                    paint_main_screen(&mut pm, map, backing_scale_f32);
                     pm
                 } else {
                     break;
@@ -883,6 +982,71 @@ fn render_loop(
     }
 }
 
+/// The main display's frame in global top-left points and its backing scale.
+/// `CGDisplayBounds` is cheap and thread-safe; the scale is re-read only when
+/// the frame changed, keeping the AppKit-reported scale otherwise.
+fn main_display_geometry(applied: Option<SurfaceGeometry>) -> Option<SurfaceGeometry> {
+    use core_graphics::display::CGDisplay;
+
+    let main = CGDisplay::main();
+    let display_id = main.id;
+    let bounds = main.bounds();
+    let frame = ScreenFrame::new(
+        bounds.origin.x,
+        bounds.origin.y,
+        bounds.size.width,
+        bounds.size.height,
+    );
+    let scale = match applied {
+        Some(applied) if applied.frame == frame => applied.scale,
+        _ => crate::tools::get_screen_size::get_backing_scale(display_id),
+    };
+    Some(SurfaceGeometry::new(frame, scale))
+}
+
+/// Resize the overlay window to cover the main display at `geometry` and
+/// match the layer's backing scale. AppKit keeps a borderless window's frame
+/// across a display reconfiguration, so without this a taller display leaves
+/// the window short of its top edge and every cursor is drawn lower by the
+/// difference (and clipped past the old width).
+fn dispatch_fit_window(win_ptr: usize, layer_ptr: usize, geometry: SurfaceGeometry) {
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    use std::ffi::c_void;
+
+    #[link(name = "System", kind = "framework")]
+    extern "C" {
+        static _dispatch_main_q: u8;
+        fn dispatch_async_f(
+            queue: *const c_void,
+            context: *mut c_void,
+            work: unsafe extern "C" fn(*mut c_void),
+        );
+    }
+
+    unsafe extern "C" fn fit_cb(ctx: *mut c_void) {
+        let (win_ptr, layer_ptr, width, height, scale): (usize, usize, f64, f64, f64) =
+            *Box::from_raw(ctx as *mut (usize, usize, f64, f64, f64));
+        let win = win_ptr as *mut objc2::runtime::AnyObject;
+        let layer = layer_ptr as *mut objc2::runtime::AnyObject;
+        // The main display's Cocoa frame always starts at the global origin.
+        let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(width, height));
+        let _: () = objc2::msg_send![win, setFrame: frame display: true];
+        let _: () = objc2::msg_send![layer, setContentsScale: scale];
+    }
+
+    let payload = Box::new((
+        win_ptr,
+        layer_ptr,
+        geometry.frame.width,
+        geometry.frame.height,
+        geometry.scale,
+    ));
+    unsafe {
+        let main_queue = &raw const _dispatch_main_q as *const c_void;
+        dispatch_async_f(main_queue, Box::into_raw(payload) as *mut c_void, fit_cb);
+    }
+}
+
 fn hardware_cursor_position() -> Option<(f64, f64)> {
     use core_graphics::{
         event::CGEvent,
@@ -898,8 +1062,7 @@ fn hardware_cursor_position() -> Option<(f64, f64)> {
 fn cursor_is_externally_visible(state: &RenderState) -> bool {
     state.core.cfg.enabled
         && state.core.visible
-        && state.core.pos.0 > -50.0
-        && state.core.pos.1 > -50.0
+        && on_main_screen(state.core.pos)
         && state.core.idle_alpha >= 0.004
 }
 
@@ -1201,12 +1364,72 @@ fn pixmap_to_cgimage(pixmap: &tiny_skia::Pixmap) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A human-origin session (a Cua Spaces viewer's relayed input) never
+    /// reaches the renderer; an agent's session does. The rule itself lives
+    /// in `cua_driver_core::agent_cursor`.
+    #[test]
+    fn human_origin_sessions_draw_no_agent_cursor() {
+        use cua_driver_core::agent_cursor::{set_input_origin, InputOrigin};
+        let human = "overlay-test-human-origin-session";
+        assert!(draws_cursor(human));
+        set_input_origin(human, InputOrigin::Human);
+        assert!(!draws_cursor(human));
+        assert!(draws_cursor("overlay-test-agent-session"));
+        assert!(!draws_cursor(""));
+        set_input_origin(human, InputOrigin::Agent);
+        assert!(draws_cursor(human));
+    }
     use std::collections::HashMap;
 
     // The keyed lifecycle, sentinel seed, and shared frame-tick predicate are
     // covered once in `cursor_overlay::render_map`. These tests cover only the
     // macOS adapter: window ordering, external visibility, and the macOS
     // frame-tick terms layered on the shared predicate.
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap()
+    }
+
+    /// cua-spacesd `serve` initialized the overlay (a GUI session) but never
+    /// ran its AppKit loop, and the first animated click waited forever for
+    /// an arrival only the render loop fires, wedging the driver.
+    #[test]
+    fn animate_without_a_render_loop_never_waits() {
+        init(CursorConfig {
+            enabled: true,
+            ..CursorConfig::default()
+        });
+        assert!(!render_loop_running());
+        let done = runtime().block_on(async {
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                animate_cursor_to("session-no-loop".to_owned(), 240.0, 180.0),
+            )
+            .await
+        });
+        assert!(
+            done.is_ok(),
+            "animate_cursor_to waited for a render loop that is not running"
+        );
+    }
+
+    #[test]
+    fn arrival_wait_is_bounded_and_skipped_without_a_loop() {
+        let rt = runtime();
+        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        assert!(!rt.block_on(wait_for_arrival(rx, false, Duration::from_secs(60))));
+        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let started = Instant::now();
+        assert!(!rt.block_on(wait_for_arrival(rx, true, Duration::from_millis(50))));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        tx.send(()).unwrap();
+        assert!(rt.block_on(wait_for_arrival(rx, true, Duration::from_secs(60))));
+    }
 
     fn window(window_id: u32, pid: i32, z_index: usize) -> crate::windows::WindowInfo {
         crate::windows::WindowInfo {
@@ -1280,6 +1503,27 @@ mod tests {
         assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
 
         map.cursors.get_mut("sessA").unwrap().core.cfg.enabled = false;
+        assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
+    }
+
+    #[test]
+    fn a_cursor_left_of_the_main_screen_paints_nothing_there() {
+        let mut map = empty_map();
+        let state = placed(&mut map, "sessA");
+        state.core.session_label = Some("A".to_owned());
+        let painted = |map: &RenderMap| {
+            let mut pm = tiny_skia::Pixmap::new(100, 100).unwrap();
+            paint_main_screen(&mut pm, map, 1.0);
+            pm.pixels().iter().any(|pixel| pixel.alpha() > 0)
+        };
+        assert!(painted(&map));
+        assert!(cursor_may_paint(&map.cursors["sessA"]));
+
+        // Placed on a display left of the main screen: the label would clamp
+        // its badge into the main-screen pixmap if this cursor were painted.
+        map.cursors.get_mut("sessA").unwrap().core.pos = (-200.0, 30.0);
+        assert!(!painted(&map));
+        assert!(!cursor_may_paint(&map.cursors["sessA"]));
         assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
     }
 

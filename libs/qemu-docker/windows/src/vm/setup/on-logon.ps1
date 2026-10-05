@@ -1,2 +1,2 @@
-Write-Host "Starting Cua Computer Server task..."
-Start-ScheduledTask -TaskName "Cua-Computer-Server"
+Write-Host "Starting cua-spacesd task..."
+Start-ScheduledTask -TaskName "Cua-Spacesd"

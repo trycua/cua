@@ -1,0 +1,28 @@
+[package]
+# The app core (libs/cua/crates/cua-spaces-app-core) for the webview: one
+# `call(method, args)` export over its JSON dispatcher. Its own workspace so
+# wasm-bindgen can be pinned to the installed CLI without touching
+# libs/cua's lockfile.
+name = "cua-spaces-core-wasm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "FSL-1.1-MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+cua-spaces-app-core = { path = "../../../libs/cua/crates/cua-spaces-app-core", default-features = false }
+wasm-bindgen = "=0.2.126"
+js-sys = "0.3"
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[workspace]

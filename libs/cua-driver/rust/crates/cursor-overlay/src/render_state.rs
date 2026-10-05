@@ -38,10 +38,22 @@ use crate::{
     CompiledTheme, CursorAction, CursorConfig, CursorVisualState, DeliveryModifier, MotionConfig,
     OverlayCommand, PathPlanner, PathState, PlannedPath, Spring, TargetModifier,
 };
+use cua_driver_core::agent_cursor::AgentCursorVisibility;
 use std::sync::Arc;
 
 pub const SESSION_BADGE_HOLD_SECS: f64 = 2.0;
 pub const SESSION_BADGE_FADE_SECS: f64 = 0.4;
+
+/// Position of a cursor that has never been placed. It lies far outside any
+/// compositor layout: layouts reach negative coordinates when a monitor sits
+/// left of or above the primary one, so a small negative sentinel (the old
+/// `(-200, -200)`) is indistinguishable from a real position there.
+pub const UNPLACED_POS: (f64, f64) = (-1.0e9, -1.0e9);
+
+/// Whether `pos` is a real position rather than [`UNPLACED_POS`].
+pub fn is_placed(pos: (f64, f64)) -> bool {
+    pos.0 > -1.0e8
+}
 
 /// Platform-agnostic render state shared by macOS / Windows / Linux overlays.
 ///
@@ -70,6 +82,10 @@ pub struct RenderStateCore {
     pub pressed: bool,
     /// Semantic action and animation playback state.
     pub visual: CursorVisualState,
+    /// The current visual action came from a semantic `BeginAction` cue
+    /// (not the display action a move, snap or click plays after itself).
+    /// Only such a cue holds the idle clock while it lasts.
+    semantic_cue: bool,
     /// Decoded installed or embedded theme.
     pub theme: Option<Arc<CompiledTheme>>,
     /// Non-fatal launch-time fallback reason, if an installed theme failed.
@@ -129,9 +145,10 @@ impl RenderStateCore {
             cfg,
             motion,
             visual,
+            semantic_cue: false,
             theme,
             theme_fallback,
-            pos: (-200.0, -200.0),
+            pos: UNPLACED_POS,
             heading: std::f64::consts::FRAC_PI_4,
             path: None,
             dist: 0.0,
@@ -152,10 +169,10 @@ impl RenderStateCore {
         }
     }
 
-    /// Whether the cursor currently paints pixels: user-visible, placed on
-    /// screen (not the `(-200, -200)` sentinel), and not fully idle-faded.
+    /// Whether the cursor currently paints pixels: user-visible, placed
+    /// (not [`UNPLACED_POS`]), and not fully idle-faded.
     pub fn is_revealed(&self) -> bool {
-        self.visible && self.pos.0 >= -100.0 && self.idle_alpha >= 0.004
+        self.visible && is_placed(self.pos) && self.idle_alpha >= 0.004
     }
 
     /// Whether a revealed cursor keeps changing pixels while it rests.
@@ -196,10 +213,8 @@ impl RenderStateCore {
     /// `motion.idle_hide_ms` of inactivity) is currently animating.
     pub fn idle_fade_in_progress(&self) -> bool {
         self.motion.idle_hide_ms > 0.0
-            && self.visible
-            && self.pos.0 >= -100.0
+            && self.is_revealed()
             && self.idle_secs >= self.motion.idle_hide_ms / 1000.0
-            && self.idle_alpha >= 0.004
     }
 
     /// The shared frame-tick predicate: true while the next tick can change
@@ -225,7 +240,7 @@ impl RenderStateCore {
     /// the fade has already started.
     pub fn idle_fade_wait(&self) -> Option<std::time::Duration> {
         if !self.visible
-            || self.pos.0 < -100.0
+            || !is_placed(self.pos)
             || self.motion.idle_hide_ms <= 0.0
             || self.path.is_some()
             || self.spring.is_some()
@@ -594,26 +609,25 @@ impl RenderStateCore {
             self.session_badge_secs = (self.session_badge_secs + dt)
                 .min(SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS);
         }
+        // The idle clock and fade curve are the shared agent cursor contract
+        // (`cua_driver_core::agent_cursor`); this only feeds it frame deltas.
         let idle_hide_ms = self.motion.idle_hide_ms;
         if idle_hide_ms > 0.0 {
+            // An active semantic cue (a keyboard-first press shows the
+            // cursor before any motion) and a held button keep it visible
+            // like motion does. The display action a move, snap or click
+            // plays after itself does not: that motion already restarted
+            // the clock, and the timeout counts from it.
             let moving = self.path.is_some()
                 || self.spring.is_some()
                 || self.click_t.is_some()
-                || self.visual.resolved_action != CursorAction::Idle;
-            if moving {
-                self.idle_secs = 0.0;
-                self.idle_alpha = 1.0;
-            } else {
-                self.idle_secs += dt;
-                let fade_start = idle_hide_ms / 1000.0;
-                let fade_end = fade_start + 0.18; // 180ms fade like Windows ref
-                if self.idle_secs > fade_end {
-                    self.idle_alpha = 0.0;
-                } else if self.idle_secs > fade_start {
-                    let t = (self.idle_secs - fade_start) / 0.18;
-                    self.idle_alpha = 1.0 - t.clamp(0.0, 1.0);
-                }
-            }
+                || self.pressed
+                || (self.semantic_cue && self.visual.resolved_action != CursorAction::Idle);
+            let mut idle = AgentCursorVisibility::new();
+            idle.set_idle_secs(self.idle_secs);
+            idle.tick(dt, moving);
+            self.idle_secs = idle.idle_secs();
+            self.idle_alpha = idle.alpha(idle_hide_ms);
         } else {
             self.idle_alpha = 1.0;
         }
@@ -626,7 +640,7 @@ impl RenderStateCore {
     ///
     /// `move_to_snap_sentinel` controls macOS-only behaviour: when `true`,
     /// `MoveTo` snaps `self.pos` to the offset target if the cursor is
-    /// still at the off-screen sentinel (`pos.0 < -50.0`).  Windows/Linux
+    /// still at [`UNPLACED_POS`].  Windows/Linux
     /// pass `false` here.
     ///
     /// `click_pulse_sentinel_only` likewise controls macOS-only behaviour:
@@ -655,7 +669,7 @@ impl RenderStateCore {
 
                 // macOS-only: if the cursor is still at the initial off-screen
                 // sentinel, snap it to the offset target so the path starts on-screen.
-                if move_to_snap_sentinel && self.pos.0 < -50.0 {
+                if move_to_snap_sentinel && !is_placed(self.pos) {
                     self.pos = (tx, ty);
                 }
                 let (x0, y0) = self.pos;
@@ -674,6 +688,7 @@ impl RenderStateCore {
                     let delivery = self.visual.delivery;
                     let target = self.visual.target;
                     self.visual.begin(CursorAction::Navigate, delivery, target);
+                    self.semantic_cue = false;
                 }
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
@@ -703,6 +718,7 @@ impl RenderStateCore {
                     let delivery = self.visual.delivery;
                     let target = self.visual.target;
                     self.visual.begin(CursorAction::Navigate, delivery, target);
+                    self.semantic_cue = false;
                 }
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
@@ -717,7 +733,7 @@ impl RenderStateCore {
                 // that the cursor stays where the animation landed. Windows
                 // and Linux always snap. Both anchor the click point so the
                 // hotspot stays on it instead of jumping by the anchor offset.
-                if !click_pulse_sentinel_only || self.pos.0 < -50.0 {
+                if !click_pulse_sentinel_only || !is_placed(self.pos) {
                     self.pos = crate::anchor_for_pointer(x, y, self.heading);
                 }
                 self.click_t = Some(0.0);
@@ -728,6 +744,7 @@ impl RenderStateCore {
                     let delivery = self.visual.delivery;
                     let target = self.visual.target;
                     self.visual.begin(CursorAction::Click, delivery, target);
+                    self.semantic_cue = false;
                 }
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
@@ -742,6 +759,7 @@ impl RenderStateCore {
                     let delivery = self.visual.delivery;
                     let target = self.visual.target;
                     self.visual.begin(CursorAction::Drag, delivery, target);
+                    self.semantic_cue = false;
                 } else {
                     self.visual.end(CursorAction::Drag);
                 }
@@ -771,6 +789,7 @@ impl RenderStateCore {
                 target,
             } => {
                 self.visual.begin(action, delivery, target);
+                self.semantic_cue = true;
                 // A semantic cue re-reveals an idle-faded cursor that already
                 // has a position; `tick_idle` keeps it visible until the cue ends.
                 self.idle_secs = 0.0;
@@ -894,11 +913,7 @@ pub fn paint_cursor(
     focus_rect: Option<FocusRect>,
     backing_scale: f32,
 ) {
-    if !core.visible
-        || core.pinned_target_off_workspace
-        || core.pos.0 < -100.0
-        || core.idle_alpha < 0.004
-    {
+    if !core.is_revealed() || core.pinned_target_off_workspace {
         return;
     }
 
@@ -1475,6 +1490,106 @@ mod backing_scale_tests {
                 "3× visible bounds should triple: {one}, {three}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod agent_idle_tests {
+    use super::*;
+    use crate::CursorConfig;
+    use cua_driver_core::agent_cursor::{AGENT_CURSOR_FADE, AGENT_CURSOR_IDLE_TIMEOUT};
+
+    fn placed() -> RenderStateCore {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        assert!(core.apply_command_base(
+            OverlayCommand::SnapTo {
+                x: 40.0,
+                y: 60.0,
+                heading_radians: None,
+            },
+            false,
+            false,
+        ));
+        core
+    }
+
+    /// Every platform renderer ticks this core, so this is the overlay side of
+    /// the shared idle contract: visible for the presence agent timeout, then
+    /// gone within one fade.
+    #[test]
+    fn default_cursor_fades_at_the_shared_agent_idle_timeout() {
+        let mut core = placed();
+        assert_eq!(
+            core.motion.idle_hide_ms,
+            AGENT_CURSOR_IDLE_TIMEOUT.as_millis() as f64
+        );
+        let idle = AGENT_CURSOR_IDLE_TIMEOUT.as_secs_f64();
+        let step = 0.05;
+        let mut t = 0.0;
+        while t + step < idle - 0.1 {
+            core.tick_motion(step);
+            t += step;
+        }
+        assert!(core.is_revealed(), "still visible at {t}s");
+        while t < idle + AGENT_CURSOR_FADE.as_secs_f64() + step {
+            core.tick_motion(step);
+            t += step;
+        }
+        assert!(!core.is_revealed(), "hidden after the fade at {t}s");
+    }
+
+    /// A held button is activity for as long as it is held; the timeout
+    /// then counts from the release, like any other motion.
+    #[test]
+    fn a_held_button_keeps_the_cursor_until_release() {
+        let mut core = placed();
+        core.apply_command_base(OverlayCommand::SetPressed(true), false, false);
+        let idle = AGENT_CURSOR_IDLE_TIMEOUT.as_secs_f64();
+        let step = 0.05;
+        let mut t = 0.0;
+        while t < 2.0 * idle {
+            core.tick_motion(step);
+            t += step;
+        }
+        assert!(core.is_revealed(), "held for {t}s and still visible");
+        core.apply_command_base(OverlayCommand::SetPressed(false), false, false);
+        let mut since = 0.0;
+        while since + step < idle - 0.1 {
+            core.tick_motion(step);
+            since += step;
+        }
+        assert!(core.is_revealed(), "visible {since}s after the release");
+        while since < idle + AGENT_CURSOR_FADE.as_secs_f64() + step {
+            core.tick_motion(step);
+            since += step;
+        }
+        assert!(!core.is_revealed(), "hidden {since}s after the release");
+    }
+
+    #[test]
+    fn one_cursor_idling_out_leaves_an_active_one_visible() {
+        let mut idle = placed();
+        let mut active = placed();
+        // 20 Hz for the idle timeout plus a second; the active cursor acts
+        // every 5 s.
+        let ticks = (AGENT_CURSOR_IDLE_TIMEOUT.as_secs() + 1) * 20;
+        for tick in 0..ticks {
+            idle.tick_motion(0.05);
+            active.tick_motion(0.05);
+            if tick % 100 == 0 {
+                active.apply_command_base(
+                    OverlayCommand::SnapTo {
+                        x: 50.0 + tick as f64,
+                        y: 60.0,
+                        heading_radians: None,
+                    },
+                    false,
+                    false,
+                );
+            }
+        }
+        assert!(!idle.is_revealed());
+        assert!(active.is_revealed());
     }
 }
 

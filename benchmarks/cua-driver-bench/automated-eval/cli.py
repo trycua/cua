@@ -35,6 +35,13 @@ def _executable(value: str) -> Path:
     return Path(resolved).resolve()
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be at least 1")
+    return parsed
+
+
 def build_parser(*, fleet: bool = False) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="compare_drivers fleet" if fleet else "compare_drivers",
@@ -137,6 +144,30 @@ def build_parser(*, fleet: bool = False) -> argparse.ArgumentParser:
         help="maximum seconds allowed for each trial (default: 1800)",
     )
     parser.add_argument(
+        "--max-parallel-tasks",
+        type=_positive_int,
+        default=2 if fleet else 1,
+        help=(
+            "maximum task shards to run concurrently (default: 2; use 1 for serial)"
+            if fleet
+            else (
+                "maximum local task shards to run concurrently; parallel runs "
+                "require one --local-display for each active shard (default: 1)"
+            )
+        ),
+    )
+    if not fleet:
+        parser.add_argument(
+            "--local-display",
+            action="append",
+            dest="local_displays",
+            metavar="DISPLAY",
+            help=(
+                "isolated Linux/X11 display for a local task shard; repeat the "
+                "option for parallel local runs"
+            ),
+        )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help=(
@@ -197,6 +228,8 @@ def _config(arguments: argparse.Namespace, *, fleet: bool = False) -> Comparison
         model=arguments.model,
         reasoning_effort=arguments.reasoning_effort,
         timeout_seconds=arguments.timeout,
+        max_parallel_tasks=arguments.max_parallel_tasks,
+        local_displays=tuple(getattr(arguments, "local_displays", None) or ()),
     )
 
 

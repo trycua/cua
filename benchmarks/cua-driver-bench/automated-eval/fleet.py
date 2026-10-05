@@ -6,22 +6,32 @@ import asyncio
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import tarfile
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, fields, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from compare_drivers import (
     ComparisonConfig,
+    TaskShard,
+    TaskShardResult,
+    TrialMetrics,
+    build_comparisons,
+    build_task_shards,
     discover_driver_releases,
+    failed_trial_metrics,
     load_launch_descriptor,
+    render_markdown,
     require_release,
+    schedule_task_shards_async,
     task_path,
 )
+from reporting import write_html_bundle
 
 
 REMOTE_WORKSPACE = "/root/cua"
@@ -218,6 +228,8 @@ def _application_provision_command(config: ComparisonConfig) -> str | None:
             (
                 "apt_update_once",
                 "apt-get install -y --no-install-recommends flatpak dbus-x11",
+                "apt-get clean",
+                "rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*",
                 "flatpak remote-add --system --if-not-exists flathub "
                 "https://flathub.org/repo/flathub.flatpakrepo",
             )
@@ -271,6 +283,8 @@ def _remote_cli_arguments(config: ComparisonConfig, remote_output: str) -> list[
         REMOTE_CODEX_HOME,
         "--output",
         remote_output,
+        "--max-parallel-tasks",
+        "1",
     ]
     if config.candidate is not None and config.candidate != config.baseline:
         arguments.extend(("--candidate", config.candidate))
@@ -328,11 +342,24 @@ async def _run_checked(worker: Any, command: str, label: str, timeout: int) -> A
     return result
 
 
-async def _get_or_create_pool(cua_sandbox: Any, pool_name: str) -> Any:
+def _pool_replicas(pool: Any) -> int:
+    spec = pool.resource.spec
+    value = spec.get("replicas", 0) if isinstance(spec, dict) else spec.replicas
+    return value if isinstance(value, int) else 0
+
+
+async def _get_or_create_pool(cua_sandbox: Any, pool_name: str, required_replicas: int) -> Any:
+    pool = None
     try:
         pool = await cua_sandbox.Pool.get(pool_name)
-        print(f"[fleet] using existing pool {pool_name}")
-        return pool
+        replicas = _pool_replicas(pool)
+        if replicas >= required_replicas:
+            print(f"[fleet] using existing pool {pool_name} with {replicas} replicas")
+            return pool
+        print(
+            f"[fleet] increasing pool {pool_name} from {replicas} to "
+            f"{required_replicas} replicas..."
+        )
     except Exception:
         print(f"[fleet] pool {pool_name} is not accessible; creating it...")
     try:
@@ -340,7 +367,7 @@ async def _get_or_create_pool(cua_sandbox: Any, pool_name: str) -> Any:
         return await cua_sandbox.Pool.apply(
             image,
             name=pool_name,
-            replicas=1,
+            replicas=required_replicas,
             cpu=4,
             memory_mb=8192,
             services={"server": 8000},
@@ -573,8 +600,312 @@ async def _download_results(
     return json_path, markdown_path
 
 
+async def _finalize_worker(worker: Any, secret_cleanup_required: bool) -> tuple[str, ...]:
+    errors: list[str] = []
+    if secret_cleanup_required:
+        try:
+            await _run_checked(worker, f"rm -f {REMOTE_ENV}", "secret cleanup", 30)
+        except Exception as cleanup_error:
+            errors.append(f"secret cleanup failed: {cleanup_error}")
+    try:
+        await _retry_transport(lambda: worker.close(), "worker release")
+    except Exception as release_error:
+        errors.append(f"worker release failed: {release_error}")
+    return tuple(errors)
+
+
+async def _run_fleet_task_shard(
+    pool: Any,
+    config: ComparisonConfig,
+    shard: TaskShard,
+    *,
+    stamp: str,
+    repo_archive: Path,
+    driver_archive: Path,
+    task_archive: Path,
+    codex_version: str,
+    model_key: str,
+    model_base_url: str,
+) -> Path:
+    shard_config = replace(
+        config,
+        tasks=(shard.task,),
+        output=config.output / "shards" / shard.task,
+        max_parallel_tasks=1,
+    )
+    claim_name = f"cdb-{stamp.lower()}-{shard.task.lower()}"
+    remote_output = f"{REMOTE_REPO}/artifacts/automated-eval/{stamp}/{shard.task.lower()}"
+    trial_count = len(shard.releases)
+    benchmark_timeout = int(config.timeout_seconds * trial_count + 600)
+    keep_alive_minutes = benchmark_timeout / 60 + 20
+    worker = None
+    active_error: BaseException | None = None
+    secret_cleanup_required = False
+    prefix = f"[fleet:{shard.task}]"
+    print(f"{prefix} claiming worker...")
+    try:
+        worker = await _claim_worker(pool, claim_name)
+        await worker.keep_alive(minutes=keep_alive_minutes)
+        worker_id = worker.claim_name or worker.name or claim_name
+        print(f"{prefix} claimed worker {worker_id}")
+
+        print(f"{prefix} checking Linux/X11...")
+        preflight = await _run_checked(
+            worker,
+            _preflight_command(),
+            "Linux/X11 preflight",
+            60,
+        )
+        print(f"{prefix} {preflight.stdout.strip().splitlines()[0]}")
+
+        print(f"{prefix} uploading repository, task, and drivers...")
+        await _retry_transport(
+            lambda: worker.files.upload(repo_archive, REMOTE_REPO_ARCHIVE),
+            "repository archive upload",
+        )
+        await _retry_transport(
+            lambda: worker.files.upload(driver_archive, REMOTE_DRIVER_ARCHIVE),
+            "driver archive upload",
+        )
+        await _retry_transport(
+            lambda: worker.files.upload(task_archive, REMOTE_TASKS_ARCHIVE),
+            "task archive upload",
+        )
+        await _run_checked(
+            worker,
+            f"rm -rf {REMOTE_WORKSPACE} {REMOTE_TASKS_ROOT}; mkdir -p /root; "
+            f"tar -xzf {REMOTE_REPO_ARCHIVE} -C /root; "
+            f"tar -xzf {REMOTE_DRIVER_ARCHIVE} -C {REMOTE_REPO}; "
+            f"mkdir -p {REMOTE_TASKS_ROOT}; "
+            f"tar -xzf {REMOTE_TASKS_ARCHIVE} -C {REMOTE_TASKS_ROOT}; "
+            f"rm -f {REMOTE_REPO_ARCHIVE} {REMOTE_DRIVER_ARCHIVE} "
+            f"{REMOTE_TASKS_ARCHIVE}",
+            "repository staging",
+            180,
+        )
+
+        applications = _required_fleet_applications(shard_config)
+        provision_command = _application_provision_command(shard_config)
+        if provision_command is not None:
+            print(f"{prefix} provisioning task applications: " + ", ".join(applications))
+            provision = await _run_background_command(
+                worker,
+                provision_command,
+                3600,
+                label="task application provisioning",
+                stdout_path=REMOTE_PROVISION_STDOUT,
+                stderr_path=REMOTE_PROVISION_STDERR,
+                exit_path=REMOTE_PROVISION_EXIT,
+            )
+            if provision.returncode != 0:
+                raise _command_error("task application provisioning", provision)
+
+        print(f"{prefix} preparing agent and task dependencies...")
+        provider_config = "\n".join(
+            (
+                'model_provider = "cdb-fleet"',
+                "",
+                '[model_providers."cdb-fleet"]',
+                'name = "CDB Fleet LiteLLM"',
+                f"base_url = {json.dumps(model_base_url)}",
+                'env_key = "OPENAI_API_KEY"',
+                'wire_api = "responses"',
+                "",
+            )
+        )
+        await _run_checked(
+            worker,
+            f"mkdir -p {REMOTE_CODEX_HOME}",
+            "agent configuration staging",
+            30,
+        )
+        await _retry_transport(
+            lambda: worker.files.write_text(f"{REMOTE_CODEX_HOME}/config.toml", provider_config),
+            "agent configuration upload",
+        )
+        await _run_checked(
+            worker,
+            _bootstrap_command(shard_config, codex_version),
+            "worker bootstrap",
+            1200,
+        )
+
+        print(f"{prefix} verifying selected Cua Driver releases...")
+        await _run_checked(
+            worker,
+            _driver_check_command(shard_config),
+            "Cua Driver verification",
+            180,
+        )
+
+        secret_cleanup_required = True
+        await _retry_transport(
+            lambda: worker.files.write_text(
+                REMOTE_ENV,
+                f"OPENAI_API_KEY={shlex.quote(model_key)}\n"
+                f"OPENAI_BASE_URL={shlex.quote(model_base_url)}\n",
+            ),
+            "model environment upload",
+        )
+        await _run_checked(worker, f"chmod 600 {REMOTE_ENV}", "secret staging", 30)
+        await _run_checked(
+            worker,
+            _model_endpoint_preflight_command(),
+            "model endpoint preflight",
+            60,
+        )
+
+        remote_arguments = _remote_cli_arguments(shard_config, remote_output)
+        benchmark_command = (
+            f"set -a; . {REMOTE_ENV}; set +a; export DISPLAY=:1; "
+            f"cd {REMOTE_REPO}; {shlex.join(remote_arguments)}"
+        )
+        print(f"{prefix} running: " + shlex.join(remote_arguments))
+        benchmark = await _run_background_benchmark(worker, benchmark_command, benchmark_timeout)
+
+        await _run_checked(worker, f"rm -f {REMOTE_ENV}", "secret cleanup", 30)
+        secret_cleanup_required = False
+
+        output_exists = await worker.files.is_dir(remote_output)
+        if not output_exists:
+            raise _command_error("benchmark command", benchmark)
+        await _run_checked(
+            worker,
+            f"cp {REMOTE_BENCHMARK_STDOUT} {shlex.quote(remote_output)}/fleet.stdout; "
+            f"cp {REMOTE_BENCHMARK_STDERR} {shlex.quote(remote_output)}/fleet.stderr",
+            "benchmark log staging",
+            30,
+        )
+        print(f"{prefix} downloading reports and raw artifacts...")
+        await _download_results(worker, remote_output, shard_config.output)
+        if benchmark.returncode != 0:
+            raise _command_error("benchmark command", benchmark)
+        print(f"{prefix} benchmark completed")
+        return shard_config.output
+    except BaseException as error:
+        active_error = error
+        raise
+    finally:
+        finalization_errors: tuple[str, ...] = ()
+        if worker is not None:
+            print(f"{prefix} releasing worker...")
+            finalization_errors = await _finalize_worker(worker, secret_cleanup_required)
+        if finalization_errors:
+            detail = "; ".join(finalization_errors)
+            if active_error is not None:
+                raise RuntimeError(f"{active_error}; {detail}") from active_error
+            raise RuntimeError(detail)
+
+
+def _trial_from_report(value: dict[str, Any]) -> TrialMetrics:
+    names = {field.name for field in fields(TrialMetrics)}
+    return TrialMetrics(**{name: value[name] for name in names if name in value})
+
+
+def _copy_shard_directory(shard_output: Path, output: Path, name: str) -> None:
+    source = shard_output / name
+    if not source.is_dir():
+        return
+    destination = output / name
+    destination.mkdir(parents=True, exist_ok=True)
+    for item in sorted(source.iterdir()):
+        target = destination / item.name
+        if target.exists():
+            raise RuntimeError(f"duplicate shard artifact: {name}/{item.name}")
+        if item.is_dir():
+            shutil.copytree(item, target)
+        else:
+            shutil.copy2(item, target)
+
+
+def _aggregate_shard_results(
+    config: ComparisonConfig,
+    results: tuple[TaskShardResult[Path], ...],
+    stamp: str,
+) -> tuple[Path, Path]:
+    config.output.mkdir(parents=True, exist_ok=True)
+    trials: list[TrialMetrics] = []
+    template: dict[str, Any] | None = None
+    failures: list[dict[str, str]] = []
+    candidate_name = config.candidate if config.candidate != config.baseline else None
+
+    for result in results:
+        shard_output = config.output / "shards" / result.shard.task
+        report_path = shard_output / "comparison.json"
+        if report_path.is_file():
+            try:
+                shard_report = json.loads(report_path.read_text(encoding="utf-8"))
+                if template is None:
+                    template = shard_report
+                shard_trials = tuple(
+                    _trial_from_report(trial)
+                    for trial in shard_report.get("trials", [])
+                    if isinstance(trial, dict)
+                )
+                for name in ("trials", "launchers", "runtime"):
+                    _copy_shard_directory(shard_output, config.output, name)
+                trials.extend(shard_trials)
+            except Exception as error:  # noqa: BLE001 - preserve other shard reports
+                result_error = error
+            else:
+                if result.error is not None:
+                    failures.append({"task": result.shard.task, "error": str(result.error)})
+                continue
+        else:
+            result_error = result.error or RuntimeError("task shard did not return a result bundle")
+
+        failures.append({"task": result.shard.task, "error": str(result_error)})
+        for release in result.shard.releases:
+            trials.append(
+                failed_trial_metrics(
+                    result.shard.task,
+                    release.version,
+                    f"{result.shard.task}-{release.version}-{stamp}",
+                    result_error,
+                )
+            )
+
+    if template is None:
+        failure_path = config.output / "fleet-failures.json"
+        failure_path.write_text(
+            json.dumps(failures, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        raise RuntimeError("all Fleet task shards failed before producing reports")
+
+    report = dict(template)
+    report["generated_at"] = datetime.now(UTC).isoformat()
+    report["baseline"] = config.baseline
+    report["candidate"] = candidate_name
+    report["trials"] = [asdict(trial) for trial in trials]
+    report["comparisons"] = build_comparisons(trials, config.baseline, candidate_name)
+    report["execution"] = {
+        "backend": "fleet",
+        "task_shards": [result.shard.task for result in results],
+        "max_parallel_tasks": config.max_parallel_tasks,
+        "complete": not failures,
+        "infrastructure_failures": failures,
+    }
+
+    json_path = config.output / "comparison.json"
+    markdown_path = config.output / "comparison.md"
+    write_html_bundle(report, config.output)
+    json_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    markdown = render_markdown(report)
+    markdown_path.write_text(markdown, encoding="utf-8", newline="\n")
+    (config.output / "report" / "comparison.md").write_text(
+        markdown, encoding="utf-8", newline="\n"
+    )
+    return json_path, markdown_path
+
+
 async def run_on_fleet(config: ComparisonConfig) -> tuple[Path, Path]:
-    """Claim one Fleet worker, run the existing CLI, and download its output."""
+    """Run task shards on isolated Fleet workers and aggregate their output."""
     if config.platform != "linux":
         raise ValueError("Fleet evaluation currently supports only Linux/X11")
     if config.output.exists():
@@ -606,185 +937,54 @@ async def run_on_fleet(config: ComparisonConfig) -> tuple[Path, Path]:
         fleet_base_url=fleet_base_url,
     )
 
+    releases = discover_driver_releases(config.drivers_root, "linux")
+    selected_releases = tuple(
+        require_release(releases, version) for version in _selected_versions(config)
+    )
+    shards = build_task_shards(config.tasks, selected_releases)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    claim_name = f"cdb-{stamp.lower()}"
-    remote_output = f"{REMOTE_REPO}/artifacts/automated-eval/{stamp}"
     codex_version = _codex_version(config.codex)
-    trial_count = len(config.tasks) * len(_selected_versions(config))
-    benchmark_timeout = int(config.timeout_seconds * trial_count + 600)
-    keep_alive_minutes = benchmark_timeout / 60 + 20
 
-    worker = None
-    active_error: BaseException | None = None
-    secret_written = False
     with tempfile.TemporaryDirectory(prefix="cdb-fleet-") as temporary:
         temporary_root = Path(temporary)
         repo_archive = temporary_root / "repo.tar.gz"
         driver_archive = temporary_root / "drivers.tar.gz"
-        task_archive = temporary_root / "tasks.tar.gz"
         _create_repo_archive(config.repo_root, repo_archive)
         _create_driver_archive(config, driver_archive)
-        _create_task_archive(config, task_archive)
+        task_archives: dict[str, Path] = {}
+        for shard in shards:
+            task_archive = temporary_root / f"{shard.task.lower()}-tasks.tar.gz"
+            _create_task_archive(replace(config, tasks=(shard.task,)), task_archive)
+            task_archives[shard.task] = task_archive
 
-        print(f"[fleet] claiming one worker from {pool_name}...")
-        try:
-            pool = await _get_or_create_pool(cua_sandbox, pool_name)
-            worker = await _claim_worker(pool, claim_name)
-            await worker.keep_alive(minutes=keep_alive_minutes)
-            worker_id = worker.claim_name or worker.name or claim_name
-            print(f"[fleet] claimed worker {worker_id}")
+        required_replicas = min(config.max_parallel_tasks, len(shards))
+        pool = await _get_or_create_pool(cua_sandbox, pool_name, required_replicas)
+        print(
+            f"[fleet] running {len(shards)} task shards with up to "
+            f"{config.max_parallel_tasks} workers from {pool_name}..."
+        )
 
-            print("[fleet] checking Linux/X11...")
-            preflight = await _run_checked(
-                worker,
-                _preflight_command(),
-                "Linux/X11 preflight",
-                60,
-            )
-            print(preflight.stdout.strip().splitlines()[0])
-
-            print("[fleet] uploading repository, selected tasks, and drivers...")
-            await _retry_transport(
-                lambda: worker.files.upload(repo_archive, REMOTE_REPO_ARCHIVE),
-                "repository archive upload",
-            )
-            await _retry_transport(
-                lambda: worker.files.upload(driver_archive, REMOTE_DRIVER_ARCHIVE),
-                "driver archive upload",
-            )
-            await _retry_transport(
-                lambda: worker.files.upload(task_archive, REMOTE_TASKS_ARCHIVE),
-                "task archive upload",
-            )
-            await _run_checked(
-                worker,
-                f"rm -rf {REMOTE_WORKSPACE} {REMOTE_TASKS_ROOT}; mkdir -p /root; "
-                f"tar -xzf {REMOTE_REPO_ARCHIVE} -C /root; "
-                f"tar -xzf {REMOTE_DRIVER_ARCHIVE} -C {REMOTE_REPO}; "
-                f"mkdir -p {REMOTE_TASKS_ROOT}; "
-                f"tar -xzf {REMOTE_TASKS_ARCHIVE} -C {REMOTE_TASKS_ROOT}; "
-                f"rm -f {REMOTE_REPO_ARCHIVE} {REMOTE_DRIVER_ARCHIVE} "
-                f"{REMOTE_TASKS_ARCHIVE}",
-                "repository staging",
-                180,
+        async def run_shard(shard: TaskShard) -> Path:
+            return await _run_fleet_task_shard(
+                pool,
+                config,
+                shard,
+                stamp=stamp,
+                repo_archive=repo_archive,
+                driver_archive=driver_archive,
+                task_archive=task_archives[shard.task],
+                codex_version=codex_version,
+                model_key=model_key,
+                model_base_url=model_base_url,
             )
 
-            applications = _required_fleet_applications(config)
-            provision_command = _application_provision_command(config)
-            if provision_command is not None:
-                print("[fleet] provisioning selected task applications: " + ", ".join(applications))
-                provision = await _run_background_command(
-                    worker,
-                    provision_command,
-                    3600,
-                    label="task application provisioning",
-                    stdout_path=REMOTE_PROVISION_STDOUT,
-                    stderr_path=REMOTE_PROVISION_STDERR,
-                    exit_path=REMOTE_PROVISION_EXIT,
-                )
-                if provision.returncode != 0:
-                    raise _command_error("task application provisioning", provision)
+        results = await schedule_task_shards_async(
+            shards,
+            run_shard,
+            max_parallel_tasks=config.max_parallel_tasks,
+        )
 
-            print("[fleet] preparing Codex and task dependencies...")
-            provider_config = "\n".join(
-                (
-                    'model_provider = "cdb-fleet"',
-                    "",
-                    '[model_providers."cdb-fleet"]',
-                    'name = "CDB Fleet LiteLLM"',
-                    f"base_url = {json.dumps(model_base_url)}",
-                    'env_key = "OPENAI_API_KEY"',
-                    'wire_api = "responses"',
-                    "",
-                )
-            )
-            await _run_checked(
-                worker,
-                f"mkdir -p {REMOTE_CODEX_HOME}",
-                "Codex configuration staging",
-                30,
-            )
-            await _retry_transport(
-                lambda: worker.files.write_text(
-                    f"{REMOTE_CODEX_HOME}/config.toml", provider_config
-                ),
-                "agent configuration upload",
-            )
-            await _run_checked(
-                worker,
-                _bootstrap_command(config, codex_version),
-                "worker bootstrap",
-                1200,
-            )
-
-            print("[fleet] verifying selected Cua Driver releases...")
-            await _run_checked(
-                worker,
-                _driver_check_command(config),
-                "Cua Driver verification",
-                180,
-            )
-
-            await _retry_transport(
-                lambda: worker.files.write_text(
-                    REMOTE_ENV,
-                    f"OPENAI_API_KEY={shlex.quote(model_key)}\n"
-                    f"OPENAI_BASE_URL={shlex.quote(model_base_url)}\n",
-                ),
-                "model environment upload",
-            )
-            secret_written = True
-            await _run_checked(worker, f"chmod 600 {REMOTE_ENV}", "secret staging", 30)
-            await _run_checked(
-                worker,
-                _model_endpoint_preflight_command(),
-                "model endpoint preflight",
-                60,
-            )
-
-            remote_arguments = _remote_cli_arguments(config, remote_output)
-            benchmark_command = (
-                f"set -a; . {REMOTE_ENV}; set +a; export DISPLAY=:1; "
-                f"cd {REMOTE_REPO}; {shlex.join(remote_arguments)}"
-            )
-            print("[fleet] running: " + shlex.join(remote_arguments))
-            benchmark = await _run_background_benchmark(
-                worker, benchmark_command, benchmark_timeout
-            )
-
-            await _run_checked(worker, f"rm -f {REMOTE_ENV}", "secret cleanup", 30)
-            secret_written = False
-
-            output_exists = await worker.files.is_dir(remote_output)
-            if not output_exists:
-                raise _command_error("benchmark command", benchmark)
-            await _run_checked(
-                worker,
-                f"cp {REMOTE_BENCHMARK_STDOUT} {shlex.quote(remote_output)}/fleet.stdout; "
-                f"cp {REMOTE_BENCHMARK_STDERR} {shlex.quote(remote_output)}/fleet.stderr",
-                "benchmark log staging",
-                30,
-            )
-            print("[fleet] downloading reports and raw artifacts...")
-            json_path, markdown_path = await _download_results(worker, remote_output, config.output)
-            if benchmark.returncode != 0:
-                raise _command_error("benchmark command", benchmark)
-            print("[fleet] benchmark completed")
-            return json_path, markdown_path
-        except BaseException as error:
-            active_error = error
-            raise
-        finally:
-            if worker is not None and secret_written:
-                try:
-                    await worker.shell.run(f"rm -f {REMOTE_ENV}", timeout=30)
-                except Exception:
-                    pass
-            if worker is not None:
-                print("[fleet] releasing worker...")
-                try:
-                    await worker.close()
-                except Exception as release_error:
-                    if active_error is None:
-                        raise RuntimeError("could not release Fleet worker") from release_error
-                    print(f"[fleet] warning: worker release failed: {release_error}")
+    failures = [result for result in results if result.error is not None]
+    if failures:
+        print(f"[fleet] warning: {len(failures)} task shard(s) had infrastructure failures")
+    return _aggregate_shard_results(config, results, stamp)

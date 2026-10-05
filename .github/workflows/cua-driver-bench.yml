@@ -14,6 +14,10 @@ on:
         description: "Comma-separated benchmark tasks"
         required: true
         default: "CDB-S01,CDB-S03"
+      max_parallel_tasks:
+        description: "Maximum task shards to run at the same time"
+        required: true
+        default: "2"
 
 permissions:
   contents: read
@@ -274,6 +278,7 @@ jobs:
           OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
           OPENAI_FLEET_BASE_URL: ${{ vars.OPENAI_FLEET_BASE_URL }}
           REQUESTED_TASKS: ${{ inputs.tasks }}
+          MAX_PARALLEL_TASKS: ${{ inputs.max_parallel_tasks }}
           TASKS_ROOT: ${{ steps.task_pack.outputs.tasks_root }}
         run: |
           set -euo pipefail
@@ -297,6 +302,7 @@ jobs:
             --baseline 0.0.1 \
             --candidate 0.0.2 \
             --output "$run_dir" \
+            --max-parallel-tasks "$MAX_PARALLEL_TASKS" \
             "${task_arguments[@]}"
 
       - name: Remove authorized task pack
@@ -372,6 +378,7 @@ jobs:
           CANDIDATE_REF: ${{ inputs.candidate_ref }}
           CANDIDATE_SHA: ${{ steps.refs.outputs.candidate_sha }}
           REQUESTED_TASKS: ${{ inputs.tasks }}
+          MAX_PARALLEL_TASKS: ${{ inputs.max_parallel_tasks }}
           BENCHMARK_OUTCOME: ${{ steps.benchmark.outcome }}
           S3_URI: ${{ steps.publish.outputs.s3_uri }}
           REPORT_URL: ${{ steps.publish.outputs.report_url }}
@@ -391,6 +398,7 @@ jobs:
             echo
             echo "Platform: Linux/X11"
             printf 'Tasks: `%s`\n' "$REQUESTED_TASKS"
+            printf 'Maximum parallel task shards: `%s`\n' "$MAX_PARALLEL_TASKS"
             printf 'Benchmark: `%s`\n' "${BENCHMARK_OUTCOME:-not run}"
             echo
             if [[ -n "$S3_URI" ]]; then

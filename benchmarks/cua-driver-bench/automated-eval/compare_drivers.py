@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import ctypes
 import ctypes.util
 import importlib.util
 import json
+import multiprocessing
 import os
 import queue
 import re
@@ -22,12 +24,13 @@ import tomllib
 import urllib.error
 import urllib.request
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from cua_bench_runtime import engine
 from cua_bench_runtime.adapters.agent_harnesses.production import (
@@ -139,6 +142,7 @@ _X11_BUTTON_MASK = sum(1 << bit for bit in range(8, 13))
 _XRECORD_FROM_SERVER = 0
 _XRECORD_FROM_CLIENT = 1
 _XRECORD_ALL_CLIENTS = 3
+ShardOutput = TypeVar("ShardOutput")
 
 
 @dataclass(frozen=True)
@@ -167,6 +171,14 @@ class ComparisonConfig:
     model: str
     reasoning_effort: str
     timeout_seconds: float
+    max_parallel_tasks: int = 1
+    local_displays: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class TaskShard:
+    task: str
+    releases: tuple[DriverRelease, ...]
 
 
 @dataclass(frozen=True)
@@ -208,6 +220,13 @@ class TrialMetrics:
     focus_window_transitions: int | None = None
     cursor_deviation_episodes: int | None = None
     papercut_count: int | None = None
+
+
+@dataclass(frozen=True)
+class TaskShardResult(Generic[ShardOutput]):
+    shard: TaskShard
+    output: ShardOutput | None = None
+    error: Exception | None = None
 
 
 @dataclass(frozen=True)
@@ -644,8 +663,52 @@ def load_launch_descriptor(bundle: Path, platform: str) -> dict[str, Any]:
     return descriptor
 
 
-def _gui_environment() -> dict[str, str]:
-    return {name: os.environ[name] for name in GUI_ENVIRONMENT if name in os.environ}
+def _gui_environment(display: str | None = None) -> dict[str, str]:
+    environment = {name: os.environ[name] for name in GUI_ENVIRONMENT if name in os.environ}
+    if display is not None:
+        environment["DISPLAY"] = display
+    return environment
+
+
+def _local_gui_environments(config: ComparisonConfig) -> tuple[dict[str, str], ...]:
+    base = _gui_environment()
+    if config.platform != "linux":
+        if config.local_displays:
+            raise ValueError("--local-display is available only for Linux/X11 runs")
+        if config.max_parallel_tasks > 1:
+            raise ValueError("parallel local comparisons require isolated Linux/X11 displays")
+        return (base,)
+
+    displays = config.local_displays
+    if not displays:
+        current_display = base.get("DISPLAY")
+        displays = (current_display,) if current_display else ()
+    if not displays or any(not display.strip() for display in displays):
+        raise ValueError("Linux shared-task runs require an X11 display")
+    if len(set(displays)) != len(displays):
+        raise ValueError("local display assignments must be unique")
+
+    active_shards = min(config.max_parallel_tasks, len(config.tasks))
+    if len(displays) < active_shards:
+        raise ValueError(
+            "parallel local comparisons require one unique --local-display "
+            "for each active task shard"
+        )
+    return tuple(_gui_environment(display) for display in displays[:active_shards])
+
+
+def _isolated_local_environment(gui_environment: Mapping[str, str], root: Path) -> dict[str, str]:
+    directories = {
+        "HOME": root / "home",
+        "TMPDIR": root / "tmp",
+        "XDG_CACHE_HOME": root / "cache",
+        "XDG_CONFIG_HOME": root / "config",
+        "XDG_DATA_HOME": root / "data",
+        "XDG_STATE_HOME": root / "state",
+    }
+    for directory in directories.values():
+        directory.mkdir(parents=True, exist_ok=True)
+    return {**gui_environment, **{name: str(path) for name, path in directories.items()}}
 
 
 def _resolve_executable(command: Sequence[str]) -> list[str]:
@@ -764,10 +827,14 @@ def _descriptor_variables(bundle: Path, workspace: Path) -> dict[str, str]:
     }
 
 
-def _preflight_task(bundle: Path, platform: str) -> None:
+def _preflight_task(
+    bundle: Path,
+    platform: str,
+    gui_environment: Mapping[str, str] | None = None,
+) -> None:
     descriptor = load_launch_descriptor(bundle, platform)
     variables = _descriptor_variables(bundle, bundle / ".preflight-workspace")
-    environment = {**os.environ, **_gui_environment()}
+    environment = {**os.environ, **(gui_environment or _gui_environment())}
     for prerequisite in descriptor.get("prerequisites", []):
         if not isinstance(prerequisite, dict) or not isinstance(prerequisite.get("check"), list):
             raise ValueError(f"invalid prerequisite in {bundle}")
@@ -836,20 +903,22 @@ def preflight(
     config: ComparisonConfig,
     releases: Sequence[DriverRelease],
     task_manifests: Sequence[Path],
+    gui_environments: Sequence[Mapping[str, str]],
 ) -> str:
     host = detect_platform()
     if config.platform != host:
         raise ValueError(
             f"selected platform {config.platform} cannot execute on host platform {host}"
         )
-    if config.platform == "linux" and not os.environ.get("DISPLAY"):
-        raise ValueError("Linux shared-task runs require DISPLAY for X11 or XWayland")
+    if not gui_environments:
+        raise ValueError("local execution requires at least one GUI environment")
     if not config.codex.is_file():
         raise ValueError(f"Codex CLI is missing: {config.codex}")
     for release in releases:
         _verify_driver_identity(release)
-    for manifest in task_manifests:
-        _preflight_task(manifest.parent, config.platform)
+    for index, manifest in enumerate(task_manifests):
+        gui_environment = gui_environments[index % len(gui_environments)]
+        _preflight_task(manifest.parent, config.platform, gui_environment)
         _evaluator_node_options(manifest.parent, config.platform)
     version = _preflight_codex(config)
     _codex_provider_environment(config.codex_home)
@@ -3134,20 +3203,55 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             "actions versus transcript-counted successful input actions."
         ),
         "",
-        "## Trials",
-        "",
-        (
-            "| Task | Version | Trajectory | Pass | Participation | Score | "
-            "Total ms | Cua calls | Input actions | Recorded actions | "
-            "Focus drops | Drag interruptions | "
-            "Cursor deviations | FG disturbances | Input tokens | "
-            "Cached tokens | Output tokens | Termination | Papercuts |"
-        ),
-        (
-            "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | "
-            "---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |"
-        ),
     ]
+    execution = report.get("execution")
+    if isinstance(execution, Mapping):
+        lines.extend(
+            (
+                "## Execution",
+                "",
+                f"- Backend: {_markdown_value(execution.get('backend'))}",
+                (
+                    "- Maximum parallel task shards: "
+                    f"{_markdown_value(execution.get('max_parallel_tasks'))}"
+                ),
+                f"- Complete: {_markdown_value(execution.get('complete'))}",
+                "",
+            )
+        )
+        failures = execution.get("infrastructure_failures")
+        if isinstance(failures, list) and failures:
+            lines.extend(
+                (
+                    "| Task | Infrastructure failure |",
+                    "| --- | --- |",
+                )
+            )
+            lines.extend(
+                f"| {_markdown_value(failure.get('task'))} | "
+                f"{_markdown_value(failure.get('error'))} |"
+                for failure in failures
+                if isinstance(failure, Mapping)
+            )
+            lines.append("")
+
+    lines.extend(
+        (
+            "## Trials",
+            "",
+            (
+                "| Task | Version | Trajectory | Pass | Participation | Score | "
+                "Total ms | Cua calls | Input actions | Recorded actions | "
+                "Focus drops | Drag interruptions | "
+                "Cursor deviations | FG disturbances | Input tokens | "
+                "Cached tokens | Output tokens | Termination | Papercuts |"
+            ),
+            (
+                "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | "
+                "---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |"
+            ),
+        )
+    )
     for trial in report["trials"]:
         codex_tokens = trial.get("codex_tokens")
         lines.append(
@@ -3298,7 +3402,8 @@ def build_plan(config: ComparisonConfig) -> dict[str, Any]:
     candidate_name = config.candidate if config.candidate != config.baseline else None
     candidate = require_release(releases, candidate_name) if candidate_name is not None else None
     selected_releases = (baseline,) if candidate is None else (baseline, candidate)
-    manifests = [task_path(config.tasks_root, task) for task in config.tasks]
+    shards = build_task_shards(config.tasks, selected_releases)
+    manifests = [task_path(config.tasks_root, shard.task) for shard in shards]
     for manifest in manifests:
         load_launch_descriptor(manifest.parent, config.platform)
     return {
@@ -3306,11 +3411,12 @@ def build_plan(config: ComparisonConfig) -> dict[str, Any]:
         "diagnostic": True,
         "baseline": asdict(baseline),
         "candidate": asdict(candidate) if candidate is not None else None,
-        "tasks": list(config.tasks),
+        "tasks": [shard.task for shard in shards],
+        "max_parallel_tasks": config.max_parallel_tasks,
         "trials": [
-            {"task": task, "version": release.version}
-            for release in selected_releases
-            for task in config.tasks
+            {"task": shard.task, "version": release.version}
+            for shard in shards
+            for release in shard.releases
         ],
     }
 
@@ -3319,17 +3425,71 @@ def _trial_id(task: str, version: str, run_stamp: str) -> str:
     return f"{task}-{version}-{run_stamp}"
 
 
+def build_task_shards(
+    tasks: Sequence[str], releases: Sequence[DriverRelease]
+) -> tuple[TaskShard, ...]:
+    ordered_releases = tuple(releases)
+    selected_tasks = set(tasks)
+    ordered_tasks = tuple(task for task in SHARED_TASKS if task in selected_tasks)
+    return tuple(TaskShard(task=task, releases=ordered_releases) for task in ordered_tasks)
+
+
+def schedule_task_shards(
+    shards: Sequence[TaskShard],
+    run_shard: Callable[[TaskShard], ShardOutput],
+    *,
+    max_parallel_tasks: int = 2,
+) -> tuple[TaskShardResult[ShardOutput], ...]:
+    if max_parallel_tasks < 1:
+        raise ValueError("max parallel tasks must be at least 1")
+
+    def capture(shard: TaskShard) -> TaskShardResult[ShardOutput]:
+        try:
+            return TaskShardResult(shard=shard, output=run_shard(shard))
+        except Exception as error:  # noqa: BLE001 - preserve other completed shards
+            return TaskShardResult(shard=shard, error=error)
+
+    if max_parallel_tasks == 1 or len(shards) <= 1:
+        return tuple(capture(shard) for shard in shards)
+
+    with ThreadPoolExecutor(max_workers=min(max_parallel_tasks, len(shards))) as executor:
+        futures = [executor.submit(capture, shard) for shard in shards]
+        return tuple(future.result() for future in futures)
+
+
+async def schedule_task_shards_async(
+    shards: Sequence[TaskShard],
+    run_shard: Callable[[TaskShard], Awaitable[ShardOutput]],
+    *,
+    max_parallel_tasks: int = 2,
+) -> tuple[TaskShardResult[ShardOutput], ...]:
+    if max_parallel_tasks < 1:
+        raise ValueError("max parallel tasks must be at least 1")
+
+    semaphore = asyncio.Semaphore(max_parallel_tasks)
+
+    async def capture(shard: TaskShard) -> TaskShardResult[ShardOutput]:
+        async with semaphore:
+            try:
+                return TaskShardResult(shard=shard, output=await run_shard(shard))
+            except Exception as error:  # noqa: BLE001 - preserve other completed shards
+                return TaskShardResult(shard=shard, error=error)
+
+    return tuple(await asyncio.gather(*(capture(shard) for shard in shards)))
+
+
 def _run_trial(
     config: ComparisonConfig,
     release: DriverRelease,
     task: str,
     run_stamp: str,
+    gui_environment: Mapping[str, str],
 ) -> TrialMetrics:
     trial_id = _trial_id(task, release.version, run_stamp)
     trial_root = config.output / "trials" / trial_id
     launcher = config.output / "launchers" / f"{trial_id}.py"
     runtime_log = config.output / "runtime" / f"{trial_id}.driver-daemon"
-    gui_environment = _gui_environment()
+    gui_environment = dict(gui_environment)
     daemon: DriverDaemon | None = None
     materialized_trial: Path | None = None
     try:
@@ -3384,22 +3544,123 @@ def _run_trial(
     return extract_trial_metrics(materialized_trial, task, release.version, trial_id)
 
 
+def _run_local_task_shard(
+    config: ComparisonConfig,
+    shard: TaskShard,
+    run_stamp: str,
+    gui_environment: Mapping[str, str],
+) -> tuple[TrialMetrics, ...]:
+    return tuple(
+        _run_trial(config, release, shard.task, run_stamp, gui_environment)
+        for release in shard.releases
+    )
+
+
+def _capture_local_task_shard(
+    config: ComparisonConfig,
+    shard: TaskShard,
+    run_stamp: str,
+    gui_environment: Mapping[str, str],
+) -> TaskShardResult[tuple[TrialMetrics, ...]]:
+    try:
+        output = _run_local_task_shard(config, shard, run_stamp, gui_environment)
+    except Exception as error:  # noqa: BLE001 - preserve other completed shards
+        wrapped = RuntimeError(f"{type(error).__name__}: {error}")
+        return TaskShardResult(shard=shard, error=wrapped)
+    return TaskShardResult(shard=shard, output=output)
+
+
+def schedule_local_task_shards(
+    config: ComparisonConfig,
+    shards: Sequence[TaskShard],
+    run_stamp: str,
+    gui_environments: Sequence[Mapping[str, str]],
+) -> tuple[TaskShardResult[tuple[TrialMetrics, ...]], ...]:
+    if config.max_parallel_tasks == 1 or len(shards) <= 1:
+        return schedule_task_shards(
+            shards,
+            lambda shard: _run_local_task_shard(config, shard, run_stamp, gui_environments[0]),
+            max_parallel_tasks=1,
+        )
+
+    executor_count = min(config.max_parallel_tasks, len(shards))
+    if len(gui_environments) < executor_count:
+        raise ValueError("local execution does not have enough isolated GUI environments")
+    process_context = multiprocessing.get_context("spawn")
+    executors = [
+        ProcessPoolExecutor(max_workers=1, mp_context=process_context)
+        for _ in range(executor_count)
+    ]
+    futures = []
+    try:
+        for index, shard in enumerate(shards):
+            gui_environment = gui_environments[index % executor_count]
+            future = executors[index % executor_count].submit(
+                _capture_local_task_shard,
+                config,
+                shard,
+                run_stamp,
+                gui_environment,
+            )
+            futures.append((shard, future))
+        results = []
+        for shard, future in futures:
+            try:
+                results.append(future.result())
+            except Exception as error:  # noqa: BLE001 - preserve other completed shards
+                results.append(TaskShardResult(shard=shard, error=error))
+        return tuple(results)
+    finally:
+        for executor in executors:
+            executor.shutdown(wait=True, cancel_futures=False)
+
+
 def run_comparison(config: ComparisonConfig) -> tuple[dict[str, Any], Path, Path]:
     if config.timeout_seconds <= 30:
         raise ValueError("timeout must be greater than 30 seconds")
+    if config.max_parallel_tasks < 1:
+        raise ValueError("max parallel tasks must be at least 1")
     releases = discover_driver_releases(config.drivers_root, config.platform)
     baseline = require_release(releases, config.baseline)
     candidate_name = config.candidate if config.candidate != config.baseline else None
     candidate = require_release(releases, candidate_name) if candidate_name is not None else None
     selected_releases = (baseline,) if candidate is None else (baseline, candidate)
-    manifests = [task_path(config.tasks_root, task) for task in config.tasks]
-    codex_version = preflight(config, selected_releases, manifests)
+    shards = build_task_shards(config.tasks, selected_releases)
+    gui_environments = _local_gui_environments(config)
+    manifests = [task_path(config.tasks_root, shard.task) for shard in shards]
+    codex_version = preflight(config, selected_releases, manifests, gui_environments)
     config.output.mkdir(parents=True, exist_ok=False)
     run_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     trials: list[TrialMetrics] = []
-    for release in selected_releases:
-        for task in config.tasks:
-            trials.append(_run_trial(config, release, task, run_stamp))
+    if config.max_parallel_tasks > 1 and len(shards) > 1:
+        with tempfile.TemporaryDirectory(prefix="cdb-local-instances-") as temporary:
+            root = Path(temporary)
+            isolated_environments = tuple(
+                _isolated_local_environment(environment, root / f"executor-{index + 1}")
+                for index, environment in enumerate(gui_environments)
+            )
+            shard_results = schedule_local_task_shards(
+                config, shards, run_stamp, isolated_environments
+            )
+    else:
+        shard_results = schedule_local_task_shards(config, shards, run_stamp, gui_environments)
+    infrastructure_failures: list[dict[str, str]] = []
+    for shard_result in shard_results:
+        if shard_result.error is None:
+            assert shard_result.output is not None
+            trials.extend(shard_result.output)
+            continue
+        error_text = f"{type(shard_result.error).__name__}: {shard_result.error}"
+        infrastructure_failures.append({"task": shard_result.shard.task, "error": error_text})
+        for release in shard_result.shard.releases:
+            trials.append(
+                failed_trial_metrics(
+                    shard_result.shard.task,
+                    release.version,
+                    _trial_id(shard_result.shard.task, release.version, run_stamp),
+                    shard_result.error,
+                )
+            )
     comparisons = build_comparisons(trials, config.baseline, candidate_name)
     report = {
         "schema_version": "1",
@@ -3409,6 +3670,12 @@ def run_comparison(config: ComparisonConfig) -> tuple[dict[str, Any], Path, Path
         "platform": config.platform,
         "baseline": config.baseline,
         "candidate": candidate_name,
+        "execution": {
+            "backend": "local",
+            "max_parallel_tasks": config.max_parallel_tasks,
+            "complete": not infrastructure_failures,
+            "infrastructure_failures": infrastructure_failures,
+        },
         "drivers": {
             "baseline": {
                 "version": baseline.version,

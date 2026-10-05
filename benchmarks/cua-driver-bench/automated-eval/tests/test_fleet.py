@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "fleet.py"
@@ -86,6 +86,7 @@ class FleetHelpersTests(unittest.TestCase):
         self.assertNotIn("--candidate", arguments)
         self.assertEqual(arguments[0], f"{fleet.REMOTE_WORKSPACE}/.fleet-venv/bin/python")
         self.assertEqual(arguments[arguments.index("--tasks-root") + 1], fleet.REMOTE_TASKS_ROOT)
+        self.assertEqual(arguments[arguments.index("--max-parallel-tasks") + 1], "1")
         self.assertEqual(arguments[-2:], ["--task", "CDB-S01"])
 
     def test_driver_check_supports_diagnostic_version_aliases(self) -> None:
@@ -131,6 +132,55 @@ class FleetHelpersTests(unittest.TestCase):
 
         self.assertEqual(result.stdout, "ok")
         self.assertEqual(shell.run.await_count, 2)
+
+    def test_existing_pool_is_scaled_to_parallel_capacity(self) -> None:
+        pool = SimpleNamespace(resource=SimpleNamespace(spec=SimpleNamespace(replicas=1)))
+        scaled = SimpleNamespace(resource=SimpleNamespace(spec=SimpleNamespace(replicas=2)))
+        sandbox = SimpleNamespace(
+            Pool=SimpleNamespace(
+                get=AsyncMock(return_value=pool),
+                apply=AsyncMock(return_value=scaled),
+            ),
+            Image=SimpleNamespace(from_registry=Mock(return_value=object())),
+        )
+
+        result = asyncio.run(fleet._get_or_create_pool(sandbox, "bench", 2))
+
+        self.assertIs(result, scaled)
+        self.assertEqual(sandbox.Pool.apply.await_args.kwargs["replicas"], 2)
+
+    def test_existing_pool_keeps_larger_capacity(self) -> None:
+        pool = SimpleNamespace(resource=SimpleNamespace(spec=SimpleNamespace(replicas=3)))
+        sandbox = SimpleNamespace(
+            Pool=SimpleNamespace(get=AsyncMock(return_value=pool), apply=AsyncMock()),
+            Image=SimpleNamespace(from_registry=Mock()),
+        )
+
+        result = asyncio.run(fleet._get_or_create_pool(sandbox, "bench", 2))
+
+        self.assertIs(result, pool)
+        sandbox.Pool.apply.assert_not_awaited()
+
+    def test_worker_finalization_retries_release_and_checks_secret_cleanup(self) -> None:
+        worker = SimpleNamespace(
+            shell=SimpleNamespace(
+                run=AsyncMock(
+                    return_value=SimpleNamespace(
+                        returncode=1,
+                        stdout="",
+                        stderr="permission denied",
+                    )
+                )
+            ),
+            close=AsyncMock(side_effect=[RuntimeError("transport dropped"), None]),
+        )
+
+        with patch.object(fleet.asyncio, "sleep", new=AsyncMock()):
+            errors = asyncio.run(fleet._finalize_worker(worker, True))
+
+        self.assertEqual(worker.close.await_count, 2)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("secret cleanup failed", errors[0])
 
     def test_background_command_uses_durable_detached_process(self) -> None:
         shell = SimpleNamespace(
@@ -224,6 +274,94 @@ class FleetHelpersTests(unittest.TestCase):
         self.assertIn("org.gnucash.GnuCash", command)
         self.assertIn("/usr/local/bin/libreoffice", command)
         self.assertIn("/usr/local/bin/gnucash", command)
+        self.assertIn("apt-get clean", command)
+        self.assertIn("rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*", command)
+
+    def test_aggregates_shards_canonically_and_preserves_infrastructure_failure(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "result"
+            shard_output = output / "shards" / "CDB-S01"
+            trial_values = []
+            releases = tuple(SimpleNamespace(version=version) for version in ("0.22.2", "0.23.2"))
+            for version in ("0.22.2", "0.23.2"):
+                trial_id = f"CDB-S01-{version}-stamp"
+                (shard_output / "trials" / trial_id).mkdir(parents=True)
+                trial_values.append(
+                    {
+                        "task": "CDB-S01",
+                        "version": version,
+                        "trial_id": trial_id,
+                        "trial_dir": f"/remote/{trial_id}",
+                        "passed": True,
+                        "score": 1.0,
+                        "total_ms": 100,
+                        "cua_calls": 2,
+                        "input_actions": 1,
+                        "termination": "completed",
+                    }
+                )
+            (shard_output / "comparison.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "1",
+                        "generated_at": "2026-10-05T00:00:00+00:00",
+                        "diagnostic": True,
+                        "certifying": False,
+                        "platform": "linux",
+                        "baseline": "0.22.2",
+                        "candidate": "0.23.2",
+                        "trials": trial_values,
+                        "comparisons": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            results = (
+                fleet.TaskShardResult(
+                    shard=fleet.TaskShard("CDB-S01", releases),
+                    output=shard_output,
+                ),
+                fleet.TaskShardResult(
+                    shard=fleet.TaskShard("CDB-S02", releases),
+                    error=RuntimeError("worker unavailable"),
+                ),
+            )
+            config = SimpleNamespace(
+                output=output,
+                baseline="0.22.2",
+                candidate="0.23.2",
+                max_parallel_tasks=2,
+            )
+
+            def create_report_dir(_report, destination: Path) -> None:
+                (destination / "report").mkdir(parents=True, exist_ok=True)
+
+            with (
+                patch.object(fleet, "write_html_bundle", side_effect=create_report_dir),
+                patch.object(fleet, "render_markdown", return_value="# Comparison\n"),
+            ):
+                json_path, markdown_path = fleet._aggregate_shard_results(
+                    config, results, "20261005T000000Z"
+                )
+
+            report = json.loads(json_path.read_text(encoding="utf-8"))
+            self.assertTrue(markdown_path.is_file())
+            self.assertEqual(
+                [trial["task"] for trial in report["trials"]],
+                ["CDB-S01", "CDB-S01", "CDB-S02", "CDB-S02"],
+            )
+            self.assertFalse(report["execution"]["complete"])
+            self.assertEqual(
+                report["execution"]["infrastructure_failures"][0]["task"],
+                "CDB-S02",
+            )
+            self.assertEqual(
+                [comparison["task"] for comparison in report["comparisons"]],
+                ["CDB-S01", "CDB-S02"],
+            )
+            self.assertTrue((output / "trials" / "CDB-S01-0.22.2-stamp").is_dir())
 
 
 if __name__ == "__main__":

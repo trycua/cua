@@ -140,6 +140,12 @@ class ReportingTests(unittest.TestCase):
                     }
                 ],
                 "comparisons": [],
+                "execution": {
+                    "backend": "fleet",
+                    "max_parallel_tasks": 2,
+                    "complete": False,
+                    "infrastructure_failures": [{"task": "CDB-S02", "error": "worker unavailable"}],
+                },
             }
             reporting.write_html_bundle(report, output)
             html = (output / "report" / "trials" / trial_id / "trajectory.html").read_text(
@@ -158,6 +164,8 @@ class ReportingTests(unittest.TestCase):
         self.assertIsNone(report["trials"][0]["papercut_count"])
         self.assertIn("Diagnostic Integrity", comparison_html)
         self.assertIn("recorded 0 of 1 successful input actions", comparison_html)
+        self.assertIn("Maximum parallel task shards: 2", comparison_html)
+        self.assertIn("worker unavailable", comparison_html)
 
 
 if __name__ == "__main__":

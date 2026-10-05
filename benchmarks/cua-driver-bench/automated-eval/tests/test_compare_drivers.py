@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 from dataclasses import asdict
@@ -7,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -69,6 +71,30 @@ def _write_foreground_evidence(trial: Path) -> None:
 
 
 class CompareDriversTests(unittest.TestCase):
+    @staticmethod
+    def _release(version: str) -> compare_drivers.DriverRelease:
+        return compare_drivers.DriverRelease(
+            version=version,
+            root=Path(f"/release/{version}"),
+            binary=Path(f"/release/{version}/cua-driver"),
+            manifest=Path(f"/release/{version}/release-manifest.json"),
+        )
+
+    @staticmethod
+    def _trial(task: str, version: str) -> compare_drivers.TrialMetrics:
+        return compare_drivers.TrialMetrics(
+            task,
+            version,
+            f"{task}-{version}",
+            None,
+            True,
+            1.0,
+            100,
+            2,
+            1,
+            "completed",
+        )
+
     def test_linux_root_gui_commands_disable_chromium_sandbox(self) -> None:
         with (
             patch.object(compare_drivers.sys, "platform", "linux"),
@@ -1140,6 +1166,246 @@ command = "unrelated"
             ("0.23.2", None),
         )
 
+    def test_task_shards_run_in_parallel_and_aggregate_canonically(self) -> None:
+        baseline = self._release("0.22.2")
+        candidate = self._release("0.23.2")
+        shards = compare_drivers.build_task_shards(("CDB-S02", "CDB-S01"), (baseline, candidate))
+        barrier = threading.Barrier(2)
+        release_first = threading.Event()
+
+        def run_shard(shard: compare_drivers.TaskShard):
+            barrier.wait(timeout=2)
+            if shard.task == "CDB-S01":
+                release_first.wait(timeout=2)
+            else:
+                release_first.set()
+            return tuple(self._trial(shard.task, release.version) for release in shard.releases)
+
+        results = compare_drivers.schedule_task_shards(shards, run_shard)
+
+        self.assertEqual([result.shard.task for result in results], ["CDB-S01", "CDB-S02"])
+        self.assertEqual(
+            [[trial.version for trial in result.output or ()] for result in results],
+            [["0.22.2", "0.23.2"], ["0.22.2", "0.23.2"]],
+        )
+
+    def test_task_shard_serial_mode_and_failures_preserve_other_results(self) -> None:
+        release = self._release("0.23.2")
+        shards = compare_drivers.build_task_shards(("CDB-S01", "CDB-S02", "CDB-S03"), (release,))
+        calls: list[str] = []
+
+        def run_shard(shard: compare_drivers.TaskShard):
+            calls.append(shard.task)
+            if shard.task == "CDB-S02":
+                raise RuntimeError("worker unavailable")
+            return (self._trial(shard.task, release.version),)
+
+        results = compare_drivers.schedule_task_shards(shards, run_shard, max_parallel_tasks=1)
+
+        self.assertEqual(calls, ["CDB-S01", "CDB-S02", "CDB-S03"])
+        self.assertEqual([result.shard.task for result in results], calls)
+        self.assertEqual(len(results[0].output or ()), 1)
+        self.assertIsInstance(results[1].error, RuntimeError)
+        self.assertEqual(len(results[2].output or ()), 1)
+
+    def test_async_task_shards_limit_concurrency_and_keep_order(self) -> None:
+        release = self._release("0.23.2")
+        shards = compare_drivers.build_task_shards(("CDB-S03", "CDB-S01", "CDB-S02"), (release,))
+        active = 0
+        peak = 0
+        lock = asyncio.Lock()
+
+        async def run_shard(shard: compare_drivers.TaskShard):
+            nonlocal active, peak
+            async with lock:
+                active += 1
+                peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            async with lock:
+                active -= 1
+            if shard.task == "CDB-S02":
+                raise RuntimeError("worker unavailable")
+            return shard.task
+
+        results = asyncio.run(
+            compare_drivers.schedule_task_shards_async(shards, run_shard, max_parallel_tasks=2)
+        )
+
+        self.assertEqual(peak, 2)
+        self.assertEqual(
+            [result.shard.task for result in results],
+            ["CDB-S01", "CDB-S02", "CDB-S03"],
+        )
+        self.assertEqual(results[0].output, "CDB-S01")
+        self.assertIsInstance(results[1].error, RuntimeError)
+        self.assertEqual(results[2].output, "CDB-S03")
+
+    def test_local_parallel_displays_are_unique_and_preserve_gui_environment(self) -> None:
+        config = SimpleNamespace(
+            platform="linux",
+            local_displays=(":91", ":92"),
+            max_parallel_tasks=2,
+            tasks=("CDB-S01", "CDB-S03"),
+        )
+        with patch.dict(
+            os.environ,
+            {"DISPLAY": ":0", "XAUTHORITY": "/tmp/test-xauthority"},
+            clear=True,
+        ):
+            environments = compare_drivers._local_gui_environments(config)
+
+        self.assertEqual([item["DISPLAY"] for item in environments], [":91", ":92"])
+        self.assertEqual(
+            [item["XAUTHORITY"] for item in environments],
+            ["/tmp/test-xauthority", "/tmp/test-xauthority"],
+        )
+
+    def test_local_parallel_displays_require_one_unique_display_per_active_shard(self) -> None:
+        config = SimpleNamespace(
+            platform="linux",
+            local_displays=(":91",),
+            max_parallel_tasks=2,
+            tasks=("CDB-S01", "CDB-S03"),
+        )
+
+        with self.assertRaisesRegex(ValueError, "one unique --local-display"):
+            compare_drivers._local_gui_environments(config)
+
+        config.local_displays = (":91", ":91")
+        with self.assertRaisesRegex(ValueError, "must be unique"):
+            compare_drivers._local_gui_environments(config)
+
+    def test_local_parallel_scheduler_uses_one_process_executor_per_display(self) -> None:
+        release = self._release("0.23.2")
+        shards = compare_drivers.build_task_shards(("CDB-S03", "CDB-S01", "CDB-S02"), (release,))
+        environments = ({"DISPLAY": ":91"}, {"DISPLAY": ":92"})
+        calls: list[tuple[str, str]] = []
+        executors = []
+
+        class ImmediateFuture:
+            def __init__(self, value):
+                self.value = value
+
+            def result(self):
+                return self.value
+
+        class ImmediateExecutor:
+            def __init__(self, *, max_workers, mp_context):
+                self.max_workers = max_workers
+                self.start_method = mp_context.get_start_method()
+                self.submitted = []
+                self.shutdown_arguments = None
+                executors.append(self)
+
+            def submit(self, function, *arguments):
+                self.submitted.append(arguments[1].task)
+                return ImmediateFuture(function(*arguments))
+
+            def shutdown(self, *, wait, cancel_futures):
+                self.shutdown_arguments = (wait, cancel_futures)
+
+        def run_shard(_config, shard, _run_stamp, environment):
+            calls.append((shard.task, environment["DISPLAY"]))
+            return (self._trial(shard.task, release.version),)
+
+        config = SimpleNamespace(max_parallel_tasks=2)
+        with (
+            patch.object(compare_drivers, "ProcessPoolExecutor", ImmediateExecutor),
+            patch.object(compare_drivers, "_run_local_task_shard", side_effect=run_shard),
+        ):
+            results = compare_drivers.schedule_local_task_shards(
+                config, shards, "20261005T000000Z", environments
+            )
+
+        self.assertEqual([executor.max_workers for executor in executors], [1, 1])
+        self.assertEqual([executor.start_method for executor in executors], ["spawn", "spawn"])
+        self.assertEqual(executors[0].submitted, ["CDB-S01", "CDB-S03"])
+        self.assertEqual(executors[1].submitted, ["CDB-S02"])
+        self.assertEqual(
+            calls,
+            [("CDB-S01", ":91"), ("CDB-S02", ":92"), ("CDB-S03", ":91")],
+        )
+        self.assertEqual(
+            [result.shard.task for result in results],
+            ["CDB-S01", "CDB-S02", "CDB-S03"],
+        )
+        self.assertEqual(
+            [executor.shutdown_arguments for executor in executors],
+            [(True, False), (True, False)],
+        )
+
+    def test_markdown_reports_incomplete_shard_execution(self) -> None:
+        markdown = compare_drivers.render_markdown(
+            {
+                "execution": {
+                    "backend": "fleet",
+                    "max_parallel_tasks": 2,
+                    "complete": False,
+                    "infrastructure_failures": [{"task": "CDB-S02", "error": "worker unavailable"}],
+                },
+                "trials": [],
+                "comparisons": [],
+            }
+        )
+
+        self.assertIn("## Execution", markdown)
+        self.assertIn("- Complete: no", markdown)
+        self.assertIn("| CDB-S02 | worker unavailable |", markdown)
+
+    def test_local_task_shard_runs_baseline_then_candidate(self) -> None:
+        baseline = self._release("0.22.2")
+        candidate = self._release("0.23.2")
+        shard = compare_drivers.TaskShard("CDB-S01", (baseline, candidate))
+        calls: list[str] = []
+
+        def run_trial(_config, release, task, _run_stamp, _gui_environment):
+            calls.append(release.version)
+            return self._trial(task, release.version)
+
+        with patch.object(compare_drivers, "_run_trial", side_effect=run_trial):
+            trials = compare_drivers._run_local_task_shard(
+                SimpleNamespace(), shard, "20261005T000000Z", {"DISPLAY": ":91"}
+            )
+
+        self.assertEqual(calls, ["0.22.2", "0.23.2"])
+        self.assertEqual([trial.version for trial in trials], calls)
+
+    def test_cli_parallel_defaults_keep_local_serial(self) -> None:
+        cli_path = MODULE_PATH.with_name("cli.py")
+        spec = importlib.util.spec_from_file_location("test_compare_drivers_cli", cli_path)
+        assert spec is not None and spec.loader is not None
+        cli = importlib.util.module_from_spec(spec)
+        with (
+            patch.dict(sys.modules, {"compare_drivers": compare_drivers}),
+            patch.object(sys, "path", [str(MODULE_PATH.parent), *sys.path]),
+        ):
+            spec.loader.exec_module(cli)
+
+        required = ["--tasks-root", "/tasks", "--model", "small", "--codex", sys.executable]
+        local_arguments = cli.build_parser().parse_args(required)
+        fleet_arguments = cli.build_parser(fleet=True).parse_args(required)
+        serial_arguments = cli.build_parser(fleet=True).parse_args(
+            [*required, "--max-parallel-tasks", "1"]
+        )
+        parallel_local_arguments = cli.build_parser().parse_args(
+            [
+                *required,
+                "--max-parallel-tasks",
+                "2",
+                "--local-display",
+                ":91",
+                "--local-display",
+                ":92",
+            ]
+        )
+
+        self.assertEqual(local_arguments.max_parallel_tasks, 1)
+        self.assertIsNone(local_arguments.local_displays)
+        self.assertEqual(fleet_arguments.max_parallel_tasks, 2)
+        self.assertEqual(serial_arguments.max_parallel_tasks, 1)
+        self.assertEqual(parallel_local_arguments.max_parallel_tasks, 2)
+        self.assertEqual(parallel_local_arguments.local_displays, [":91", ":92"])
+
     def test_single_release_plan_has_one_trial_and_no_candidate(self) -> None:
         release = compare_drivers.DriverRelease(
             version="0.23.2",
@@ -1161,6 +1427,7 @@ command = "unrelated"
             model="large",
             reasoning_effort="high",
             timeout_seconds=1800,
+            max_parallel_tasks=1,
         )
         with (
             patch.object(
@@ -1208,6 +1475,8 @@ command = "unrelated"
                 model="large",
                 reasoning_effort="high",
                 timeout_seconds=1800,
+                max_parallel_tasks=1,
+                local_displays=(":99",),
             )
             with (
                 patch.object(

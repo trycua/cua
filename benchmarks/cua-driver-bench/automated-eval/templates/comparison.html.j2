@@ -18,6 +18,27 @@
   <h1>Cua Driver Local Diagnostic Comparison</h1>
   <p>Non-certifying diagnostic output. Papercuts and foreground disturbances do not affect scores or signals. Required participation failures make comparison signals incomplete.</p>
 
+  {% if report.execution %}
+  <h2>Execution</h2>
+  <ul>
+    <li>Backend: {{ report.execution.backend }}</li>
+    <li>Maximum parallel task shards: {{ report.execution.max_parallel_tasks }}</li>
+    <li>Complete: {{ "yes" if report.execution.complete else "no" }}</li>
+  </ul>
+  {% if report.execution.infrastructure_failures %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Task</th><th>Infrastructure failure</th></tr></thead>
+      <tbody>
+      {% for failure in report.execution.infrastructure_failures %}
+        <tr><td>{{ failure.task }}</td><td>{{ failure.error }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endif %}
+
   <h2>Trials</h2>
   <div class="table-wrap">
     <table>

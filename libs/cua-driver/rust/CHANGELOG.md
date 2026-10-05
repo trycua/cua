@@ -6,6 +6,14 @@
 
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.
 
+## [0.33.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.33.3...cua-driver-rs-v0.33.4) (2026-10-05)
+
+
+### Bug Fixes
+
+* **cua-driver:** recognize captured Chinese browser consent ([#4590](https://github.com/trycua/cua/issues/4590)) ([9ccafc9](https://github.com/trycua/cua/commit/9ccafc981412b02c096fc5a4008d08b16cada8e7))
+* **cua-driver:** support multi-monitor Hyprland desktops ([#4305](https://github.com/trycua/cua/issues/4305)) ([8674a68](https://github.com/trycua/cua/commit/8674a6832086a38c40ea59886b977a82a97645ad))
+
 ## [0.33.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.33.2...cua-driver-rs-v0.33.3) (2026-10-04)
 
 

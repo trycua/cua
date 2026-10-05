@@ -89,6 +89,17 @@ class FleetHelpersTests(unittest.TestCase):
         self.assertEqual(arguments[arguments.index("--max-parallel-tasks") + 1], "1")
         self.assertEqual(arguments[-2:], ["--task", "CDB-S01"])
 
+    def test_bootstrap_cleans_stale_global_agent_install(self) -> None:
+        config = SimpleNamespace(tasks=("CDB-S01",))
+
+        command = fleet._bootstrap_command(config, "1.2.3")
+
+        uninstall = command.index("npm uninstall --global @openai/codex")
+        stale_cleanup = command.index(".codex-*")
+        install = command.index("npm install --global --no-audit --no-fund")
+        self.assertLess(uninstall, stale_cleanup)
+        self.assertLess(stale_cleanup, install)
+
     def test_driver_check_supports_diagnostic_version_aliases(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             drivers_root = Path(temporary)

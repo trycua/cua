@@ -320,6 +320,32 @@ jobs:
             "$RUNNER_TEMP/cua-driver-bench-task-pack-source" \
             "$RUNNER_TEMP/cua-driver-bench-task-pack.tar.gz"
 
+      - name: Remove private trial inputs
+        if: ${{ always() && steps.benchmark.outputs.run_dir != '' }}
+        env:
+          RUN_DIR: ${{ steps.benchmark.outputs.run_dir }}
+        run: |
+          set -euo pipefail
+          if [[ ! -d "$RUN_DIR" ]]; then
+            exit 0
+          fi
+          find "$RUN_DIR" \
+            -type d \
+            -path '*/trials/*/inputs' \
+            -prune \
+            -exec rm -rf -- {} +
+          find "$RUN_DIR" \
+            -type f \
+            -path '*/trials/*/inputs.manifest.json' \
+            -delete
+          if find "$RUN_DIR" \
+            \( -type d -path '*/trials/*/inputs' \
+            -o -type f -path '*/trials/*/inputs.manifest.json' \) \
+            -print -quit | grep -q .; then
+            echo "Private trial inputs remain in the result bundle." >&2
+            exit 1
+          fi
+
       - name: Collect artifacts
         id: collect
         if: ${{ always() && steps.benchmark.outputs.run_dir != '' }}

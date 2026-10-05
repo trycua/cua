@@ -490,6 +490,12 @@ apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends python3-de
 python3 -m venv .fleet-venv
 .fleet-venv/bin/python -m pip install --disable-pip-version-check -e {shlex.quote(f"{REMOTE_RUNTIME}[fleet]")}
 if ! command -v codex >/dev/null 2>&1 || ! codex --version | grep -Fqx {shlex.quote(f"codex-cli {codex_version}")}; then
+  npm_root=$(npm root --global)
+  npm uninstall --global @openai/codex >/dev/null 2>&1 || true
+  if test -d "$npm_root/@openai"; then
+    find "$npm_root/@openai" -mindepth 1 -maxdepth 1 -type d -name '.codex-*' \
+      -exec rm -rf -- {{}} +
+  fi
   npm install --global --no-audit --no-fund {shlex.quote(f"@openai/codex@{codex_version}")}
 fi
 for task_dir in {task_paths}; do

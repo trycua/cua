@@ -3,11 +3,50 @@ use super::tree::AXNode;
 use core_foundation::base::{CFRelease, CFRetain, CFTypeRef};
 use cua_driver_core::snapshot_store::{SnapshotPayload, SnapshotStore};
 
-pub struct RetainedElement(usize);
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ObservedIdentity {
+    role: String,
+    title: Option<String>,
+    description: Option<String>,
+    identifier: Option<String>,
+}
+
+impl ObservedIdentity {
+    fn from_node(node: &AXNode) -> Self {
+        Self {
+            role: node.role.clone(),
+            title: node.title.clone(),
+            description: node.description.clone(),
+            identifier: node.identifier.clone(),
+        }
+    }
+
+    unsafe fn read(ptr: usize) -> Option<Self> {
+        use super::bindings::copy_string_attr;
+        let element = ptr as AXUIElementRef;
+        Some(Self {
+            role: copy_string_attr(element, "AXRole")?,
+            title: copy_string_attr(element, "AXTitle"),
+            description: copy_string_attr(element, "AXDescription"),
+            identifier: copy_string_attr(element, "AXIdentifier"),
+        })
+    }
+}
+
+pub struct RetainedElement(usize, Option<ObservedIdentity>);
 
 impl RetainedElement {
     pub fn as_ptr(&self) -> usize {
         self.0
+    }
+
+    /// Recheck the identity that the caller observed, without treating mutable
+    /// control values or layout as identity. The retained AX object alone does
+    /// not prove that a button still represents the observed action.
+    pub fn observed_identity_is_current(&self) -> bool {
+        self.1.as_ref().is_some_and(|expected| {
+            unsafe { ObservedIdentity::read(self.0) }.as_ref() == Some(expected)
+        })
     }
 
     /// Take a +1 reference on an AX element pointer (0 is kept as null).
@@ -19,13 +58,15 @@ impl RetainedElement {
         if ptr != 0 {
             unsafe { CFRetain(ptr as AXUIElementRef as CFTypeRef) };
         }
-        Self(ptr)
+        Self(ptr, None)
     }
 }
 
 impl Clone for RetainedElement {
     fn clone(&self) -> Self {
-        unsafe { Self::retain(self.0) }
+        let mut retained = unsafe { Self::retain(self.0) };
+        retained.1 = self.1.clone();
+        retained
     }
 }
 
@@ -39,6 +80,7 @@ impl Drop for RetainedElement {
 
 pub struct AxSnapshot {
     pub elements: Vec<usize>,
+    identities: Vec<ObservedIdentity>,
 }
 
 impl AxSnapshot {
@@ -48,6 +90,11 @@ impl AxSnapshot {
                 .iter()
                 .filter(|node| node.element_index.is_some())
                 .map(|node| node.element_ptr)
+                .collect(),
+            identities: nodes
+                .iter()
+                .filter(|node| node.element_index.is_some())
+                .map(ObservedIdentity::from_node)
                 .collect(),
         }
     }
@@ -59,9 +106,11 @@ impl SnapshotPayload for AxSnapshot {
         self.elements.len()
     }
     fn retain(&self, index: usize) -> Option<RetainedElement> {
-        self.elements
-            .get(index)
-            .map(|ptr| unsafe { RetainedElement::retain(*ptr) })
+        self.elements.get(index).map(|ptr| {
+            let mut element = unsafe { RetainedElement::retain(*ptr) };
+            element.1 = self.identities.get(index).cloned();
+            element
+        })
     }
 }
 
@@ -101,6 +150,7 @@ mod tests {
         unsafe { CFRetain(ptr as CFTypeRef) };
         AxSnapshot {
             elements: vec![ptr],
+            identities: vec![],
         }
     }
 

@@ -12,6 +12,7 @@ final class SnapshotPublicationFixture: NSObject {
     private var timer: Timer?
     private var generation = 0
     private var checkpoint = false
+    private var relabeled = false
     private var originalClicks = 0
     private var replacementClicks = 0
 
@@ -66,6 +67,13 @@ final class SnapshotPublicationFixture: NSObject {
             publish()
             return
         }
+        if command == "relabel" && !relabeled {
+            original.title = "Changed action"
+            relabeled = true
+            window.displayIfNeeded()
+            publish()
+            return
+        }
         guard generation == 0 && command == "replace" else { return }
         original.removeFromSuperview()
         let button = NSButton(title: "Replacement", target: self, action: #selector(clickReplacement))
@@ -95,6 +103,7 @@ final class SnapshotPublicationFixture: NSObject {
                 "window_id": window.windowNumber,
                 "generation": generation,
                 "checkpoint": checkpoint,
+                "relabeled": relabeled,
                 "original_clicks": originalClicks,
                 "replacement_clicks": replacementClicks,
             ])

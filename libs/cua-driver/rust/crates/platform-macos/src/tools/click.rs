@@ -556,6 +556,19 @@ impl Tool for ClickTool {
                 None
             };
 
+            let identity_guard = element_guard.clone();
+            let identity_current =
+                tokio::task::spawn_blocking(move || identity_guard.observed_identity_is_current())
+                    .await
+                    .unwrap_or(false);
+            if !identity_current {
+                let message = cua_driver_core::element_token::STALE_TOKEN_ERROR;
+                return ToolResult::error(message).with_structured(serde_json::json!({
+                    "status": "refused",
+                    "refusal": { "code": "stale_element_token", "message": message }
+                }));
+            }
+
             // Surface 5: button=right on the AX path → AXShowMenu (the same surface
             // the dedicated `right_click` tool dispatches). Threads through the
             // identical perform_ax_click code path with the action remapped.

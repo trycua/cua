@@ -130,6 +130,73 @@ fn resolve_owning_window<E>(
     own_id
 }
 
+/// Whether an addressed element is blocked by an attached native sheet.
+/// The owning-window mapping deliberately maps sheet descendants to their
+/// parent, so that mapping alone cannot admit actions behind the sheet.
+/// `None` means fresh ancestry/children could not be proven; fail closed.
+///
+/// # Safety
+/// `element` must remain retained for this call.
+pub unsafe fn element_blocked_by_sheet(element: AXUIElementRef, window_id: u32) -> Option<bool> {
+    use super::bindings::copy_children_checked;
+    use core_foundation::base::CFEqual;
+    let mut ancestry = vec![RetainedElement::retain(element as usize)];
+    let mut remaining_children = 2048usize;
+    for _ in 0..MAX_ANCESTRY_DEPTH {
+        let current = ancestry.last()?.as_ptr() as AXUIElementRef;
+        let role = copy_string_attr(current, "AXRole")?;
+        if matches!(role.as_str(), "AXWindow" | "AXSheet") {
+            let children = copy_children_checked(current).ok()?;
+            if children.len() > remaining_children {
+                for child in children {
+                    CFRelease(child as CFTypeRef);
+                }
+                return None;
+            }
+            remaining_children -= children.len();
+            let mut blocked = false;
+            let mut readable = true;
+            for child in children {
+                match copy_string_attr(child, "AXRole") {
+                    Some(role) if role == "AXSheet" => {
+                        blocked |= !ancestry.iter().any(|ancestor| {
+                            CFEqual(child as CFTypeRef, ancestor.as_ptr() as CFTypeRef) != 0
+                        });
+                    }
+                    None => readable = false,
+                    _ => {}
+                }
+                CFRelease(child as CFTypeRef);
+            }
+            if blocked {
+                return Some(true);
+            }
+            if !readable {
+                return None;
+            }
+            if role == "AXWindow" {
+                return (ax_get_window_id(current) == Some(window_id)).then_some(false);
+            }
+        }
+        if role == "AXApplication" {
+            return None;
+        }
+        let parent = copy_element_attr(current, "AXParent")?;
+        let retained = RetainedElement::retain(parent as usize);
+        CFRelease(parent as CFTypeRef);
+        if ancestry.iter().any(|ancestor| {
+            CFEqual(
+                retained.as_ptr() as CFTypeRef,
+                ancestor.as_ptr() as CFTypeRef,
+            ) != 0
+        }) {
+            return None;
+        }
+        ancestry.push(retained);
+    }
+    None
+}
+
 /// The process's focused AX element, but only when it provably belongs to the
 /// requested window. Returns a retained element the caller must release.
 ///

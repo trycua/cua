@@ -355,3 +355,89 @@ fn harness_appkit_pending_snapshot_cannot_retarget_token() {
         Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
     });
 }
+
+#[test]
+#[ignore]
+fn harness_appkit_cached_click_cannot_press_behind_sheet() {
+    let case = native_foreground_case(
+        "appkit",
+        "cached_click_sheet",
+        Targeting::Ax,
+        DriverRoute::MacosAxAction,
+    );
+    let label = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&label)
+            .expect("requires a TCC-authorized candidate daemon");
+        *evidence = recording_evidence(driver.recording_dir());
+        let directory = tempfile::tempdir().unwrap();
+        let child = Command::new(harness_exe())
+            .env("CUA_APPKIT_SNAPSHOT_DIR", directory.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        let harness = Harness {
+            pid: child.id(),
+            _app: child,
+        };
+        let ready = fixture_state(directory.path(), |s| {
+            s["window_id"].as_u64().is_some_and(|id| id > 0)
+        });
+        let window = ready["window_id"].as_u64().unwrap();
+        driver.start_behavior_recording();
+        let first = snapshot_elements(&mut driver, harness.pid, window);
+        assert!(!first.is_error(), "{}", first.text());
+        let token = element_token_by_id(&first, "snapshot-original");
+        std::fs::write(directory.path().join("command"), "sheet").unwrap();
+        fixture_state(directory.path(), |s| s["sheet_open"] == true);
+        // No driver observation after the external sheet opens.
+        for delivery in ["background", "foreground"] {
+            let refused = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": harness.pid, "window_id": window, "element_token": token,
+                    "delivery_mode": delivery
+                }),
+            );
+            assert!(
+                refused.is_error(),
+                "clicked behind sheet: {}",
+                refused.text()
+            );
+            assert_eq!(
+                refused.structured()["refusal"]["code"],
+                "stale_element_token"
+            );
+        }
+        std::fs::write(directory.path().join("command"), "checkpoint").unwrap();
+        let after = fixture_state(directory.path(), |s| s["checkpoint"] == true);
+        assert_eq!(after["original_clicks"], 0);
+        // Mapping a sheet to its parent must still allow its own controls.
+        let modal = snapshot_elements(&mut driver, harness.pid, window);
+        let closed = driver.call(
+            "click",
+            serde_json::json!({
+                "pid": harness.pid, "window_id": window,
+                "element_token": element_token_by_id(&modal, "snapshot-sheet-close")
+            }),
+        );
+        assert!(!closed.is_error(), "sheet control: {}", closed.text());
+        fixture_state(directory.path(), |s| s["sheet_closed"] == true);
+        let fresh = snapshot_elements(&mut driver, harness.pid, window);
+        let clicked = driver.call(
+            "click",
+            serde_json::json!({
+                "pid": harness.pid, "window_id": window,
+                "element_token": element_token_by_id(&fresh, "snapshot-original")
+            }),
+        );
+        assert!(
+            !clicked.is_error(),
+            "parent after sheet: {}",
+            clicked.text()
+        );
+        fixture_state(directory.path(), |s| s["original_clicks"] == 1);
+        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+    });
+}

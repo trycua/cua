@@ -556,6 +556,24 @@ impl Tool for ClickTool {
                 None
             };
 
+            let sheet_guard = element_guard.clone();
+            let blocked = tokio::task::spawn_blocking(move || unsafe {
+                crate::ax::exact_target::element_blocked_by_sheet(
+                    sheet_guard.as_ptr() as AXUIElementRef,
+                    wid,
+                )
+            })
+            .await
+            .ok()
+            .flatten();
+            if blocked != Some(false) {
+                let message = "The addressed element is blocked by an attached sheet or its modal ancestry is unreadable; call get_window_state and target the sheet instead";
+                return ToolResult::error(message).with_structured(serde_json::json!({
+                    "status": "refused",
+                    "refusal": { "code": "stale_element_token", "message": message }
+                }));
+            }
+
             // Surface 5: button=right on the AX path → AXShowMenu (the same surface
             // the dedicated `right_click` tool dispatches). Threads through the
             // identical perform_ax_click code path with the action remapped.

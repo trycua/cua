@@ -4408,7 +4408,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "subcommands": [
                     {"name":"show","abstract":"Print the full config.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
                     {"name":"get","abstract":"Print one config key.","discussion":"","arguments":[{"name":"key","help":"Config key to read.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
-                    {"name":"set","abstract":"Set one config key.","discussion":"","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"set","abstract":"Set one config key.","discussion":"Cursor motion defaults are saved keys that apply to sessions started afterwards: cursor.motion.style (signature_arc, spring_settle, magnetic, comet_swoop, adaptive, classic), cursor.motion.timing (native, fitts, fixed) and cursor.motion.effects.<trail|glow|magnet|ripple|squish> (true, false). Use null for a key to clear it, or cursor.motion null to clear all. A start_session cursor_motion or a set_agent_cursor_motion call overrides the saved default.","arguments":[{"name":"key","help":"Config key to write.","type":"String","is_optional":false},{"name":"value","help":"Value to store.","type":"String","is_optional":false}],"options":[],"flags":[],"subcommands":[]},
                     {"name":"reset","abstract":"Reset config to defaults.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
                 ]
             },
@@ -4641,7 +4641,12 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
     ("config", &[("cua-driver config", "Print the full config")]),
     ("config show", &[("cua-driver config show", "Print the full config")]),
     ("config get", &[("cua-driver config get max_image_dimension", "Print one key")]),
-    ("config set", &[("cua-driver config set max_image_dimension 1568", "Downscale screenshots to at most 1568 px")]),
+    ("config set", &[
+        ("cua-driver config set max_image_dimension 1568", "Downscale screenshots to at most 1568 px"),
+        ("cua-driver config set cursor.motion.style magnetic", "Make magnetic the default cursor motion for new sessions"),
+        ("cua-driver config set cursor.motion.timing fitts", "Scale cursor move time with distance and target size"),
+        ("cua-driver config set cursor.motion.effects.trail true", "Turn the cursor trail on by default"),
+    ]),
     ("config reset", &[("cua-driver config reset", "Restore the defaults")]),
     ("telemetry", &[("cua-driver telemetry status", "Show the effective telemetry setting")]),
     ("telemetry enable", &[("cua-driver telemetry enable", "Enable telemetry")]),
@@ -5031,6 +5036,25 @@ fn diagnose_config_paths_section() -> String {
     lines.join("\n")
 }
 
+/// Print a tool-level error (`isError` result) to stderr and exit 1, so a
+/// rejected `config set` never reports success.
+fn exit_on_tool_error(result: &serde_json::Value) {
+    if result.get("isError").and_then(serde_json::Value::as_bool) != Some(true) {
+        return;
+    }
+    let message = result
+        .get("content")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find_map(|item| item.get("text").and_then(serde_json::Value::as_str))
+        })
+        .unwrap_or("set_config failed");
+    eprintln!("{message}");
+    process::exit(1);
+}
+
 /// `cua-driver config [show|get|set|reset] [key] [value]`
 ///
 /// Thin daemon-only wrapper around the `get_config` / `set_config` tools.
@@ -5103,7 +5127,7 @@ pub fn run_config_cmd(
                 Some(k) => k,
                 None => {
                     eprintln!("Usage: cua-driver config get <key>");
-                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform");
+                    eprintln!("Keys: capture_mode, max_image_dimension, version, platform, cursor.motion.style, cursor.motion.timing");
                     process::exit(64);
                 }
             };
@@ -5116,11 +5140,8 @@ pub fn run_config_cmd(
             let config = get_config();
             // Support dotted key paths like "agent_cursor.enabled".
             let v = if key.contains('.') {
-                let (parent, child) = key.split_once('.').unwrap();
-
-                config
-                    .get(parent)
-                    .and_then(|object| object.get(child))
+                key.split('.')
+                    .try_fold(&config, |node, part| node.get(part))
                     .cloned()
             } else {
                 config.get(key).cloned()
@@ -5135,7 +5156,7 @@ pub fn run_config_cmd(
                 );
             } else {
                 eprintln!("Unknown config key: {key}");
-                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, agent_cursor.enabled");
+                eprintln!("Available keys: capture_mode, max_image_dimension, version, platform, agent_cursor.enabled, cursor.motion.style, cursor.motion.timing, cursor.motion.effects");
                 process::exit(64);
             }
         }
@@ -5164,7 +5185,14 @@ pub fn run_config_cmd(
             // Parse value: try JSON, fall back to string.
             let parsed_value: serde_json::Value = serde_json::from_str(value)
                 .unwrap_or_else(|_| serde_json::Value::String(value.to_owned()));
-            call("set_config", serde_json::json!({ key: parsed_value }));
+            // Dotted keys (cursor.motion.style, ...) use the {key, value} shape.
+            let set_args = if key.contains('.') {
+                serde_json::json!({ "key": key, "value": parsed_value })
+            } else {
+                serde_json::json!({ key: parsed_value })
+            };
+            let result = call("set_config", set_args);
+            exit_on_tool_error(&result);
             println!("Config updated.");
             let config = get_config();
             println!(
@@ -5182,6 +5210,11 @@ pub fn run_config_cmd(
                 "max_image_dimension": 0
             });
             call("set_config", defaults);
+            // Also clear the saved cursor motion defaults.
+            exit_on_tool_error(&call(
+                "set_config",
+                serde_json::json!({ "key": "cursor.motion", "value": null }),
+            ));
             println!("Config reset to defaults.");
             let config = get_config();
             println!(

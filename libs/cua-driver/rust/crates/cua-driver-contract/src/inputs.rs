@@ -327,6 +327,12 @@ pub struct StartSessionInput {
     /// first made visible, avoiding a flash of the default theme.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor_theme: Option<CursorThemeSelection>,
+    /// Optional initial cursor motion (style, timing, effects and tuning). The host applies it
+    /// before the cursor is first made visible. A later `set_agent_cursor_motion` call wins;
+    /// this wins over the saved default (`cursor.motion.*` in the driver config) and the
+    /// built-in `signature_arc`. Reduced motion always wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_motion: Option<CursorMotionSelection>,
 }
 
 impl ToolInput for StartSessionInput {
@@ -411,6 +417,66 @@ pub struct SetAgentCursorEnabledInput {
 
 impl ToolInput for SetAgentCursorEnabledInput {
     const TOOL_NAME: &'static str = "set_agent_cursor_enabled";
+}
+
+/// Cursor motion for a session, with the fields of `set_agent_cursor_motion` minus `session`.
+/// Omitted or null fields keep the saved default (`cursor.motion.*` in the driver config), then
+/// the built-in `signature_arc`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CursorMotionSelection {
+    /// Trajectory style. `signature_arc` (default) is one arc with a small follow-through;
+    /// `spring_settle` lands with one soft bounce; `magnetic` is pulled into the target;
+    /// `comet_swoop` is a wide arc with a short trail; `adaptive` picks a careful approach for
+    /// small targets and a swoop for long moves; `classic` is the previous Dubins glide. When
+    /// the theme's reduced motion is on, every move is a short straight glide with no effects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "cursor_motion_style_schema")]
+    pub style: Option<crate::CursorMotionStyle>,
+    /// `native` uses the style's own timing; `fitts` scales the move time with distance and
+    /// target size; `fixed` uses glide_duration_ms (1430 ms when 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "cursor_motion_timing_schema")]
+    pub timing: Option<crate::CursorMotionTiming>,
+    /// Turn single effects on or off. An omitted effect keeps its current setting; null
+    /// restores the style's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effects: Option<crate::CursorMotionEffects>,
+    /// Arc control-point offset from the start, as a fraction of the distance, for
+    /// `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_handle: Option<f64>,
+    /// Arc control-point offset from the end, as a fraction of the distance, for
+    /// `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_handle: Option<f64>,
+    /// Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default)
+    /// keeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arc_size: Option<f64>,
+    /// Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`:
+    /// positive moves the apex toward the destination. Clamped to -1..1 (default 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arc_flow: Option<f64>,
+    /// Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped
+    /// to 0.3..1 (default 0.72).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spring: Option<f64>,
+    /// Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A
+    /// nonzero value with `native` timing also fixes the duration. Clamped to 0..5000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glide_duration_ms: Option<f64>,
+    /// Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dwell_after_click_ms: Option<f64>,
+    /// Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to
+    /// 0..60000 (default 15000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_hide_ms: Option<f64>,
+    /// Minimum turning radius of the `classic` glide path, in points; smaller turns tighter.
+    /// Clamped to 1..1000 (default 80).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_radius: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]

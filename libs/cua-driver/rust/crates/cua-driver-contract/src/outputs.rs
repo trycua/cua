@@ -253,12 +253,15 @@ pub struct ListSessionsOutput {
 impl ToolOutput for ListSessionsOutput {}
 
 /// Successful structured result returned by `start_session`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 pub struct StartSessionOutput {
     #[serde(flatten)]
     pub state: SessionStateOutput,
     pub active: bool,
     pub revived: bool,
+    /// The `cursor_motion` this call applied, echoed as sent. Absent when the call did not set one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_motion: Option<crate::CursorMotionSelection>,
 }
 
 impl ToolOutput for StartSessionOutput {}

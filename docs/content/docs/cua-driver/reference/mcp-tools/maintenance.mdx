@@ -77,6 +77,8 @@ Update cua-driver-rs configuration. Changes to max_image_dimension take effect i
 
 Note: capture_mode is a per-call param (on get_window_state / click), not a stored setting. Capture modality is selected by each action's target; the old capture_scope config key is retired.
 
+Cursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.motion.effects.&lt;trail|glow|magnet|ripple|squish&gt; are saved to ~/.cua-driver/config.json and seed sessions started afterwards. start_session cursor_motion and set_agent_cursor_motion override them; reduced motion always wins.
+
 **macOS parameters**
 
 | Parameter | Type | Default | Description |
@@ -96,6 +98,8 @@ Two input shapes (both accepted, matching Windows/Swift):
 - **Legacy per-field**: `{"capture_mode": "som", "max_image_dimension": 0}`.
 
 The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next daemon restart (the PiP backend is initialised once at startup; Linux ships only the trait stub today: see issue #1729).
+
+`cursor.motion.style`, `cursor.motion.timing` and `cursor.motion.effects.<name>` save the default cursor motion for sessions started afterwards.
 
 **Linux parameters**
 
@@ -122,6 +126,8 @@ Known keys:
 - `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart: Windows backend stubbed today, see issue #1729)
 - `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)
 
+- `cursor.motion.style`, `cursor.motion.timing`, `cursor.motion.effects.<name>`: saved default cursor motion for sessions started afterwards (see the cursor docs).
+
 Returns the full updated config in the same shape as `get_config`.
 
 **Windows parameters**
@@ -141,6 +147,14 @@ Returns the full updated config in the same shape as `get_config`.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
+| <span id="set_config--cursor-motion"></span>`cursor.motion` | `any` |  | Pass null (or `default`) to clear every saved cursor motion default. |
+| <span id="set_config--cursor-motion-effects-glow"></span>`cursor.motion.effects.glow` | `boolean` |  | Saved default for the `glow` cursor effect. Unset follows the style. |
+| <span id="set_config--cursor-motion-effects-magnet"></span>`cursor.motion.effects.magnet` | `boolean` |  | Saved default for the `magnet` cursor effect. Unset follows the style. |
+| <span id="set_config--cursor-motion-effects-ripple"></span>`cursor.motion.effects.ripple` | `boolean` |  | Saved default for the `ripple` cursor effect. Unset follows the style. |
+| <span id="set_config--cursor-motion-effects-squish"></span>`cursor.motion.effects.squish` | `boolean` |  | Saved default for the `squish` cursor effect. Unset follows the style. |
+| <span id="set_config--cursor-motion-effects-trail"></span>`cursor.motion.effects.trail` | `boolean` |  | Saved default for the `trail` cursor effect. Unset follows the style. |
+| <span id="set_config--cursor-motion-style"></span>`cursor.motion.style` | `"signature_arc" \| "spring_settle" \| "magnetic" \| "comet_swoop" \| "adaptive" \| "classic"` |  | Saved default cursor motion style for new sessions. Overridden by start_session cursor_motion and set_agent_cursor_motion; reduced motion always wins. Built-in default: signature_arc. |
+| <span id="set_config--cursor-motion-timing"></span>`cursor.motion.timing` | `"native" \| "fitts" \| "fixed"` |  | Saved default cursor move timing for new sessions. |
 | <span id="set_config--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="set_config--value"></span>`value` | `any` |  | New value for `key`. JSON type depends on the key. |
 

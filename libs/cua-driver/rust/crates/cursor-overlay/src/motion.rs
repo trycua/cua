@@ -301,6 +301,27 @@ impl MotionConfig {
     /// Apply the `style`, `timing` and `effects` fields of a
     /// `set_agent_cursor_motion` call. Absent or null fields keep their
     /// current value; inside `effects`, `null` restores the style default.
+    /// Apply the motion fields of `set_agent_cursor_motion` (also the
+    /// `cursor_motion` of `start_session`) on top of `self`. Omitted or null
+    /// fields keep their current value; an invalid style, timing or effect is
+    /// an error that names the allowed values.
+    pub fn with_motion_args(&self, args: &Value) -> Result<Self, String> {
+        let number = |name: &str| args.get(name).and_then(Value::as_f64);
+        self.with_overrides(
+            number("start_handle"),
+            number("end_handle"),
+            number("arc_size"),
+            number("arc_flow"),
+            number("spring"),
+            number("glide_duration_ms"),
+            number("dwell_after_click_ms"),
+            number("idle_hide_ms"),
+            None,
+            number("turn_radius"),
+        )
+        .with_style_args(args)
+    }
+
     pub fn with_style_args(&self, args: &Value) -> Result<Self, String> {
         let mut out = self.clone();
         match args.get("style") {

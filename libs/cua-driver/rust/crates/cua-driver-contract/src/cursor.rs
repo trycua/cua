@@ -219,6 +219,20 @@ impl CursorMotionStyle {
             Self::Classic => "classic",
         }
     }
+
+    /// Parse a public name or one of its accepted aliases.
+    pub fn parse(value: &str) -> Option<Self> {
+        let aliased = match value {
+            "dc-signature-arc" => Self::SignatureArc,
+            "dc-spring-settle" => Self::SpringSettle,
+            "dc-magnetic" => Self::Magnetic,
+            "dc-comet-swoop" => Self::CometSwoop,
+            "adaptive-auto" => Self::Adaptive,
+            "dubins-glide" | "dubins" => Self::Classic,
+            _ => return Self::ALL.into_iter().find(|style| style.as_str() == value),
+        };
+        Some(aliased)
+    }
 }
 
 // How long each agent cursor move takes.

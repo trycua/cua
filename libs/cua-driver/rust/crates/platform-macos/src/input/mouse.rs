@@ -752,7 +752,9 @@ pub fn drag_at_xy(
 
 /// Window drag with an observer called for every native pointer position.
 ///
-/// Background delivery keeps the established PID-routed sequence. When
+/// Background delivery keeps the established PID-routed sequence, with each
+/// event posted once through SkyLight (the public API only when the SPI is
+/// absent) so the target sees one press, one path and one release. When
 /// `foreground_hid` is true, the same stamped gesture is posted once per event
 /// through the global HID queue while the hardware cursor follows the path.
 ///
@@ -854,7 +856,7 @@ where
         from_local,
         wid,
         click_group_id,
-        MousePostMode::Both,
+        MousePostMode::SkyLightPreferred,
     );
     std::thread::sleep(std::time::Duration::from_millis(12));
 
@@ -864,7 +866,7 @@ where
     if flags != CGEventFlags::CGEventFlagNull {
         down.set_flags(flags);
     }
-    post_mouse_event(
+    post_mouse_event_with_mode(
         pid,
         &down,
         from_local,
@@ -873,6 +875,7 @@ where
         1,
         button_number,
         0,
+        MousePostMode::SkyLightPreferred,
     );
     observe(from_x, from_y);
     std::thread::sleep(std::time::Duration::from_millis(16));
@@ -891,7 +894,17 @@ where
         if flags != CGEventFlags::CGEventFlagNull {
             drag.set_flags(flags);
         }
-        post_mouse_event(pid, &drag, il, wid, click_group_id, 1, button_number, 0);
+        post_mouse_event_with_mode(
+            pid,
+            &drag,
+            il,
+            wid,
+            click_group_id,
+            1,
+            button_number,
+            0,
+            MousePostMode::SkyLightPreferred,
+        );
         observe(ix, iy);
         if step_delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
@@ -908,7 +921,17 @@ where
     if flags != CGEventFlags::CGEventFlagNull {
         up.set_flags(flags);
     }
-    post_mouse_event(pid, &up, to_local, wid, click_group_id, 1, button_number, 0);
+    post_mouse_event_with_mode(
+        pid,
+        &up,
+        to_local,
+        wid,
+        click_group_id,
+        1,
+        button_number,
+        0,
+        MousePostMode::SkyLightPreferred,
+    );
     // Chromium may process the final pointerup on the next run-loop turn. In
     // the foreground rung the caller restores the previous app immediately
     // after this function returns, so let the target consume the release and
@@ -2224,5 +2247,79 @@ mod tests {
         middle_click_at_xy(1, 100.0, 100.0, &["ctrl"]).unwrap();
         let control = CGEventFlags::CGEventFlagControl.bits();
         assert_eq!(capture.modifiers(), [control, control]);
+    }
+
+    fn background_drag(button: DragButton) {
+        drag_at_xy(
+            1,
+            10.0,
+            10.0,
+            40.0,
+            10.0,
+            Some((10.0, 10.0)),
+            Some((40.0, 10.0)),
+            Some(7),
+            0,
+            3,
+            &[],
+            button,
+            false,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn background_drag_posts_one_press_one_path_and_one_release_per_button() {
+        for (button, down, dragged, up) in [
+            (
+                DragButton::Left,
+                "LeftMouseDown",
+                "LeftMouseDragged",
+                "LeftMouseUp",
+            ),
+            (
+                DragButton::Right,
+                "RightMouseDown",
+                "RightMouseDragged",
+                "RightMouseUp",
+            ),
+            (
+                DragButton::Middle,
+                "OtherMouseDown",
+                "OtherMouseDragged",
+                "OtherMouseUp",
+            ),
+        ] {
+            let capture = Capture::start(true);
+            background_drag(button);
+            let mut events = vec!["MouseMoved", down];
+            events.extend([dragged; 3]);
+            events.push(up);
+            assert_eq!(
+                sequence(&capture),
+                expected(&events, PostRoute::SkyLight),
+                "{button:?} drag"
+            );
+        }
+    }
+
+    #[test]
+    fn background_drag_falls_back_to_the_public_api_once_without_the_spi() {
+        let capture = Capture::start(false);
+        background_drag(DragButton::Left);
+        assert_eq!(
+            sequence(&capture),
+            expected(
+                &[
+                    "MouseMoved",
+                    "LeftMouseDown",
+                    "LeftMouseDragged",
+                    "LeftMouseDragged",
+                    "LeftMouseDragged",
+                    "LeftMouseUp",
+                ],
+                PostRoute::PublicPid
+            )
+        );
     }
 }

@@ -103,30 +103,20 @@ export GNOME_ACCESSIBILITY=1 QT_ACCESSIBILITY=1 QT_LINUX_ACCESSIBILITY_ALWAYS_ON
 export MOZ_ENABLE_ACCESSIBILITY=1 ACCESSIBILITY_ENABLED=1
 unset NO_AT_BRIDGE SESSION_MANAGER
 
-# gVisor (runsc) doesn't give Firefox's per-process sandboxes what they need
-# (its content/RDD/GPU children die with "VideoBridgeParent ... AbnormalShutdown"
-# and no window ever maps). The container boundary is the sandbox there, so
-# turn Firefox's inner ones off only when running under gVisor.
-SANDBOX_ENV=""
-if dmesg 2>/dev/null | head -1 | grep -q gVisor; then
-    for v in MOZ_DISABLE_CONTENT_SANDBOX MOZ_DISABLE_GMP_SANDBOX MOZ_DISABLE_RDD_SANDBOX \
-        MOZ_DISABLE_SOCKET_PROCESS_SANDBOX MOZ_DISABLE_UTILITY_SANDBOX; do
-        export "$v=1"; SANDBOX_ENV="$SANDBOX_ENV$v=1
+# The browsers' own sandboxes, as far as this runtime carries them
+# (browser-sandbox.sh): Firefox's inner sandboxes go off under gVisor, so its
+# variables are exported into the session; Chromium's flags are read from
+# desktop.env by /etc/chromium.d/cua-sandbox and by cua-driver.
+# shellcheck source=browser-sandbox.sh
+. "$(dirname "$0")/browser-sandbox.sh"
+SANDBOX_ENV="$(browser_sandbox_env)"
+while IFS= read -r line; do
+    case "$line" in MOZ_DISABLE_*) export "${line?}" ;; esac
+done <<<"$SANDBOX_ENV"
+if [ -n "$SANDBOX_ENV" ]; then
+    log "browser sandbox settings: $(echo "$SANDBOX_ENV" | tr '\n' ' ')"
+    SANDBOX_ENV="$SANDBOX_ENV
 "
-    done
-    log "gVisor detected: Firefox inner sandboxes disabled"
-fi
-
-# Chromium keeps its own sandbox wherever the runtime allows it: gVisor gives
-# it namespaces and seccomp; a plain container without unprivileged user
-# namespaces (docker's default seccomp profile) cannot, and there the
-# container boundary is the sandbox, so cua-driver launches Chromium with
-# --no-sandbox (CUA_DRIVER_BROWSER_NO_SANDBOX).
-if [ -z "${CUA_DRIVER_BROWSER_NO_SANDBOX:-}" ] && ! dmesg 2>/dev/null | head -1 | grep -q gVisor \
-    && ! unshare --user --map-root-user true 2>/dev/null; then
-    SANDBOX_ENV="${SANDBOX_ENV}CUA_DRIVER_BROWSER_NO_SANDBOX=1
-"
-    log "no unprivileged user namespaces: Chromium runs without its own sandbox"
 fi
 
 # Persist the session environment so `docker exec` / helpers can source it.

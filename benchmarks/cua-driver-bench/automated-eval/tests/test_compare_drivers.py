@@ -1334,6 +1334,38 @@ command = "unrelated"
             [(True, False), (True, False)],
         )
 
+    def test_local_parallel_scheduler_runs_with_spawned_processes(self) -> None:
+        script = f"""
+from types import SimpleNamespace
+import sys
+sys.path.insert(0, {str(MODULE_PATH.parent)!r})
+from compare_drivers import TaskShard, schedule_local_task_shards
+
+if __name__ == "__main__":
+    config = SimpleNamespace(max_parallel_tasks=2)
+    shards = (TaskShard("CDB-S01", ()), TaskShard("CDB-S03", ()))
+    environments = ({{"DISPLAY": ":91"}}, {{"DISPLAY": ":92"}})
+    results = schedule_local_task_shards(
+        config, shards, "20261005T000000Z", environments
+    )
+    if [result.shard.task for result in results] != ["CDB-S01", "CDB-S03"]:
+        raise SystemExit(1)
+    if any(result.error is not None or result.output != () for result in results):
+        raise SystemExit(2)
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "spawn-smoke.py"
+            path.write_text(script, encoding="utf-8")
+            completed = subprocess.run(
+                [sys.executable, str(path)],
+                cwd=MODULE_PATH.parent,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_markdown_reports_incomplete_shard_execution(self) -> None:
         markdown = compare_drivers.render_markdown(
             {

@@ -314,14 +314,23 @@ jobs:
 
       - name: Collect artifacts
         id: collect
+        if: ${{ always() && steps.benchmark.outputs.run_dir != '' }}
         env:
           RUN_DIR: ${{ steps.benchmark.outputs.run_dir }}
         run: |
           set -euo pipefail
-          test -f "$RUN_DIR/comparison.md"
-          test -f "$RUN_DIR/comparison.json"
-          test -f "$RUN_DIR/report/index.html"
-          test -d "$RUN_DIR/trials"
+          test -d "$RUN_DIR"
+          if [[ -f "$RUN_DIR/comparison.md" \
+            && -f "$RUN_DIR/comparison.json" \
+            && -f "$RUN_DIR/report/index.html" \
+            && -d "$RUN_DIR/trials" ]]; then
+            echo "bundle=report" >> "$GITHUB_OUTPUT"
+          elif [[ -f "$RUN_DIR/fleet-failures.json" ]]; then
+            echo "bundle=failure" >> "$GITHUB_OUTPUT"
+          else
+            echo "Benchmark output is incomplete." >&2
+            exit 1
+          fi
 
       - name: Publish to S3
         id: publish

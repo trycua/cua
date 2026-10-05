@@ -2149,21 +2149,27 @@ impl Sandboxes {
         }
         if let Some(rt) = &self.inner.local {
             let listed = rt.list().await?;
-            // Local state files whose VM or container is gone: `missing`,
-            // so `ls` shows the stale record and `rm` clears it. Only a
-            // definite not-found counts; an unreachable engine keeps the
-            // recorded status.
+            // Local state files the backend listing leaves out (a Lume VM,
+            // or a VM or container that is gone) get their live status: the
+            // recorded one is what the last lifecycle call wrote, and a host
+            // reboot stops a VM without updating it. A definite not-found is
+            // `missing`, so `ls` shows the stale record and `rm` clears it;
+            // an unreachable engine keeps the recorded status.
             for s in self.inner.state.list_all() {
                 if provider_of(&s) != ProviderKind::Local
                     || listed.iter().any(|i| i.name == s.name())
                 {
                     continue;
                 }
-                if let Err(crate::RuntimeError::NotFound(_)) =
-                    rt.status_on(s.name(), s.runtime_type()).await
-                    && let Some(row) = out.get_mut(&state_ref(&s).to_string())
-                {
-                    row.status = Status::Unknown(MISSING.into());
+                let Some(row) = out.get_mut(&state_ref(&s).to_string()) else {
+                    continue;
+                };
+                match rt.status_on(s.name(), s.runtime_type()).await {
+                    Ok(live) => row.status = live.into(),
+                    Err(crate::RuntimeError::NotFound(_)) => {
+                        row.status = Status::Unknown(MISSING.into());
+                    }
+                    Err(_) => {}
                 }
             }
             for i in listed {

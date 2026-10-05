@@ -393,7 +393,6 @@
       "package-name": "cua-spaces",
       "bump-minor-pre-major": true,
       "version-file": "VERSION",
-      "release-as": "0.7.2",
       "additional-paths": [
         "libs/cua"
       ],

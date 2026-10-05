@@ -1459,7 +1459,7 @@ mod tests {
         }
         assert_eq!(arrivals, vec!["mover".to_owned()]);
         assert!(
-            render.cursors["mover"].path.is_none(),
+            render.cursors["mover"].trajectory.is_none(),
             "the planned glide has ended"
         );
     }

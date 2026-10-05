@@ -55,7 +55,7 @@ public enum AppEnvironment {
         // This app's own daemon, started before the SDK connects (it
         // replaces another build's, or its own from before an update);
         // fixtures never touch the host.
-        let supervisor = fixtures ? nil : bundledCua.flatMap { DaemonSupervisor(bundledCua: $0) }
+        let supervisor = fixtures ? nil : bundledCua.flatMap { DaemonSupervisor(bundledCua: $0, agent: LiveDaemonAgent()) }
         var daemonError: String?
         if fixtures {
             backend = FixtureSpacesBackend()

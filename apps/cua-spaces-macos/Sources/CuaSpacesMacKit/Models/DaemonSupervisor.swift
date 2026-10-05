@@ -3,6 +3,34 @@
 
 import CuaSpacesFFI
 import Foundation
+import ServiceManagement
+
+/// This app's daemon as its launchd agent
+/// (`Contents/Library/LaunchAgents/com.trycua.spaces.daemon.plist`).
+/// Everything that registers or reads it goes through this protocol, so
+/// tests never touch the Mac's real launchd agents.
+public protocol DaemonAgentControlling: AnyObject, Sendable {
+    /// The agent's launchd label.
+    var label: String { get }
+    /// What the system reports now.
+    func status() -> AppLoginItemStatus
+    /// Registers it (launchd loads it; it runs when started).
+    func register() throws
+}
+
+/// `SMAppService.agent`: macOS holds this app responsible for the agent, so
+/// the daemon it runs answers to the app's Local Network permission even
+/// after the app quits.
+public final class LiveDaemonAgent: DaemonAgentControlling, @unchecked Sendable {
+    public static let plistName = "com.trycua.spaces.daemon.plist"
+    public let label = "com.trycua.spaces.daemon"
+    private let service = SMAppService.agent(plistName: LiveDaemonAgent.plistName)
+
+    public init() {}
+
+    public func status() -> AppLoginItemStatus { MainAppLoginItem.map(service.status) }
+    public func register() throws { try service.register() }
+}
 
 /// This app's own `cua daemon`: the bundled `cua`'s build. The Keyvault, the
 /// persistent-agent supervisor, Cua Volume and host Spaces live only in the
@@ -11,16 +39,27 @@ import Foundation
 /// starts it again when it dies. `cua daemon start` does the work: it
 /// starts a daemon that survives the app (as the Tauri app's does), replaces
 /// a stranger, and does nothing when this build's already runs.
+///
+/// With this app's launchd agent registered, `cua daemon start` has launchd
+/// run the daemon (`CUA_DAEMON_LAUNCHD_LABEL`). Spawned as a child of the
+/// app, the daemon answered to the app process for Local Network access and
+/// could lose it when the app quit ("No route to host" creating a Space).
+/// Without the agent (the user turned it off, a development build) it is
+/// spawned as before.
 public final class DaemonSupervisor: @unchecked Sendable {
     /// The bundled `cua`.
     public let cua: String
     /// This app's bundle (`<App>.app`, holding `Contents/MacOS/cua`).
     public let bundle: String
 
+    /// This app's daemon agent; `nil` spawns the daemon as a child.
+    let agent: DaemonAgentControlling?
+
     /// `nil` when the bundle has no executable `cua` (a bare build).
-    public init?(bundledCua: String) {
+    public init?(bundledCua: String, agent: DaemonAgentControlling? = nil) {
         guard FileManager.default.isExecutableFile(atPath: bundledCua) else { return nil }
         cua = bundledCua
+        self.agent = agent
         // <App>.app/Contents/MacOS/cua -> <App>.app
         bundle = URL(fileURLWithPath: bundledCua).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().path
@@ -46,6 +85,7 @@ public final class DaemonSupervisor: @unchecked Sendable {
         process.arguments = ["daemon", "start"]
         var env = ProcessInfo.processInfo.environment
         env["CUA_DAEMON_STARTED_BY"] = "app"
+        env["CUA_DAEMON_LAUNCHD_LABEL"] = agentLabel(environment: env)
         process.environment = env
         let output = Pipe()
         process.standardInput = FileHandle.nullDevice
@@ -104,6 +144,35 @@ public final class DaemonSupervisor: @unchecked Sendable {
             }
         }
     }
+
+    /// The launchd label `cua daemon start` should start the daemon with:
+    /// the agent's, once registered (registering it the first time). `nil`
+    /// (spawn it) when there is no agent, it waits for the user's approval
+    /// in System Settings, registering fails, or this run points the
+    /// daemon at another home or state (`HOME`, `CUA_*` settings: tests,
+    /// development runs), which the agent's fixed environment would not carry.
+    func agentLabel(environment: [String: String]) -> String? {
+        guard let agent else { return nil }
+        if environment.keys.contains(where: { $0.hasPrefix("CUA_") && !Self.agentCarries.contains($0) })
+            || environment["HOME"].map({ $0 != Self.accountHome }) == true {
+            return nil
+        }
+        if agent.status() == .notRegistered {
+            do { try agent.register() } catch {
+                NSLog("Cua Spaces: the daemon agent was not registered: %@", error.localizedDescription)
+                return nil
+            }
+        }
+        return agent.status() == .enabled ? agent.label : nil
+    }
+
+    /// This user's home from the account database (launchd's `HOME`), not
+    /// from this process's environment.
+    static let accountHome: String? = getpwuid(getuid()).flatMap { $0.pointee.pw_dir.map { String(cString: $0) } }
+
+    /// The `CUA_*` variables a launchd-run daemon still gets right: set by
+    /// the agent's property list, or by this supervisor.
+    static let agentCarries: Set<String> = ["CUA_DAEMON_STARTED_BY", "CUA_DAEMON_LAUNCHD_LABEL"]
 
     /// The wait before try `n` (1, 2, ...): 2 s doubling, at most a minute.
     static func backoff(_ n: Int) -> Duration {

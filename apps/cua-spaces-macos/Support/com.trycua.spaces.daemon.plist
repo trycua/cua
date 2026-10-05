@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Contents/Library/LaunchAgents/com.trycua.spaces.daemon.plist: this app's
+  `cua daemon` as its launchd agent, registered with SMAppService
+  (DaemonSupervisor). macOS holds the app responsible for an agent it
+  registered, so the daemon keeps the app's Local Network permission (the
+  macOS VMs on vmnet) after the app quits; a daemon spawned as the app's
+  child process answers for the app process instead.
+
+  Not run at load and not kept alive: `cua daemon start` starts it
+  (`launchctl kickstart`) when the app asks for its daemon, and replaces or
+  stops it like any other daemon.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.trycua.spaces.daemon</string>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/cua</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>cua</string>
+		<string>daemon</string>
+		<string>start</string>
+		<string>--foreground</string>
+		<string>--loopback</string>
+		<string>127.0.0.1:0</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>CUA_DAEMON_STARTED_BY</key>
+		<string>app</string>
+	</dict>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>com.trycua.spaces.macos</string>
+	</array>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>KeepAlive</key>
+	<false/>
+</dict>
+</plist>

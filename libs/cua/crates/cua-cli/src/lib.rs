@@ -31,6 +31,7 @@ mod catalog;
 mod cloud_cmd;
 mod computer;
 mod config_cmd;
+mod daemon_launchd;
 mod devices_cmd;
 mod do_cmd;
 mod doctor;
@@ -2090,6 +2091,28 @@ async fn env_targets(
     Ok(())
 }
 
+/// `exe args` as a detached child, the daemon's start outside the app's
+/// launchd agent.
+fn spawn_daemon(exe: &std::path::Path, args: &[String]) -> Result<u32, CuaError> {
+    let child = std::process::Command::new(exe)
+        .args(args)
+        // Who started it (`cua_daemon_started.mode`): the Spaces app
+        // sets `app`; an autostart from the CLI is `background`.
+        .env(
+            "CUA_DAEMON_STARTED_BY",
+            std::env::var("CUA_DAEMON_STARTED_BY").unwrap_or_else(|_| "cli".into()),
+        )
+        // Not inherited by the daemon and what it runs: a `cua daemon
+        // start` from inside would restart the agent's job.
+        .env_remove(daemon_launchd::LABEL_ENV)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(util::internal)?;
+    Ok(child.id())
+}
+
 async fn daemon_start(
     cli: &Cli,
     foreground: bool,
@@ -2131,13 +2154,22 @@ async fn daemon_start(
         }
         // The Cua Spaces `cua` runs the daemon when this build has no
         // extensions of its own and one is installed ([`extension`]).
+        let current = std::env::current_exe().map_err(util::internal)?;
         let exe = match (
             cua_daemon::extension::registered().is_empty(),
             extension::spaces_cli(),
         ) {
             (true, Some(spaces)) => spaces,
-            _ => std::env::current_exe().map_err(util::internal)?,
+            _ => current.clone(),
         };
+        // The Cua Spaces app's start runs its launchd agent, so the daemon
+        // keeps the app's Local Network permission after the app quits
+        // ([`daemon_launchd`]).
+        let launchd = daemon_launchd::label(
+            std::env::var(daemon_launchd::LABEL_ENV).ok().as_deref(),
+            socket.is_none() && cli.state_dir.is_none() && loopback == "127.0.0.1:0",
+            exe == current,
+        );
         let mut args = vec!["daemon".to_string(), "start".into(), "--foreground".into()];
         if let Some(s) = &socket {
             args.push("--socket".into());
@@ -2154,26 +2186,25 @@ async fn daemon_start(
         if let Some(d) = cua_daemon::Discovery::read(&discovery) {
             cua_daemon::remove_stale(&discovery, &d);
         }
-        let child = std::process::Command::new(exe)
-            .args(&args)
-            // Who started it (`cua_daemon_started.mode`): the Spaces app
-            // sets `app`; an autostart from the CLI is `background`.
-            .env(
-                "CUA_DAEMON_STARTED_BY",
-                std::env::var("CUA_DAEMON_STARTED_BY").unwrap_or_else(|_| "cli".into()),
-            )
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(util::internal)?;
+        let launched = launchd.and_then(|label| match daemon_launchd::kickstart(&label) {
+            Ok(pid) => Some(pid),
+            Err(e) => {
+                // An agent the user turned off, or a launchd error: spawn.
+                eprintln!("cua daemon: starting it directly ({e})");
+                None
+            }
+        });
+        let pid = match launched {
+            Some(pid) => pid,
+            None => spawn_daemon(&exe, &args)?,
+        };
         // Clients wait for it rather than run a runtime of their own while
         // it starts (it writes the same marker itself).
-        let _starting = cua_daemon::StartingMarker::write(child.id());
+        let _starting = cua_daemon::StartingMarker::write(pid);
         // Bounded wait for the discovery file.
         for _ in 0..100 {
             if let Some(d) = cua_daemon::Discovery::read(&discovery)
-                && d.pid == child.id()
+                && d.pid == pid
             {
                 line(
                     out,

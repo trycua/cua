@@ -2641,6 +2641,31 @@ class _UniffiFfiConverterTypeCursorMotionStyle(_UniffiConverterRustBuffer):
 
 
 
+class _UniffiFfiConverterOptionalTypeCursorMotionStyle(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorMotionStyle.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorMotionStyle.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorMotionStyle.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 
 
 
@@ -2689,9 +2714,59 @@ class _UniffiFfiConverterTypeCursorMotionTiming(_UniffiConverterRustBuffer):
 
 
 
+class _UniffiFfiConverterOptionalTypeCursorMotionTiming(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorMotionTiming.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorMotionTiming.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorMotionTiming.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+class _UniffiFfiConverterOptionalTypeCursorMotionEffectsOutput(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCursorMotionEffectsOutput.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCursorMotionEffectsOutput.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCursorMotionEffectsOutput.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class CursorMotionOutput:
-    def __init__(self, *, start_handle:float, end_handle:float, arc_size:float, arc_flow:float, spring:float, glide_duration_ms:float, dwell_after_click_ms:float, idle_hide_ms:float, turn_radius:float, style:CursorMotionStyle, timing:CursorMotionTiming, effects:CursorMotionEffectsOutput):
+    def __init__(self, *, start_handle:float, end_handle:float, arc_size:float, arc_flow:float, spring:float, glide_duration_ms:float, dwell_after_click_ms:float, idle_hide_ms:float, turn_radius:float, style:typing.Optional[CursorMotionStyle], timing:typing.Optional[CursorMotionTiming], effects:typing.Optional[CursorMotionEffectsOutput]):
         self.start_handle = start_handle
         self.end_handle = end_handle
         self.arc_size = arc_size
@@ -2750,9 +2825,9 @@ class _UniffiFfiConverterTypeCursorMotionOutput(_UniffiConverterRustBuffer):
             dwell_after_click_ms=_UniffiFfiConverterFloat64.read(buf),
             idle_hide_ms=_UniffiFfiConverterFloat64.read(buf),
             turn_radius=_UniffiFfiConverterFloat64.read(buf),
-            style=_UniffiFfiConverterTypeCursorMotionStyle.read(buf),
-            timing=_UniffiFfiConverterTypeCursorMotionTiming.read(buf),
-            effects=_UniffiFfiConverterTypeCursorMotionEffectsOutput.read(buf),
+            style=_UniffiFfiConverterOptionalTypeCursorMotionStyle.read(buf),
+            timing=_UniffiFfiConverterOptionalTypeCursorMotionTiming.read(buf),
+            effects=_UniffiFfiConverterOptionalTypeCursorMotionEffectsOutput.read(buf),
         )
 
     @staticmethod
@@ -2766,9 +2841,9 @@ class _UniffiFfiConverterTypeCursorMotionOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterFloat64.check_lower(value.dwell_after_click_ms)
         _UniffiFfiConverterFloat64.check_lower(value.idle_hide_ms)
         _UniffiFfiConverterFloat64.check_lower(value.turn_radius)
-        _UniffiFfiConverterTypeCursorMotionStyle.check_lower(value.style)
-        _UniffiFfiConverterTypeCursorMotionTiming.check_lower(value.timing)
-        _UniffiFfiConverterTypeCursorMotionEffectsOutput.check_lower(value.effects)
+        _UniffiFfiConverterOptionalTypeCursorMotionStyle.check_lower(value.style)
+        _UniffiFfiConverterOptionalTypeCursorMotionTiming.check_lower(value.timing)
+        _UniffiFfiConverterOptionalTypeCursorMotionEffectsOutput.check_lower(value.effects)
 
     @staticmethod
     def write(value, buf):
@@ -2781,9 +2856,9 @@ class _UniffiFfiConverterTypeCursorMotionOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterFloat64.write(value.dwell_after_click_ms, buf)
         _UniffiFfiConverterFloat64.write(value.idle_hide_ms, buf)
         _UniffiFfiConverterFloat64.write(value.turn_radius, buf)
-        _UniffiFfiConverterTypeCursorMotionStyle.write(value.style, buf)
-        _UniffiFfiConverterTypeCursorMotionTiming.write(value.timing, buf)
-        _UniffiFfiConverterTypeCursorMotionEffectsOutput.write(value.effects, buf)
+        _UniffiFfiConverterOptionalTypeCursorMotionStyle.write(value.style, buf)
+        _UniffiFfiConverterOptionalTypeCursorMotionTiming.write(value.timing, buf)
+        _UniffiFfiConverterOptionalTypeCursorMotionEffectsOutput.write(value.effects, buf)
 
 @dataclass
 class CursorPointOutput:
@@ -6700,56 +6775,6 @@ class _UniffiFfiConverterTypeSetAgentCursorEnabledOutput(_UniffiConverterRustBuf
     def write(value, buf):
         _UniffiFfiConverterString.write(value.session, buf)
         _UniffiFfiConverterBoolean.write(value.enabled, buf)
-
-class _UniffiFfiConverterOptionalTypeCursorMotionStyle(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterTypeCursorMotionStyle.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterTypeCursorMotionStyle.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterTypeCursorMotionStyle.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
-
-class _UniffiFfiConverterOptionalTypeCursorMotionTiming(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterTypeCursorMotionTiming.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterTypeCursorMotionTiming.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterTypeCursorMotionTiming.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
 
 class _UniffiFfiConverterOptionalTypeCursorMotionEffects(_UniffiConverterRustBuffer):
     @classmethod

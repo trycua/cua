@@ -1531,9 +1531,19 @@ export type CursorMotionOutput = {
     dwellAfterClickMs: number,
     idleHideMs: number,
     turnRadius: number,
-    style: CursorMotionStyle,
-    timing: CursorMotionTiming,
-    effects: CursorMotionEffectsOutput
+    /**
+     * Trajectory style. Absent from daemons that predate motion styles.
+     */
+    style?: CursorMotionStyle,
+    /**
+     * Move duration model. Absent from daemons that predate motion styles.
+     */
+    timing?: CursorMotionTiming,
+    /**
+     * Effects in use after the style defaults. Absent from daemons that
+     * predate motion styles.
+     */
+    effects?: CursorMotionEffectsOutput
 }
 
 /**
@@ -1566,9 +1576,9 @@ const FfiConverterTypeCursorMotionOutput = (() => {
                 dwellAfterClickMs: FfiConverterFloat64.read(from),
                 idleHideMs: FfiConverterFloat64.read(from),
                 turnRadius: FfiConverterFloat64.read(from),
-                style: FfiConverterTypeCursorMotionStyle.read(from),
-                timing: FfiConverterTypeCursorMotionTiming.read(from),
-                effects: FfiConverterTypeCursorMotionEffectsOutput.read(from)
+                style: FfiConverterOptionalTypeCursorMotionStyle.read(from),
+                timing: FfiConverterOptionalTypeCursorMotionTiming.read(from),
+                effects: FfiConverterOptionalTypeCursorMotionEffectsOutput.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -1581,9 +1591,9 @@ const FfiConverterTypeCursorMotionOutput = (() => {
             FfiConverterFloat64.write(value.dwellAfterClickMs, into);
             FfiConverterFloat64.write(value.idleHideMs, into);
             FfiConverterFloat64.write(value.turnRadius, into);
-            FfiConverterTypeCursorMotionStyle.write(value.style, into);
-            FfiConverterTypeCursorMotionTiming.write(value.timing, into);
-            FfiConverterTypeCursorMotionEffectsOutput.write(value.effects, into);
+            FfiConverterOptionalTypeCursorMotionStyle.write(value.style, into);
+            FfiConverterOptionalTypeCursorMotionTiming.write(value.timing, into);
+            FfiConverterOptionalTypeCursorMotionEffectsOutput.write(value.effects, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterFloat64.allocationSize(value.startHandle) +
@@ -1595,9 +1605,9 @@ const FfiConverterTypeCursorMotionOutput = (() => {
              FfiConverterFloat64.allocationSize(value.dwellAfterClickMs) +
              FfiConverterFloat64.allocationSize(value.idleHideMs) +
              FfiConverterFloat64.allocationSize(value.turnRadius) +
-             FfiConverterTypeCursorMotionStyle.allocationSize(value.style) +
-             FfiConverterTypeCursorMotionTiming.allocationSize(value.timing) +
-             FfiConverterTypeCursorMotionEffectsOutput.allocationSize(value.effects);
+             FfiConverterOptionalTypeCursorMotionStyle.allocationSize(value.style) +
+             FfiConverterOptionalTypeCursorMotionTiming.allocationSize(value.timing) +
+             FfiConverterOptionalTypeCursorMotionEffectsOutput.allocationSize(value.effects);
 
         }
     };
@@ -6292,6 +6302,15 @@ const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 // FfiConverter for boolean | undefined
 const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
 
+// FfiConverter for CursorMotionStyle | undefined
+const FfiConverterOptionalTypeCursorMotionStyle = new FfiConverterOptional(FfiConverterTypeCursorMotionStyle);
+
+// FfiConverter for CursorMotionTiming | undefined
+const FfiConverterOptionalTypeCursorMotionTiming = new FfiConverterOptional(FfiConverterTypeCursorMotionTiming);
+
+// FfiConverter for CursorMotionEffectsOutput | undefined
+const FfiConverterOptionalTypeCursorMotionEffectsOutput = new FfiConverterOptional(FfiConverterTypeCursorMotionEffectsOutput);
+
 // FfiConverter for ActionTarget | undefined
 const FfiConverterOptionalTypeActionTarget = new FfiConverterOptional(FfiConverterTypeActionTarget);
 
@@ -6348,12 +6367,6 @@ const FfiConverterOptionalTypeScrollBy = new FfiConverterOptional(FfiConverterTy
 
 // FfiConverter for EscalationReason | undefined
 const FfiConverterOptionalTypeEscalationReason = new FfiConverterOptional(FfiConverterTypeEscalationReason);
-
-// FfiConverter for CursorMotionStyle | undefined
-const FfiConverterOptionalTypeCursorMotionStyle = new FfiConverterOptional(FfiConverterTypeCursorMotionStyle);
-
-// FfiConverter for CursorMotionTiming | undefined
-const FfiConverterOptionalTypeCursorMotionTiming = new FfiConverterOptional(FfiConverterTypeCursorMotionTiming);
 
 // FfiConverter for CursorMotionEffects | undefined
 const FfiConverterOptionalTypeCursorMotionEffects = new FfiConverterOptional(FfiConverterTypeCursorMotionEffects);

@@ -989,7 +989,10 @@
                   "ripple",
                   "squish"
                 ],
-                "type": "object"
+                "type": [
+                  "object",
+                  "null"
+                ]
               },
               "end_handle": {
                 "type": "number"
@@ -1038,10 +1041,7 @@
               "glide_duration_ms",
               "dwell_after_click_ms",
               "idle_hide_ms",
-              "turn_radius",
-              "style",
-              "timing",
-              "effects"
+              "turn_radius"
             ],
             "type": "object"
           },
@@ -4334,7 +4334,10 @@
                   "ripple",
                   "squish"
                 ],
-                "type": "object"
+                "type": [
+                  "object",
+                  "null"
+                ]
               },
               "end_handle": {
                 "type": "number"
@@ -4383,10 +4386,7 @@
               "glide_duration_ms",
               "dwell_after_click_ms",
               "idle_hide_ms",
-              "turn_radius",
-              "style",
-              "timing",
-              "effects"
+              "turn_radius"
             ],
             "type": "object"
           },

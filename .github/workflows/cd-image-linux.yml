@@ -702,6 +702,8 @@ jobs:
       - run: scripts/images/test-schedule-scripts.sh
       - name: boot-qemu.sh SSH probe retries (fake ssh)
         run: libs/images/common/tests/test-ssh-retry.sh
+      - name: Browser sandbox choice per runtime (stubbed probes)
+        run: libs/images/common/tests/test-browser-sandbox.sh
       - name: Manifest generator, ledger and docs-gate tests
         run: |
           python3 -m unittest discover -s libs/images/common/tools/tests

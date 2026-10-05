@@ -424,14 +424,49 @@ fn cleanup_created_profile_as_browser(
 fn configure_linux_isolated_browser_command(
     command: &mut Command,
     native_wayland: bool,
-    no_sandbox: bool,
+    sandbox: LinuxBrowserSandbox,
 ) {
     command.arg("--password-store=basic");
     if native_wayland {
         command.arg("--ozone-platform=wayland");
     }
-    if no_sandbox {
-        command.arg("--no-sandbox");
+    match sandbox {
+        LinuxBrowserSandbox::Full => {}
+        LinuxBrowserSandbox::NoSeccomp => {
+            command.arg("--disable-seccomp-filter-sandbox");
+        }
+        LinuxBrowserSandbox::None => {
+            command.arg("--no-sandbox");
+        }
+    }
+}
+
+/// How much of Chromium's own sandbox the runtime carries. The image decides
+/// (libs/images/common/desktop/browser-sandbox.sh writes the variables into
+/// the session environment); nothing is guessed here.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LinuxBrowserSandbox {
+    /// Namespaces and seccomp-bpf, as shipped.
+    Full,
+    /// gVisor on arm64: namespaces work, the renderer's seccomp-bpf filter
+    /// kills every tab, so only that layer goes off.
+    NoSeccomp,
+    /// No unprivileged user namespaces (a container under docker's default
+    /// seccomp profile): the container boundary is the sandbox.
+    None,
+}
+
+#[cfg(target_os = "linux")]
+fn linux_browser_sandbox(var: impl Fn(&str) -> Option<String>) -> LinuxBrowserSandbox {
+    let on = |name: &str| var(name).as_deref() == Some("1");
+    // CUA_E2E_BROWSER_NO_SANDBOX is the older test spelling.
+    if on("CUA_DRIVER_BROWSER_NO_SANDBOX") || on("CUA_E2E_BROWSER_NO_SANDBOX") {
+        LinuxBrowserSandbox::None
+    } else if on("CUA_DRIVER_BROWSER_NO_SECCOMP_SANDBOX") {
+        LinuxBrowserSandbox::NoSeccomp
+    } else {
+        LinuxBrowserSandbox::Full
     }
 }
 
@@ -461,17 +496,8 @@ fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
             .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
             && std::env::var_os("WAYLAND_DISPLAY").is_some()
             && std::env::var_os("DISPLAY").is_none();
-        // The runtime cannot give Chromium its own sandbox (a container
-        // without unprivileged user namespaces): the container boundary is
-        // the sandbox. Set by the image (libs/images/linux detects it), never
-        // guessed here; CUA_E2E_BROWSER_NO_SANDBOX is the older test spelling.
-        let no_sandbox = [
-            "CUA_DRIVER_BROWSER_NO_SANDBOX",
-            "CUA_E2E_BROWSER_NO_SANDBOX",
-        ]
-        .iter()
-        .any(|name| std::env::var(name).as_deref() == Ok("1"));
-        configure_linux_isolated_browser_command(&mut command, native_wayland, no_sandbox);
+        let sandbox = linux_browser_sandbox(|name| std::env::var(name).ok());
+        configure_linux_isolated_browser_command(&mut command, native_wayland, sandbox);
     }
     let stderr = if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {
         Stdio::inherit()
@@ -1947,7 +1973,7 @@ mod tests {
     #[test]
     fn isolated_launch_can_select_native_wayland_and_test_vm_sandbox_mode() {
         let mut command = Command::new("chromium-under-test");
-        configure_linux_isolated_browser_command(&mut command, true, true);
+        configure_linux_isolated_browser_command(&mut command, true, LinuxBrowserSandbox::None);
         let args = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -1955,5 +1981,46 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "--password-store=basic"));
         assert!(args.iter().any(|arg| arg == "--ozone-platform=wayland"));
         assert!(args.iter().any(|arg| arg == "--no-sandbox"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn isolated_launch_sandbox_flags_follow_the_image_variables() {
+        let flags = |vars: &[(&str, &str)]| {
+            let vars = vars
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<std::collections::HashMap<_, _>>();
+            let sandbox = linux_browser_sandbox(|name| vars.get(name).cloned());
+            let mut command = Command::new("chromium-under-test");
+            configure_linux_isolated_browser_command(&mut command, false, sandbox);
+            command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .filter(|arg| arg.contains("sandbox"))
+                .collect::<Vec<_>>()
+        };
+        assert!(flags(&[]).is_empty());
+        assert_eq!(
+            flags(&[("CUA_DRIVER_BROWSER_NO_SECCOMP_SANDBOX", "1")]),
+            ["--disable-seccomp-filter-sandbox"]
+        );
+        assert_eq!(
+            flags(&[("CUA_DRIVER_BROWSER_NO_SANDBOX", "1")]),
+            ["--no-sandbox"]
+        );
+        assert_eq!(
+            flags(&[("CUA_E2E_BROWSER_NO_SANDBOX", "1")]),
+            ["--no-sandbox"]
+        );
+        // --no-sandbox already drops the seccomp layer with the rest.
+        assert_eq!(
+            flags(&[
+                ("CUA_DRIVER_BROWSER_NO_SANDBOX", "1"),
+                ("CUA_DRIVER_BROWSER_NO_SECCOMP_SANDBOX", "1"),
+            ]),
+            ["--no-sandbox"]
+        );
+        assert!(flags(&[("CUA_DRIVER_BROWSER_NO_SECCOMP_SANDBOX", "0")]).is_empty());
     }
 }

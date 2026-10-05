@@ -23,6 +23,7 @@ module FleetSdk
     readTypeOSGymSandboxTemplateSpec
     readTypeOSGymSandboxWarmPoolSpec
     readTypeOSGymSandboxWarmPoolStatus
+    readTypePreservedJson
   ].freeze
   SCHEMA_WRITE_METHODS = %i[
     write_TypeClaimSpec
@@ -30,6 +31,7 @@ module FleetSdk
     write_TypeOSGymSandboxTemplateSpec
     write_TypeOSGymSandboxWarmPoolSpec
     write_TypeOSGymSandboxWarmPoolStatus
+    write_TypePreservedJson
   ].freeze
 
   schema_rust_buffer = CyclopsSdkSchema::RustBuffer

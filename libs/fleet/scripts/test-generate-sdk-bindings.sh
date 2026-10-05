@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-workspace_dir="$repo_root/cyclops-cs"
+workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 generator="$workspace_dir/scripts/generate-sdk-bindings.sh"
 compat_generator="$workspace_dir/scripts/generate-compat-sdk-bindings.sh"
 compat_normalizer="$workspace_dir/scripts/normalize-compat-sdk-bindings.py"
@@ -331,6 +330,9 @@ if [ "$handwritten_directory_created" = true ]; then
 fi
 assert_tree_unchanged "$initial_hash" "handwritten fixture cleanup"
 "$generator" --check
+for compatibility_root in go-uniffi ts-uniffi ts-uniffi-browser; do
+  [ -f "$bindings_dir/$compatibility_root/.cyclops-sdk-generated-files" ] ||     fail "canonical generator omits $compatibility_root manifest"
+done
 
 runtime_library="$(find_cyclops_sdk_library)" || fail "could not read a cyclops-sdk cdylib from Cargo compiler-artifact output"
 [ -f "$runtime_library" ] || fail "Cargo reported a missing cyclops-sdk cdylib: $runtime_library"
@@ -374,6 +376,17 @@ class CallbackHttpClient(fleet_sdk.HttpClient):
                     "sandboxTemplateRef": {"name": "default"},
                 },
             }
+        elif request.url.endswith("/api/k8s/apis/images.cua.ai/v1alpha1/namespaces/default/images"):
+            body = {
+                "apiVersion": "images.cua.ai/v1alpha1",
+                "kind": "Image",
+                "metadata": {
+                    "namespace": "default",
+                    "name": "offline-image",
+                    "uid": "image-uid",
+                    "generation": 1,
+                },
+            }
         else:
             raise AssertionError(f"unexpected callback request: {request.method} {request.url}")
         return fleet_sdk.HttpResponse(status=201, headers=[], body=json.dumps(body).encode())
@@ -402,6 +415,15 @@ async def smoke_create_pool():
     pool = await client.create_pool(request)
     assert pool.metadata.name == "offline-pool"
     assert any(request.url.endswith("/osgymsandboxwarmpools") for request in transport.requests)
+
+    manifest = fleet_sdk.PreservedJson.from_json(json.dumps({
+        "apiVersion": "images.cua.ai/v1alpha1",
+        "kind": "Image",
+        "metadata": {"namespace": "default", "name": "offline-image"},
+    }))
+    image = await client.create_image("default", manifest)
+    assert json.loads(image.to_json())["metadata"]["uid"] == "image-uid"
+    assert any(request.url.endswith("/images") for request in transport.requests)
 
 asyncio.run(smoke_create_pool())
 PYTHON_SMOKE
@@ -828,11 +850,15 @@ expectRejected("Python class SignedServiceUrl: pass", assertPython, replaceOnce(
 expectRejected("renamed Python SignedServiceUrl converter", assertPython, replaceOnce(sources.python, "class _UniffiFfiConverterTypeSignedServiceUrl(", "class _UniffiFfiConverterTypeRenamedSignedServiceUrl(", "Python converter rename"));
 expectRejected("Python CreatePoolRequest lowering", assertPython, withinAfter(sources.python, "class CyclopsClient(CyclopsClientProtocol):", "    async def create_signed_service_url", "\n    async def ", "_UniffiFfiConverterTypeCreateSignedServiceUrlRequest.lower", "_UniffiFfiConverterTypeCreatePoolRequest.lower", "Python create lowering"));
 expectRejected("Swift FFI moved to EOF", assertSwift, `${within(sources.swift, "open func createSignedServiceUrl", "\nopen func ", "uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url", "uniffi_cyclops_sdk_fn_method_cyclopsclient_create_wrong", "Swift create FFI")}\n// uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url`);
-expectRejected("browser service setter FFI", assertBrowser, within(sources.browser, "  service(value: string)", "\n  uniffiDestroy", "createsignedserviceurlrequestbuilder_service", "createsignedserviceurlrequestbuilder_label", "browser setter FFI"));
+const browserSignedUrlBuilder = braceBlock(sources.browser, "export class CreateSignedServiceUrlRequestBuilder", "browser setter builder");
+const browserServiceSetter = braceMember(browserSignedUrlBuilder, "  service(value: string)", "): CreateSignedServiceUrlRequestBuilderLike {", "browser setter method");
+expectRejected("browser service setter FFI", assertBrowser, replaceOnce(sources.browser, browserServiceSetter, replaceOnce(browserServiceSetter, "createsignedserviceurlrequestbuilder_service", "createsignedserviceurlrequestbuilder_label", "browser setter FFI"), "browser setter method"));
 expectRejected("Python concrete SdkError", assertPython, withinAfter(sources.python, "class CyclopsClient(CyclopsClientProtocol):", "    async def create_signed_service_url", "\n    async def ", "_UniffiFfiConverterTypeSdkError", "_UniffiFfiConverterTypeSdkBuildError", "Python create error"));
 expectRejected("Python swapped SignedServiceUrlsUnavailable ordinal", assertPython, replaceOnce(sources.python, "if variant == 7:\n            return SdkError.SignedServiceUrlsUnavailable(", "if variant == 8:\n            return SdkError.SignedServiceUrlsUnavailable(", "Python ordinal"));
 expectRejected("Ruby swapped SignedServiceUrlsUnavailable ordinal", assertRuby, replaceOnce(sources.ruby, "if variant == 7\n        return SdkError::SignedServiceUrlsUnavailable.new", "if variant == 8\n        return SdkError::SignedServiceUrlsUnavailable.new", "Ruby ordinal"));
-expectRejected("browser swapped SignedServiceUrlsUnavailable ordinal", assertBrowser, replaceOnce(sources.browser, "case 7:\n          return new SdkError.SignedServiceUrlsUnavailable();", "case 8:\n          return new SdkError.SignedServiceUrlsUnavailable();", "browser ordinal"));
+const browserErrorConverter = braceBlock(sources.browser, "const FfiConverterTypeSdkError", "browser ordinal converter");
+const browserErrorRead = braceMember(browserErrorConverter, "read(from: RustBuffer)", "): TypeName {", "browser ordinal decoder");
+expectRejected("browser swapped SignedServiceUrlsUnavailable ordinal", assertBrowser, replaceOnce(sources.browser, browserErrorRead, replaceOnce(browserErrorRead, /case 7:(\s+return new SdkError\.SignedServiceUrlsUnavailable\(\))/, "case 8:$1", "browser ordinal"), "browser ordinal decoder"));
 
 NODE
 
@@ -909,17 +935,62 @@ grep -Fq -- "TtlSecondsAfterCreated *uint32" "$go_schema_source" || fail "Go bin
 grep -Fq -- "FfiConverterOptionalUint32INSTANCE.Write(writer, value.TtlSecondsAfterCreated)" "$go_schema_source" || fail "Go bindings do not write TtlSecondsAfterCreated"
 
 for typescript_binding in "$node_sdk_source" "$browser_sdk_source"; do
+  for upload_type in ImageUploadFileRequest ImageUploadInstruction ImageUploadRequest ImageUploadResponse PresignedPut; do
+    grep -Fq -- "export type $upload_type =" "$typescript_binding" || fail "TypeScript bindings omit $upload_type: $typescript_binding"
+  done
+  grep -Fq -- "presignImageUploads(" "$typescript_binding" || fail "TypeScript bindings omit presignImageUploads: $typescript_binding"
+done
+for upload_type in ImageUploadFileRequest ImageUploadInstruction ImageUploadRequest ImageUploadResponse PresignedPut; do
+  grep -Fq -- "type $upload_type struct" "$go_sdk_source" || fail "Go bindings omit $upload_type"
+done
+grep -Fq -- "PresignImageUploads(" "$go_sdk_source" || fail "Go bindings omit PresignImageUploads"
+grep -Fq -- "func GetPoolDisplayStatus(pool Pool) PoolDisplayStatus" "$go_sdk_source" || fail "Go display-status function collides with its record type"
+
+for typescript_binding in "$node_sdk_source" "$browser_sdk_source"; do
   grep -Fq -- "timeoutSecs?: bigint" "$typescript_binding" || fail "TypeScript bindings omit HttpRequest.timeoutSecs: $typescript_binding"
   grep -Fq -- "timeoutSecs: FfiConverterOptionalUInt64.read(from)" "$typescript_binding" || fail "TypeScript bindings do not read HttpRequest.timeoutSecs: $typescript_binding"
   grep -Fq -- "FfiConverterOptionalUInt64.write(value.timeoutSecs, into)" "$typescript_binding" || fail "TypeScript bindings do not write HttpRequest.timeoutSecs: $typescript_binding"
   grep -Fq -- "FfiConverterOptionalUInt64.allocationSize(value.timeoutSecs)" "$typescript_binding" || fail "TypeScript bindings do not allocate HttpRequest.timeoutSecs: $typescript_binding"
   grep -Fq -- "const FfiConverterOptionalUInt64 = new FfiConverterOptional" "$typescript_binding" || fail "TypeScript bindings omit the optional UInt64 converter: $typescript_binding"
+  grep -Fq -- "maxResponseBytes?: bigint" "$typescript_binding" || fail "TypeScript bindings omit HttpRequest.maxResponseBytes: $typescript_binding"
+  grep -Fq -- "maxResponseBytes: undefined" "$typescript_binding" || fail "TypeScript bindings do not default HttpRequest.maxResponseBytes to absent: $typescript_binding"
+  grep -Fq -- "maxResponseBytes: FfiConverterOptionalUInt64.read(from)" "$typescript_binding" || fail "TypeScript bindings do not read HttpRequest.maxResponseBytes: $typescript_binding"
+  grep -Fq -- "FfiConverterOptionalUInt64.write(value.maxResponseBytes, into)" "$typescript_binding" || fail "TypeScript bindings do not write HttpRequest.maxResponseBytes: $typescript_binding"
+  grep -Fq -- "FfiConverterOptionalUInt64.allocationSize(value.maxResponseBytes)" "$typescript_binding" || fail "TypeScript bindings do not allocate HttpRequest.maxResponseBytes: $typescript_binding"
 done
 grep -Fq -- "TimeoutSecs *uint64" "$go_sdk_source" || fail "Go bindings omit HttpRequest.TimeoutSecs"
 grep -Fq -- "FfiConverterOptionalUint64INSTANCE.Read(reader)" "$go_sdk_source" || fail "Go bindings do not read HttpRequest.TimeoutSecs"
 grep -Fq -- "FfiConverterOptionalUint64INSTANCE.Write(writer, value.TimeoutSecs)" "$go_sdk_source" || fail "Go bindings do not write HttpRequest.TimeoutSecs"
 grep -Fq -- "FfiDestroyerOptionalUint64{}.Destroy(r.TimeoutSecs)" "$go_sdk_source" || fail "Go bindings do not destroy HttpRequest.TimeoutSecs"
+grep -Fq -- "MaxResponseBytes *uint64" "$go_sdk_source" || fail "Go bindings omit HttpRequest.MaxResponseBytes"
+go_http_request_block="$(sed -n '/^type HttpRequest struct {/,/^type FfiDestroyerHttpRequest struct/p' "$go_sdk_source")"
+[ "$(printf '%s\n' "$go_http_request_block" | grep -Fc -- "FfiConverterOptionalUint64INSTANCE.Read(reader),")" -eq 2 ] || fail "Go bindings do not read both HttpRequest request controls in field order"
+grep -Fq -- "FfiConverterOptionalUint64INSTANCE.Write(writer, value.MaxResponseBytes)" "$go_sdk_source" || fail "Go bindings do not write HttpRequest.MaxResponseBytes"
+grep -Fq -- "FfiDestroyerOptionalUint64{}.Destroy(r.MaxResponseBytes)" "$go_sdk_source" || fail "Go bindings do not destroy HttpRequest.MaxResponseBytes"
 grep -Fq -- "type FfiConverterOptionalUint64 struct{}" "$go_sdk_source" || fail "Go bindings omit the optional uint64 converter"
+node - "$python_sdk_source" "$go_sdk_source" "$node_sdk_source" "$browser_sdk_source" <<'NODE'
+const fs = require("node:fs");
+
+const bindings = [
+  [process.argv[2], /uniffi_cyclops_sdk_checksum_method_httpclient_execute\(\) != (\d+):/],
+  [process.argv[3], /if checksum != (\d+) \{\n\s*\/\/ If this happens try cleaning and rebuilding your project\n\s*panic\("fleet_sdk: uniffi_cyclops_sdk_checksum_method_httpclient_execute/],
+  [process.argv[4], /uniffi_cyclops_sdk_checksum_method_httpclient_execute\(\) !== (\d+)/],
+  [process.argv[5], /ubrn_uniffi_cyclops_sdk_checksum_method_httpclient_execute\(\) !==\s*(\d+)/],
+];
+const checksums = bindings.map(([path, pattern]) => {
+  const match = fs.readFileSync(path, "utf8").match(pattern);
+  if (!match) throw new Error(`HttpClient.execute checksum is missing from ${path}`);
+  return [path, match[1]];
+});
+const expected = checksums[0][1];
+const mismatches = checksums.filter(([, checksum]) => checksum !== expected);
+if (mismatches.length > 0) {
+  throw new Error(
+    `HttpClient.execute checksum drift: expected ${expected}; ` +
+      mismatches.map(([path, checksum]) => `${path} has ${checksum}`).join(", "),
+  );
+}
+NODE
 grep -Fq -- "@uniffi_handle_map = UniffiHandleMap.new" "$ruby_sdk_source" || fail "Ruby callback bindings do not retain native callback objects"
 grep -Fq -- "module UniffiCallbackInterfaceHttpClient" "$ruby_sdk_source" || fail "Ruby callback bindings do not register an HTTP callback vtable"
 grep -Fq -- "[VTableCallbackInterfaceHttpClient.by_ref]" "$ruby_sdk_source" || fail "Ruby callback vtable initializer has the wrong FFI signature"
@@ -976,6 +1047,17 @@ printf '\n# task10 content drift\n' >> "$content_file"
 expect_check_failure content
 mv "$temporary_directory/content-file" "$content_file"
 chmod "$content_file_mode" "$content_file"
+"$generator" --check
+
+compatibility_content_file="$bindings_dir/ts-uniffi/fleet_sdk.ts"
+compatibility_content_mode="$(mode_for "$compatibility_content_file")"
+cp "$compatibility_content_file" "$temporary_directory/compatibility-content-file"
+printf '
+// compatibility content drift
+' >> "$compatibility_content_file"
+expect_check_failure compatibility-content
+mv "$temporary_directory/compatibility-content-file" "$compatibility_content_file"
+chmod "$compatibility_content_mode" "$compatibility_content_file"
 "$generator" --check
 
 mode_file="$bindings_dir/ruby/cyclops_sdk.rb"

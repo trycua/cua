@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -127,4 +128,36 @@ func TestNormalizePath(t *testing.T) {
 			t.Errorf("normalizePath(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
+}
+
+func TestRecordNamespaceCreatePhase(t *testing.T) {
+	before := namespaceCreatePhaseHistogramCount(t, "k8s_create", "http_201")
+	RecordNamespaceCreatePhase("k8s_create", "http_201", 750*time.Millisecond)
+	after := namespaceCreatePhaseHistogramCount(t, "k8s_create", "http_201")
+	if after != before+1 {
+		t.Fatalf("namespace create phase histogram count = %d, want %d", after, before+1)
+	}
+}
+
+func namespaceCreatePhaseHistogramCount(t *testing.T, phase, result string) uint64 {
+	t.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "cyclops_cs_namespace_create_phase_duration_seconds" {
+			continue
+		}
+		for _, metric := range family.Metric {
+			labels := map[string]string{}
+			for _, pair := range metric.Label {
+				labels[pair.GetName()] = pair.GetValue()
+			}
+			if labels["phase"] == phase && labels["result"] == result {
+				return metric.GetHistogram().GetSampleCount()
+			}
+		}
+	}
+	return 0
 }

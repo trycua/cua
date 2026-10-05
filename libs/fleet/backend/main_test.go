@@ -156,6 +156,13 @@ func TestFeatureFlagAdminSwaggerDocumentsReachableResponses(t *testing.T) {
 	}
 }
 
+func TestNewImageObjectStoreDisabledWithoutBucket(t *testing.T) {
+	store, err := newImageObjectStore(context.Background(), config.ImageUploadConfiguration{})
+	if err != nil || store != nil {
+		t.Fatalf("newImageObjectStore() = %v, %v, want nil, nil", store, err)
+	}
+}
+
 func TestGatewayRoutesAreRemoved(t *testing.T) {
 	router := setupRouter(handlers.Handlers{})
 

@@ -1,0 +1,610 @@
+{
+  "$defs": {
+    "ApiVersion": {
+      "description": "`apiVersion` (single allowed value).",
+      "enum": [
+        "images.cua.ai/v1alpha1"
+      ],
+      "type": "string"
+    },
+    "ConditionStatus": {
+      "enum": [
+        "True",
+        "False",
+        "Unknown"
+      ],
+      "type": "string"
+    },
+    "ImageArtifacts": {
+      "additionalProperties": false,
+      "properties": {
+        "oci": {
+          "$ref": "#/$defs/ImageOciArtifact",
+          "description": "The built OCI image."
+        },
+        "volumeSnapshot": {
+          "$ref": "#/$defs/ImageVolumeSnapshotArtifact",
+          "description": "The built VM disk, as a volume snapshot."
+        }
+      },
+      "title": "ImageArtifacts",
+      "type": "object"
+    },
+    "ImageBuildOptions": {
+      "additionalProperties": false,
+      "properties": {
+        "diskSize": {
+          "default": "40Gi",
+          "description": "Disk size of the build machine (default `40Gi`).",
+          "pattern": "^[1-9][0-9]*(Gi|Ti)$",
+          "type": "string"
+        },
+        "timeoutSeconds": {
+          "default": 7200,
+          "description": "Build budget in seconds (default 7200).",
+          "format": "uint32",
+          "maximum": 86400,
+          "minimum": 60,
+          "type": "integer"
+        }
+      },
+      "title": "ImageBuildOptions",
+      "type": "object"
+    },
+    "ImageCondition": {
+      "additionalProperties": false,
+      "properties": {
+        "lastTransitionTime": {
+          "description": "When the condition last changed (RFC 3339).",
+          "format": "date-time",
+          "type": "string"
+        },
+        "message": {
+          "description": "Human-readable detail.",
+          "maxLength": 32768,
+          "type": "string"
+        },
+        "observedGeneration": {
+          "description": "The spec generation the condition describes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "description": "Machine-readable reason.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ConditionStatus",
+          "description": "`True`, `False` or `Unknown`."
+        },
+        "type": {
+          "description": "Condition type.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "status",
+        "reason",
+        "lastTransitionTime"
+      ],
+      "title": "ImageCondition",
+      "type": "object"
+    },
+    "ImageFile": {
+      "additionalProperties": false,
+      "properties": {
+        "destination": {
+          "description": "Absolute path in the image.",
+          "maxLength": 4096,
+          "pattern": "^/.*",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/ImageFileReference",
+          "description": "The uploaded file."
+        }
+      },
+      "required": [
+        "source",
+        "destination"
+      ],
+      "title": "ImageFile",
+      "type": "object"
+    },
+    "ImageFileReference": {
+      "additionalProperties": false,
+      "description": "A file uploaded to Fleet (`uploads/<namespace>/<id>`).",
+      "properties": {
+        "digest": {
+          "description": "SHA-256 digest of the file.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "reference": {
+          "description": "Upload reference from the image upload API (`uploads/<namespace>/<id>`).",
+          "maxLength": 2048,
+          "minLength": 1,
+          "pattern": "^uploads/[a-z0-9]([-a-z0-9]*[a-z0-9])?/[A-Za-z0-9_-]+$",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "description": "Size in bytes.",
+          "format": "uint64",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "reference",
+        "digest",
+        "sizeBytes"
+      ],
+      "title": "ImageFileReference",
+      "type": "object"
+    },
+    "ImageLayer": {
+      "description": "One build step. Serialised as `{\"type\": \"<kind>\", ...}`.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "packages": {
+              "items": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 256,
+              "minItems": 1,
+              "type": "array"
+            },
+            "type": {
+              "const": "apt_install",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "packages"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "packages": {
+              "items": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 256,
+              "minItems": 1,
+              "type": "array"
+            },
+            "type": {
+              "const": "pip_install",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "packages"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "packages": {
+              "items": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 256,
+              "minItems": 1,
+              "type": "array"
+            },
+            "type": {
+              "const": "uv_install",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "packages"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "appId": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": {
+              "const": "app_install",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "appId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "maxLength": 16384,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": {
+              "const": "run",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "command"
+          ],
+          "type": "object"
+        }
+      ],
+      "title": "ImageLayer"
+    },
+    "ImageLogs": {
+      "additionalProperties": false,
+      "properties": {
+        "livePodName": {
+          "description": "Pod that streams the log while the build runs.",
+          "maxLength": 253,
+          "type": "string"
+        },
+        "retainedReference": {
+          "description": "Where the log is kept after the build.",
+          "maxLength": 2048,
+          "type": "string"
+        }
+      },
+      "title": "ImageLogs",
+      "type": "object"
+    },
+    "ImageObjectMeta": {
+      "additionalProperties": false,
+      "properties": {
+        "annotations": {
+          "additionalProperties": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "description": "Annotations on the Image resource.",
+          "maxProperties": 64,
+          "type": "object"
+        },
+        "labels": {
+          "additionalProperties": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "description": "Labels on the Image resource.",
+          "maxProperties": 64,
+          "type": "object"
+        },
+        "name": {
+          "description": "Image name: a DNS label.",
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Namespace the image belongs to.",
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "namespace"
+      ],
+      "title": "ImageObjectMeta",
+      "type": "object"
+    },
+    "ImageOciArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "description": "Image digest.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "reference": {
+          "description": "Image reference.",
+          "maxLength": 2048,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "reference",
+        "digest"
+      ],
+      "title": "ImageOciArtifact",
+      "type": "object"
+    },
+    "ImagePhase": {
+      "enum": [
+        "Pending",
+        "Validating",
+        "Building",
+        "PushingOCI",
+        "Importing",
+        "Quiescing",
+        "Snapshotting",
+        "Ready",
+        "Failed",
+        "Cancelling"
+      ],
+      "type": "string"
+    },
+    "ImageRecipe": {
+      "additionalProperties": false,
+      "description": "What to build.",
+      "properties": {
+        "distro": {
+          "description": "Distribution of the base, for example `ubuntu`.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "maxLength": 8192,
+            "type": "string"
+          },
+          "description": "Environment variables of the image.",
+          "maxProperties": 128,
+          "type": "object"
+        },
+        "files": {
+          "description": "Uploaded files copied into the image.",
+          "items": {
+            "$ref": "#/$defs/ImageFile"
+          },
+          "maxItems": 128,
+          "type": "array"
+        },
+        "from": {
+          "description": "Registry base image (`kind: container`): layers are built on top of\nit and the result is an OCI rootfs.",
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        },
+        "fromPullSecret": {
+          "description": "A `cua-registry-*` pull Secret in this namespace for a private base.",
+          "maxLength": 253,
+          "pattern": "^cua-registry-[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/RecipeKind",
+          "description": "`vm`: a VM disk image. `container`: an OCI rootfs built on `from`."
+        },
+        "layers": {
+          "description": "Build steps, run in order.",
+          "items": {
+            "$ref": "#/$defs/ImageLayer"
+          },
+          "maxItems": 128,
+          "type": "array"
+        },
+        "osType": {
+          "$ref": "#/$defs/RecipeOsType",
+          "description": "Guest OS family."
+        },
+        "ports": {
+          "description": "Ports the image exposes.",
+          "items": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxItems": 32,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "version": {
+          "description": "Distribution version, for example `24.04`.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "osType",
+        "distro",
+        "version",
+        "kind",
+        "layers"
+      ],
+      "title": "ImageRecipe",
+      "type": "object"
+    },
+    "ImageSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "build": {
+          "$ref": "#/$defs/ImageBuildOptions",
+          "description": "Build resources and limits."
+        },
+        "metadata": {
+          "$ref": "#/$defs/ImageUserMetadata",
+          "description": "Free-form metadata kept with the image."
+        },
+        "recipe": {
+          "$ref": "#/$defs/ImageRecipe",
+          "description": "What to build."
+        }
+      },
+      "required": [
+        "recipe"
+      ],
+      "title": "ImageSpec",
+      "type": "object"
+    },
+    "ImageStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "$ref": "#/$defs/ImageArtifacts",
+          "description": "What the build produced."
+        },
+        "buildIdentity": {
+          "description": "Identifier of the build run.",
+          "maxLength": 63,
+          "type": "string"
+        },
+        "conditions": {
+          "description": "Kubernetes-style conditions of the build.",
+          "items": {
+            "$ref": "#/$defs/ImageCondition"
+          },
+          "type": "array"
+        },
+        "logs": {
+          "$ref": "#/$defs/ImageLogs",
+          "description": "Where the build log is."
+        },
+        "observedGeneration": {
+          "description": "The spec generation this status describes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "phase": {
+          "$ref": "#/$defs/ImagePhase",
+          "description": "Build phase."
+        },
+        "recipeDigest": {
+          "description": "Digest of the recipe that was built.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "title": "ImageStatus",
+      "type": "object"
+    },
+    "ImageUserMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "tags": {
+          "additionalProperties": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "description": "Tags, as key-value pairs.",
+          "maxProperties": 32,
+          "type": "object"
+        }
+      },
+      "title": "ImageUserMetadata",
+      "type": "object"
+    },
+    "ImageVolumeSnapshotArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Name of the snapshot.",
+          "maxLength": 253,
+          "minLength": 1,
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Namespace of the snapshot.",
+          "maxLength": 63,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "namespace",
+        "name"
+      ],
+      "title": "ImageVolumeSnapshotArtifact",
+      "type": "object"
+    },
+    "RecipeKind": {
+      "oneOf": [
+        {
+          "enum": [
+            "vm"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "container",
+          "description": "An OCI rootfs (docker / gVisor) built on the registry image `from`.",
+          "type": "string"
+        }
+      ]
+    },
+    "RecipeOsType": {
+      "enum": [
+        "linux"
+      ],
+      "type": "string"
+    },
+    "ResourceKind": {
+      "description": "`kind` (single allowed value).",
+      "enum": [
+        "Image"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "https://cua.ai/schemas/images.cua.ai/v1alpha1/image.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The full Image resource.",
+  "properties": {
+    "apiVersion": {
+      "$ref": "#/$defs/ApiVersion"
+    },
+    "kind": {
+      "$ref": "#/$defs/ResourceKind"
+    },
+    "metadata": {
+      "$ref": "#/$defs/ImageObjectMeta"
+    },
+    "spec": {
+      "$ref": "#/$defs/ImageSpec"
+    },
+    "status": {
+      "$ref": "#/$defs/ImageStatus"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "ImageResource",
+  "type": "object"
+}

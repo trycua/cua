@@ -303,6 +303,16 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_driver_sdk_fn_clone_driverservicetransport": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_free_driverservicetransport": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_driver_sdk_fn_clone_embeddedcuadriverhost": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -323,6 +333,16 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_driver_sdk_fn_clone_mcpdriverchannel": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_free_mcpdriverchannel": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_driver_sdk_fn_init_callback_vtable_driveractivityobserver": {
       args: [FfiType.Reference(FfiType.Struct("VTableCallbackInterfaceCuaDriverSdkDriverActivityObserver"))],
       ret: FfiType.Void,
@@ -330,6 +350,11 @@ const DEFINITIONS = {
     },
     "uniffi_cua_driver_sdk_fn_init_callback_vtable_driverauthorizationhost": {
       args: [FfiType.Reference(FfiType.Struct("VTableCallbackInterfaceCuaDriverSdkDriverAuthorizationHost"))],
+      ret: FfiType.Void,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_init_callback_vtable_driverservicetransport": {
+      args: [FfiType.Reference(FfiType.Struct("VTableCallbackInterfaceCuaDriverSdkDriverServiceTransport"))],
       ret: FfiType.Void,
       hasRustCallStatus: false,
     },
@@ -361,6 +386,11 @@ const DEFINITIONS = {
     "uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings": {
       args: [],
       ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_func_open_mcp_driver_channel": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
     "uniffi_cua_driver_sdk_fn_func_request_mac_os_permissions": {
@@ -563,6 +593,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_fn_method_cuadriver_parse_visual_regions": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_fn_method_cuadriver_press_key": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -728,6 +763,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_fn_method_cuadriversession_parse_visual_regions": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_fn_method_cuadriversession_press_key": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -779,6 +819,11 @@ const DEFINITIONS = {
       hasRustCallStatus: true,
     },
     "uniffi_cua_driver_sdk_fn_method_driverauthorizationhost_authorize": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_driverservicetransport_send": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -853,6 +898,26 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_close": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_driver": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_open": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_public_session": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "ffi_cua_driver_sdk_uniffi_contract_version": {
       args: [],
       ret: FfiType.UInt32,
@@ -879,6 +944,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_func_open_mcp_driver_channel": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1083,6 +1153,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_checksum_method_cuadriver_parse_visual_regions": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_checksum_method_cuadriver_press_key": {
       args: [],
       ret: FfiType.UInt16,
@@ -1248,6 +1323,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_checksum_method_cuadriversession_parse_visual_regions": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_driver_sdk_checksum_method_cuadriversession_press_key": {
       args: [],
       ret: FfiType.UInt16,
@@ -1299,6 +1379,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_method_driverauthorizationhost_authorize": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_driverservicetransport_send": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1373,6 +1458,26 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_close": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_driver": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_open": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_public_session": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
   },
   callbacks: {
     "RustFutureContinuationCallback": {
@@ -1418,6 +1523,22 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "CallbackInterfaceFreeCuaDriverSdk_DriverAuthorizationHost": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: false,
+    },
+    "CallbackInterfaceCuaDriverSdkDriverServiceTransportMethod0": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Callback("ForeignFutureCompleterust_buffer"), FfiType.Handle],
+      ret: FfiType.Struct("ForeignFutureDroppedCallbackStruct"),
+      hasRustCallStatus: false,
+      outReturn: true,
+    },
+    "CallbackInterfaceCloneCuaDriverSdk_DriverServiceTransport": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "CallbackInterfaceFreeCuaDriverSdk_DriverServiceTransport": {
       args: [FfiType.Handle],
       ret: FfiType.Void,
       hasRustCallStatus: false,
@@ -1493,6 +1614,11 @@ const DEFINITIONS = {
       { name: "uniffi_clone", type: FfiType.Callback("CallbackInterfaceCloneCuaDriverSdk_DriverAuthorizationHost") },
       { name: "authorize", type: FfiType.Callback("CallbackInterfaceCuaDriverSdkDriverAuthorizationHostMethod0") },
     ],
+    "VTableCallbackInterfaceCuaDriverSdkDriverServiceTransport": [
+      { name: "uniffi_free", type: FfiType.Callback("CallbackInterfaceFreeCuaDriverSdk_DriverServiceTransport") },
+      { name: "uniffi_clone", type: FfiType.Callback("CallbackInterfaceCloneCuaDriverSdk_DriverServiceTransport") },
+      { name: "send", type: FfiType.Callback("CallbackInterfaceCuaDriverSdkDriverServiceTransportMethod0") },
+    ],
     "ForeignFutureResultVoid": [
       { name: "call_status", type: FfiType.RustCallStatus },
     ],
@@ -1566,18 +1692,24 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_free_driveractivityobserver(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_clone_driverauthorizationhost(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_free_driverauthorizationhost(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_driver_sdk_fn_clone_driverservicetransport(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_free_driverservicetransport(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_clone_embeddedcuadriverhost(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_free_embeddedcuadriverhost(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_clone_foreigndriverenvelopechannel(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_free_foreigndriverenvelopechannel(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_driver_sdk_fn_clone_mcpdriverchannel(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_free_mcpdriverchannel(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_init_callback_vtable_driveractivityobserver(vtable: UniffiVTableCallbackInterfaceCuaDriverSdkDriverActivityObserver): void;
     uniffi_cua_driver_sdk_fn_init_callback_vtable_driverauthorizationhost(vtable: UniffiVTableCallbackInterfaceCuaDriverSdkDriverAuthorizationHost): void;
+    uniffi_cua_driver_sdk_fn_init_callback_vtable_driverservicetransport(vtable: UniffiVTableCallbackInterfaceCuaDriverSdkDriverServiceTransport): void;
     uniffi_cua_driver_sdk_fn_init_callback_vtable_foreigndriverenvelopechannel(vtable: UniffiVTableCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannel): void;
     uniffi_cua_driver_sdk_fn_func_connect_remote_channel(channel: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_func_create_remote_trusted_session(driver: bigint, options: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_func_create_trusted_session(driver: bigint, options: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_func_current_mac_os_permission_status(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings(uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_driver_sdk_fn_func_open_mcp_driver_channel(transport: bigint, authenticatedPrincipal: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_func_request_mac_os_permissions(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect(socketPath: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_constructor_cuadriver_connect_with_client_kind(socketPath: Uint8Array, clientKind: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -1618,6 +1750,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_cuadriver_list_windows(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_metadata(uniffiSelf: bigint): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_move_cursor(uniffiSelf: bigint, input: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_cuadriver_parse_visual_regions(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_press_key(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriver_runtime_scope_prefix(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_cuadriver_scroll(uniffiSelf: bigint, input: Uint8Array): bigint;
@@ -1651,6 +1784,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_cuadriversession_list_sessions(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_list_windows(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_move_cursor(uniffiSelf: bigint, input: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_cuadriversession_parse_visual_regions(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_press_key(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_scroll(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_cuadriversession_set_agent_cursor_enabled(uniffiSelf: bigint, input: Uint8Array): bigint;
@@ -1662,6 +1796,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_cuadriversession_verify_state(uniffiSelf: bigint, input: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_driveractivityobserver_on_activity(uniffiSelf: bigint, event: Uint8Array, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_method_driverauthorizationhost_authorize(uniffiSelf: bigint, request: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_driverservicetransport_send(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_constructor_embeddedcuadriverhost_new(binaryPath: Uint8Array, hostBundleId: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_constructor_embeddedcuadriverhost_with_options(options: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_connection(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -1676,12 +1811,17 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_bind_session(uniffiSelf: bigint, options: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_cancel(uniffiSelf: bigint, requestId: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_close(uniffiSelf: bigint): bigint;
+    uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_close(uniffiSelf: bigint): bigint;
+    uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_driver(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_open(uniffiSelf: bigint): bigint;
+    uniffi_cua_driver_sdk_fn_method_mcpdriverchannel_public_session(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     ffi_cua_driver_sdk_uniffi_contract_version(): number;
     uniffi_cua_driver_sdk_checksum_func_connect_remote_channel(): number;
     uniffi_cua_driver_sdk_checksum_func_create_remote_trusted_session(): number;
     uniffi_cua_driver_sdk_checksum_func_create_trusted_session(): number;
     uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status(): number;
     uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings(): number;
+    uniffi_cua_driver_sdk_checksum_func_open_mcp_driver_channel(): number;
     uniffi_cua_driver_sdk_checksum_func_request_mac_os_permissions(): number;
     uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect(): number;
     uniffi_cua_driver_sdk_checksum_constructor_cuadriver_connect_with_client_kind(): number;
@@ -1722,6 +1862,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_cuadriver_list_windows(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_metadata(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_move_cursor(): number;
+    uniffi_cua_driver_sdk_checksum_method_cuadriver_parse_visual_regions(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_press_key(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_runtime_scope_prefix(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriver_scroll(): number;
@@ -1755,6 +1896,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_list_sessions(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_list_windows(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_move_cursor(): number;
+    uniffi_cua_driver_sdk_checksum_method_cuadriversession_parse_visual_regions(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_press_key(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_scroll(): number;
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_set_agent_cursor_enabled(): number;
@@ -1766,6 +1908,7 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_cuadriversession_verify_state(): number;
     uniffi_cua_driver_sdk_checksum_method_driveractivityobserver_on_activity(): number;
     uniffi_cua_driver_sdk_checksum_method_driverauthorizationhost_authorize(): number;
+    uniffi_cua_driver_sdk_checksum_method_driverservicetransport_send(): number;
     uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_new(): number;
     uniffi_cua_driver_sdk_checksum_constructor_embeddedcuadriverhost_with_options(): number;
     uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection(): number;
@@ -1780,6 +1923,10 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_bind_session(): number;
     uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_cancel(): number;
     uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_close(): number;
+    uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_close(): number;
+    uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_driver(): number;
+    uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_open(): number;
+    uniffi_cua_driver_sdk_checksum_method_mcpdriverchannel_public_session(): number;
     // Codegen call sites use these via `nativeModule().rustbuffer_alloc(...)`
     // and `nativeModule().rustbuffer_free(...)`. The runtime's registered
     // module exposes them as method properties.
@@ -1830,6 +1977,14 @@ export type UniffiVTableCallbackInterfaceCuaDriverSdkDriverAuthorizationHost = {
   uniffi_free: UniffiCallbackInterfaceFreeCuaDriverSdkDriverAuthorizationHost;
   uniffi_clone: UniffiCallbackInterfaceCloneCuaDriverSdkDriverAuthorizationHost;
   authorize: UniffiCallbackInterfaceCuaDriverSdkDriverAuthorizationHostMethod0;
+};
+type UniffiCallbackInterfaceCuaDriverSdkDriverServiceTransportMethod0 = (uniffiHandle: bigint, request: Uint8Array, uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer, uniffiCallbackData: bigint) => UniffiForeignFutureDroppedCallbackStruct;
+type UniffiCallbackInterfaceCloneCuaDriverSdkDriverServiceTransport = (handle: bigint) => UniffiResult<void>;
+type UniffiCallbackInterfaceFreeCuaDriverSdkDriverServiceTransport = (handle: bigint) => void;
+export type UniffiVTableCallbackInterfaceCuaDriverSdkDriverServiceTransport = {
+  uniffi_free: UniffiCallbackInterfaceFreeCuaDriverSdkDriverServiceTransport;
+  uniffi_clone: UniffiCallbackInterfaceCloneCuaDriverSdkDriverServiceTransport;
+  send: UniffiCallbackInterfaceCuaDriverSdkDriverServiceTransportMethod0;
 };
 type UniffiCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod0 = (uniffiHandle: bigint) => Uint8Array;
 type UniffiCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod1 = (uniffiHandle: bigint, uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer, uniffiCallbackData: bigint) => UniffiForeignFutureDroppedCallbackStruct;

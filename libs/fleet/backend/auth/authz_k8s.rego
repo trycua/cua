@@ -179,6 +179,44 @@ native_fleet_resources := {
 
 k8s_request_allowed {
 	parts := split(input.params.path, "/")
+	image_request(parts)
+}
+
+image_request(parts) {
+	apis_namespaced_group(parts, "images.cua.ai", "v1alpha1")
+	authz.valid_dns_label(parts[4])
+	parts[5] == "images"
+	image_crud_shape(parts)
+}
+
+image_crud_shape(parts) {
+	apis_collection(parts)
+	input.method == "GET"
+}
+
+image_crud_shape(parts) {
+	image_item(parts)
+	input.method == "GET"
+}
+
+image_crud_shape(parts) {
+	apis_collection(parts)
+	input.method == "POST"
+}
+
+image_crud_shape(parts) {
+	image_item(parts)
+	{"PATCH", "DELETE"}[input.method]
+}
+
+image_item(parts) {
+	apis_item(parts)
+	count(parts[6]) <= 253
+	regex.match(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`, parts[6])
+}
+
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
 	apis_namespaced_group(parts, "osgym.cua.ai", "v1alpha1")
 	native_fleet_resources[parts[5]]
 	fleet_crud_shape(parts)
@@ -292,6 +330,58 @@ is_write_method {
 
 is_write_method {
 	input.method == "DELETE"
+}
+
+# ── Tenant Secrets ──────────────────────────────────────────────────────────
+#
+# api/v1/namespaces/{ns}/secrets (POST) and .../secrets/<tenant secret> (DELETE)
+#
+# The Secret kinds a tenant may write, one name prefix each:
+#   * cua-claim-*: the SDK's per-claim secret. It names it in
+#     OSGymSandboxClaim spec.secretRef, and the pool-operator delivers its
+#     keys into the bound sandbox (the cua-env-driver token at
+#     /run/cua/env-token; osgym/pool-operator/claim_secrets.py).
+#   * cua-registry-*: a tenant's own registry pull credentials, a
+#     kubernetes.io/dockerconfigjson Secret the SDK names in
+#     vmTemplate.imagePullSecret (pool_admission.rego admits that pairing for
+#     any image). "Update" is delete + create.
+# A reviewed product decision, not observed traffic. Write-only by design: no
+# GET, LIST, WATCH, PUT or PATCH on any Secret, so a tenant cannot read back
+# even its own Secrets, and cannot touch any Secret outside these prefixes
+# (the ECR pull secret, the OIDC credentials, the operator's
+# osgym-claim-secrets-* delivery Secrets). A POST names its object in the
+# body, so the per-kind name, type and payload checks for creation live in
+# tenant_secret_admission.rego, a conjunct on this surface. Capsule scopes the
+# caller to their own namespaces, as everywhere else here.
+#
+# Adding a kind: add its pattern here and in tenant_secret_admission.rego
+# (tenant_secret_admission_test.rego checks the two sets agree).
+tenant_secret_name_pattern[pattern] {
+	pattern := `^cua-claim-[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+}
+
+tenant_secret_name_pattern[pattern] {
+	pattern := `^cua-registry-[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+}
+
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	core_namespaced_resource(parts, "secrets")
+	count(parts) == 5
+	input.method == "POST"
+}
+
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	core_namespaced_resource(parts, "secrets")
+	count(parts) == 6
+	is_tenant_secret_name(parts[5])
+	input.method == "DELETE"
+}
+
+is_tenant_secret_name(name) {
+	count(name) <= 253
+	regex.match(tenant_secret_name_pattern[_], name)
 }
 
 # ── Pod metrics ─────────────────────────────────────────────────────────────
@@ -587,6 +677,12 @@ is_infra_literal(path) {
 	parts[1] == "capsule.clastix.io"
 	parts[2] != ""
 	parts[3] == "tenants"
+}
+
+github_k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	image_request(parts)
+	github_namespace_allowed(parts[4])
 }
 
 github_k8s_request_allowed {

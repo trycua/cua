@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+import release_attribution
+
 from release_attribution import (
     CommitRecord,
     ReleaseError,
@@ -76,7 +78,7 @@ def validate(
     pull_value=None,
     commits=None,
     base=None,
-    head=None,
+    changes=None,
     authors=None,
     source_emails=None,
 ):
@@ -86,7 +88,7 @@ def validate(
         pull=pull_value or pull(),
         commits=commits or [],
         base_config=base,
-        head_config=head or base,
+        identity_changes=changes or {},
         github=SourceGitHub(authors or {}, source_emails or {}),
     )
 
@@ -291,11 +293,10 @@ def test_verified_source_pr_produces_exact_override_and_accepts_it():
         error.value
     )
 
-    head = config(identityOverrides={"source@university.example": "source-login"})
     validate(
         pull_value=landing,
         commits=commits,
-        head=head,
+        changes={"source@university.example": "source-login"},
         authors={2280: "source-login"},
         source_emails={2280: ["source@university.example"]},
     )
@@ -337,15 +338,15 @@ def test_source_pr_author_without_exact_email_is_not_mapping_evidence():
 
 
 def test_mapping_only_override_requires_and_accepts_exact_source_evidence():
-    head = config(identityOverrides={"historic@institution.example": "historic-author"})
+    changes = {"historic@institution.example": "historic-author"}
     with pytest.raises(ReleaseError, match="has no explicit same-repository source PR"):
-        validate(head=head)
+        validate(changes=changes)
 
     validate(
         pull_value=pull(
             body=("The identity is verified by [PR #20](https://github.com/trycua/cua/pull/20)")
         ),
-        head=head,
+        changes=changes,
         authors={20: "historic-author"},
         source_emails={20: ["historic@institution.example"]},
     )
@@ -354,12 +355,22 @@ def test_mapping_only_override_requires_and_accepts_exact_source_evidence():
 def test_existing_identity_override_cannot_be_removed_or_changed():
     base = config(identityOverrides={"known@institution.example": "known-author"})
     with pytest.raises(ReleaseError, match="removes or changes trusted identityOverrides"):
-        validate(base=base, head=config())
+        validate(base=base, changes={"known@institution.example": None})
     with pytest.raises(ReleaseError, match="removes or changes trusted identityOverrides"):
         validate(
             base=base,
-            head=config(identityOverrides={"known@institution.example": "other-author"}),
+            changes={"known@institution.example": "other-author"},
         )
+
+
+def test_protected_mapping_errors_are_complete_and_sorted():
+    base = config(identityOverrides={"z@example.com": "zoe", "a@example.com": "alice"})
+    with pytest.raises(ReleaseError) as error:
+        validate(base=base, changes={"z@example.com": None, "a@example.com": "other"})
+    assert str(error.value) == (
+        "the pull request removes or changes trusted identityOverrides: "
+        "a@example.com='other' (expected 'alice'), z@example.com=None (expected 'zoe')"
+    )
 
 
 def test_internal_bot_and_ignored_coauthors_are_excluded():
@@ -398,3 +409,50 @@ def test_coauthor_trailer_parsing_is_case_insensitive_and_multiline():
                 )
             ]
         )
+
+
+class PagedCompareGitHub(release_attribution.GitHubClient):
+    """Serves a 300-commit pull request: the commits endpoint stops at 250."""
+
+    def __init__(self, total: int = 300, reported_total: int | None = None):
+        super().__init__("token", "https://api.example")
+        self.total = total
+        self.reported_total = total if reported_total is None else reported_total
+        self.paths: list[str] = []
+
+    def get(self, path: str):
+        self.paths.append(path)
+        if "/pulls/" in path:
+            raise AssertionError("a pull request past 250 commits must not use /pulls/N/commits")
+        page = int(path.rsplit("page=", 1)[1])
+        start = (page - 1) * 100
+        end = min(start + 100, self.total)
+        return {
+            "total_commits": self.reported_total,
+            "commits": [{"sha": f"{index:040x}"} for index in range(start, end)],
+        }
+
+
+def large_pull(commits: int = 300):
+    return {"number": 19, "commits": commits, "base": {"ref": "main"}, "head": {"sha": "f" * 40}}
+
+
+def test_pull_request_past_the_commits_endpoint_cap_pages_the_compare_api():
+    client = PagedCompareGitHub()
+    commits = client.all_pull_commits("trycua/cua-staging", large_pull())
+    assert len(commits) == 300
+    assert client.paths[0] == (
+        "repos/trycua/cua-staging/compare/main..." + "f" * 40 + "?per_page=100&page=1"
+    )
+
+
+def test_compare_total_disagreeing_with_the_pull_request_is_refused():
+    client = PagedCompareGitHub(total=300, reported_total=299)
+    with pytest.raises(release_attribution.ReleaseError, match="refusing partial"):
+        client.all_pull_commits("trycua/cua-staging", large_pull())
+
+
+def test_compare_pages_that_stop_short_are_refused():
+    client = PagedCompareGitHub(total=250, reported_total=300)
+    with pytest.raises(release_attribution.ReleaseError, match="refusing partial"):
+        client.all_pull_commits("trycua/cua-staging", large_pull())

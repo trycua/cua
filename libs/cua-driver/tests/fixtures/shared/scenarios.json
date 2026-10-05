@@ -371,6 +371,16 @@
     }
    },
    {
+    "id": "erroring_toggles",
+    "kind": "toggle",
+    "description": "Opt-in (CUA_APPKIT_ERRORING_TOGGLES=1): two NSButton checkboxes whose accessibility press raises, so AppKit answers AXPress with an AX error. The first toggles before raising (as Finder's toolbar view switcher does), the second changes nothing. Tests that click reports the first as performed and keeps the error for the second (#3835). acts_then_errors= errors_only= label.",
+    "controls": {
+     "acts_then_errors_aid": "chk-acts-then-errors",
+     "errors_only_aid": "chk-errors-only",
+     "state_label_aid": "lbl-erroring-toggles"
+    }
+   },
+   {
     "id": "context_menu",
     "kind": "context_menu",
     "description": "NSButton with an attached NSMenu (Cut/Copy/Paste). Right-click opens the native context menu; selecting an item sets menu_action=. menu_action= label.",

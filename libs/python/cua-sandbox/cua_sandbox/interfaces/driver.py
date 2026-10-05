@@ -1,4 +1,16 @@
-"""Optional canonical Cua Driver connections over Fleet named services."""
+"""Optional canonical Cua Driver connections for a sandbox.
+
+``sb.driver.connect()`` yields the generated, typed ``cua_driver.CuaDriver``
+for the guest's desktop. Two carriers, no fallback between them:
+
+* **cua-spacesd** (the default for every sandbox the cua SDK drives): the
+  typed-envelope MCP extension on the spacesd's ``/mcp`` route, reached
+  through the cua SDK's env client (``SpacesdClient.http``) with the sandbox's own
+  endpoint and credentials, so Fleet, direct and local sandboxes all work.
+* **Fleet named services** (images that publish their own Driver receiver):
+  ``service="driver"`` (private envelope HTTP) or ``service="mcp",
+  transport="mcp"``, through the Fleet gateway.
+"""
 
 from __future__ import annotations
 
@@ -10,8 +22,10 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator, Literal
 
+from cua_sandbox._sdk import ENV_SERVICE
+from cua_sandbox.transport.env import EnvTransport
 from cua_sandbox.transport.fleet import FleetTransport
 
 if TYPE_CHECKING:
@@ -29,14 +43,15 @@ def _consume_result(done: asyncio.Future) -> None:
         done.exception()
 
 
-async def _bounded_cleanup(awaitable: Any) -> bool:
+async def _bounded_cleanup(awaitable: Any, *, cancel_on_timeout: bool = True) -> bool:
     """Bound best-effort cleanup, including callbacks that ignore cancellation."""
     task = asyncio.ensure_future(awaitable)
 
     task.add_done_callback(_consume_result)
     done, _ = await asyncio.wait({task}, timeout=_CLEANUP_TIMEOUT)
     if task not in done:
-        task.cancel()
+        if cancel_on_timeout:
+            task.cancel()
         logger.warning("Driver cleanup timed out; remote session cleanup is unconfirmed")
         return False
     if task.cancelled() or task.exception() is not None:
@@ -102,23 +117,53 @@ class Driver:
         raise DriverConnectionError("Driver connection is inactive or belongs to another sandbox")
 
     @asynccontextmanager
-    async def connect(self, *, service: str = "driver") -> AsyncIterator[CuaDriver]:
-        """Yield the canonical ``cua_driver.CuaDriver`` and close its session on exit."""
+    async def connect(
+        self,
+        *,
+        service: str | None = None,
+        transport: Literal["envelope", "mcp"] | None = None,
+    ) -> AsyncIterator[CuaDriver]:
+        """Yield the canonical Driver; the receiver must support typed envelopes.
+
+        With no arguments this uses the image's Fleet ``driver`` service when
+        it publishes one (the private envelope HTTP carrier), and otherwise
+        cua-spacesd's ``/mcp`` (``service="env"``, ``transport="mcp"``)
+        through the cua SDK. ``service="mcp", transport="mcp"`` selects a
+        Fleet named MCP service instead. MCP selection verifies the
+        ``ai.cua.driver.envelopes`` extension before opening a receiver. No
+        fallback occurs.
+        """
         self._check_loop()
+        if transport not in (None, "envelope", "mcp"):
+            raise DriverConnectionError("Driver transport must be 'envelope' or 'mcp'")
+        service, transport = self._resolve(service, transport)
         self._loop = asyncio.get_running_loop()
         async with self._lock:
             if self._closed:
                 raise DriverConnectionError("Sandbox Driver accessor is disconnected")
-            if not isinstance(self._transport, FleetTransport):
-                raise DriverConnectionError("Typed Driver requires a Fleet transport")
             if not self._transport._connected:
-                raise DriverConnectionError("Fleet transport is disconnected")
-            if service not in self._transport._bound.services:
-                raise DriverConnectionError(
-                    "Fleet sandbox does not expose the requested Driver service"
-                )
+                raise DriverConnectionError("Sandbox transport is disconnected")
+            if service == ENV_SERVICE and transport == "mcp":
+                carrier: Any = _EnvMcpCarrier(self._transport)
+                if isinstance(self._transport, FleetTransport) and (
+                    ENV_SERVICE not in self._transport._bound.services
+                ):
+                    raise DriverConnectionError(
+                        "Fleet sandbox does not expose the requested Driver service"
+                    )
+            else:
+                carrier = self._transport
+                if service not in self._transport._bound.services:
+                    raise DriverConnectionError(
+                        "Fleet sandbox does not expose the requested Driver service"
+                    )
             sdk = _sdk()
-            channel = _channel(sdk, self._transport, service, self._principal)
+            if transport == "mcp":
+                from cua_sandbox.interfaces._driver_mcp import shared_channel
+
+                channel = shared_channel(sdk, carrier, service, self._principal)
+            else:
+                channel = _channel(sdk, carrier, service, self._principal)
 
             async def open_channel():
                 try:
@@ -137,11 +182,37 @@ class Driver:
             async with self._lock:
                 if self._closed or channel.closed:
                     raise DriverConnectionError("Sandbox Driver accessor is disconnected")
-                driver = sdk.connect_remote_channel(channel)
+                driver = (
+                    channel.driver() if transport == "mcp" else sdk.connect_remote_channel(channel)
+                )
                 self._connections[channel] = driver
             yield driver
         finally:
             await self._close_connection(channel)
+
+    def _resolve(
+        self, service: str | None, transport: str | None
+    ) -> tuple[str, Literal["envelope", "mcp"]]:
+        """Pick the carrier. Only Fleet and cua-spacesd sandboxes have one."""
+        sandbox_transport = self._transport
+        if not isinstance(sandbox_transport, (FleetTransport, EnvTransport)):
+            raise DriverConnectionError(
+                "Typed Driver requires a Fleet or cua-spacesd sandbox transport"
+            )
+        is_fleet = isinstance(sandbox_transport, FleetTransport)
+        if service is None:
+            if transport == "envelope" or (
+                transport is None and is_fleet and "driver" in sandbox_transport._bound.services
+            ):
+                return "driver", "envelope"
+            return ENV_SERVICE, "mcp"
+        if service == ENV_SERVICE:
+            if transport == "envelope":
+                raise DriverConnectionError("cua-spacesd carries the typed Driver over MCP only")
+            return service, "mcp"
+        if not is_fleet:
+            raise DriverConnectionError("Named Driver services require a Fleet transport")
+        return service, transport or "envelope"
 
     async def _close_connection(self, channel: Any) -> None:
         self._check_loop()
@@ -153,6 +224,9 @@ class Driver:
                 channel.closed = True
 
                 async def cleanup():
+                    if getattr(channel, "shared_mcp", False):
+                        await channel.close()
+                        return
                     if not opening.done():
                         await _bounded_cleanup(opening)
                     await channel.close()
@@ -196,6 +270,7 @@ def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) 
             self.cleanup_confirmed = False
             self._close_task = None
             self.cancelled: set[str] = set()
+            self._exchanges: dict[str, asyncio.Task] = {}
 
         def fail(self, reason: str):
             return sdk.ForeignDriverChannelError.Failed(reason)
@@ -314,6 +389,8 @@ def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) 
             if timeout <= 0:
                 raise self.fail("Driver request deadline has expired")
             exchange = asyncio.create_task(self.request("POST", "/exchange", body, timeout=timeout))
+            self._exchanges[request.request_id] = exchange
+            exchange.add_done_callback(lambda done: self._exchanges.pop(request.request_id, None))
             exchange.add_done_callback(_consume_result)
             try:
                 done, _ = await asyncio.wait({exchange}, timeout=timeout)
@@ -387,10 +464,67 @@ def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) 
             if self._close_task is None:
 
                 async def cleanup():
+                    receiver_closed = self.connection_id is None
                     if self.connection_id is not None:
-                        self.cleanup_confirmed = await _bounded_cleanup(self.request("DELETE"))
+                        receiver_close = asyncio.create_task(self.request("DELETE"))
+                        receiver_closed = await _bounded_cleanup(receiver_close)
+                    self.cleanup_confirmed = receiver_closed
 
                 self._close_task = asyncio.create_task(cleanup())
             await asyncio.shield(self._close_task)
 
     return Channel()
+
+
+class _EnvMcpCarrier:
+    """``request_service`` over the cua SDK's env client (``SpacesdClient.http``).
+
+    Gives the shared MCP channel the same byte transport it uses for Fleet
+    named services, but addressed to cua-spacesd's own ``/mcp`` with the
+    sandbox's env credentials. The service name is ignored: there is one
+    spacesd per sandbox.
+    """
+
+    def __init__(self, transport: EnvTransport):
+        self._transport = transport
+
+    @property
+    def _connected(self) -> bool:
+        return bool(self._transport._connected)
+
+    async def request_service(
+        self,
+        name: str,
+        *,
+        method: str,
+        path: str,
+        body: bytes | None = None,
+        headers: Any = None,
+        timeout: float | None = None,
+        max_response_bytes: int | None = None,
+        json_body: Any = None,
+    ) -> Any:
+        import httpx
+        from cua_sandbox._sdk import native
+
+        if json_body is not None:
+            raise DriverConnectionError("cua-spacesd MCP requests carry raw bytes")
+        header_items = headers.items() if isinstance(headers, dict) else (headers or [])
+        env = await self._transport.spacesd()
+        types = native()
+        reply = await env.http(
+            types.SpacesdHttpRequest(
+                method=method,
+                path=path,
+                headers=[types.SpacesdHttpHeader(name=k, value=v) for k, v in header_items],
+                body=body or b"",
+                timeout_ms=None if timeout is None else max(1, int(timeout * 1000)),
+                max_response_bytes=max_response_bytes,
+            )
+        )
+        return httpx.Response(
+            reply.status,
+            headers=[(h.name, h.value) for h in reply.headers],
+            content=bytes(reply.body),
+            request=httpx.Request(method, f"https://env.invalid{path}"),
+        )

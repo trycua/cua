@@ -7,6 +7,14 @@ on:
       - ".github/workflows/ci-ts-core.yml"
       - ".github/workflows/ts-reusable-build.yml"
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+permissions:
+  contents: read
+
 jobs:
   build:
     uses: ./.github/workflows/ts-reusable-build.yml

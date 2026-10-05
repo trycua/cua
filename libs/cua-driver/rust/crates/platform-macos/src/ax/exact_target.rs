@@ -13,13 +13,17 @@ use cua_driver_core::background_input::{
 };
 
 use super::bindings::{
-    ax_get_window_id, copy_ax_windows, copy_bool_attr, copy_element_attr, copy_string_attr,
-    focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
+    ax_get_window_id, copy_ax_windows_including, copy_bool_attr, copy_element_attr,
+    copy_string_attr, focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
 };
+use super::snapshot::RetainedElement;
 use crate::windows::{all_windows, resolve_window_owner, WindowOwner};
 
 /// Bounded `AXParent` ascent used when an element does not expose `AXWindow`.
 const MAX_ANCESTRY_DEPTH: usize = 40;
+
+/// Bounded sheet chain followed when mapping a sheet to its parent window.
+const MAX_SHEET_NESTING: usize = 8;
 
 /// Resolve the CGWindowID of the top-level AX window that owns `element`.
 ///
@@ -27,12 +31,18 @@ const MAX_ANCESTRY_DEPTH: usize = 40;
 /// `AXParent` walk. `None` means ancestry could not be proven — callers must
 /// treat that as "not the requested window", never as a wildcard.
 ///
+/// A sheet is its own WindowServer window (and a remote Open/Save panel's
+/// content lives in yet another, service-owned one), but it is modal to the
+/// window it is attached to and is observed inside that window's snapshot.
+/// An element under an `AXSheet` therefore resolves to the sheet's parent
+/// window when AX proves that parent (issue #4392).
+///
 /// # Safety
 ///
 /// `element` must be a valid `AXUIElementRef` for the duration of the call.
 pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
     if let Some(window) = copy_element_attr(element, "AXWindow") {
-        let window_id = ax_get_window_id(window);
+        let window_id = owning_window_id(window);
         CFRelease(window as CFTypeRef);
         if window_id.is_some() {
             return window_id;
@@ -45,7 +55,7 @@ pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
     for _ in 0..MAX_ANCESTRY_DEPTH {
         match copy_string_attr(current, "AXRole").as_deref() {
             Some("AXWindow") | Some("AXSheet") => {
-                resolved = ax_get_window_id(current);
+                resolved = owning_window_id(current);
                 break;
             }
             Some("AXApplication") | None => break,
@@ -55,18 +65,69 @@ pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
         if owned {
             CFRelease(current as CFTypeRef);
         }
-        match parent {
-            Some(parent) => {
-                current = parent;
-                owned = true;
-            }
-            None => return None,
+        {
+            let parent = parent?;
+            current = parent;
+            owned = true;
         }
     }
     if owned {
         CFRelease(current as CFTypeRef);
     }
     resolved
+}
+
+/// Map a window-role AX element to the CGWindowID of the top-level window it
+/// belongs to: an `AXWindow` maps to itself, an `AXSheet` to the window it is
+/// attached to (see [`element_window_id`]).
+///
+/// # Safety
+///
+/// `window` must be a valid `AXUIElementRef` for the duration of the call.
+unsafe fn owning_window_id(window: AXUIElementRef) -> Option<u32> {
+    resolve_owning_window(
+        RetainedElement::retain(window as usize),
+        MAX_SHEET_NESTING,
+        |element| copy_string_attr(element.as_ptr() as AXUIElementRef, "AXRole"),
+        |element| {
+            copy_element_attr(element.as_ptr() as AXUIElementRef, "AXParent").map(|parent| {
+                // copy_element_attr returned +1; hand that reference over.
+                let retained = RetainedElement::retain(parent as usize);
+                CFRelease(parent as CFTypeRef);
+                retained
+            })
+        },
+        |element| ax_get_window_id(element.as_ptr() as AXUIElementRef),
+    )
+}
+
+/// Pure sheet-to-parent resolution behind [`owning_window_id`].
+///
+/// A sheet whose parent is not a window (or a sheet attached to another
+/// sheet) is followed up to `max_nesting` levels. When no parent window is
+/// proven, the sheet keeps its own window id: that never names a different
+/// window than before, so it can only stay refused, never widen.
+fn resolve_owning_window<E>(
+    start: E,
+    max_nesting: usize,
+    role: impl Fn(&E) -> Option<String>,
+    parent: impl Fn(&E) -> Option<E>,
+    window_id: impl Fn(&E) -> Option<u32>,
+) -> Option<u32> {
+    let own_id = window_id(&start);
+    let mut current = start;
+    for _ in 0..=max_nesting {
+        match role(&current).as_deref() {
+            Some("AXSheet") => {}
+            Some("AXWindow") => return window_id(&current),
+            _ => return own_id,
+        }
+        current = match parent(&current) {
+            Some(next) => next,
+            None => return own_id,
+        };
+    }
+    own_id
 }
 
 /// The process's focused AX element, but only when it provably belongs to the
@@ -97,11 +158,12 @@ struct AxWindowRecord {
     minimized: Option<bool>,
 }
 
-/// Map the application's fresh `AXWindows` through `_AXUIElementGetWindow`.
-/// Windows whose id the SPI cannot resolve are omitted: an unmappable window
-/// can never satisfy an exact-target requirement.
-unsafe fn ax_window_records(app: AXUIElementRef) -> Vec<AxWindowRecord> {
-    copy_ax_windows(app)
+/// Map the application's fresh `AXWindows` — plus the requested window when it
+/// is on another Space — through `_AXUIElementGetWindow`. Windows whose id the
+/// SPI cannot resolve are omitted: an unmappable window can never satisfy an
+/// exact-target requirement.
+unsafe fn ax_window_records(app: AXUIElementRef, pid: i32, window_id: u32) -> Vec<AxWindowRecord> {
+    copy_ax_windows_including(app, pid, window_id)
         .into_iter()
         .filter_map(|window| {
             let record = ax_get_window_id(window).map(|window_id| AxWindowRecord {
@@ -173,7 +235,7 @@ pub fn gather_background_facts(
             // Electron/Chromium apps may need per-process-lifetime enablement
             // before their AX windows and subtrees are materialized.
             super::enablement::ensure_chromium_ax_enabled(pid, app);
-            let records = ax_window_records(app);
+            let records = ax_window_records(app, pid, window_id);
             let app_hidden = copy_bool_attr(app, "AXHidden");
             let element = element_ptr.map(|ptr| match element_window_id(ptr as AXUIElementRef) {
                 Some(id) if id == window_id => ElementAncestry::ProvenDescendant,
@@ -207,7 +269,66 @@ pub fn gather_background_facts(
 
 #[cfg(test)]
 mod tests {
-    use super::{count_competing_keyboard_destinations, AxWindowRecord};
+    use super::{count_competing_keyboard_destinations, resolve_owning_window, AxWindowRecord};
+
+    /// A fake AX node: (role, AXParent index, CGWindowID).
+    type FakeNode = (&'static str, Option<usize>, Option<u32>);
+
+    fn resolve(tree: &[FakeNode], start: usize) -> Option<u32> {
+        resolve_owning_window(
+            start,
+            8,
+            |&index| Some(tree[index].0.to_owned()),
+            |&index| tree[index].1,
+            |&index| tree[index].2,
+        )
+    }
+
+    #[test]
+    fn window_maps_to_itself() {
+        assert_eq!(resolve(&[("AXWindow", None, Some(167))], 0), Some(167));
+    }
+
+    #[test]
+    fn sheet_maps_to_the_window_it_is_attached_to() {
+        // Open panel sheet 172 attached to window 167 (issue #4392).
+        let tree = [
+            ("AXWindow", None, Some(167)),
+            ("AXSheet", Some(0), Some(172)),
+        ];
+        assert_eq!(resolve(&tree, 1), Some(167));
+    }
+
+    #[test]
+    fn nested_sheets_map_to_the_root_window() {
+        let tree = [
+            ("AXWindow", None, Some(167)),
+            ("AXSheet", Some(0), Some(172)),
+            ("AXSheet", Some(1), Some(180)),
+        ];
+        assert_eq!(resolve(&tree, 2), Some(167));
+    }
+
+    #[test]
+    fn sheet_without_a_proven_parent_window_keeps_its_own_id() {
+        // A top-level consent sheet whose parent is the application, and a
+        // sheet whose parent cannot be read, never resolve to another window.
+        let tree = [
+            ("AXApplication", None, None),
+            ("AXSheet", Some(0), Some(172)),
+        ];
+        assert_eq!(resolve(&tree, 1), Some(172));
+        assert_eq!(resolve(&[("AXSheet", None, Some(172))], 0), Some(172));
+    }
+
+    #[test]
+    fn sheet_chain_is_bounded() {
+        let tree = [
+            ("AXSheet", Some(1), Some(172)),
+            ("AXSheet", Some(0), Some(173)),
+        ];
+        assert_eq!(resolve(&tree, 0), Some(172));
+    }
 
     fn ax_window(window_id: u32, minimized: Option<bool>) -> AxWindowRecord {
         AxWindowRecord {

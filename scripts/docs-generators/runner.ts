@@ -16,6 +16,7 @@
 import { execSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { parseArgs } from 'node:util';
 
 // ============================================================================
 // Types
@@ -56,6 +57,12 @@ const CONFIG_PATH = path.join(__dirname, 'config.json');
 const DOCS_TSX_PATH = path.join(ROOT_DIR, 'docs', 'node_modules', 'tsx', 'dist', 'cli.mjs');
 const SHARED_GENERATOR_FILES = new Set([
   'scripts/docs-generators/runner.ts',
+  // Shared rendering helpers every generator uses.
+  'scripts/docs-generators/lib/mdx.ts',
+  'scripts/docs-generators/lib/cli-mdx.ts',
+  'scripts/docs-generators/lib/mcp-mdx.ts',
+  'scripts/docs-generators/lib/headers.ts',
+  'scripts/docs-generators/prose-style.ts',
   'scripts/docs-generators/config.json',
   '.github/workflows/ci-check-docs.yml',
   '.gitattributes',
@@ -68,18 +75,34 @@ const SHARED_GENERATOR_FILES = new Set([
 // ============================================================================
 
 async function main() {
-  const args = process.argv.slice(2);
+  const { values } = parseArgs({
+    options: {
+      help: { type: 'boolean' },
+      list: { type: 'boolean' },
+      library: { type: 'string' },
+      check: { type: 'boolean' },
+      'check-only': { type: 'boolean' },
+      changed: { type: 'boolean' },
+      'changed-files-file': { type: 'string' },
+      'test-routing': { type: 'boolean' },
+    },
+  });
+  if (values.help) {
+    console.log(`Usage: pnpm --dir docs docs:generate [options]
 
-  // Parse arguments
-  const checkOnly = args.includes('--check') || args.includes('--check-only');
-  const listOnly = args.includes('--list');
-  const changedOnly = args.includes('--changed');
-  const changedFilesFileIndex = args.indexOf('--changed-files-file');
-  const changedFilesFile =
-    changedFilesFileIndex !== -1 ? args[changedFilesFileIndex + 1] : undefined;
-  const testRouting = args.includes('--test-routing');
-  const libraryIndex = args.indexOf('--library');
-  const specificLibrary = libraryIndex !== -1 ? args[libraryIndex + 1] : null;
+  --help                       Show this help without running generators
+  --list                       List configured generators
+  --library <name>             Run one configured generator
+  --check, --check-only         Check for documentation drift
+  --changed                    Select generators from changed files
+  --changed-files-file <path>   Print generators selected by a changed-file list
+  --test-routing               Verify generator routing`);
+    return;
+  }
+
+  const checkOnly = Boolean(values.check || values['check-only']);
+  const changedFilesFile = values['changed-files-file'];
+  const specificLibrary = values.library;
 
   // Load config
   if (!fs.existsSync(CONFIG_PATH)) {
@@ -89,12 +112,12 @@ async function main() {
 
   const config: Config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
 
-  if (testRouting) {
+  if (values['test-routing']) {
     testGeneratorRouting(config);
     return;
   }
 
-  if (changedFilesFile) {
+  if (changedFilesFile !== undefined) {
     if (!fs.existsSync(changedFilesFile)) {
       console.error(`Changed-files input not found: ${changedFilesFile}`);
       process.exit(1);
@@ -108,7 +131,7 @@ async function main() {
   console.log('==================================\n');
 
   // List mode
-  if (listOnly) {
+  if (values.list) {
     listGenerators(config);
     return;
   }
@@ -116,14 +139,14 @@ async function main() {
   // Determine which generators to run
   let generatorsToRun: string[] = [];
 
-  if (specificLibrary) {
+  if (specificLibrary !== undefined) {
     if (!config.generators[specificLibrary]) {
       console.error(`❌ Unknown library: ${specificLibrary}`);
       console.log('\nAvailable libraries:', Object.keys(config.generators).join(', '));
       process.exit(1);
     }
     generatorsToRun = [specificLibrary];
-  } else if (changedOnly) {
+  } else if (values.changed) {
     generatorsToRun = getChangedGenerators(config);
     if (generatorsToRun.length === 0) {
       console.log('✅ No documentation-related changes detected.');
@@ -305,38 +328,143 @@ function assertSelection(
 function testGeneratorRouting(config: Config): void {
   const tsxVersion = requireDocsTsx();
 
-  assertSelection(
-    config,
-    [
-      'docs/content/docs/use-cua-with/hermes.mdx',
-      'docs/content/docs/reference/cua-driver/macos-permissions.mdx',
-      'docs/content/docs/reference/cua-driver/mcp-tool-notes.mdx',
-    ],
-    []
-  );
+  assertSelection(config, ['docs/content/docs/cua-driver/guides/connect-your-agent.mdx'], []);
   assertSelection(
     config,
     [
       'libs/cua-driver/rust/crates/cua-driver/src/main.rs',
-      'docs/content/docs/reference/cua-driver/cli-reference.mdx',
+      'docs/content/docs/cua-driver/reference/cli/daemon.mdx',
       'scripts/docs-generators/cua-driver.ts',
     ],
     ['cua-driver']
   );
+  // Every platform's registry snapshot and every generated page routes to it.
+  for (const file of [
+    'scripts/docs-generators/cli-specs/cua-driver-mcp-windows.json',
+    'scripts/docs-generators/headers/cua-driver/mcp-tools.md',
+    'docs/content/docs/cua-driver/reference/mcp-tools/click.mdx',
+    'docs/content/docs/cua-driver/reference/index.mdx',
+  ]) {
+    assertSelection(config, [file], ['cua-driver']);
+  }
+  assertSelection(
+    config,
+    [
+      'libs/cua-bench/cua_bench/cli/commands/run.py',
+      'libs/cua-bench/cua_bench/results.py',
+      'docs/content/docs/cua-bench/reference/cli/run.mdx',
+      'scripts/docs-generators/extract_cb_docs.py',
+    ],
+    ['cua-bench']
+  );
+  assertSelection(config, ['docs/content/docs/cua-bench/guides/benchmarks.mdx'], []);
   assertSelection(
     config,
     [
       'libs/lume/src/Commands/List.swift',
-      'docs/content/docs/reference/lume/http-api.mdx',
+      'docs/content/docs/lume/reference/http-api.mdx',
       'scripts/docs-generators/lume.ts',
     ],
     ['lume']
   );
-  for (const file of ['mcp-tools.mdx', 'mcp-tools-linux.mdx', 'mcp-tools-windows.mdx']) {
-    assertSelection(config, [`docs/content/docs/reference/cua-driver/${file}`], ['cua-driver']);
-  }
-  assertSelection(config, ['scripts/docs-generators/runner.ts'], ['cua-driver', 'lume']);
-  assertSelection(config, ['scripts/docs-generators/config.json'], ['cua-driver', 'lume']);
+  assertSelection(
+    config,
+    [
+      'libs/python/cua-sandbox/cua_sandbox/image.py',
+      'docs/content/docs/cua-sdk/reference/os-image-catalog.mdx',
+      'scripts/docs-generators/sandbox-facts.json',
+    ],
+    ['sandbox', 'cua-sdk-python']
+  );
+  assertSelection(
+    config,
+    [
+      'libs/cua/crates/cua-cli/src/main.rs',
+      'docs/content/docs/cua-cli/reference/mcp-tools/computer.mdx',
+      'scripts/docs-generators/cua-cli.ts',
+    ],
+    ['cua-cli']
+  );
+  assertSelection(config, ['libs/cua/spaces-contract/manifest.json'], ['cua-cli', 'spaces']);
+  assertSelection(
+    config,
+    ['libs/cua/crates/cua-spaces-contract/src/lib.rs', 'docs/content/docs/spaces/reference/agents.mdx', 'scripts/docs-generators/spaces.ts'],
+    ['cua-cli', 'spaces']
+  );
+  assertSelection(
+    config,
+    ['libs/fleet/backend/docs/swagger.json', 'docs/content/docs/fleets/reference/pool.mdx', 'scripts/docs-generators/fleet.ts'],
+    ['fleet']
+  );
+  assertSelection(config, ['libs/cua/crates/cua-fleet/src/lib.rs'], ['cua-rust', 'fleet']);
+  assertSelection(config, ['docs/content/docs/cua-cli/guides/mcp-server.mdx'], []);
+  assertSelection(config, ['docs/content/docs/lume/reference/cli/vms.mdx'], ['lume']);
+  assertSelection(
+    config,
+    [
+      'libs/cua/crates/cua-sdk/src/native/sandbox.rs',
+      'libs/cua/crates/cua-bindgen/src/docs.rs',
+      'docs/content/docs/cua-sdk/reference/sandbox/index.mdx',
+    ],
+    ['cua-sdk', 'cua-rust']
+  );
+  assertSelection(config, ['libs/cua/crates/cua-sdk/uniffi.toml'], ['cua-sdk', 'cua-rust']);
+  // The reference index is the object generator's; the Rust pages read its anchors.
+  assertSelection(config, ['docs/content/docs/cua-sdk/reference/index.mdx'], ['cua-sdk', 'cua-rust']);
+  // Curated headers and tested examples route to the generator that embeds them.
+  assertSelection(config, ['scripts/docs-generators/examples/cua-sdk/Sandboxes.create.py'], ['cua-sdk']);
+  assertSelection(config, ['scripts/docs-generators/headers/cua-sdk/python/index.md'], ['cua-sdk-python']);
+  assertSelection(
+    config,
+    [
+      'libs/cua/python/src/cua/images.py',
+      'docs/content/docs/cua-sdk/reference/python/index.mdx',
+      'docs/content/docs/cua-sdk/reference/python/interfaces.mdx',
+      'scripts/docs-generators/extract_python_docs.py',
+    ],
+    ['cua-sdk-python']
+  );
+  assertSelection(
+    config,
+    [
+      'libs/cua/typescript/src/spaces/thread.ts',
+      'libs/cua/typescript/package-lock.json',
+      'docs/content/docs/cua-sdk/reference/typescript/spaces.mdx',
+    ],
+    ['cua-sdk-ts']
+  );
+  assertSelection(
+    config,
+    [
+      'libs/cua/crates/cua-spaces/src/client/model.rs',
+      'scripts/docs-generators/rustdoc-json/src/main.rs',
+      'docs/content/docs/cua-sdk/reference/rust/cua-fleet.mdx',
+    ],
+    ['cua-rust']
+  );
+  // The Rust pages link UniFFI-exported items to the object pages.
+  assertSelection(config, ['docs/content/docs/cua-sdk/reference/spacesd/files.mdx'], ['cua-sdk', 'cua-rust']);
+  // Unrelated crates do not trigger it.
+  assertSelection(config, ['libs/cua/crates/cua-vmm/src/lib.rs'], []);
+  assertSelection(
+    config,
+    [
+      'libs/cua/proto/cua/env/v1/process.proto',
+      'libs/cua/crates/cua-proto/src/lib.rs',
+      'docs/content/docs/cua-sdk/reference/protocol/env-process.mdx',
+    ],
+    ['cua-proto']
+  );
+  assertSelection(config, ['scripts/docs-generators/headers/cua-sdk/protocol/index.md'], ['cua-proto']);
+  // A shared file routes to every enabled generator.
+  const enabled = Object.entries(config.generators)
+    .filter(([, generator]) => generator.enabled)
+    .map(([key]) => key);
+  assertSelection(config, ['scripts/docs-generators/runner.ts'], enabled);
+  assertSelection(config, ['scripts/docs-generators/config.json'], enabled);
+  assertSelection(config, ['scripts/docs-generators/lib/mdx.ts'], enabled);
+  assertSelection(config, ['scripts/docs-generators/lib/cli-mdx.ts'], enabled);
+  assertSelection(config, ['scripts/docs-generators/lib/mcp-mdx.ts'], enabled);
 
   console.log(`Generator routing assertions passed with pinned tsx ${tsxVersion}`);
 }

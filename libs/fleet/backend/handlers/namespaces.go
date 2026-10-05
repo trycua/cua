@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"cyclops-cs-backend/identity"
+	backendmetrics "cyclops-cs-backend/metrics"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -171,7 +173,7 @@ const (
 // cluster-wide to system:authenticated, so that probe succeeds instantly and
 // gates nothing.) Best-effort by design: failures are logged, never
 // surfaced — the namespace was created either way.
-func (h Handlers) waitForNamespaceAdoption(ctx context.Context, name, userSub string) {
+func (h Handlers) waitForNamespaceAdoption(ctx context.Context, name, userSub string) (string, error) {
 	adoptionCtx, cancel := context.WithTimeout(ctx, adoptionWaitTimeout)
 	defer cancel()
 	for {
@@ -182,18 +184,27 @@ func (h Handlers) waitForNamespaceAdoption(ctx context.Context, name, userSub st
 			_, _ = io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				return
+				return "success", nil
 			}
 		}
-		if adoptionCtx.Err() != nil {
-			slog.Warn("namespace create: adoption wait timed out; returning anyway",
-				"namespace", name)
-			return
+		if ctxErr := adoptionCtx.Err(); ctxErr != nil {
+			result := "canceled"
+			if ctxErr == context.DeadlineExceeded {
+				result = "timeout"
+			}
+			slog.Warn("namespace create: adoption wait ended; returning anyway",
+				"namespace", name, "result", result, "err", ctxErr)
+			return result, errors.Join(ctxErr, err)
 		}
 		select {
 		case <-time.After(adoptionWaitStep):
 		case <-adoptionCtx.Done():
-			return
+			ctxErr := adoptionCtx.Err()
+			result := "canceled"
+			if ctxErr == context.DeadlineExceeded {
+				result = "timeout"
+			}
+			return result, errors.Join(ctxErr, err)
 		}
 	}
 }
@@ -425,8 +436,14 @@ func (h Handlers) CreateNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.k8sImpersonate(ctx, "POST", "/api/v1/namespaces", bytes.NewReader(body), user.ID)
+	k8sStart := time.Now()
+	k8sCtx, k8sSpan := handlerTracer().Start(ctx, "namespaces.create.k8s")
+	resp, err := h.k8sImpersonate(k8sCtx, "POST", "/api/v1/namespaces", bytes.NewReader(body), user.ID)
 	if err != nil {
+		k8sSpan.RecordError(err)
+		k8sSpan.SetStatus(codes.Error, "Kubernetes namespace create failed")
+		k8sSpan.End()
+		backendmetrics.RecordNamespaceCreatePhase("k8s_create", "error", time.Since(k8sStart))
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "namespace create request failed")
 		slog.Warn("namespace create: k8s request failed", "err", err)
@@ -436,6 +453,17 @@ func (h Handlers) CreateNamespace(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	respBody, err := readBoundedK8sBody(resp.Body)
+	k8sResult := fmt.Sprintf("http_%d", resp.StatusCode)
+	k8sSpan.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
+	if err != nil {
+		k8sResult = "body_error"
+		k8sSpan.RecordError(err)
+		k8sSpan.SetStatus(codes.Error, "Kubernetes namespace response failed")
+	} else if resp.StatusCode != http.StatusCreated {
+		k8sSpan.SetStatus(codes.Error, "Kubernetes namespace create returned unexpected status")
+	}
+	k8sSpan.End()
+	backendmetrics.RecordNamespaceCreatePhase("k8s_create", k8sResult, time.Since(k8sStart))
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "namespace create response failed")
@@ -466,12 +494,28 @@ func (h Handlers) CreateNamespace(w http.ResponseWriter, r *http.Request) {
 	// it only succeeds once the RoleBindings exist — the same instant any other
 	// in-namespace call becomes authorized. Best-effort: on timeout we still
 	// return 201 (the namespace exists; adoption is merely late).
-	h.waitForNamespaceAdoption(ctx, req.Name, user.ID)
+	adoptionStart := time.Now()
+	adoptionCtx, adoptionSpan := handlerTracer().Start(ctx, "namespaces.create.adoption_wait")
+	adoptionResult, adoptionErr := h.waitForNamespaceAdoption(adoptionCtx, req.Name, user.ID)
+	if adoptionErr != nil {
+		adoptionSpan.RecordError(adoptionErr)
+		adoptionSpan.SetStatus(codes.Error, adoptionResult)
+	}
+	adoptionSpan.End()
+	backendmetrics.RecordNamespaceCreatePhase("adoption_wait", adoptionResult, time.Since(adoptionStart))
 
 	// Best-effort: provision the tenant's workload-OIDC credentials into the
 	// new namespace so OSGym pool VMs here can mint a tenant-scoped OIDC
 	// token (see provisionWorkloadOIDC; no-op when the feature is disabled).
-	h.provisionWorkloadOIDC(ctx, user.ID, req.Name)
+	oidcStart := time.Now()
+	oidcCtx, oidcSpan := handlerTracer().Start(ctx, "namespaces.create.workload_oidc")
+	oidcResult, oidcErr := h.provisionWorkloadOIDC(oidcCtx, user.ID, req.Name)
+	if oidcErr != nil {
+		oidcSpan.RecordError(oidcErr)
+		oidcSpan.SetStatus(codes.Error, oidcResult)
+	}
+	oidcSpan.End()
+	backendmetrics.RecordNamespaceCreatePhase("workload_oidc", oidcResult, time.Since(oidcStart))
 
 	// Parse the created namespace.
 	var created struct {

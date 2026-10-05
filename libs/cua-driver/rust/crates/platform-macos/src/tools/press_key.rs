@@ -184,7 +184,7 @@ fn def() -> &'static ToolDef {
         description: "Press and release a single key. Follows the same `delivery_mode` ladder as click/type_text \
             — it does NOT raise the window by default:\n\
             • `background` (default): post to the pid WITHOUT fronting/raising — the \
-              auth-message path (Chromium-safe). With element_index it focuses that AX \
+              auth-message path (Chromium-safe). With element_token it focuses that AX \
               element first. `window_id` only targets; it does not raise.\n\
             • `foreground`: guard and briefly front the exact window, focus an addressed AX \
               element when supplied, send a genuine HID key transition so Chromium content, \
@@ -201,7 +201,7 @@ fn def() -> &'static ToolDef {
             "required": ["key"],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid": { "type": "integer" },
+                "pid": { "type": "integer", "description": "Target process ID." },
                 "key": { "type": "string", "description": "Key name: return, tab, escape, up, down, etc." },
                 "modifiers": {
                     "type": "array",
@@ -209,10 +209,8 @@ fn def() -> &'static ToolDef {
                     "description": "Modifier keys: cmd, shift, option/alt, ctrl, fn."
                 },
                 "window_id": { "type": "integer", "description": "Target window. Required for delivery_mode:\"foreground\". Does NOT itself raise the window — raising is gated on delivery_mode." },
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
-                "x": { "type": "number", "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index." },
+                "x": { "type": "number", "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_token." },
                 "y": { "type": "number", "description": "Screenshot-pixel Y (see x)." },
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id to send the key to the frontmost application." },
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
@@ -270,28 +268,15 @@ impl Tool for PressKeyTool {
             Err(e) => return e,
         };
         let mut modifiers: Vec<String> = args.str_array("modifiers");
-        // Surface 6: element_token / element_index precedence resolution.
-        let element_token_arg = args.opt_str("element_token");
-        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "press_key",
-        ) {
+        let window_id_arg = args.opt_u64("window_id");
+        let resolved = match self.state.snapshots.resolve(pid, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token: _,
-            } => (Some(idx), wid),
+        let (element_index, window_id, pre_focus_guard) = resolved.into_parts(window_id_arg);
+        let window_id = match super::native_window_id(window_id) {
+            Ok(window_id) => window_id,
+            Err(error) => return error,
         };
 
         if let Err(error) = validate_post_target(pid) {
@@ -321,28 +306,10 @@ impl Tool for PressKeyTool {
         let py = args.get("y").and_then(|v| v.as_f64());
         if px.is_some() && py.is_some() && element_index.is_some() {
             return ToolResult::error(
-                "Pass either element_index (ax) or x,y (px) to press_key, not both.",
+                "Pass either element_token (ax) or x,y (px) to press_key, not both.",
             );
         }
 
-        // Resolve the pre-focus element pointer (if requested) outside
-        // the suppression closure — only the focus_element() write itself
-        // needs to run under suppression, the cache lookup does not.
-        // Retain out of the cache so a concurrent get_window_state can't free
-        // the element before the suppressed focus below dereferences it
-        // (use-after-free → daemon crash). Guard lives to method end.
-        let pre_focus_guard = if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            match self.state.element_cache.get_element_retained(pid, wid, idx) {
-                Some(guard) => Some(guard),
-                None => {
-                    return ToolResult::error(format!(
-                        "Element index {idx} not found. Call get_window_state first."
-                    ));
-                }
-            }
-        } else {
-            None
-        };
         let pre_focus_ptr: Option<usize> = pre_focus_guard.as_ref().map(|g| g.as_ptr());
 
         // ── Exact-target background gate (macOS background input v1) ──
@@ -403,6 +370,30 @@ impl Tool for PressKeyTool {
             }
         };
 
+        // The px form's focus click already moved the cursor. Otherwise place
+        // a named session's cursor on the element, or its remembered position,
+        // or the window centre, so a keyboard-first session stays visible.
+        if !px_focus {
+            let element_center = match pre_focus_guard.clone() {
+                Some(guard) => tokio::task::spawn_blocking(move || unsafe {
+                    crate::ax::bindings::element_screen_center(
+                        guard.as_ptr() as crate::ax::bindings::AXUIElementRef
+                    )
+                })
+                .await
+                .ok()
+                .flatten(),
+                None => None,
+            };
+            super::cursor_tools::position_keyboard_cursor(
+                &self.state,
+                &args,
+                window_id,
+                element_center,
+            )
+            .await;
+        }
+
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // Single-key presses can fire autocomplete (Return on a search
         // box opens a results popover) or trigger menu shortcuts that
@@ -421,15 +412,16 @@ impl Tool for PressKeyTool {
             || async move {
                 // Pre-focus the element under suppression so its
                 // side-effects are captured by the snapshot + lease.
-                if let Some(element_ptr) = pre_focus_ptr {
+                if let Some(guard) = pre_focus_guard.clone() {
                     let _ = tokio::task::spawn_blocking(move || {
-                        crate::input::ax_actions::focus_element(element_ptr)
+                        crate::input::ax_actions::focus_element(guard.as_ptr())
                     })
                     .await;
                     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
                 }
 
                 tokio::task::spawn_blocking(move || {
+                    let pre_focus_ptr = pre_focus_guard.as_ref().map(|guard| guard.as_ptr());
                     let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                     // Foreground rung: keep the exact target frontmost through a genuine
                     // physical HID key down/up pair, then restore. PID-routed events without the
@@ -471,7 +463,7 @@ impl Tool for PressKeyTool {
         )
         .await;
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
+        let changes = super::finish_window_observation(snapshot).await;
 
         let delivery_outcome = match result {
             Ok(result) => map_delivery_outcome(result),

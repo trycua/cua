@@ -76,11 +76,19 @@ class TestCiNixLinuxPaths(unittest.TestCase):
             "libs/cua-driver/tools/cursor-gallery/README.md",
             "libs/cua-driver/tools/cursor-gallery/index.html",
             "libs/cua-driver/tools/cursor-gallery/styles.css",
-            "docs/content/docs/how-to-guides/driver/personalize-cursor.mdx",
+            "docs/content/docs/cua-driver/guides/operate.mdx",
             "docs/public/img/cua-driver/cursor-themes/delivery-target-context.gif",
         )
 
-        self.assertEqual(self.workflow.count("          - name:"), 5)
+        for attribute in (
+            "cua-compositor-build",
+            "cua-driver-build",
+            "cua-driver-linux-rust-unit",
+            "cua-driver-policy-yaml",
+            "cua-driver-policy-rego",
+        ):
+            with self.subTest(attribute=attribute):
+                self.assertIn(attribute, self.workflow)
         self.assertFalse(self.workflow_selected(gallery_only))
 
     def test_production_nix_and_workflow_changes_still_select_the_matrix(self) -> None:

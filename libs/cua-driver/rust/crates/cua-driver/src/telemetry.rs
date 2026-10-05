@@ -214,16 +214,43 @@ pub fn is_enabled() -> bool {
 }
 
 fn effective_enabled() -> (bool, &'static str) {
+    // The cross-tool opt-out wins over everything.
+    if std::env::var("DO_NOT_TRACK").is_ok_and(|v| {
+        let v = v.trim();
+        !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false")
+    }) {
+        return (false, "do_not_track");
+    }
     if let Some(value) = parse_env_bool(ENV_TELEMETRY_ENABLED) {
         return (value, "environment");
     }
     if let Some(value) = parse_env_bool(ENV_TELEMETRY_ENABLED_COMPAT) {
         return (value, "environment_compat");
     }
+    // The switches every Cua program shares: `CUA_TELEMETRY`, then
+    // `cua config set telemetry off` / the Spaces app setting.
+    if let Some(value) = parse_env_bool(cua_telemetry::config::ENV_TELEMETRY) {
+        return (value, "environment_shared");
+    }
+    if shared_config_disabled() {
+        return (false, "shared_config");
+    }
     if let Some(value) = persisted_enabled() {
         return (value, "persisted");
     }
     (true, "default")
+}
+
+/// `[telemetry] enabled = "off"` in `$CUA_HOME/config.toml` (outside
+/// tests, `~/.cua/config.toml` when `CUA_HOME` is unset). Only an explicit
+/// off counts here; on is the driver's own default.
+fn shared_config_disabled() -> bool {
+    let home = if cfg!(test) {
+        std::env::var_os("CUA_HOME").map(PathBuf::from)
+    } else {
+        cua_telemetry::config::cua_home(&cua_telemetry::config::process_env)
+    };
+    home.is_some_and(|h| cua_telemetry::config::config_value(&h) == Some(false))
 }
 
 pub fn status() -> TelemetryStatus {
@@ -1071,10 +1098,10 @@ fn tool_completion_properties(
         ToolErrorClass::UnknownTool | ToolErrorClass::InvalidParams
     ) {
         "other".to_owned()
-    } else if outcome.tool_name == "type_text_chars" {
-        "type_text".to_owned()
     } else {
-        outcome.tool_name
+        // Re-checked against the compile-time registry, as on the CLI
+        // path: an extension or dynamically named tool is `other`.
+        fixed_tool_name(&outcome.tool_name)
     };
     let error_class = match outcome.error_class {
         ToolErrorClass::None => "none",
@@ -1166,6 +1193,7 @@ pub(crate) fn capture_mcp_startup_completed(
     );
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn capture_permissions_gate_completed(
     missing_accessibility: bool,
     missing_screen_recording: bool,
@@ -1200,6 +1228,7 @@ pub(crate) fn capture_permissions_gate_completed(
     );
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) const fn permissions_gate_resolution(
     gate_failed: bool,
     dismissed: bool,
@@ -1213,6 +1242,7 @@ pub(crate) const fn permissions_gate_resolution(
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn capture_permissions_gate_started(
     missing_accessibility: bool,
     missing_screen_recording: bool,
@@ -1230,6 +1260,7 @@ pub(crate) fn capture_permissions_gate_started(
     );
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn capture_permissions_gate_dismissed(
     missing_accessibility: bool,
     missing_screen_recording: bool,
@@ -1330,8 +1361,6 @@ fn normalize_model(value: Option<&str>) -> String {
         } else {
             "gemini_other"
         }
-    } else if raw.starts_with("grok-") {
-        "grok"
     } else if raw.starts_with("nova-") {
         "amazon_nova"
     } else if raw.starts_with("phi-") {
@@ -1797,6 +1826,7 @@ pub(crate) fn capture_cli_completed(
         "permissions" => "permissions",
         "autostart" => "autostart",
         "skills" => "skills",
+        "extension" => "extension",
         "config" => "config",
         _ => "other",
     };
@@ -1952,6 +1982,7 @@ fn fixed_cli_command(command: &str) -> &'static str {
         "permissions" => "permissions",
         "autostart" => "autostart",
         "skills" => "skills",
+        "extension" => "extension",
         "config" => "config",
         _ => "other",
     }
@@ -2017,6 +2048,16 @@ fn fixed_cli_operation(command: &str, operation: &str) -> &'static str {
             "update" => "update",
             "uninstall" => "uninstall",
             "status" => "status",
+            "path" => "path",
+            _ => "other",
+        },
+        "extension" => match operation {
+            "list" => "list",
+            "info" => "info",
+            "status" => "status",
+            "install" => "install",
+            "update" => "update",
+            "uninstall" => "uninstall",
             "path" => "path",
             _ => "other",
         },
@@ -2090,6 +2131,8 @@ fn build_payload(
     );
     event_properties.insert("id_persisted".into(), Value::Bool(identity.persisted));
     event_properties.insert("$process_person_profile".into(), Value::Bool(false));
+    // No location lookup from the request IP (same as Lume and the cua SDK).
+    event_properties.insert("$geoip_disable".into(), Value::Bool(true));
     event_properties.insert("$lib".into(), Value::String("cua-driver-rs".into()));
     event_properties.insert(
         "$lib_version".into(),
@@ -2565,7 +2608,7 @@ fn os_version() -> String {
         .output();
     #[cfg(target_os = "linux")]
     {
-        return std::fs::read_to_string("/etc/os-release")
+        std::fs::read_to_string("/etc/os-release")
             .ok()
             .and_then(|contents| {
                 contents
@@ -2573,7 +2616,7 @@ fn os_version() -> String {
                     .find_map(|line| line.strip_prefix("VERSION_ID=").map(str::to_owned))
             })
             .map(|value| value.trim_matches('"').to_owned())
-            .unwrap_or_else(|| "unknown".into());
+            .unwrap_or_else(|| "unknown".into())
     }
     #[cfg(not(target_os = "linux"))]
     command
@@ -2638,6 +2681,9 @@ mod tests {
             std::env::set_var(ENV_TELEMETRY_HOME, &telemetry_home);
             std::env::remove_var(ENV_TELEMETRY_ENABLED);
             std::env::remove_var(ENV_TELEMETRY_ENABLED_COMPAT);
+            std::env::remove_var("DO_NOT_TRACK");
+            std::env::remove_var("CUA_TELEMETRY");
+            std::env::remove_var("CUA_HOME");
         }
         let result = test(&root);
         let _ = std::fs::remove_dir_all(&root);
@@ -2886,6 +2932,54 @@ mod tests {
     }
 
     #[test]
+    fn shared_cua_switches_turn_the_driver_off() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|home| {
+            assert_eq!(effective_enabled(), (true, "default"));
+            unsafe {
+                std::env::set_var("DO_NOT_TRACK", "1");
+                std::env::set_var(ENV_TELEMETRY_ENABLED, "true");
+            }
+            assert_eq!(effective_enabled(), (false, "do_not_track"));
+            unsafe {
+                std::env::remove_var("DO_NOT_TRACK");
+                std::env::remove_var(ENV_TELEMETRY_ENABLED);
+                std::env::set_var("CUA_TELEMETRY", "0");
+            }
+            assert_eq!(effective_enabled(), (false, "environment_shared"));
+            unsafe {
+                std::env::remove_var("CUA_TELEMETRY");
+            }
+            let cua_home = home.join("cua-home");
+            std::fs::create_dir_all(&cua_home).unwrap();
+            std::fs::write(
+                cua_home.join("config.toml"),
+                "[telemetry]\nenabled = \"off\"\n",
+            )
+            .unwrap();
+            unsafe {
+                std::env::set_var("CUA_HOME", &cua_home);
+            }
+            assert_eq!(effective_enabled(), (false, "shared_config"));
+            // The driver's own switch still wins over the shared file.
+            unsafe {
+                std::env::set_var(ENV_TELEMETRY_ENABLED, "true");
+            }
+            assert_eq!(effective_enabled(), (true, "environment"));
+            unsafe {
+                std::env::remove_var(ENV_TELEMETRY_ENABLED);
+                std::env::remove_var("CUA_HOME");
+            }
+        });
+    }
+
+    #[test]
+    fn mcp_tool_names_outside_the_registry_are_other() {
+        assert_eq!(fixed_tool_name("my_private_extension_tool"), "other");
+        assert_eq!(fixed_tool_name("type_text_chars"), "type_text");
+    }
+
+    #[test]
     fn persisted_install_channel_prevents_first_run_attribution_race() {
         let _guard = ENV_LOCK.lock().unwrap();
         with_isolated_home(|root| {
@@ -3060,7 +3154,7 @@ mod tests {
     }
 
     #[test]
-    fn v3_payload_allows_server_geoip_without_sending_an_ip_or_client_timestamp() {
+    fn v3_payload_disables_geoip_and_sends_no_ip_or_client_timestamp() {
         let _guard = ENV_LOCK.lock().unwrap();
         let identity = InstallationIdentity {
             id: "test-id".into(),
@@ -3098,7 +3192,7 @@ mod tests {
         }
         assert_eq!(properties["telemetry_schema_version"], 3);
         assert_eq!(properties["is_synthetic"], false);
-        assert!(!properties.contains_key("$geoip_disable"));
+        assert_eq!(properties["$geoip_disable"], true);
         assert!(!properties.contains_key("$ip"));
         let serialized = serde_json::to_string(&payload)
             .unwrap()

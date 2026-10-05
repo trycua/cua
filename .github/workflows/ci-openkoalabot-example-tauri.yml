@@ -1,0 +1,96 @@
+name: "CI: openkoalabot-example (Tauri)"
+
+# The Rust/Tauri OpenKoalaBots example builds on the cua SDK's crates by path
+# (libs/cua), so an SDK change can break it without touching the sample.
+# This compiles the whole workspace (core + the Tauri shell), runs the
+# headless core tests (in-process spacesd through spaces-e2e; nothing touches
+# host apps) and the UI unit tests. apps/cua-spaces has its own workflow
+# (ci-cua-spaces.yml).
+
+on:
+  pull_request:
+    paths:
+      - "samples/openkoalabot-example-tauri/**"
+      - "libs/cua/**"
+      - "libs/cua-spacesd/**"
+      - ".github/workflows/ci-openkoalabot-example-tauri.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-openkoalabot-example-tauri-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: samples/openkoalabot-example-tauri
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  check:
+    name: cargo check + core tests + vitest
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 4
+      # The Tauri shell plus the SDK and driver crates: full debug info
+      # fills the runner disk; line tables keep backtraces useful.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          install-deps: "false"
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: samples/openkoalabot-example-tauri/pnpm-lock.yaml
+      - name: Install Rust (toolchain from rust-toolchain.toml)
+        working-directory: samples/openkoalabot-example-tauri/src-tauri
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Linux build dependencies (Tauri)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config libssl-dev file \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev \
+            libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            samples/openkoalabot-example-tauri/src-tauri/target
+          key: openkoalabot-example-tauri-${{ hashFiles('samples/openkoalabot-example-tauri/src-tauri/Cargo.lock') }}
+          restore-keys: openkoalabot-example-tauri-
+      - name: cargo check (core + Tauri shell)
+        working-directory: samples/openkoalabot-example-tauri/src-tauri
+        run: cargo check --locked --workspace --all-targets
+      - name: Core tests (hermetic)
+        working-directory: samples/openkoalabot-example-tauri/src-tauri
+        run: cargo test --locked -p openkoalabot-example-core -- --test-threads=4
+      # The UI links @trycua/cua from the repo (link:../../libs/cua/typescript);
+      # its subpath exports (teleport, spaces/presence, ...) resolve to the
+      # compiled dist/, which is not committed.
+      - name: Build @trycua/cua (TypeScript only)
+        working-directory: libs/cua/typescript
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vitest run

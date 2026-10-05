@@ -1,0 +1,244 @@
+---
+title: Host Spaces on your spare Mac
+description: 'Turn a spare Mac mini (or any machine) into a place your laptop and your agents create Spaces on, over the relay, ssh or Tailscale, without sharing its own desktop.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Spaces run on your own Mac, on your other machines, and in your own cloud
+account ([AWS, Google Cloud or Modal](/cua-sdk/guides/your-cloud)). In this walkthrough a spare Mac mini in a closet runs Spaces for
+your laptop: your laptop, or a coding agent on it, asks for them through the
+cua.ai relay or [directly over Tailscale](#over-tailscale-without-the-relay),
+and the Mac mini runs them with its own runtimes (Lume for macOS VMs, Docker
+for Linux). You can set the Mac up [over ssh](#over-ssh-or-tailscale). Its own
+desktop, shell and files stay private.
+
+## Set up the spare Mac
+
+On the spare Mac:
+
+```bash test="cli-shape" id="cua-host-setup-spare"
+cua host setup --profile spare --name "Mac mini (spare)"
+```
+
+`--profile spare` is shorthand for `--no-desktop --provide-spaces`. Setup
+joins the relay the way [unattended access](/spaces/guides/unattended-access)
+does. It signs you in for that one command and keeps no account session, only
+the machine's own token.
+
+The machine has two settings, and each works on its own:
+
+| Setting | What it does | `desktop` profile (default) | `spare` profile |
+|---|---|---|---|
+| Share this desktop | The machine itself is a Space: its screen, input, shell and files. | on | off |
+| Provide Spaces | Your enrolled devices can create, list and delete Spaces on it. | off | on |
+
+With **Share this desktop** off, the host's cua-spacesd runs without its
+desktop services, and a relayed caller reaches only the Spaces service. Change
+either setting at any time:
+
+```bash test="cli-shape" id="cua-host-config"
+cua host config                                    # show both settings and the Spaces it runs
+cua host config --desktop on --provide-spaces on   # share the desktop too
+cua host config --max-spaces 6                     # at most 6 Spaces at once (default 4)
+```
+
+The app's **This machine** page has the same two switches, the Spaces the
+machine provides, and every remote create and delete.
+
+## Over ssh or Tailscale
+
+A spare Mac mini you only reach over ssh (on your [Tailscale](https://tailscale.com)
+or your LAN) works the same way. Tailscale is only the ssh transport here;
+hosting Spaces still goes through the cua.ai relay, not through Tailscale.
+
+```bash skip="no-runner"
+ssh mini.your-tailnet.ts.net
+
+# on the mini, non-interactively:
+curl -fsSL https://cua.ai/install.sh | sh -s -- -y --select spaces,host --no-onboarding
+```
+
+`-y` accepts the install without the interactive checklist, `--select
+spaces,host` picks the Cua Spaces app and hosting, and `--no-onboarding`
+skips the automatic `cua auth login` (there is no browser or tty to sign in
+with yet). Then sign in with a device code instead of a browser:
+
+```bash skip="no-runner"
+cua auth login --remote
+```
+
+This prints a URL and a short code. Show both to the user and have them
+approve the code on another signed-in device or at the URL. Once signed in,
+set the mini up as a spare host:
+
+```bash test="cli-shape" id="cua-host-setup-spare-ssh"
+cua host setup --profile spare --name "Mac mini (spare)"
+```
+
+<Callout type="warn">
+  The mini needs an active GUI login session: `cua-spacesd` runs as a
+  LaunchAgent in the logged-in (Aqua) session, so it starts only after
+  someone is logged in, not at the login window. For a headless mini, turn
+  on auto-login (System Settings > Users & Groups > Login Options) so it
+  signs in on its own after every reboot or power loss. The first run also needs a one-time
+  grant of **Screen Recording** and **Accessibility** to `cua-spacesd` in
+  System Settings > Privacy & Security; nothing in setup grants these for
+  you.
+</Callout>
+
+From your laptop, create Spaces on it the same way as any other host (see
+below): `create_space(on="host:<name>", count=2)`, or
+`cua spaces create macos:26 --on "<name>" --count 2`.
+
+## Create Spaces from your laptop
+
+Your laptop must be [enrolled](/spaces/guides/unattended-access#reach-it-from-your-devices)
+for your account. Then ask your coding agent, through the cua MCP server:
+
+> spin up 2 macos spaces on my spare mac mini
+
+The agent calls `create_space` with `on="host:spare mac mini"`,
+`image="macos"` and `count=2`. From the CLI:
+
+```bash test="cli-shape" id="cua-spaces-create-host"
+cua spaces create macos:26 --on "spare mac mini" --count 2
+cua spaces create linux --on host:0123abcd4567ef89
+```
+
+The SDK takes the same `on`: `spaces.create(on="host:spare mac mini", image="macos")`.
+
+The machine is matched by its ID, its exact name, or the words of its name,
+so "spare mac mini" finds `Mac mini (spare)` or `dillons-mac-mini`. When two
+machines fit equally well (two Mac minis), the call fails with
+`ambiguous_host` and lists them with their IDs, so the agent can ask you
+which one you meant.
+
+Each new Space joins the relay as a machine of its own and comes back as
+`relay:<machine>`. Open it, stream it and run commands in it like any other
+Space.
+
+## List and delete
+
+```bash test="cli-shape" id="cua-spaces-host-ls"
+cua spaces ls
+cua spaces delete relay:space-0123456789abcdef
+```
+
+`cua spaces ls` (and the app's sidebar) groups the Spaces a machine provides
+under that machine. In `list_spaces` each one carries `host` (the machine ID)
+and `host_name`. Deleting asks the machine to delete the VM or container,
+and the Space leaves the relay.
+
+## Limits
+
+| Limit | Default | Why |
+|---|---|---|
+| macOS VMs on one Mac | 2 | Apple's macOS license allows two macOS VMs per Mac, and Apple Virtualization (which Lume runs on) enforces it. |
+| Spaces at once | 4 | Set with `cua host config --max-spaces N` (0: no limit). |
+
+A request past a limit fails with `limit_exceeded` and says which limit and
+what to do. macOS Spaces need a Mac host: a Linux or Windows host refuses
+them with `host_capability_missing`.
+
+## Who can create Spaces on it
+
+- You, from any device enrolled for your account.
+- Accounts you share the machine with as editors (`cua host share` or
+  `cua spaces share relay:<machine> <who> --role editor`). They see and
+  delete only the Spaces they created; you see and delete all of them.
+- Nobody else. A device that is not enrolled is refused by the relay, and an
+  account shared as a viewer is refused by the machine.
+
+Every remote create, delete and refusal is a line in the machine's
+hash-chained audit log (`~/.cua/host/spaces-audit.jsonl`). `cua host status`
+and the app show it, and warn when the log does not verify.
+
+Agents follow [per-agent computer access](/spaces/guides/persistent-agents):
+a persistent agent uses a Space on your spare Mac only after you allow it, and
+a grant on the machine does not reach the Spaces it provides.
+
+```bash test="cli-shape" id="cua-agent-allow-host-space"
+cua agent allow-computer ada relay:space-0123456789abcdef
+```
+
+## Over Tailscale without the relay
+
+A spare Mac your laptop reaches by its [Tailscale](https://tailscale.com) (or
+LAN) address can host Spaces without the cua.ai relay: no sign-in on either
+machine and no enrolled devices. Set it up on its Tailscale address:
+
+```bash test="cli-shape" id="cua-host-setup-direct-spare"
+cua host setup --direct 100.101.102.103:3211 --profile spare --name "Mac mini (spare)"
+```
+
+Use the Mac's own address from `tailscale ip -4`. With `--direct
+0.0.0.0:3211` it listens on every interface and setup picks its Tailscale
+address (else its LAN address) for the next step. Setup prints the exact
+command to run on your laptop, with the Mac's token:
+
+```bash test="cli-shape" id="cua-spaces-add-direct-host"
+cua spaces add 100.101.102.103:3211 --host --name "Mac mini (spare)" --token <token>
+```
+
+The laptop keeps the token in its Spaces credential store
+(`~/.cua/spaces-credentials.json`, 0600) and lists the Mac in
+`~/.cua/direct-hosts.json`. Then create Spaces on it as on any host:
+
+```bash test="cli-shape" id="cua-spaces-create-direct-host"
+cua spaces create macos:26 --on "spare mac mini" --count 2
+```
+
+`on="host:<name>"` looks at your machines on the relay first, then at the
+hosts you added with `--host`, with the same matching: an ID or exact name
+wins, otherwise the words of the name, and two equally good matches fail with
+`ambiguous_host`.
+
+Each new Space runs on the Mac with the same limits (four Spaces, two macOS
+VMs). It is not put on the relay: the Mac forwards a port on its own address
+to the Space's cua-spacesd, and your laptop adds it as
+`direct:100.101.102.103:<port>` with the Space's own token. `cua spaces ls`
+lists it under the Mac, `list_spaces` marks it `"via": "direct"`, and
+`cua spaces delete`, `stop` and `start` ask the Mac to do it. When a Space
+starts again, or the Mac restarts, the Mac opens the same port again.
+
+<Callout type="warn">
+  The direct listener is plain HTTP, and the Mac's token is its owner: it
+  creates and deletes Spaces there and reaches the Mac's own shell and files,
+  even with **Share this desktop** off. Treat it like an SSH key and use it
+  only over Tailscale or a LAN you trust. By default the Mac takes host calls,
+  and connections to the Spaces it forwards, only from loopback, Tailscale
+  (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) and private LAN addresses
+  (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`), and setup
+  refuses a public `--direct` address. `--allow-any-address` turns both off,
+  with a warning. To rotate the token, delete `~/.cua/host/env-token` on the
+  Mac, run the same `cua host setup` again, and add the Mac on your laptop
+  again with the new command.
+</Callout>
+
+## macOS Spaces with Lume
+
+The spare Mac runs macOS Spaces as Lume VMs:
+
+- Apple silicon and macOS 13 or later, with [Lume](/lume) installed.
+- About 50 GB free disk and 8 GB free memory per macOS Space. The first one
+  downloads the image, so it takes longer than the next ones.
+- The cua daemon on the spare Mac creates the VMs. The host's cua-spacesd
+  starts it when a request comes in, with the `cua` CLI that ran setup.
+
+<Callout type="info">
+  A Space reaches the relay from inside its VM or container. With a relay on
+  the spare Mac itself (a self-hosted relay on `localhost`), a container gets
+  it at `host.docker.internal` and a Lume VM at the host's NAT address,
+  `192.168.64.1`.
+</Callout>
+
+## Troubleshooting
+
+| Error | Meaning | Fix |
+|---|---|---|
+| `ambiguous_host` | Several of your machines fit the name. | Pick one of the listed IDs: `on="host:<id>"`. |
+| `not_found` | No machine fits the name. | Check `cua spaces ls`, or set the machine up with `--provide-spaces`. |
+| `host_capability_missing` | The machine is offline, does not provide Spaces, or cannot run that OS. | Run `cua host config --provide-spaces on` on it, or pick another machine. |
+| `limit_exceeded` | Two macOS VMs already run, or the machine is at its Space limit. | Delete one with `cua spaces delete`, or raise `--max-spaces`. |
+| `permission_denied` | The machine is shared with you to watch only. | Ask its owner to share it as an editor. |

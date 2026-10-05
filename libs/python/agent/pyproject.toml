@@ -4,9 +4,10 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-agent"
-version = "0.8.4"
+version = "0.9.0"
 description = "Cua (Computer Use) Agent for AI-driven computer interaction"
 readme = "README.md"
+license = { text = "MIT" }
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }
 ]
@@ -27,7 +28,7 @@ requires-python = ">=3.11,<3.14"
 
 [project.optional-dependencies]
 computer = [
-    "cua-computer>=0.5.0,<0.6.0",
+    "cua-sandbox>=0.8.0,<0.10.0",
 ]
 openai = []
 anthropic = []
@@ -36,9 +37,9 @@ qwen = [
     "qwen-agent",
     "Pillow>=10.0.0",
 ]
-omni = [
-    "cua-som>=0.1.0,<0.2.0",
-]
+# No `omni` extra: cua-som is deprecated, unmaintained and AGPL-3.0, and this
+# package is MIT. The omniparser loop still runs with it installed separately
+# (`pip install cua-som`).
 uitars = []
 uitars-mlx = [
     "mlx-vlm>=0.1.27; sys_platform == 'darwin'"

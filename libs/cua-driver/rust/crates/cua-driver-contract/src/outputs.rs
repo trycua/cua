@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-use crate::{CaptureScope, EscalationReason, Platform};
-use schemars::{generate::SchemaSettings, JsonSchema};
+use crate::{schema_settings, CaptureScope, EscalationReason, Platform};
+use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -38,6 +38,61 @@ pub fn refusal_envelope_schema() -> Value {
     })
 }
 
+/// Marker code for structured error envelopes that carry no tool-specific
+/// refusal shape.
+///
+/// The transport and daemon failure paths answer with diagnostics like
+/// `{"exit_code": 1}` rather than a tool refusal. That payload satisfies
+/// neither arm of [`advertised_output_schema`]: it is missing the success
+/// arm's required keys while carrying a key the success arm does not allow,
+/// and it has none of the refusal arm's marker keys. Strict MCP clients then
+/// reject the whole response, so the error text in `content` never reaches the
+/// agent.
+pub const TOOL_INVOCATION_FAILED_CODE: &str = "tool_invocation_failed";
+
+/// Keys that make a payload recognisable to the refusal arm of
+/// [`advertised_output_schema`].
+const REFUSAL_MARKER_KEYS: [&str; 3] = ["refusal", "status", "code"];
+
+/// Whether a payload already satisfies the refusal arm of
+/// [`advertised_output_schema`].
+pub fn is_refusal_envelope(value: &Value) -> bool {
+    value.as_object().is_some_and(has_refusal_marker)
+}
+
+fn has_refusal_marker(object: &Map<String, Value>) -> bool {
+    REFUSAL_MARKER_KEYS
+        .iter()
+        .any(|marker| object.contains_key(*marker))
+}
+
+/// Guarantee a structured error payload is recognisable as a refusal.
+///
+/// Inserts [`TOOL_INVOCATION_FAILED_CODE`] when the payload carries none of the
+/// refusal marker keys, so any diagnostic an error path invents still validates
+/// against the advertised `outputSchema`. Payloads that already carry a marker
+/// are returned untouched.
+pub fn conforming_error_envelope(structured: Value) -> Value {
+    // Both arms require `type: object`, so a non-object diagnostic is kept as a
+    // value inside the envelope rather than being emitted as the envelope.
+    let mut object = match structured {
+        Value::Object(object) => object,
+        Value::Null => Map::new(),
+        other => {
+            let mut object = Map::new();
+            object.insert("detail".into(), other);
+            object
+        }
+    };
+    if !has_refusal_marker(&object) {
+        object.insert(
+            "code".into(),
+            Value::String(TOOL_INVOCATION_FAILED_CODE.into()),
+        );
+    }
+    Value::Object(object)
+}
+
 /// Wrap a success schema into the shape advertised as the MCP `outputSchema`.
 ///
 /// MCP requires every `structuredContent` a tool emits to validate against its
@@ -58,11 +113,12 @@ pub fn advertised_output_schema(success: Value) -> Value {
 pub(crate) fn output_schema_with_additional_properties<T: JsonSchema>(
     additional_properties: bool,
 ) -> Value {
-    let mut settings = SchemaSettings::draft2020_12();
-    settings.inline_subschemas = true;
-    settings.meta_schema = None;
-    let mut schema = serde_json::to_value(settings.into_generator().into_root_schema_for::<T>())
-        .expect("JSON Schema serializes");
+    let mut schema = serde_json::to_value(
+        schema_settings()
+            .into_generator()
+            .into_root_schema_for::<T>(),
+    )
+    .expect("JSON Schema serializes");
     strip_schema_titles(&mut schema);
     if let Some(object) = schema.as_object_mut() {
         object.insert(
@@ -76,13 +132,30 @@ pub(crate) fn output_schema_with_additional_properties<T: JsonSchema>(
     schema
 }
 
+/// Compact generated schemas by removing the JSON Schema annotations `title`
+/// and `description`.
+///
+/// `properties` and `patternProperties` hold property names as keys, not
+/// annotations, so the stripper must recurse into each property schema without
+/// touching the map's keys — a tool may legitimately publish a property named
+/// `title` (list_windows does), and deleting it silently under-describes the
+/// contract.
 fn strip_schema_titles(value: &mut Value) {
     match value {
         Value::Object(object) => {
             object.remove("title");
             object.remove("description");
-            for child in object.values_mut() {
-                strip_schema_titles(child);
+            for (key, child) in object.iter_mut() {
+                if key == "properties" || key == "patternProperties" {
+                    match child {
+                        Value::Object(properties) => {
+                            properties.values_mut().for_each(strip_schema_titles)
+                        }
+                        other => strip_schema_titles(other),
+                    }
+                } else {
+                    strip_schema_titles(child);
+                }
             }
         }
         Value::Array(values) => values.iter_mut().for_each(strip_schema_titles),
@@ -180,12 +253,15 @@ pub struct ListSessionsOutput {
 impl ToolOutput for ListSessionsOutput {}
 
 /// Successful structured result returned by `start_session`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 pub struct StartSessionOutput {
     #[serde(flatten)]
     pub state: SessionStateOutput,
     pub active: bool,
     pub revived: bool,
+    /// The `cursor_motion` this call applied, echoed as sent. Absent when the call did not set one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_motion: Option<crate::CursorMotionSelection>,
 }
 
 impl ToolOutput for StartSessionOutput {}
@@ -219,6 +295,32 @@ pub struct CursorMotionOutput {
     pub dwell_after_click_ms: f64,
     pub idle_hide_ms: f64,
     pub turn_radius: f64,
+    /// Trajectory style. Absent from daemons that predate motion styles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "cursor_motion_style_output_schema")]
+    pub style: Option<crate::CursorMotionStyle>,
+    /// Move duration model. Absent from daemons that predate motion styles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "cursor_motion_timing_output_schema")]
+    pub timing: Option<crate::CursorMotionTiming>,
+    /// Effects in use after the style defaults. Absent from daemons that
+    /// predate motion styles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effects: Option<crate::CursorMotionEffectsOutput>,
+}
+
+// Optional enums advertise the bare string enum (Gemini rejects `null` in
+// `enum`); an older daemon simply omits the field.
+fn cursor_motion_style_output_schema(
+    generator: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
+    <crate::CursorMotionStyle as JsonSchema>::json_schema(generator)
+}
+
+fn cursor_motion_timing_output_schema(
+    generator: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
+    <crate::CursorMotionTiming as JsonSchema>::json_schema(generator)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
@@ -275,7 +377,9 @@ impl ToolOutput for SetAgentCursorThemeOutput {}
 pub struct GetAgentCursorStateOutput {
     pub session: String,
     pub enabled: bool,
-    #[schemars(required)]
+    // Wire contract: the key is always present, and its value is `null` until
+    // the session cursor first moves.
+    #[schemars(required, schema_with = "nullable_cursor_point_schema")]
     pub position: Option<CursorPointOutput>,
     pub theme: CursorThemeOutput,
     pub visual_state: CursorVisualOutput,
@@ -308,16 +412,92 @@ pub struct DesktopStateOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub screenshot_file_path: Option<String>,
+    /// Whether the Driver's own overlay pixels (agent cursor, session pill)
+    /// were kept out of this capture. Absent from producers that predate the
+    /// report.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_overlay_capture: Option<AgentOverlayCapture>,
     #[serde(flatten)]
     pub extensions: BTreeMap<String, Value>,
 }
 
+/// How a Driver-owned desktop capture treated Driver-owned overlay pixels.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentOverlayCaptureStatus {
+    /// Overlay windows were on screen and were kept out of the pixels.
+    Excluded,
+    /// No Driver overlay pixels were on screen, so there was nothing to keep out.
+    NotPresent,
+    /// Overlay pixels may be in the capture; `reason` says why.
+    NotExcluded,
+}
+
+/// Report attached to desktop captures about Driver-owned overlay pixels.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentOverlayCapture {
+    pub status: AgentOverlayCaptureStatus,
+    /// Native mechanism that kept the overlay out, when `status` is `excluded`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    /// Why the overlay could not be kept out, when `status` is `not_excluded`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl AgentOverlayCapture {
+    pub fn excluded(method: impl Into<String>) -> Self {
+        Self {
+            status: AgentOverlayCaptureStatus::Excluded,
+            method: Some(method.into()),
+            reason: None,
+        }
+    }
+
+    pub fn not_present() -> Self {
+        Self {
+            status: AgentOverlayCaptureStatus::NotPresent,
+            method: None,
+            reason: None,
+        }
+    }
+
+    pub fn not_excluded(reason: impl Into<String>) -> Self {
+        Self {
+            status: AgentOverlayCaptureStatus::NotExcluded,
+            method: None,
+            reason: Some(reason.into()),
+        }
+    }
+
+    /// Whether the capture is free of Driver overlay pixels.
+    pub fn is_clean(&self) -> bool {
+        self.status != AgentOverlayCaptureStatus::NotExcluded
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        match (self.status, &self.method, &self.reason) {
+            (AgentOverlayCaptureStatus::Excluded, Some(_), None)
+            | (AgentOverlayCaptureStatus::NotPresent, None, None)
+            | (AgentOverlayCaptureStatus::NotExcluded, None, Some(_)) => Ok(()),
+            _ => Err(
+                "agent_overlay_capture: excluded requires only method, not_excluded requires \
+                 only reason, not_present carries neither"
+                    .into(),
+            ),
+        }
+    }
+}
+
 impl ToolOutput for DesktopStateOutput {
     fn validate(&self) -> Result<(), String> {
-        if self.screenshot_mime_type == "image/png" {
-            Ok(())
-        } else {
-            Err("screenshot_mime_type must be image/png".into())
+        if self.screenshot_mime_type != "image/png" {
+            return Err("screenshot_mime_type must be image/png".into());
+        }
+        match &self.agent_overlay_capture {
+            Some(report) => report.validate(),
+            None => Ok(()),
         }
     }
 }
@@ -455,6 +635,19 @@ pub enum ActionEvidenceKind {
 #[serde(deny_unknown_fields)]
 pub struct ActionEvidence {
     pub kind: ActionEvidenceKind,
+    /// Human-readable readback the evidence rests on (what changed, which
+    /// popup or window appeared and how to target it). Never request data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// Why a `refused` action sent no input, and what to do instead.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionError {
+    pub code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
@@ -494,6 +687,15 @@ pub struct ActionResult {
     pub evidence: Option<Vec<ActionEvidence>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub escalation: Option<ActionEscalation>,
+    /// The producer's human summary of what happened (resolved points, the
+    /// element hit, popups that opened, focus outcome, follow-up calls).
+    /// Clients that read only `structuredContent` still get everything the
+    /// text content says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// Present only with `effect: refused`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ActionError>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -502,6 +704,7 @@ pub enum ActionResultValidationError {
     PartialRequiresDeliveredCount,
     RefusedCannotHaveDelivery,
     RefusedCannotHaveEvidence,
+    ErrorRequiresRefused,
 }
 
 impl std::fmt::Display for ActionResultValidationError {
@@ -511,6 +714,7 @@ impl std::fmt::Display for ActionResultValidationError {
             Self::PartialRequiresDeliveredCount => "partial effect requires delivered_count",
             Self::RefusedCannotHaveDelivery => "refused effect cannot include delivery",
             Self::RefusedCannotHaveEvidence => "refused effect cannot include evidence",
+            Self::ErrorRequiresRefused => "error is only reported with a refused effect",
         })
     }
 }
@@ -542,6 +746,9 @@ impl ActionResult {
             }
             ActionEffect::Refused if self.evidence.is_some() => {
                 Err(ActionResultValidationError::RefusedCannotHaveEvidence)
+            }
+            effect if effect != ActionEffect::Refused && self.error.is_some() => {
+                Err(ActionResultValidationError::ErrorRequiresRefused)
             }
             _ => Ok(()),
         }
@@ -584,6 +791,11 @@ fn platform_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
 
 fn nullable_string_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({ "anyOf": [{ "type": "string" }, { "type": "null" }] })
+}
+
+fn nullable_cursor_point_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let point = generator.subschema_for::<CursorPointOutput>();
+    schemars::json_schema!({ "anyOf": [point, { "type": "null" }] })
 }
 
 fn nullable_escalation_reason_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -631,9 +843,54 @@ mod tests {
             }),
             evidence: Some(vec![ActionEvidence {
                 kind: ActionEvidenceKind::ValueReadback,
+                detail: None,
             }]),
             escalation: None,
+            summary: None,
+            error: None,
         }
+    }
+
+    #[test]
+    fn schema_compaction_keeps_properties_named_title_or_description() {
+        let mut schema = serde_json::json!({
+            "title": "TopLevel",
+            "description": "Top-level annotation",
+            "properties": {
+                "title": { "type": "string", "description": "The window title." },
+                "description": { "type": "string" },
+                "nested": {
+                    "title": "Nested",
+                    "properties": { "title": { "type": "string", "title": "Inner" } }
+                }
+            }
+        });
+
+        strip_schema_titles(&mut schema);
+
+        assert!(schema.get("title").is_none(), "annotation must be stripped");
+        assert!(
+            schema.get("description").is_none(),
+            "annotation must be stripped"
+        );
+        let properties = schema["properties"].as_object().expect("properties map");
+        assert!(
+            properties.contains_key("title"),
+            "property name must survive compaction"
+        );
+        assert!(
+            properties.contains_key("description"),
+            "property name must survive compaction"
+        );
+        assert!(
+            properties["nested"]["properties"]
+                .as_object()
+                .expect("nested properties")
+                .contains_key("title"),
+            "nested property name must survive compaction"
+        );
+        assert!(properties["title"].get("description").is_none());
+        assert!(properties["nested"].get("title").is_none());
     }
 
     #[test]
@@ -645,7 +902,15 @@ mod tests {
         let properties = schema["properties"].as_object().expect("properties");
         assert_eq!(
             properties.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["delivery", "effect", "escalation", "evidence", "route"]
+            [
+                "delivery",
+                "effect",
+                "error",
+                "escalation",
+                "evidence",
+                "route",
+                "summary"
+            ]
         );
         assert_eq!(
             properties["effect"]["enum"],
@@ -759,9 +1024,39 @@ mod tests {
         delivery_extension["delivery"]["requested"] = json!("background");
         assert!(serde_json::from_value::<ActionResult>(delivery_extension).is_err());
 
+        // Evidence carries its human detail so a client that reads only
+        // structuredContent still sees what the readback said; other
+        // evidence extensions stay closed.
+        let mut evidence_detail = serde_json::to_value(&result).expect("serialize");
+        evidence_detail["evidence"][0]["detail"] = json!("value read back as 42");
+        assert_eq!(
+            serde_json::from_value::<ActionResult>(evidence_detail)
+                .expect("detail")
+                .evidence
+                .expect("evidence")[0]
+                .detail
+                .as_deref(),
+            Some("value read back as 42")
+        );
         let mut evidence_extension = serde_json::to_value(&result).expect("serialize");
-        evidence_extension["evidence"][0]["detail"] = json!("private readback");
+        evidence_extension["evidence"][0]["raw"] = json!("private readback");
         assert!(serde_json::from_value::<ActionResult>(evidence_extension).is_err());
+
+        let refusal = json!({
+            "effect": "refused",
+            "route": "synthetic_events",
+            "summary": "no input was sent",
+            "error": {"code": "point_outside_window", "hint": "use window-local pixels"}
+        });
+        let refusal = serde_json::from_value::<ActionResult>(refusal).expect("refusal");
+        assert_eq!(refusal.validate_invariants(), Ok(()));
+        assert_eq!(
+            refusal.error.as_ref().map(|error| error.code.as_str()),
+            Some("point_outside_window")
+        );
+        let mut error_extension = serde_json::to_value(&refusal).expect("serialize");
+        error_extension["error"]["detail"] = json!({"x": 1});
+        assert!(serde_json::from_value::<ActionResult>(error_extension).is_err());
 
         let escalation_extension = json!({
             "effect": "unverifiable",
@@ -808,6 +1103,7 @@ mod tests {
         result.delivery = None;
         result.evidence = Some(vec![ActionEvidence {
             kind: ActionEvidenceKind::WindowChange,
+            detail: None,
         }]);
         assert_eq!(
             result.validate_invariants(),
@@ -815,5 +1111,59 @@ mod tests {
         );
         result.evidence = None;
         assert_eq!(result.validate_invariants(), Ok(()));
+
+        result.error = Some(ActionError {
+            code: "window_target_not_found".into(),
+            hint: None,
+        });
+        assert_eq!(result.validate_invariants(), Ok(()));
+        result.effect = ActionEffect::Unverifiable;
+        assert_eq!(
+            result.validate_invariants(),
+            Err(ActionResultValidationError::ErrorRequiresRefused)
+        );
+    }
+}
+
+#[cfg(test)]
+mod error_envelope_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_diagnostic_without_a_marker_gains_one() {
+        let envelope = conforming_error_envelope(json!({"exit_code": 1}));
+
+        assert_eq!(envelope["code"], TOOL_INVOCATION_FAILED_CODE);
+        assert_eq!(envelope["exit_code"], 1);
+    }
+
+    #[test]
+    fn each_existing_marker_is_left_alone() {
+        for marker in ["refusal", "status", "code"] {
+            let envelope = conforming_error_envelope(json!({marker: "already-named"}));
+
+            assert_eq!(
+                envelope,
+                json!({marker: "already-named"}),
+                "guard rewrote a payload that already carries `{marker}`"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_object_diagnostic_becomes_an_object() {
+        let envelope = conforming_error_envelope(json!("daemon transport closed"));
+
+        assert_eq!(envelope["code"], TOOL_INVOCATION_FAILED_CODE);
+        assert_eq!(envelope["detail"], "daemon transport closed");
+    }
+
+    #[test]
+    fn an_absent_diagnostic_still_produces_a_refusal() {
+        assert_eq!(
+            conforming_error_envelope(Value::Null),
+            json!({"code": TOOL_INVOCATION_FAILED_CODE})
+        );
     }
 }

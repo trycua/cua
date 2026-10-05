@@ -1,0 +1,1 @@
+Most programs never touch pools: a cloud `Sandbox.create` claims from a pool the SDK manages per image and shape (`cua-auto-*`), tuned with `CloudOptions`. A named `Pool` is dedicated capacity you size and own; `Sandbox.create(cloud=CloudOptions(pool=...))` claims from it, and fields that differ from its template raise `PoolSpecMismatch`.

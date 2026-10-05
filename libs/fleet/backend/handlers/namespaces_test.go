@@ -13,8 +13,10 @@ import (
 
 	"cyclops-cs-backend/auth"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // withUser stamps a *auth.User on the request context the same way
@@ -422,19 +424,80 @@ func TestCreateNamespace_CreatesTracingSpan(t *testing.T) {
 	h.CreateNamespace(w, r)
 	root.End()
 
-	var found bool
+	spans := map[string]bool{}
 	for _, span := range recorder.Ended() {
-		if span.Name() != "namespaces.create" {
+		spans[span.Name()] = true
+		if span.Name() == "namespaces.create" {
+			if got, want := span.Parent().SpanID(), root.SpanContext().SpanID(); got != want {
+				t.Fatalf("parent span id = %s, want %s", got, want)
+			}
+		}
+	}
+	for _, name := range []string{"namespaces.create", "namespaces.create.k8s", "namespaces.create.adoption_wait", "namespaces.create.workload_oidc"} {
+		if !spans[name] {
+			t.Errorf("expected %s span", name)
+		}
+	}
+}
+
+func TestCreateNamespace_UnexpectedSuccessStatusMarksK8sSpanError(t *testing.T) {
+	fk := newFakeK8s(http.StatusAccepted, `{}`)
+	defer fk.server.Close()
+	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
+
+	recorder := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() { otel.SetTracerProvider(previous) })
+
+	r := httptest.NewRequest(http.MethodPost, "/api/namespaces", strings.NewReader(`{"name":"my-workspace"}`))
+	r = withUser(r, &auth.User{ID: "test-uuid"})
+	w := httptest.NewRecorder()
+	before := namespaceCreatePhaseHistogramCount(t, "k8s_create", "http_202")
+
+	Handlers{}.CreateNamespace(w, r)
+
+	if w.Code == http.StatusCreated {
+		t.Fatalf("status = %d, want non-201 for unexpected Kubernetes status", w.Code)
+	}
+	after := namespaceCreatePhaseHistogramCount(t, "k8s_create", "http_202")
+	if after != before+1 {
+		t.Fatalf("http_202 metric count = %d, want %d", after, before+1)
+	}
+
+	for _, span := range recorder.Ended() {
+		if span.Name() == "namespaces.create.k8s" {
+			if span.Status().Code != codes.Error {
+				t.Fatalf("k8s span status = %v, want error", span.Status().Code)
+			}
+			return
+		}
+	}
+	t.Fatal("expected namespaces.create.k8s span")
+}
+
+func namespaceCreatePhaseHistogramCount(t *testing.T, phase, result string) uint64 {
+	t.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "cyclops_cs_namespace_create_phase_duration_seconds" {
 			continue
 		}
-		found = true
-		if got, want := span.Parent().SpanID(), root.SpanContext().SpanID(); got != want {
-			t.Fatalf("parent span id = %s, want %s", got, want)
+		for _, metric := range family.Metric {
+			labels := map[string]string{}
+			for _, pair := range metric.Label {
+				labels[pair.GetName()] = pair.GetValue()
+			}
+			if labels["phase"] == phase && labels["result"] == result {
+				return metric.GetHistogram().GetSampleCount()
+			}
 		}
 	}
-	if !found {
-		t.Fatal("expected namespaces.create span")
-	}
+	return 0
 }
 
 func TestDeleteNamespace_Success(t *testing.T) {

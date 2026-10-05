@@ -64,7 +64,11 @@ def test_image_crd_restricts_the_initial_recipe_contract() -> None:
     schema = _version()["schema"]["openAPIV3Schema"]
     recipe = schema["properties"]["spec"]["properties"]["recipe"]
     assert recipe["properties"]["osType"]["enum"] == ["linux"]
-    assert recipe["properties"]["kind"]["enum"] == ["vm"]
+    # `container` builds an OCI rootfs on a registry base (recipe.from).
+    assert recipe["properties"]["kind"]["enum"] == ["vm", "container"]
+    assert recipe["properties"]["from"]["maxLength"] == 1024
+    assert recipe["properties"]["fromPullSecret"]["pattern"].startswith("^cua-registry-")
+    assert "from" not in recipe["required"] and "fromPullSecret" not in recipe["required"]
     assert recipe["properties"]["layers"]["maxItems"] == 128
     assert recipe["properties"]["files"]["maxItems"] == 128
     assert "registry" not in recipe["properties"]
@@ -84,8 +88,7 @@ def test_image_crd_files_use_external_references() -> None:
     reference = file_item["properties"]["source"]["properties"]["reference"]
     assert reference["pattern"] == "^uploads/[a-z0-9]([-a-z0-9]*[a-z0-9])?/[A-Za-z0-9_-]+$"
     assert (
-        file_item["properties"]["source"]["properties"]["sizeBytes"]["maximum"]
-        == 9223372036854775807
+        file_item["properties"]["source"]["properties"]["sizeBytes"]["maximum"] == 9007199254740991
     )
     assert "content" not in file_item["properties"]
     assert "path" not in file_item["properties"]["source"]["properties"]

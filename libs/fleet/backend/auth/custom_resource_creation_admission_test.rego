@@ -153,6 +153,16 @@ test_namespaced_custom_group_collection_is_create {
 	)
 }
 
+test_namespaced_image_collection_requires_card_admission {
+	request := input_for(
+		"POST", "apis/images.cua.ai/v1alpha1/namespaces/ns-a/images", true, [], "u", [], 2026, 8,
+	)
+
+	custom_resource_creation_admission.is_custom_resource_create with input as request
+	not custom_resource_creation_admission.exempt with input as request
+	not custom_resource_creation_admission.billing_eligible with input as request
+}
+
 test_cluster_custom_group_collection_is_create {
 	custom_resource_creation_admission.is_custom_resource_create with input as input_for(
 		"POST", "apis/osgym.cua.ai/v1alpha1/osgymsandboxtemplates", true, [], "u", [], 2026, 8,

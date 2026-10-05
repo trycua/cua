@@ -1,0 +1,130 @@
+---
+title: Test in CI with Cua sandboxes
+description: Run tests against a Cua sandbox in GitHub Actions or any CI, inject the build under test, and fail on stale builds.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The `cua-sandbox` action creates a sandbox from any image, waits until it is
+ready, runs your tests against it, uploads logs, the doctor report and a
+screenshot, and always deletes it, even when the job is cancelled. Every step
+is a plain `cua` command, so the same run works on your machine.
+
+## GitHub Actions
+
+```yaml test="config" id="ci-basic"
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - id: sandbox
+        uses: trycua/cua/.github/actions/cua-sandbox@main
+        with:
+          image: linux
+          run: |
+            cua sb exec "$CUA_SANDBOX" uname -a
+            cua sb screenshot "$CUA_SANDBOX" -o "$CUA_SANDBOX_ARTIFACTS/desktop.png"
+```
+
+- `image`: a canonical image, a bench image or any registry reference.
+- `on`: `local` (the default: Docker on the runner, or QEMU with KVM for VM
+  images) or `cloud`. Cloud needs `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET` in the
+  job env. `claim-ttl` (default `60m`) is the backstop if cleanup never runs.
+- `run` runs on the runner with `CUA_SANDBOX` set to the sandbox ref.
+  `guest-run` runs inside the sandbox. `guest-setup` runs as root inside it
+  first, for example to install test dependencies.
+- `cua-version`: `source` (the default) builds the CLI from the action's ref.
+  Pass `cua-bin` to use one you built.
+- Outputs: `ref`, `name`, `env-url`, `viewer-url`, `urls`, `overlays`,
+  `doctor-status`, `artifacts-dir`.
+
+<Callout type="info">
+Pin the action to a commit (`@<sha>`) in CI you depend on. `@main` follows the
+repository.
+</Callout>
+
+## Test the code you just built
+
+An image bundles its own cua-spacesd, and runners may have their own
+cua-driver installed. To test your build instead, inject it with `overlay`:
+
+```yaml test="config" id="ci-overlay"
+      - uses: trycua/cua/.github/actions/cua-sandbox@main
+        with:
+          image: linux
+          overlay: |
+            cua-spacesd=target/release/cua-spacesd
+            cua-driver=target/release/cua-driver
+          expect: cua-driver=git:${{ github.sha }}
+          run: ./tests/e2e.sh
+```
+
+Each overlay replaces the guest file atomically, is recorded with its sha256
+and restarts what runs it. The action then runs `cua doctor` with an
+expectation per overlay. The job fails before your tests run if anything else
+runs, for example a daemon that was never restarted or a file replaced
+afterwards. On the runner, `PATH` resolves `cua-driver` to the injected build
+only, so a copy installed on the runner is never used.
+
+## The same steps with the CLI
+
+```bash test="cli-shape" id="ci-cli"
+cua sb create linux --name ci --wait desktop \
+  --overlay cua-driver=./target/release/cua-driver --json
+cua doctor local:ci --no-host --only build \
+  --expect cua-driver=sha256:<sha256 printed by create>
+cua sb exec local:ci uname -a
+cua sb rm local:ci --force
+```
+
+`--overlay` also works on a running sandbox (`cua sb overlay ci
+cua-driver=PATH`) and for any file: `NAME=PATH:/guest/path`.
+
+From Python, pass `overlay=` to `Sandbox.create`, or call `sb.overlay(...)` on
+a running sandbox. `cua-driver` and `cua-spacesd` find their guest path; any
+other file takes `(path, "/guest/path")`. If an overlay fails, the new sandbox
+is deleted and the error raised:
+
+```python test="container" id="ci-overlay-python" prelude="local-cleanup"
+import os
+import tempfile
+
+from cua_sandbox import Image, Sandbox
+
+tool = os.path.join(tempfile.mkdtemp(), "tool")
+with open(tool, "w") as f:
+    f.write("#!/bin/sh\necho build-under-test\n")
+os.chmod(tool, 0o755)
+
+sb = await Sandbox.create(
+    Image.from_registry("python:3.12-slim"),
+    command=["sleep", "infinity"],
+    runtime="runc",
+    overlay={"tool": (tool, "/usr/local/bin/tool")},
+)
+[result] = await sb.overlay({"tool": (tool, "/usr/local/bin/tool")})
+print(result.name, result.target, result.sha256)
+await sb.destroy()
+```
+
+The Rust, TypeScript, Swift and Kotlin SDKs have the same `overlays` create
+option and `overlay` method.
+
+The action's steps are phases of `.github/actions/cua-sandbox/cua-sandbox.sh`,
+which also runs outside GitHub. Set the inputs as `CUA_SB_*` environment
+variables (for example `CUA_SB_IMAGE`, `CUA_SB_OVERLAY` and `CUA_SB_RUN`) and
+run `cua-sandbox.sh all`. It cleans up on exit and on Ctrl-C.
+
+## Expectations
+
+`cua doctor REF --expect COMPONENT=WANT` fails unless that exact build runs.
+`WANT` is one of:
+
+- `sha256:<hex>`: the executable.
+- `git:<sha>`: the source revision it was built from.
+- a version.
+
+Components are `cua-spacesd`, `cua-driver` or an overlay name. Inside the
+sandbox, `cua-spacesd doctor --expect ...` does the same.

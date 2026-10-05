@@ -354,6 +354,7 @@ func TestOwnedNamespaceMatchesRego(t *testing.T) {
 		name   string
 		params map[string]string
 		want   string
+		route  string
 	}{
 		{name: "svc namespace", params: map[string]string{"namespace": "ns-a", "service": "svc-a"}, want: "ns-a"},
 		{name: "namespaces name", params: map[string]string{"name": "ns-b"}, want: "ns-b"},
@@ -361,14 +362,20 @@ func TestOwnedNamespaceMatchesRego(t *testing.T) {
 		{name: "empty name stays empty", params: map[string]string{"name": ""}, want: ""},
 		{name: "namespace wins over name", params: map[string]string{"namespace": "ns-a", "name": "ns-z"}, want: "ns-a"},
 		{name: "no namespace parameter at all", params: map[string]string{"path": "x"}, want: ""},
+		{name: "image collection", route: "/api/k8s/{path...}", params: map[string]string{"path": "apis/images.cua.ai/v1alpha1/namespaces/ns-a/images"}, want: "ns-a"},
+		{name: "image item", route: "/api/k8s/{path...}", params: map[string]string{"path": "apis/images.cua.ai/v1alpha1/namespaces/ns-b/images/image-a"}, want: "ns-b"},
+		{name: "image path wins", route: "/api/k8s/{path...}", params: map[string]string{"path": "apis/images.cua.ai/v1alpha1/namespaces/ns-b/images", "namespace": "ns-a", "name": "ns-c"}, want: "ns-b"},
+		{name: "image cluster list", route: "/api/k8s/{path...}", params: map[string]string{"path": "apis/images.cua.ai/v1alpha1/images"}, want: ""},
+		{name: "other proxy resource", route: "/api/k8s/{path...}", params: map[string]string{"path": "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxclaims"}, want: ""},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			ctx := context.WithValue(context.Background(), paramsKey, testCase.params)
+			ctx = context.WithValue(ctx, routeKey, testCase.route)
 			if got := OwnedNamespace(ctx); got != testCase.want {
 				t.Fatalf("OwnedNamespace = %q, want %q", got, testCase.want)
 			}
 
-			results, err := query.Eval(context.Background(), rego.EvalInput(map[string]any{"params": testCase.params}))
+			results, err := query.Eval(context.Background(), rego.EvalInput(map[string]any{"params": testCase.params, "route": testCase.route}))
 			if err != nil {
 				t.Fatalf("eval target_namespace: %v", err)
 			}

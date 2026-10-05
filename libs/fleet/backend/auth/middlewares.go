@@ -59,6 +59,29 @@ var customResourceCreationAdmissionPolicy string
 //go:embed sandbox_services_admission.rego
 var sandboxServicesAdmissionPolicy string
 
+// sandboxProcessAdmissionPolicy checks what a template asks its sandboxes to
+// run (vmTemplate command/args/env/processMode), e.g. that env and args on
+// KubeVirt come with processMode: Run. A conjunct on the k8s surface.
+//
+//go:embed sandbox_process_admission.rego
+var sandboxProcessAdmissionPolicy string
+
+// tenantSecretAdmissionPolicy restricts the one Secret create /api/k8s admits
+// (POST on the secrets collection) to the tenant Secret kinds, each under its
+// own name prefix (cua-claim-*, the per-claim secret the pool-operator
+// delivers into a bound sandbox; cua-registry-*, a tenant registry pull
+// Secret). One module for every kind, so kinds never
+// deny each other. A conjunct on the k8s surface, registered by name below.
+//
+//go:embed tenant_secret_admission.rego
+var tenantSecretAdmissionPolicy string
+
+//go:embed image_admission.rego
+var imageAdmissionPolicy string
+
+//go:embed image_rollout.rego
+var imageRolloutPolicy string
+
 // authzOwnershipPolicy is the namespace-ownership boundary. Like
 // pool_admission.rego it is not a surface — it is a conjunct several surfaces
 // carry — so it is registered by name below rather than through
@@ -92,10 +115,15 @@ var surfacePolicySources = map[string]struct {
 	"authz-state-query":         {"authz_state_query.rego", authzStateQueryPolicy},
 	"authz-feature-flags":       {"authz_feature_flags.rego", authzFeatureFlagsPolicy},
 	"authz-account-lookup":      {"authz_account_lookup.rego", authzAccountLookupPolicy},
+	"authz-image-uploads":       {"authz_image_uploads.rego", authzImageUploadsPolicy},
+	"authz-images-resolve":      {"authz_images_resolve.rego", authzImagesResolvePolicy},
 }
 
 //go:embed authz_account_lookup.rego
 var authzAccountLookupPolicy string
+
+//go:embed authz_images_resolve.rego
+var authzImagesResolvePolicy string
 
 //go:embed authz_base.rego
 var authzBasePolicy string
@@ -117,6 +145,9 @@ var authzUsagePolicy string
 
 //go:embed authz_namespaces.rego
 var authzNamespacesPolicy string
+
+//go:embed authz_image_uploads.rego
+var authzImageUploadsPolicy string
 
 //go:embed authz_github_trust.rego
 var authzGitHubTrustPolicy string
@@ -390,6 +421,10 @@ func LoadOpa() {
 	RegisterPolicyModule("pool-admission", "pool_admission.rego", poolAdmissionPolicy)
 	RegisterPolicyModule("custom-resource-creation-admission", "custom_resource_creation_admission.rego", customResourceCreationAdmissionPolicy)
 	RegisterPolicyModule("sandbox-services-admission", "sandbox_services_admission.rego", sandboxServicesAdmissionPolicy)
+	RegisterPolicyModule("sandbox-process-admission", "sandbox_process_admission.rego", sandboxProcessAdmissionPolicy)
+	RegisterPolicyModule("tenant-secret-admission", "tenant_secret_admission.rego", tenantSecretAdmissionPolicy)
+	RegisterPolicyModule("image-admission", "image_admission.rego", imageAdmissionPolicy)
+	RegisterPolicyModule("image-rollout", "image_rollout.rego", imageRolloutPolicy)
 	RegisterPolicyModule("authz-ownership", "authz_ownership.rego", authzOwnershipPolicy)
 	for name, module := range surfacePolicySources {
 		RegisterPolicyModule(name, module.filename, module.source)

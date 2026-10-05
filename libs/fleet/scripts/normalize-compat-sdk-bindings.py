@@ -148,15 +148,24 @@ def format_go(source: str) -> str:
     return formatted.stdout
 
 
-def normalize_go(raw: str) -> str:
-    require_all(
-        raw,
-        [
-            "TtlSecondsAfterCreated *uint32",
-            "FfiConverterOptionalUint32INSTANCE.Write(writer, value.TtlSecondsAfterCreated)",
-        ],
-        "Go",
-    )
+def normalize_go(raw: str, *, schema: bool = True) -> str:
+    if schema:
+        require_all(
+            raw,
+            [
+                "TtlSecondsAfterCreated *uint32",
+                "FfiConverterOptionalUint32INSTANCE.Write(writer, value.TtlSecondsAfterCreated)",
+            ],
+            "Go",
+        )
+    if not schema:
+        raw, renamed = re.subn(
+            r"(?m)^func PoolDisplayStatus\(pool Pool\) PoolDisplayStatus \{",
+            "func GetPoolDisplayStatus(pool Pool) PoolDisplayStatus {",
+            raw,
+        )
+        if renamed != 1:
+            raise ValueError("expected one Go pool display-status function/type collision")
     builder_classes = go_builder_classes(raw)
     if not builder_classes:
         raise ValueError("raw Go generator output is missing builder declarations")
@@ -240,16 +249,17 @@ def remove_node_builder_declarations(
     return "".join(normalized)
 
 
-def normalize_node(raw: str) -> str:
-    require_all(
-        raw,
-        [
-            "ttlSecondsAfterCreated?: number",
-            "ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from)",
-            "FfiConverterOptionalUInt32.write(value.ttlSecondsAfterCreated, into)",
-        ],
-        "Node",
-    )
+def normalize_node(raw: str, *, schema: bool = True) -> str:
+    if schema:
+        require_all(
+            raw,
+            [
+                "ttlSecondsAfterCreated?: number",
+                "ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from)",
+                "FfiConverterOptionalUInt32.write(value.ttlSecondsAfterCreated, into)",
+            ],
+            "Node",
+        )
     declarations = list(NODE_DECLARATION.finditer(raw))
     if not declarations:
         raise ValueError("raw Node generator output is missing top-level declarations")
@@ -266,7 +276,7 @@ def normalize_node(raw: str) -> str:
 
 
 def check_no_builders(source: str, path: Path) -> None:
-    if path == NODE_OUTPUT:
+    if path.suffix == ".ts":
         for declaration in NODE_DECLARATION.finditer(source):
             if declaration.group("name").endswith(BUILDER_NAME):
                 raise ValueError(f"compatibility binding exposes builder ABI: {path}")

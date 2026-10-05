@@ -2,6 +2,7 @@
 name = "platform-linux"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 tokio = { workspace = true }
@@ -26,7 +27,7 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 clipboard-rs = { version = "0.3.5", features = ["wayland"] }
 keyring = { version = "4.1.6", default-features = false, features = ["v1"] }
 # X11 background input + window enumeration + MIT-SHM capture
-x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape", "xtest", "shm"] }
+x11rb = { version = "0.13", features = ["xinput", "randr", "xfixes", "composite", "shape", "xtest", "shm", "res"] }
 x11 = { version = "2.21", features = ["xlib", "xinput", "xtest"] }
 base64 = { workspace = true }
 image = { workspace = true }
@@ -38,7 +39,12 @@ libc = "0.2"
 # subprocess bridge so accessibility input/readback needs no Python or GI
 # typelibs at runtime. `tokio` matches the driver's async runtime; `zbus`
 # re-exports the bus types we need (fdo::DBusProxy for pid resolution).
-atspi = { version = "0.30", features = ["tokio", "zbus"] }
+# `p2p` (a default feature) opens a private socket to every application that
+# advertises one; LibreOffice advertises a socket its VCL main loop never
+# services, and the crate's peer bookkeeping then wedges every call on the
+# shared connection once LibreOffice registers. The session a11y bus is what
+# gdbus/pyatspi use and is the only route this crate takes.
+atspi = { version = "0.30", default-features = false, features = ["connection", "proxies", "wrappers", "tokio", "zbus"] }
 evdev = "0.12"
 # Math-expression evaluator for parallel_mouse_drag `fn` paths (y = f(x)).
 meval = "0.2"
@@ -62,12 +68,14 @@ wayland-protocols = { version = "0.32", features = ["client", "staging", "unstab
 # xdg-desktop-portal client: display-screenshot tier
 # (org.freedesktop.portal.Screenshot), per-window ScreenCast
 # (org.freedesktop.portal.ScreenCast), and the libei input session
-# (org.freedesktop.portal.RemoteDesktop.ConnectToEIS). `tokio` shares the
-# driver's async runtime.
+# (org.freedesktop.portal.RemoteDesktop.ConnectToEIS). ashpd allows exactly
+# one async backend, and gpui's Linux port selects `async-io` through oo7,
+# so an app embedding both must use it here too; zbus keeps running on
+# tokio when both of its backends are enabled.
 #
 # ashpd's RemoteDesktop feature is pure Rust. Only our ScreenCast frame reader
 # pulls pipewire-rs/libspa, whose headers are newer than Debian bullseye.
-ashpd = { version = "0.13", default-features = false, features = ["tokio", "screenshot"] }
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "screenshot"] }
 # zbus is pulled transitively via ashpd + atspi but declared directly so
 # the portal-probe path in wayland::portal_screenshot can talk to the
 # session bus without going through ashpd's higher-level builders.

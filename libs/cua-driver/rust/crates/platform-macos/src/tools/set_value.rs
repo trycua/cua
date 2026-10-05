@@ -21,8 +21,8 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_children, copy_number_attr, copy_string_attr, kAXErrorSuccess, perform_action,
-    set_number_attr, set_string_attr, AXUIElementRef,
+    copy_bool_attr, copy_children, copy_number_attr, copy_string_attr, copy_url_attr,
+    kAXErrorSuccess, perform_action, set_number_attr, set_string_attr, AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
@@ -57,6 +57,13 @@ fn def() -> &'static ToolDef {
              - **All other elements**: writes AXValue directly (sliders, steppers, \
              date pickers, native text fields that expose settable AXValue).\n\
              \n\
+             - **A file's name as Finder lists it** (a text field carrying \
+             AXFilename and a file URL, not being edited) or **as Finder's Get \
+             Info window shows it** (Finder's text field with AXIdentifier \
+             `Name`, not being edited): refused with `file_name_needs_rename`, \
+             because the write changes only what Finder shows, never the file. \
+             The refusal names the keyboard route that renames it.\n\
+             \n\
              For free-form text entry into web inputs, prefer `type_text_chars` \
              which synthesises key events — AXValue writes are ignored by WebKit."
             .into(),
@@ -65,14 +72,12 @@ fn def() -> &'static ToolDef {
             "required": ["pid", "value"],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid": { "type": "integer" },
+                "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used; optional when element_token is supplied (the token carries it)."
+                    "description": "CGWindowID. Omit when element_token is supplied (the token carries it)."
                 },
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "value": {
                     "type": "string",
                     "description": "New value. AX will coerce to the element's native type."
@@ -104,61 +109,24 @@ impl Tool for SetValueTool {
             Err(e) => return e,
         };
 
-        // Surface 6: element_token / element_index precedence. Neither
-        // is now schema-required so the resolver can centralize the
-        // "missing addressing" error message.
-        let element_token_arg = args.opt_str("element_token");
-        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "set_value",
-        ) {
-            Ok(r) => r,
-            Err(e) => return e,
-        };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => {
-                return ToolResult::error(
-                    "set_value requires element_index (+ window_id) or element_token to \
-                     address the target element.",
-                )
-            }
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: Some(wid),
-                element_index: idx,
-                via_token: _,
-            } => (idx, wid),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: None, ..
-            } => {
-                return ToolResult::error(
-                    "set_value requires window_id when element_index is used \
-                 (omit only when supplying element_token, which carries it).",
-                )
-            }
-        };
-
-        // Retain out of the cache so a concurrent get_window_state can't free
-        // the element mid-action (use-after-free → daemon crash). Guard lives
-        // to the end of this method, past the AX write below.
-        let element_guard =
-            match self
-                .state
-                .element_cache
-                .get_element_retained(pid, window_id, element_index)
-            {
-                Some(e) => e,
-                None => {
-                    return ToolResult::error(format!(
-                        "Element index {element_index} not found. Call get_window_state first."
-                    ))
+        let (element_index, window_id, element_guard) =
+            match self.state.snapshots.resolve(pid, &args) {
+                Ok(cua_driver_core::element_token::ResolvedElement::None) => {
+                    return ToolResult::error(
+                        "set_value requires element_token to address the target element.",
+                    )
                 }
+                Ok(cua_driver_core::element_token::ResolvedElement::Element {
+                    window_id,
+                    element_index,
+                    element,
+                }) => match u32::try_from(window_id) {
+                    Ok(window_id) => (element_index, window_id, element),
+                    Err(_) => return ToolResult::error("window_id is out of range for macOS."),
+                },
+                Err(refusal) => return refusal,
             };
+
         let element_ptr = element_guard.as_ptr();
 
         // set_value is an always-background semantic AX mutation. Re-prove
@@ -177,18 +145,48 @@ impl Tool for SetValueTool {
             Err(refusal_result) => return refusal_result,
         };
 
-        let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
-        let center_ptr = element_ptr as usize;
-        if let Ok(Some((screen_x, screen_y))) = tokio::task::spawn_blocking(move || unsafe {
-            crate::ax::bindings::element_screen_center(center_ptr as AXUIElementRef)
+        // A file's name as Finder lists it takes an AXValue write and reads it
+        // back, but the file is never renamed. Refuse before anything moves.
+        // Finder's Get Info Name field does the same.
+        let name_guard = element_guard.clone();
+        if let Ok(Some(reason)) = tokio::task::spawn_blocking(move || unsafe {
+            let element = name_guard.as_ptr() as AXUIElementRef;
+            if file_name_cell(element) {
+                Some(LIST_RENAME_ROUTE)
+            } else if get_info_name_field(pid, element) {
+                Some(GET_INFO_RENAME_ROUTE)
+            } else {
+                None
+            }
         })
         .await
+        {
+            return file_name_needs_rename(pid, window_id, reason);
+        }
+
+        let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
+        let center_guard = element_guard.clone();
+        if let Ok((Some((screen_x, screen_y)), target_rect)) =
+            tokio::task::spawn_blocking(move || unsafe {
+                let el = center_guard.as_ptr() as AXUIElementRef;
+                (
+                    crate::ax::bindings::element_screen_center(el),
+                    crate::ax::bindings::element_screen_rect(el),
+                )
+            })
+            .await
         {
             crate::cursor::overlay::send_command(
                 cursor_key.clone(),
                 cursor_overlay::OverlayCommand::PinAbove(window_id as u64),
             );
-            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
+            crate::cursor::overlay::animate_cursor_to_target(
+                cursor_key.clone(),
+                screen_x,
+                screen_y,
+                target_rect,
+            )
+            .await;
             self.state
                 .cursor_registry
                 .update_position(&cursor_key, screen_x, screen_y);
@@ -217,7 +215,7 @@ impl Tool for SetValueTool {
             "set_value.AXValue",
             || async move {
                 tokio::task::spawn_blocking(move || {
-                    set_value_blocking(element_ptr, element_index, pid, &value)
+                    set_value_blocking(element_guard.as_ptr(), element_index, pid, &value)
                 })
                 .await
             },
@@ -252,6 +250,82 @@ impl Tool for SetValueTool {
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
+}
+
+// ── File name cells ──────────────────────────────────────────────────────────
+
+const FILE_NAME_NEEDS_RENAME: &str = "file_name_needs_rename";
+
+/// Whether `element` is a file's name as a list shows it (Finder's list and
+/// icon views): a text field that names a file and is not being edited.
+/// Finder's inline rename editor is focused, so it stays writable.
+unsafe fn file_name_cell(element: AXUIElementRef) -> bool {
+    copy_string_attr(element, "AXRole").as_deref() == Some("AXTextField")
+        && is_file_name_cell(
+            copy_string_attr(element, "AXFilename").as_deref(),
+            copy_url_attr(element).as_deref(),
+            copy_bool_attr(element, "AXFocused"),
+        )
+}
+
+fn is_file_name_cell(filename: Option<&str>, url: Option<&str>, focused: Option<bool>) -> bool {
+    filename.is_some_and(|name| !name.is_empty())
+        && url.is_some_and(|url| url.starts_with("file://"))
+        && focused != Some(true)
+}
+
+/// Whether `element` is the Name & Extension field of Finder's Get Info
+/// window. It names no file through AXFilename or AXURL, so `file_name_cell`
+/// misses it, yet an AXValue write there renames nothing either.
+unsafe fn get_info_name_field(pid: i32, element: AXUIElementRef) -> bool {
+    is_get_info_name_field(
+        crate::apps::bundle_id_for_pid(pid).as_deref(),
+        copy_string_attr(element, "AXRole").as_deref(),
+        copy_string_attr(element, "AXIdentifier").as_deref(),
+        copy_bool_attr(element, "AXFocused"),
+    )
+}
+
+fn is_get_info_name_field(
+    bundle_id: Option<&str>,
+    role: Option<&str>,
+    identifier: Option<&str>,
+    focused: Option<bool>,
+) -> bool {
+    bundle_id == Some("com.apple.finder")
+        && role == Some("AXTextField")
+        && identifier == Some("Name")
+        && focused != Some(true)
+}
+
+const LIST_RENAME_ROUTE: &str = "This is a file's name as the list shows it. Writing its AXValue \
+    changes only what the list shows, never the file, so nothing was written. To rename the \
+    file: click this element to select the item, then with Finder frontmost send press_key \
+    return, hotkey cmd+a (Finder selects the name without its extension), type_text the full \
+    new name, and press_key return, each with scope:\"desktop\". Then check the new name in a \
+    fresh get_window_state.";
+
+const GET_INFO_RENAME_ROUTE: &str = "This is the Name & Extension field of Finder's Get Info \
+    window. Writing its AXValue changes only what the field shows, never the file, so nothing \
+    was written. To rename the file: take a fresh get_window_state of this window and click the \
+    field's centre in its screenshot pixels (pass its capture_id), then hotkey cmd+a, type_text \
+    the full new name with its extension, and press_key return, each with \
+    delivery_mode:\"foreground\" on this window. A changed extension makes Finder ask for \
+    confirmation in a dialog first. Then check the new name in a fresh listing of the folder; \
+    this window's title changes with it.";
+
+fn file_name_needs_rename(pid: i32, window_id: u32, reason: &str) -> ToolResult {
+    ToolResult::error(format!(
+        "set_value refused ({FILE_NAME_NEEDS_RENAME}): {reason}"
+    ))
+    .with_structured(serde_json::json!({
+        "code": FILE_NAME_NEEDS_RENAME,
+        "effect": "refused",
+        "path": "ax",
+        "pid": pid,
+        "window_id": window_id,
+        "reason": reason,
+    }))
 }
 
 // ── Blocking implementation (runs on spawn_blocking thread) ─────────────────
@@ -677,7 +751,121 @@ fn hex_digit(n: u8) -> char {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_surface_trust, apply_verification_label, classify_write, SetValueOutcome};
+    use super::{
+        apply_surface_trust, apply_verification_label, classify_write, file_name_needs_rename,
+        is_file_name_cell, is_get_info_name_field, SetValueOutcome, GET_INFO_RENAME_ROUTE,
+        LIST_RENAME_ROUTE,
+    };
+
+    #[test]
+    fn a_listed_file_name_is_a_file_name_cell() {
+        let url = Some("file:///Users/me/lab/charlie.bin");
+        assert!(is_file_name_cell(Some("charlie.bin"), url, Some(false)));
+        assert!(is_file_name_cell(Some("charlie.bin"), url, None));
+    }
+
+    #[test]
+    fn rename_editor_and_ordinary_fields_stay_writable() {
+        let url = Some("file:///Users/me/lab/charlie.bin");
+        // Finder's inline rename editor is focused while editing.
+        assert!(!is_file_name_cell(Some("charlie.bin"), url, Some(true)));
+        // A plain text field names no file.
+        assert!(!is_file_name_cell(None, None, Some(false)));
+        assert!(!is_file_name_cell(Some(""), url, Some(false)));
+        assert!(!is_file_name_cell(Some("charlie.bin"), None, Some(false)));
+        assert!(!is_file_name_cell(
+            Some("page"),
+            Some("https://example.com/page"),
+            None
+        ));
+    }
+
+    #[test]
+    fn get_info_name_field_is_refused_and_its_neighbours_are_not() {
+        const FINDER: Option<&str> = Some("com.apple.finder");
+        // (bundle id, role, AXIdentifier, AXFocused, refused). Identifiers are
+        // the ones Finder reported on macOS 26.4.
+        let cases = [
+            (FINDER, "AXTextField", Some("Name"), Some(false), true),
+            (FINDER, "AXTextField", Some("Name"), None, true),
+            // A real click starts an edit session; Return then commits an
+            // AXValue write, so the focused field stays writable.
+            (FINDER, "AXTextField", Some("Name"), Some(true), false),
+            // The "Name & Extension" disclosure triangle shares the identifier.
+            (FINDER, "AXDisclosureTriangle", Some("Name"), None, false),
+            // Tags field, list inline rename editor, list name cell.
+            (FINDER, "AXTextField", Some("_NS:34"), None, false),
+            (
+                FINDER,
+                "AXTextField",
+                Some("ShrinkToFit Text Field"),
+                Some(true),
+                false,
+            ),
+            (FINDER, "AXTextField", None, Some(false), false),
+            (FINDER, "AXTextArea", Some("Comments"), None, false),
+            // The same field shape in another app.
+            (
+                Some("com.example.notes"),
+                "AXTextField",
+                Some("Name"),
+                None,
+                false,
+            ),
+            (None, "AXTextField", Some("Name"), None, false),
+        ];
+        for (bundle, role, identifier, focused, refused) in cases {
+            assert_eq!(
+                is_get_info_name_field(bundle, Some(role), identifier, focused),
+                refused,
+                "{bundle:?} {role} {identifier:?} {focused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn get_info_refusal_names_the_foreground_route() {
+        let result = file_name_needs_rename(7, 42, GET_INFO_RENAME_ROUTE);
+        let data = result.structured_content.unwrap();
+        assert_eq!(data["code"], "file_name_needs_rename");
+        let reason = data["reason"].as_str().unwrap();
+        for needed in [
+            "Get Info",
+            "nothing was written",
+            "screenshot pixels",
+            "capture_id",
+            "cmd+a",
+            "type_text",
+            "return",
+            "delivery_mode:\"foreground\"",
+        ] {
+            assert!(reason.contains(needed), "missing {needed:?}: {reason}");
+        }
+    }
+
+    #[test]
+    fn file_name_refusal_names_the_rename_route() {
+        let result = file_name_needs_rename(7, 42, LIST_RENAME_ROUTE);
+        assert_eq!(result.is_error, Some(true));
+        let data = result.structured_content.unwrap();
+        assert_eq!(data["code"], "file_name_needs_rename");
+        assert_eq!(data["effect"], "refused");
+        assert_eq!(
+            (data["pid"].as_i64(), data["window_id"].as_u64()),
+            (Some(7), Some(42))
+        );
+        let reason = data["reason"].as_str().unwrap();
+        for needed in [
+            "never the file",
+            "nothing was written",
+            "return",
+            "cmd+a",
+            "type_text",
+            "desktop",
+        ] {
+            assert!(reason.contains(needed), "missing {needed:?}: {reason}");
+        }
+    }
 
     #[test]
     fn unreadable_value_reports_neither_verified_nor_changed() {

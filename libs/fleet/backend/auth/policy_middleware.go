@@ -242,12 +242,13 @@ func newRequestPolicyInput(request *http.Request, bodyBudget int64) *requestPoli
 		bodyBudget: bodyBudget,
 		factCache:  map[string]cachedFacts{},
 		base: map[string]any{
-			"method": request.Method,
-			"path":   request.URL.Path,
-			"route":  route,
-			"params": params,
-			"user":   buildUserInput(user),
-			"flags":  authorizationFlags(request.Context()),
+			"content_types": request.Header.Values("Content-Type"),
+			"method":        request.Method,
+			"path":          request.URL.Path,
+			"route":         route,
+			"params":        params,
+			"user":          buildUserInput(user),
+			"flags":         authorizationFlags(request.Context()),
 		},
 	}
 }

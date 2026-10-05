@@ -41,6 +41,21 @@ default probe_eligible = false
 
 default rbac_allow = false
 
+image_proxy_request {
+	input.route == "/api/k8s/{path...}"
+	parts := split(input.params.path, "/")
+	count(parts) >= 6
+	parts[0] == "apis"
+	parts[1] == "images.cua.ai"
+	parts[2] == "v1alpha1"
+	parts[3] == "namespaces"
+	parts[5] == "images"
+}
+
+applies {
+	image_proxy_request
+}
+
 # ── Where the boundary applies ──────────────────────────────────────────────
 #
 # These are exactly the remaining call sites requireNamespaceAccess had. The
@@ -85,11 +100,18 @@ applies {
 # `not` in the second is false. Every rule below requires a non-empty namespace,
 # so the empty case denies rather than falling through to {name}.
 target_namespace = input.params.namespace {
+	not image_proxy_request
 	input.params.namespace
 }
 
 target_namespace = input.params.name {
+	not image_proxy_request
 	not input.params.namespace
+}
+
+target_namespace = namespace {
+	image_proxy_request
+	namespace := split(input.params.path, "/")[4]
 }
 
 # ── The three cases ─────────────────────────────────────────────────────────

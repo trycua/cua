@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Verify that checked-in Driver, Lume, and Sandbox release versions agree."""
+"""Verify that checked-in product release versions agree."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import plistlib
 from pathlib import Path
 import re
 import sys
@@ -16,6 +17,7 @@ except ModuleNotFoundError:  # Python 3.10 and earlier
 from typing import Sequence
 
 from sync_driver_release_docs import driver_reference_paths
+from sync_lume_release_docs import lume_reference_paths
 
 
 class VersionError(RuntimeError):
@@ -59,9 +61,62 @@ def driver_installer_versions(root: Path) -> dict[str, str]:
     }
 
 
+WITHDRAWN_VERSIONS_PATH = ".github/release-state/cua-driver-rs-withdrawn-versions"
+# The installers run from `curl | bash` and `irm | iex` and cannot read repo
+# files, so each carries a baked copy of the withdrawn list that must mirror
+# WITHDRAWN_VERSIONS_PATH exactly.
+SHELL_WITHDRAWN_VERSIONS = re.compile(
+    r'^CUA_DRIVER_RS_WITHDRAWN_VERSIONS="([^"]*)" # withdrawn-installer-versions$',
+    re.MULTILINE,
+)
+POWERSHELL_WITHDRAWN_VERSIONS = re.compile(
+    r"^\$Script:CuaDriverRsWithdrawnVersions\s*=\s*@\(([^)]*)\) # withdrawn-installer-versions$",
+    re.MULTILINE,
+)
+
+
+def driver_withdrawn_versions(root: Path) -> dict[str, str]:
+    """Releases that must never be installed, baked, or certified."""
+    return read_withdrawn_versions(root / WITHDRAWN_VERSIONS_PATH)
+
+
+def _single_match(path: Path, pattern: re.Pattern[str]) -> str:
+    matches = list(pattern.finditer(path.read_text(encoding="utf-8-sig")))
+    if len(matches) != 1:
+        raise VersionError(
+            f"expected exactly one withdrawn-versions sentinel in {path}, found {len(matches)}"
+        )
+    return matches[0].group(1)
+
+
+def driver_installer_withdrawn_versions(root: Path) -> dict[str, list[str]]:
+    """Withdrawn lists baked into each installer."""
+    base = root / "libs/cua-driver/scripts"
+    shell = _single_match(base / "_install-rust.sh", SHELL_WITHDRAWN_VERSIONS).split()
+    powershell = re.findall(
+        r"'([^']*)'", _single_match(base / "install.ps1", POWERSHELL_WITHDRAWN_VERSIONS)
+    )
+    return {"scripts/_install-rust.sh": shell, "scripts/install.ps1": powershell}
+
+
+def read_withdrawn_versions(path: Path) -> dict[str, str]:
+    """Parse a withdrawn-versions file: one ``x.y.z # reason`` entry per line."""
+    if not path.exists():
+        return {}
+    withdrawn: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        version, _, reason = line.partition("#")
+        version = version.strip()
+        if not version:
+            continue
+        stable_version_tuple(version)
+        withdrawn[version] = reason.strip() or "withdrawn"
+    return withdrawn
+
+
 def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
     base = root / "libs/cua-driver"
-    docs = root / "docs/content/docs/reference/cua-driver"
+    docs_dir = "docs/content/docs/cua-driver/reference"
     expected = (base / "rust/VERSION").read_text().strip()
     cargo = tomllib.loads((base / "rust/Cargo.toml").read_text())
     python_project = tomllib.loads((base / "python/pyproject.toml").read_text())
@@ -86,12 +141,9 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
             base / "rust/Skills/cua-driver/SKILL.md",
             r"^version:\s*([^\s#]+)",
         ),
-        "docs/cli-reference.mdx:body": read_match(
-            docs / "cli-reference.mdx", r"Documented against Cua Driver \*\*(\S+)\*\*\."
-        ),
     }
     for relative in driver_reference_paths(root):
-        values[f"docs/{Path(relative).name}:metadata"] = read_match(
+        values[f"docs/{Path(relative).relative_to(docs_dir).as_posix()}:metadata"] = read_match(
             root / relative, r"^  Version: (\S+)$"
         )
 
@@ -99,6 +151,7 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
     local_names = {
         tomllib.loads((member / "Cargo.toml").read_text())["package"]["name"] for member in members
     }
+    local_names.discard("cua-perception")
     lock = tomllib.loads((base / "rust/Cargo.lock").read_text())
     for package in lock["package"]:
         if package["name"] in local_names:
@@ -111,28 +164,41 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
     return expected, values
 
 
+def perception_versions(root: Path) -> tuple[str, dict[str, str]]:
+    base = root / "libs/cua-driver/rust/crates/cua-perception"
+    expected = (base / "VERSION").read_text().strip()
+    project = tomllib.loads((base / "Cargo.toml").read_text())
+    lock = tomllib.loads((root / "libs/cua-driver/rust/Cargo.lock").read_text())
+    packages = [entry for entry in lock["package"] if entry["name"] == "cua-perception"]
+    if len(packages) != 1:
+        raise VersionError("Cargo.lock must contain exactly one cua-perception package")
+    stable_version_tuple(expected)
+    return expected, {
+        "Cargo.toml": str(project["package"]["version"]),
+        "Cargo.lock:cua-perception": str(packages[0]["version"]),
+    }
+
+
 def lume_versions(root: Path) -> tuple[str, dict[str, str]]:
     base = root / "libs/lume"
-    docs = root / "docs/content/docs/reference/lume"
+    docs_dir = "docs/content/docs/lume/reference"
     expected = (base / "VERSION").read_text().strip()
-    return expected, {
+    values = {
         "src/Main.swift": read_match(
             base / "src/Main.swift", r'static let current: String = "([^"]+)"'
         ),
         "scripts/install.sh": read_match(
             base / "scripts/install.sh", r'^LUME_BAKED_VERSION="([^"]+)"'
         ),
-        "docs/cli-reference.mdx:metadata": read_match(
-            docs / "cli-reference.mdx", r"^  Version: (\S+)$"
-        ),
-        "docs/cli-reference.mdx:body": read_match(
-            docs / "cli-reference.mdx", r"Documented against Lume \*\*(\S+)\*\*\."
-        ),
-        "docs/http-api.mdx:metadata": read_match(docs / "http-api.mdx", r"^  Version: (\S+)$"),
         "docs/http-api.mdx:body": read_match(
-            docs / "http-api.mdx", r"Documented against Lume \*\*(\S+)\*\*\."
+            root / docs_dir / "http-api.mdx", r"Documented against Lume \*\*(\S+)\*\*\."
         ),
     }
+    for relative in lume_reference_paths(root):
+        values[f"docs/{Path(relative).relative_to(docs_dir).as_posix()}:metadata"] = read_match(
+            root / relative, r"^  Version: (\S+)$"
+        )
+    return expected, values
 
 
 def sandbox_versions(root: Path) -> tuple[str, dict[str, str]]:
@@ -153,6 +219,73 @@ def sandbox_versions(root: Path) -> tuple[str, dict[str, str]]:
     }
 
 
+def spacesd_versions(root: Path) -> tuple[str, dict[str, str]]:
+    base = root / "libs/cua-spacesd"
+    expected = (base / "VERSION").read_text().strip()
+    cargo = tomllib.loads((base / "Cargo.toml").read_text())
+    names = set()
+    for member in cargo["workspace"]["members"]:
+        package = tomllib.loads((base / member / "Cargo.toml").read_text())["package"]
+        if package.get("version") == {"workspace": True}:
+            names.add(package["name"])
+    if "cua-spacesd" not in names:
+        raise VersionError("cua-spacesd must inherit the workspace version")
+    stable_version_tuple(expected)
+    values = {"Cargo.toml": str(cargo["workspace"]["package"]["version"])}
+    # The standalone e2e workspaces lock the driver crates by path too.
+    locks = [base / "Cargo.lock", *sorted((base / "tests").glob("*/Cargo.lock"))]
+    for lock_path in locks:
+        lock = tomllib.loads(lock_path.read_text())
+        label = lock_path.relative_to(base).as_posix()
+        for entry in lock["package"]:
+            if entry["name"] in names and "source" not in entry:
+                values[f"{label}:{entry['name']}"] = str(entry["version"])
+    return expected, values
+
+
+def sdk_versions(root: Path) -> tuple[str, dict[str, str]]:
+    base = root / "libs/cua"
+    expected = (base / "VERSION").read_text().strip()
+    stable_version_tuple(expected)
+    project = tomllib.loads((base / "python/pyproject.toml").read_text())
+    package = json.loads((base / "typescript/package.json").read_text())
+    lock = json.loads((base / "typescript/package-lock.json").read_text())
+    return expected, {
+        "python/pyproject.toml": str(project["project"]["version"]),
+        "python/src/cua/__init__.py": read_match(
+            base / "python/src/cua/__init__.py", r'^__version__\s*=\s*"([^"]+)"'
+        ),
+        "typescript/package.json": str(package["version"]),
+        "typescript/package-lock.json": str(lock["version"]),
+        "typescript/package-lock.json:root": str(lock["packages"][""]["version"]),
+    }
+
+
+def spaces_app_versions(root: Path) -> tuple[str, dict[str, str]]:
+    # Release Please drives Cua Spaces from the macOS app (component
+    # `cua-spaces` at apps/cua-spaces-macos); the Tauri app shares its version.
+    macos = root / "apps/cua-spaces-macos"
+    expected = (macos / "VERSION").read_text().strip()
+    stable_version_tuple(expected)
+    with (macos / "Support/Info.plist").open("rb") as info_file:
+        info = plistlib.load(info_file)
+    base = root / "apps/cua-spaces"
+    package = json.loads((base / "package.json").read_text())
+    tauri = json.loads((base / "src-tauri/tauri.conf.json").read_text())
+    cargo = tomllib.loads((base / "src-tauri/Cargo.toml").read_text())
+    lock = tomllib.loads((base / "src-tauri/Cargo.lock").read_text())
+    locked = [entry for entry in lock["package"] if entry["name"] == cargo["package"]["name"]]
+    if len(locked) != 1:
+        raise VersionError("Cua Spaces Cargo.lock must lock the app crate exactly once")
+    return expected, {
+        "apps/cua-spaces-macos/Support/Info.plist": str(info["CFBundleShortVersionString"]),
+        "apps/cua-spaces/package.json": str(package["version"]),
+        "apps/cua-spaces/src-tauri/tauri.conf.json": str(tauri["version"]),
+        "apps/cua-spaces/src-tauri/Cargo.toml": str(cargo["package"]["version"]),
+        "apps/cua-spaces/src-tauri/Cargo.lock": str(locked[0]["version"]),
+    }
+
+
 def validate(root: Path, product: str) -> None:
     manifest = json.loads((root / ".release-please-manifest.json").read_text())
     if product in {"all", "driver"}:
@@ -162,11 +295,32 @@ def validate(root: Path, product: str) -> None:
         installers = driver_installer_versions(root)
         installer_version = next(iter(installers.values()))
         require_equal("Cua Driver baked installers", installer_version, installers)
+        withdrawn = driver_withdrawn_versions(root)
+        if installer_version in withdrawn:
+            raise VersionError(
+                f"Cua Driver baked installers advertise withdrawn release {installer_version}: "
+                f"{withdrawn[installer_version]}"
+            )
+        expected_withdrawn = sorted(withdrawn, key=stable_version_tuple)
+        for name, baked in driver_installer_withdrawn_versions(root).items():
+            for version in baked:
+                stable_version_tuple(version)
+            if sorted(baked, key=stable_version_tuple) != expected_withdrawn:
+                raise VersionError(
+                    f"Cua Driver {name} withdraws {baked or 'nothing'}, but "
+                    f"{WITHDRAWN_VERSIONS_PATH} withdraws {expected_withdrawn or 'nothing'}"
+                )
         if stable_version_tuple(installer_version) > stable_version_tuple(expected):
             raise VersionError(
                 f"Cua Driver baked installers advertise {installer_version}, "
                 f"ahead of source release {expected}"
             )
+    if product in {"all", "perception"}:
+        expected, values = perception_versions(root)
+        values[".release-please-manifest.json"] = str(
+            manifest["libs/cua-driver/rust/crates/cua-perception"]
+        )
+        require_equal("Cua Perception", expected, values)
     if product in {"all", "lume"}:
         expected, values = lume_versions(root)
         values[".release-please-manifest.json"] = str(manifest["libs/lume"])
@@ -175,12 +329,28 @@ def validate(root: Path, product: str) -> None:
         expected, values = sandbox_versions(root)
         values[".release-please-manifest.json"] = str(manifest["libs/python/cua-sandbox"])
         require_equal("Sandbox", expected, values)
+    if product in {"all", "spacesd"}:
+        expected, values = spacesd_versions(root)
+        values[".release-please-manifest.json"] = str(manifest["libs/cua-spacesd"])
+        require_equal("cua-spacesd", expected, values)
+    if product in {"all", "sdk"}:
+        expected, values = sdk_versions(root)
+        values[".release-please-manifest.json"] = str(manifest["libs/cua"])
+        require_equal("cua SDK", expected, values)
+    if product in {"all", "spaces"}:
+        expected, values = spaces_app_versions(root)
+        values[".release-please-manifest.json"] = str(manifest["apps/cua-spaces-macos"])
+        require_equal("Cua Spaces app", expected, values)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
-    parser.add_argument("--product", choices=("all", "driver", "lume", "sandbox"), default="all")
+    parser.add_argument(
+        "--product",
+        choices=("all", "driver", "perception", "lume", "sandbox", "spacesd", "sdk", "spaces"),
+        default="all",
+    )
     args = parser.parse_args(argv)
     try:
         validate(args.repo_root.resolve(), args.product)

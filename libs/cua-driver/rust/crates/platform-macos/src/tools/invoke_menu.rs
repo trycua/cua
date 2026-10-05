@@ -10,7 +10,15 @@ use cua_driver_core::{
     tool::{Tool, ToolDef},
 };
 use serde_json::Value;
-use std::time::Duration;
+use std::{
+    ffi::c_void,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, SyncSender},
+        Arc,
+    },
+    time::Duration,
+};
 
 use crate::ax::bindings::{
     ax_get_window_id, copy_action_names, copy_ax_windows, copy_bool_attr, copy_children,
@@ -21,6 +29,7 @@ use crate::ax::bindings::{
 pub struct InvokeMenuTool;
 
 const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
+const MAIN_QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 
 unsafe fn set_messaging_timeout(element: AXUIElementRef) {
     let _ = AXUIElementSetMessagingTimeout(element, AX_MESSAGING_TIMEOUT_SECONDS);
@@ -77,6 +86,13 @@ unsafe fn semantic_children(parent: AXUIElementRef) -> Vec<AXUIElementRef> {
     out
 }
 
+/// A menu title as paths compare it: trimmed, with three periods read as
+/// the ellipsis character macOS menu titles use ("Save As..." finds
+/// "Save As…").
+fn menu_title_key(title: &str) -> String {
+    title.trim().replace("...", "\u{2026}")
+}
+
 unsafe fn resolve_exact_prefix(
     menu_bar: AXUIElementRef,
     prefix: &[String],
@@ -90,10 +106,11 @@ unsafe fn resolve_exact_prefix(
             CFRelease(current as CFTypeRef);
         }
 
+        let wanted = menu_title_key(segment);
         let mut matches = Vec::new();
         for child in children {
             let title = copy_string_attr(child, "AXTitle").unwrap_or_default();
-            if title.trim() == segment {
+            if menu_title_key(&title) == wanted {
                 matches.push(child);
             } else {
                 CFRelease(child as CFTypeRef);
@@ -122,6 +139,54 @@ unsafe fn resolve_exact_prefix(
     }
 }
 
+/// Close the menu a failed path opened from the menu bar item `top` with
+/// AXCancel on that item's menu (which also ends its submenus), and read the
+/// result back from WindowServer's window list. Menu windows in
+/// `menus_before` were on screen before this call and do not count.
+unsafe fn close_opened_menu(
+    app: AXUIElementRef,
+    pid: i32,
+    top: &str,
+    menus_before: &[u32],
+) -> Option<bool> {
+    // An action that reported an error can still open its menu a moment
+    // later; give it the same settle time as a hop before looking.
+    std::thread::sleep(Duration::from_millis(80));
+    if crate::windows::new_menu_windows(pid, menus_before)? == 0 {
+        return Some(true);
+    }
+    let item = copy_element_attr(app, "AXMenuBar").and_then(|bar| {
+        set_messaging_timeout(bar);
+        let item = resolve_exact_prefix(bar, std::slice::from_ref(&top.to_owned())).ok();
+        CFRelease(bar as CFTypeRef);
+        item
+    });
+    let Some(item) = item else {
+        return Some(false);
+    };
+    set_messaging_timeout(item);
+    for child in copy_children(item) {
+        set_messaging_timeout(child);
+        if copy_string_attr(child, "AXRole").as_deref() == Some("AXMenu") {
+            let _ = perform_action(child, "AXCancel");
+        }
+        CFRelease(child as CFTypeRef);
+    }
+    CFRelease(item as CFTypeRef);
+    crate::windows::wait_for_new_menus_closed(pid, menus_before)
+}
+
+/// The refusal for a path that failed after pressing a menu item, saying
+/// whether the menu it opened was seen to close.
+fn failure_after_press(error: String, top: &str, closed: Option<bool>) -> String {
+    match closed {
+        Some(true) => format!("{error}. No menu window this call opened is still on screen."),
+        Some(false) | None => format!(
+            "{error}. The {top} menu this call opened may still be open: press escape on the window before other input."
+        ),
+    }
+}
+
 fn choose_action(actions: &[String], final_segment: bool) -> Option<&'static str> {
     let supports = |name: &str| actions.iter().any(|action| action == name);
     let order: &[&str] = if final_segment {
@@ -139,6 +204,12 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
     }
     set_messaging_timeout(app);
 
+    // Whether this call pressed a menu item (a press that reports an error
+    // can still open its menu), so a failure must close what it opened.
+    let mut pressed = false;
+    // Unreadable now counts every menu window later as this call's, which can
+    // only make the closed claim more cautious.
+    let menus_before = crate::windows::menu_window_ids(pid).unwrap_or_default();
     let result = (|| {
         for depth in 0..path.len() {
             // Resolve from the live app root for every hop. Opening a menu can
@@ -166,6 +237,7 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
                     return Err(error);
                 }
             };
+            pressed = true;
             let error = perform_action(target, action);
             CFRelease(target as CFTypeRef);
             if error != kAXErrorSuccess {
@@ -180,8 +252,49 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
         Ok(())
     })();
 
+    // A failure after a hop opened a menu: close it, so the app is not left
+    // tracking a menu (where the next menu command reports success and does
+    // nothing).
+    let result = result.map_err(|error| {
+        if !pressed {
+            return error;
+        }
+        let closed = close_opened_menu(app, pid, &path[0], &menus_before);
+        failure_after_press(error, &path[0], closed)
+    });
+
     CFRelease(app as CFTypeRef);
     result
+}
+
+fn select_frontmost_pid(
+    front_process_matches: Option<bool>,
+    workspace_fallback: impl FnOnce() -> Option<i32>,
+    pid: i32,
+) -> Option<i32> {
+    match front_process_matches {
+        Some(true) => Some(pid),
+        Some(false) => None,
+        None => workspace_fallback(),
+    }
+}
+
+fn live_frontmost_pid(pid: i32, window_id: u32) -> Option<i32> {
+    select_frontmost_pid(
+        crate::input::skylight::front_process_matches(pid, window_id),
+        crate::apps::frontmost_pid,
+        pid,
+    )
+}
+
+fn live_frontmost_app() -> Option<i32> {
+    crate::windows::visible_windows()
+        .into_iter()
+        .find(|window| {
+            crate::input::skylight::front_process_matches(window.pid, window.window_id)
+                == Some(true)
+        })
+        .map(|window| window.pid)
 }
 
 /// Make one exact application window key before resolving focus-sensitive
@@ -194,18 +307,7 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
 /// disabled even though the application itself is frontmost. Raise and mark
 /// only the requested AX window, then require an exact focused-window readback
 /// before menu resolution proceeds.
-fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
-    let native_key_requested = crate::input::skylight::make_exact_window_key(pid, window_id);
-    if !native_key_requested
-        && crate::apps::frontmost_pid() != Some(pid)
-        && !crate::apps::activate_pid(pid)
-    {
-        return Err("invoke_menu: target application could not be activated".into());
-    }
-    if !native_key_requested {
-        std::thread::sleep(Duration::from_millis(120));
-    }
-
+fn focus_ax_window(pid: i32, window_id: u32) -> Result<(), String> {
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
@@ -237,6 +339,88 @@ fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
         let _ = set_bool_attr_true(target, "AXFocused");
         CFRelease(target as CFTypeRef);
     }
+    Ok(())
+}
+
+struct AxWindowFocusRequest {
+    pid: i32,
+    window_id: u32,
+    tx: SyncSender<Result<(), String>>,
+    cancelled: Arc<AtomicBool>,
+}
+
+#[link(name = "System", kind = "framework")]
+extern "C" {
+    static _dispatch_main_q: u8;
+    fn dispatch_async_f(
+        queue: *const c_void,
+        context: *mut c_void,
+        work: unsafe extern "C" fn(*mut c_void),
+    );
+}
+
+unsafe extern "C" fn focus_ax_window_on_main(context: *mut c_void) {
+    let request = unsafe { Box::from_raw(context.cast::<AxWindowFocusRequest>()) };
+    if request.cancelled.load(Ordering::Acquire) {
+        return;
+    }
+    let result = focus_ax_window(request.pid, request.window_id);
+    let _ = request.tx.send(result);
+}
+
+fn focus_ax_window_with_thread_affinity(pid: i32, window_id: u32) -> Result<(), String> {
+    let is_main_thread = objc2_foundation::MainThreadMarker::new().is_some();
+    if pid != std::process::id() as i32 || is_main_thread {
+        return focus_ax_window(pid, window_id);
+    }
+
+    // AX actions against another process execute in that process. An embedded
+    // driver targeting its own window is different: AppKit services AXRaise
+    // in this process, and window ordering is main-thread-only. Queue just the
+    // self-process AX mutation onto AppKit's main queue, then return to the
+    // blocking worker for readiness polling and menu traversal.
+    let (tx, rx) = mpsc::sync_channel(1);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let request = Box::new(AxWindowFocusRequest {
+        pid,
+        window_id,
+        tx,
+        cancelled: Arc::clone(&cancelled),
+    });
+    unsafe {
+        let main_queue = &raw const _dispatch_main_q as *const c_void;
+        dispatch_async_f(
+            main_queue,
+            Box::into_raw(request).cast::<c_void>(),
+            focus_ax_window_on_main,
+        );
+    }
+    match rx.recv_timeout(MAIN_QUEUE_TIMEOUT) {
+        Ok(result) => result,
+        Err(error) => {
+            // If AppKit never serviced the request, prevent a stale focus
+            // change from firing after this tool call has already failed.
+            cancelled.store(true, Ordering::Release);
+            Err(format!(
+                "invoke_menu: failed waiting for the embedded host window on the AppKit main queue: {error}"
+            ))
+        }
+    }
+}
+
+fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
+    let native_key_requested = crate::input::skylight::make_exact_window_key(pid, window_id);
+    if !native_key_requested
+        && live_frontmost_pid(pid, window_id) != Some(pid)
+        && !crate::apps::activate_pid(pid)
+    {
+        return Err("invoke_menu: target application could not be activated".into());
+    }
+    if !native_key_requested {
+        std::thread::sleep(Duration::from_millis(120));
+    }
+
+    focus_ax_window_with_thread_affinity(pid, window_id)?;
 
     // AXFocusedWindow can lead AppKit's native `isKeyWindow` state while the
     // WindowServer activation is still settling. Menu validation observes the
@@ -247,7 +431,7 @@ fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
     loop {
         let now = std::time::Instant::now();
         if exact_window_is_ready(
-            crate::apps::frontmost_pid(),
+            live_frontmost_pid(pid, window_id),
             pid,
             crate::ax::bindings::focused_window_id_of_pid(pid),
             window_id,
@@ -316,7 +500,7 @@ impl Tool for InvokeMenuTool {
         }
 
         let outcome = tokio::task::spawn_blocking(move || {
-            let prior_frontmost = crate::apps::frontmost_pid();
+            let prior_frontmost = live_frontmost_app().or_else(crate::apps::frontmost_pid);
             let prior_frontmost_window =
                 prior_frontmost.and_then(crate::ax::bindings::focused_window_id_of_pid);
             let needs_activation = prior_frontmost != Some(pid);
@@ -389,10 +573,55 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_path_says_whether_its_menu_was_closed() {
+        let error = || "invoke_menu: path segment 1 was not found".to_owned();
+        assert_eq!(
+            failure_after_press(error(), "File", Some(true)),
+            "invoke_menu: path segment 1 was not found. No menu window this call opened is still on screen."
+        );
+        for unconfirmed in [Some(false), None] {
+            assert!(failure_after_press(error(), "File", unconfirmed)
+                .ends_with("The File menu this call opened may still be open: press escape on the window before other input."));
+        }
+    }
+
+    #[test]
+    fn three_periods_match_the_ellipsis_in_menu_titles() {
+        assert_eq!(
+            menu_title_key(" Save As... "),
+            menu_title_key("Save As\u{2026}")
+        );
+        assert_eq!(menu_title_key("Save As..."), menu_title_key("Save As..."));
+        assert_ne!(menu_title_key("Save As"), menu_title_key("Save As\u{2026}"));
+        assert_ne!(
+            menu_title_key("save as..."),
+            menu_title_key("Save As\u{2026}")
+        );
+    }
+
+    #[test]
     fn menu_focus_requires_the_exact_frontmost_app_and_window() {
         assert!(exact_window_is_ready(Some(7), 7, Some(42), 42));
         assert!(!exact_window_is_ready(Some(8), 7, Some(42), 42));
         assert!(!exact_window_is_ready(Some(7), 7, Some(41), 42));
         assert!(!exact_window_is_ready(Some(7), 7, None, 42));
+    }
+
+    fn workspace_frontmost_must_not_be_read() -> Option<i32> {
+        panic!("stale workspace state must not be consulted");
+    }
+
+    #[test]
+    fn windowserver_mismatch_never_falls_back_to_stale_workspace_state() {
+        assert_eq!(
+            select_frontmost_pid(Some(true), workspace_frontmost_must_not_be_read, 7),
+            Some(7)
+        );
+        assert_eq!(
+            select_frontmost_pid(Some(false), workspace_frontmost_must_not_be_read, 7),
+            None
+        );
+        assert_eq!(select_frontmost_pid(None, || Some(8), 7), Some(8));
+        assert_eq!(select_frontmost_pid(None, || None, 7), None);
     }
 }

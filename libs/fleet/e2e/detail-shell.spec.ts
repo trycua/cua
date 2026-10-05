@@ -4,6 +4,7 @@ import {
   mockClaimsApi,
   mockInstancesApi,
   mockNamespacesApi,
+  type MockPoolService,
   mockPoolsApi,
   mockSignedServiceUrlsApi,
 } from "./fixtures/mock-api"
@@ -14,15 +15,67 @@ async function mockFleet(
   initialSignedUrls: Parameters<typeof mockSignedServiceUrlsApi>[1] = [],
   signedUrlOptions: Parameters<typeof mockSignedServiceUrlsApi>[2] = {},
   claimOptions: Parameters<typeof mockClaimsApi>[1] = {},
+  poolServices?: MockPoolService[],
 ) {
   await mockAuth(page)
   await mockNamespacesApi(page)
-  await mockPoolsApi(page)
+  await mockPoolsApi(page, poolServices)
   await mockInstancesApi(page)
   const claims = await mockClaimsApi(page, claimOptions)
   const signedUrls = await mockSignedServiceUrlsApi(page, initialSignedUrls, signedUrlOptions)
   return { ...signedUrls, claims }
 }
+
+test("bound claim provides a copyable first workload for the existing claim", async ({ page }) => {
+  await mockFleet(
+    page,
+    [],
+    {},
+    {},
+    [
+      { name: "mcp", targetPort: 8080, protocol: "TCP" },
+      { name: "server", targetPort: 8000, protocol: "TCP" },
+    ],
+  )
+  await page.goto("/pools/demo-pool/demo-pool/claims/claim-abc123")
+
+  await expect(page.getByRole("heading", { name: "Run your first workload" })).toBeVisible()
+  const snippet = page.locator("pre").filter({ hasText: '"claim": "claim-abc123"' })
+  await expect(snippet).toContainText('"namespace": "demo-pool"')
+  await expect(snippet).toContainText('"pool": "demo-pool"')
+  await expect(snippet).toContainText('"service": "server"')
+  await expect(snippet).toContainText('sandbox.shell.run("uname -sr", timeout=30)')
+  await expect(page.getByRole("button", { name: "Copy first workload Python code" })).toBeVisible()
+  const apiKeyLink = page.getByRole("link", { name: "API key Opens in a new tab" })
+  await expect(apiKeyLink).toHaveAttribute("href", "#/user-keys")
+  await expect(apiKeyLink).toHaveAttribute("target", "_blank")
+})
+
+test("pending claim does not show runnable first workload code", async ({ page }) => {
+  await mockFleet(page, [], {}, {
+    claims: [{ name: "claim-pending", phase: "Pending" }],
+  })
+  await page.goto("/pools/demo-pool/demo-pool/claims/claim-pending")
+
+  await expect(page.getByRole("heading", { name: "Run your first workload" })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Copy first workload Python code" })).toHaveCount(0)
+})
+
+test("bound claim explains when its pool lacks the server service", async ({ page }) => {
+  await mockFleet(
+    page,
+    [],
+    {},
+    {},
+    [{ name: "mcp", targetPort: 8080, protocol: "TCP" }],
+  )
+  await page.goto("/pools/demo-pool/demo-pool/claims/claim-abc123")
+
+  await expect(page.getByRole("heading", { name: "Run your first workload" })).toBeVisible()
+  await expect(page.getByText("This pool does not expose the server service")).toBeVisible()
+  await expect(page.getByText(/This claim currently exposes: mcp/)).toBeVisible()
+  await expect(page.getByRole("button", { name: "Copy first workload Python code" })).toHaveCount(0)
+})
 
 for (const viewport of [
   { name: "desktop", width: 1440, height: 900 },

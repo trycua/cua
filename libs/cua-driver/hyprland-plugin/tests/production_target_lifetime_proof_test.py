@@ -2,6 +2,7 @@
 from contextlib import ExitStack
 from copy import deepcopy
 import hashlib
+from itertools import product
 import json
 import os
 from pathlib import Path
@@ -10,9 +11,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_target_lifetime_proof as proof
-from production_primary_conflict_proof_test import plan as base_plan, identity, DELIVERED
-from production_session_fault_proof_test import ACTIVE, PARTIAL, status, trace
+from proof_fixtures import (ACTIVE, DELIVERED, PARTIAL, assert_rejects, identity, inkscape_profile,
+                            primary_conflict_plan as base_plan, status, trace)
 
 
 DESTROYED = ACTIVE + [(8, 'agent_cancel', 1, 0)]
@@ -42,6 +44,14 @@ def statuses():
     return before, after
 
 
+def recovery_status(lane=1, pointer=True):
+    observed = status()
+    for row in observed['input']['lanes']:
+        row.update(seat_resources=2, pointer_resources=2, keyboard_resources=2)
+    observed['input']['lanes'][lane - 1].update(reserved=True, pointer_focus=pointer, dispatches=1)
+    return observed
+
+
 def record():
     before, after = statuses()
     return {'result': 'observed', 'target': plan()['agents'][0]['target'], 'lane': 1,
@@ -59,6 +69,45 @@ def action():
 
 
 class PlanTests(unittest.TestCase):
+    def test_inkscape_only_profile_binds_both_the_target_and_its_replacement(self):
+        candidate = inkscape_profile(plan())
+        old, fresh = candidate['agents'][0], candidate['recovery']['agent']
+        fresh.update(app='inkscape', document='/synthetic/replacement/cua-smoke-inkscape.svg',
+                     pointer_stage='click_rectangle')
+        candidate['recovery']['identity']['exe'] = '/usr/bin/inkscape'
+        for index, spec in enumerate((old, fresh)):
+            spec['app_id_tag'] = f'cua-profile-lane-{index}'
+            spec['owned'].pop('profile')
+            spec['owned']['document']['path'] = spec['document']
+        proof.validate_plan(candidate)
+        assert_rejects(self, proof.validate_plan, candidate, [
+            ('absolute synthetic SVG document', lambda p: p['agents'][0].update(document='/synthetic/private.svg')),
+            ('fresh click stage', lambda p: p['recovery']['agent'].update(pointer_stage='move_rectangle')),
+            ('wrong Inkscape executable identity', lambda p: p['recovery']['identity'].update(exe='/usr/bin/soffice.bin')),
+            ('distinct Inkscape application instances', lambda p: p['recovery']['agent'].update(
+                app_id_tag=p['agents'][0]['app_id_tag'])),
+            ('synthetic smoke document', lambda p: p['recovery']['agent']['owned']['document'].update(
+                path='/synthetic/wrong.svg')),
+        ])
+
+    def test_inkscape_requires_exact_reviewed_app_id_tag_argv_and_identity(self):
+        spec = {'app': 'inkscape', 'app_id_tag': 'cua-profile-lane-0',
+                'document': '/synthetic/cua-smoke-inkscape.svg'}
+        expected = {**identity(20), 'exe': '/usr/bin/inkscape', 'uid': os.getuid()}
+        argv = ['/usr/bin/inkscape', '--app-id-tag=cua-profile-lane-0', spec['document']]
+        for words in (argv, [argv[0], '--new-instance', argv[2]],
+                      [argv[0], '--app-id-tag=cua-profile-lane-1', argv[2]], argv + ['/other.svg']):
+            with self.subTest(argv=words), patch.object(proof, '_identity', return_value=expected), \
+                 patch.object(proof, 'saved_document'), \
+                 patch.object(Path, 'read_bytes', return_value=b'\0'.join(x.encode() for x in words) + b'\0'):
+                if words == argv:
+                    proof.check_app(spec, expected)
+                else:
+                    with self.assertRaises(AssertionError):
+                        proof.check_app(spec, expected)
+        with patch.object(proof, '_identity', return_value={}), self.assertRaises(AssertionError):
+            proof.check_app(spec, expected)
+
     def test_exact_disposable_distinct_replacement_only(self):
         proof.validate_plan(plan())
         mutations = [lambda p: p.update(disposable=False),
@@ -119,6 +168,47 @@ class PlanTests(unittest.TestCase):
 
 
 class OracleTests(unittest.TestCase):
+    def test_partial_connection_retirement_may_release_capacity_immediately(self):
+        for reserved in (True, False):
+            observed = record()
+            observed['after']['input']['lanes'][0]['reserved'] = reserved
+            self.assertEqual(proof.verify_fault(trace(DESTROYED), observed, action())['result'], 'verified')
+        for reserved in (None, 0, 1, 'false'):
+            observed = record()
+            observed['after']['input']['lanes'][0]['reserved'] = reserved
+            with self.subTest(reserved=reserved), self.assertRaises(AssertionError):
+                proof.verify_fault(trace(DESTROYED), observed, action())
+
+    def test_terminal_gate_requires_released_capacity_and_unchanged_sibling(self):
+        before, after = statuses()
+        with self.assertRaisesRegex(AssertionError, 'retained capacity'):
+            proof.verify_terminal_cleared(before, after, 1)
+        after['input']['lanes'][0]['reserved'] = False
+        self.assertTrue(proof.verify_terminal_cleared(before, after, 1)['unreserved'])
+        for field, value in (('held_button', 272), ('held_keys', 1), ('lease_active', True),
+                             ('drag_active', True), ('pointer_focus', True), ('keyboard_focus', True)):
+            changed = deepcopy(after)
+            changed['input']['lanes'][0][field] = value
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                proof.verify_terminal_cleared(before, changed, 1)
+        after['input']['lanes'][1]['reserved'] = True
+        with self.assertRaises(AssertionError):
+            proof.verify_terminal_cleared(before, after, 1)
+
+    def test_bounded_terminal_wait_does_not_accept_a_retained_reservation(self):
+        before, pending = statuses()
+        released = deepcopy(pending)
+        released['input']['lanes'][0]['reserved'] = False
+        fault = SimpleNamespace(status=Mock(side_effect=[pending, released]))
+        def wait(sample, timeout):
+            self.assertEqual(timeout, 3)
+            self.assertIsNone(sample())
+            return sample()
+        with patch.object(proof, 'wait_for', side_effect=wait):
+            result = proof.await_connection_retirement(fault, before, 1)
+        self.assertTrue(result['verification']['unreserved'])
+        self.assertEqual(fault.status.call_count, 2)
+
     def test_destroyed_surface_requires_no_invented_release(self):
         result = proof.verify_fault(trace(DESTROYED), record(), action())
         self.assertEqual(result['wire_release_events'], 0)
@@ -139,11 +229,11 @@ class OracleTests(unittest.TestCase):
                 proof.verify_fault(trace(DESTROYED), record(), observed)
 
     def test_raw_trace_rejects_corruption_primary_leaks_other_lane_and_replay(self):
-        for field, value in (('hook', False), ('active', False), ('overflow', True), ('timed_out', True), ('count', 0)):
-            with self.subTest(field=field), self.assertRaises(AssertionError):
-                proof.verify_fault({**trace(DESTROYED), field: value}, record(), action())
-        for kind, lane, value in [('pointer_button', 0, 0), ('keyboard_key', 0, 1), ('pointer_focus', 0, 0),
-                ('pointer_axis', 0, 0), ('agent_cancel', 2, 0), ('agent_admitted', 1, 0),
+        # Page validity is owned by trace_interval (realapp TraceIntervalTests); one case proves wiring.
+        with self.assertRaisesRegex(AssertionError, 'dropped events'):
+            proof.verify_fault({**trace(DESTROYED), 'overflow': True}, record(), action())
+        # Primary classification is owned by primary_trace_test; one primary row proves wiring.
+        for kind, lane, value in [('keyboard_key', 0, 1), ('agent_cancel', 2, 0), ('agent_admitted', 1, 0),
                 ('agent_drag_end', 1, 0), ('agent_drag_start', 1, 0), ('agent_action_end', 1, 0),
                 ('pointer_motion', 1, 0), ('pointer_button', 1, 1), ('keyboard_key', 1, 1)]:
             with self.subTest(kind=kind, lane=lane), self.assertRaises(AssertionError):
@@ -226,6 +316,40 @@ class InjectionTests(unittest.TestCase):
                     with self.assertRaisesRegex(AssertionError, 'one termination'):
                         fault.inject(Mock(), trace(ACTIVE[:1]), pending, Mock())
 
+    def test_status_without_resource_counters_is_not_yet_cleared_and_never_fatal(self):
+        def bounded(check, timeout):
+            for _ in range(3):
+                value = check()
+                if value:
+                    return value
+            raise AssertionError('bounded evidence wait expired')
+        for eventually_cleared in (True, False):
+            with self.subTest(eventually_cleared=eventually_cleared), ExitStack() as stack:
+                fault = object.__new__(proof.TargetLifetime)
+                fault.fd, fault.sent, fault.record = 77, False, {}
+                fault.guard, fault.spec = Mock(), plan()['agents'][0]
+                before, after = statuses()
+                partial = deepcopy(after)
+                del partial['input']['lanes'][0]['pointer_resources']
+                samples = [partial, after, after] if eventually_cleared else [partial] * 3
+                fault.status = Mock(side_effect=[before, *samples])
+                fault.gone = Mock(return_value={'pidfd_exited': True, 'window_absent': True, 'observed_ns': 9_000_000})
+                stack.enter_context(patch.object(proof, 'poll_active', return_value=(trace(ACTIVE), {1: 2})))
+                stack.enter_context(patch.object(proof, 'saved_document'))
+                stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=[5_000_000, 6_000_000, 10_000_000]))
+                stack.enter_context(patch.object(proof.signal, 'pidfd_send_signal', create=True))
+                stack.enter_context(patch.object(proof, 'wait_for', side_effect=bounded))
+                pending = Mock(done=Mock(return_value=False))
+                if eventually_cleared:
+                    self.assertEqual(fault.inject(Mock(), trace(ACTIVE[:1]), pending, Mock()), 1)
+                    self.assertEqual(fault.record['after'], after)
+                    self.assertNotIn('last_clear_error', fault.record)
+                else:
+                    with self.assertRaisesRegex(AssertionError, 'bounded evidence wait expired'):
+                        fault.inject(Mock(), trace(ACTIVE[:1]), pending, Mock())
+                    self.assertEqual(fault.record['last_status'], partial)
+                    self.assertEqual(fault.record['last_clear_error'], "KeyError: 'pointer_resources'")
+
     def test_gone_requires_pidfd_exit_and_old_address_absence(self):
         for exited, windows in ((False, []), (True, [{'pid': 21, 'address': '0xc8'}]),
                                 (True, [{'pid': 20, 'address': '0xff'}]), (True, [])):
@@ -237,13 +361,107 @@ class InjectionTests(unittest.TestCase):
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_final_cleanup_preserves_only_captured_recovery_hover(self):
+        for lane in (1, 2):
+            for pointer in (True, False):
+                before = recovery_status(lane, pointer)
+                after = deepcopy(before)
+                after['input']['lanes'][lane - 1]['reserved'] = False
+                with self.subTest(lane=lane, pointer=pointer):
+                    result = proof.verify_recovery_retirement(before, after, lane)
+                    self.assertTrue(result['unreserved'])
+                    self.assertFalse(result['input_authority'])
+                    self.assertEqual(result['parked_pointer_focus'], pointer)
+
+    def test_final_cleanup_rejects_authority_wrong_lane_and_identity_drift(self):
+        before = recovery_status()
+        after = deepcopy(before)
+        after['input']['lanes'][0]['reserved'] = False
+        for key in (0, 1):
+            for field, value in (('reserved', True), ('reserved', 0), ('held_button', 272),
+                    ('held_keys', 1), ('drag_active', True), ('lease_active', True),
+                    ('keyboard_focus', True), ('epoch', 'f' * 32), ('desktop_generation', 2),
+                    ('dispatches', 9), ('seat_resources', 1), ('pointer_resources', 1),
+                    ('keyboard_resources', 1), ('pointer_focus', key == 1)):
+                changed = deepcopy(after)
+                changed['input']['lanes'][key][field] = value
+                with self.subTest(key=key, field=field, value=value), self.assertRaises(AssertionError):
+                    proof.verify_recovery_retirement(before, changed, 1)
+        for lane in (0, 2, 3, True):
+            with self.subTest(lane=lane), self.assertRaises(AssertionError):
+                proof.verify_recovery_retirement(before, after, lane)
+        for field, value in (('pointer_focus', True), ('reserved', True)):
+            changed = deepcopy(before)
+            changed['input']['lanes'][1][field] = value
+            with self.subTest(captured_field=field), self.assertRaises(AssertionError):
+                proof.verify_recovery_retirement(changed, after, 1)
+        with self.assertRaises(AssertionError):
+            proof.verify_recovery_retirement(recovery_status(pointer=False), after, 1)
+
+    def test_final_retirement_wait_requires_closed_runtimes_and_clean_samples(self):
+        before = recovery_status()
+        after = deepcopy(before)
+        after['input']['lanes'][0]['reserved'] = False
+        recovery = {'result': 'verified', 'status': before, 'lane': 1}
+        runtimes = [Mock(process=Mock(poll=Mock(return_value=0))) for _ in range(3)]
+        fault = SimpleNamespace(status=Mock(side_effect=[before, after]))
+        def wait(sample, timeout):
+            self.assertEqual(timeout, 3)
+            self.assertIsNone(sample())
+            return sample()
+        with patch.object(proof, 'wait_for', side_effect=wait):
+            result = proof.await_recovery_retirement(fault, recovery, runtimes)
+        self.assertTrue(result['all_runtimes_closed'])
+        self.assertTrue(result['verification']['unreserved'])
+        for runtime in runtimes:
+            runtime.process.poll.return_value = None
+            with self.assertRaisesRegex(AssertionError, 'runtime still alive'):
+                proof.await_recovery_retirement(fault, recovery, runtimes)
+            runtime.process.poll.return_value = 0
+        with self.assertRaisesRegex(AssertionError, 'not verified'):
+            proof.await_recovery_retirement(fault, {**recovery, 'result': 'unproven'}, runtimes)
+        for field, value in (('lease_active', True), ('held_button', 272), ('held_keys', 1),
+                             ('drag_active', True), ('keyboard_focus', True), ('dispatches', 2)):
+            pending = deepcopy(before)
+            pending['input']['lanes'][0][field] = value
+            fault.status = Mock(return_value=pending)
+            with self.subTest(field=field), patch.object(proof, 'wait_for', side_effect=wait), \
+                    self.assertRaises(AssertionError):
+                proof.await_recovery_retirement(fault, recovery, runtimes)
+        fault.status = Mock(return_value=before)
+        def expires(sample, timeout):
+            self.assertEqual(timeout, 3)
+            self.assertIsNone(sample())
+            raise AssertionError('bounded evidence wait expired')
+        with patch.object(proof, 'wait_for', side_effect=expires), self.assertRaisesRegex(AssertionError, 'expired'):
+            proof.await_recovery_retirement(fault, recovery, runtimes)
+
+    def test_final_cleanup_trace_rejects_new_input_and_primary_drift(self):
+        rows = DESTROYED + [(12, 'agent_admitted', 1, 0), (13, 'pointer_button', 1, 1),
+                           (14, 'pointer_button', 1, 0), (15, 'agent_action_end', 1, 0)]
+        prefix = trace(rows)
+        self.assertEqual(proof.cleanup_trace(prefix, proof.stopped_prefix(prefix), stopped=True)['result'], 'passed')
+        for lane, kind, value in ((1, 'pointer_motion', 0), (2, 'pointer_motion', 0),
+                (1, 'pointer_button', 1), (1, 'keyboard_key', 1), (1, 'agent_admitted', 0),
+                (0, 'pointer_focus', 0), (0, 'pointer_button', 0)):
+            stopped = proof.stopped_prefix(trace(rows + [(16, kind, lane, value)]))
+            with self.subTest(lane=lane, kind=kind), self.assertRaises(AssertionError):
+                proof.cleanup_trace(prefix, stopped, stopped=True)
+        stopped = proof.stopped_prefix(trace(rows + [(16, 'cursor', 0, 0), (17, 'cursor', 0, 0)]))
+        stopped['events'][-3][3] += 2
+        with self.assertRaises(AssertionError):
+            proof.cleanup_trace(prefix, stopped, stopped=True)
+
     def test_one_fresh_distinct_action_unknown_never_replayed(self):
-        for failure in (None, 'alive', 'reused_runtime', 'stale', 'unknown', 'bad_effect', 'same_snapshot',
-                        'same_artifact', 'cached', 'before_return', 'same_runtime', 'dead_after'):
-            with self.subTest(failure=failure), ExitStack() as stack:
+        # Freshness rules are owned by cancel's ObservationTests; 'cached' proves wiring.
+        for app, failure in product(('calc', 'inkscape'), (None, 'alive', 'reused_runtime', 'stale',
+                'unknown', 'bad_effect', 'cached', 'same_runtime', 'dead_after')):
+            with self.subTest(app=app, failure=failure), ExitStack() as stack:
                 candidate = plan()
-                recovered_status = status()
-                recovered_status['input']['lanes'][0]['reserved'] = True
+                if app == 'inkscape':
+                    candidate['agents'][0].update(app=app, pointer_stage='move_rectangle')
+                    candidate['recovery']['agent'].update(app=app, pointer_stage='click_rectangle')
+                recovered_status = recovery_status()
                 fault = SimpleNamespace(destroyed=True, spec=candidate['agents'][0], fresh=candidate['recovery']['agent'],
                     guard=Mock(), status=Mock(return_value=recovered_status))
                 client = Mock(process=Mock(pid=100 if failure == 'reused_runtime' else 101, poll=Mock(return_value=None)))
@@ -256,16 +474,10 @@ class RecoveryTests(unittest.TestCase):
                     'proof_observation_started_ns': 100, 'proof_observation_finished_ns': 101}
                 after = {**before, 'proof_runtime': {'pid': 102, 'directory': str(Path.cwd())},
                     'proof_image': 'after.png', 'proof_observation_started_ns': 104, 'proof_observation_finished_ns': 105}
-                if failure == 'same_snapshot':
-                    after = dict(before)
-                elif failure == 'same_artifact':
-                    after['proof_image'] = before['proof_image']
-                elif failure == 'cached':
+                if failure == 'cached':
                     after.update(proof_observation_started_ns=100, proof_observation_finished_ns=101)
-                elif failure == 'before_return':
-                    after['proof_observation_started_ns'] = 102
                 prepared = {'target': fault.fresh['target'], 'snapshot': before, 'prepared_ns': 100,
-                            'arguments': {'x': 20, 'y': 30}, 'oracle': {'stage': 'click_b2'}}
+                            'arguments': {'x': 20, 'y': 30}, 'oracle': {'stage': fault.fresh['pointer_stage']}}
                 stack.enter_context(patch.object(proof, 'prepare_drag', return_value=prepared))
                 stack.enter_context(patch.object(proof, 'grounded_snapshot', return_value=after))
                 stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=
@@ -282,6 +494,9 @@ class RecoveryTests(unittest.TestCase):
                 else:
                     proof.recover(client, observer, victim, fault, collector, trace(DESTROYED), 1, Mock(), Mock(), result)
                     self.assertEqual(result['result'], 'verified')
+                    self.assertEqual(result['status'], recovered_status)
+                    self.assertTrue(result['status']['input']['lanes'][0]['pointer_focus'])
+                    self.assertEqual(result['lane'], 1)
                 clicks = [call for call in client.tool.call_args_list if call.args[0] == 'click']
                 self.assertEqual(len(clicks), 0 if failure in ('alive', 'reused_runtime', 'stale', 'same_runtime') else 1)
                 if clicks:

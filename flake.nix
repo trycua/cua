@@ -23,20 +23,39 @@
         let
           pkgs = import nixpkgs { inherit system; };
 
-          rustSrc = ./libs/cua-driver/rust;
+          # cua-driver builds inside libs/: its crates reach the shared
+          # cua-telemetry crate in the libs/cua workspace (which inherits that
+          # workspace's package fields and reads the image catalog and the
+          # teleport target list at compile time), and platform-linux embeds
+          # the GNOME Shell helper from wayland-helper.
+          driverSharedFiles = [
+            ./libs/cua-driver/rust
+            ./libs/cua-driver/wayland-helper
+            ./libs/cua/Cargo.toml
+            ./libs/cua/crates/cua-telemetry
+            ./libs/cua/crates/cua-teleport/src/ux/targets.json
+            ./libs/images/sandbox-images.json
+          ];
+          rustSrc = pkgs.lib.fileset.toSource {
+            root = ./libs;
+            fileset = pkgs.lib.fileset.unions driverSharedFiles;
+          };
           rustTestSrc = pkgs.lib.fileset.toSource {
-            root = ./libs/cua-driver;
-            fileset = pkgs.lib.fileset.unions [
-              ./libs/cua-driver/rust
-              ./libs/cua-driver/wayland-helper
-              ./libs/cua-driver/compat-fixtures
-              ./libs/cua-driver/tests/fixtures/shared/web/index.html
-            ];
+            root = ./libs;
+            fileset = pkgs.lib.fileset.unions (
+              driverSharedFiles
+              ++ [
+                ./libs/cua-driver/compat-fixtures
+                ./libs/cua-driver/tests/fixtures/shared/web/index.html
+                ./libs/cua-driver/tests/perception-demo/evidence-manifest.schema.json
+              ]
+            );
           };
 
           cuaDriverPackage = import ./nix/cua-driver/package.nix {
             inherit pkgs;
             src = rustSrc;
+            sourceSubdir = "cua-driver/rust";
           };
 
           cuaCompositorPackage = pkgs.callPackage ./nix/cua-driver/compositor { };
@@ -100,6 +119,8 @@
               chromium
               dbus
               ffmpeg
+              # The shared Wayland history gate requires an unlocked Secret Service.
+              gnome-keyring
               gobject-introspection
               grim
               jq
@@ -137,7 +158,7 @@
             cua-driver-linux-rust-unit = import ./nix/cua-driver/tests/rust-unit.nix {
               inherit pkgs;
               src = rustTestSrc;
-              sourceSubdir = "rust";
+              sourceSubdir = "cua-driver/rust";
             };
             cua-driver-policy-yaml = import ./nix/cua-driver/tests/policy-yaml.nix {
               inherit pkgs;

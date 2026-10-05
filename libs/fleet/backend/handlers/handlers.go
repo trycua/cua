@@ -17,6 +17,7 @@ import (
 	"cyclops-cs-backend/chat"
 	"cyclops-cs-backend/config"
 	"cyclops-cs-backend/featureflagadmin"
+	"cyclops-cs-backend/imageresolve"
 	"cyclops-cs-backend/keycloak"
 	"cyclops-cs-backend/productanalytics"
 	"cyclops-cs-backend/signedurls"
@@ -78,6 +79,12 @@ type Handlers struct {
 	WorkloadAdmin    *keycloak.Admin
 	WorkloadAudience string
 	WorkloadTokenURL string
+
+	ImageUploads config.ImageUploadConfiguration
+	ImageObjects ImageObjectStore
+
+	// ImageResolver backs GET /api/images/resolve. nil answers 503.
+	ImageResolver ImageResolver
 }
 
 func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
@@ -90,7 +97,10 @@ func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 		KC:           cfg.Keycloak,
 		Stripe:       cfg.Stripe,
 		Analytics:    productanalytics.Nop(),
+		ImageUploads: cfg.ImageUploads,
 		chatLocks:    newConversationLockRegistry(),
+
+		ImageResolver: imageresolve.NewResolver(),
 	}
 }
 

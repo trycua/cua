@@ -1,0 +1,481 @@
+{
+  "flow": "provisioning",
+  "frames": [
+    {
+      "creates": "initial",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [],
+        "ids": [],
+        "pending": true,
+        "rows": [],
+        "tiles": []
+      }
+    },
+    {
+      "creates": "start pending:1",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [Starting] 10 1%"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Starting 10 Starting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 pulling",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 160
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Downloading image… 16%",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:1",
+            "previewText": "Downloading image…",
+            "progress": 160,
+            "progressText": "3.9 of 22.3 GB · 81 MB/s · about 4 min"
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [Starting] 160 16%"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Starting 160 Downloading image…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 pulling",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 187
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Downloading image… 18%",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:1",
+            "previewText": "Downloading image…",
+            "progress": 187,
+            "progressText": "4.7 of 22.3 GB · 80 MB/s · about 4 min"
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [Starting] 187 18%"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Starting 187 Downloading image…"
+        ]
+      }
+    },
+    {
+      "creates": "cancel-start pending:1",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 187
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Cancelling… 18%",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:1",
+            "previewText": "Cancelling…",
+            "progress": 187,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [Cancelling…] 187 18%"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Cancelling… 187 Cancelling…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 pulling",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 187
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Cancelling… 18%",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:1",
+            "previewText": "Cancelling…",
+            "progress": 187,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [Cancelling…] 187 18%"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Cancelling… 187 Cancelling…"
+        ]
+      }
+    },
+    {
+      "creates": "tick",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 187
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Cancelling… 18%",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:1",
+            "previewText": "Cancelling…",
+            "progress": 187,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [Cancelling…] 187 18%"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Cancelling… 187 Cancelling…"
+        ]
+      }
+    },
+    {
+      "creates": "fail pending:1",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [],
+        "ids": [],
+        "pending": true,
+        "rows": [],
+        "tiles": []
+      }
+    },
+    {
+      "creates": "start pending:2",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "System: Linux"
+            ],
+            "id": "pending:2",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Box [Starting] 10 1%"
+        ],
+        "tiles": [
+          "os-linux Box, Linux, This Mac, Starting 10 Starting…"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:2 pulling",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 425
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Downloading image… 42%",
+              "System: Linux"
+            ],
+            "id": "pending:2",
+            "previewText": "Downloading image…",
+            "progress": 425,
+            "progressText": "286 of 572 MB · 29 MB/s · less than a minute"
+          }
+        ],
+        "ids": [
+          "pending:2"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Box [Starting] 425 42%"
+        ],
+        "tiles": [
+          "os-linux Box, Linux, This Mac, Starting 425 Downloading image…"
+        ]
+      }
+    },
+    {
+      "creates": "cancel-start pending:2",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 425
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Cancelling… 42%",
+              "System: Linux"
+            ],
+            "id": "pending:2",
+            "previewText": "Cancelling…",
+            "progress": 425,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Box [Cancelling…] 425 42%"
+        ],
+        "tiles": [
+          "os-linux Box, Linux, This Mac, Cancelling… 425 Cancelling…"
+        ]
+      }
+    },
+    {
+      "creates": "cancel-fail pending:2",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Remove",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Failed",
+              "System: Linux"
+            ],
+            "id": "pending:2",
+            "previewText": "timed out: the cua daemon did not answer",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Box [Failed] - timed out: the cua daemon did not answer"
+        ],
+        "tiles": [
+          "os-linux Box, Linux, This Mac, Failed - Failed"
+        ]
+      }
+    },
+    {
+      "creates": "dismiss pending:2",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [],
+        "ids": [],
+        "pending": true,
+        "rows": [],
+        "tiles": []
+      }
+    },
+    {
+      "creates": "refreshed",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [],
+        "ids": [],
+        "pending": true,
+        "rows": [],
+        "tiles": []
+      }
+    }
+  ]
+}

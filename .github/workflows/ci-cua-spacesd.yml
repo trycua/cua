@@ -1,0 +1,221 @@
+name: "CI: cua-spacesd"
+
+# Mirrors rcdp's original ci.yml (fmt, test, clippy and the ScreenCaptureKit
+# single-version gate) for the server-only workspace at libs/cua-spacesd. The workspace depends on the in-repo
+# cua-driver crates by path, so their changes retrigger it too.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-spacesd/**"
+      - "libs/cua-driver/rust/**"
+      - "libs/cua/proto/**"
+      - "libs/cua/crates/cua-proto/**"
+      - "libs/cua/crates/cua-spacesd-client/**"
+      - "libs/cua/crates/cua-teleport-bundle/**"
+      - "libs/cua/crates/cua-chromium-storage/**"
+      - "libs/cua/crates/cua-teleport/**"
+      - "libs/cua/crates/cua-media-protocol/**"
+      - "libs/cua/crates/cua-media-transport/**"
+      - "libs/cua/crates/cua-media-codec/**"
+      - "libs/cua/crates/cua-logging/**"
+      - "libs/cua/crates/cua-volume/**"
+      - "libs/images/windows-2022/enable-volume.ps1"
+      - "libs/images/windows-2022/volume-diagnostics.ps1"
+      - ".github/workflows/ci-cua-spacesd.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-spacesd/**"
+      - "libs/cua-driver/rust/**"
+      - "libs/cua/proto/**"
+      - "libs/cua/crates/cua-proto/**"
+      - "libs/cua/crates/cua-spacesd-client/**"
+      - "libs/cua/crates/cua-teleport-bundle/**"
+      - "libs/cua/crates/cua-chromium-storage/**"
+      - "libs/cua/crates/cua-teleport/**"
+      - "libs/cua/crates/cua-media-protocol/**"
+      - "libs/cua/crates/cua-media-transport/**"
+      - "libs/cua/crates/cua-media-codec/**"
+      - "libs/cua/crates/cua-logging/**"
+      - "libs/cua/crates/cua-volume/**"
+      - "libs/images/windows-2022/enable-volume.ps1"
+      - "libs/images/windows-2022/volume-diagnostics.ps1"
+      - ".github/workflows/ci-cua-spacesd.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-spacesd-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  # Big debug test binaries (Spaces, conformance) exhaust link memory with
+  # full debug info; line tables keep backtraces useful.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # Belt and braces for the teleport host-effects isolation: any code path
+  # that reaches the real host implementation fails closed under CI.
+  CUA_ENV_TEST_SANDBOX: "1"
+
+jobs:
+  test:
+    name: fmt, clippy, test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS 26: the ScreenCaptureKit dependency compiles Metal bindings for
+        # macOS 26 APIs and needs that SDK.
+        os: [ubuntu-latest, macos-26, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: libs/cua-spacesd
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # cua-proto (the cua.env.v1 contract) is generated at build time.
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-spacesd -> target"
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config perl libx11-dev libxkbcommon-dev \
+            libwayland-dev libdbus-1-dev libxcb1-dev libx11-xcb-dev \
+            libxkbcommon-x11-dev libxrandr-dev libxi-dev libxtst-dev \
+            libxfixes-dev libxdamage-dev libudev-dev
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Test
+        run: cargo test --workspace --locked
+        env:
+          DYLD_FALLBACK_LIBRARY_PATH: /usr/lib/swift
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        env:
+          DYLD_FALLBACK_LIBRARY_PATH: /usr/lib/swift
+      # A second screencapturekit version in the graph silently binds one
+      # version's call sites to the other's Swift bridge (unmangled @_cdecl
+      # symbols in an identically named static archive), which segfaults the
+      # daemon at 0x0 inside sc_stream_create. Neither the linker nor cargo
+      # flags it. Runs on every OS because the lockfile is shared.
+      - name: ScreenCaptureKit single-version gate
+        run: ./scripts/check-screencapturekit-unified.sh
+      # cua-spacesd is server-only: teleport SEND lives in libs/cua
+      # (cua-teleport, used by the Cua Spaces extensions) and must never
+      # enter this workspace. Only the effect-free contract
+      # (cua-teleport-bundle) is shared.
+      - name: Server-only boundary
+        run: |
+          if grep -E '^name = "cua-teleport"$' Cargo.lock; then
+            echo "the driver workspace depends on the teleport sender (cua-teleport)" >&2
+            exit 1
+          fi
+      # The shared media crates and the clients (cua-media-client,
+      # cua-viewer) live in libs/cua; the client/server dependency boundary
+      # is checked by ci-cua-sdk.yml.
+
+  # Cua Volume in a Windows guest, for real: a hosted Windows Server 2022
+  # runner gets Client for NFS the way the windows:2022 image does
+  # (libs/images/windows-2022/enable-volume.ps1), then an in-process
+  # cua-spacesd mounts a throwaway volume served by the test over /volume:
+  # the doctor's volume.mount round trip on a folder, then a Space's view on
+  # V: (read-only public/, its own folder writable, a 3 MB file both ways,
+  # rename, mkdir, and no drive left after detaching).
+  volume-windows:
+    name: Cua Volume mount (Windows NFS client)
+    # Not shipped yet (renames fail in the Windows NFS client): run on
+    # demand while the Windows mount is finished.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+        working-directory: libs/cua-spacesd
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-spacesd -> target"
+      - name: Enable Client for NFS (as the image does)
+        shell: powershell
+        working-directory: .
+        run: |
+          & .\libs\images\windows-2022\enable-volume.ps1
+      - name: NFS client state before the test
+        if: always()
+        shell: powershell
+        working-directory: .
+        run: .\libs\images\windows-2022\volume-diagnostics.ps1
+      - name: Build the volume tests
+        run: |
+          cargo test -p cua-spacesd-server --lib --no-run --locked
+          cargo test -p cua-spacesd-doctor --test volume --no-run --locked
+      - name: Portmapper and drive unit tests
+        run: cargo test -p cua-spacesd-server --lib --locked services::volume
+      - name: Mount, round trip and unmount
+        run: cargo test -p cua-spacesd-doctor --test volume --locked -- --nocapture
+        env:
+          CUA_SPACESD_VOLUME_TEST: "1"
+          CUA_VOLUME_WINDOWS_PREVIEW: "1"
+          # Every NFS call the host answers, next to the driver's mount log.
+          CUA_VOLUME_TEST_LOG: "nfsserve=debug,cua_spacesd_server::services=info"
+      - name: NFS client state after the test
+        if: always()
+        shell: powershell
+        working-directory: .
+        run: .\libs\images\windows-2022\volume-diagnostics.ps1
+      - name: Nothing left mounted
+        if: always()
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Continue"
+          $left = & mount.exe 2>&1 | Select-String "127.0.0.1|localhost"
+          if ($left) { $left; throw "a Cua Volume mount is still there" }
+          "no Cua Volume mount left"
+
+  # Reverse tunnel end to end: spacesd on an internal Docker network with
+  # no published ports, reached through cua-relay (conformance suite,
+  # 1 GiB transfers, relay killed mid-stream).
+  relay-e2e:
+    name: relay e2e (docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+        working-directory: libs/cua-spacesd
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          install-deps: "false"
+      - name: Linux core lane (unit, conformance, in-process relay, teleport e2e)
+        run: scripts/ci/linux-core-tests.sh
+      - name: Relay lane
+        run: scripts/ci/relay-e2e.sh

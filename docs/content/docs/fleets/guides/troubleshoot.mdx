@@ -1,0 +1,57 @@
+---
+title: Troubleshoot cloud sandboxes
+description: Diagnose credential, access, image and readiness errors on Fleet, and clean up sandboxes and pools left behind.
+---
+
+Start with what the current credentials can see, and keep tokens and signed
+URLs out of shared logs:
+
+```bash test="cli-shape" id="cua-sb-ls"
+cua auth whoami
+cua sb ls --cloud
+cua fleet pools ls
+```
+
+## Errors
+
+| Error | Cause and fix |
+| --- | --- |
+| `Fleet credentials missing` | No API key and no `cua auth login` session. Sign in, export a key, or run with `local=True` |
+| `401` | Revoked key, expired token, or `CUA_FLEET_BASE_URL` / `CUA_TOKEN_URL` pointing elsewhere. A stale `FLEETS_TOKEN` wins over a key; unset it |
+| `403` Payment method required | Add one in the dashboard |
+| `403` on create pool (`PoolAccessDeniedError`) | Pool names are global; another account owns it |
+| `403` on template | The image or its pull policy is not allowed: make it public or pass a [registry secret](/cua-sdk/guides/images#private-registries) |
+| `InvalidArgument` before anything is created | The runtime cannot run the image (`gvisor` needs a container image, `kubevirt` a containerDisk, both amd64), the sandbox has image layers the cloud cannot build yet, or a service uses a reserved name (`main`, `sidecars`, `sc`) next to sidecars |
+| `SpacesdNotAvailable` | The image has no cua-spacesd on `3211`; use its own services or an image that ships it |
+
+A `403` never proves a resource is absent.
+
+## A sandbox does not become ready
+
+`progress=print` in Python (the CLI prints the same stages) shows where it
+waits. In `provisioning`, capacity is being found: a cold image takes a few
+minutes, and an image the cloud cannot pull stays there. In `starting`, your
+`wait_for` probes run: check that the server listens on the declared port on a
+non-loopback address. `cua sb logs NAME --source guest` shows the guest log.
+Raise the wait budget (`time_to_start=`, `--ready-timeout`) only after that; it
+does not extend any TTL.
+
+## Clean up leftovers
+
+A run that stopped early needs no rerun: a cloud sandbox expires after its TTL
+(15 minutes by default) and idle managed pools are deleted after 30 minutes.
+To clean up now:
+
+```bash test="cli-shape" id="cua-fleet-pools-gc"
+cua sb rm -f first-fleet          # a named CLI sandbox
+cua fleet pools gc --idle 5m      # idle managed pools and stuck claims
+```
+
+- A named Python sandbox: `await (await Sandbox.connect(NAME)).close()`.
+- A pool you own: `await pool.delete()` from `Pool.apply`, or
+  `fleet.deletePool(NAME)` in TypeScript, after its users release their claims.
+  `gc` never touches pools you created.
+
+Deletion is asynchronous; list again until the resource is gone. Add a
+[TTL](/fleets/guides/capacity-and-claims#expiry) to disposable work as a
+backstop.

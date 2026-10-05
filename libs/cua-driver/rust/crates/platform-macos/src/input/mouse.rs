@@ -1370,6 +1370,11 @@ pub fn right_click_at_xy(pid: i32, x: f64, y: f64, modifiers: &[&str]) -> anyhow
 /// (backgrounded) windows, so the right-down never reached the NSView — the
 /// reported "right-click does not fire rightMouseDown" bug. The left-click path
 /// already threaded `wid`; right-click did not, which is why it broke.
+///
+/// The `mouseMoved` primer, `rightMouseDown` and `rightMouseUp` are each posted
+/// once, through SkyLight (the public API only when the SPI is absent). Posting
+/// the same event through both transports delivered it to an AppKit view twice,
+/// so one right click arrived as down, down, up, up (#4679).
 pub fn right_click_at_xy_with_window_local(
     pid: i32,
     x: f64,
@@ -1413,7 +1418,7 @@ fn right_click_at_xy_inner(
         window_local,
         wid,
         click_group_id,
-        MousePostMode::Both,
+        MousePostMode::SkyLightPreferred,
     );
     std::thread::sleep(std::time::Duration::from_millis(12));
 
@@ -1429,7 +1434,17 @@ fn right_click_at_xy_inner(
     }
     // button_number = 1 (right). Stamping 0 here routes the event as a left
     // button-number on the receiving side even though the type is rightMouseDown.
-    post_mouse_event(pid, &down, window_local, wid, click_group_id, 1, 1, 3);
+    post_mouse_event_with_mode(
+        pid,
+        &down,
+        window_local,
+        wid,
+        click_group_id,
+        1,
+        1,
+        3,
+        MousePostMode::SkyLightPreferred,
+    );
     std::thread::sleep(std::time::Duration::from_millis(28));
 
     let up = CGEvent::new_mouse_event(
@@ -1442,7 +1457,17 @@ fn right_click_at_xy_inner(
     if flags != CGEventFlags::CGEventFlagNull {
         up.set_flags(flags);
     }
-    post_mouse_event(pid, &up, window_local, wid, click_group_id, 1, 1, 3);
+    post_mouse_event_with_mode(
+        pid,
+        &up,
+        window_local,
+        wid,
+        click_group_id,
+        1,
+        1,
+        3,
+        MousePostMode::SkyLightPreferred,
+    );
 
     Ok(())
 }
@@ -1723,6 +1748,11 @@ mod post_sink {
     use core_graphics::event::{CGEvent, EventField};
     use std::cell::RefCell;
 
+    pub(super) const MODIFIER_MASK: u64 = 0x0002_0000 // shift
+        | 0x0004_0000 // control
+        | 0x0008_0000 // option
+        | 0x0010_0000; // command
+
     /// One event handed to a transport: its type name, the transport, and the
     /// button number stamped on it (0 left, 1 right, 2 middle).
     #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1745,6 +1775,8 @@ mod post_sink {
     struct State {
         skylight_available: bool,
         posted: Vec<Posted>,
+        /// Modifier flags carried by each posted event, parallel to `posted`.
+        modifiers: Vec<u64>,
     }
 
     thread_local! {
@@ -1761,9 +1793,23 @@ mod post_sink {
                 *state.borrow_mut() = Some(State {
                     skylight_available,
                     posted: Vec::new(),
+                    modifiers: Vec::new(),
                 });
             });
             Self
+        }
+
+        /// Shift/control/option/command flags of each posted event. The rest of
+        /// the flag word reflects whatever keys the developer holds while the
+        /// tests run, so it is masked out.
+        pub(super) fn modifiers(&self) -> Vec<u64> {
+            STATE.with(|state| {
+                state
+                    .borrow()
+                    .as_ref()
+                    .map(|state| state.modifiers.clone())
+                    .unwrap_or_default()
+            })
         }
 
         pub(super) fn posted(&self) -> Vec<Posted> {
@@ -1804,6 +1850,9 @@ mod post_sink {
                 route,
                 button: event.get_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER),
             });
+            state
+                .modifiers
+                .push(event.get_flags().bits() & MODIFIER_MASK);
             true
         })
     }
@@ -2050,5 +2099,66 @@ mod tests {
         let posted = capture.posted();
         assert_eq!(posted.len(), 5);
         assert!(posted.iter().all(|p| p.route == PostRoute::PublicPid));
+    }
+
+    #[test]
+    fn background_right_click_posts_one_move_and_one_down_up_pair_through_skylight() {
+        let capture = Capture::start(true);
+        right_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &[]).unwrap();
+        assert_eq!(
+            capture.posted(),
+            [
+                Posted::new("MouseMoved", PostRoute::SkyLight, 0),
+                Posted::new("RightMouseDown", PostRoute::SkyLight, 1),
+                Posted::new("RightMouseUp", PostRoute::SkyLight, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn background_right_click_falls_back_to_the_public_api_once_without_the_spi() {
+        let capture = Capture::start(false);
+        right_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &[]).unwrap();
+        assert_eq!(
+            capture.posted(),
+            [
+                Posted::new("MouseMoved", PostRoute::PublicPid, 0),
+                Posted::new("RightMouseDown", PostRoute::PublicPid, 1),
+                Posted::new("RightMouseUp", PostRoute::PublicPid, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn window_less_right_click_posts_one_down_up_pair() {
+        let capture = Capture::start(true);
+        right_click_at_xy(1, 100.0, 100.0, &[]).unwrap();
+        let events: Vec<_> = capture
+            .posted()
+            .into_iter()
+            .map(|p| (p.event, p.route))
+            .collect();
+        assert_eq!(
+            events,
+            [
+                ("MouseMoved".to_owned(), PostRoute::SkyLight),
+                ("RightMouseDown".to_owned(), PostRoute::SkyLight),
+                ("RightMouseUp".to_owned(), PostRoute::SkyLight),
+            ]
+        );
+    }
+
+    #[test]
+    fn right_click_modifiers_ride_on_the_single_down_and_up() {
+        let capture = Capture::start(true);
+        right_click_at_xy_with_window_local(1, 100.0, 100.0, 10.0, 10.0, 7, &["cmd", "shift"])
+            .unwrap();
+        let posted = capture.posted();
+        let modifiers = capture.modifiers();
+        let names: Vec<_> = posted.iter().map(|p| p.event.as_str()).collect();
+        assert_eq!(names, ["MouseMoved", "RightMouseDown", "RightMouseUp"]);
+        let expected =
+            CGEventFlags::CGEventFlagCommand.bits() | CGEventFlags::CGEventFlagShift.bits();
+        assert_eq!(&modifiers[1..], [expected, expected]);
     }
 }

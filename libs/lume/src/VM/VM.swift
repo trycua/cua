@@ -866,6 +866,13 @@ class VM {
             "Found process \(pid) holding lock on config file",
             metadata: ["name": vmDirContext.name])
 
+        // A `lume serve` may host other VMs too: a signal would end the server
+        // and all of them. Ask it to stop this one.
+        if let port = LumeServeProcess.apiPort(ofProcess: pid) {
+            try await stopThroughServer(pid: pid, port: port, force: force, timeout: timeout)
+            return
+        }
+
         if force {
             Logger.info(
                 "Force stop requested; powering off process \(pid) immediately",
@@ -899,6 +906,49 @@ class VM {
             "Graceful shutdown did not complete within \(Int(timeout))s; forcing power-off of process \(pid)",
             metadata: ["name": vmDirContext.name])
         try await forcePowerOff(pid: pid)
+    }
+
+    /// Stops this VM through the `lume serve` (process `pid`, API on `port`)
+    /// that runs it, leaving the server and its other VMs running.
+    @MainActor
+    private func stopThroughServer(
+        pid: pid_t, port: UInt16, force: Bool, timeout: TimeInterval
+    ) async throws {
+        Logger.info(
+            "VM runs in lume serve; asking the server to stop it",
+            metadata: ["name": vmDirContext.name, "pid": "\(pid)", "port": "\(port)"])
+        let name =
+            vmDirContext.name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+            ?? vmDirContext.name
+        guard let url = URL(string: "http://127.0.0.1:\(port)/lume/vms/\(name)/stop") else {
+            throw VMError.internalError("Invalid lume serve URL for port \(port)")
+        }
+        var body: [String: Any] = ["force": force, "timeout": timeout]
+        if let storage = vmDirContext.storage { body["storage"] = storage }
+        var request = URLRequest(url: url, timeoutInterval: max(timeout, 0) + 30)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            // Never fall back to signalling the server: that is what ends
+            // every VM it hosts.
+            throw VMError.internalError(
+                "VM '\(vmDirContext.name)' runs in lume serve (process \(pid)), which did not answer on port \(port): \(error.localizedDescription)"
+            )
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            let detail = String(decoding: data, as: UTF8.self)
+            throw VMError.internalError(
+                "lume serve (process \(pid)) could not stop VM '\(vmDirContext.name)' (HTTP \(status)): \(detail)"
+            )
+        }
+        finalizeCrossProcessStop()
+        Logger.info("VM stopped through lume serve", metadata: ["name": vmDirContext.name])
     }
 
     /// Polls until `pid` is no longer signalable or `timeout` elapses.

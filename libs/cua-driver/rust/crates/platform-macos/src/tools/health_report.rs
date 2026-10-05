@@ -108,6 +108,10 @@ pub(crate) fn check_bundle_identity() -> CheckEntry {
         );
     }
 
+    standalone_bundle_identity(bid, exe)
+}
+
+fn standalone_bundle_identity(bid: Option<String>, exe: String) -> CheckEntry {
     let data = CheckData {
         bundle_identifier: bid.clone(),
         executable_path: if exe.is_empty() { None } else { Some(exe) },
@@ -121,23 +125,15 @@ pub(crate) fn check_bundle_identity() -> CheckEntry {
         )
         .with_data(data);
     }
-    let (message, hint) = match bid.as_deref() {
-        None | Some("") => (
-            "Process has no CFBundleIdentifier.".to_owned(),
-            "Run the binary inside CuaDriver.app so TCC grants attribute correctly. \
-             Start the daemon with `open -n -g -a CuaDriver --args serve` and \
-             connect via `cua-driver mcp`."
-                .to_owned(),
-        ),
-        Some(other) => (
-            format!("Bundle is {other}, not {CANONICAL_BUNDLE_ID}."),
-            format!(
-                "TCC grants will be attributed to {other}, not the cua-driver daemon. \
-                 Run via `cua-driver mcp` (auto-relaunches inside CuaDriver.app) or \
-                 start the daemon manually: `open -n -g -a CuaDriver --args serve`."
-            ),
-        ),
+    let message = match bid.as_deref() {
+        None | Some("") => "Process has no CFBundleIdentifier.".to_owned(),
+        Some(other) => format!("Bundle is {other}, not {CANONICAL_BUNDLE_ID}."),
     };
+    let hint = "This bundle check does not identify the app or executable macOS attributes \
+                this process's permission request to. For standalone CuaDriver, start the \
+                daemon inside CuaDriver.app with `open -n -g -a CuaDriver --args serve` and \
+                connect via `cua-driver mcp`. For an embedded or linked driver, use the \
+                host's launch and permission setup instead.";
 
     CheckEntry::fail(NAME_BUNDLE_IDENTITY, message, hint).with_data(data)
 }
@@ -192,29 +188,37 @@ fn check_embedded_bundle_identity(
 fn check_tcc_accessibility() -> CheckEntry {
     // Reuse the shared probe — do not duplicate AXIsProcessTrusted.
     let status = current_status();
+    accessibility_check(status.accessibility, current_bundle_identifier())
+}
+
+fn accessibility_check(granted: bool, bundle_identifier: Option<String>) -> CheckEntry {
     let data = CheckData {
-        bundle_identifier: current_bundle_identifier(),
+        bundle_identifier,
         ..Default::default()
     };
-    if status.accessibility {
+    if granted {
         return CheckEntry::pass(NAME_TCC_ACCESSIBILITY, "Accessibility is granted.")
             .with_data(data);
     }
     CheckEntry::fail(
         NAME_TCC_ACCESSIBILITY,
         "Accessibility is NOT granted for this process.",
-        "Grant Accessibility to CuaDriver.app in System Settings → Privacy & Security → \
-         Accessibility. If the process bundle is not com.trycua.driver (see bundle_identity), \
-         the grant must target the responsible app — restart via `cua-driver mcp` to relaunch \
-         inside CuaDriver.app.",
+        "Grant Accessibility to the app or executable macOS attributes this process's \
+         permission request to in System Settings → Privacy & Security → Accessibility. \
+         For standalone CuaDriver, use CuaDriver.app. For an embedded or linked driver, \
+         follow the host's permission setup; a grant to a separate CuaDriver.app does not \
+         verify this process's access.",
     )
     .with_data(data)
 }
 
 fn check_tcc_screen_recording() -> CheckEntry {
-    let granted = screen_recording_granted();
+    screen_recording_check(screen_recording_granted(), current_bundle_identifier())
+}
+
+fn screen_recording_check(granted: bool, bundle_identifier: Option<String>) -> CheckEntry {
     let data = CheckData {
-        bundle_identifier: current_bundle_identifier(),
+        bundle_identifier,
         ..Default::default()
     };
     if granted {
@@ -224,9 +228,11 @@ fn check_tcc_screen_recording() -> CheckEntry {
     CheckEntry::fail(
         NAME_TCC_SCREEN_RECORDING,
         "Screen Recording is NOT granted for this process.",
-        "Grant Screen Recording to CuaDriver.app in System Settings → Privacy & Security → \
-         Screen Recording. The grant is attributed to the responsible process — see \
-         bundle_identity to confirm the right binary is being prompted.",
+        "Grant Screen Recording to the app or executable macOS attributes this process's \
+         permission request to in System Settings → Privacy & Security → Screen Recording. \
+         For standalone CuaDriver, use CuaDriver.app. For an embedded or linked driver, \
+         follow the host's permission setup; a grant to a separate CuaDriver.app does not \
+         verify this process's access.",
     )
     .with_data(data)
 }
@@ -252,11 +258,11 @@ fn check_screen_capture_capability() -> CheckEntry {
     // SCShareableContent::get() is not a read-only probe on recent macOS:
     // Tahoe may display the separate private-window-picker bypass consent.
     // `health_report` is declared read-only, so fail closed to an explicit
-    // unknown/skip state. `permissions grant` is the sole flow allowed to
-    // explain, request, and verify direct capture.
+    // unknown/skip state. Explicit verification must use the permission
+    // flow for the app or executable macOS attributes the request to.
     CheckEntry::skip(
         NAME_SCREEN_CAPTURE_CAPABILITY,
-        "Direct ScreenCaptureKit readiness was not probed because health_report is read-only; run `cua-driver permissions grant` to request and verify it explicitly.",
+        "Direct ScreenCaptureKit readiness was not probed because health_report is read-only. For standalone CuaDriver, use `cua-driver permissions grant` to request and verify it explicitly. For an embedded or linked driver, use the host's permission flow for the app or executable macOS attributes this process's permission request to; the standalone command does not verify the host's capture readiness.",
     )
 }
 
@@ -392,6 +398,86 @@ mod tests {
         let data = entry.data.expect("data block expected");
         assert!(data.os_version.is_some(), "os_version must be set");
         assert!(data.architecture.is_some(), "architecture must be set");
+    }
+
+    #[test]
+    fn permission_remediation_preserves_attribution_uncertainty() {
+        let mut wrong_hints = Vec::new();
+        for check in [accessibility_check, screen_recording_check] {
+            for bid in [
+                None,
+                Some(CANONICAL_BUNDLE_ID.to_owned()),
+                Some("com.example.host".to_owned()),
+            ] {
+                let denied = check(false, bid.clone());
+                assert_eq!(denied.status, CheckStatus::Fail);
+                assert_eq!(
+                    denied
+                        .data
+                        .as_ref()
+                        .and_then(|d| d.bundle_identifier.clone()),
+                    bid
+                );
+                let hint = denied.hint.unwrap();
+                if !hint.contains("app or executable macOS attributes")
+                    || !hint.contains("For standalone CuaDriver")
+                {
+                    wrong_hints.push(format!("{} {bid:?}: {hint}", denied.name));
+                }
+                let granted = check(true, bid.clone());
+                assert_eq!(granted.status, CheckStatus::Pass);
+                assert!(granted.hint.is_none());
+                assert_eq!(granted.data.and_then(|d| d.bundle_identifier), bid);
+            }
+        }
+        assert!(wrong_hints.is_empty(), "{}", wrong_hints.join("\n"));
+    }
+
+    #[test]
+    fn bundle_remediation_qualifies_standalone_launch_in_both_failure_branches() {
+        let mut wrong_hints = Vec::new();
+        for bid in [
+            None,
+            Some(String::new()),
+            Some("com.example.host".to_owned()),
+        ] {
+            let entry = standalone_bundle_identity(bid.clone(), "/tmp/host".to_owned());
+            assert_eq!(entry.status, CheckStatus::Fail);
+            let hint = entry.hint.unwrap();
+            if !hint.contains("For standalone CuaDriver")
+                || !hint.contains("does not identify")
+                || hint.contains("TCC grants will be attributed to")
+            {
+                wrong_hints.push(format!("{bid:?}: {hint}"));
+            }
+            let data = entry.data.unwrap();
+            assert_eq!(data.bundle_identifier, bid);
+            assert_eq!(data.executable_path.as_deref(), Some("/tmp/host"));
+            assert_eq!(data.identity_source.as_deref(), Some("current_process"));
+        }
+        let entry = standalone_bundle_identity(Some(CANONICAL_BUNDLE_ID.to_owned()), String::new());
+        assert_eq!(entry.status, CheckStatus::Pass);
+        assert!(entry.hint.is_none());
+        assert!(wrong_hints.is_empty(), "{}", wrong_hints.join("\n"));
+    }
+
+    #[tokio::test]
+    async fn capture_remediation_through_actual_provider_dispatcher_is_owner_scoped() {
+        let tool = HealthReportTool::new(Arc::new(MacosHealthProvider));
+        let result = tool
+            .invoke(serde_json::json!({"include": [NAME_SCREEN_CAPTURE_CAPABILITY]}))
+            .await;
+        let report = result.structured_content.unwrap();
+        let check = report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == NAME_SCREEN_CAPTURE_CAPABILITY)
+            .unwrap();
+        assert_eq!(check["status"], "skip");
+        let message = check["message"].as_str().unwrap();
+        assert!(message.contains("For standalone CuaDriver"), "{message}");
+        assert!(message.contains("does not verify"), "{message}");
     }
 
     #[test]

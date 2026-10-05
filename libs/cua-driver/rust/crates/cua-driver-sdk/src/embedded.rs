@@ -865,6 +865,7 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
                 | "DBUS_SESSION_BUS_ADDRESS"
                 | "XAUTHORITY"
                 | "CUA_LOG"
+                | "CUA_DRIVER_RS_HOME"
                 | "CUA_DRIVER_RS_TELEMETRY_ENABLED"
                 | "CUA_TELEMETRY_ENABLED"
         )
@@ -1230,6 +1231,29 @@ mod tests {
             "CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS"
         ));
         assert!(allowed_environment_name("CUA_DRIVER_WINDOW_CHANGE_POLL_MS"));
+    }
+
+    #[test]
+    fn driver_state_root_is_inherited_and_overridable() {
+        let inherited = [("CUA_DRIVER_RS_HOME".into(), "host-state".into())];
+        for (overrides, expected) in [
+            (Vec::new(), "host-state"),
+            (
+                vec![EmbeddedEnvironmentVariable {
+                    name: "CUA_DRIVER_RS_HOME".into(),
+                    value: "isolated-state".into(),
+                }],
+                "isolated-state",
+            ),
+        ] {
+            let mut host_options = options(EmbeddedPermissionMode::Standard);
+            host_options.environment = overrides;
+            let validated = validate_options(host_options).expect("state root is supported");
+            let values = merge_safe_environment(inherited.clone(), &validated.environment);
+            assert_eq!(values.len(), 1);
+            assert_eq!(values[0].name, "CUA_DRIVER_RS_HOME");
+            assert_eq!(values[0].value, expected);
+        }
     }
 
     #[test]

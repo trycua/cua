@@ -44,9 +44,14 @@ fn isolated_driver_host(
         environment: state
             .env()
             .into_iter()
-            // The SDK forwards only its safe allowlist; without XDG overrides
-            // the driver derives its XDG state from the isolated HOME.
-            .filter(|(name, _)| matches!(*name, "HOME" | "APPDATA" | "LOCALAPPDATA"))
+            // Keep the driver-owned state root without redirecting the OS
+            // profile directories used for installed-app discovery.
+            .filter(|(name, _)| {
+                matches!(
+                    *name,
+                    "HOME" | "APPDATA" | "LOCALAPPDATA" | "CUA_DRIVER_RS_HOME"
+                )
+            })
             .map(|(name, value)| EmbeddedEnvironmentVariable {
                 name: name.into(),
                 value: value.to_string_lossy().into_owned(),

@@ -88,17 +88,57 @@ unsafe fn owning_window_id(window: AXUIElementRef) -> Option<u32> {
     resolve_owning_window(
         RetainedElement::retain(window as usize),
         MAX_SHEET_NESTING,
-        |element| copy_string_attr(element.as_ptr() as AXUIElementRef, "AXRole"),
-        |element| {
-            copy_element_attr(element.as_ptr() as AXUIElementRef, "AXParent").map(|parent| {
-                // copy_element_attr returned +1; hand that reference over.
-                let retained = RetainedElement::retain(parent as usize);
-                CFRelease(parent as CFTypeRef);
-                retained
-            })
-        },
+        role_of,
+        parent_of,
         |element| ax_get_window_id(element.as_ptr() as AXUIElementRef),
     )
+}
+
+fn role_of(element: &RetainedElement) -> Option<String> {
+    // SAFETY: a RetainedElement holds a +1 reference on a live element.
+    unsafe { copy_string_attr(element.as_ptr() as AXUIElementRef, "AXRole") }
+}
+
+fn parent_of(element: &RetainedElement) -> Option<RetainedElement> {
+    // SAFETY: as above; copy_element_attr returned +1, handed over here.
+    unsafe {
+        copy_element_attr(element.as_ptr() as AXUIElementRef, "AXParent").map(|parent| {
+            let retained = RetainedElement::retain(parent as usize);
+            CFRelease(parent as CFTypeRef);
+            retained
+        })
+    }
+}
+
+/// The menu of a menu item whose `AXMenu` parent has no readable `AXParent`.
+/// A Mac Catalyst pop-up's menu has this shape: it is its own WindowServer
+/// window and names no window upward. Anything else, including an unreadable
+/// role, is `None`.
+fn parentless_menu<E>(
+    item: E,
+    role: impl Fn(&E) -> Option<String>,
+    parent: impl Fn(&E) -> Option<E>,
+) -> Option<E> {
+    if role(&item)? != "AXMenuItem" {
+        return None;
+    }
+    let menu = parent(&item)?;
+    (role(&menu)? == "AXMenu" && parent(&menu).is_none()).then_some(menu)
+}
+
+/// Whether `element` is an item of a menu that names no window (see
+/// [`parentless_menu`]).
+///
+/// # Safety
+///
+/// `element` must be a valid `AXUIElementRef` for the duration of the call.
+pub unsafe fn in_parentless_menu(element: AXUIElementRef) -> bool {
+    parentless_menu(
+        RetainedElement::retain(element as usize),
+        role_of,
+        parent_of,
+    )
+    .is_some()
 }
 
 /// Pure sheet-to-parent resolution behind [`owning_window_id`].
@@ -301,8 +341,8 @@ pub fn gather_background_facts(
 #[cfg(test)]
 mod tests {
     use super::{
-        count_competing_keyboard_destinations, resolve_owning_window, AxWindowRecord,
-        WindowServerRow,
+        count_competing_keyboard_destinations, parentless_menu, resolve_owning_window,
+        AxWindowRecord, WindowServerRow,
     };
 
     /// A fake AX node: (role, AXParent index, CGWindowID).
@@ -362,6 +402,41 @@ mod tests {
             ("AXSheet", Some(0), Some(173)),
         ];
         assert_eq!(resolve(&tree, 0), Some(172));
+    }
+
+    /// A fake AX node for the menu checks: (role, AXParent index).
+    type MenuNode = (&'static str, Option<usize>);
+
+    fn menu_of(tree: &[MenuNode], item: usize) -> Option<usize> {
+        parentless_menu(item, |&i| Some(tree[i].0.to_owned()), |&i| tree[i].1)
+    }
+
+    #[test]
+    fn only_items_of_a_menu_with_no_parent_qualify() {
+        let tree: &[MenuNode] = &[
+            // CatalystProfile as measured: the menu has no AXParent.
+            ("AXMenu", None),
+            ("AXMenuItem", Some(0)),
+            // An AppKit pop-up: the menu's parent is the button.
+            ("AXPopUpButton", None),
+            ("AXMenu", Some(2)),
+            ("AXMenuItem", Some(3)),
+            // A menu under the application.
+            ("AXApplication", None),
+            ("AXMenu", Some(5)),
+            ("AXMenuItem", Some(6)),
+            ("AXButton", Some(0)),
+        ];
+        assert_eq!(menu_of(tree, 1), Some(0));
+        assert_eq!(menu_of(tree, 4), None, "AppKit pop-up");
+        assert_eq!(menu_of(tree, 7), None, "a menu under the application");
+        assert_eq!(menu_of(tree, 0), None, "the menu itself is not an item");
+        assert_eq!(menu_of(tree, 8), None, "not a menu item");
+        assert_eq!(
+            parentless_menu(1, |_| None, |&i| tree[i].1),
+            None,
+            "unreadable role"
+        );
     }
 
     fn ax_window(window_id: u32, minimized: Option<bool>) -> AxWindowRecord {

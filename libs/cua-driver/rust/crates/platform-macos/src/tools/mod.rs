@@ -329,17 +329,28 @@ async fn decide_background_window_action(
     action: cua_driver_core::background_input::BackgroundAction,
 ) -> Result<(), cua_driver_core::protocol::ToolResult> {
     use cua_driver_core::background_input::{
-        decide_background_input, BackgroundInputDecision, ExactWindowTarget,
+        decide_background_input, refusal_codes, BackgroundInputDecision, ElementAncestry,
+        ExactWindowTarget,
     };
     let element_guard =
         element_ptr.map(|ptr| unsafe { crate::ax::snapshot::RetainedElement::retain(ptr) });
-    let facts = match tokio::task::spawn_blocking(move || {
+    let (facts, menu_open) = match tokio::task::spawn_blocking(move || {
         let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
-        crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
+        let facts = crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr);
+        // An unproven item of a Catalyst-style menu: is a menu of the app
+        // still on screen (so a refusal does not leave it open silently)?
+        let menu_open = facts.element == ElementAncestry::Unproven
+            && element_ptr.is_some_and(|ptr| unsafe {
+                crate::ax::exact_target::in_parentless_menu(
+                    ptr as crate::ax::bindings::AXUIElementRef,
+                )
+            })
+            && crate::windows::menu_window_ids(pid).is_some_and(|ids| !ids.is_empty());
+        (facts, menu_open)
     })
     .await
     {
-        Ok(facts) => facts,
+        Ok(gathered) => gathered,
         Err(error) => {
             return Err(cua_driver_core::protocol::ToolResult::error(format!(
                 "Could not gather exact-target facts for pid {pid} window {window_id}: {error}"
@@ -348,7 +359,14 @@ async fn decide_background_window_action(
     };
     match decide_background_input(ExactWindowTarget { pid, window_id }, &facts, action) {
         BackgroundInputDecision::Execute { .. } => Ok(()),
-        BackgroundInputDecision::Refuse(refusal) => {
+        BackgroundInputDecision::Refuse(mut refusal) => {
+            if menu_open && refusal.code == refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW {
+                refusal.reason.push_str(
+                    ". It is an item of a menu that names no window, and a menu of this app is \
+                     still on screen; click this item with delivery_mode \"foreground\" to pick it",
+                );
+                refusal.advice = Some("foreground");
+            }
             Err(background_refusal_result(pid, window_id, &refusal))
         }
     }

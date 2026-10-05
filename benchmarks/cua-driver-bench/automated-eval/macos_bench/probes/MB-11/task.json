@@ -1,0 +1,18 @@
+{
+  "id": "MB-11",
+  "title": "Read a native tooltip and type its code",
+  "group": "P",
+  "ability": "tooltip",
+  "dimension_tags": [
+    "hover",
+    "tooltip",
+    "coverage_probe"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "tooltip"
+  ],
+  "coverage_caveat": "Codex computer-use API has no hover or pointer-move tool; report separately."
+}

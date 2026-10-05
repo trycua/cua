@@ -1,0 +1,7 @@
+{
+  "id": "PROBE-CLIPBOARD",
+  "title": "Compute a sum in Calculator and save it in a native app",
+  "dimension_tags": ["multi_app", "cross_app_transfer"],
+  "timeout_s": 300,
+  "app_args": ["--mode", "clipboard"]
+}

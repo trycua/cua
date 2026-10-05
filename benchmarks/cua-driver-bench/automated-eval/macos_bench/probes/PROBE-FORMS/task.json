@@ -1,0 +1,7 @@
+{
+  "id": "PROBE-FORMS",
+  "title": "Fill and submit a native invoice form",
+  "dimension_tags": ["native_ax", "text_entry"],
+  "timeout_s": 300,
+  "app_args": ["--mode", "forms"]
+}

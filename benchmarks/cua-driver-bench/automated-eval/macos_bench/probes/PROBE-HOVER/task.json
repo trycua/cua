@@ -1,0 +1,7 @@
+{
+  "id": "PROBE-HOVER",
+  "title": "Reveal a hover-only toolbar and click one action",
+  "dimension_tags": ["hover", "coverage_probe"],
+  "timeout_s": 240,
+  "app_args": ["--mode", "hover"]
+}

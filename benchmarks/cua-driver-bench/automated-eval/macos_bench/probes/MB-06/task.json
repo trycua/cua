@@ -1,0 +1,17 @@
+{
+  "id": "MB-06",
+  "title": "Type a paragraph, bold one sentence, replace one word in a rich text editor",
+  "group": "AF",
+  "ability": "text_editing",
+  "dimension_tags": [
+    "text_entry",
+    "selection",
+    "rich_text"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "richtext"
+  ]
+}

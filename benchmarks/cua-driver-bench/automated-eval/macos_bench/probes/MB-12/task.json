@@ -1,0 +1,17 @@
+{
+  "id": "MB-12",
+  "title": "Fill a form in a background app while another app stays frontmost and the pointer stays put",
+  "group": "P",
+  "ability": "background_operation",
+  "dimension_tags": [
+    "background",
+    "disturbance_in_pass"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "forms"
+  ],
+  "sentinel_in_pass": true
+}

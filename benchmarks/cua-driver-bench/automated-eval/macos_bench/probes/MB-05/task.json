@@ -1,0 +1,16 @@
+{
+  "id": "MB-05",
+  "title": "Fill and submit a native invoice form",
+  "group": "AF",
+  "ability": "form_fill",
+  "dimension_tags": [
+    "native_ax",
+    "text_entry"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "forms"
+  ]
+}

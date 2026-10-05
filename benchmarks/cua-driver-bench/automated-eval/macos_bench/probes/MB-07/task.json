@@ -1,0 +1,19 @@
+{
+  "id": "MB-07",
+  "title": "Compute in Calculator, copy the result, paste it into BenchLab and save",
+  "group": "AF",
+  "ability": "multi_app_clipboard",
+  "dimension_tags": [
+    "multi_app",
+    "clipboard"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "clipboard"
+  ],
+  "needs_apps": [
+    "Calculator"
+  ]
+}

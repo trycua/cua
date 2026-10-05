@@ -9,13 +9,10 @@ use cua_driver_core::browser::{
 };
 
 use crate::ax::bindings::{kAXErrorSuccess, perform_action, AXUIElementRef};
-use crate::ax::tree::{walk_tree_bounded, AXNode, TreeWalkResult, DEFAULT_MAX_DEPTH};
+use crate::ax::tree::{walk_native_chrome_bounded, AXNode, TreeWalkResult};
 
-// Large Chromium pages can put the browser-owned consent sheet after the
-// ordinary 2,000-node snapshot cap. Keep this privileged scan bounded while
-// allowing enough headroom to inspect Chrome's top-level sheet on pages such
-// as Gmail. The matcher below still requires one exact AXSheet and one exact
-// semantic Allow action before it will press anything.
+// Keep the native-chrome walk bounded even though it skips web content.
+// The matcher still requires one exact AXSheet and semantic Allow action.
 const CONSENT_MAX_ELEMENTS: usize = 5_000;
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
@@ -214,12 +211,10 @@ impl Drop for ConsentTrees {
 fn read_consent_trees(pid: i32, window_id: u32) -> Result<ConsentTrees, BrowserRefusal> {
     let mut trees = ConsentTrees(Vec::new());
     for candidate in consent_surface_ids(crate::windows::all_windows(), pid, window_id) {
-        trees.push(walk_tree_bounded(
+        trees.push(walk_native_chrome_bounded(
             pid,
-            Some(candidate),
-            None,
+            candidate,
             CONSENT_MAX_ELEMENTS,
-            DEFAULT_MAX_DEPTH,
         ))?;
     }
     Ok(trees)

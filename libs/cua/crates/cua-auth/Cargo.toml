@@ -19,7 +19,7 @@ rand.workspace = true
 sha2.workspace = true
 url.workspace = true
 rustls.workspace = true
-tokio = { workspace = true, features = ["net", "time", "sync", "io-util", "macros"] }
+tokio = { workspace = true, features = ["net", "time", "sync", "io-util", "macros", "rt"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 

@@ -1697,7 +1697,7 @@ pub fn scroll_wheel_at_xy(
                 .unwrap_or_default()
                 .subsec_nanos() as i64,
         ),
-        MousePostMode::Both,
+        MousePostMode::SkyLightPreferred,
     );
     std::thread::sleep(std::time::Duration::from_millis(12));
 
@@ -1736,10 +1736,15 @@ pub fn scroll_wheel_at_xy(
         // f40 = target pid (Chromium synthetic-event filter).
         crate::input::skylight::set_integer_field(event_ptr, 40, pid as i64);
 
-        // Belt+suspenders post: SkyLight reaches backgrounded Chromium/Catalyst;
-        // the public path lands on AppKit/WKWebView. Mouse-class → no auth envelope.
-        crate::input::skylight::post_to_pid(pid as libc::pid_t, event_ptr, false);
-        event.post_to_pid(pid as libc::pid_t);
+        // One post per tick. SkyLight reaches backgrounded Chromium/Catalyst and
+        // AppKit alike; posting the same wheel event through the public API as
+        // well made an AppKit scroll view scroll every tick twice.
+        // Mouse-class → no auth envelope.
+        dispatch_mouse_event(
+            post_route(MousePostMode::SkyLightPreferred, skylight_available()),
+            pid,
+            &event,
+        );
 
         std::thread::sleep(std::time::Duration::from_millis(30));
     }
@@ -2318,6 +2323,32 @@ mod tests {
                     "LeftMouseDragged",
                     "LeftMouseUp",
                 ],
+                PostRoute::PublicPid
+            )
+        );
+    }
+
+    #[test]
+    fn background_scroll_posts_one_primer_and_one_wheel_event_per_tick() {
+        let capture = Capture::start(true);
+        scroll_wheel_at_xy(1, 100.0, 100.0, Some((10.0, 10.0)), Some(7), -240, 0, 3).unwrap();
+        assert_eq!(
+            sequence(&capture),
+            expected(
+                &["MouseMoved", "ScrollWheel", "ScrollWheel", "ScrollWheel"],
+                PostRoute::SkyLight
+            )
+        );
+    }
+
+    #[test]
+    fn background_scroll_falls_back_to_the_public_api_once_without_the_spi() {
+        let capture = Capture::start(false);
+        scroll_wheel_at_xy(1, 100.0, 100.0, Some((10.0, 10.0)), Some(7), -240, 0, 2).unwrap();
+        assert_eq!(
+            sequence(&capture),
+            expected(
+                &["MouseMoved", "ScrollWheel", "ScrollWheel"],
                 PostRoute::PublicPid
             )
         );

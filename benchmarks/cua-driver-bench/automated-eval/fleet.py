@@ -50,6 +50,9 @@ REMOTE_BENCHMARK_EXIT = "/tmp/cua-driver-bench.exit"
 REMOTE_PROVISION_STDOUT = "/tmp/cua-driver-bench-provision.stdout"
 REMOTE_PROVISION_STDERR = "/tmp/cua-driver-bench-provision.stderr"
 REMOTE_PROVISION_EXIT = "/tmp/cua-driver-bench-provision.exit"
+REMOTE_BOOTSTRAP_STDOUT = "/tmp/cua-driver-bench-bootstrap.stdout"
+REMOTE_BOOTSTRAP_STDERR = "/tmp/cua-driver-bench-bootstrap.stderr"
+REMOTE_BOOTSTRAP_EXIT = "/tmp/cua-driver-bench-bootstrap.exit"
 REMOTE_ARCHIVE_STDOUT = "/tmp/cua-driver-bench-archive.stdout"
 REMOTE_ARCHIVE_STDERR = "/tmp/cua-driver-bench-archive.stderr"
 REMOTE_ARCHIVE_EXIT = "/tmp/cua-driver-bench-archive.exit"
@@ -493,6 +496,7 @@ if ! command -v codex >/dev/null 2>&1 || ! codex --version | grep -Fqx {shlex.qu
   npm_root=$(npm root --global)
   npm uninstall --global @openai/codex >/dev/null 2>&1 || true
   if test -d "$npm_root/@openai"; then
+    rm -rf -- "$npm_root/@openai/codex"
     find "$npm_root/@openai" -mindepth 1 -maxdepth 1 -type d -name '.codex-*' \
       -exec rm -rf -- {{}} +
   fi
@@ -729,12 +733,17 @@ async def _run_fleet_task_shard(
             lambda: worker.files.write_text(f"{REMOTE_CODEX_HOME}/config.toml", provider_config),
             "agent configuration upload",
         )
-        await _run_checked(
+        bootstrap = await _run_background_command(
             worker,
             _bootstrap_command(shard_config, codex_version),
-            "worker bootstrap",
             1200,
+            label="worker bootstrap",
+            stdout_path=REMOTE_BOOTSTRAP_STDOUT,
+            stderr_path=REMOTE_BOOTSTRAP_STDERR,
+            exit_path=REMOTE_BOOTSTRAP_EXIT,
         )
+        if bootstrap.returncode != 0:
+            raise _command_error("worker bootstrap", bootstrap)
 
         print(f"{prefix} verifying selected Cua Driver releases...")
         await _run_checked(

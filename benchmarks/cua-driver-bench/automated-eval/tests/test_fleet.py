@@ -95,8 +95,11 @@ class FleetHelpersTests(unittest.TestCase):
         command = fleet._bootstrap_command(config, "1.2.3")
 
         uninstall = command.index("npm uninstall --global @openai/codex")
+        install_cleanup = command.index('rm -rf -- "$npm_root/@openai/codex"')
         stale_cleanup = command.index(".codex-*")
         install = command.index("npm install --global --no-audit --no-fund")
+        self.assertLess(uninstall, install_cleanup)
+        self.assertLess(install_cleanup, stale_cleanup)
         self.assertLess(uninstall, stale_cleanup)
         self.assertLess(stale_cleanup, install)
 

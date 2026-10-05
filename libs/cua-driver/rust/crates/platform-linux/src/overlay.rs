@@ -660,9 +660,7 @@ pub async fn animate_cursor_to_target_for(
         let guard = RENDER.lock().unwrap();
         matches!(
             guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled
-                && rs.core.visible
-                && cursor_overlay::render_state::is_placed(rs.core.pos)
+            Some(rs) if rs.core.should_animate_to_target()
         )
     };
     if !should_animate {

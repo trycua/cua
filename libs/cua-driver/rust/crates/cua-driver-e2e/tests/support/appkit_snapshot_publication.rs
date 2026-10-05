@@ -355,3 +355,114 @@ fn harness_appkit_pending_snapshot_cannot_retarget_token() {
         Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
     });
 }
+
+/// Disabling a session cursor suppresses its visual glide, so AX input must
+/// not wait for that invisible animation. The fixture independently records
+/// the handler effect; a long fixed glide separates it from normal settling.
+#[test]
+#[ignore]
+fn harness_appkit_disabled_cursor_does_not_delay_ax_action() {
+    let case = native_foreground_case(
+        "appkit",
+        "disabled_cursor_ax_action",
+        Targeting::Ax,
+        DriverRoute::MacosAxAction,
+    );
+    let label = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut recorder = McpDriver::spawn_macos_daemon_proxy_named(&label)
+            .expect("TCC-authorized native daemon");
+        *evidence = recording_evidence(recorder.recording_dir());
+        // Keep behavioral video, but measure an ordinary unrecorded MCP
+        // call: synchronous before/after recording screenshots add their
+        // own latency unrelated to the cursor wait.
+        let socket =
+            std::env::var("CUA_E2E_MACOS_DAEMON_SOCKET").expect("canonical native daemon socket");
+        let mut driver =
+            McpDriver::spawn_daemon_proxy_unrecorded(&socket).expect("ordinary action proxy");
+        let directory = tempfile::tempdir().unwrap();
+        let child = Command::new(harness_exe())
+            .env("CUA_APPKIT_SNAPSHOT_DIR", directory.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("AppKit counter fixture");
+        let harness = Harness {
+            pid: child.id(),
+            _app: child,
+        };
+        let ready = fixture_state(directory.path(), |state| {
+            state["window_id"].as_u64().is_some_and(|id| id > 0)
+        });
+        let window = ready["window_id"].as_u64().unwrap();
+        assert_eq!(ready["original_clicks"], 0);
+        // Complete exact-window activation during setup, outside the latency
+        // measurement; the owner isolates cursor waiting, not focus assistance.
+        let activated = driver.call(
+            "bring_to_front",
+            serde_json::json!({
+                "pid": harness.pid, "window_id": window
+            }),
+        );
+        assert!(
+            !activated.is_error(),
+            "activate fixture: {}",
+            activated.text()
+        );
+        assert_eq!(activated.structured()["activated"], true);
+        assert_eq!(
+            activated.structured()["observed"]["focused_window_id"],
+            window
+        );
+
+        let session = format!("disabled-cursor-{}", harness.pid);
+        for (tool, mut args) in [
+            (
+                "set_agent_cursor_motion",
+                serde_json::json!({
+                    "glide_duration_ms": 5000, "timing": "fixed"
+                }),
+            ),
+            (
+                "set_agent_cursor_enabled",
+                serde_json::json!({"enabled": false}),
+            ),
+        ] {
+            args["session"] = serde_json::json!(session);
+            let response = driver.call(tool, args);
+            assert!(!response.is_error(), "{tool}: {}", response.text());
+        }
+        let state = driver.call(
+            "get_agent_cursor_state",
+            serde_json::json!({"session": session}),
+        );
+        assert!(!state.is_error(), "cursor state: {}", state.text());
+        assert_eq!(state.structured()["enabled"], false);
+        assert_eq!(state.structured()["motion"]["glide_duration_ms"], 5000.0);
+        let snapshot = driver.call(
+            "get_window_state",
+            serde_json::json!({
+                "pid": harness.pid, "window_id": window, "include_screenshot": false
+            }),
+        );
+        assert!(!snapshot.is_error(), "snapshot: {}", snapshot.text());
+        let token = element_token_by_id(&snapshot, "snapshot-original");
+        recorder.start_behavior_recording();
+        let started = Instant::now();
+        let response = driver.call(
+            "click",
+            serde_json::json!({
+                "session": session, "pid": harness.pid, "window_id": window,
+                "element_token": token, "delivery_mode": "foreground"
+            }),
+        );
+        let elapsed = started.elapsed();
+        assert!(!response.is_error(), "AX click: {}", response.text());
+        fixture_state(directory.path(), |state| state["original_clicks"] == 1);
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "disabled cursor delayed AX input for {elapsed:?}; configured glide is 5 seconds"
+        );
+        Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+    });
+}

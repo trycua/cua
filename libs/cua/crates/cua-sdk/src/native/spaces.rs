@@ -2720,7 +2720,22 @@ impl Spaces {
     pub async fn space(&self, space: String) -> Result<Arc<Space>> {
         let host = self.host.clone();
         run(async move {
-            let (info, inner) = host.connect(&space).await?;
+            let (mut info, inner) = host.connect(&space).await?;
+            // Relay discovery has no OS fields. Use the handshake already
+            // fetched by either topology, without registering the machine.
+            if inner.has_spacesd() {
+                let os = inner.capabilities().os.as_ref();
+                info.os = match os.map(|o| o.family()) {
+                    Some(cua_proto::env::v1::OsFamily::Macos) => "macos",
+                    Some(cua_proto::env::v1::OsFamily::Windows) => "windows",
+                    Some(cua_proto::env::v1::OsFamily::Linux) => "linux",
+                    _ => "",
+                }
+                .into();
+                let os = os.filter(|_| !info.os.is_empty());
+                info.os_name = os.map(|o| o.name.clone()).unwrap_or_default();
+                info.os_pretty_name = os.map(|o| o.pretty_name.clone()).unwrap_or_default();
+            }
             Ok(Arc::new(Space { host, info, inner }))
         })
         .await

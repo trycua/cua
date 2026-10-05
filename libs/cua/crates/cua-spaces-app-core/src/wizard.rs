@@ -630,6 +630,7 @@ pub struct PlacementOption {
 pub fn cloud_family(image: &SandboxImage) -> &'static str {
     let r = image.image_ref.to_ascii_lowercase();
     match image.os {
+        SpaceOs::Unknown => "unknown",
         SpaceOs::Macos => "macos",
         SpaceOs::Windows => "windows",
         SpaceOs::Linux if r.contains("omarchy") => "omarchy",
@@ -2584,12 +2585,13 @@ pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
     let custom = custom_ref(state).is_some();
     let image_error = validate_image_ref(&state.image_text);
     let disk = disk_view(state, &image, env);
-    let can_continue = match state.step {
-        0 => placeable && placement_ready && image_error.is_none(),
-        1 => disk.error.is_none(),
-        2 => !name_invalid,
-        _ => true,
-    };
+    let can_continue = image.os != SpaceOs::Unknown
+        && match state.step {
+            0 => placeable && placement_ready && image_error.is_none(),
+            1 => disk.error.is_none(),
+            2 => !name_invalid,
+            _ => true,
+        };
     let images = &catalog().images;
     let pressed_os = selected_os(state);
     let os_tiles = [

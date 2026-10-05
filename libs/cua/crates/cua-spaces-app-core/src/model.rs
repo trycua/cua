@@ -17,6 +17,9 @@ pub enum SpaceOs {
     Windows,
     /// Linux.
     Linux,
+    /// The host has not reported a recognized operating system.
+    #[serde(other)]
+    Unknown,
 }
 
 impl SpaceOs {
@@ -26,6 +29,7 @@ impl SpaceOs {
             SpaceOs::Macos => "macOS",
             SpaceOs::Windows => "Windows",
             SpaceOs::Linux => "Linux",
+            SpaceOs::Unknown => "Unknown",
         }
     }
 
@@ -35,6 +39,7 @@ impl SpaceOs {
             SpaceOs::Macos => "macos",
             SpaceOs::Windows => "windows",
             SpaceOs::Linux => "linux",
+            SpaceOs::Unknown => "unknown",
         }
     }
 

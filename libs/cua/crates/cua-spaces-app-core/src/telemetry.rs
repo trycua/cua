@@ -335,6 +335,7 @@ fn after_answers(before: &OnboardingState, after: &OnboardingState) -> Onboardin
 
 fn os_word(os: SpaceOs) -> &'static str {
     match os {
+        SpaceOs::Unknown => "unknown",
         SpaceOs::Macos => "macos",
         SpaceOs::Windows => "windows",
         SpaceOs::Linux => "linux",

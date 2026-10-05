@@ -400,7 +400,8 @@ public struct NewSpaceWizardView: View {
         switch id {
         case "macos": return .macos
         case "windows": return .windows
-        default: return .linux
+        case "linux": return .linux
+        default: return .unknown
         }
     }
 

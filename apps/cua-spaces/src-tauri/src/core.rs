@@ -449,7 +449,7 @@ impl SpaceRow {
             kind: (!info.kind.is_empty()).then_some(info.kind),
             arch: (!info.arch.is_empty()).then_some(info.arch),
             added_at: info.added_at,
-            os: None,
+            os: matches!(info.os.as_str(), "macos" | "windows" | "linux").then_some(info.os),
             reachable: false,
             error: None,
             host: (!info.host.is_empty()).then_some(info.host),
@@ -464,24 +464,15 @@ impl SpaceRow {
 
     fn connected(info: SpaceInfo, space: &Space) -> Self {
         let mut row = Self::from_info(info);
-        row.os = Some(os_name(space).into());
-        if let Some(name) = space
-            .capabilities()
-            .os
-            .as_ref()
-            .map(|o| o.name.clone())
-            .filter(|n| !n.is_empty())
-        {
-            row.os_name = Some(name);
-        }
-        if let Some(pretty) = space
-            .capabilities()
-            .os
-            .as_ref()
-            .map(|o| o.pretty_name.clone())
-            .filter(|n| !n.is_empty())
-        {
-            row.os_pretty_name = Some(pretty);
+        if space.has_spacesd() {
+            row.os = os_name(space).map(str::to_string);
+            let os = space
+                .capabilities()
+                .os
+                .as_ref()
+                .filter(|_| row.os.is_some());
+            row.os_name = os.map(|o| o.name.clone()).filter(|s| !s.is_empty());
+            row.os_pretty_name = os.map(|o| o.pretty_name.clone()).filter(|s| !s.is_empty());
         }
         if let Some((image, digest)) = space.image() {
             row.image = Some(image.to_string());
@@ -508,11 +499,12 @@ impl SpaceRow {
     }
 }
 
-fn os_name(space: &Space) -> &'static str {
+fn os_name(space: &Space) -> Option<&'static str> {
     match space.os_family() {
-        pb::OsFamily::Macos => "macos",
-        pb::OsFamily::Windows => "windows",
-        _ => "linux",
+        pb::OsFamily::Macos => Some("macos"),
+        pb::OsFamily::Windows => Some("windows"),
+        pb::OsFamily::Linux => Some("linux"),
+        _ => None,
     }
 }
 

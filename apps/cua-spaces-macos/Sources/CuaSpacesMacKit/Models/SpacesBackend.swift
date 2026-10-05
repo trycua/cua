@@ -189,10 +189,10 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
                     switch probe {
                     case .success(let space):
                         row.reachable = true
-                        row.os = AppSpaceOs(word: space.info().os) ?? row.os
                         let info = space.info()
-                        if !info.osName.isEmpty { row.osName = info.osName }
-                        if !info.osPrettyName.isEmpty { row.osPrettyName = info.osPrettyName }
+                        row.os = AppSpaceOs(word: info.os)
+                        row.osName = info.osName.isEmpty ? nil : info.osName
+                        row.osPrettyName = info.osPrettyName.isEmpty ? nil : info.osPrettyName
                         if !info.image.isEmpty { row.image = info.image }
                         if !info.imageDigest.isEmpty { row.imageDigest = info.imageDigest }
                         if let kind = AppSpaceKind(word: info.kind) { row.kind = kind }
@@ -471,6 +471,7 @@ extension AppSpaceOs {
         case .macos: return "macOS"
         case .windows: return "Windows"
         case .linux: return "Linux"
+        case .unknown: return "Unknown"
         }
     }
 }

@@ -17,7 +17,7 @@ import type {
  * Synthetic OS multipliers on top of the Linux list price. Windows and macOS
  * carry licensing overhead; these numbers are illustrative only.
  */
-const OS_MULTIPLIER: Record<SpaceOs, number> = {
+const OS_MULTIPLIER: Record<Exclude<SpaceOs, "unknown">, number> = {
   linux: 1,
   windows: 1.35,
   macos: 2.1,
@@ -55,6 +55,8 @@ function stripIndex(name: string): string {
 
 function sceneFor(os: SpaceOs): TemplateMember["scene"] {
   switch (os) {
+    case "unknown":
+      return "blank";
     case "windows":
       return "windows-desktop";
     case "macos":
@@ -65,6 +67,7 @@ function sceneFor(os: SpaceOs): TemplateMember["scene"] {
 }
 
 export function hourlyRate(os: SpaceOs, size: MachineSize): number {
+  if (os === "unknown") throw new Error("Cannot price an unknown operating system");
   const option = SIZES.find((s) => s.id === size);
   if (!option) throw new Error(`Unknown size: ${size}`);
   return round2(option.linuxHourlyUsd * OS_MULTIPLIER[os]);
@@ -110,6 +113,7 @@ export function createFleetLocally(
 ): CreateFleetResult {
   const template = getTemplate(draft.templateId);
   const members = resolveMembers(draft);
+  if (members.some((m) => m.os === "unknown")) throw new Error("Choose an operating system before creating a Space");
   const ordinal = existing.filter((s) => s.fleetId).reduce((set, s) => set.add(s.fleetId!), new Set<string>()).size + 1;
   const fleetId = `fleet-${ordinal}-${template.id}`;
   const usedNames = new Set(existing.map((s) => s.name));

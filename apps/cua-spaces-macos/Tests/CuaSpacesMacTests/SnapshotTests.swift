@@ -172,6 +172,30 @@ struct SnapshotTests {
         try assertSnapshot(form(true), "space-facts-copied", size: size)
     }
 
+    /// OS-only regression: the real app core, facts view and icon renderer.
+    @Test func relayOperatingSystemFacts() throws {
+        for (os, name, expected) in [(Optional<AppSpaceOs>.none, "Unknown", "Unknown"), (.macos, "macOS", "macOS")] {
+            let row = AppSpaceRow(id: "relay:test-host", name: "Test host", provider: "relay",
+                spacesdVersion: "0.4.1", features: [], addedAt: nil, os: os,
+                osName: nil, osPrettyName: nil, image: nil, imageDigest: nil,
+                kind: nil, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
+                power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil)
+            let space = appRowsToSpaces(rows: [row], nowMs: 0)[0]
+            let facts = appSpaceDetail(space: space).facts
+            #expect(facts.first { $0.label == "System" }?.value == expected)
+            #expect(space.os.label == expected)
+            var notch = appNotchInitial()
+            notch.open = true
+            let tile = try #require(appNotchView(state: notch, spaces: [space]).tiles.first)
+            #expect(tile.symbol == (os == nil ? "computer" : "os-macos"))
+            let view = VStack(alignment: .leading, spacing: 12) {
+                HStack { OsIconImage(id: tile.symbol, size: 18); Text(space.name) }
+                Form { Section { FactRows(facts: facts, write: { _ in }, copied: false) } }.formStyle(.grouped)
+            }.padding().background(Color.white)
+            try assertSnapshot(view, "relay-os-" + name, size: CGSize(width: 520, height: 300))
+        }
+    }
+
     /// The live desktop's card: its content runs flush to the card's edges
     /// (no row inset, no letterbox) at the default desktop's 16:10, with
     /// only the card's corner radius, above the facts card.

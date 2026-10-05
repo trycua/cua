@@ -707,6 +707,9 @@ pub unsafe fn set_bool_attr_true(element: AXUIElementRef, attr_name: &str) -> AX
 pub enum AccessibilityOptIn {
     ManualAccessibility,
     EnhancedUserInterface,
+    /// `AXManualAccessibility` is unsupported and the app is neither Chromium
+    /// nor Electron: nothing was written, and nothing needs enabling.
+    NotNeeded,
     NotAccepted,
 }
 
@@ -716,13 +719,29 @@ pub enum AccessibilityOptIn {
 /// `AXManualAccessibility` is the modern opt-in with no screen-reader side
 /// effects; `AXEnhancedUserInterface` is the legacy fallback some Electron
 /// builds expose instead (the modern attribute returns
-/// `kAXErrorAttributeUnsupported` on those builds).
+/// `kAXErrorAttributeUnsupported` on those builds). Native AppKit and Catalyst
+/// apps also accept the legacy attribute and switch into screen-reader mode
+/// for the rest of their life, so it is written only when
+/// `is_chromium_family` says the app is Chromium or Electron.
 ///
 /// # Safety
 ///
 /// `app_element` must be a valid, live application `AXUIElementRef`.
-pub unsafe fn enable_chromium_accessibility(app_element: AXUIElementRef) -> AccessibilityOptIn {
-    let manual = set_bool_attr_true(app_element, "AXManualAccessibility");
+pub unsafe fn enable_chromium_accessibility(
+    app_element: AXUIElementRef,
+    is_chromium_family: impl FnOnce() -> bool,
+) -> AccessibilityOptIn {
+    choose_accessibility_opt_in(
+        |attr| set_bool_attr_true(app_element, attr),
+        is_chromium_family,
+    )
+}
+
+fn choose_accessibility_opt_in(
+    mut set_true: impl FnMut(&str) -> AXError,
+    is_chromium_family: impl FnOnce() -> bool,
+) -> AccessibilityOptIn {
+    let manual = set_true("AXManualAccessibility");
     if manual == kAXErrorSuccess {
         return AccessibilityOptIn::ManualAccessibility;
     }
@@ -732,7 +751,10 @@ pub unsafe fn enable_chromium_accessibility(app_element: AXUIElementRef) -> Acce
         // fallback, and don't claim enablement happened.
         return AccessibilityOptIn::NotAccepted;
     }
-    if set_bool_attr_true(app_element, "AXEnhancedUserInterface") == kAXErrorSuccess {
+    if !is_chromium_family() {
+        return AccessibilityOptIn::NotNeeded;
+    }
+    if set_true("AXEnhancedUserInterface") == kAXErrorSuccess {
         AccessibilityOptIn::EnhancedUserInterface
     } else {
         AccessibilityOptIn::NotAccepted
@@ -950,6 +972,52 @@ mod tests {
     use super::*;
     use crate::windows::WindowSpaceView;
     use core_foundation::{boolean::CFBoolean, number::CFNumber};
+
+    /// The legacy attribute is written only to Chromium or Electron apps.
+    #[test]
+    fn enhanced_user_interface_is_written_only_for_chromium_family_apps() {
+        let run = |manual: AXError, chromium: bool| {
+            let mut written = Vec::new();
+            let opt_in = choose_accessibility_opt_in(
+                |attr| {
+                    written.push(attr.to_string());
+                    if attr == "AXManualAccessibility" {
+                        manual
+                    } else {
+                        kAXErrorSuccess
+                    }
+                },
+                || chromium,
+            );
+            (opt_in, written)
+        };
+        let manual_only = vec!["AXManualAccessibility".to_string()];
+        // A native app (TextEdit, Calculator, Stocks) rejects the modern
+        // attribute and must not get the legacy one.
+        assert_eq!(
+            run(kAXErrorAttributeUnsupported, false),
+            (AccessibilityOptIn::NotNeeded, manual_only.clone())
+        );
+        // An Electron build without the modern attribute keeps the fallback.
+        assert_eq!(
+            run(kAXErrorAttributeUnsupported, true),
+            (
+                AccessibilityOptIn::EnhancedUserInterface,
+                vec![
+                    "AXManualAccessibility".to_string(),
+                    "AXEnhancedUserInterface".to_string()
+                ]
+            )
+        );
+        assert_eq!(
+            run(kAXErrorSuccess, false),
+            (AccessibilityOptIn::ManualAccessibility, manual_only.clone())
+        );
+        assert_eq!(
+            run(kAXErrorFailure, true),
+            (AccessibilityOptIn::NotAccepted, manual_only)
+        );
+    }
 
     #[test]
     fn remote_token_layout_is_pid_zero_coco_element_id() {

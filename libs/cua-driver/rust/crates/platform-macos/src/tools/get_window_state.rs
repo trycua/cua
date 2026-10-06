@@ -1234,7 +1234,7 @@ mod window_scope_contract_tests {
         }
         assert_eq!(d.input_schema["additionalProperties"], false);
         for needle in [
-            "max_elements` 250",
+            "at most 250 nodes",
             "since:",
             "full_output:true",
             "tree_format",

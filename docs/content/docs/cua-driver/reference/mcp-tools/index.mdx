@@ -69,7 +69,7 @@ Screenshots, accessibility trees, verification and visual regions of a window. [
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="get_window_state"></span>[`get_window_state`](/cua-driver/reference/mcp-tools/window-state#get_window_state) | Snapshot a window: structured `elements` (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`), the same tree as Markdown in `tree_markdown`, and a screenshot. | macOS, Linux, Windows |
+| <span id="get_window_state"></span>[`get_window_state`](/cua-driver/reference/mcp-tools/window-state#get_window_state) | Snapshot a window: the accessibility tree plus a screenshot. | macOS, Linux, Windows |
 | <span id="get_accessibility_tree"></span>[`get_accessibility_tree`](/cua-driver/reference/mcp-tools/window-state#get_accessibility_tree) | Return a lightweight snapshot of the desktop: running regular apps and on-screen visible windows with their bounds, z-order, and owner pid. | macOS, Linux, Windows |
 | <span id="verify_state"></span>[`verify_state`](/cua-driver/reference/mcp-tools/window-state#verify_state) | Deterministically verify bounded predicates against one exact window. | macOS, Linux, Windows |
 | <span id="parse_visual_regions"></span>[`parse_visual_regions`](/cua-driver/reference/mcp-tools/window-state#parse_visual_regions) | Parse one immutable registered capture into model-neutral text and icon regions. | macOS, Linux, Windows |

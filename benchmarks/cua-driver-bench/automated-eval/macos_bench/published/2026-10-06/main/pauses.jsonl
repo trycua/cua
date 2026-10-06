@@ -1,0 +1,4 @@
+{"ts": "2026-10-06T09:06:48+00:00", "kind": "retry_harness_exception", "planned_s": 5.0, "message": "RuntimeError: window of app calc did not appear", "trial_id": "CDB-S02-r1-cc-codex-cu", "event": "start"}
+{"ts": "2026-10-06T09:06:53+00:00", "kind": "retry_harness_exception", "planned_s": 5.0, "message": "RuntimeError: window of app calc did not appear", "trial_id": "CDB-S02-r1-cc-codex-cu", "event": "end", "actual_s": 5.0}
+{"ts": "2026-10-06T09:10:17+00:00", "kind": "retry_harness_exception", "planned_s": 5.0, "message": "RuntimeError: window of app calc did not appear", "trial_id": "CDB-S02-r1-cc-cua-driver", "event": "start"}
+{"ts": "2026-10-06T09:10:17+00:00", "kind": "retry_harness_exception", "planned_s": 5.0, "message": "RuntimeError: window of app calc did not appear", "trial_id": "CDB-S02-r1-cc-cua-driver", "event": "end", "actual_s": 0.0}

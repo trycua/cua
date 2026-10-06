@@ -2159,6 +2159,49 @@ const FfiConverterTypeDragInput = (() => {
     return new FFIConverter();
 })();
 
+export type ElementCustomAction = {
+    name: string,
+    raw: string
+}
+
+/**
+ * Generated factory for {@link ElementCustomAction} record objects.
+ */
+export const ElementCustomAction = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ElementCustomAction, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ElementCustomAction>,
+    });
+})();
+
+const FfiConverterTypeElementCustomAction = (() => {
+    type TypeName = ElementCustomAction;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                name: FfiConverterString.read(from),
+                raw: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.raw, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.raw);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type ElementFrame = {
     x: number,
     y: number,
@@ -6166,15 +6209,34 @@ const FfiConverterTypeVisualParseError = (() => {
 export type WindowElement = {
     elementIndex: bigint,
     role: string,
+    /**
+     * macOS only: the element's `AXSubrole` (for example `AXSearchField`),
+     * omitted when the application publishes none. Windows and Linux do not
+     * emit it.
+     */
+    subrole?: string,
     depth: number,
     elementToken?: string,
     label?: string,
     value?: string,
     valueDescription?: string,
+    /**
+     * Whether the element accepts input: `AXEnabled` on macOS, UIA
+     * `IsEnabled` on Windows, the AT-SPI `enabled` or `sensitive` state on
+     * Linux. On macOS a disabled control keeps its `element_index`, and some
+     * controls read `false` only while their window is not key.
+     */
     enabled?: boolean,
     selected?: boolean,
     inWebContent?: boolean,
     actions?: Array<string>,
+    /**
+     * macOS only: the application's own actions, which macOS reports as a
+     * `Name:`/`Target:`/`Selector:` envelope. `name` is the readable label,
+     * `raw` the envelope; `click` accepts either as `action`. Windows and
+     * Linux do not emit it.
+     */
+    customActions?: Array<ElementCustomAction>,
     parentIndex?: bigint,
     frame?: ElementFrame,
     min?: number,
@@ -6204,6 +6266,7 @@ const FfiConverterTypeWindowElement = (() => {
             return {
                 elementIndex: FfiConverterUInt64.read(from),
                 role: FfiConverterString.read(from),
+                subrole: FfiConverterOptionalString.read(from),
                 depth: FfiConverterUInt32.read(from),
                 elementToken: FfiConverterOptionalString.read(from),
                 label: FfiConverterOptionalString.read(from),
@@ -6213,6 +6276,7 @@ const FfiConverterTypeWindowElement = (() => {
                 selected: FfiConverterOptionalBoolean.read(from),
                 inWebContent: FfiConverterOptionalBoolean.read(from),
                 actions: FfiConverterOptionalSequenceString.read(from),
+                customActions: FfiConverterOptionalSequenceTypeElementCustomAction.read(from),
                 parentIndex: FfiConverterOptionalUInt64.read(from),
                 frame: FfiConverterOptionalTypeElementFrame.read(from),
                 min: FfiConverterOptionalFloat64.read(from),
@@ -6222,6 +6286,7 @@ const FfiConverterTypeWindowElement = (() => {
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterUInt64.write(value.elementIndex, into);
             FfiConverterString.write(value.role, into);
+            FfiConverterOptionalString.write(value.subrole, into);
             FfiConverterUInt32.write(value.depth, into);
             FfiConverterOptionalString.write(value.elementToken, into);
             FfiConverterOptionalString.write(value.label, into);
@@ -6231,6 +6296,7 @@ const FfiConverterTypeWindowElement = (() => {
             FfiConverterOptionalBoolean.write(value.selected, into);
             FfiConverterOptionalBoolean.write(value.inWebContent, into);
             FfiConverterOptionalSequenceString.write(value.actions, into);
+            FfiConverterOptionalSequenceTypeElementCustomAction.write(value.customActions, into);
             FfiConverterOptionalUInt64.write(value.parentIndex, into);
             FfiConverterOptionalTypeElementFrame.write(value.frame, into);
             FfiConverterOptionalFloat64.write(value.min, into);
@@ -6239,6 +6305,7 @@ const FfiConverterTypeWindowElement = (() => {
         allocationSize(value: TypeName): number {
             return FfiConverterUInt64.allocationSize(value.elementIndex) +
              FfiConverterString.allocationSize(value.role) +
+             FfiConverterOptionalString.allocationSize(value.subrole) +
              FfiConverterUInt32.allocationSize(value.depth) +
              FfiConverterOptionalString.allocationSize(value.elementToken) +
              FfiConverterOptionalString.allocationSize(value.label) +
@@ -6248,6 +6315,7 @@ const FfiConverterTypeWindowElement = (() => {
              FfiConverterOptionalBoolean.allocationSize(value.selected) +
              FfiConverterOptionalBoolean.allocationSize(value.inWebContent) +
              FfiConverterOptionalSequenceString.allocationSize(value.actions) +
+             FfiConverterOptionalSequenceTypeElementCustomAction.allocationSize(value.customActions) +
              FfiConverterOptionalUInt64.allocationSize(value.parentIndex) +
              FfiConverterOptionalTypeElementFrame.allocationSize(value.frame) +
              FfiConverterOptionalFloat64.allocationSize(value.min) +
@@ -6550,6 +6618,12 @@ const FfiConverterSequenceTypeStatePredicate = new FfiConverterArray(FfiConverte
 // FfiConverter for Array<PredicateOutcome>
 const FfiConverterSequenceTypePredicateOutcome = new FfiConverterArray(FfiConverterTypePredicateOutcome);
 
+// FfiConverter for Array<ElementCustomAction>
+const FfiConverterSequenceTypeElementCustomAction = new FfiConverterArray(FfiConverterTypeElementCustomAction);
+
+// FfiConverter for Array<ElementCustomAction> | undefined
+const FfiConverterOptionalSequenceTypeElementCustomAction = new FfiConverterOptional(FfiConverterSequenceTypeElementCustomAction);
+
 // FfiConverter for ElementFrame | undefined
 const FfiConverterOptionalTypeElementFrame = new FfiConverterOptional(FfiConverterTypeElementFrame);
 
@@ -6627,6 +6701,7 @@ export default Object.freeze({
     FfiConverterTypeDesktopScope,
     FfiConverterTypeDragInput,
     FfiConverterTypeEffectiveScope,
+    FfiConverterTypeElementCustomAction,
     FfiConverterTypeElementFrame,
     FfiConverterTypeElementPredicate,
     FfiConverterTypeElementSelector,

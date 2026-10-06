@@ -1746,6 +1746,27 @@
                     "null"
                   ]
                 },
+                "custom_actions": {
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "raw": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "raw"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                },
                 "depth": {
                   "minimum": 0,
                   "type": "integer"
@@ -1829,6 +1850,12 @@
                 "selected": {
                   "type": [
                     "boolean",
+                    "null"
+                  ]
+                },
+                "subrole": {
+                  "type": [
+                    "string",
                     "null"
                   ]
                 },

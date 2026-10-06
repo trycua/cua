@@ -402,10 +402,27 @@ def run_checks(smoke):
         probe.first_line(),
     )
 
+    # Probe (informational, last because it may leave a menu open): the
+    # drop-down combo with delivery_mode foreground, which the background
+    # refusal recommends.
+    state = smoke.read()
+    combo = find_row(tree(state), COMBO, "Color")
+    args = {"pid": smoke.pid, "element_token": token(state, combo), "value": "Green",
+            "delivery_mode": "foreground"}
+    result = smoke.call("set_value", args)
+    fresh = smoke.wait_for_text("Color: Green", timeout=5)
+    changed = "Color: Green" in tree(fresh)
+    smoke.record(
+        "probe: set_value on the drop-down combo box with delivery_mode foreground",
+        "pass" if changed else "not_possible",
+        ("app shows 'Color: Green'; " if changed else "app unchanged; ")
+        + ("error: " if result.is_error else "driver said: ") + result.first_line(),
+    )
+
 
 def combo_check(smoke, name, value, editable):
-    kind = "editable combo box" if editable else "drop-down combo box"
-    check = f"set_value on a {kind} ({name} -> {value})"
+    kind = "an editable combo box" if editable else "a drop-down combo box"
+    check = f"set_value on {kind} ({name} -> {value})"
     state = smoke.read()
     md = tree(state)
     combo = find_row(md, COMBO, name)
@@ -440,14 +457,14 @@ def combo_check(smoke, name, value, editable):
 
 def write_reports(smoke, out, platform_name):
     out.mkdir(parents=True, exist_ok=True)
-    (out / "results.json").write_text(json.dumps(smoke.results, indent=2))
-    (out / "calls.json").write_text(json.dumps(smoke.calls, indent=2, default=str))
+    (out / "results.json").write_text(json.dumps(smoke.results, indent=2), encoding="utf-8")
+    (out / "calls.json").write_text(json.dumps(smoke.calls, indent=2, default=str), encoding="utf-8")
     lines = [f"## cua-driver live smoke: {platform_name}", "", "| Check | Result | Evidence |", "| --- | --- | --- |"]
     for r in smoke.results:
         evidence = r["evidence"].replace("|", "\\|").replace("\n", " ")
         lines.append(f"| {r['check']} | {r['status']} | {evidence} |")
     summary = "\n".join(lines) + "\n"
-    (out / "summary.md").write_text(summary)
+    (out / "summary.md").write_text(summary, encoding="utf-8")
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if step_summary:
         with open(step_summary, "a", encoding="utf-8") as handle:
@@ -460,6 +477,8 @@ def main():
     parser.add_argument("--driver", required=True, help="path to the cua-driver binary")
     parser.add_argument("--out", required=True, help="artifact directory")
     options = parser.parse_args()
+    # Tool text carries non-ASCII marks; a Windows console is cp1252.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     out = Path(options.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -474,9 +493,9 @@ def main():
             "CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS": "1",
         }
     )
-    daemon_log = open(out / "daemon.log", "w")
-    mcp_log = open(out / "mcp.log", "w")
-    fixture_log = open(out / "fixture.log", "w")
+    daemon_log = open(out / "daemon.log", "w", encoding="utf-8")
+    mcp_log = open(out / "mcp.log", "w", encoding="utf-8")
+    fixture_log = open(out / "fixture.log", "w", encoding="utf-8")
 
     daemon = start_daemon(driver, socket, env, daemon_log)
     fixture = None

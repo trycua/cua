@@ -668,6 +668,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         )  # no stale clipboard between trials
         if arm in ca.CUA_ARMS:
             ensure_agent_daemon(ctx, arm)
+        if getattr(args, "park_pointer", False):
+            row["pointer_parked"] = park_pointer(ctx)
         lab_app = Path(args.build_dir) / "BenchLab.app"
         if cdb is not None:
             cdb.reset()
@@ -1008,6 +1010,22 @@ def place_window(ctx: "Ctx", win: dict[str, Any], wait_s: float = 90.0) -> bool:
                 return True
         time.sleep(0.5)
     return False
+
+
+PARK_POINT = (1000, 12)  # Amendment 3, A3.9: an empty stretch of the menu bar, away from every task window
+
+
+def park_pointer(ctx: "Ctx") -> Any:
+    """Move the real pointer to PARK_POINT through the recorder daemon before each trial, so no trial starts
+    with the pointer left over a hover target by the previous one. Returns the pointer position read back."""
+    rec_home = ca.RECORDER_STATE / "home"
+    args = {"x": PARK_POINT[0], "y": PARK_POINT[1], "scope": "desktop"}
+    try:
+        ca.cua_cli("call", "move_cursor", json.dumps(args), socket=ca.RECORDER_SOCKET, home=rec_home, timeout=20)
+        done = ca.cua_cli("call", "get_cursor_position", "{}", socket=ca.RECORDER_SOCKET, home=rec_home, timeout=20)
+        return json.loads(done.stdout[done.stdout.index("{") :])
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        return {"error": f"{type(error).__name__}: {error}"}
 
 
 def _walk_dicts(node: Any):
@@ -1699,6 +1717,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="dir with BenchLab.app and BenchSentinel.app (swift/build.sh)",
     )
     p.add_argument("--no-sentinel", action="store_true")
+    p.add_argument(
+        "--park-pointer",
+        action="store_true",
+        help="move the real pointer to an empty menu-bar point before each trial (Amendment 3, A3.9)",
+    )
     p.add_argument("--no-recorder", action="store_true")
     p.add_argument(
         "--codex-cu-mcp",

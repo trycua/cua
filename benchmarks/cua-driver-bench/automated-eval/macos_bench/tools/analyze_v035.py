@@ -37,14 +37,27 @@ MARGIN = -0.15
 
 
 def load(results: Path) -> list[dict]:
+    """Final, counted rows of complete blocks. Completeness is recomputed from blocks.json: a row's
+    `block_incomplete` flag is written when a run stops mid-block and is not cleared when a resumed run
+    finishes that block."""
     rows = []
     for line in results.read_text("utf-8").splitlines():
         if not line.strip():
             continue
         d = json.loads(line)
-        if d.get("smoke") or not d.get("final", True) or d.get("excluded") or d.get("block_incomplete"):
+        if d.get("smoke") or not d.get("final", True) or d.get("excluded"):
             continue
         rows.append(d)
+    blocks_file = results.parent / "blocks.json"
+    if blocks_file.is_file():
+        blocks = json.loads(blocks_file.read_text("utf-8"))["blocks"]
+        have: dict = defaultdict(set)
+        for r in rows:
+            have[r["block"]].add(r["trial_id"])
+        complete = {bid for bid, b in blocks.items() if len(have.get(bid, set())) >= b["n_expected"]}
+        rows = [r for r in rows if r["block"] in complete]
+    else:
+        rows = [r for r in rows if not r.get("block_incomplete")]
     return rows
 
 
@@ -225,7 +238,12 @@ def main() -> int:
     p(f"# Run {args.run.name}: A (main) vs A0 (0.34.0) vs B (Codex CU)\n")
     p(f"{len(rows)} counted trials (final, complete blocks).\n")
     p("## Pre-registered hypotheses (Amendment 3), GUI-heavy set\n")
-    for label, tasks in (("GUI-heavy set (primary)", PRIMARY), ("all ten tasks (reported, not tested)", ALL)):
+    no_mb10 = [t for t in PRIMARY if t != "MB-10"]
+    for label, tasks in (
+        ("GUI-heavy set (primary)", PRIMARY),
+        ("GUI-heavy set without MB-10 (post-hoc, A3.9 pointer carry-over)", no_mb10),
+        ("all ten tasks (reported, not tested)", ALL),
+    ):
         h = hypotheses(by, tasks)
         out[label] = h
         if "H1_total_tokens" not in h:
@@ -268,6 +286,18 @@ def main() -> int:
                     f"| {sum(1 for r in v if r.get('evaluator_peeks'))} | {sum(1 for r in v if r.get('side_door_flag'))} |"
                 )
         p("")
+    p("## Probes by pointer reset (A3.9): phase 1 had no pointer reset, phase 2 parks the pointer\n")
+    p("| Task | Arm | Pointer parked | n | Success | Pointer moved by agent |")
+    p("|---|---|---|---|---|---|")
+    for t in ("MB-09", "MB-10", "MB-11"):
+        for arm in ARMS:
+            for parked in (False, True):
+                v = [r for r in by.get((t, arm), []) if bool(r.get("pointer_parked")) == parked]
+                if v:
+                    k = sum(1 for r in v if r["passed"])
+                    moved = sum(1 for r in v if (r.get("disturbance") or {}).get("pointer_moved"))
+                    p(f"| {t} | {LABEL[arm]} | {'yes' if parked else 'no'} | {len(v)} | {k}/{len(v)} | {moved}/{len(v)} |")
+    p("")
     br = call_breakdown(args.run, rows)
     p("## Calls: actions and observes per trial (a run_actions step counts as an action)\n")
     p("| Arm | Task | Trials | MCP calls | Actions | Observes | Observes per action | Failed calls |")

@@ -6355,15 +6355,6 @@ impl Tool for ClickTool {
             // The overlay draws in layout coordinates, like the input below.
             let (overlay_x, overlay_y) = space.to_layout(sx, sy);
             if crate::wayland::wayland_input_enabled() && crate::wayland::overlay::available() {
-                if let Err(error) = crate::wayland::overlay::animate_and_wait(
-                    cursor_id.clone(),
-                    f64::from(overlay_x),
-                    f64::from(overlay_y),
-                )
-                .await
-                {
-                    return ToolResult::error(error.to_string());
-                }
                 self.state.cursor_registry.set_enabled(&cursor_id, true);
                 self.state.cursor_registry.update_position(
                     &cursor_id,
@@ -6376,6 +6367,15 @@ impl Tool for ClickTool {
                     f64::from(overlay_y),
                     false,
                 );
+                if let Err(error) = crate::wayland::overlay::animate_and_wait(
+                    cursor_id.clone(),
+                    f64::from(overlay_x),
+                    f64::from(overlay_y),
+                )
+                .await
+                {
+                    return ToolResult::error(error.to_string());
+                }
             } else {
                 reveal_pointer_action_for(
                     &self.state,

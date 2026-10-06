@@ -1,0 +1,354 @@
+{
+  "arc_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
+  "arc_version": "0.1.1",
+  "native_version": "0.34.0",
+  "native_latest_version": "0.34.0",
+  "native_release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
+  "arc_upstream_checked_at": "2026-10-06T13:50:32.002940+00:00",
+  "candidates_checked_at": "2026-10-06T13:50:30Z",
+  "macos": "27.0.1",
+  "python": "3.12.12",
+  "native_release_commit": "b0968e1b12834e485dda68789541a3cc57664a9f",
+  "recipe_source": "0b90b6f4af6885ecbe696a6b33a3ad63773183d4",
+  "recipe_file_sha256": "4b136721d5b5908d7ee669ae88b94010d65ecc1f961956dcec93f34d21532060",
+  "recipe_patch": "",
+  "results": [
+    {
+      "mode": "literal_with_jev",
+      "rep": 0,
+      "passed": true,
+      "terminal": "verified_complete",
+      "decisions": [
+        {
+          "label": "Full name",
+          "kind": "SET_VALUE",
+          "terminal": null,
+          "confidence": 1.0
+        },
+        {
+          "label": "Email",
+          "kind": "SET_VALUE",
+          "terminal": null,
+          "confidence": 1.0
+        }
+      ],
+      "steps": [
+        {
+          "label": "Full name",
+          "verified": true
+        },
+        {
+          "label": "Email",
+          "verified": true
+        }
+      ],
+      "wall_ms": 4117.323042009957,
+      "driver_calls": 6,
+      "driver_tool_ms": 3744.759957990027,
+      "provider_requests": [
+        {
+          "ms": 215.55783400253858,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 146.22158400015905,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        }
+      ],
+      "provider_calls": 2,
+      "provider_ms": 361.77941800269764,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 6,
+      "tool_refusals": []
+    },
+    {
+      "mode": "literal_without_jev",
+      "rep": 0,
+      "passed": true,
+      "terminal": "verified_complete",
+      "decisions": [],
+      "steps": [
+        {
+          "label": "Full name",
+          "verified": true
+        },
+        {
+          "label": "Email",
+          "verified": true
+        }
+      ],
+      "wall_ms": 3608.372374990722,
+      "driver_calls": 6,
+      "driver_tool_ms": 3602.598752011545,
+      "provider_requests": [],
+      "provider_calls": 0,
+      "provider_ms": 0,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 6,
+      "tool_refusals": []
+    },
+    {
+      "mode": "literal_without_jev",
+      "rep": 1,
+      "passed": true,
+      "terminal": "verified_complete",
+      "decisions": [],
+      "steps": [
+        {
+          "label": "Full name",
+          "verified": true
+        },
+        {
+          "label": "Email",
+          "verified": true
+        }
+      ],
+      "wall_ms": 3524.0084169927286,
+      "driver_calls": 6,
+      "driver_tool_ms": 3517.5264990102733,
+      "provider_requests": [],
+      "provider_calls": 0,
+      "provider_ms": 0,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 6,
+      "tool_refusals": []
+    },
+    {
+      "mode": "literal_with_jev",
+      "rep": 1,
+      "passed": true,
+      "terminal": "verified_complete",
+      "decisions": [
+        {
+          "label": "Full name",
+          "kind": "SET_VALUE",
+          "terminal": null,
+          "confidence": 1.0
+        },
+        {
+          "label": "Email",
+          "kind": "SET_VALUE",
+          "terminal": null,
+          "confidence": 1.0
+        }
+      ],
+      "steps": [
+        {
+          "label": "Full name",
+          "verified": true
+        },
+        {
+          "label": "Email",
+          "verified": true
+        }
+      ],
+      "wall_ms": 3941.9796250003856,
+      "driver_calls": 6,
+      "driver_tool_ms": 3619.8371659847908,
+      "provider_requests": [
+        {
+          "ms": 180.08720900979824,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 133.48683300137054,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        }
+      ],
+      "provider_calls": 2,
+      "provider_ms": 313.5740420111688,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 6,
+      "tool_refusals": []
+    },
+    {
+      "mode": "literal_with_jev",
+      "rep": 2,
+      "passed": true,
+      "terminal": "verified_complete",
+      "decisions": [
+        {
+          "label": "Full name",
+          "kind": "SET_VALUE",
+          "terminal": null,
+          "confidence": 1.0
+        },
+        {
+          "label": "Email",
+          "kind": "SET_VALUE",
+          "terminal": null,
+          "confidence": 1.0
+        }
+      ],
+      "steps": [
+        {
+          "label": "Full name",
+          "verified": true
+        },
+        {
+          "label": "Email",
+          "verified": true
+        }
+      ],
+      "wall_ms": 3962.67037501093,
+      "driver_calls": 6,
+      "driver_tool_ms": 3580.3612919844454,
+      "provider_requests": [
+        {
+          "ms": 150.94725000381004,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 222.21887498744763,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        }
+      ],
+      "provider_calls": 2,
+      "provider_ms": 373.1661249912577,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 6,
+      "tool_refusals": []
+    },
+    {
+      "mode": "literal_without_jev",
+      "rep": 2,
+      "passed": true,
+      "terminal": "verified_complete",
+      "decisions": [],
+      "steps": [
+        {
+          "label": "Full name",
+          "verified": true
+        },
+        {
+          "label": "Email",
+          "verified": true
+        }
+      ],
+      "wall_ms": 3603.0832910037134,
+      "driver_calls": 6,
+      "driver_tool_ms": 3595.799539994914,
+      "provider_requests": [],
+      "provider_calls": 0,
+      "provider_ms": 0,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 6,
+      "tool_refusals": []
+    }
+  ],
+  "running_servers": {
+    "arc": {
+      "name": "arc-cua",
+      "version": "0.1.1"
+    },
+    "cua": {
+      "name": "cua-driver",
+      "version": "0.34.0"
+    }
+  },
+  "resolved_models": [
+    "jev-1.13.0"
+  ]
+}

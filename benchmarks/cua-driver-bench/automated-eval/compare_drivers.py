@@ -25,7 +25,7 @@ import urllib.error
 import urllib.request
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -100,6 +100,7 @@ GUI_ENVIRONMENT = (
 )
 SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+X11_DISPLAY_SERVER = re.compile(r"^(?P<server>.*:[0-9]+)(?:\.[0-9]+)?$")
 DEFAULT_BASELINE = "0.22.2"
 DEFAULT_CANDIDATE = "0.23.2"
 FOREGROUND_SAMPLE_HZ = 5
@@ -666,8 +667,16 @@ def load_launch_descriptor(bundle: Path, platform: str) -> dict[str, Any]:
 def _gui_environment(display: str | None = None) -> dict[str, str]:
     environment = {name: os.environ[name] for name in GUI_ENVIRONMENT if name in os.environ}
     if display is not None:
-        environment["DISPLAY"] = display
+        environment.pop("WAYLAND_DISPLAY", None)
+        environment.pop("DBUS_SESSION_BUS_ADDRESS", None)
+        environment["DISPLAY"] = display.strip()
     return environment
+
+
+def _x11_display_server(display: str) -> str:
+    normalized = display.strip()
+    match = X11_DISPLAY_SERVER.fullmatch(normalized)
+    return match.group("server") if match is not None else normalized
 
 
 def _local_gui_environments(config: ComparisonConfig) -> tuple[dict[str, str], ...]:
@@ -685,7 +694,8 @@ def _local_gui_environments(config: ComparisonConfig) -> tuple[dict[str, str], .
         displays = (current_display,) if current_display else ()
     if not displays or any(not display.strip() for display in displays):
         raise ValueError("Linux shared-task runs require an X11 display")
-    if len(set(displays)) != len(displays):
+    display_servers = tuple(_x11_display_server(display) for display in displays)
+    if len(set(display_servers)) != len(display_servers):
         raise ValueError("local display assignments must be unique")
 
     active_shards = min(config.max_parallel_tasks, len(config.tasks))
@@ -704,11 +714,40 @@ def _isolated_local_environment(gui_environment: Mapping[str, str], root: Path) 
         "XDG_CACHE_HOME": root / "cache",
         "XDG_CONFIG_HOME": root / "config",
         "XDG_DATA_HOME": root / "data",
+        "XDG_RUNTIME_DIR": root / "runtime",
         "XDG_STATE_HOME": root / "state",
     }
     for directory in directories.values():
         directory.mkdir(parents=True, exist_ok=True)
+    directories["XDG_RUNTIME_DIR"].chmod(0o700)
     return {**gui_environment, **{name: str(path) for name, path in directories.items()}}
+
+
+@contextmanager
+def _process_environment(environment: Mapping[str, str]):
+    names = set(environment) | set(GUI_ENVIRONMENT)
+    previous = {name: os.environ.get(name) for name in names}
+    for name in GUI_ENVIRONMENT:
+        if name not in environment:
+            os.environ.pop(name, None)
+    os.environ.update(environment)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _preflight_x11_environment(gui_environment: Mapping[str, str]) -> None:
+    display_name = gui_environment.get("DISPLAY", "").strip()
+    if not display_name:
+        raise ValueError("Linux shared-task runs require an X11 display")
+    with _process_environment(gui_environment):
+        source = _X11SampleSource(display_name)
+        source.close()
 
 
 def _resolve_executable(command: Sequence[str]) -> list[str]:
@@ -914,6 +953,9 @@ def preflight(
         raise ValueError("local execution requires at least one GUI environment")
     if not config.codex.is_file():
         raise ValueError(f"Codex CLI is missing: {config.codex}")
+    if config.platform == "linux":
+        for gui_environment in gui_environments:
+            _preflight_x11_environment(gui_environment)
     for release in releases:
         _verify_driver_identity(release)
     for index, manifest in enumerate(task_manifests):
@@ -2101,17 +2143,30 @@ def _render_toml_table(path: tuple[str, ...], values: Mapping[str, Any]) -> list
     return lines
 
 
-def _codex_provider_config(codex_home: Path) -> tuple[list[str], str | None]:
+def _codex_provider_config(codex_home: Path) -> tuple[list[str], str | None, bool]:
     path = codex_home / "config.toml"
-    if not path.is_file():
-        return [], None
-    try:
-        document = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
-        raise ValueError(f"Codex config is invalid: {path}") from error
+    document: Mapping[str, Any] = {}
+    if path.is_file():
+        try:
+            document = tomllib.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+            raise ValueError(f"Codex config is invalid: {path}") from error
     provider_name = document.get("model_provider")
     if provider_name is None:
-        return [], None
+        base_url = os.environ.get("OPENAI_BASE_URL")
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not base_url or not api_key:
+            return [], None, False
+        provider_name = "cdb-local"
+        provider = {
+            "name": "CDB Local Gateway",
+            "base_url": base_url,
+            "env_key": "OPENAI_API_KEY",
+            "wire_api": "responses",
+        }
+        lines = [f"model_provider = {_toml_value(provider_name)}"]
+        lines.extend(_render_toml_table(("model_providers", provider_name), provider))
+        return lines, "OPENAI_API_KEY", True
     if not isinstance(provider_name, str) or not provider_name:
         raise ValueError("Codex model_provider must be a non-empty string")
     providers = document.get("model_providers")
@@ -2126,17 +2181,23 @@ def _codex_provider_config(codex_home: Path) -> tuple[list[str], str | None]:
         raise ValueError("Codex model provider env_key is invalid")
     lines = [f"model_provider = {_toml_value(provider_name)}"]
     lines.extend(_render_toml_table(("model_providers", provider_name), provider))
-    return lines, environment_key
+    return lines, environment_key, False
 
 
 def _codex_provider_environment(codex_home: Path) -> dict[str, str]:
-    _provider_lines, environment_key = _codex_provider_config(codex_home)
+    _provider_lines, environment_key, uses_environment_gateway = _codex_provider_config(codex_home)
     if environment_key is None:
         return {}
     environment_value = os.environ.get(environment_key)
     if environment_value is None:
         raise RuntimeError("Codex model provider requires environment variable " + environment_key)
-    return {environment_key: environment_value}
+    environment = {environment_key: environment_value}
+    if uses_environment_gateway:
+        base_url = os.environ.get("OPENAI_BASE_URL")
+        if base_url is None:
+            raise RuntimeError("local Codex model provider requires OPENAI_BASE_URL")
+        environment["OPENAI_BASE_URL"] = base_url
+    return environment
 
 
 def _codex_telemetry(
@@ -2330,7 +2391,9 @@ def _run_codex(
         )
         source_codex_home = Path(str(config["codex_home"]))
         _link_auth(source_codex_home, codex_home)
-        provider_lines, _provider_environment_key = _codex_provider_config(source_codex_home)
+        provider_lines, _provider_environment_key, _uses_environment_gateway = (
+            _codex_provider_config(source_codex_home)
+        )
         route = ModelRoute(
             route_id="local.codex.primary",
             role="primary",
@@ -3544,16 +3607,53 @@ def _run_trial(
     return extract_trial_metrics(materialized_trial, task, release.version, trial_id)
 
 
+def _local_shard_state_path(config: ComparisonConfig, shard: TaskShard) -> Path:
+    return config.output / "shards" / shard.task / "trials.json"
+
+
+def _validate_local_shard_output(
+    shard: TaskShard,
+    trials: Sequence[TrialMetrics],
+    *,
+    allow_partial: bool,
+) -> None:
+    expected = tuple((shard.task, release.version) for release in shard.releases)
+    actual = tuple((trial.task, trial.version) for trial in trials)
+    if actual != expected[: len(actual)] or (not allow_partial and len(actual) != len(expected)):
+        raise RuntimeError(
+            f"task shard returned unexpected trials: {actual!r}; expected {expected!r}"
+        )
+
+
+def _load_local_shard_state(config: ComparisonConfig, shard: TaskShard) -> tuple[TrialMetrics, ...]:
+    path = _local_shard_state_path(config, shard)
+    if not path.is_file():
+        return ()
+    document = json.loads(path.read_text(encoding="utf-8"))
+    values = document.get("trials") if isinstance(document, dict) else None
+    if not isinstance(values, list):
+        raise RuntimeError(f"local task shard state is invalid: {path}")
+    trials = tuple(TrialMetrics(**value) for value in values if isinstance(value, dict))
+    if len(trials) != len(values):
+        raise RuntimeError(f"local task shard state is invalid: {path}")
+    return trials
+
+
 def _run_local_task_shard(
     config: ComparisonConfig,
     shard: TaskShard,
     run_stamp: str,
     gui_environment: Mapping[str, str],
 ) -> tuple[TrialMetrics, ...]:
-    return tuple(
-        _run_trial(config, release, shard.task, run_stamp, gui_environment)
-        for release in shard.releases
-    )
+    trials: list[TrialMetrics] = []
+    with _process_environment(gui_environment):
+        for release in shard.releases:
+            trials.append(_run_trial(config, release, shard.task, run_stamp, gui_environment))
+            _write_json(
+                _local_shard_state_path(config, shard),
+                {"trials": [asdict(trial) for trial in trials]},
+            )
+    return tuple(trials)
 
 
 def _capture_local_task_shard(
@@ -3564,9 +3664,16 @@ def _capture_local_task_shard(
 ) -> TaskShardResult[tuple[TrialMetrics, ...]]:
     try:
         output = _run_local_task_shard(config, shard, run_stamp, gui_environment)
+        _validate_local_shard_output(shard, output, allow_partial=False)
     except Exception as error:  # noqa: BLE001 - preserve other completed shards
         wrapped = RuntimeError(f"{type(error).__name__}: {error}")
-        return TaskShardResult(shard=shard, error=wrapped)
+        try:
+            partial_output = _load_local_shard_state(config, shard)
+            _validate_local_shard_output(shard, partial_output, allow_partial=True)
+        except Exception as state_error:  # noqa: BLE001 - report corrupt shard state
+            wrapped = RuntimeError(f"{wrapped}; shard state recovery failed: {state_error}")
+            partial_output = ()
+        return TaskShardResult(shard=shard, output=partial_output or None, error=wrapped)
     return TaskShardResult(shard=shard, output=output)
 
 
@@ -3591,25 +3698,50 @@ def schedule_local_task_shards(
         ProcessPoolExecutor(max_workers=1, mp_context=process_context)
         for _ in range(executor_count)
     ]
-    futures = []
+    results: list[TaskShardResult[tuple[TrialMetrics, ...]] | None] = [None] * len(shards)
+    pending = iter(enumerate(shards))
+    active: dict[Any, tuple[int, int, TaskShard]] = {}
+
+    def submit_next(executor_index: int) -> bool:
+        try:
+            shard_index, shard = next(pending)
+        except StopIteration:
+            return False
+        future = executors[executor_index].submit(
+            _capture_local_task_shard,
+            config,
+            shard,
+            run_stamp,
+            gui_environments[executor_index],
+        )
+        active[future] = (shard_index, executor_index, shard)
+        return True
+
     try:
-        for index, shard in enumerate(shards):
-            gui_environment = gui_environments[index % executor_count]
-            future = executors[index % executor_count].submit(
-                _capture_local_task_shard,
-                config,
-                shard,
-                run_stamp,
-                gui_environment,
-            )
-            futures.append((shard, future))
-        results = []
-        for shard, future in futures:
-            try:
-                results.append(future.result())
-            except Exception as error:  # noqa: BLE001 - preserve other completed shards
-                results.append(TaskShardResult(shard=shard, error=error))
-        return tuple(results)
+        for executor_index in range(executor_count):
+            submit_next(executor_index)
+        while active:
+            completed, _ = wait(active, return_when=FIRST_COMPLETED)
+            for future in completed:
+                shard_index, executor_index, shard = active.pop(future)
+                try:
+                    result = future.result()
+                except Exception as error:  # noqa: BLE001 - preserve other completed shards
+                    try:
+                        partial_output = _load_local_shard_state(config, shard)
+                        _validate_local_shard_output(shard, partial_output, allow_partial=True)
+                    except Exception as state_error:  # noqa: BLE001 - report corrupt shard state
+                        error = RuntimeError(f"{error}; shard state recovery failed: {state_error}")
+                        partial_output = ()
+                    result = TaskShardResult(
+                        shard=shard,
+                        output=partial_output or None,
+                        error=error,
+                    )
+                results[shard_index] = result
+                submit_next(executor_index)
+        assert all(result is not None for result in results)
+        return tuple(result for result in results if result is not None)
     finally:
         for executor in executors:
             executor.shutdown(wait=True, cancel_futures=False)
@@ -3646,19 +3778,40 @@ def run_comparison(config: ComparisonConfig) -> tuple[dict[str, Any], Path, Path
         shard_results = schedule_local_task_shards(config, shards, run_stamp, gui_environments)
     infrastructure_failures: list[dict[str, str]] = []
     for shard_result in shard_results:
-        if shard_result.error is None:
-            assert shard_result.output is not None
-            trials.extend(shard_result.output)
-            continue
-        error_text = f"{type(shard_result.error).__name__}: {shard_result.error}"
-        infrastructure_failures.append({"task": shard_result.shard.task, "error": error_text})
+        shard_trials = shard_result.output or ()
+        result_error = shard_result.error
+        try:
+            _validate_local_shard_output(
+                shard_result.shard,
+                shard_trials,
+                allow_partial=result_error is not None,
+            )
+        except Exception as validation_error:  # noqa: BLE001 - preserve other shards
+            result_error = validation_error
+            shard_trials = ()
+        trials.extend(shard_trials)
+        completed_versions = {trial.version for trial in shard_trials}
+        failure_details = [
+            f"{trial.version}: {trial.error or trial.termination}"
+            for trial in shard_trials
+            if trial.termination == "orchestration_error"
+        ]
+        if result_error is not None:
+            failure_details.append(f"{type(result_error).__name__}: {result_error}")
+        if failure_details:
+            infrastructure_failures.append(
+                {"task": shard_result.shard.task, "error": "; ".join(failure_details)}
+            )
         for release in shard_result.shard.releases:
+            if release.version in completed_versions:
+                continue
+            missing_error = result_error or RuntimeError("task shard returned incomplete output")
             trials.append(
                 failed_trial_metrics(
                     shard_result.shard.task,
                     release.version,
                     _trial_id(shard_result.shard.task, release.version, run_stamp),
-                    shard_result.error,
+                    missing_error,
                 )
             )
     comparisons = build_comparisons(trials, config.baseline, candidate_name)

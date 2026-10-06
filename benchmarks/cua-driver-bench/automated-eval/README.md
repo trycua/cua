@@ -104,6 +104,8 @@ Use `--max-parallel-tasks` to set the maximum number of active task shards.
 - Local runs use `1` by default.
 - Parallel local runs require one independent Linux/X11 display for each active shard.
 
+Concurrent shards share the configured model provider. Higher concurrency can increase latency or cause provider capacity errors. Use `1` for latency-sensitive comparisons.
+
 Use `--max-parallel-tasks 1` to run all task shards in sequence.
 
 For a parallel local run, start the X11 sessions before you run the command. Then assign each session with a separate `--local-display` option.
@@ -203,7 +205,7 @@ The workflow builds isolated Linux drivers from both refs. It retrieves only the
 
 The task pack stays in runner temporary storage. A cleanup step removes it, and the result artifact does not include it.
 
-The workflow starts the Fleet comparison and publishes the report to S3. It also uploads the complete result bundle as a GitHub artifact.
+The workflow starts the Fleet comparison and publishes an available report bundle to S3. It also uploads the scrubbed result bundle as a GitHub artifact. The report and summary identify incomplete infrastructure execution.
 
 The artifact name is `cua-driver-bench-<run-id>`. The workflow summary includes refs, resolved SHAs, tasks, benchmark status, S3 status, and artifact status.
 
@@ -306,7 +308,7 @@ The reports contain these main values:
 The runner preserves each raw trial directory. Keep those artifacts outside Git
 and use them locally to investigate failures and reported metrics.
 
-The command exit code reports runner errors. Read the generated report for individual task pass results.
+Exit code `2` means that infrastructure execution was incomplete. A completed run can still contain failed tasks. Read the report for each task result.
 
 ## Limits
 

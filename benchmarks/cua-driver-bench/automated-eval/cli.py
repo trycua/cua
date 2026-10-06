@@ -46,8 +46,9 @@ def build_parser(*, fleet: bool = False) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="compare_drivers fleet" if fleet else "compare_drivers",
         description=(
-            "Run one or compare two Cua Driver releases on one Fleet worker. "
-            "Fleet provisions supported external Linux apps required by the "
+            "Run one or compare two Cua Driver releases on isolated Fleet workers. "
+            "Each active task shard uses one worker. Fleet provisions the "
+            "supported external Linux apps required by the "
             "selected task descriptors."
             if fleet
             else "Run one or compare two local Cua Driver releases."
@@ -196,7 +197,7 @@ def build_publish_parser() -> argparse.ArgumentParser:
         "--run-dir",
         type=Path,
         required=True,
-        help="completed benchmark run containing comparison files and report/index.html",
+        help="benchmark run containing comparison files and report/index.html",
     )
     return parser
 
@@ -268,6 +269,13 @@ def _publish_run(run_dir: Path) -> str:
     )
 
 
+def _result_exit_code(report: dict[str, object], *, fleet: bool) -> int:
+    execution = report.get("execution")
+    if isinstance(execution, dict) and execution.get("complete") is False:
+        return 2
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     _load_environment()
     mode, arguments_list = _command_mode(argv)
@@ -316,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, RuntimeError, ValueError) as error:
             parser.error(str(error))
         print(f"REPORT_URL={report_url}")
-    return 0
+    return _result_exit_code(report, fleet=fleet_mode)
 
 
 if __name__ == "__main__":

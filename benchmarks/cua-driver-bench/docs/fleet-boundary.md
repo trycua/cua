@@ -2,6 +2,8 @@
 
 The benchmark separates comparison logic from the current cloud execution backend. Cua Fleet is the current cloud backend.
 
+This page is the handoff for benchmark execution and future Fleet replacement.
+
 No generic executor interface exists yet. The boundary is a small task-shard contract in the existing comparison and Fleet code.
 
 ## Backend-neutral behavior
@@ -17,6 +19,8 @@ The following behavior does not depend on Fleet:
 - trial metrics, participation data, recording data, and Papercut data
 - JSON, Markdown, and HTML report generation
 - S3 report publishing
+- GitHub Actions artifact upload
+- workflow summary formatting
 
 The scheduler can run different task shards at the same time. It returns shard results in canonical task order, not completion order.
 
@@ -95,4 +99,6 @@ The backend must perform these operations:
 4. Retrieve the shard result bundle.
 5. Release the executor.
 
-A replacement does not need to change comparison logic, aggregation, report generation, or S3 publishing.
+When Fleet is removed, replace only executor acquisition, staging, execution, result retrieval, and release.
+
+Keep task selection, comparison, aggregation, reports, S3 publishing, artifact upload, and summary formatting unchanged.

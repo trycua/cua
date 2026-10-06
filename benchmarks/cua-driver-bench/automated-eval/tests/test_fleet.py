@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import io
 import json
 import sys
 import tarfile
@@ -175,7 +176,7 @@ class FleetHelpersTests(unittest.TestCase):
         self.assertIs(result, pool)
         sandbox.Pool.apply.assert_not_awaited()
 
-    def test_worker_finalization_retries_release_and_checks_secret_cleanup(self) -> None:
+    def test_worker_finalization_retries_release_and_checks_worker_cleanup(self) -> None:
         worker = SimpleNamespace(
             shell=SimpleNamespace(
                 run=AsyncMock(
@@ -190,11 +191,26 @@ class FleetHelpersTests(unittest.TestCase):
         )
 
         with patch.object(fleet.asyncio, "sleep", new=AsyncMock()):
-            errors = asyncio.run(fleet._finalize_worker(worker, True))
+            errors = asyncio.run(fleet._finalize_worker(worker))
 
         self.assertEqual(worker.close.await_count, 2)
         self.assertEqual(len(errors), 1)
-        self.assertIn("secret cleanup failed", errors[0])
+        self.assertIn("worker cleanup failed", errors[0])
+        cleanup_command = worker.shell.run.await_args.args[0]
+        self.assertIn(fleet.REMOTE_WORKSPACE, cleanup_command)
+        self.assertIn(fleet.REMOTE_TASKS_ROOT, cleanup_command)
+        self.assertIn(fleet.REMOTE_CODEX_HOME, cleanup_command)
+        self.assertIn("set -eu", cleanup_command)
+        self.assertIn("worker cleanup left $path", cleanup_command)
+        self.assertNotIn("; rm -f", cleanup_command)
+
+    def test_timeout_termination_waits_before_force_kill(self) -> None:
+        command = fleet._termination_command("4321")
+
+        self.assertIn('kill -TERM -- "-$pid"', command)
+        self.assertIn("sleep 1", command)
+        self.assertIn('kill -KILL -- "-$pid"', command)
+        self.assertIn("exit 1", command)
 
     def test_background_command_uses_durable_detached_process(self) -> None:
         shell = SimpleNamespace(
@@ -230,6 +246,38 @@ class FleetHelpersTests(unittest.TestCase):
         self.assertIn("/tmp/provision.exit.pid", launch.args[0])
         self.assertEqual(launch.kwargs, {"background": True})
 
+    def test_timeout_retries_pid_lookup_and_confirms_termination(self) -> None:
+        successful = SimpleNamespace(returncode=0, stdout="", stderr="")
+        shell = SimpleNamespace(run=AsyncMock(side_effect=[successful, successful, successful]))
+        files = SimpleNamespace(
+            exists=AsyncMock(side_effect=[RuntimeError("transport dropped"), True]),
+            read_text=AsyncMock(return_value="4321\n"),
+        )
+        worker = SimpleNamespace(shell=shell, files=files)
+
+        with (
+            patch.object(fleet.asyncio, "sleep", new=AsyncMock()),
+            self.assertRaisesRegex(RuntimeError, "timed out after -1 seconds"),
+        ):
+            asyncio.run(
+                fleet._run_background_command(
+                    worker,
+                    "sleep 60",
+                    -1,
+                    label="benchmark command",
+                    stdout_path="/tmp/benchmark.stdout",
+                    stderr_path="/tmp/benchmark.stderr",
+                    exit_path="/tmp/benchmark.exit",
+                )
+            )
+
+        self.assertEqual(files.exists.await_count, 2)
+        self.assertEqual(files.read_text.await_count, 1)
+        self.assertEqual(shell.run.await_count, 3)
+        termination = shell.run.await_args_list[2]
+        self.assertIn("pid=4321", termination.args[0])
+        self.assertEqual(termination.kwargs, {"timeout": 45})
+
     def test_task_archive_contains_only_selected_task_source(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -255,6 +303,44 @@ class FleetHelpersTests(unittest.TestCase):
         self.assertIn("shared/cdb-s01/task.cuabench.json", names)
         self.assertFalse(any("node_modules" in name for name in names))
         self.assertFalse(any("cdb-s02" in name for name in names))
+
+    def test_safe_extract_skips_links_and_extracts_regular_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive_path = root / "results.tar.gz"
+            destination = root / "result"
+            with tarfile.open(archive_path, "w:gz") as archive:
+                regular = tarfile.TarInfo("trial/result.json")
+                payload = b"{}"
+                regular.size = len(payload)
+                archive.addfile(regular, io.BytesIO(payload))
+                symlink = tarfile.TarInfo("trial/SingletonSocket")
+                symlink.type = tarfile.SYMTYPE
+                symlink.linkname = "/tmp/chromium-socket"
+                archive.addfile(symlink)
+                hardlink = tarfile.TarInfo("trial/result-copy.json")
+                hardlink.type = tarfile.LNKTYPE
+                hardlink.linkname = "trial/result.json"
+                archive.addfile(hardlink)
+
+            fleet._safe_extract(archive_path, destination)
+
+            self.assertEqual((destination / "trial" / "result.json").read_bytes(), payload)
+            self.assertFalse((destination / "trial" / "SingletonSocket").exists())
+            self.assertFalse((destination / "trial" / "result-copy.json").exists())
+
+    def test_safe_extract_rejects_parent_traversal(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive_path = root / "results.tar.gz"
+            with tarfile.open(archive_path, "w:gz") as archive:
+                member = tarfile.TarInfo("../outside.txt")
+                payload = b"unsafe"
+                member.size = len(payload)
+                archive.addfile(member, io.BytesIO(payload))
+
+            with self.assertRaisesRegex(RuntimeError, "unsafe path"):
+                fleet._safe_extract(archive_path, root / "result")
 
     def test_provisions_only_apps_required_by_selected_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -334,12 +420,12 @@ class FleetHelpersTests(unittest.TestCase):
             )
             results = (
                 fleet.TaskShardResult(
-                    shard=fleet.TaskShard("CDB-S01", releases),
-                    output=shard_output,
-                ),
-                fleet.TaskShardResult(
                     shard=fleet.TaskShard("CDB-S02", releases),
                     error=RuntimeError("worker unavailable"),
+                ),
+                fleet.TaskShardResult(
+                    shard=fleet.TaskShard("CDB-S01", releases),
+                    output=shard_output,
                 ),
             )
             config = SimpleNamespace(
@@ -376,6 +462,225 @@ class FleetHelpersTests(unittest.TestCase):
                 ["CDB-S01", "CDB-S02"],
             )
             self.assertTrue((output / "trials" / "CDB-S01-0.22.2-stamp").is_dir())
+
+    def test_copy_shard_directory_ignores_dangling_runtime_links(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shard_output = root / "shard"
+            profile = shard_output / "trials" / "trial" / "workspace" / ".chromium-profile"
+            profile.mkdir(parents=True)
+            (profile / "Preferences").write_text("{}", encoding="utf-8")
+            (profile / "SingletonSocket").symlink_to("/tmp/missing-chromium-socket")
+            (profile / "PreferencesLink").symlink_to(profile / "Preferences")
+            (shard_output / "trials-link").symlink_to(shard_output / "trials")
+            output = root / "result"
+
+            fleet._copy_shard_directory(shard_output, output, "trials")
+
+            copied_profile = output / "trials" / "trial" / "workspace" / ".chromium-profile"
+            self.assertTrue((copied_profile / "Preferences").is_file())
+            self.assertFalse((copied_profile / "SingletonSocket").exists())
+            self.assertFalse((copied_profile / "PreferencesLink").exists())
+            self.assertFalse((output / "trials-link").exists())
+
+    def test_aggregate_marks_incomplete_trial_set_as_infrastructure_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "result"
+            shard_output = output / "shards" / "CDB-S01"
+            shard_output.mkdir(parents=True)
+            releases = tuple(SimpleNamespace(version=version) for version in ("0.22.2", "0.23.2"))
+            (shard_output / "comparison.json").write_text(
+                json.dumps(
+                    {
+                        "baseline": "0.22.2",
+                        "candidate": "0.23.2",
+                        "trials": [
+                            {
+                                "task": "CDB-S01",
+                                "version": "0.22.2",
+                                "trial_id": "baseline",
+                                "trial_dir": "/remote/baseline",
+                                "passed": True,
+                                "score": 1.0,
+                                "total_ms": 100,
+                                "cua_calls": 1,
+                                "input_actions": 1,
+                                "termination": "completed",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            results = (
+                fleet.TaskShardResult(
+                    shard=fleet.TaskShard("CDB-S01", releases),
+                    output=shard_output,
+                ),
+            )
+            config = SimpleNamespace(
+                output=output,
+                baseline="0.22.2",
+                candidate="0.23.2",
+                max_parallel_tasks=1,
+            )
+
+            with (
+                patch.object(
+                    fleet,
+                    "write_html_bundle",
+                    side_effect=lambda _report, path: (path / "report").mkdir(),
+                ),
+                patch.object(fleet, "render_markdown", return_value="# Comparison\n"),
+            ):
+                json_path, _ = fleet._aggregate_shard_results(config, results, "stamp")
+
+            report = json.loads(json_path.read_text(encoding="utf-8"))
+            self.assertFalse(report["execution"]["complete"])
+            self.assertIn(
+                "unexpected trials", report["execution"]["infrastructure_failures"][0]["error"]
+            )
+            self.assertEqual(
+                [trial["termination"] for trial in report["trials"]],
+                ["orchestration_error", "orchestration_error"],
+            )
+
+    def test_aggregate_propagates_incomplete_shard_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "result"
+            shard_output = output / "shards" / "CDB-S01"
+            releases = tuple(SimpleNamespace(version=version) for version in ("0.22.2", "0.23.2"))
+            trial_values = []
+            for version in ("0.22.2", "0.23.2"):
+                trial_id = f"CDB-S01-{version}-stamp"
+                (shard_output / "trials" / trial_id).mkdir(parents=True)
+                trial_values.append(
+                    {
+                        "task": "CDB-S01",
+                        "version": version,
+                        "trial_id": trial_id,
+                        "trial_dir": f"/remote/{trial_id}",
+                        "passed": False,
+                        "score": 0.0,
+                        "total_ms": 100,
+                        "cua_calls": 1,
+                        "input_actions": 0,
+                        "termination": "completed",
+                    }
+                )
+            (shard_output / "comparison.json").write_text(
+                json.dumps(
+                    {
+                        "baseline": "0.22.2",
+                        "candidate": "0.23.2",
+                        "trials": trial_values,
+                        "execution": {
+                            "complete": False,
+                            "infrastructure_failures": [
+                                {"task": "CDB-S01", "error": "driver unavailable"}
+                            ],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            results = (
+                fleet.TaskShardResult(
+                    shard=fleet.TaskShard("CDB-S01", releases),
+                    output=shard_output,
+                ),
+            )
+            config = SimpleNamespace(
+                output=output,
+                baseline="0.22.2",
+                candidate="0.23.2",
+                max_parallel_tasks=1,
+            )
+
+            with (
+                patch.object(
+                    fleet,
+                    "write_html_bundle",
+                    side_effect=lambda _report, path: (path / "report").mkdir(),
+                ),
+                patch.object(fleet, "render_markdown", return_value="# Comparison\n"),
+            ):
+                json_path, _ = fleet._aggregate_shard_results(config, results, "stamp")
+
+            report = json.loads(json_path.read_text(encoding="utf-8"))
+            self.assertFalse(report["execution"]["complete"])
+            self.assertEqual(
+                report["execution"]["infrastructure_failures"],
+                [{"task": "CDB-S01", "error": "driver unavailable"}],
+            )
+            self.assertEqual(
+                [trial["termination"] for trial in report["trials"]],
+                ["completed", "completed"],
+            )
+
+    def test_aggregate_rejects_missing_raw_trial_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "result"
+            shard_output = output / "shards" / "CDB-S01"
+            shard_output.mkdir(parents=True)
+            releases = tuple(SimpleNamespace(version=version) for version in ("0.22.2", "0.23.2"))
+            (shard_output / "comparison.json").write_text(
+                json.dumps(
+                    {
+                        "baseline": "0.22.2",
+                        "candidate": "0.23.2",
+                        "trials": [
+                            {
+                                "task": "CDB-S01",
+                                "version": version,
+                                "trial_id": f"CDB-S01-{version}-stamp",
+                                "trial_dir": f"/remote/CDB-S01-{version}-stamp",
+                                "passed": True,
+                                "score": 1.0,
+                                "total_ms": 100,
+                                "cua_calls": 1,
+                                "input_actions": 1,
+                                "termination": "completed",
+                            }
+                            for version in ("0.22.2", "0.23.2")
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            results = (
+                fleet.TaskShardResult(
+                    shard=fleet.TaskShard("CDB-S01", releases),
+                    output=shard_output,
+                ),
+            )
+            config = SimpleNamespace(
+                output=output,
+                baseline="0.22.2",
+                candidate="0.23.2",
+                max_parallel_tasks=1,
+            )
+
+            with (
+                patch.object(
+                    fleet,
+                    "write_html_bundle",
+                    side_effect=lambda _report, path: (path / "report").mkdir(),
+                ),
+                patch.object(fleet, "render_markdown", return_value="# Comparison\n"),
+            ):
+                json_path, _ = fleet._aggregate_shard_results(config, results, "stamp")
+
+            report = json.loads(json_path.read_text(encoding="utf-8"))
+            self.assertFalse(report["execution"]["complete"])
+            self.assertIn(
+                "missing raw trial artifacts",
+                report["execution"]["infrastructure_failures"][0]["error"],
+            )
+            self.assertEqual(
+                [trial["termination"] for trial in report["trials"]],
+                ["orchestration_error", "orchestration_error"],
+            )
 
 
 if __name__ == "__main__":

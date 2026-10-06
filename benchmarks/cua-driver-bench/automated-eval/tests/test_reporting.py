@@ -61,8 +61,9 @@ class ReportingTests(unittest.TestCase):
 
         self.assertEqual(
             [event["kind"] for event in normalized],
-            ["user", "agent", "tool_call", "tool_result"],
+            ["agent", "tool_call", "tool_result"],
         )
+        self.assertNotIn("Task prompt", " ".join(event["text"] for event in normalized))
         self.assertNotIn("private", " ".join(event["text"] for event in normalized))
         self.assertIn("<script>bad</script>", normalized[-1]["text"])
 
@@ -74,7 +75,9 @@ class ReportingTests(unittest.TestCase):
             (trial / "inputs" / "artifacts").mkdir(parents=True)
             (trial / "artifacts").mkdir()
             (trial / "observer" / "cua-driver-recording" / "turn-00001").mkdir(parents=True)
-            (trial / "inputs" / "artifacts" / "brief.md").write_text("prompt", encoding="utf-8")
+            (trial / "inputs" / "artifacts" / "brief.md").write_text(
+                "PRIVATE PARTICIPANT BRIEF", encoding="utf-8"
+            )
             (trial / "artifacts" / "codex-events.jsonl").write_text(
                 "\n".join(
                     [
@@ -156,7 +159,7 @@ class ReportingTests(unittest.TestCase):
             )
             comparison_html = (output / "report" / "index.html").read_text(encoding="utf-8")
 
-        self.assertIn("prompt", html)
+        self.assertNotIn("PRIVATE PARTICIPANT BRIEF", html)
         self.assertIn("assets/0001.png", html)
         self.assertIn("&lt;script&gt;bad&lt;/script&gt;", html)
         self.assertNotIn("<script>bad</script>", html)

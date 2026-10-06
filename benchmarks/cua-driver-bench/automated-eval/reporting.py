@@ -139,10 +139,6 @@ def _recording_images(trial_dir: Path) -> list[Path]:
 
 def load_trajectory_events(trial_dir: Path) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
-    brief = trial_dir / "inputs" / "artifacts" / "brief.md"
-    if brief.is_file():
-        events.append(_event("user", "USER", brief.read_text(encoding="utf-8")))
-
     pending: dict[str, dict[str, Any]] = {}
     event_path = trial_dir / "artifacts" / "codex-events.jsonl"
     for raw in _read_jsonl(event_path):

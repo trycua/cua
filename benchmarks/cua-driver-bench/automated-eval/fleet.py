@@ -17,6 +17,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from compare_drivers import (
+    SHARED_TASKS,
     ComparisonConfig,
     TaskShard,
     TaskShardResult,
@@ -394,6 +395,35 @@ async def _claim_worker(pool: Any, claim_name: str) -> Any:
         raise RuntimeError("could not claim a ready Fleet worker") from error
 
 
+def _termination_command(remote_pid: str) -> str:
+    return _bash(
+        f"""
+set -eu
+pid={shlex.quote(remote_pid)}
+alive() {{
+  kill -0 "$pid" 2>/dev/null || kill -0 -- "-$pid" 2>/dev/null
+}}
+if alive; then
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if ! alive; then
+      exit 0
+    fi
+    sleep 1
+  done
+  kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+  for _ in 1 2 3 4 5; do
+    if ! alive; then
+      exit 0
+    fi
+    sleep 1
+  done
+  exit 1
+fi
+""".strip()
+    )
+
+
 async def _run_background_command(
     worker: Any,
     command: str,
@@ -450,15 +480,22 @@ trap finish EXIT
                 stderr = await worker.files.read_text(stderr_path)
             return _RemoteCommandResult(stdout, stderr, returncode)
         await asyncio.sleep(10)
-    remote_pid = ""
-    if await worker.files.exists(pid_path):
-        remote_pid = (await worker.files.read_text(pid_path)).strip()
-    if remote_pid.isdigit():
-        await worker.shell.run(
-            f"kill -TERM -- -{remote_pid} 2>/dev/null || "
-            f"kill -TERM {remote_pid} 2>/dev/null || true",
-            timeout=30,
-        )
+    pid_exists = await _retry_transport(
+        lambda: worker.files.exists(pid_path), f"{label} PID lookup"
+    )
+    if not pid_exists:
+        raise RuntimeError(f"{label} timed out and did not expose a remote PID")
+    remote_pid = (
+        await _retry_transport(lambda: worker.files.read_text(pid_path), f"{label} PID read")
+    ).strip()
+    if not remote_pid.isdigit():
+        raise RuntimeError(f"{label} timed out and returned an invalid remote PID")
+    await _run_checked(
+        worker,
+        _termination_command(remote_pid),
+        f"{label} termination",
+        45,
+    )
     raise RuntimeError(f"{label} timed out after {timeout} seconds")
 
 
@@ -565,11 +602,17 @@ def _model_endpoint_preflight_command() -> str:
 def _safe_extract(archive_path: Path, destination: Path) -> None:
     destination_root = destination.resolve()
     with tarfile.open(archive_path, "r:gz") as archive:
+        safe_members: list[tarfile.TarInfo] = []
         for member in archive.getmembers():
             target = (destination / member.name).resolve()
             if target != destination_root and destination_root not in target.parents:
                 raise RuntimeError("result archive contains an unsafe path")
-        archive.extractall(destination)
+            if member.issym() or member.islnk():
+                continue
+            if not member.isdir() and not member.isfile():
+                raise RuntimeError("result archive contains an unsupported entry")
+            safe_members.append(member)
+        archive.extractall(destination, members=safe_members)
 
 
 async def _download_results(
@@ -605,18 +648,55 @@ async def _download_results(
         archive_path.unlink(missing_ok=True)
     json_path = local_output / "comparison.json"
     markdown_path = local_output / "comparison.md"
-    if not json_path.is_file() or not markdown_path.is_file():
-        raise RuntimeError("downloaded Fleet results are missing comparison files")
+    trials_path = local_output / "trials"
+    if not json_path.is_file() or not markdown_path.is_file() or not trials_path.is_dir():
+        raise RuntimeError("downloaded Fleet results are missing required result files")
     return json_path, markdown_path
 
 
-async def _finalize_worker(worker: Any, secret_cleanup_required: bool) -> tuple[str, ...]:
+def _worker_cleanup_command() -> str:
+    files = (
+        REMOTE_REPO_ARCHIVE,
+        REMOTE_DRIVER_ARCHIVE,
+        REMOTE_TASKS_ARCHIVE,
+        REMOTE_RESULTS_ARCHIVE,
+        REMOTE_ENV,
+        REMOTE_BENCHMARK_STDOUT,
+        REMOTE_BENCHMARK_STDERR,
+        REMOTE_BENCHMARK_EXIT,
+        REMOTE_PROVISION_STDOUT,
+        REMOTE_PROVISION_STDERR,
+        REMOTE_PROVISION_EXIT,
+        REMOTE_BOOTSTRAP_STDOUT,
+        REMOTE_BOOTSTRAP_STDERR,
+        REMOTE_BOOTSTRAP_EXIT,
+        REMOTE_ARCHIVE_STDOUT,
+        REMOTE_ARCHIVE_STDERR,
+        REMOTE_ARCHIVE_EXIT,
+    )
+    directories = (REMOTE_WORKSPACE, REMOTE_TASKS_ROOT, REMOTE_CODEX_HOME)
+    state_files = tuple(path for base in files for path in (base, f"{base}.partial", f"{base}.pid"))
+    cleanup_targets = (*directories, *state_files)
+    script = (
+        "set -eu\n"
+        + "rm -rf -- "
+        + " ".join(shlex.quote(path) for path in directories)
+        + "\nrm -f -- "
+        + " ".join(shlex.quote(path) for path in state_files)
+        + "\nfor path in "
+        + " ".join(shlex.quote(path) for path in cleanup_targets)
+        + '; do\n  if test -e "$path" || test -L "$path"; then\n'
+        + '    echo "worker cleanup left $path" >&2\n    exit 1\n  fi\ndone'
+    )
+    return _bash(script)
+
+
+async def _finalize_worker(worker: Any) -> tuple[str, ...]:
     errors: list[str] = []
-    if secret_cleanup_required:
-        try:
-            await _run_checked(worker, f"rm -f {REMOTE_ENV}", "secret cleanup", 30)
-        except Exception as cleanup_error:
-            errors.append(f"secret cleanup failed: {cleanup_error}")
+    try:
+        await _run_checked(worker, _worker_cleanup_command(), "worker cleanup", 120)
+    except Exception as cleanup_error:
+        errors.append(f"worker cleanup failed: {cleanup_error}")
     try:
         await _retry_transport(lambda: worker.close(), "worker release")
     except Exception as release_error:
@@ -650,7 +730,6 @@ async def _run_fleet_task_shard(
     keep_alive_minutes = benchmark_timeout / 60 + 20
     worker = None
     active_error: BaseException | None = None
-    secret_cleanup_required = False
     prefix = f"[fleet:{shard.task}]"
     print(f"{prefix} claiming worker...")
     try:
@@ -753,7 +832,6 @@ async def _run_fleet_task_shard(
             180,
         )
 
-        secret_cleanup_required = True
         await _retry_transport(
             lambda: worker.files.write_text(
                 REMOTE_ENV,
@@ -779,7 +857,6 @@ async def _run_fleet_task_shard(
         benchmark = await _run_background_benchmark(worker, benchmark_command, benchmark_timeout)
 
         await _run_checked(worker, f"rm -f {REMOTE_ENV}", "secret cleanup", 30)
-        secret_cleanup_required = False
 
         output_exists = await worker.files.is_dir(remote_output)
         if not output_exists:
@@ -804,7 +881,7 @@ async def _run_fleet_task_shard(
         finalization_errors: tuple[str, ...] = ()
         if worker is not None:
             print(f"{prefix} releasing worker...")
-            finalization_errors = await _finalize_worker(worker, secret_cleanup_required)
+            finalization_errors = await _finalize_worker(worker)
         if finalization_errors:
             detail = "; ".join(finalization_errors)
             if active_error is not None:
@@ -823,12 +900,19 @@ def _copy_shard_directory(shard_output: Path, output: Path, name: str) -> None:
         return
     destination = output / name
     destination.mkdir(parents=True, exist_ok=True)
+
+    def ignore_symlinks(directory: str, names: list[str]) -> list[str]:
+        root = Path(directory)
+        return [name for name in names if (root / name).is_symlink()]
+
     for item in sorted(source.iterdir()):
         target = destination / item.name
         if target.exists():
             raise RuntimeError(f"duplicate shard artifact: {name}/{item.name}")
+        if item.is_symlink():
+            continue
         if item.is_dir():
-            shutil.copytree(item, target)
+            shutil.copytree(item, target, ignore=ignore_symlinks)
         else:
             shutil.copy2(item, target)
 
@@ -844,7 +928,12 @@ def _aggregate_shard_results(
     failures: list[dict[str, str]] = []
     candidate_name = config.candidate if config.candidate != config.baseline else None
 
-    for result in results:
+    task_order = {task: index for index, task in enumerate(SHARED_TASKS)}
+    ordered_results = tuple(
+        sorted(results, key=lambda result: task_order.get(result.shard.task, len(task_order)))
+    )
+
+    for result in ordered_results:
         shard_output = config.output / "shards" / result.shard.task
         report_path = shard_output / "comparison.json"
         if report_path.is_file():
@@ -857,9 +946,43 @@ def _aggregate_shard_results(
                     for trial in shard_report.get("trials", [])
                     if isinstance(trial, dict)
                 )
+                expected_trials = tuple(
+                    (result.shard.task, release.version) for release in result.shard.releases
+                )
+                actual_trials = tuple((trial.task, trial.version) for trial in shard_trials)
+                if actual_trials != expected_trials:
+                    raise RuntimeError(
+                        f"task shard returned unexpected trials: {actual_trials!r}; "
+                        f"expected {expected_trials!r}"
+                    )
+                for trial in shard_trials:
+                    trial_directory = shard_output / "trials" / trial.trial_id
+                    if not trial_directory.is_dir():
+                        raise RuntimeError(
+                            f"task shard is missing raw trial artifacts: {trial.trial_id}"
+                        )
                 for name in ("trials", "launchers", "runtime"):
                     _copy_shard_directory(shard_output, config.output, name)
                 trials.extend(shard_trials)
+                shard_execution = shard_report.get("execution")
+                if isinstance(shard_execution, dict) and shard_execution.get("complete") is False:
+                    shard_failures = shard_execution.get("infrastructure_failures")
+                    if isinstance(shard_failures, list) and shard_failures:
+                        failures.extend(
+                            {
+                                "task": result.shard.task,
+                                "error": str(failure.get("error", "incomplete task shard")),
+                            }
+                            for failure in shard_failures
+                            if isinstance(failure, dict)
+                        )
+                    else:
+                        failures.append(
+                            {
+                                "task": result.shard.task,
+                                "error": "task shard reported incomplete execution",
+                            }
+                        )
             except Exception as error:  # noqa: BLE001 - preserve other shard reports
                 result_error = error
             else:
@@ -897,7 +1020,7 @@ def _aggregate_shard_results(
     report["comparisons"] = build_comparisons(trials, config.baseline, candidate_name)
     report["execution"] = {
         "backend": "fleet",
-        "task_shards": [result.shard.task for result in results],
+        "task_shards": [result.shard.task for result in ordered_results],
         "max_parallel_tasks": config.max_parallel_tasks,
         "complete": not failures,
         "infrastructure_failures": failures,

@@ -18,18 +18,18 @@
    "read_only": true
   },
   {
-   "description": "List all layer-0 top-level windows currently known to WindowServer. Includes off-screen windows (minimized, on another Space, hidden-launched). Use this to find a window_id before calling get_window_state. AppKit-internal helper windows (off screen, untitled, in no Space, and absent from the app's AXWindows) are omitted: no tool can read, move, or focus them.\n\nPer-record fields: window_id, pid, app_name, title, bounds (x/y/width/height, top-left origin), z_index (integer or null; higher values are closer to the front; null means stacking order is unavailable and callers must not infer one), is_on_screen, space_ids, current_space_id (the active Space on that window's display), and on_current_space. The top-level current_space_id is WindowServer's main/global active Space and can differ from a record's current_space_id when displays use independent Spaces. To select a frontmost candidate, take the maximum integer z_index; if every value is null, use an explicit fallback instead of relying on array order.",
+   "description": "List layer-0 top-level windows known to WindowServer, including off-screen ones (minimized, other Space, hidden). Use it to find a `window_id` for get_window_state. AppKit-internal helper windows are omitted.\n\nPer record: window_id, pid, app_name, title, bounds, z_index, is_on_screen, space_ids, current_space_id, on_current_space. For the frontmost window take the maximum integer z_index; null means stacking is unavailable, so do not infer it from array order.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
     "additionalProperties": false,
     "properties": {
      "on_screen_only": {
-      "description": "When true, drop windows not on the current Space. Default false.",
+      "description": "Drop windows not on the current Space.",
       "type": "boolean"
      },
      "pid": {
-      "description": "Optional pid filter. When set, only this pid's windows are returned.",
+      "description": "Only this pid's windows.",
       "type": "integer"
      },
      "session": {
@@ -43,7 +43,7 @@
    "read_only": true
   },
   {
-   "description": "Walk a running app's AX tree and return BOTH a structured `elements` array (preferred) AND a Markdown rendering of the same tree (back-compat). Every actionable element is tagged with [element_index N] in the markdown and as `element_index` in the structured array; pass each element's `element_token` to click, type_text, press_key, etc.\n\nINVARIANT: call get_window_state once per turn per (pid, window_id) before any element action. The next snapshot of the window replaces this one, stales its element tokens, and lists the replaced ids in `invalidated_snapshot_ids`.\n\nPREFERRED CONSUMERS read `structuredContent.elements` (one entry per indexed row with `element_index`, `role`, `label`, `value` (the element's text/AXValue when present — use it to verify what a field holds), `actions` (names of AX actions exposed by the element, omitted when empty), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown `tree_markdown` stays available and unchanged in shape for existing text-parsing callers — but new fields will only be added to the structured side.\n\nAlways returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces: Electron echo-confirms, Catalyst null values, virtualized off-viewport rows with `h:1` frames). You choose the modality at ACTION time, not here: an element ax action (pass `element_token` → the accessibility rung) or an element px action (pass `x`,`y` → the pixel rung, read straight off this screenshot). `capture_mode` is deprecated and ignored. Pass `include_screenshot:false` to skip the grab and get the tree only — the cheap path when you're just re-indexing before an element ax action.\n\nThe mirror image: pass `include_accessibility_tree:false` to SKIP the AX walk entirely (the expensive part, bounded by timeout_ms) and return just the screenshot plus window metadata — `window_bounds`, `screenshot_scale`, `screenshot_width`/`screenshot_height`, `app_name`, and `window_title` — the capture-only path for rendering a live window preview / picture-in-picture without paying for perception. Setting BOTH `include_accessibility_tree:false` and `include_screenshot:false` is an error (nothing to return). Optional `max_image_dimension` overrides the configured screenshot long-edge limit for this call; use 0 for native resolution. The legacy `max_dimension` remains a tighter cap for compatibility.\n\nThe snapshot is SCOPED to `window_id`: a window_id that no longer exists is refused with `window_id_not_found`, and one owned by another process is refused with `window_owner_pid_mismatch` naming the real `owner_pid` to retry with (macOS hosts a sandboxed app's Open/Save panel out-of-process, so its window belongs to the panel service, not the app). If the window is live under this pid but its accessibility surface can't be resolved, the tree comes back EMPTY with `degraded_reason: ax_window_unresolved` and the screenshot of the requested window; background input is refused until it resolves, so re-snapshot or act with `delivery_mode:\"foreground\"`. When that pid is an app still launching (its window exists before it answers accessibility), the walk first waits up to `timeout_ms` for it; if it never answers, the tree comes back EMPTY with `degraded_reason: ax_app_launching`, `truncated: true` and `truncation_reason: app_lookup_timeout`. A window on another Space still resolves by its exact CGWindowID. This tool never returns another surface's elements under your window_id. Before exposing a screenshot, its raw dimensions are validated as a coherent 1x/2x representation of the requested WindowServer bounds. `px_frame_mismatch` or `px_capture_unavailable` omits an unprovable screenshot/pixel frame instead of guessing a transform; the truthful AX payload remains available.\n\nOptional `query` projects both tree_markdown and structured `elements` to matching lines plus their ancestor chain (case-insensitive substring). The element_index values are unchanged, the complete snapshot remains actionable, and `element_count` continues to report its total size; `filtered_element_count` reports the projected response size.\n\nOptional `max_elements` / `max_depth` bound the AX walk to mitigate context-window blow-up on Electron / Obsidian / large web apps that produce 10k+ element trees. When applied, BOTH the markdown and the structured elements are truncated identically. Omit both for current default behaviour (≤2 000 elements, depth ≤25).",
+   "description": "Snapshot a window: structured `elements` (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`), the same tree as Markdown in `tree_markdown`, and a screenshot. Pass an element's `element_token` to click, type_text, press_key, etc.\n\nSTART NARROW: `query` (case-insensitive substring) returns only matching rows plus their ancestors, and `max_elements` / `max_depth` bound the walk, so large Electron or web trees do not flood context. Indices and tokens stay valid for the whole snapshot. A full read can be 20x larger than a targeted one.\n\nA new snapshot of the same (pid, window_id) replaces the previous one and stales its tokens (`invalidated_snapshot_ids`). `include_screenshot:false` returns the tree only; `include_accessibility_tree:false` returns only the screenshot and window metadata. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\nRefusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -58,15 +58,15 @@
       "type": "string"
      },
      "include_accessibility_tree": {
-      "description": "Default true — walk the AX tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the AX walk entirely (the expensive part, bounded by timeout_ms) and return just the screenshot plus window metadata (bounds, scale, app_name, window_title) — the capture-only path for rendering a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return).",
+      "description": "Default true. False skips the AX walk and returns the screenshot plus window metadata. Both this and include_screenshot false is an error.",
       "type": "boolean"
      },
      "include_screenshot": {
-      "description": "Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return the tree only (the cheap path when you're just re-indexing before an element ax action; saves the image tokens + screen-grab latency). screenshot_out_file still forces a capture to disk.",
+      "description": "Default true. False returns the tree only (saves image tokens and latency); screenshot_out_file still forces a capture.",
       "type": "boolean"
      },
      "max_depth": {
-      "description": "Cap on the AX-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower this for deep menu/Electron trees.",
+      "description": "Cap on walk depth. Default 25.",
       "minimum": 1,
       "type": "integer"
      },
@@ -76,7 +76,7 @@
       "type": "integer"
      },
      "max_elements": {
-      "description": "Cap on the total number of AX nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (2 000). Lower this for Electron / Obsidian / large web apps that produce 10k+ element trees and blow context windows.",
+      "description": "Cap on AX nodes walked (depth-first; markdown and elements truncate together). Default 2000.",
       "minimum": 1,
       "type": "integer"
      },
@@ -90,7 +90,7 @@
       "type": "integer"
      },
      "query": {
-      "description": "Case-insensitive filter for tree_markdown and structured elements. Returns matching actionable rows plus their actionable ancestors without renumbering element_index values.",
+      "description": "Case-insensitive substring filter: returns matching rows plus ancestors; element_index values are not renumbered. Try this before a full read.",
       "type": "string"
      },
      "screenshot_out_file": {
@@ -98,7 +98,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "timeout_ms": {
@@ -480,18 +480,18 @@
    "read_only": false
   },
   {
-   "description": "Click against a target pid. **Prefer `element_token` over pixel coordinates** — the token works on backgrounded / minimized / hidden / off-Space windows, identifies one exact snapshot element, and tells you what you're clicking via the cached element's role + label. Reach for `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface that doesn't appear in the AX tree.\n\nTwo addressing modes:\n\n- element_token (from get_window_state): AX action path. Works on backgrounded/hidden windows. No cursor move, no focus steal. The snapshot cache is scoped per (pid, window_id) and is replaced by the next snapshot of the same window — re-snapshot every turn before clicking.\n\n- x, y (window-local screenshot pixels, top-left origin of the PNG returned by get_window_state): CGEvent path. Synthesizes mouse events and posts to pid. Use modifier for cmd/shift/option/ctrl. Needs a visible on-screen window to anchor the conversion.\n\nbutton: \"left\" (default), \"right\", or \"middle\". Defaults to left so the field is fully back-compat — omit it and you get the legacy left-click behaviour. Pixel path: routes through the CGEvent left/right/middle mouse-button primitives. AX path: \"right\" maps to AXShowMenu (same surface as the dedicated `right_click` tool); \"middle\" has no AX equivalent and falls back to a pixel middle-click at the element's center.\naction: press (default), show_menu, pick, confirm, cancel, open.\nfrom_zoom: set true after a zoom call to auto-translate zoom-image pixel coordinates to full-window space.",
+   "description": "Click a target pid. Prefer `element_token` (from get_window_state): it identifies one snapshot element, works on backgrounded, minimized or off-Space windows, and moves no cursor or focus. Use `x, y` only for canvas / video / WebGL / custom-drawn surfaces missing from the AX tree.\n\n- element_token: AX action path. Tokens are scoped to (pid, window_id) and stale once the window is snapshotted again.\n- x, y: window-local pixels of the get_window_state screenshot, sent as CGEvent mouse events. Needs a visible window. `modifier` takes cmd/shift/option/ctrl.\n\n`button` defaults to left; on the AX path \"right\" maps to AXShowMenu and \"middle\" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open. `from_zoom:true` translates zoom-image pixels after a `zoom` call.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
     "additionalProperties": false,
     "properties": {
      "action": {
-      "description": "AX action: press, show_menu, pick, confirm, cancel, open.",
+      "description": "AX action.",
       "type": "string"
      },
      "button": {
-      "description": "Mouse button. Default: \"left\" — omit for legacy left-click behaviour. Pixel path uses the matching CGEvent primitive; AX path maps \"right\" to AXShowMenu and falls back to a pixel middle-click at the element's center for \"middle\".",
+      "description": "Mouse button. Default left.",
       "enum": [
        "left",
        "right",
@@ -500,7 +500,7 @@
       "type": "string"
      },
      "capture_id": {
-      "description": "Optional immutable source capture ID returned by get_window_state or get_desktop_state. With x,y, Driver atomically admits and consumes that exact capture before dispatch; stale, mismatched, or out-of-bounds captures are refused without fallback.",
+      "description": "Optional capture ID from get_window_state or get_desktop_state. With x,y it is consumed atomically; stale or mismatched captures are refused.",
       "type": "string"
      },
      "count": {
@@ -508,11 +508,11 @@
       "type": "integer"
      },
      "debug_image_out": {
-      "description": "Optional file path. When set on a pixel-addressed click, captures a fresh screenshot, draws a red crosshair at (x, y), and writes the PNG. Use to verify coordinate spaces. Requires window_id; incompatible with from_zoom.",
+      "description": "Write a screenshot with a crosshair at (x, y) to this path. Needs window_id; not with from_zoom.",
       "type": "string"
      },
      "delivery_mode": {
-      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require \"foreground\" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_token) → snapshot → background pixel (x/y) → snapshot → delivery_mode:\"foreground\".",
+      "description": "Default \"background\" (no fronting). \"foreground\" briefly fronts the window, acts, then restores the prior app; needs window_id and is required for modified clicks. Escalate in order: AX element_token, background pixel, foreground, checking state between rungs; a click has no read-back except list-row selection.",
       "enum": [
        "background",
        "foreground"
@@ -525,7 +525,7 @@
       "type": "string"
      },
      "from_zoom": {
-      "description": "When true, x and y are in the last zoom image for this pid; driver translates back to full-window coordinates.",
+      "description": "x and y are in the last zoom image for this pid.",
       "type": "boolean"
      },
      "modifier": {
@@ -540,7 +540,7 @@
       "type": "integer"
      },
      "scope": {
-      "description": "Coordinate frame for a windowless screen-absolute click (default \"window\"). Pass \"desktop\" when sending x,y with NO pid/window_id — the coordinates are then true screen pixels (read from get_desktop_state with scope=\"desktop\"). Per-call; not a setting.",
+      "description": "Default \"window\". \"desktop\": x,y with no pid/window_id are true screen pixels from get_desktop_state.",
       "enum": [
        "window",
        "desktop"
@@ -548,7 +548,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -597,11 +597,11 @@
       ]
      },
      "window_id": {
-      "description": "Target window ID. Omit when element_token is supplied (the token carries it).",
+      "description": "Target window ID. Omit with element_token.",
       "type": "integer"
      },
      "x": {
-      "description": "X in screenshot pixels. A window target uses the get_window_state PNG; a desktop target uses the native get_desktop_state PNG. The driver reverses Retina backing scale and any window-image downscale.",
+      "description": "X in screenshot pixels (get_window_state PNG, or get_desktop_state PNG for a desktop target).",
       "type": "number"
      },
      "y": {
@@ -870,20 +870,20 @@
    "read_only": false
   },
   {
-   "description": "Insert text into the target pid via `AXSetAttribute(kAXSelectedText)`. Works for standard Cocoa text fields and text views. No keystrokes are synthesized — special keys (Return / Escape / arrows) go through `press_key` / `hotkey`. For Chromium / Electron inputs that don't implement `kAXSelectedText`, the tool falls back to CGEvent character synthesis automatically when the estimated route stays within the daemon transport budget. Longer synthesized routes are refused before character events and return a safe chunk size; one-call AX insertion remains uncapped.\n\nOptional `element_token` (from the last `get_window_state` snapshot) directs the write to a specific field. Without `element_token`, the write goes to the pid's currently focused element.\n\nWEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, X's compose box): AXValue is not independent proof that the renderer/DOM observed an AX write or synthesized keystrokes. The driver detects this at the element level (an AXWebArea ancestor) and refuses to trust AXValue-only read-back there. Electron AX targets that are web content or cannot be proven native refuse background delivery before mutation because the AX route cannot establish exact renderer focus; use the px form or explicit foreground delivery. Other web-content paths return effect:\"unverifiable\" + escalation, never a false \"confirmed\" (a browser's own native address bar/toolbar stays trusted). For a browser TAB the reliable path is the `page` tool (drives the DOM via CDP); for an embedded web view use this tool's px form: pass x,y (no element_token) to pixel-click the field then type, in one call. NOTE: a px focus-click won't reliably open+focus a CLOSED control; AX-press to open/activate it first (works in the background), then px-type. Always confirm via the screenshot; if px-background still drops, escalate to delivery_mode:\"foreground\".",
+   "description": "Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `element_token`, or the pid's focused element. Does not press keys: use `press_key` / `hotkey` for Return, Escape, arrows. If AX insertion is unsupported (Chromium/Electron), it falls back to CGEvent typing when the route fits the transport budget; longer routes are refused with a safe chunk size.\n\nWeb content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:\"unverifiable\"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Confirm from the screenshot, and use `delivery_mode:\"foreground\"` only if background still drops the text.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
     "additionalProperties": false,
     "properties": {
      "delay_ms": {
-      "description": "Milliseconds between characters in the CGEvent fallback path. Default 30. Ignored when the AX path succeeds.",
+      "description": "Ms between characters in the CGEvent fallback. Default 30.",
       "maximum": 200,
       "minimum": 0,
       "type": "integer"
      },
      "delivery_mode": {
-      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": AX insert, then CGEvent keystrokes if needed — no focus steal; native controls can be confirmed via AXValue read-back, while web-content writes remain effect:\"unverifiable\". \"foreground\": briefly front the window, type, restore the prior frontmost — the explicit last resort for focus-sensitive surfaces (e.g. WhatsApp/Catalyst) where background keystrokes don't land. Re-call with \"foreground\" when a background attempt remains unverifiable and a fresh snapshot shows the text did not appear.",
+      "description": "Default \"background\": AX insert, then CGEvent keys, no focus steal. \"foreground\": front the window, type, restore; last resort for surfaces (WhatsApp/Catalyst) where background keys do not land.",
       "enum": [
        "background",
        "foreground"
@@ -901,7 +901,7 @@
      },
      "scope": {
       "default": "window",
-      "description": "Use desktop with no pid/window_id to type into the frontmost application.",
+      "description": "\"desktop\" with no pid/window_id types into the frontmost app.",
       "enum": [
        "window",
        "desktop"
@@ -909,7 +909,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -966,19 +966,19 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
      },
      "text": {
-      "description": "Text to insert at the target's cursor.",
+      "description": "Text to insert.",
       "type": "string"
      },
      "window_id": {
-      "description": "CGWindowID. Omit when element_token is supplied (the token carries it).",
+      "description": "Window ID. Omit with element_token.",
       "type": "integer"
      },
      "x": {
-      "description": "Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_token) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click.",
+      "description": "Screenshot-pixel X of the field (get_window_state PNG, as in click). With y and no element_token, pixel-clicks to focus, then types.",
       "type": "number"
      },
      "y": {
-      "description": "Screenshot-pixel Y of the field (see x).",
+      "description": "Screenshot-pixel Y (see x).",
       "type": "number"
      }
     },
@@ -991,14 +991,14 @@
    "read_only": false
   },
   {
-   "description": "Press and release a single key. Follows the same `delivery_mode` ladder as click/type_text — it does NOT raise the window by default:\n• `background` (default): post to the pid WITHOUT fronting/raising — the auth-message path (Chromium-safe). With element_token it focuses that AX element first. `window_id` only targets; it does not raise.\n• `foreground`: guard and briefly front the exact window, focus an addressed AX element when supplied, send a genuine HID key transition so Chromium content, inline editors, and native menu equivalents receive it, then restore prior frontmost. Requires window_id.\n\nA key press is confirmed only when a bounded native AX value/selection read-back changes on the same control. Otherwise a successfully attempted post remains effect:\"unverifiable\" without implying delivery failure or recommending foreground. Key names: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, plus any letter or digit. Modifiers array: cmd, shift, option/alt, ctrl, fn.",
+   "description": "Press and release one key. `delivery_mode` as in click/type_text.\n- `background` (default): posts to the pid without raising the window; with `element_token` it focuses that element first.\n- `foreground`: fronts the exact window (needs `window_id`), sends a real HID key transition (Chromium content, inline editors, menu equivalents), then restores the prior app.\n\nConfirmed only when a native AX value/selection read-back changes; otherwise `effect:\"unverifiable\"` (not a delivery failure). Keys: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, any letter or digit.",
    "destructive": true,
    "idempotent": false,
    "input_schema": {
     "additionalProperties": false,
     "properties": {
      "delivery_mode": {
-      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": inject without fronting or raising the target — no focus steal. \"foreground\": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with \"foreground\" only for the action that needs it.",
+      "description": "Default \"background\": no fronting or focus steal. \"foreground\": briefly front the window, act, restore the prior app; last resort when background did not land.",
       "enum": [
        "background",
        "foreground"
@@ -1011,11 +1011,11 @@
       "type": "string"
      },
      "key": {
-      "description": "Key name: return, tab, escape, up, down, etc.",
+      "description": "Key name.",
       "type": "string"
      },
      "modifiers": {
-      "description": "Modifier keys: cmd, shift, option/alt, ctrl, fn.",
+      "description": "cmd, shift, option/alt, ctrl, fn.",
       "items": {
        "type": "string"
       },
@@ -1027,7 +1027,7 @@
      },
      "scope": {
       "default": "window",
-      "description": "Use desktop with no pid/window_id to send the key to the frontmost application.",
+      "description": "\"desktop\" with no pid/window_id sends to the frontmost app.",
       "enum": [
        "window",
        "desktop"
@@ -1035,7 +1035,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -1092,11 +1092,11 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
      },
      "window_id": {
-      "description": "Target window. Required for delivery_mode:\"foreground\". Does NOT itself raise the window — raising is gated on delivery_mode.",
+      "description": "Target window; required for foreground. Does not raise by itself.",
       "type": "integer"
      },
      "x": {
-      "description": "Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_token.",
+      "description": "Screenshot-pixel X: pixel-click to focus, then send the key. With y, no element_token.",
       "type": "number"
      },
      "y": {
@@ -1232,7 +1232,7 @@
    "read_only": false
   },
   {
-   "description": "Set a value on a UI element. Two modes depending on element role:\n\n- **AXPopUpButton / select dropdown**: finds the child option whose title or value matches `value` (case-insensitive) and AXPresses it directly — the native macOS popup menu is never opened, so focus is never stolen. Use this for HTML <select> elements in Safari or any native NSPopUpButton.\n\n- **All other elements**: writes AXValue directly (sliders, steppers, date pickers, native text fields that expose settable AXValue).\n\n- **A file's name as Finder lists it** (a text field carrying AXFilename and a file URL, not being edited) or **as Finder's Get Info window shows it** (Finder's text field with AXIdentifier `Name`, not being edited): refused with `file_name_needs_rename`, because the write changes only what Finder shows, never the file. The refusal names the keyboard route that renames it.\n\nFor free-form text entry into web inputs, prefer `type_text_chars` which synthesises key events — AXValue writes are ignored by WebKit.",
+   "description": "Set an element's value by `element_token`. A popup button / select dropdown: presses the child option whose title or value matches `value` (case-insensitive) without opening the menu or stealing focus. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).\n\nA Finder file name (list row or Get Info `Name` field, not being edited) is refused with `file_name_needs_rename`; the refusal names the keyboard route. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.",
    "destructive": true,
    "idempotent": true,
    "input_schema": {
@@ -1248,15 +1248,15 @@
       "type": "integer"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "value": {
-      "description": "New value. AX will coerce to the element's native type.",
+      "description": "New value, coerced to the element's type.",
       "type": "string"
      },
      "window_id": {
-      "description": "CGWindowID. Omit when element_token is supplied (the token carries it).",
+      "description": "Window ID. Omit with element_token.",
       "type": "integer"
      }
     },
@@ -1270,14 +1270,14 @@
    "read_only": false
   },
   {
-   "description": "Scroll the target pid. Two paths, picked by how you address the scroll:\n\n• **Targeted wheel path** — when you pass a target, either `element_token` (preferred) or window-local `x, y` pixels: the driver synthesizes a real mouse-wheel event (CGEventCreateScrollWheelEvent, at that screen point. The renderer hit-tests the wheel at the cursor, so the scroll lands on whatever element is under the point — exactly like physically rolling the wheel over it. This is the ONLY way to scroll a nested `overflow:auto` region (e.g. a scrollable <div> with no tabindex): such regions never take keyboard focus, so the keystroke path below no-ops on them. Use this for inner/nested scrollers in web views.\n\n• **Keystroke path (focused region)** — when you pass NO target (just pid + direction): synthesizes PageDown/PageUp (by='page') or Down/Up arrows (by='line'); horizontal uses Left/Right arrows. Drives the focused / page scroller only.\n\nMapping: by='page' → larger step; by='line' → smaller step; amount = number of wheel notches (targeted path) or keystroke repetitions (keystroke path).",
+   "description": "Scroll the target pid.\n- Targeted wheel: pass `element_token` (preferred) or window-local `x, y`. Sends a real wheel event at that point, so it scrolls whatever is under it. The only way to scroll nested `overflow:auto` regions in web views.\n- Keystroke: no target, just pid + direction. PageDown/PageUp (by='page') or arrows (by='line') on the focused scroller.\n\n`amount` is wheel notches (targeted) or key repetitions (keystroke).",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
     "additionalProperties": false,
     "properties": {
      "amount": {
-      "description": "Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Larger requests are clamped to the maximum. Default: 3.",
+      "description": "Wheel notches or key repetitions, clamped to the maximum. Default 3.",
       "maximum": 50,
       "minimum": 1,
       "type": "integer"
@@ -1291,7 +1291,7 @@
       "type": "string"
      },
      "delivery_mode": {
-      "description": "Best-effort-background ladder rung (default \"background\"). \"background\": inject without fronting or raising the target — no focus steal. \"foreground\": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with \"foreground\" only for the action that needs it.",
+      "description": "Default \"background\": no fronting or focus steal. \"foreground\": briefly front the window, act, restore the prior app; last resort when background did not land.",
       "enum": [
        "background",
        "foreground"
@@ -1319,7 +1319,7 @@
      },
      "scope": {
       "default": "window",
-      "description": "Use desktop with x,y and no pid/window_id for native get_desktop_state screenshot coordinates.",
+      "description": "\"desktop\" with x,y and no pid/window_id uses get_desktop_state coordinates.",
       "enum": [
        "window",
        "desktop"
@@ -1327,7 +1327,7 @@
       "type": "string"
      },
      "session": {
-      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
      "target": {
@@ -1384,15 +1384,15 @@
       "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
      },
      "window_id": {
-      "description": "CGWindowID of the target window. Required with x/y; optional with element_token (the token carries it).",
+      "description": "Window ID. Required with x/y; optional with element_token.",
       "type": "integer"
      },
      "x": {
-      "description": "Window-local screenshot X (top-left origin of the PNG from get_window_state). With `y`, routes through the pixel-wheel path at this point — use for a scrollable surface that isn't in the AX tree. Requires window_id to anchor the window→screen conversion.",
+      "description": "Window-local screenshot X (get_window_state PNG). With y, wheel-scrolls at that point; needs window_id.",
       "type": "number"
      },
      "y": {
-      "description": "Window-local screenshot Y. See `x`.",
+      "description": "Window-local screenshot Y.",
       "type": "number"
      }
     },

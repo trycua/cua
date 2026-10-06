@@ -14,7 +14,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| [`set_value`](#set_value) | Set a value on a UI element. | macOS, Linux, Windows |
+| [`set_value`](#set_value) | Set an element's value by `element_token`. | macOS, Linux, Windows |
 | [`clipboard_read`](#clipboard_read) | List available system clipboard types and optionally return privacy-sensitive plain text. | macOS, Linux, Windows |
 | [`clipboard_write`](#clipboard_write) | Replace the system clipboard with exactly one value: plain text, an image from an absolute local path, or a file URL from an absolute local path. | macOS, Linux, Windows |
 
@@ -27,22 +27,17 @@ Effect: destructive, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Set a value on a UI element. Two modes depending on element role:
+Set an element's value by `element_token`. A popup button / select dropdown: presses the child option whose title or value matches `value` (case-insensitive) without opening the menu or stealing focus. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).
 
-- **AXPopUpButton / select dropdown**: finds the child option whose title or value matches `value` (case-insensitive) and AXPresses it directly; the native macOS popup menu is never opened, so focus is never stolen. Use this for HTML &lt;select&gt; elements in Safari or any native NSPopUpButton.
-
-- **All other elements**: writes AXValue directly (sliders, steppers, date pickers, native text fields that expose settable AXValue).
-
-- **A file's name as Finder lists it** (a text field carrying AXFilename and a file URL, not being edited) or **as Finder's Get Info window shows it** (Finder's text field with AXIdentifier `Name`, not being edited): refused with `file_name_needs_rename`, because the write changes only what Finder shows, never the file. The refusal names the keyboard route that renames it.
-
-For free-form text entry into web inputs, prefer `type_text_chars` which synthesises key events: AXValue writes are ignored by WebKit.
+A Finder file name (list row or Get Info `Name` field, not being edited) is refused with `file_name_needs_rename`; the refusal names the keyboard route. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.
 
 **macOS parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="set_value--macos--value"></span>`value` | `string` | required | New value. AX will coerce to the element's native type. |
-| <span id="set_value--macos--window_id"></span>`window_id` | `integer` |  | CGWindowID. Omit when element_token is supplied (the token carries it). |
+| <span id="set_value--macos--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
+| <span id="set_value--macos--value"></span>`value` | `string` | required | New value, coerced to the element's type. |
+| <span id="set_value--macos--window_id"></span>`window_id` | `integer` |  | Window ID. Omit with element_token. |
 
 </Tab>
 <Tab value="Linux">
@@ -54,6 +49,7 @@ Set value of an AT-SPI element via SetValue action.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="set_value--linux--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` | `"background"` | Input delivery mode. 'background' (default) never activates or raises the target window. On X11 it injects via XTEST / the XInput2 master pointer (no focus steal). On Wayland it goes through libei + xdg-desktop-portal, which injects to the compositor's input focus: Wayland's security model has no per-window background targeting, so a specific non-focused window cannot be aimed at; when no libei backend is available the tool returns a structured background_unavailable error. 'foreground' is the explicit escalation: activate the target (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then restore the prior active window; a brief focus swap unless the target was already active. Matches the macOS / Windows delivery_mode surface. |
+| <span id="set_value--linux--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="set_value--linux--value"></span>`value` | `string \| number` | required | New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back. |
 | <span id="set_value--linux--window_id"></span>`window_id` | `integer` |  | Omit when element_token is supplied (the token carries it). |
 
@@ -73,6 +69,7 @@ For free-form text entry that the target accepts via keystrokes only, prefer `ty
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="set_value--windows--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Input delivery mode. 'background' (default) never swaps foreground: it routes through UIA Invoke / PostMessage and the window is never raised. For targets whose input stack silently drops posted events (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) the tool returns a structured background_unavailable error rather than fronting. 'foreground' is the explicit escalation: a brief SetForegroundWindow swap + SendInput, restoring the prior foreground afterward. IMPORTANT: 'background' is not a hint to weigh; it is the mandatory first attempt. Do NOT pass 'foreground' preemptively because a target 'looks like' GTK/Chromium/Electron; the DRIVER decides when background is impossible and tells you so via a background_unavailable error (or a verified no-op). Only THEN re-issue the same action with 'foreground'. The lists above are the driver's detectors, not a checklist for you to front on a guess: fronting up-front needlessly steals the user's focus and is a bug, not a shortcut. Matches the macOS delivery_mode surface. |
+| <span id="set_value--windows--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="set_value--windows--value"></span>`value` | `string` | required | New value. UIA will coerce to the element's native type. |
 | <span id="set_value--windows--window_id"></span>`window_id` | `integer` |  | HWND of the window. Omit when element_token is supplied (the token carries it). |
 
@@ -85,7 +82,6 @@ For free-form text entry that the target accepts via keystrokes only, prefer `ty
 | --- | --- | --- | --- |
 | <span id="set_value--element_token"></span>`element_token` | `string` |  | Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
 | <span id="set_value--pid"></span>`pid` | `integer` | required | Target process ID. |
-| <span id="set_value--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 
 **Example arguments**
 

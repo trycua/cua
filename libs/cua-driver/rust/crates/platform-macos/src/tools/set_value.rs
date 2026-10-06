@@ -45,42 +45,23 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "set_value".into(),
-        description:
-            "Set a value on a UI element. Two modes depending on element role:\n\
-             \n\
-             - **AXPopUpButton / select dropdown**: finds the child option whose \
-             title or value matches `value` (case-insensitive) and AXPresses it \
-             directly — the native macOS popup menu is never opened, so focus \
-             is never stolen. Use this for HTML <select> elements in Safari or \
-             any native NSPopUpButton.\n\
-             \n\
-             - **All other elements**: writes AXValue directly (sliders, steppers, \
-             date pickers, native text fields that expose settable AXValue).\n\
-             \n\
-             - **A file's name as Finder lists it** (a text field carrying \
-             AXFilename and a file URL, not being edited) or **as Finder's Get \
-             Info window shows it** (Finder's text field with AXIdentifier \
-             `Name`, not being edited): refused with `file_name_needs_rename`, \
-             because the write changes only what Finder shows, never the file. \
-             The refusal names the keyboard route that renames it.\n\
-             \n\
-             For free-form text entry into web inputs, prefer `type_text_chars` \
-             which synthesises key events — AXValue writes are ignored by WebKit."
-            .into(),
+        description: "Set an element's value by `element_token`. A popup button / select dropdown: presses the child option whose title or value matches `value` (case-insensitive) without opening the menu or stealing focus. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).\n\
+            \n\
+            A Finder file name (list row or Get Info `Name` field, not being edited) is refused with `file_name_needs_rename`; the refusal names the keyboard route. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["pid", "value"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID. Omit when element_token is supplied (the token carries it)."
+                    "description": "Window ID. Omit with element_token."
                 },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "value": {
                     "type": "string",
-                    "description": "New value. AX will coerce to the element's native type."
+                    "description": "New value, coerced to the element's type."
                 }
             },
             "additionalProperties": false

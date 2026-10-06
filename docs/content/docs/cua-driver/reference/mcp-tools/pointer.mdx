@@ -132,25 +132,24 @@ Effect: mutating. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Scroll the target pid. Two paths, picked by how you address the scroll:
+Scroll the target pid.
+- Targeted wheel: pass `element_token` (preferred) or window-local `x, y`. Sends a real wheel event at that point, so it scrolls whatever is under it. The only way to scroll nested `overflow:auto` regions in web views.
+- Keystroke: no target, just pid + direction. PageDown/PageUp (by='page') or arrows (by='line') on the focused scroller.
 
-• **Targeted wheel path**: when you pass a target, either `element_token` (preferred) or window-local `x, y` pixels: the driver synthesizes a real mouse-wheel event (CGEventCreateScrollWheelEvent, at that screen point. The renderer hit-tests the wheel at the cursor, so the scroll lands on whatever element is under the point: exactly like physically rolling the wheel over it. This is the ONLY way to scroll a nested `overflow:auto` region (e.g. a scrollable &lt;div&gt; with no tabindex): such regions never take keyboard focus, so the keystroke path below no-ops on them. Use this for inner/nested scrollers in web views.
-
-• **Keystroke path (focused region)**: when you pass NO target (just pid + direction): synthesizes PageDown/PageUp (by='page') or Down/Up arrows (by='line'); horizontal uses Left/Right arrows. Drives the focused / page scroller only.
-
-Mapping: by='page' → larger step; by='line' → smaller step; amount = number of wheel notches (targeted path) or keystroke repetitions (keystroke path).
+`amount` is wheel notches (targeted) or key repetitions (keystroke).
 
 **macOS parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="scroll--macos--amount"></span>`amount` | `integer` |  | Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Larger requests are clamped to the maximum. Default: 3. Range: 1 to 50. |
-| <span id="scroll--macos--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target; no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost; the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it. |
+| <span id="scroll--macos--amount"></span>`amount` | `integer` |  | Wheel notches or key repetitions, clamped to the maximum. Default 3. Range: 1 to 50. |
+| <span id="scroll--macos--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Default "background": no fronting or focus steal. "foreground": briefly front the window, act, restore the prior app; last resort when background did not land. |
 | <span id="scroll--macos--pid"></span>`pid` | `integer` |  | Target process ID. Required unless scope is "desktop". |
-| <span id="scroll--macos--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Use desktop with x,y and no pid/window_id for native get_desktop_state screenshot coordinates. |
-| <span id="scroll--macos--window_id"></span>`window_id` | `integer` |  | CGWindowID of the target window. Required with x/y; optional with element_token (the token carries it). |
-| <span id="scroll--macos--x"></span>`x` | `number` |  | Window-local screenshot X (top-left origin of the PNG from get_window_state). With `y`, routes through the pixel-wheel path at this point: use for a scrollable surface that isn't in the AX tree. Requires window_id to anchor the window→screen conversion. |
-| <span id="scroll--macos--y"></span>`y` | `number` |  | Window-local screenshot Y. See `x`. |
+| <span id="scroll--macos--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | "desktop" with x,y and no pid/window_id uses get_desktop_state coordinates. |
+| <span id="scroll--macos--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
+| <span id="scroll--macos--window_id"></span>`window_id` | `integer` |  | Window ID. Required with x/y; optional with element_token. |
+| <span id="scroll--macos--x"></span>`x` | `number` |  | Window-local screenshot X (get_window_state PNG). With y, wheel-scrolls at that point; needs window_id. |
+| <span id="scroll--macos--y"></span>`y` | `number` |  | Window-local screenshot Y. |
 
 </Tab>
 <Tab value="Linux">
@@ -167,6 +166,7 @@ Scroll the target pid's focused region via XSendEvent Button4/5. direction requi
 | <span id="scroll--linux--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` | `"background"` | Input delivery mode. 'background' (default) never activates or raises the target window. On X11 it injects via XTEST / the XInput2 master pointer (no focus steal). On Wayland it goes through libei + xdg-desktop-portal, which injects to the compositor's input focus: Wayland's security model has no per-window background targeting, so a specific non-focused window cannot be aimed at; when no libei backend is available the tool returns a structured background_unavailable error. 'foreground' is the explicit escalation: activate the target (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then restore the prior active window; a brief focus swap unless the target was already active. Matches the macOS / Windows delivery_mode surface. |
 | <span id="scroll--linux--pid"></span>`pid` | `integer` |  | Target process ID. Required unless scope is "desktop". |
 | <span id="scroll--linux--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Use "desktop" with x,y and no pid/window_id for get_desktop_state screen coordinates. Default "window". |
+| <span id="scroll--linux--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="scroll--linux--window_id"></span>`window_id` | `integer` |  | Window id from list_windows. Required with x/y; optional with element_token (the token carries it). |
 | <span id="scroll--linux--x"></span>`x` | `number` |  | Window-local screenshot-pixel X of the scroll target. Pass with y and without element_token. |
 | <span id="scroll--linux--y"></span>`y` | `number` |  | Window-local screenshot-pixel Y of the scroll target. Pass with x and without element_token. |
@@ -190,6 +190,7 @@ Note: `element_token` is accepted for cross-platform parity but currently no-op 
 | <span id="scroll--windows--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Input delivery mode. 'background' (default) never swaps foreground: it routes through UIA Invoke / PostMessage and the window is never raised. For targets whose input stack silently drops posted events (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) the tool returns a structured background_unavailable error rather than fronting. 'foreground' is the explicit escalation: a brief SetForegroundWindow swap + SendInput, restoring the prior foreground afterward. IMPORTANT: 'background' is not a hint to weigh; it is the mandatory first attempt. Do NOT pass 'foreground' preemptively because a target 'looks like' GTK/Chromium/Electron; the DRIVER decides when background is impossible and tells you so via a background_unavailable error (or a verified no-op). Only THEN re-issue the same action with 'foreground'. The lists above are the driver's detectors, not a checklist for you to front on a guess: fronting up-front needlessly steals the user's focus and is a bug, not a shortcut. Matches the macOS delivery_mode surface. |
 | <span id="scroll--windows--pid"></span>`pid` | `integer` |  | Target process ID for window scope. Omit with scope=desktop for screen-absolute coordinates from get_desktop_state. |
 | <span id="scroll--windows--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Use "desktop" with x,y and no pid/window_id for screen-absolute coordinates from get_desktop_state. Default "window". |
+| <span id="scroll--windows--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="scroll--windows--window_id"></span>`window_id` | `integer` |  | HWND of the target window. Omit when element_token is supplied; otherwise auto-resolves the pid's first visible window. |
 | <span id="scroll--windows--x"></span>`x` | `number` |  | With pid/window_id: window-local screenshot X used to target a nested scroll surface in foreground mode. Without pid/window_id: screen-absolute X for desktop scope. Must be paired with y. |
 | <span id="scroll--windows--y"></span>`y` | `number` |  | With pid/window_id: window-local screenshot Y used to target a nested scroll surface in foreground mode. Without pid/window_id: screen-absolute Y for desktop scope. Must be paired with x. |
@@ -204,7 +205,6 @@ Note: `element_token` is accepted for cross-platform parity but currently no-op 
 | <span id="scroll--by"></span>`by` | `"line" \| "page"` |  | Scroll granularity. Default: line. |
 | <span id="scroll--direction"></span>`direction` | `"up" \| "down" \| "left" \| "right"` | required | Scroll direction. |
 | <span id="scroll--element_token"></span>`element_token` | `string` |  | Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
-| <span id="scroll--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="scroll--target"></span>`target` | `window target \| desktop target` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 
 **Example arguments**

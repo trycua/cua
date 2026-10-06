@@ -61,29 +61,18 @@ fn clamp_amount(requested: u64) -> usize {
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "scroll".into(),
-        description: "Scroll the target pid. Two paths, picked by how you address the scroll:\n\n\
-            • **Targeted wheel path** — when you pass a target, either \
-            `element_token` (preferred) or window-local `x, y` pixels: \
-            the driver synthesizes a real mouse-wheel event (CGEventCreateScrollWheelEvent, \
-            at that screen point. The renderer hit-tests the wheel at the \
-            cursor, so the scroll lands on whatever element is under the point — exactly \
-            like physically rolling the wheel over it. This is the ONLY way to scroll a \
-            nested `overflow:auto` region (e.g. a scrollable <div> with no tabindex): such \
-            regions never take keyboard focus, so the keystroke path below no-ops on them. \
-            Use this for inner/nested scrollers in web views.\n\n\
-            • **Keystroke path (focused region)** — when you pass NO target (just pid + \
-            direction): synthesizes PageDown/PageUp (by='page') or Down/Up arrows \
-            (by='line'); horizontal uses Left/Right arrows. Drives the focused / page \
-            scroller only.\n\n\
-            Mapping: by='page' → larger step; by='line' → smaller step; amount = number of \
-            wheel notches (targeted path) or keystroke repetitions (keystroke path).".into(),
+        description: "Scroll the target pid.\n\
+            - Targeted wheel: pass `element_token` (preferred) or window-local `x, y`. Sends a real wheel event at that point, so it scrolls whatever is under it. The only way to scroll nested `overflow:auto` regions in web views.\n\
+            - Keystroke: no target, just pid + direction. PageDown/PageUp (by='page') or arrows (by='line') on the focused scroller.\n\
+            \n\
+            `amount` is wheel notches (targeted) or key repetitions (keystroke).".into(),
         input_schema: serde_json::json!({
             "type": "object",
             // `pid` conditionally required (validated in code), not pinned in the
             // schema — keeps the contract consistent across platforms.
             "required": ["direction"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
                 "pid": { "type": "integer", "description": "Target process ID. Required unless scope is \"desktop\"." },
                 "direction": {
                     "type": "string",
@@ -99,14 +88,14 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "minimum": AMOUNT_MIN,
                     "maximum": AMOUNT_MAX,
-                    "description": "Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Larger requests are clamped to the maximum. Default: 3."
+                    "description": "Wheel notches or key repetitions, clamped to the maximum. Default 3."
                 },
-                "window_id": { "type": "integer", "description": "CGWindowID of the target window. Required with x/y; optional with element_token (the token carries it)." },
+                "window_id": { "type": "integer", "description": "Window ID. Required with x/y; optional with element_token." },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "x": { "type": "number", "description": "Window-local screenshot X (top-left origin of the PNG from get_window_state). With `y`, routes through the pixel-wheel path at this point — use for a scrollable surface that isn't in the AX tree. Requires window_id to anchor the window→screen conversion." },
-                "y": { "type": "number", "description": "Window-local screenshot Y. See `x`." },
-                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with x,y and no pid/window_id for native get_desktop_state screenshot coordinates." },
-                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
+                "x": { "type": "number", "description": "Window-local screenshot X (get_window_state PNG). With y, wheel-scrolls at that point; needs window_id." },
+                "y": { "type": "number", "description": "Window-local screenshot Y." },
+                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "\"desktop\" with x,y and no pid/window_id uses get_desktop_state coordinates." },
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema_with("Default \"background\": no fronting or focus steal. \"foreground\": briefly front the window, act, restore the prior app; last resort when background did not land.")
             },
             "additionalProperties": false
         }),

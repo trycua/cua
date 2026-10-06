@@ -2852,7 +2852,25 @@ export type GetWindowStateInput = {
      * (default 1000 on every platform). A walk that runs out returns a
      * partial tree flagged `truncated` rather than failing.
      */
-    timeoutMs?: number
+    timeoutMs?: number,
+    /**
+     * Tree representation to return: `markdown` (default), `elements`, or
+     * `both`.
+     */
+    treeFormat?: string,
+    /**
+     * Return only what changed since this earlier `snapshot_id`.
+     */
+    since?: string,
+    /**
+     * Include `_note` and the full `background_input` report.
+     */
+    verbose?: boolean,
+    /**
+     * Restore the previous full response (both representations, all
+     * metadata, platform walk limits).
+     */
+    fullOutput?: boolean
 }
 
 /**
@@ -2860,7 +2878,11 @@ export type GetWindowStateInput = {
  */
 export const GetWindowStateInput = (() => {
     const defaults = () => ({
-        timeoutMs: undefined
+        timeoutMs: undefined,
+        treeFormat: undefined,
+        since: undefined,
+        verbose: undefined,
+        fullOutput: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<GetWindowStateInput, ReturnType<typeof defaults>>(defaults);
@@ -2888,7 +2910,11 @@ const FfiConverterTypeGetWindowStateInput = (() => {
                 maxDepth: FfiConverterOptionalUInt32.read(from),
                 maxDimension: FfiConverterOptionalUInt32.read(from),
                 maxImageDimension: FfiConverterOptionalUInt32.read(from),
-                timeoutMs: FfiConverterOptionalUInt32.read(from)
+                timeoutMs: FfiConverterOptionalUInt32.read(from),
+                treeFormat: FfiConverterOptionalString.read(from),
+                since: FfiConverterOptionalString.read(from),
+                verbose: FfiConverterOptionalBoolean.read(from),
+                fullOutput: FfiConverterOptionalBoolean.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -2904,6 +2930,10 @@ const FfiConverterTypeGetWindowStateInput = (() => {
             FfiConverterOptionalUInt32.write(value.maxDimension, into);
             FfiConverterOptionalUInt32.write(value.maxImageDimension, into);
             FfiConverterOptionalUInt32.write(value.timeoutMs, into);
+            FfiConverterOptionalString.write(value.treeFormat, into);
+            FfiConverterOptionalString.write(value.since, into);
+            FfiConverterOptionalBoolean.write(value.verbose, into);
+            FfiConverterOptionalBoolean.write(value.fullOutput, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt32.allocationSize(value.pid) +
@@ -2917,7 +2947,11 @@ const FfiConverterTypeGetWindowStateInput = (() => {
              FfiConverterOptionalUInt32.allocationSize(value.maxDepth) +
              FfiConverterOptionalUInt32.allocationSize(value.maxDimension) +
              FfiConverterOptionalUInt32.allocationSize(value.maxImageDimension) +
-             FfiConverterOptionalUInt32.allocationSize(value.timeoutMs);
+             FfiConverterOptionalUInt32.allocationSize(value.timeoutMs) +
+             FfiConverterOptionalString.allocationSize(value.treeFormat) +
+             FfiConverterOptionalString.allocationSize(value.since) +
+             FfiConverterOptionalBoolean.allocationSize(value.verbose) +
+             FfiConverterOptionalBoolean.allocationSize(value.fullOutput);
 
         }
     };
@@ -6275,6 +6309,29 @@ export type WindowStateOutput = {
     degradedReason?: string,
     truncated?: boolean,
     truncationReason?: string,
+    /**
+     * Plain-language line saying the tree was cut at `max_elements` and how
+     * to read more.
+     */
+    truncationHint?: string,
+    /**
+     * Which representation this response carries.
+     */
+    treeFormat?: string,
+    /**
+     * The `since` snapshot_id the caller asked to diff against.
+     */
+    since?: string,
+    /**
+     * `diff`, `no_change`, or the reason a full read was returned instead
+     * (`unknown_snapshot`, `other_window`, `view_changed`, `too_much_changed`,
+     * `diff_too_large`, `no_snapshot`).
+     */
+    sinceStatus?: string,
+    /**
+     * Added/changed/removed rows against `since`, one per line.
+     */
+    treeDiff?: string,
     screenshotWidth?: number,
     screenshotHeight?: number,
     screenshotScale?: number,
@@ -6325,6 +6382,11 @@ const FfiConverterTypeWindowStateOutput = (() => {
                 degradedReason: FfiConverterOptionalString.read(from),
                 truncated: FfiConverterOptionalBoolean.read(from),
                 truncationReason: FfiConverterOptionalString.read(from),
+                truncationHint: FfiConverterOptionalString.read(from),
+                treeFormat: FfiConverterOptionalString.read(from),
+                since: FfiConverterOptionalString.read(from),
+                sinceStatus: FfiConverterOptionalString.read(from),
+                treeDiff: FfiConverterOptionalString.read(from),
                 screenshotWidth: FfiConverterOptionalUInt32.read(from),
                 screenshotHeight: FfiConverterOptionalUInt32.read(from),
                 screenshotScale: FfiConverterOptionalFloat64.read(from),
@@ -6352,6 +6414,11 @@ const FfiConverterTypeWindowStateOutput = (() => {
             FfiConverterOptionalString.write(value.degradedReason, into);
             FfiConverterOptionalBoolean.write(value.truncated, into);
             FfiConverterOptionalString.write(value.truncationReason, into);
+            FfiConverterOptionalString.write(value.truncationHint, into);
+            FfiConverterOptionalString.write(value.treeFormat, into);
+            FfiConverterOptionalString.write(value.since, into);
+            FfiConverterOptionalString.write(value.sinceStatus, into);
+            FfiConverterOptionalString.write(value.treeDiff, into);
             FfiConverterOptionalUInt32.write(value.screenshotWidth, into);
             FfiConverterOptionalUInt32.write(value.screenshotHeight, into);
             FfiConverterOptionalFloat64.write(value.screenshotScale, into);
@@ -6378,6 +6445,11 @@ const FfiConverterTypeWindowStateOutput = (() => {
              FfiConverterOptionalString.allocationSize(value.degradedReason) +
              FfiConverterOptionalBoolean.allocationSize(value.truncated) +
              FfiConverterOptionalString.allocationSize(value.truncationReason) +
+             FfiConverterOptionalString.allocationSize(value.truncationHint) +
+             FfiConverterOptionalString.allocationSize(value.treeFormat) +
+             FfiConverterOptionalString.allocationSize(value.since) +
+             FfiConverterOptionalString.allocationSize(value.sinceStatus) +
+             FfiConverterOptionalString.allocationSize(value.treeDiff) +
              FfiConverterOptionalUInt32.allocationSize(value.screenshotWidth) +
              FfiConverterOptionalUInt32.allocationSize(value.screenshotHeight) +
              FfiConverterOptionalFloat64.allocationSize(value.screenshotScale) +

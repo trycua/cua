@@ -104,6 +104,32 @@ pub struct GetWindowStateInput {
     #[schemars(schema_with = "timeout_ms_schema")]
     #[uniffi(default = None)]
     pub timeout_ms: Option<u32>,
+    /// Tree representation to return: `markdown` (default), `elements`, or
+    /// `both`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "tree_format_schema")]
+    #[uniffi(default = None)]
+    pub tree_format: Option<String>,
+    /// Return only what changed since this earlier `snapshot_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    #[uniffi(default = None)]
+    pub since: Option<String>,
+    /// Include `_note` and the full `background_input` report.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "bool_schema")]
+    #[uniffi(default = None)]
+    pub verbose: Option<bool>,
+    /// Restore the previous full response (both representations, all
+    /// metadata, platform walk limits).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "bool_schema")]
+    #[uniffi(default = None)]
+    pub full_output: Option<bool>,
+}
+
+fn tree_format_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type":"string", "enum":["markdown","elements","both"]})
 }
 
 /// Bounds of the accessibility-walk budget, shared with every live backend
@@ -303,6 +329,24 @@ pub struct WindowStateOutput {
     pub truncated: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub truncation_reason: Option<String>,
+    /// Plain-language line saying the tree was cut at `max_elements` and how
+    /// to read more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub truncation_hint: Option<String>,
+    /// Which representation this response carries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree_format: Option<String>,
+    /// The `since` snapshot_id the caller asked to diff against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    /// `diff`, `no_change`, or the reason a full read was returned instead
+    /// (`unknown_snapshot`, `other_window`, `view_changed`, `too_much_changed`,
+    /// `diff_too_large`, `no_snapshot`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since_status: Option<String>,
+    /// Added/changed/removed rows against `since`, one per line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree_diff: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screenshot_width: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

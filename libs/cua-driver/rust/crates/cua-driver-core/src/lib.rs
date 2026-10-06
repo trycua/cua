@@ -113,6 +113,7 @@ pub mod video_ffmpeg;
 pub mod walk_budget;
 pub mod window_inspection;
 pub mod window_observation;
+pub mod window_state_view;
 pub mod window_target;
 
 pub use cua_driver_contract::{CaptureScope, EscalationReason, TOOL_INVOCATION_FAILED_CODE};

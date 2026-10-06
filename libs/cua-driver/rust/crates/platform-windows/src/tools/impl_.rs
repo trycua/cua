@@ -1164,30 +1164,39 @@ impl Tool for GetWindowStateTool {
             // Windows-specific adaptations (UIA instead of AX; no SkyLight
             // Space validation; no per-call `javascript` field — that's a
             // macOS AppleScript hook).
-            description: "Walk a running app's UIA tree and return BOTH a structured \
-                `elements` array (preferred) AND a Markdown rendering of the same tree \
-                (back-compat). Every actionable element is tagged with [element_index N] \
-                in the markdown and as `element_index` in the structured array; pass each \
-                element's `element_token` to `click`, `type_text`, `scroll`, etc.\n\n\
+            description: "Walk a running app's UIA tree and return it ONCE, as compact \
+                Markdown by default (`tree_format:\"markdown\"`). Every actionable element is \
+                tagged `[N]` (an element_index); its element_token is `<snapshot_id>:N`, where \
+                `snapshot_id` is printed in the response header and returned in structuredContent. \
+                Pass `tree_format:\"elements\"` for the structured `elements` array instead \
+                (explicit `element_token`, `frame`, `parent_index`, `value`, `actions` per row), \
+                or `\"both\"` for both (about twice the size).\n\n\
+                Size: a read is bounded by default (`max_elements` 250). When the walk stops at \
+                that budget the response says `Tree truncated at max_elements=…` and `truncated: \
+                true`; pass a larger `max_elements`, or `query` / `max_depth`, to reach the rest. \
+                `_note` is omitted unless `verbose:true`. `full_output:true` restores the \
+                previous full response: both representations, all metadata, and the platform's \
+                walk limits (≤5 000 elements, depth ≤25).\n\n\
+                DIFF READS: pass `since: <snapshot_id>` from an earlier read of the same window \
+                to get only what changed: `+` added rows, `~` changed rows, `-` removed rows \
+                (their ids are the old snapshot's), or `no change since …`. Rows not listed keep \
+                their previous `[N]` unless a `reindexed:` line says otherwise. The response \
+                carries a NEW snapshot_id: use it in element_tokens. An unknown, expired, \
+                other-window or differently-scoped (query/max_elements/max_depth) `since` falls \
+                back to a full read and `since_status` says why. The focused element is not \
+                reported on Windows yet.\n\n\
                 INVARIANT: call `get_window_state` once per turn per (pid, window_id) before \
                 any element action against that window. The next snapshot of the same \
                 (pid, window_id) replaces this one, stales its element tokens, and lists the \
                 replaced ids in `invalidated_snapshot_ids`.\n\n\
-                PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
-                indexed row with `element_index`, `role`, `label`, `value`, `enabled`, \
-                `selected`, `actions` (names of UIA patterns exposed as actions, \
-                omitted when empty), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
-                `tree_markdown` stays available \
-                and unchanged in shape for existing text-parsing callers — but new \
-                fields will only be added to the structured side.\n\n\
                 The UIA tree walked is the window's tree (HWND-scoped); the screenshot and \
                 window bounds reported come from the same `window_id`. This is the source of \
                 truth for which window the caller intends to reason about — the driver never \
                 picks a window implicitly.\n\n\
                 `window_id` MUST belong to `pid`; the call returns `isError: true` otherwise. \
                 The driver does not auto-fall-back to a different window.\n\n\
-                Set `query` to a case-insensitive substring to project BOTH `tree_markdown` \
-                and `structuredContent.elements` to matching rows plus their ancestor chain. \
+                Set `query` to a case-insensitive substring to project the tree to matching \
+                rows plus their ancestor chain. \
                 Original element indices are preserved. `total_element_count` reports the \
                 complete snapshot; `returned_element_count` reports the projection.\n\n\
                 Always returns BOTH the element tree AND a screenshot — ground on both \
@@ -1206,11 +1215,9 @@ impl Tool for GetWindowStateTool {
                 Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a \
                 single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of \
                 timing out at 4s with per-property RPCs).\n\n\
-                Optional `max_elements` / `max_depth` bound the UIA walk to mitigate \
-                context-window blow-up on Electron / large web apps that produce 10k+ \
-                element trees. When applied, BOTH the markdown and the structured \
-                elements are truncated identically. Omit both for current default behaviour \
-                (≤5 000 elements, depth ≤25).\n\n\
+                Optional `max_elements` / `max_depth` bound the UIA walk (Electron / large web \
+                apps produce 10k+ element trees). Markdown and structured elements are \
+                truncated identically. Default: `max_elements` 250, depth ≤25.\n\n\
                 CHROMIUM COVERAGE: a browser-owned permission bubble can be \
                 composited outside the requested native window. Chromium-family \
                 snapshots therefore describe this limit in structuredContent.capture_coverage. \
@@ -1220,21 +1227,21 @@ impl Tool for GetWindowStateTool {
                 This is separate from page JavaScript dialogs, which remain on \
                 browser_dialog.\n\n\
                 Windows requires no special permissions.".into(),
-            input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
+            input_schema: cua_driver_core::window_state_view::extend_input_schema(json!({"type":"object","required":["pid","window_id"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":{"type":"integer","description":"Process ID from `list_apps`."},
                 "window_id":{"type":"integer","description":"HWND of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
-                "include_accessibility_tree":{"type":"boolean","description":"Default true — walk the UIA tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
+                "include_accessibility_tree":{"type":"boolean","description":"Default true — walk the UIA tree and return it (per `tree_format`) alongside the screenshot. Set false to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
                 "include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string","description":"When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead."},
                 "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
-                "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees."},
+                "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Default 250 (5 000 with full_output:true); the response states when the tree was cut. Raise it to read further into a large window."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."},
                 "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
                 "max_image_dimension":{"type":"integer","minimum":0,"description":"Per-call long-edge limit for the returned screenshot, in pixels (aspect ratio preserved). Explicit values override configured behavior; 0 returns native resolution. Omit to preserve the configured default."},
                 "max_dimension":{"type":"integer","minimum":1,"description":"Legacy optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved). Applied on top of the configured max_image_dimension ceiling when max_image_dimension is omitted; the tighter wins."}
-            },"additionalProperties":false}),
+            },"additionalProperties":false})),
             // Swift annotation: idempotent: false (each call is a fresh snapshot).
             read_only: true, destructive: false, idempotent: false, open_world: false,
         })
@@ -1333,17 +1340,23 @@ impl Tool for GetWindowStateTool {
         // time: an element ax action (element_index) or an element px action (x,y).
         // We don't read the arg; it stays in the schema only so old callers don't
         // trip additionalProperties:false.
+        let view = match cua_driver_core::window_state_view::ViewOptions::from_args(&args) {
+            Ok(view) => view,
+            Err(refusal) => return refusal,
+        };
         let query = args.opt_str("query");
         let session_id = args.opt_str("_session_id");
         let screenshot_out_file = args.opt_str("screenshot_out_file");
         // Optional caps — when omitted, fall back to the walker's built-in
         // defaults (#22865). minimum:1 enforced in the schema, but defend
         // against 0 here too.
-        let max_elements = args
-            .get("max_elements")
-            .and_then(|v| v.as_u64())
-            .map(|v| v.max(1) as usize)
-            .unwrap_or(crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS);
+        let max_elements = view.max_elements(
+            &args,
+            crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS,
+            args.get("_observation_only")
+                .and_then(|value| value.as_bool())
+                == Some(true),
+        );
         let max_depth = args
             .get("max_depth")
             .and_then(|v| v.as_u64())
@@ -1746,6 +1759,27 @@ impl Tool for GetWindowStateTool {
                          skipped (include_accessibility_tree:false) and no screenshot was returned."
                     ))
                     .with_structured(structured);
+                }
+
+                if !observation_only {
+                    cua_driver_core::window_state_view::apply(
+                        &view,
+                        &cua_driver_core::window_state_view::ViewContext {
+                            pid: i64::from(pid),
+                            window_id: hwnd,
+                            key: cua_driver_core::window_state_view::ViewKey {
+                                query: query.clone(),
+                                max_elements,
+                                max_depth: args
+                                    .get("max_depth")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|v| v as usize),
+                            },
+                            focus_probe: None,
+                        },
+                        &mut content,
+                        &mut structured,
+                    );
                 }
 
                 ToolResult {

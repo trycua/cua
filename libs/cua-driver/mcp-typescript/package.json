@@ -1,0 +1,25 @@
+{
+  "name": "@trycua/cua-driver-mcp-typescript",
+  "version": "0.0.0",
+  "private": true,
+  "description": "TypeScript MCP server for the Cua Driver daemon and bundled skill pack",
+  "type": "module",
+  "bin": {
+    "cua-driver-mcp-typescript": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.7.0"
+  }
+}

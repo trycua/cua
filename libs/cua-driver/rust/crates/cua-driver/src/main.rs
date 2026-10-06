@@ -32,6 +32,7 @@ mod perception_cli;
 mod private_worker;
 mod proxy;
 mod release_channel;
+mod release_source;
 mod responsibility;
 mod sdk_adapter;
 mod serve;

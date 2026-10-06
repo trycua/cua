@@ -3224,9 +3224,9 @@ fn run_recording_render(args: &[String]) {
 
 /// `cua-driver update [--apply]` — check for a newer release and optionally apply it.
 ///
-/// Shares the GitHub releases fetch with the startup banner via
+/// Shares the release lookup with the startup banner via
 /// [`crate::version_check::fetch_latest_version`] so both code paths agree on
-/// tag filtering and HTTP semantics. `--apply` delegates to the canonical
+/// the source (the installer's own version pin, then GitHub) and tag filtering. `--apply` delegates to the canonical
 /// installer script — see [`crate::updater`] for why we go through the script
 /// instead of re-implementing the asset resolution + atomic swap + GC in Rust.
 pub fn run_update_cmd(apply: bool, json: bool) {
@@ -3282,6 +3282,10 @@ pub fn run_update_cmd(apply: bool, json: bool) {
     }
 
     let latest = crate::version_check::fetch_latest_version();
+    if let Ok(v) = &latest {
+        // Keep the cache in step with what the user was just told.
+        crate::version_check::record_latest(selected_channel, v);
+    }
     match latest {
         Err(e) => {
             crate::telemetry::capture_update_checked(
@@ -3299,12 +3303,11 @@ pub fn run_update_cmd(apply: bool, json: bool) {
                     apply_started_at.elapsed(),
                 );
             }
-            // The shared helper returns a human-readable error string for
-            // the CLI surface — pass it through so the user can see why
-            // (timeout, parse error, etc.) instead of just "unreachable".
-            tracing::debug!(target: "cua_driver::update", "fetch failed: {e}");
+            // The error names the real cause: a GitHub API rate limit (with its
+            // reset time) is not a network failure, and vice versa.
+            tracing::debug!(target: "cua_driver::update", "fetch failed: {e:?}");
             if !json {
-                println!("Could not reach GitHub — check your connection and try again.");
+                println!("Could not check for updates: {e}");
             }
             process::exit(1);
         }
@@ -3371,6 +3374,9 @@ pub fn run_update_cmd(apply: bool, json: bool) {
                         daemon_was_running,
                         apply_started_at.elapsed(),
                     );
+                    // What was "latest" before this install says nothing about
+                    // what is latest after it.
+                    crate::version_check::invalidate_cache();
                     if !json {
                         println!("Installed cua-driver {v}.");
                     }
@@ -4435,7 +4441,7 @@ fn cli_docs_literal() -> serde_json::Value {
                 "options": no_options,
                 "flags": [
                     {"name":"json","short_name":null,"help":"Emit a machine-readable JSON payload.","default_value":false},
-                    {"name":"no-cache","short_name":null,"help":"Skip the 20-hour on-disk cache and force a GitHub request.","default_value":false}
+                    {"name":"no-cache","short_name":null,"help":"Skip the 1-hour on-disk cache and look up the latest release again.","default_value":false}
                 ],
                 "subcommands": no_subcommands
             },

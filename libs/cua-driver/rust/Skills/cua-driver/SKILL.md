@@ -40,7 +40,7 @@ The MCP server instructions carry the same rules, so they apply even when this f
 1. Start with a targeted read: `get_window_state({pid, window_id, query:"Save"})` returns about 2K chars where a full snapshot is about 42K. Bound large trees with `max_elements` / `max_depth`, and pass `include_screenshot:false` when the tree is enough. Widen only if the target is missing.
 2. Act by `element_token`. A narrowed read keeps the full snapshot actionable, so you can act on a match without re-reading. Use pixels only for surfaces missing from the tree.
 3. Verify at checkpoints (after a meaningful state change, before finishing), not after every action. One `verify_state` or one targeted `get_window_state` is usually enough.
-4. Batch known steps in one call once the batch tool exists (CUA-1194, not yet available).
+4. Batch known steps in one `run_actions` call (stops at the first failure, one optional bounded read at the end); see [Workflow](WORKFLOW.md#batch-known-actions).
 
 ## Act
 
@@ -50,6 +50,7 @@ The MCP server instructions carry the same rules, so they apply even when this f
 | Find or open the requested app            | `list_apps`, `list_windows`, `launch_app`                                                             | Current platform guide below                          |
 | Observe one window                        | `get_window_state({pid, window_id, query})`                                                           | [Workflow](WORKFLOW.md)                               |
 | Act on a control                          | `click` / `type_text` with a fresh `element_token` and exact window target                            | [Workflow](WORKFLOW.md)                               |
+| Run several decided actions in one call   | `run_actions({steps:[{tool,args},...], observe?})`; stops at the first failure                        | [Workflow](WORKFLOW.md#batch-known-actions)           |
 | Use pixels when semantics cannot reach it | Fresh target screenshot, then `x,y` on the same target                                                | [Workflow](WORKFLOW.md)                               |
 | Verify the outcome                        | `verify_state({pid, window_id, expect})` or a fresh snapshot read by the agent                        | [Workflow](WORKFLOW.md)                               |
 | Operate the authorized desktop            | `get_desktop_state` → input with `target:{kind:"desktop",display_id:"primary"}` → `get_desktop_state` | [Workflow](WORKFLOW.md), [Linux](LINUX.md) on Wayland |

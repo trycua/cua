@@ -53,6 +53,7 @@ pub mod action_target;
 pub mod agent_cursor;
 pub mod authorization;
 pub mod background_input;
+pub mod batch_tools;
 pub mod browser;
 pub mod build_info;
 pub mod capture_mode;

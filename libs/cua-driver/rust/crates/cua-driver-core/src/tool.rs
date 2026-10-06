@@ -209,7 +209,7 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
         .cloned()
 }
 
-fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
+pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
     let mut schema = schema.clone();
     let closed = schema["additionalProperties"] == false;
     let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
@@ -403,6 +403,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "stop_recording" => &["recording.stop"],
         "get_recording_state" => &["recording.state"],
         "replay_trajectory" => &["recording.replay"],
+        "run_actions" => &["input.batch"],
         "install_ffmpeg" => &["recording.install_dependency"],
         "install_extension" => &["extension.install"],
 
@@ -932,6 +933,17 @@ impl ToolRegistry {
         self.register(Box::new(ListSessionsTool));
         self.register(Box::new(GetSessionStateTool));
         self.register(Box::new(EndSessionTool));
+        self.register_batch_tools();
+    }
+
+    /// Register `run_actions`, which re-enters this registry for every step.
+    /// Called from [`Self::register_session_tools`] so every platform that
+    /// registers sessions gets it; [`Self::init_self_weak`] supplies the
+    /// registry handle, as for `replay_trajectory`.
+    fn register_batch_tools(&mut self) {
+        self.register(Box::new(crate::batch_tools::RunActionsTool::new(
+            self.replay_registry.clone(),
+        )));
     }
 
     pub fn register_perception_tool(
@@ -1723,6 +1735,7 @@ impl ToolRegistry {
                     | "stop_recording"
                     | "get_recording_state"
                     | "replay_trajectory"
+                    | "run_actions"
                     | "start_session"
                     | "end_session"
             );

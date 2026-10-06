@@ -378,8 +378,6 @@ fn agent_instructions() -> String {
         )
     };
 
-    // TODO(CUA-1194): when the batch tool lands, add a loop step: send several
-    // known steps in one batch call instead of one call per action.
     format!(
         r#"cua-driver: background GUI automation. No shell: for non-GUI outcomes use an app API/SDK, CLI or filesystem and read the result back there.
 
@@ -388,6 +386,7 @@ Efficient loop:
 2. Read narrowly: `get_window_state` with `query:"Save"` (or `max_elements`) returns ~2K chars vs ~42K for a full snapshot. Widen only if the target is missing; `include_screenshot:false` when the tree suffices.
 3. Act by `element_token` ({tree_kind}) from the latest snapshot; pixel `x,y` only for surfaces missing from the tree. A new snapshot stales older tokens.
 4. Verify at checkpoints, not after every action: `verify_state(pid, window_id, expect)` or one targeted read. `unknown` and `effect:"unverifiable"` are not success.
+5. Batch known steps: `run_actions({{steps:[{{tool,args}}]}})` stops at the first failure.
 
 Use the narrowest semantic route first: `set_window_frame` plus `list_windows` for geometry, typed browser tools for pages, clipboard tools for the clipboard. Stay in the background; `delivery_mode:"foreground"` only if refused or unverifiable.
 

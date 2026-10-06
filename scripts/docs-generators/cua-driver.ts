@@ -297,6 +297,12 @@ export const MCP_CATEGORIES: Array<McpCategory & { tools: string[] }> = [
     tools: ['set_value', 'clipboard_read', 'clipboard_write'],
   },
   {
+    slug: 'batch',
+    title: 'Batch tool',
+    summary: 'Run several action tools in one call',
+    tools: ['run_actions'],
+  },
+  {
     slug: 'page',
     title: 'Page tools',
     summary: 'Read and act on web pages, and prepare and navigate browsers',

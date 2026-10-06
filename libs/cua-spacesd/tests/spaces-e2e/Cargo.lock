@@ -2314,7 +2314,7 @@ dependencies = [
 
 [[package]]
 name = "cua-motion"
-version = "0.1.0"
+version = "0.34.0"
 dependencies = [
  "serde",
 ]

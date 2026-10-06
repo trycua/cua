@@ -10,11 +10,13 @@ fixture window (GTK3 on Linux, WinForms on Windows) and checks:
   * run_actions (one batch with an end-of-batch observation),
   * set_value on a drop-down combo box and on an editable combo box.
 
-The first five checks are required: each is `pass` or `fail`. set_value on
-combo boxes and the probes are best effort and never fail the job; each is
-`pass`, `not_possible` (the driver refused with an explicit error) or `bug`
-(the driver claimed success, or failed internally after acting, and the app's
-change handler never saw the value).
+Also checked: an element_token alone (no pid) acts and a stale one is
+refused as `stale_element_token`. Those are required: each is `pass` or
+`fail`. set_value on combo boxes (including delivery_mode foreground and an
+unknown option) is required on the platforms in COMBO_HARD and best effort
+elsewhere, where it is `pass`, `not_possible` (the driver refused with an
+explicit error) or `bug` (the driver claimed success, or failed internally
+after acting, and the app's change handler never saw the value).
 
 Writes results.json, summary.md and the raw responses to --out, and appends
 summary.md to $GITHUB_STEP_SUMMARY when set. Exits 1 when any check fails.
@@ -41,6 +43,10 @@ WINDOWS = sys.platform == "win32"
 BUTTON = r"(push )?button"
 ENTRY = r"edit" if WINDOWS else r"text|entry"
 COMBO = r"combo ?box"
+# Platforms where set_value on a combo box must reach the app's change
+# handler: a failure there fails the job instead of being recorded. None yet;
+# the Windows and Linux combo-box fixes each turn on their platform.
+COMBO_HARD = False
 
 
 class Mcp:
@@ -392,30 +398,105 @@ def run_checks(smoke):
     # 6. set_value on combo boxes.
     combo_check(smoke, "Color", "Blue", editable=False)
     combo_check(smoke, "Size", "Large", editable=True)
+    unknown_option_check(smoke)
 
-    # Probe (informational): element_token alone, no pid (#4739 on macOS).
-    state = smoke.read()
-    increment = find_row(tree(state), BUTTON, "Increment")
-    probe = smoke.call("click", {"element_token": token(state, increment)})
-    smoke.record(
-        "probe: click with element_token and no pid",
-        "not_possible" if probe.is_error else "pass",
-        probe.first_line(),
-    )
+    # 7. element_token alone, no pid: the token names its pid.
+    token_without_pid_check(smoke)
 
-    # Probe (informational, last because it may leave a menu open): the
-    # drop-down combo with delivery_mode foreground, which the background
-    # refusal on Linux recommends.
+    # 8. The drop-down combo with delivery_mode foreground (last because a
+    # broken route may leave a popup open), then a click by token must still
+    # land, which it does not while a popup holds the pointer grab.
     state = smoke.read()
     combo = find_row(tree(state), COMBO, "Color")
     status, evidence = set_value_attempt(
         smoke, state, combo, "Color", "Green", delivery_mode="foreground"
     )
+    if status == "pass":
+        landed, detail = click_still_lands(smoke)
+        if not landed:
+            status = "bug"
+        evidence += "; " + detail
     smoke.record(
-        "probe: set_value on the drop-down combo box with delivery_mode foreground",
-        status,
+        "set_value on the drop-down combo box with delivery_mode foreground",
+        hard(status),
         evidence,
     )
+
+
+def hard(status):
+    """A combo-box status under COMBO_HARD: anything but pass fails."""
+    return "fail" if COMBO_HARD and status != "pass" else status
+
+
+def count_value(markdown):
+    match = re.search(r"Count: (\d+)", markdown)
+    return int(match.group(1)) if match else None
+
+
+def click_still_lands(smoke):
+    """Click Increment by token and check the count moves."""
+    state = smoke.read()
+    before = count_value(tree(state))
+    increment = find_row(tree(state), BUTTON, "Increment")
+    if before is None or increment is None:
+        return False, "no Increment button or Count label to probe with"
+    smoke.call("click", {"pid": smoke.pid, "element_token": token(state, increment)})
+    after = smoke.wait_for_text(f"Count: {before + 1}")
+    if f"Count: {before + 1}" in tree(after):
+        return True, f"a following click by token still lands (Count: {before + 1})"
+    return False, f"a following click by token did not land (Count stayed {before})"
+
+
+def token_without_pid_check(smoke):
+    check = "act by element_token without pid; a stale token is refused"
+    state = smoke.read()
+    before = count_value(tree(state))
+    increment = find_row(tree(state), BUTTON, "Increment")
+    args = {"element_token": token(state, increment)}
+    click = smoke.call("click", args)
+    after = smoke.wait_for_text(f"Count: {(before or 0) + 1}")
+    problems = []
+    if click.is_error:
+        problems.append(f"click {json.dumps(args)} -> {click.first_line()}")
+    elif f"Count: {(before or 0) + 1}" not in tree(after):
+        problems.append(f"click ok but the count did not move from {before}")
+    stale_args = {"element_token": "s0fffffff:0", "value": "x"}
+    stale = smoke.call("set_value", stale_args)
+    code = (stale.structured.get("refusal") or {}).get("code")
+    if not stale.is_error or code != "stale_element_token":
+        problems.append(
+            f"set_value {json.dumps(stale_args)} -> is_error={stale.is_error}, "
+            f"refusal code {code!r}: {stale.first_line()}"
+        )
+    smoke.record(
+        check,
+        "fail" if problems else "pass",
+        "; ".join(problems)
+        or f"click {json.dumps(args)} -> Count: {(before or 0) + 1}; a stale token -> "
+        f"stale_element_token ({stale.first_line()})",
+    )
+
+
+def unknown_option_check(smoke):
+    """set_value with an option the drop-down does not have is refused and
+    changes nothing."""
+    check = "set_value on a drop-down combo box refuses an unknown option"
+    state = smoke.read()
+    combo = find_row(tree(state), COMBO, "Color")
+    shown = re.search(r"Color: (\w+)", tree(state))
+    args = {"pid": smoke.pid, "element_token": token(state, combo), "value": "Purple"}
+    result = smoke.call("set_value", args)
+    fresh = smoke.read()
+    code = result.structured.get("code")
+    if not result.is_error:
+        status, evidence = "bug", f"set_value 'Purple' reported success: {result.first_line()}"
+    elif shown and shown.group(0) not in tree(fresh):
+        status, evidence = "bug", f"refused ({result.first_line()}) but the label changed"
+    elif code != "option_not_found":
+        status, evidence = "not_possible", f"refused with code {code!r}: {result.first_line()}"
+    else:
+        status, evidence = "pass", f"option_not_found: {result.first_line()}"
+    smoke.record(check, hard(status), evidence)
 
 
 def row_text(markdown, index):
@@ -446,8 +527,8 @@ def set_value_attempt(smoke, state, index, name, value, **extra):
 
 
 def combo_check(smoke, name, value, editable):
-    """set_value on a combo box is best effort ("where possible"): it records
-    pass, not_possible or bug and never fails the job."""
+    """set_value on a combo box: required under COMBO_HARD, otherwise best
+    effort (pass, not_possible or bug, never failing the job)."""
     kind = "an editable combo box" if editable else "a drop-down combo box"
     check = f"set_value on {kind} ({name} -> {value})"
     state = smoke.read()
@@ -470,7 +551,7 @@ def combo_check(smoke, name, value, editable):
             break
         state = smoke.read()
     status = next((s for s in ("pass", "bug", "not_possible") if any(o[0] == s for o in outcomes)))
-    smoke.record(check, status, "; ".join(e for st, e in outcomes if st == status))
+    smoke.record(check, hard(status), "; ".join(e for st, e in outcomes if st == status))
 
 
 def write_reports(smoke, out, platform_name):
@@ -482,7 +563,8 @@ def write_reports(smoke, out, platform_name):
         "",
         "`fail` fails the job. `bug` (a best-effort check where the driver claimed "
         "success, or failed internally after acting, without the app seeing the "
-        "change) and `not_possible` (an explicit refusal) are recorded only.",
+        "change) and `not_possible` (an explicit refusal) are recorded only. "
+        f"Combo-box checks are {'required' if COMBO_HARD else 'best effort'} here.",
         "",
         "| Check | Result | Evidence |",
         "| --- | --- | --- |",

@@ -16,6 +16,12 @@ fi
 # Find .desktop file
 DESKTOP_FILE=$(find /usr/share/applications -name "*git*" -type f 2>/dev/null | head -1)
 
+if [ -z "$DESKTOP_FILE" ]; then
+  DESKTOP_ENTRY_JSON="null"
+else
+  DESKTOP_ENTRY_JSON="\"$DESKTOP_FILE\""
+fi
+
 # Find icon files from package data or filesystem
 ICON_PATHS=()
 
@@ -54,10 +60,10 @@ echo "{"
 echo "  \"binary_path\": \"$BINARY_PATH\","
 echo "  \"binary_name\": \"$BINARY_NAME\","
 echo "  \"display_name\": \"$DISPLAY_NAME\","
-echo "  \"desktop_entry\": $([ -z \"$DESKTOP_FILE\" ] && echo 'null' || echo \"\"$DESKTOP_FILE\")","
+echo "  \"desktop_entry\": $DESKTOP_ENTRY_JSON,"
 echo "  \"icon_paths\": ["
 if [ ${#ICON_PATHS[@]} -gt 0 ]; then
-  for i in \"${!ICON_PATHS[@]}\"; do
+  for i in "${!ICON_PATHS[@]}"; do
     if [ $i -lt $((${#ICON_PATHS[@]} - 1)) ]; then
       echo "    \"${ICON_PATHS[$i]}\","
     else

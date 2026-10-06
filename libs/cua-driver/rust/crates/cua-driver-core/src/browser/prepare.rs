@@ -550,6 +550,76 @@ fn write_profile_marker(path: &Path, marker: &ProfileMarker) -> Result<(), Brows
         })
 }
 
+/// An `isolated_new` profile is deleted when its owning session ends, but that
+/// cleanup runs in the daemon's memory (`ManagedBrowser::drop`). If the daemon
+/// is killed, crashes or is restarted first, the profile stays on disk with
+/// whatever the agent signed into. A profile is only swept once it is this old,
+/// so a profile another daemon just created is never touched.
+const ORPHANED_PROFILE_MIN_AGE: Duration = Duration::from_secs(60 * 60);
+
+/// Chrome records its owner in `SingletonLock` as a symlink to `host-pid`.
+#[cfg(unix)]
+fn profile_has_live_browser(path: &Path) -> bool {
+    let Ok(target) = fs::read_link(path.join("SingletonLock")) else {
+        return false;
+    };
+    let Some(pid) = target
+        .to_string_lossy()
+        .rsplit('-')
+        .next()
+        .and_then(|pid| pid.parse::<i32>().ok())
+        .filter(|pid| *pid > 0)
+    else {
+        // An unreadable lock is not proof the browser is gone.
+        return true;
+    };
+    // SAFETY: signal 0 only checks that the process exists.
+    let exists = unsafe { libc::kill(pid, 0) } == 0;
+    exists || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// Delete `isolated-*` profiles left behind by a daemon that exited before it
+/// could clean up. Only directories carrying this driver's `isolated_new`
+/// marker are removed, never named profiles, and never one whose browser is
+/// still running or that is younger than `min_age`. Returns the number removed.
+#[cfg(unix)]
+fn sweep_orphaned_isolated_profiles(root: &Path, min_age: Duration) -> usize {
+    let Ok(entries) = fs::read_dir(root) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_isolated_new = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with("isolated-"));
+        if !is_isolated_new {
+            continue;
+        }
+        let marker = ProfileMarker {
+            schema: PROFILE_SCHEMA.to_owned(),
+            mode: PrepareProfileMode::IsolatedNew,
+            name: None,
+        };
+        if !profile_matches_marker(&path, &marker) {
+            continue;
+        }
+        let old_enough = fs::metadata(path.join(PROFILE_MARKER))
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age >= min_age);
+        if !old_enough || profile_has_live_browser(&path) {
+            continue;
+        }
+        if fs::remove_dir_all(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 fn prepare_profile(profile: &PrepareProfile) -> Result<PreparedProfile, BrowserRefusal> {
     validate_profile(profile)?;
     let root = profile_root()?;
@@ -581,6 +651,8 @@ fn prepare_profile(profile: &PrepareProfile) -> Result<PreparedProfile, BrowserR
             "the driver-owned profile root is not a real directory",
         ));
     }
+    #[cfg(unix)]
+    sweep_orphaned_isolated_profiles(&root, ORPHANED_PROFILE_MIN_AGE);
     let leaf = match profile.mode {
         PrepareProfileMode::IsolatedNew => format!("isolated-{}", uuid::Uuid::new_v4()),
         PrepareProfileMode::IsolatedNamed => profile.name.clone().expect("validated profile name"),
@@ -1901,6 +1973,65 @@ mod tests {
         ));
         assert!(write_profile_marker(&path, &expected).is_err());
         fs::remove_dir_all(path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sweep_removes_only_stale_unowned_isolated_new_profiles() {
+        let root = tempfile::tempdir().unwrap();
+        let make = |name: &str, mode: PrepareProfileMode, name_field: Option<&str>| {
+            let path = root.path().join(name);
+            fs::create_dir(&path).unwrap();
+            write_profile_marker(
+                &path,
+                &ProfileMarker {
+                    schema: PROFILE_SCHEMA.to_owned(),
+                    mode,
+                    name: name_field.map(str::to_owned),
+                },
+            )
+            .unwrap();
+            path
+        };
+        let orphan = make("isolated-orphan", PrepareProfileMode::IsolatedNew, None);
+        let live = make("isolated-live", PrepareProfileMode::IsolatedNew, None);
+        std::os::unix::fs::symlink(
+            format!("host-{}", std::process::id()),
+            live.join("SingletonLock"),
+        )
+        .unwrap();
+        let dead = make("isolated-dead-lock", PrepareProfileMode::IsolatedNew, None);
+        std::os::unix::fs::symlink("host-2147483646", dead.join("SingletonLock")).unwrap();
+        let named = make(
+            "isolated-looks-new",
+            PrepareProfileMode::IsolatedNamed,
+            Some("isolated-looks-new"),
+        );
+        let user_named = make(
+            "francesco-outlook",
+            PrepareProfileMode::IsolatedNamed,
+            Some("francesco-outlook"),
+        );
+        let unmarked = root.path().join("isolated-unmarked");
+        fs::create_dir(&unmarked).unwrap();
+
+        // Too young: nothing is touched.
+        assert_eq!(
+            sweep_orphaned_isolated_profiles(root.path(), Duration::from_secs(3600)),
+            0
+        );
+        assert!(orphan.exists());
+
+        assert_eq!(
+            sweep_orphaned_isolated_profiles(root.path(), Duration::ZERO),
+            2
+        );
+        assert!(!orphan.exists());
+        assert!(!dead.exists());
+        assert!(live.exists(), "profile with a running browser is kept");
+        assert!(named.exists(), "isolated_named profiles are never swept");
+        assert!(user_named.exists());
+        assert!(unmarked.exists(), "directories without our marker are kept");
     }
 
     #[test]

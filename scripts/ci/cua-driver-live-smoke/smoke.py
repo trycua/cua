@@ -439,7 +439,7 @@ def set_value_attempt(smoke, state, index, name, value, **extra):
         return "not_possible", f"[{index}] {result.first_line()}"
     claim = ("failed internally: " if result.is_error else "reported success: ") + result.first_line()
     return "bug", (
-        f"set_value {json.dumps(extra) if extra else ''} on row [{index}] {claim}; "
+        f"set_value{' ' + json.dumps(extra) if extra else ''} on row [{index}] {claim}; "
         f"the control now reads `{control}` but the app's change handler never ran "
         f"(no '{expected}')"
     )

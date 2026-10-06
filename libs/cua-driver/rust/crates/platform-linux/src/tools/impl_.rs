@@ -6354,14 +6354,38 @@ impl Tool for ClickTool {
             // sees the cursor "click somewhere else."
             // The overlay draws in layout coordinates, like the input below.
             let (overlay_x, overlay_y) = space.to_layout(sx, sy);
-            reveal_pointer_action_for(
-                &self.state,
-                &cursor_id,
-                f64::from(overlay_x),
-                f64::from(overlay_y),
-                true,
-            )
-            .await;
+            if crate::wayland::wayland_input_enabled() && crate::wayland::overlay::available() {
+                if let Err(error) = crate::wayland::overlay::animate_and_wait(
+                    cursor_id.clone(),
+                    f64::from(overlay_x),
+                    f64::from(overlay_y),
+                )
+                .await
+                {
+                    return ToolResult::error(error.to_string());
+                }
+                self.state.cursor_registry.set_enabled(&cursor_id, true);
+                self.state.cursor_registry.update_position(
+                    &cursor_id,
+                    f64::from(overlay_x),
+                    f64::from(overlay_y),
+                );
+                emit_cursor_hook(
+                    &cursor_id,
+                    f64::from(overlay_x),
+                    f64::from(overlay_y),
+                    false,
+                );
+            } else {
+                reveal_pointer_action_for(
+                    &self.state,
+                    &cursor_id,
+                    f64::from(overlay_x),
+                    f64::from(overlay_y),
+                    false,
+                )
+                .await;
+            }
             let r = tokio::task::spawn_blocking(move || {
                 if crate::wayland::wayland_input_enabled() {
                     if !modifiers.is_empty() {
@@ -6383,6 +6407,16 @@ impl Tool for ClickTool {
                 }
             })
             .await;
+            if matches!(&r, Ok(Ok(()))) {
+                emit_cursor_hook(&cursor_id, f64::from(overlay_x), f64::from(overlay_y), true);
+                crate::overlay::send_command_for(
+                    cursor_id,
+                    cursor_overlay::OverlayCommand::ClickPulse {
+                        x: f64::from(overlay_x),
+                        y: f64::from(overlay_y),
+                    },
+                );
+            }
             return match r {
                 // Screen-absolute click — never driver-verifiable (no
                 // read-back); the caller confirms via screenshot.

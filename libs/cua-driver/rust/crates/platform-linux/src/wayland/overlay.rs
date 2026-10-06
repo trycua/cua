@@ -34,6 +34,7 @@ use wayland_client::{
     globals::{registry_queue_init, GlobalListContents},
     protocol::{
         wl_buffer::WlBuffer,
+        wl_callback::{self, WlCallback},
         wl_compositor::WlCompositor,
         wl_output::WlOutput,
         wl_region::WlRegion,
@@ -58,10 +59,19 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 /// SetPressed) are forwarded as-is so the layer-shell overlay matches the
 /// X11 visual: bloom + animated arrow + click pulse + press ring.
 enum WlOverlayCmd {
-    Cmd { key: CursorKey, cmd: OverlayCommand },
+    Cmd {
+        key: CursorKey,
+        cmd: OverlayCommand,
+    },
     Remove(CursorKey),
     Revive(CursorKey),
     Shutdown,
+    MoveAndWait {
+        key: CursorKey,
+        x: f64,
+        y: f64,
+        done: tokio::sync::oneshot::Sender<()>,
+    },
 }
 
 static TX: OnceLock<Sender<WlOverlayCmd>> = OnceLock::new();
@@ -186,6 +196,68 @@ pub fn shutdown() {
     }
 }
 
+/// Complete only after the owning cursor's arrival buffer receives a compositor
+/// frame callback. Queue loss, renderer failure and timeout refuse input.
+pub async fn animate_and_wait(key: CursorKey, x: f64, y: f64) -> anyhow::Result<()> {
+    if !CONFIG_ENABLED.load(Ordering::Acquire) {
+        // An explicitly disabled overlay does not gate real input.
+        return Ok(());
+    }
+    anyhow::ensure!(
+        available() && ensure_started(),
+        "Wayland arrival renderer unavailable"
+    );
+    let (done, arrived) = tokio::sync::oneshot::channel();
+    tx().ok_or_else(|| anyhow::anyhow!("Wayland overlay unavailable"))?
+        .try_send(WlOverlayCmd::MoveAndWait { key, x, y, done })
+        .map_err(|_| anyhow::anyhow!("Wayland overlay rejected arrival request"))?;
+    wait_for_arrival(arrived, Duration::from_secs(10)).await
+}
+
+async fn wait_for_arrival(
+    arrived: tokio::sync::oneshot::Receiver<()>,
+    budget: Duration,
+) -> anyhow::Result<()> {
+    tokio::time::timeout(budget, arrived)
+        .await
+        .map_err(|_| anyhow::anyhow!("Wayland cursor arrival timed out; click not sent"))?
+        .map_err(|_| anyhow::anyhow!("Wayland cursor arrival cancelled; click not sent"))
+}
+
+struct Arrival {
+    x: f64,
+    y: f64,
+    done: tokio::sync::oneshot::Sender<()>,
+}
+
+struct ArrivalFrame(std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>);
+
+impl Dispatch<WlCallback, ArrivalFrame> for OverlayState {
+    fn event(
+        state: &mut Self,
+        _: &WlCallback,
+        event: wl_callback::Event,
+        data: &ArrivalFrame,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if matches!(event, wl_callback::Event::Done { .. }) {
+            state.arrival_frames = state.arrival_frames.saturating_sub(1);
+            if let Some(done) = data.0.lock().unwrap().take() {
+                let _ = done.send(());
+            }
+        }
+    }
+}
+
+fn arrived_at(core: &RenderStateCore, x: f64, y: f64) -> bool {
+    let target = cursor_overlay::anchor_for_pointer(x, y, std::f64::consts::FRAC_PI_4);
+    core.visible
+        && !core.is_moving()
+        && (core.pos.0 - target.0).abs() < 1e-6
+        && (core.pos.1 - target.1).abs() < 1e-6
+}
+
 // ── owner thread ─────────────────────────────────────────────────────────
 
 struct OverlayState {
@@ -217,6 +289,8 @@ struct OverlayState {
     /// Replaces the per-redraw `mem::forget` leak: the previous frame's
     /// memory is reclaimed as soon as the compositor releases it.
     pending_buffers: HashMap<u32, (*mut libc::c_void, usize, i32)>,
+    arrivals: HashMap<CursorKey, Arrival>,
+    arrival_frames: usize,
 }
 
 struct NativeOutput {
@@ -351,6 +425,8 @@ impl OverlayState {
             // lazily-created named slots take their key as the id.
             render: WlRenderMap::new(template, ()),
             pending_buffers: HashMap::new(),
+            arrivals: HashMap::new(),
+            arrival_frames: 0,
         }
     }
 }
@@ -592,6 +668,7 @@ fn wait_for_renderer_command(
     while let Ok(command) = rx.recv() {
         match command {
             WlOverlayCmd::Shutdown => return None,
+            command @ WlOverlayCmd::MoveAndWait { .. } => return Some(command),
             WlOverlayCmd::Remove(key) => {
                 remove_keyed_core(&mut state.render, key);
             }
@@ -689,7 +766,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     loop {
         let wait = next_wait(
             &state.render.cursors,
-            frame_tick_needed,
+            frame_tick_needed || !state.arrivals.is_empty() || state.arrival_frames > 0,
             state.topology_dirty,
         );
         let wake = startup_command
@@ -717,10 +794,44 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                     shutdown = true;
                     break;
                 }
+                Ok(WlOverlayCmd::MoveAndWait { key, x, y, done }) => {
+                    if state.render.ended.contains(&key) {
+                        continue;
+                    }
+                    apply_keyed_command(
+                        &mut state.render,
+                        frame,
+                        key.clone(),
+                        OverlayCommand::SetEnabled(true),
+                    );
+                    let heading = std::f64::consts::FRAC_PI_4;
+                    let reduced_motion = state.render.cursors.get(&key).is_some_and(|core| {
+                        core.visual.reduced_motion == cursor_overlay::ReducedMotion::On
+                    });
+                    let command = if reduced_motion {
+                        let (x, y) = cursor_overlay::anchor_for_pointer(x, y, heading);
+                        OverlayCommand::SnapTo {
+                            x,
+                            y,
+                            heading_radians: Some(heading),
+                        }
+                    } else {
+                        OverlayCommand::MoveTo {
+                            x,
+                            y,
+                            end_heading_radians: heading,
+                            target: None,
+                        }
+                    };
+                    apply_keyed_command(&mut state.render, frame, key.clone(), command);
+                    state.arrivals.insert(key, Arrival { x, y, done });
+                    dirty = true;
+                }
                 Ok(WlOverlayCmd::Cmd { key, cmd }) => {
                     dirty |= apply_keyed_command(&mut state.render, frame, key, cmd);
                 }
                 Ok(WlOverlayCmd::Remove(key)) => {
+                    state.arrivals.remove(&key);
                     dirty |= remove_keyed_core(&mut state.render, key);
                 }
                 Ok(WlOverlayCmd::Revive(key)) => {
@@ -1072,6 +1183,24 @@ fn redraw_output(
         layout.origin_y,
         painted_positions.len(),
     ));
+    let ready: Vec<CursorKey> = state
+        .arrivals
+        .iter()
+        .filter_map(|(key, arrival)| {
+            let core = state.render.cursors.get(key)?;
+            let on_output = arrival.x >= f64::from(layout.origin_x)
+                && arrival.y >= f64::from(layout.origin_y)
+                && arrival.x < f64::from(layout.origin_x) + f64::from(layout.width)
+                && arrival.y < f64::from(layout.origin_y) + f64::from(layout.height);
+            (on_output && arrived_at(core, arrival.x, arrival.y)).then(|| key.clone())
+        })
+        .collect();
+    for key in ready {
+        if let Some(arrival) = state.arrivals.remove(&key) {
+            state.arrival_frames += 1;
+            surface.frame(qh, ArrivalFrame(std::sync::Mutex::new(Some(arrival.done))));
+        }
+    }
     surface.attach(Some(&buffer), 0, 0);
     // Damage both coordinate spaces. Some wlroots compositors otherwise leave
     // stale transparent frames behind while an animated cursor is moving.
@@ -2148,5 +2277,105 @@ mod tests {
         ));
         assert!(!ensure_started());
         assert_eq!(TX.get().is_some(), had_thread);
+    }
+}
+
+#[cfg(test)]
+mod click_arrival_tests {
+    use super::*;
+
+    #[test]
+    fn animation_has_intermediate_positions_and_exact_hotspot_arrival() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.glide_duration_ms = 650.0;
+        core.apply_command_base(
+            OverlayCommand::SnapTo {
+                x: 100.0,
+                y: 100.0,
+                heading_radians: None,
+            },
+            false,
+            false,
+        );
+        core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: 700.0,
+                y: 350.0,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+                target: None,
+            },
+            false,
+            false,
+        );
+        assert!(!arrived_at(&core, 700.0, 350.0));
+        let start = core.pos;
+        core.tick_motion(0.2);
+        assert_ne!(core.pos, start);
+        assert!(!arrived_at(&core, 700.0, 350.0));
+        for _ in 0..1200 {
+            core.tick_motion(0.01);
+            if arrived_at(&core, 700.0, 350.0) {
+                break;
+            }
+        }
+        assert!(
+            arrived_at(&core, 700.0, 350.0),
+            "position {:?}, heading {}, moving {}",
+            core.pos,
+            core.heading,
+            core.is_moving()
+        );
+        assert!(!arrived_at(&core, 701.0, 350.0));
+    }
+
+    #[test]
+    fn reduced_motion_snap_still_requires_exact_hotspot() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
+        let heading = std::f64::consts::FRAC_PI_4;
+        let (x, y) = cursor_overlay::anchor_for_pointer(700.0, 350.0, heading);
+        core.apply_command_base(
+            OverlayCommand::SnapTo {
+                x,
+                y,
+                heading_radians: Some(heading),
+            },
+            false,
+            false,
+        );
+        assert!(arrived_at(&core, 700.0, 350.0));
+    }
+
+    #[tokio::test]
+    async fn acknowledged_arrival_completes() {
+        let (done, arrived) = tokio::sync::oneshot::channel();
+        done.send(()).unwrap();
+        assert!(wait_for_arrival(arrived, Duration::from_secs(1))
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn stalled_renderer_refuses_input_after_timeout() {
+        let (done, arrived) = tokio::sync::oneshot::channel::<()>();
+        let error = wait_for_arrival(arrived, Duration::ZERO).await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Wayland cursor arrival timed out; click not sent"
+        );
+        drop(done);
+    }
+
+    #[tokio::test]
+    async fn lost_renderer_cancels_arrival_instead_of_authorizing_input() {
+        let (done, arrived) = tokio::sync::oneshot::channel::<()>();
+        drop(done);
+        let error = wait_for_arrival(arrived, Duration::from_secs(1))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Wayland cursor arrival cancelled; click not sent"
+        );
     }
 }

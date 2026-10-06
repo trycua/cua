@@ -769,15 +769,52 @@ pub(super) fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
         "m" => 46,
         "." => 47,
         "`" => 50,
-        _ => anyhow::bail!("Unknown key name: {key}"),
+        _ => anyhow::bail!("{}", unknown_key_message(key)),
     };
     Ok(code)
+}
+
+/// The error for a name `key_name_to_code` does not know, saying what to send
+/// instead: a combination such as "shift+Right" is a key plus modifiers, and
+/// a printable symbol is text.
+fn unknown_key_message(key: &str) -> String {
+    if key.chars().count() > 1 && key.contains('+') && !key.ends_with('+') {
+        let parts: Vec<&str> = key.split('+').collect();
+        let (modifiers, name) = parts.split_at(parts.len() - 1);
+        return format!(
+            "Unknown key name: {key}. A key name is one key, not a combination. Send the last \
+             part as the key and the rest as modifiers, e.g. key:\"{}\" with modifiers:{:?}, \
+             or use the hotkey tool with keys:{:?}.",
+            name[0],
+            modifiers
+                .iter()
+                .map(|m| m.to_lowercase())
+                .collect::<Vec<_>>(),
+            parts
+        );
+    }
+    format!(
+        "Unknown key name: {key}. Use a key name such as return, tab, escape, space, delete, \
+         left, right, up, down, pageup, pagedown, home, end, f1..f12, or a single letter or \
+         digit; to enter other characters (for example * or $) use type_text."
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use core_graphics::event::CGEventType;
+
+    #[test]
+    fn unknown_key_errors_say_what_to_send_instead() {
+        let combo = key_name_to_code("shift+Right").unwrap_err().to_string();
+        assert!(combo.contains("modifiers"), "{combo}");
+        assert!(combo.contains("hotkey"), "{combo}");
+        assert!(combo.contains("key:\"Right\""), "{combo}");
+        let symbol = key_name_to_code("asterisk").unwrap_err().to_string();
+        assert!(symbol.contains("type_text"), "{symbol}");
+        assert!(key_name_to_code("shift").is_ok());
+    }
 
     /// cua-spacesd names the Meta key `super` (the cross-platform name), and
     /// the macOS driver dropped it: `cua do hotkey cmd+w` pressed a bare `w`.

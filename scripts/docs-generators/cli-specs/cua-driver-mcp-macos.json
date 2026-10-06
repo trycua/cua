@@ -536,7 +536,7 @@
       "type": "array"
      },
      "pid": {
-      "description": "Target process ID.",
+      "description": "Target process ID. Optional with element_token (it carries the pid).",
       "type": "integer"
      },
      "scope": {
@@ -1270,7 +1270,7 @@
    "read_only": false
   },
   {
-   "description": "Scroll the target pid.\n- Targeted wheel: pass `element_token` (preferred) or window-local `x, y`. Sends a real wheel event at that point, so it scrolls whatever is under it. The only way to scroll nested `overflow:auto` regions in web views.\n- Keystroke: no target, just pid + direction. PageDown/PageUp (by='page') or arrows (by='line') on the focused scroller.\n\n`amount` is wheel notches (targeted) or key repetitions (keystroke).",
+   "description": "Scroll the target pid.\n- Targeted wheel: pass `element_token` (preferred) or window-local `x, y`. Sends a real wheel event at that point, so it scrolls whatever is under it. The only way to scroll nested `overflow:auto` regions in web views.\n- Keystroke: no target, just pid + direction. PageDown/PageUp (by='page') or arrows (by='line') on the focused scroller.\n\nElectron/Chromium windows refuse background delivery; pass `delivery_mode:\"foreground\"`.\n`amount` is wheel notches (targeted) or key repetitions (keystroke).",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -1314,7 +1314,7 @@
       "type": "string"
      },
      "pid": {
-      "description": "Target process ID. Required unless scope is \"desktop\".",
+      "description": "Target process ID. Required unless scope is \"desktop\" or element_token is supplied.",
       "type": "integer"
      },
      "scope": {

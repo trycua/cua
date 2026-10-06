@@ -58,6 +58,12 @@ fn clamp_amount(requested: u64) -> usize {
     requested.clamp(AMOUNT_MIN, AMOUNT_MAX) as usize
 }
 
+const ELECTRON_BACKGROUND_SCROLL_UNAVAILABLE: &str = "Background scroll is unavailable for \
+     Electron/Chromium windows on macOS: they drop background wheel events and keystrokes, so \
+     nothing was sent. Retry with delivery_mode:\"foreground\" (and the same window_id, \
+     element_token or x,y); the driver briefly fronts that window, scrolls, and restores the \
+     prior frontmost app.";
+
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "scroll".into(),
@@ -65,6 +71,7 @@ fn def() -> &'static ToolDef {
             - Targeted wheel: pass `element_token` (preferred) or window-local `x, y`. Sends a real wheel event at that point, so it scrolls whatever is under it. The only way to scroll nested `overflow:auto` regions in web views.\n\
             - Keystroke: no target, just pid + direction. PageDown/PageUp (by='page') or arrows (by='line') on the focused scroller.\n\
             \n\
+            Electron/Chromium windows refuse background delivery; pass `delivery_mode:\"foreground\"`.\n\
             `amount` is wheel notches (targeted) or key repetitions (keystroke).".into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -73,7 +80,7 @@ fn def() -> &'static ToolDef {
             "required": ["direction"],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
-                "pid": { "type": "integer", "description": "Target process ID. Required unless scope is \"desktop\"." },
+                "pid": { "type": "integer", "description": "Target process ID. Required unless scope is \"desktop\" or element_token is supplied." },
                 "direction": {
                     "type": "string",
                     "enum": ["up", "down", "left", "right"],
@@ -155,7 +162,7 @@ impl Tool for ScrollTool {
                 Err(error) => ToolResult::error(format!("desktop scroll task failed: {error}")),
             };
         }
-        let pid = match args.require_i32("pid") {
+        let pid = match super::target_pid(&self.state, &args) {
             Ok(v) => v,
             Err(e) => return e,
         };
@@ -165,11 +172,12 @@ impl Tool for ScrollTool {
         // keystroke path is background-by-design and untouched.
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         if !delivery_mode.is_foreground() && crate::browser::ElectronJs::is_electron(pid) {
-            return ToolResult::error(
-                "Background scroll is unavailable for Electron/Chromium windows on macOS."
-                    .to_owned(),
-            )
-            .with_structured(serde_json::json!({ "code": "background_unavailable" }));
+            return cua_driver_core::delivery::background_unavailable_result(
+                ELECTRON_BACKGROUND_SCROLL_UNAVAILABLE,
+                "background_unavailable",
+                "Electron/Chromium windows drop background wheel events and keystrokes on macOS",
+                serde_json::json!({ "effect": "refused" }),
+            );
         }
         let direction = match args.require_str("direction") {
             Ok(v) => v,

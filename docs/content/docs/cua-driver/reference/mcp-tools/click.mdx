@@ -40,7 +40,7 @@ Click a target pid. Prefer `element_token` (from get_window_state): it identifie
 | <span id="click--macos--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Default "background" (no fronting). "foreground" briefly fronts the window, acts, then restores the prior app; needs window_id and is required for modified clicks. Escalate in order: AX element_token, background pixel, foreground, checking state between rungs; a click has no read-back except list-row selection. |
 | <span id="click--macos--from_zoom"></span>`from_zoom` | `boolean` |  | x and y are in the last zoom image for this pid. |
 | <span id="click--macos--modifier"></span>`modifier` | `string[]` |  | Modifier keys: cmd, shift, option/alt, ctrl. |
-| <span id="click--macos--pid"></span>`pid` | `integer` |  | Target process ID. |
+| <span id="click--macos--pid"></span>`pid` | `integer` |  | Target process ID. Optional with element_token (it carries the pid). |
 | <span id="click--macos--scope"></span>`scope` | `"window" \| "desktop"` |  | Default "window". "desktop": x,y with no pid/window_id are true screen pixels from get_desktop_state. |
 | <span id="click--macos--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
 | <span id="click--macos--window_id"></span>`window_id` | `integer` |  | Target window ID. Omit with element_token. |

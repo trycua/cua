@@ -166,7 +166,7 @@ impl Tool for TypeTextTool {
                 Err(error) => ToolResult::error(format!("desktop type_text task failed: {error}")),
             };
         }
-        let pid = match args.require_i32("pid") {
+        let pid = match super::target_pid(&self.state, &args) {
             Ok(v) => v,
             Err(e) => return e,
         };

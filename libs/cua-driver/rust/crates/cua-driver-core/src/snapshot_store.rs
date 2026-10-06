@@ -371,6 +371,22 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         })
     }
 
+    /// The pid an `element_token` was minted for, found without the caller
+    /// naming it. Snapshot ids are unique per runtime, so a token alone names
+    /// its snapshot, window and process. `None` when the token is absent,
+    /// malformed, or no longer current; callers then fall back to the
+    /// ordinary missing-`pid` error.
+    pub fn pid_for_token(&self, args: &serde_json::Value) -> Option<i32> {
+        let token = args.get("element_token")?.as_str()?;
+        let (snapshot_id, _) = parse_token(token)?;
+        self.inner
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, lane)| lane.iter().any(|snapshot| snapshot.id == snapshot_id))
+            .map(|(pid, _)| *pid)
+    }
+
     pub fn resolve(
         &self,
         pid: i32,
@@ -509,6 +525,18 @@ mod tests {
     use crate::element_token::token_for;
     use crate::snapshot_test_support::Payload;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn pid_for_token_finds_the_owning_process() {
+        let cache = SnapshotStore::new();
+        let id = cache.publish(42, 7, Payload(vec![10, 20]));
+        cache.publish(43, 8, Payload(vec![1]));
+        let args = serde_json::json!({ "element_token": token_for(id, 1) });
+        assert_eq!(cache.pid_for_token(&args), Some(42));
+        assert_eq!(cache.pid_for_token(&serde_json::json!({})), None);
+        let unknown = serde_json::json!({ "element_token": token_for(id + 1000, 0) });
+        assert_eq!(cache.pid_for_token(&unknown), None);
+    }
 
     #[test]
     fn publish_then_resolve_returns_projection() {

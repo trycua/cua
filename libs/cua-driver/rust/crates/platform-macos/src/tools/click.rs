@@ -241,7 +241,7 @@ fn def() -> &'static ToolDef {
             "required": [],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
-                "pid":           { "type": "integer", "description": "Target process ID." },
+                "pid":           { "type": "integer", "description": "Target process ID. Optional with element_token (it carries the pid)." },
                 "window_id":     { "type": "integer", "description": "Target window ID. Omit with element_token." },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "capture_id": { "type": "string", "description": "Optional capture ID from get_window_state or get_desktop_state. With x,y it is consumed atomically; stale or mismatched captures are refused." },
@@ -433,7 +433,7 @@ impl Tool for ClickTool {
             };
         }
 
-        let pid = match args.require_i32("pid") {
+        let pid = match super::target_pid(&self.state, &args) {
             Ok(v) => v,
             Err(e) => return e,
         };
@@ -1327,7 +1327,7 @@ impl Tool for ClickTool {
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
         } else {
-            ToolResult::error("Provide either element_token or (x + y). pid is always required.")
+            ToolResult::error("Provide either element_token or (x + y). pid is required for x,y clicks; an element_token carries its own pid.")
         }
     }
 }

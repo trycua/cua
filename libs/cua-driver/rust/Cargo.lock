@@ -1345,6 +1345,7 @@ version = "0.34.0"
 dependencies = [
  "async-trait",
  "core-foundation",
+ "cua-cursor-motion",
  "cua-driver-contract",
  "cua-driver-core",
  "cursor-overlay",

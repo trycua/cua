@@ -28,6 +28,7 @@ use thiserror::Error;
 mod abi;
 mod activity_observer;
 mod authorization_host;
+mod cursor_motion;
 mod embedded;
 pub mod remote;
 pub mod remote_foreign;
@@ -43,6 +44,7 @@ pub use authorization_host::{
     DriverAuthorizationAction, DriverAuthorizationDecision, DriverAuthorizationHost,
     DriverAuthorizationHostError, DriverAuthorizationRequest,
 };
+pub use cursor_motion::*;
 pub use embedded::*;
 use remote::{DriverEnvelopeChannel, RemoteBoundSession, RemoteDriverClient};
 pub use remote_mcp::{

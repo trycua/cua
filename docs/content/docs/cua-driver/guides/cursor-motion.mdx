@@ -43,6 +43,54 @@ The file has no imports, so it also loads from a plain
 `<script type="module">`. In a TypeScript project with a bundler you can copy
 `libs/typescript/cursor-motion/src/` instead.
 
+## From the Cua Driver SDKs
+
+The Cua Driver SDKs export the planner through the same UniFFI boundary as
+the rest of the driver, so Python and TypeScript hosts plan moves with the
+Rust code itself. A planned move is a `CursorTrajectory`: read its samples
+once with `samples()` and interpolate locally each frame.
+
+```python skip="no-runner"
+import cua_driver as cd
+
+params = cd.default_cursor_motion_params()
+params.style = cd.CursorMotionStyle.SPRING_SETTLE
+trajectory = cd.plan_cursor_move(
+    params,
+    cd.CursorMoveRequest(
+        from_point=cd.CursorMotionPoint(x=100, y=100),
+        to_point=cd.CursorMotionPoint(x=700, y=400),
+        from_heading=None,
+        end_heading=None,
+        target=cd.CursorMotionRect(x=660, y=380, width=80, height=40),
+        seed="demo",
+        reduced_motion=False,
+    ),
+)
+samples = trajectory.samples()
+```
+
+```ts skip="no-runner"
+import { CursorMotionStyle, defaultCursorMotionParams, planCursorMove } from '@trycua/cua-driver';
+
+const trajectory = planCursorMove(
+  { ...defaultCursorMotionParams(), style: CursorMotionStyle.SpringSettle },
+  {
+    fromPoint: { x: 100, y: 100 },
+    toPoint: { x: 700, y: 400 },
+    target: { x: 660, y: 380, width: 80, height: 40 },
+    seed: 'demo',
+    reducedMotion: false,
+  }
+);
+const samples = trajectory.samples();
+```
+
+`plan_cursor_spec` takes a custom `CursorMotionSpec`, and
+`CursorTrajectory.effect_frame(t, blend)` returns the trail, glow and magnet to
+paint. For a web page without the native library, use the single-file web port
+(see [Use it from the repository](#use-it-from-the-repository)).
+
 ## Plan a move
 
 A move is planned once, as samples at 120 Hz, then played back by time. It

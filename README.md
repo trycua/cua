@@ -9,7 +9,7 @@
 
   <p align="center"><strong>Give AI agents computers they can use.</strong><br>Cua Spaces gives your agents full desktops on your Mac and on machines you own. This repository also holds Cua Driver for desktop automation, Lume for local VMs, CUA-S1 decision models and Cua Bench for evaluating computer-use agents.</p>
 
-  <p align="center"><strong><a href="#cua-spaces">Get Cua Spaces for macOS</a></strong></p>
+  <p align="center"><strong><a href="#cua-spaces">Get Cua Spaces</a></strong></p>
 
   <p align="center">
     <a href="https://cua.ai" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/cua.ai-0ea5e9" alt="cua.ai"></a>

@@ -26,5 +26,14 @@
       "shared/cdb-s03": "9a0615c29150af95e6a133573ea3021f17222ee51480cb150427e90457f678d2",
       "shared/cdb-s04": "240ab1b758603e938b688e4452f78a715bf4443a1df7f58535c20d8e47dc1efe"
     }
+  },
+  "cua_main": {
+    "note": "Amendment 3: Cua Driver built from main inside the VM (cargo build --locked --release -p cua-driver -p cursor-theme-cli, rustc 1.97.1), ad-hoc signed private app CuaDriverBenchMain.app, bundle id com.trycua.driver.benchmain",
+    "git_sha": "365f5e3c5b92f9457dbd560ddea8ec0268565724",
+    "version": "0.34.0",
+    "version_string": "cua-driver 0.34.0",
+    "binary_sha256": "af059a7f06f0df00e0b1d7521936f3bc88750b9ed957fa3a321cd1a93d2bb2c1",
+    "skills_tree_sha256": "e0d64711489f8d2c29747b41be8361e902ba62e1361c2e62d945f7884897bd64",
+    "skills_source": "libs/cua-driver/rust/Skills/cua-driver at git_sha"
   }
 }

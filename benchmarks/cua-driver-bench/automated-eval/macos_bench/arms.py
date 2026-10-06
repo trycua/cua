@@ -24,7 +24,7 @@ from pathlib import Path
 
 ARMS = ("cua-driver-mcp", "codex-native-cu")  # the Codex-CLI pilot arms (run_pilot.py)
 # Claude Code arms (run_bench.py): same model, same harness, only the MCP tools differ.
-CLAUDE_ARMS = ("cc-cua-driver", "cc-codex-cu")
+CLAUDE_ARMS = ("cc-cua-driver", "cc-codex-cu", "cc-cua-driver-main")  # the last one: Amendment 3
 # Fallback arms, `codex exec --json`, behind --allow-codex-arms in run_bench.py.
 CODEX_FALLBACK_ARMS = ("codex-native-cu", "codex-cua-driver")
 ARM_ALIASES = {"codex-cua-driver": "cua-driver-mcp"}  # name used by the pilot code paths

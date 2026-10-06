@@ -4,7 +4,7 @@ Status: frozen when this file is committed, before any trial that enters the ana
 Date: 2026-10-05 (UTC evening). Scope: head-to-head, macOS host, one Mac. Owner: Cua Driver Bench maintainers.
 Supersedes the pilot pre-registration (private trycua/cua-driver-bench PR #59: Codex CLI with gpt-6-astra, Cua Driver arm only).
 
-**Amended on 6 Oct 2026, before any analysed trial: see Amendment 1 immediately below (and Amendment 2, the GUI-only variant, after it). Where sections 0 to 12 differ from them, the amendments win.**
+**Amended on 6 Oct 2026, before any analysed trial: see Amendment 1 immediately below (Amendment 2, the GUI-only variant, after it, and Amendment 3, the 7 Oct before/after check of the Cua Driver 0.35.0 changes). Where sections 0 to 12 differ from them, the amendments win.**
 
 ## Amendment 1 (6 Oct 2026, before any analysed trial)
 
@@ -122,6 +122,69 @@ At 11:20 UTC (after 23 of the 30 trials) the first seat's five-hour window was e
 ### A2.8 Harness changes for this amendment
 
 `probes/CDB-G02` to `CDB-G04` (`"coding_tools": false`, `"separate_run": true`, group `CDBG`); the default schedule skips tasks with `separate_run`, so the Amendment 1 run cannot pick them up; `FrontWatcher` and `side_door_scan` in `run_bench.py` with the row fields of A2.5; tests in `tests/test_cdb_adapter.py`.
+
+
+## Amendment 3 (7 Oct 2026, before any trial of this run): before/after check of the Cua Driver 0.35.0 changes
+
+Written and committed before the first trial of run `v035`. It adds a new, separate run on the same VM. It changes nothing about the trials, analyses or reports of Amendments 1 and 2.
+
+### A3.1 Why
+
+The 6 Oct results showed arm A (Cua Driver 0.34.0) passing the GUI tasks it passed at 1.6 to 2 times the wall time and 3 to 4 times the equivalent cost of arm B, mostly through more turns and the cache-read tokens that come with them, and losing the GUI-only tasks to the turn cap. Cua Driver's main branch now carries changes aimed at that: trimmed tool descriptions and up-front workflow guidance (trycua/cua #4742), a lean `get_window_state` default with a `since` diff and a `full_output` opt-out (#4743), a `run_actions` batch tool (#4737), fixes for the failing calls seen on 6 Oct (#4739 element_token without `pid` and next steps after refusals, #4740 `set_value` on native and Chromium popups, #4741 submitted `type_text`), an update-check fix (#4757) and new cursor-motion planning (#4758, #4759, #4767). None is released. This run asks whether the main build is more efficient than 0.34.0 on the same tasks without losing success, before 0.35.0 ships.
+
+### A3.2 Arms
+
+| Label | Runner arm | Tool layer | Skill |
+|---|---|---|---|
+| A | `cc-cua-driver-main` | Cua Driver built from trycua/cua main at `365f5e3c5b92f9457dbd560ddea8ec0268565724` | `libs/cua-driver/rust/Skills/cua-driver` at that commit |
+| A0 | `cc-cua-driver` | Cua Driver 0.34.0, the same pinned private copy as on 6 Oct | the 0.34.0 skill, as on 6 Oct |
+| B | `cc-codex-cu` | OpenAI's `cua_repl` launcher, unchanged, as on 6 Oct | none |
+
+Everything else is as in Amendments 1 and 2: `claude -p --model claude-sonnet-5-5` (Claude Code 2.1.289), the same system prompt, ToolSearch on, the same scrubbed environment, `--setting-sources project`, the skill delivered as a project skill, 360 s and 45 turns, the same VM (`cdb-h2h`, macOS 26.5.2, 1920x1080), the same reset, recorder, sentinel, evaluator isolation, side-door flagging and evaluator-path scan.
+
+The main build:
+
+* Built inside the VM from a `git archive` of `libs/cua-driver`, `libs/cua` (the telemetry crate's workspace) and two files that crate includes, at the commit above: `cargo build --locked --release -p cua-driver -p cursor-theme-cli` with the repository's toolchain (rustc 1.97.1), `CUA_DRIVER_GIT_SHA` set to the commit. The source tree still says version 0.34.0 (the release pull request bumps it), so the build reports `cua-driver 0.34.0`; it is identified by commit and hash, which `health_report` returns (`git_sha` = the commit, `exe_sha256` below).
+* Wrapped in a private app `CuaDriverBenchMain.app` (the 0.34.0 Info.plist and icon, bundle id `com.trycua.driver.benchmain`), ad-hoc signed with the hardened runtime and the release's Apple Events and screen-capture entitlements. Binary sha256 `af059a7f06f0df00e0b1d7521936f3bc88750b9ed957fa3a321cd1a93d2bb2c1`, skill tree sha256 `e0d64711489f8d2c29747b41be8361e902ba62e1361c2e62d945f7884897bd64` (`pins.json`, `cua_main`). Preflight fails if either differs or the daemon reports another commit.
+* Permissions: the VM has SIP disabled, so Accessibility and Screen Recording (system TCC database) and the Automation grant for Chrome (user database) were written for `com.trycua.driver.benchmain`, bound to this build's code hash, mirroring the grants 0.34.0 has. `health_report` shows both TCC checks passing; its `bundle_identity` check fails by design (not the release bundle id) and is not gated.
+* Its own daemon socket and state (`/tmp/cdb-bench-cua-main.sock`, `WORK/cua-main/daemon-state`). Only one agent daemon runs at a time: the runner stops the other build's daemon before a Cua Driver trial (`ensure_agent_daemon`). The recorder keeps using the 0.34.0 build with no overlay, as before.
+* `DO_NOT_TRACK=1` is added to both Cua Driver daemons' environment (the main build's shared telemetry crate honours it; `CUA_DRIVER_RS_TELEMETRY_ENABLED=false` stays).
+
+### A3.3 Tasks, order and runs
+
+One run, `RUN_ID=v035`, task blocks in this order: CDB-S01, CDB-S04, CDB-G02, CDB-G03, CDB-G04, MB-09, MB-10, MB-11, then CDB-S02, CDB-S03. The first eight are the **GUI-heavy set**: the tasks where 6 Oct trials used the computer-use tools. S02 and S03 come last because on 6 Oct no trial used a computer-use call in them. Each task keeps its own tool surface from its `task.json` (CDB-S0x with `Bash`, `Edit`, `Write`; CDB-G0x and MB-xx without).
+
+Three arms are interleaved inside every task block. The first arm of a run rotates: `(task position + run index) mod 3` over the list (A, A0, B), so every arm goes first equally often across three runs. All three arms share the run's seed.
+
+Phase 1 is runs 1 to 3 of every task; phase 2, runs 4 and 5 of every task, only when phase 1 is complete and the stop rule and cutoff allow it. Only complete task blocks are analysed; three runs per arm is the guaranteed minimum, five the target.
+
+### A3.4 Hypotheses (registered before any trial)
+
+Primary set: the eight GUI-heavy tasks. Pairing: A and A0 trials of the same task and run (same seed).
+
+* **H1 (tokens).** A processes fewer tokens per trial than A0. Metric: total tokens per trial = uncached input + output + cache read + cache write, from the result event. Cache read and cache write are also reported separately.
+* **H2 (turns).** A uses fewer turns per trial than A0 (the row field `turns`, the "Turns" column of the 6 Oct tables; `num_turns` of the result event is reported next to it).
+* **H3 (success not worse).** A's success is not worse than A0's. Success is the evaluator's `passed`, as before.
+
+Tests (`tools/analyze_v035.py`, written before the first trial):
+
+* H1, H2: for each task, the ratio of means A / A0. Across the eight tasks, the geometric mean of the per-task ratios, with a 95% bootstrap interval (10 000 resamples of runs within task, seed 20261007). **Supported** when the upper bound is below 1.0. Also reported: per-task ratios, the share of pairs where A is lower, and the same numbers for all ten tasks.
+* H3: the task-macro success difference A minus A0 over the eight tasks, with the same bootstrap. **Supported** when the lower bound of the 95% interval is at or above -0.15 (non-inferiority margin, fixed now). Also reported: every task where A passed at least two fewer trials than A0, with the evaluator's reasons.
+* All three are reported whatever the outcome. No other hypothesis is registered. The comparisons with arm B are descriptive, as in Amendments 1 and 2.
+
+### A3.5 Secondary measures and breakdowns
+
+Per task and arm: success (with Wilson intervals), score, wall time, turns, computer-use calls, failed calls, uncached input, output, cache-read and cache-write tokens, equivalent cost (`total_cost_usd`), pointer moved, focus stolen, flags, peeks. The same post-hoc breakdowns as on 6 Oct, now labelled as planned for this run: failed Cua Driver calls by cause, and actions versus observes per trial (a `run_actions` call counts each inner action as an action). New for A: how often `run_actions`, `since` and `full_output` are used. The CDB-S, CDB-G and MB sets are shown in separate tables; the only pooling is the pre-registered H1 to H3 over the eight GUI-heavy tasks.
+
+### A3.6 Credentials and stop rule
+
+* The VM authenticates with the **access token only** of one Claude seat chosen from the owner's account switcher (`cswap`) by headroom at launch (seat "account 3": five-hour 5%, seven-day 64% at 21:04 UTC on 6 Oct). It is copied from the switcher's keychain item without its refresh token into a 0600 file in the VM and handed to `claude` by file descriptor, as in Amendment 1. The access token expires after a few hours; when the switcher rotates it, the new access token (again without the refresh token) replaces the file, after a fresh check of the switcher's readings. Nothing is printed, logged or committed; the file is deleted after the run.
+* Stop rule, unchanged: no new trial once that seat's seven-day utilization is 0.95 or higher or on a seven-day `rejected`; a five-hour rejection waits for its reset. `CUTOFF_UTC` for new trials: 2026-10-07T05:30:00Z.
+* Arm B keeps the OpenAI terms caveat of the 6 Oct report: its numbers stay internal until that review.
+
+### A3.7 Harness changes for this amendment
+
+`claude_arms.py`: a `CuaBuild` table with the two Cua Driver builds (binary, socket, state, skill), per-build MCP config and project skill, optional binary for the daemon helpers, `DO_NOT_TRACK=1`. `arms.py`: `cc-cua-driver-main` added to the Claude arms. `run_bench.py`: one agent daemon at a time (`ensure_agent_daemon(ctx, arm)`, `stop_agent_daemons`), per-build version fields in each row (`cua_driver_version`, `cua_driver_sha256`, new `cua_driver_git_sha`, skill hash), preflight pins and daemon checks for the main build, the skill-presence check for both Cua Driver arms. `pins.json`: `cua_main`. `tools/analyze_v035.py`: the analysis of A3.4 and A3.5. Tests: `tests/test_bench.py` (main-build MCP config, three-arm rotation).
 
 
 ## 0. Decisions made before the first trial, and why

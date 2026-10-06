@@ -669,6 +669,21 @@ class ArmsAndHostTest(unittest.TestCase):
             self.assertEqual(entry["args"], ["--socket", ca.AGENT_SOCKET, "mcp"])
             self.assertEqual(entry["env"]["CUA_DRIVER_RS_TELEMETRY_ENABLED"], "false")
 
+    def test_main_build_arm_has_its_own_binary_socket_and_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, server = ca.mcp_config_for("cc-cua-driver-main", Path(tmp))
+            entry = json.loads(path.read_text())["mcpServers"][server]
+            self.assertEqual(server, "cua")
+            self.assertEqual(entry["command"], str(ca.CUA_MAIN_APP / "Contents/MacOS/cua-driver"))
+            self.assertEqual(entry["args"], ["--socket", ca.MAIN_SOCKET, "mcp"])
+            self.assertNotEqual(ca.MAIN_SOCKET, ca.AGENT_SOCKET)
+            self.assertEqual(entry["env"]["DO_NOT_TRACK"], "1")
+
+    def test_three_arms_rotate_the_first_arm(self) -> None:
+        arms3 = ["cc-cua-driver-main", "cc-cua-driver", "cc-codex-cu"]
+        firsts = {core.arm_order(0, r, arms3)[0] for r in range(3)}
+        self.assertEqual(firsts, set(arms3))
+
     def test_cwd_gets_the_skill_only_for_arm_a(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cwd = Path(tmp) / "work"

@@ -9,6 +9,7 @@
 
 Arms (run_bench.py never mixes them up with the Codex pilot arms):
     cc-cua-driver   Claude Code + Cua Driver 0.34.0 MCP + the Cua Driver skill of that release
+    cc-cua-driver-main  the same with Cua Driver built from a pinned main commit and its skill (Amendment 3)
     cc-codex-cu     Claude Code + Codex computer-use `cua_repl` MCP (server `codex-cu`), no skill
 Fallback arms (`codex exec --json`, behind --allow-codex-arms; not run at scale): codex-native-cu,
 codex-cua-driver. They reuse run_pilot.py.
@@ -126,6 +127,7 @@ class Ctx:
     recorder: Any = None
     compress: rec.CompressQueue | None = None
     daemon: subprocess.Popen[bytes] | None = None
+    daemon_arm: str | None = None  # which Cua Driver build the agent daemon belongs to (one at a time)
     rec_daemon: subprocess.Popen[bytes] | None = None
     quota: dict[str, Any] | None = None
     cutoff: float | None = None
@@ -419,20 +421,37 @@ def unregister_stale_copies(build_dir: Path | None) -> list[str]:
 # ---------------------------------------------------------------- daemons and arms
 
 
-def ensure_agent_daemon(ctx: Ctx) -> None:
+def stop_agent_daemons(ctx: Ctx, keep: str | None = None) -> None:
+    """Stop the agent daemon of every Cua Driver build except ``keep`` (one build runs at a time)."""
+    if ctx.daemon is not None and ctx.daemon_arm != keep:
+        claude_driver.kill_group(ctx.daemon.pid)
+        ctx.daemon = None
+        ctx.daemon_arm = None
+    for arm, build in ca.CUA_BUILDS.items():
+        if arm != keep and build.bin.is_file():
+            ca.stop_cua_daemon(build.socket, build.home, build.bin)
+
+
+def ensure_agent_daemon(ctx: Ctx, arm: str = "cc-cua-driver") -> None:
+    build = ca.CUA_BUILDS[arm]
+    if ctx.daemon_arm != arm:
+        stop_agent_daemons(ctx, keep=None)
     done = subprocess.run(
-        [str(ca.CUA_BIN), "status", "--socket", ca.AGENT_SOCKET],
-        env=ca.cua_env(ca.CUA_STATE / "home"),
+        [str(build.bin), "status", "--socket", build.socket],
+        env=ca.cua_env(build.home),
         capture_output=True,
         text=True,
         timeout=15,
     )
-    if done.returncode == 0:
+    if done.returncode == 0 and ctx.daemon_arm == arm:
         return
-    ctx.log("agent daemon not answering; restarting")
+    if ctx.daemon_arm == arm:
+        ctx.log(f"agent daemon of {arm} not answering; restarting")
     if ctx.daemon is not None:
         claude_driver.kill_group(ctx.daemon.pid)
-    ctx.daemon = ca.start_cua_daemon(ca.AGENT_SOCKET, ca.CUA_STATE)
+    ca.stop_cua_daemon(build.socket, build.home, build.bin)
+    ctx.daemon = ca.start_cua_daemon(build.socket, build.state, binary=build.bin)
+    ctx.daemon_arm = arm
 
 
 def check_pins(pins: dict[str, Any], arm_names: list[str]) -> list[tuple[str, str, str]]:
@@ -454,26 +473,34 @@ def check_pins(pins: dict[str, Any], arm_names: list[str]) -> list[tuple[str, st
     return out
 
 
-def check_daemon(pins: dict[str, Any]) -> list[tuple[str, str, str]]:
-    health = ca.cua_health()
+def check_daemon(pins: dict[str, Any], arm: str = "cc-cua-driver") -> list[tuple[str, str, str]]:
+    spec = ca.CUA_BUILDS[arm]
+    health = ca.cua_health(spec.socket, spec.home, spec.bin)
     build = health.get("build", {})
-    ok_version = build.get("version") == pins["cua_driver_version"]
-    ok_sha = build.get("exe_sha256") == pins["cua_driver_binary_sha256"] and build.get(
-        "git_sha"
-    ) == pins.get("cua_driver_git_sha", build.get("git_sha"))
+    if arm == "cc-cua-driver":
+        ok_version = build.get("version") == pins["cua_driver_version"]
+        ok_sha = build.get("exe_sha256") == pins["cua_driver_binary_sha256"] and build.get(
+            "git_sha"
+        ) == pins.get("cua_driver_git_sha", build.get("git_sha"))
+    else:  # Amendment 3: the main build is pinned by commit and binary hash, not by a release version
+        main = pins.get("cua_main", {})
+        ok_version = build.get("version") == main.get("version")
+        ok_sha = build.get("exe_sha256") == main.get("binary_sha256") and build.get(
+            "git_sha"
+        ) == main.get("git_sha")
     checks = health.get("checks", {})
     perms = (
         checks.get("tcc_accessibility") == "pass" and checks.get("tcc_screen_recording") == "pass"
     )
     return [
-        ("daemon reports version", "pass" if ok_version else "fail", str(build.get("version"))),
+        (f"{arm} daemon reports version", "pass" if ok_version else "fail", str(build.get("version"))),
         (
-            "daemon exe sha256 and git sha match the pins",
+            f"{arm} daemon exe sha256 and git sha match the pins",
             "pass" if ok_sha else "fail",
-            str(build.get("exe_sha256")),
+            f"{build.get('exe_sha256')} {build.get('git_sha')}",
         ),
         (
-            "daemon accessibility + screen recording",
+            f"{arm} daemon accessibility + screen recording",
             "pass" if perms else "fail",
             json.dumps({k: v for k, v in checks.items() if k.startswith("tcc_")}),
         ),
@@ -546,6 +573,10 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     max_turns = int(args.max_turns or spec.get("max_turns") or 30)
     run_index = entry["run_index"]
     seed = core.probe_seed(task.id, run_index)
+    # Per-build Cua Driver identity (Amendment 3); arm B rows keep the 0.34.0 values of the recorder build.
+    build_versions = (ctx.versions.get("builds") or {}).get(arm) or (
+        ctx.versions.get("builds") or {}
+    ).get("cc-cua-driver", {})
     trial_dir = ctx.run_dir / "trials" / entry["trial_id"] / f"a{attempt}"
     shutil.rmtree(trial_dir, ignore_errors=True)
     artifacts = trial_dir / "artifacts"
@@ -583,11 +614,12 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         "idle_at_start_s": round(idle_start),
         "idle_gate_relaxed": bool(args.idle_min and idle_start < args.idle_min),
         "claude_version": ctx.versions.get("claude"),
-        "cua_driver_version": ctx.versions.get("cua_driver_version"),
-        "cua_driver_sha256": ctx.versions.get("cua_driver_sha256"),
-        "cua_driver_daemon_version": ctx.versions.get("cua_daemon_version"),
-        "skills_tree_sha256": ctx.versions.get("cua_skills_tree_sha256")
-        if arm == "cc-cua-driver"
+        "cua_driver_version": build_versions.get("cua_driver_version"),
+        "cua_driver_sha256": build_versions.get("cua_driver_sha256"),
+        "cua_driver_git_sha": build_versions.get("cua_driver_git_sha"),
+        "cua_driver_daemon_version": build_versions.get("cua_daemon_version"),
+        "skills_tree_sha256": build_versions.get("cua_skills_tree_sha256")
+        if arm in ca.CUA_ARMS
         else None,
         "macos": ctx.versions.get("macos"),
         "bench_repo_commit": ctx.versions.get("bench_repo_commit"),
@@ -634,8 +666,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         subprocess.run(
             ["pbcopy"], input=b"", capture_output=True
         )  # no stale clipboard between trials
-        if arm == "cc-cua-driver":
-            ensure_agent_daemon(ctx)
+        if arm in ca.CUA_ARMS:
+            ensure_agent_daemon(ctx, arm)
         lab_app = Path(args.build_dir) / "BenchLab.app"
         if cdb is not None:
             cdb.reset()
@@ -1229,9 +1261,9 @@ def execute_trial(ctx: Ctx, entry: dict[str, Any]) -> dict[str, Any]:
                 trial_started_mono=None,
             )
             return row
-        if kind == "mcp_start" and entry["arm"] == "cc-cua-driver":
+        if kind == "mcp_start" and entry["arm"] in ca.CUA_ARMS:
             try:
-                ensure_agent_daemon(ctx)
+                ensure_agent_daemon(ctx, entry["arm"])
             except Exception as error:  # noqa: BLE001
                 ctx.log(f"daemon restart failed: {error}")
         log_pause(ctx, f"retry_{kind}", wait_s, row.get("infra_message", ""), entry["trial_id"])
@@ -1304,6 +1336,8 @@ def quota_probe(ctx: Ctx) -> tuple[bool, str]:
 
 def init_check(ctx: Ctx, arm: str) -> tuple[str, str]:
     """One trivial haiku call per arm through the real argv: verify the init event."""
+    if arm in ca.CUA_ARMS:
+        ensure_agent_daemon(ctx, arm)
     mcp_path, server = ctx.mcp[arm]
     cwd = ca.prepare_cwd(arm)
     debug = ctx.run_dir / f"preflight-debug-{arm}.txt"
@@ -1347,7 +1381,7 @@ def init_check(ctx: Ctx, arm: str) -> tuple[str, str]:
     if len(connected) != 1 or connected[0].get("name") != server or len(init["mcp_servers"]) != 1:
         problems.append(f"mcp_servers {init['mcp_servers']}")
     has_skill = "cua-driver" in init["skills"]
-    if has_skill != (arm == "cc-cua-driver"):
+    if has_skill != (arm in ca.CUA_ARMS):
         problems.append(f"cua-driver skill present={has_skill}")
     leaked = [s for s in init["skills"] if s != "cua-driver" and s not in BUNDLED_SKILLS_OK]
     if leaked:
@@ -1439,35 +1473,43 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     for name, status, detail in check_pins(pins, ctx.arm_names):
         add(name, status, detail)
     offline = bool(getattr(args, "offline", False))
-    needs_a = "cc-cua-driver" in ctx.arm_names and not offline
-    if needs_a:
+    if "cc-cua-driver-main" in ctx.arm_names:
+        main = pins.get("cua_main", {})
+        spec = ca.CUA_BUILDS["cc-cua-driver-main"]
+        got_bin = ca.sha256_file(spec.bin) if spec.bin.is_file() else None
+        got_skills = ca.sha256_tree(spec.skills) if spec.skills.is_dir() else None
+        add(
+            "pin cua_main.binary_sha256",
+            "pass" if got_bin and got_bin == main.get("binary_sha256") else "fail",
+            str(got_bin),
+        )
+        add(
+            "pin cua_main.skills_tree_sha256",
+            "pass" if got_skills and got_skills == main.get("skills_tree_sha256") else "fail",
+            str(got_skills),
+        )
+    for cua_arm in [a for a in ca.CUA_ARMS if a in ctx.arm_names and not offline]:
+        spec = ca.CUA_BUILDS[cua_arm]
         try:
-            if (
-                ctx.daemon is None
-                and subprocess.run(
-                    [str(ca.CUA_BIN), "status", "--socket", ca.AGENT_SOCKET],
-                    env=ca.cua_env(ca.CUA_STATE / "home"),
-                    capture_output=True,
-                ).returncode
-                != 0
-            ):
-                ctx.daemon = ca.start_cua_daemon(ca.AGENT_SOCKET, ca.CUA_STATE)
-            for name, status, detail in check_daemon(pins):
+            ensure_agent_daemon(ctx, cua_arm)
+            for name, status, detail in check_daemon(pins, cua_arm):
                 add(name, status, detail)
-            health = ca.cua_health()
-            ctx.versions["cua_daemon_version"] = health.get("build", {}).get("version")
+            health = ca.cua_health(spec.socket, spec.home, spec.bin)
+            ctx.versions.setdefault("builds", {}).setdefault(cua_arm, {})["cua_daemon_version"] = (
+                health.get("build", {}).get("version")
+            )
+            if cua_arm == "cc-cua-driver":
+                ctx.versions["cua_daemon_version"] = health.get("build", {}).get("version")
             tools = mcp_list_tools(
-                str(ca.CUA_BIN),
-                ["--socket", ca.AGENT_SOCKET, "mcp"],
-                ca.cua_env(ca.CUA_STATE / "home"),
+                str(spec.bin), ["--socket", spec.socket, "mcp"], ca.cua_env(spec.home)
             )
             add(
-                "arm A MCP server starts and lists tools",
+                f"{cua_arm} MCP server starts and lists tools",
                 "pass" if "list_apps" in tools and len(tools) >= 50 else "fail",
                 f"{len(tools)} tools",
             )
         except Exception as error:  # noqa: BLE001
-            add("arm A daemon/MCP", "fail", f"{type(error).__name__}: {error}")
+            add(f"{cua_arm} daemon/MCP", "fail", f"{type(error).__name__}: {error}")
     if "cc-codex-cu" in ctx.arm_names and not offline:
         try:
             path, server = ctx.mcp["cc-codex-cu"]
@@ -1724,8 +1766,8 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
     codex = [a for a in arm_names if a in arms.CODEX_FALLBACK_ARMS]
     if codex and not args.allow_codex_arms:
         raise SystemExit(f"arms {codex} are fallback arms; pass --allow-codex-arms")
-    if len(arm_names) != 2 and args.command == "run":
-        print(f"note: running {len(arm_names)} arm(s); the pairing rule assumes 2", file=sys.stderr)
+    if len(arm_names) not in (2, 3) and args.command == "run":
+        print(f"note: running {len(arm_names)} arm(s); the rotation rule assumes 2 or 3", file=sys.stderr)
     if args.claude_bin is not None:
         ca.CLAUDE_BIN = args.claude_bin
     ctx = Ctx(
@@ -1757,6 +1799,21 @@ def setup_arms(ctx: Ctx) -> None:
         cua_driver_version=ca.cua_version_string(),
         cua_driver_sha256=ca.sha256_file(ca.CUA_BIN) if ca.CUA_BIN.is_file() else None,
         cua_skills_tree_sha256=ca.sha256_tree(ca.CUA_SKILLS) if ca.CUA_SKILLS.is_dir() else None,
+        builds={
+            arm: {
+                "label": build.label,
+                "cua_driver_version": ca.cua_version_string(build.bin),
+                "cua_driver_sha256": ca.sha256_file(build.bin) if build.bin.is_file() else None,
+                "cua_driver_git_sha": pins.get("cua_driver_git_sha")
+                if arm == "cc-cua-driver"
+                else pins.get("cua_main", {}).get("git_sha"),
+                "cua_skills_tree_sha256": ca.sha256_tree(build.skills)
+                if build.skills.is_dir()
+                else None,
+            }
+            for arm, build in ca.CUA_BUILDS.items()
+            if arm in ctx.arm_names or arm == "cc-cua-driver"
+        },
         pins=pins,
         system_prompt_sha256=hashlib.sha256(ca.SYSTEM_PROMPT.encode()).hexdigest(),
     )
@@ -1796,7 +1853,8 @@ def shutdown(ctx: Ctx) -> None:
         ctx.compress.close()
     if ctx.recorder:
         ctx.recorder.close()
-    for proc, sock in ((ctx.rec_daemon, ca.RECORDER_SOCKET), (ctx.daemon, ca.AGENT_SOCKET)):
+    agent_socket = ca.CUA_BUILDS[ctx.daemon_arm].socket if ctx.daemon_arm else ca.AGENT_SOCKET
+    for proc, sock in ((ctx.rec_daemon, ca.RECORDER_SOCKET), (ctx.daemon, agent_socket)):
         if proc is not None:
             claude_driver.kill_group(proc.pid)
             try:
@@ -1963,10 +2021,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         if removed:
             ctx.log(f"unregistered stale LaunchServices copies: {removed}")
         # The runner owns both private daemons for the run: replace any leftover ones.
-        ca.stop_cua_daemon(ca.AGENT_SOCKET, ca.CUA_STATE / "home")
+        stop_agent_daemons(ctx, keep=None)
         ca.stop_cua_daemon(ca.RECORDER_SOCKET, ca.RECORDER_STATE / "home")
-        if "cc-cua-driver" in ctx.arm_names:
-            ctx.daemon = ca.start_cua_daemon(ca.AGENT_SOCKET, ca.CUA_STATE)
+        cua_arms = [a for a in ctx.arm_names if a in ca.CUA_ARMS]
+        if cua_arms:
+            ensure_agent_daemon(ctx, cua_arms[0])
         start_recorder(ctx)
         checks = preflight(ctx, with_models=not args.no_model_preflight)
         (ctx.run_dir / "preflight.json").write_text(json.dumps(checks, indent=2) + "\n", "utf-8")

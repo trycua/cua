@@ -906,6 +906,14 @@ fn typed_progress(before: Option<&str>, after: Option<&str>, text: &str) -> Type
     if after.contains(text) {
         return TypedProgress::Complete;
     }
+    // Enter, Tab and Return are not characters a field keeps: they submit,
+    // move focus, or reset the field (a spreadsheet Name Box jumps and
+    // rewrites itself). A read-back after them says nothing about how many
+    // characters landed, so a shortfall must not be reported as partial
+    // delivery that the caller then retries.
+    if text.contains(['\n', '\r', '\t']) {
+        return TypedProgress::Unverifiable;
+    }
     let Some(before) = before else {
         return TypedProgress::Unverifiable;
     };
@@ -1565,6 +1573,9 @@ mod tests {
             ),
             (Some("ab"), Some("ab"), "hi", Unchanged),
             (None, None, "", Complete),
+            // A submitted field rewrites itself; the shortfall proves nothing.
+            (Some("A1"), Some("A1xx"), "$Controls.A1\n", Unverifiable),
+            (Some(""), Some("one\ntwo"), "one\ntwo", Complete),
         ] {
             assert_eq!(
                 typed_progress(before, after, text),

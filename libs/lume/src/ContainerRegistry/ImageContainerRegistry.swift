@@ -1912,7 +1912,7 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
             "Cache pull simulation completed successfully with partition table preservation")
     }
 
-    private func copyFromCache(manifest: Manifest, manifestId: String, to destination: URL)
+    func copyFromCache(manifest: Manifest, manifestId: String, to destination: URL)
         async throws
     {
         Logger.debug("Copying from cache...")
@@ -2202,15 +2202,6 @@ class ImageContainerRegistry: ImageRegistry, @unchecked Sendable {
 
                 // Finalize progress, close handle (done by defer)
                 reassemblyProgressLogger.logProgress(current: 1.0, context: "Reassembly Complete")
-
-                // Add test patterns at the beginning and end of the file
-                Logger.info("Writing test patterns to sparse file to verify integrity...")
-                let testPattern = "LUME_TEST_PATTERN".data(using: .utf8)!
-                try outputHandle.seek(toOffset: 0)
-                try outputHandle.write(contentsOf: testPattern)
-                try outputHandle.seek(toOffset: sizeForTruncate - UInt64(testPattern.count))
-                try outputHandle.write(contentsOf: testPattern)
-                try outputHandle.synchronize()
 
                 // Ensure handle is properly synchronized before closing
                 try outputHandle.synchronize()

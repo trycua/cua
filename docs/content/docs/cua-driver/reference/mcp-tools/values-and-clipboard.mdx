@@ -27,7 +27,7 @@ Effect: destructive, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Set an element's value by `element_token`. A popup button / select dropdown: presses the child option whose title or value matches `value` (case-insensitive) without opening the menu or stealing focus. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).
+Set an element's value by `element_token`. A popup button / select dropdown: selects the menu item whose title or value matches `value` (case-insensitive). Safari `<select>` is set through the DOM; AppKit and Chromium popups list items only while open, so the menu is opened, the item pressed and the menu closed again (the front window loses key focus for ~0.4 s). An unknown value lists the options. Any other element: writes AXValue (sliders, steppers, date pickers, native text fields).
 
 A Finder file name (list row or Get Info `Name` field, not being edited) is refused with `file_name_needs_rename`; the refusal names the keyboard route. For free-form text in web inputs use `type_text_chars`: WebKit ignores AXValue writes.
 

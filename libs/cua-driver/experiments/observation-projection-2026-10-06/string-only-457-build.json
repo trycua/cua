@@ -1,0 +1,12 @@
+{
+  "base_source": "45775a9244df4a1e33090c1377eeb2448d2eb820",
+  "source_commit": "45775a9244df4a1e33090c1377eeb2448d2eb820",
+  "variant": "string-only",
+  "source_sha256": {
+    "libs/cua-driver/rust/crates/platform-macos/src/ax/bindings.rs": "512ab30e090429643f5f48d4d74787fdb0c1fa1a256825778a9b52ef05e1ed19",
+    "libs/cua-driver/rust/crates/platform-macos/src/ax/tree.rs": "6abc30ec96f3699289bbffec3b3eadb2cc7514872e9a97cb2f02c9bfc87eb241"
+  },
+  "host_sha256": "c064342b33f9c6a4c4936a2da544e2294aa5bb732ad609e56b20810b3afe2c92",
+  "source_patch_sha256": "38a54310ddb6d9a5400c6c20844aeb0833c87240e889b433ae5eac2ff13c6762",
+  "binary_sha256": "be6bc3a437c8948ba503d5bd3c3e289f385f0ac4b113f266d27e20409f9d57fc"
+}

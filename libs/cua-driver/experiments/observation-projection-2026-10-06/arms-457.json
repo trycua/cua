@@ -1,0 +1,23 @@
+[
+  {
+    "name": "baseline",
+    "argv": [
+      "/tmp/cua-broad-ax-evidence/baseline-457-host"
+    ],
+    "build_manifest": "/private/tmp/cua-observation-projection-20261006/libs/cua-driver/experiments/observation-projection-2026-10-06/baseline-457-build.json"
+  },
+  {
+    "name": "string-only",
+    "argv": [
+      "/tmp/cua-broad-ax-evidence/string-only-457-host"
+    ],
+    "build_manifest": "/private/tmp/cua-observation-projection-20261006/libs/cua-driver/experiments/observation-projection-2026-10-06/string-only-457-build.json"
+  },
+  {
+    "name": "broad",
+    "argv": [
+      "/tmp/cua-broad-ax-evidence/broad-457-host"
+    ],
+    "build_manifest": "/private/tmp/cua-observation-projection-20261006/libs/cua-driver/experiments/observation-projection-2026-10-06/broad-457-build.json"
+  }
+]

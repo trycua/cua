@@ -1,0 +1,41 @@
+{
+  "measured_source_files": {
+    "literal_text_plan-457-measured.py": "ab17bbc4dda0d9cab31558cabfebd51ca308859b059c880348f3797a250bcfc6",
+    "observe_matrix-457-measured.py": "3a1d3167baa798937b12f7c801e87f799a8b1654dce94b3f2e6fea0796025bda",
+    "task_loops-457-measured.py": "5d31a8cb32f3e7a1feb9989bec3932b91607aae22158a8482750a3ae4429fb1e",
+    "tree_geometry-457-measured.py": "64352ed22d8cc926ac0cd4b811f24b55d5e67efcd4ff2836c98977d00947151c"
+  },
+  "fixture_source_files": {
+    "fixtures/fixture.py": "f5986aa15989d781ec13f87f804fb6a01d541e3bed2516c7ea7a8c9bcc05b364",
+    "fixtures/run.py": "0d00af3429e33e7410bb11111d178de914168a8be6b31a451b4b0a721bccf0ca",
+    "fixtures-large/fixture.py": "9fb6891718a07ec5772da7f43a0f34261387570caab17aeb70843fb55ab567aa"
+  },
+  "post_measurement_changes": [
+    "Portable default fixture/source paths only; measured source copies preserved.",
+    "README and analyzer only.",
+    "Negative unit tests now assert exact refusal messages; both owner/geometry keeper mutants fail."
+  ],
+  "original_environment": {
+    "CUA_PROJECTION_SOURCE": "/tmp/cua-observation-projection-20261006",
+    "OH_COMPARISON_SOURCE": "/tmp/computer-use-bounded-20261006",
+    "ARC_EVAL_SOURCE": "/tmp/arc-cua-eval-20261005",
+    "LARGE_FIXTURE_SOURCE": "/tmp/cua-arc-performance-20261006/large-fixture",
+    "arms": "arms-457.json"
+  },
+  "lossless_traces": {
+    "observation-results.json.gz": "0505682acb085965c96d057c7e0f63b92ad9799f4586237b03b9636976b2de6f",
+    "task-results.json.gz": "f8d95021c76d965d712c02062586b6ec21fba1f3d4fe98bd525625a5d1a8d19e",
+    "initial-screenshot-metadata-parity-refusal.json.gz": "17c2bc7025b05b4b76abcf98b8f7da4ec1caaeb6c4d90d91d0953de615251b8f",
+    "historical-a2-observation-results.json.gz": "e5c9791e4f75b6e99903c7ca028d757e83b3e99faba31a2e7e04d1069644e482",
+    "historical-a2-matrix-summary.json.gz": "40ccdc2fb8828fd2a0892b5e922a086e08e1bab9f74be89e8d8d06446a183238"
+  },
+  "sdk_host_source_sha256": "c064342b33f9c6a4c4936a2da544e2294aa5bb732ad609e56b20810b3afe2c92",
+  "portable_source_sha256": {
+    "observe_matrix.py": "d1f2c9012f06d70a40c8982f5e16597df5123222c88c558774057eb11aae6e5a",
+    "task_loops.py": "ec6e63d7cf702031109e9f43e986d0c236f5f60251e569f6ea2bb35fbbf78d7b",
+    "tree_geometry.py": "64352ed22d8cc926ac0cd4b811f24b55d5e67efcd4ff2836c98977d00947151c",
+    "literal_text_plan.py": "ab17bbc4dda0d9cab31558cabfebd51ca308859b059c880348f3797a250bcfc6",
+    "test_tree_geometry.py": "4733c1782e29f0902c8b862efec023cb9727d53da9b75a001443bee35ddb9619",
+    "analyze.py": "ce17db67fd0e5373440dca66f40ec162661a05cb7f751831bfdf58bbbf0b0b0a"
+  }
+}

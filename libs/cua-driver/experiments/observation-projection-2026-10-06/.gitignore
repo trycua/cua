@@ -1,0 +1,6 @@
+__pycache__/
+observation-results.json
+task-results.json
+historical-a2-observation-results.json
+historical-a2-matrix-summary.json
+initial-screenshot-metadata-parity-refusal.json

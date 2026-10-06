@@ -1,0 +1,17 @@
+{
+  "base_source": "45775a9244df4a1e33090c1377eeb2448d2eb820",
+  "source_commit": "6818718385231705abc0df3362dab0ff75605284",
+  "variant": "broad",
+  "source_sha256": {
+    "libs/cua-driver/rust/crates/platform-macos/src/ax/bindings.rs": "c4a41d71171bac09de8ac34352ccc3db83d0c4fd7a1476831b5a9ec29fcd51ca",
+    "libs/cua-driver/rust/crates/platform-macos/src/ax/tree.rs": "6f244158bfb8b17e4b470851261cccfc5cd9a0df08ba5bd5a228be4edd065371"
+  },
+  "host_sha256": "c064342b33f9c6a4c4936a2da544e2294aa5bb732ad609e56b20810b3afe2c92",
+  "tests": {
+    "platform_macos_passed": 473,
+    "ignored": 6,
+    "log_sha256": "ecf22d69ff5bea2ad044fe0b1b913cf0e071f449071917e53628e85f0c450a2b"
+  },
+  "mutation": "wrong slot shifted decoder failed mixed-slot keeper; restored before build",
+  "binary_sha256": "3d23079ec0f5ed61a4627114fe5657d8a7436d0e0014c7586f429e9eaf80646b"
+}

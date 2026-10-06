@@ -1,0 +1,235 @@
+{
+  "observations": [
+    {
+      "case": "large",
+      "arm": "baseline",
+      "mode": "full",
+      "n": 20,
+      "wall_ms": 397.31147950078594,
+      "serialized_result_bytes": 268085.0,
+      "image_bytes": 101946.0,
+      "model_json_bytes": 106610.0,
+      "public_calls": 1.0
+    },
+    {
+      "case": "large",
+      "arm": "baseline",
+      "mode": "tree_geometry",
+      "n": 20,
+      "wall_ms": 185.67295849788934,
+      "serialized_result_bytes": 120655.0,
+      "image_bytes": 0.0,
+      "model_json_bytes": 94882.0,
+      "public_calls": 2.0
+    },
+    {
+      "case": "large",
+      "arm": "broad",
+      "mode": "full",
+      "n": 20,
+      "wall_ms": 378.34583350195317,
+      "serialized_result_bytes": 268084.0,
+      "image_bytes": 101946.0,
+      "model_json_bytes": 106609.0,
+      "public_calls": 1.0
+    },
+    {
+      "case": "large",
+      "arm": "broad",
+      "mode": "tree_geometry",
+      "n": 20,
+      "wall_ms": 139.4767289966694,
+      "serialized_result_bytes": 120654.0,
+      "image_bytes": 0.0,
+      "model_json_bytes": 94881.0,
+      "public_calls": 2.0
+    },
+    {
+      "case": "large",
+      "arm": "string-only",
+      "mode": "full",
+      "n": 20,
+      "wall_ms": 408.2622914938838,
+      "serialized_result_bytes": 268084.0,
+      "image_bytes": 101946.0,
+      "model_json_bytes": 106609.0,
+      "public_calls": 1.0
+    },
+    {
+      "case": "large",
+      "arm": "string-only",
+      "mode": "tree_geometry",
+      "n": 20,
+      "wall_ms": 170.3690624999581,
+      "serialized_result_bytes": 120654.0,
+      "image_bytes": 0.0,
+      "model_json_bytes": 94881.0,
+      "public_calls": 2.0
+    },
+    {
+      "case": "small",
+      "arm": "baseline",
+      "mode": "full",
+      "n": 20,
+      "wall_ms": 237.7904584936914,
+      "serialized_result_bytes": 109935.0,
+      "image_bytes": 53810.0,
+      "model_json_bytes": 29393.0,
+      "public_calls": 1.0
+    },
+    {
+      "case": "small",
+      "arm": "baseline",
+      "mode": "tree_geometry",
+      "n": 20,
+      "wall_ms": 91.65514599590097,
+      "serialized_result_bytes": 37536.0,
+      "image_bytes": 0.0,
+      "model_json_bytes": 28516.0,
+      "public_calls": 2.0
+    },
+    {
+      "case": "small",
+      "arm": "broad",
+      "mode": "full",
+      "n": 20,
+      "wall_ms": 217.14166649326216,
+      "serialized_result_bytes": 109935.0,
+      "image_bytes": 53810.0,
+      "model_json_bytes": 29393.0,
+      "public_calls": 1.0
+    },
+    {
+      "case": "small",
+      "arm": "broad",
+      "mode": "tree_geometry",
+      "n": 20,
+      "wall_ms": 68.14502049383009,
+      "serialized_result_bytes": 37536.0,
+      "image_bytes": 0.0,
+      "model_json_bytes": 28516.0,
+      "public_calls": 2.0
+    },
+    {
+      "case": "small",
+      "arm": "string-only",
+      "mode": "full",
+      "n": 20,
+      "wall_ms": 232.40291600086493,
+      "serialized_result_bytes": 109935.0,
+      "image_bytes": 53810.0,
+      "model_json_bytes": 29393.0,
+      "public_calls": 1.0
+    },
+    {
+      "case": "small",
+      "arm": "string-only",
+      "mode": "tree_geometry",
+      "n": 20,
+      "wall_ms": 80.89258350082673,
+      "serialized_result_bytes": 37536.0,
+      "image_bytes": 0.0,
+      "model_json_bytes": 28516.0,
+      "public_calls": 2.0
+    }
+  ],
+  "tasks": [
+    {
+      "case": "small",
+      "arms": {
+        "baseline": {
+          "strict_success": 3,
+          "attempted": 3,
+          "wall_ms": 3465.4429590009386,
+          "mcp_ms": 3459.803666017251,
+          "serialized_result_bytes": 587848,
+          "image_bytes": 297047,
+          "public_calls": 7
+        },
+        "broad": {
+          "strict_success": 3,
+          "attempted": 3,
+          "wall_ms": 2542.003249996924,
+          "mcp_ms": 2534.756915003527,
+          "serialized_result_bytes": 188521,
+          "image_bytes": 0,
+          "public_calls": 12
+        }
+      },
+      "successful_pairs": 3,
+      "combined_faster_pairs": 3,
+      "paired_delta_ms": [
+        -920.1342509913957,
+        -1009.8774579964811,
+        -923.4397090040147
+      ],
+      "median_paired_delta_ms": -923.4397090040147
+    },
+    {
+      "case": "large",
+      "arms": {
+        "baseline": {
+          "strict_success": 3,
+          "attempted": 3,
+          "wall_ms": 4078.090541996062,
+          "mcp_ms": 4068.014749966096,
+          "serialized_result_bytes": 1378617,
+          "image_bytes": 537744,
+          "public_calls": 7
+        },
+        "broad": {
+          "strict_success": 3,
+          "attempted": 3,
+          "wall_ms": 2913.038750004489,
+          "mcp_ms": 2901.565458974801,
+          "serialized_result_bytes": 604111,
+          "image_bytes": 0,
+          "public_calls": 12
+        }
+      },
+      "successful_pairs": 3,
+      "combined_faster_pairs": 3,
+      "paired_delta_ms": [
+        -1165.0517919915728,
+        -1104.78716599755,
+        -1310.1758339907974
+      ],
+      "median_paired_delta_ms": -1165.0517919915728
+    }
+  ],
+  "false_completion": 0,
+  "controls": [
+    {
+      "case": "small",
+      "arm": "baseline",
+      "terminal": "handoff",
+      "handoff_before_input": true,
+      "error_type": "LiteralPlanHandoff",
+      "error": "Caller context guard failed"
+    },
+    {
+      "case": "small",
+      "arm": "broad",
+      "terminal": "handoff",
+      "handoff_before_input": true,
+      "error_type": "LiteralPlanHandoff",
+      "error": "Caller context guard failed"
+    },
+    {
+      "case": "large",
+      "arm": "baseline",
+      "terminal": "handoff",
+      "handoff_before_input": true,
+      "error_type": "LiteralPlanHandoff",
+      "error": "Caller context guard failed"
+    },
+    {
+      "case": "large",
+      "arm": "broad",
+      "terminal": "handoff",
+      "handoff_before_input": true,
+      "error_type": "LiteralPlanHandoff",
+      "error": "Caller context guard failed"
+    }
+  ]
+}

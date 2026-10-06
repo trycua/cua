@@ -27,14 +27,16 @@ const AX_WALK_BACKSTOP_GRACE: std::time::Duration = std::time::Duration::from_se
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_window_state".into(),
-        description: "Snapshot a window: structured `elements` (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`), the same tree as Markdown in `tree_markdown`, and a screenshot. Pass an element's `element_token` to click, type_text, press_key, etc.\n\
+        description: "Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.\n\
             \n\
-            START NARROW: `query` (case-insensitive substring) returns only matching rows plus their ancestors, and `max_elements` / `max_depth` bound the walk, so large Electron or web trees do not flood context. Indices and tokens stay valid for the whole snapshot. A full read can be 20x larger than a targeted one.\n\
+            START NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring; matching rows plus ancestors) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\
+            \n\
+            DIFF READS: `since:<snapshot_id>` from an earlier read of the same window returns only what changed: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), a `reindexed:` line if indices shifted, or `no change since …; focused element is …`. The response carries a NEW snapshot_id: use it in tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read; `since_status` says why.\n\
             \n\
             A new snapshot of the same (pid, window_id) replaces the previous one and stales its tokens (`invalidated_snapshot_ids`). `include_screenshot:false` returns the tree only; `include_accessibility_tree:false` returns only the screenshot and window metadata. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\
             \n\
             Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.".into(),
-        input_schema: serde_json::json!({
+        input_schema: cua_driver_core::window_state_view::extend_input_schema(serde_json::json!({
             "type": "object",
             "required": ["pid", "window_id"],
             "properties": {
@@ -58,7 +60,7 @@ fn def() -> &'static ToolDef {
                 "max_elements": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Cap on AX nodes walked (depth-first; markdown and elements truncate together). Default 2000."
+                    "description": "Cap on AX nodes walked (depth-first; markdown and elements truncate together). Default 250 (2 000 with full_output:true); the response states when the tree was cut."
                 },
                 "max_depth": {
                     "type": "integer",
@@ -78,7 +80,7 @@ fn def() -> &'static ToolDef {
                 }
             },
             "additionalProperties": false
-        }),
+        })),
         read_only: true,
         destructive: false,
         idempotent: false,
@@ -157,6 +159,10 @@ impl Tool for GetWindowStateTool {
             }
         }
 
+        let view = match cua_driver_core::window_state_view::ViewOptions::from_args(&args) {
+            Ok(view) => view,
+            Err(refusal) => return refusal,
+        };
         let query = args.opt_str("query");
         let screenshot_out_file = args.opt_str("screenshot_out_file").map(|s| {
             // Expand ~ prefix.
@@ -228,11 +234,11 @@ impl Tool for GetWindowStateTool {
         // the AX walker (#22865). minimum:1 keyed in the schema, but defend
         // against 0 here as well so a misbehaving client can't disable the
         // walk entirely.
-        let max_elements = args
-            .get("max_elements")
-            .and_then(|v| v.as_u64())
-            .map(|v| v.max(1) as usize)
-            .unwrap_or(crate::ax::tree::DEFAULT_MAX_ELEMENTS);
+        let max_elements = view.max_elements(
+            &args,
+            crate::ax::tree::DEFAULT_MAX_ELEMENTS,
+            observation_only,
+        );
         let max_depth = args
             .get("max_depth")
             .and_then(|v| v.as_u64())
@@ -720,12 +726,76 @@ impl Tool for GetWindowStateTool {
                 cua_driver_core::window_inspection::BrowserChromeCaptureCoverage::MayBeIncomplete,
             ),
         );
+        if !observation_only {
+            let focus_probe = || focused_element_description(pid, tree_result.as_ref());
+            cua_driver_core::window_state_view::apply(
+                &view,
+                &cua_driver_core::window_state_view::ViewContext {
+                    pid: i64::from(pid),
+                    window_id: u64::from(window_id),
+                    key: cua_driver_core::window_state_view::ViewKey {
+                        query: query.clone(),
+                        max_elements,
+                        max_depth: args
+                            .get("max_depth")
+                            .and_then(|v| v.as_u64())
+                            .map(|v| v as usize),
+                    },
+                    focus_probe: Some(&focus_probe),
+                },
+                &mut content,
+                &mut structured,
+            );
+        }
         ToolResult {
             content,
             is_error: None,
             structured_content: Some(structured),
             action_record: None,
         }
+    }
+}
+
+/// Describe the app's focused UI element as `[N] Role "title"` when it is one
+/// of the indexed rows of this walk. Called only for a `since` read that found
+/// no change.
+fn focused_element_description(
+    pid: i32,
+    tree: Option<&crate::ax::tree::TreeWalkResult>,
+) -> Option<String> {
+    use crate::ax::bindings::{copy_element_attr, AXUIElementCreateApplication};
+    use core_foundation::base::{CFEqual, CFRelease, CFTypeRef};
+    let tree = tree?;
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        let focused = copy_element_attr(app, "AXFocusedUIElement");
+        CFRelease(app as CFTypeRef);
+        let focused = focused?;
+        let found = tree.nodes.iter().find(|node| {
+            node.element_index.is_some()
+                && node.element_ptr != 0
+                && CFEqual(node.element_ptr as CFTypeRef, focused as CFTypeRef) != 0
+        });
+        let described = found.map(|node| {
+            let label = node
+                .title
+                .as_deref()
+                .or(node.description.as_deref())
+                .or(node.identifier.as_deref());
+            match label {
+                Some(label) => format!(
+                    "[{}] {} \"{label}\"",
+                    node.element_index.unwrap_or_default(),
+                    node.role
+                ),
+                None => format!("[{}] {}", node.element_index.unwrap_or_default(), node.role),
+            }
+        });
+        CFRelease(focused as CFTypeRef);
+        described
     }
 }
 
@@ -1149,6 +1219,31 @@ mod window_scope_contract_tests {
                 && d.description.contains("include_screenshot:false"),
             "description must document the both-false error"
         );
+    }
+
+    #[test]
+    fn schema_advertises_single_tree_and_diff_controls() {
+        let d = def();
+        let props = &d.input_schema["properties"];
+        assert_eq!(
+            props["tree_format"]["enum"],
+            serde_json::json!(["markdown", "elements", "both"])
+        );
+        for name in ["since", "verbose", "full_output"] {
+            assert!(props.get(name).is_some(), "schema must advertise {name}");
+        }
+        assert_eq!(d.input_schema["additionalProperties"], false);
+        for needle in [
+            "at most 250 nodes",
+            "since:",
+            "full_output:true",
+            "tree_format",
+        ] {
+            assert!(
+                d.description.contains(needle),
+                "description must mention {needle}"
+            );
+        }
     }
 }
 

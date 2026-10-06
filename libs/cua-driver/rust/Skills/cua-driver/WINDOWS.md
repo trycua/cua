@@ -376,6 +376,11 @@ When a cua-driver surprises you, diagnose cua-driver first:
   click in.
 - **`Invalid window handle (0x80070578)`?** The HWND you passed is
   stale (window closed, recreated). Re-resolve via `list_windows`.
+- **Large tree or repeated reads?** `get_window_state` returns one compact
+  markdown tree capped at 250 nodes (`full_output:true` restores 5 000 nodes
+  and both forms). Pass `since:<snapshot_id>` for added/changed/removed rows;
+  the focused element is not reported on Windows yet, so an unchanged read
+  says only `no change since …`.
 - **Empty `tree_markdown` / sparse UIA tree?** Some apps populate
   their UIA tree lazily on first call; retry `get_window_state`
   once. If still empty, the app has no UIA provider: fall back to an

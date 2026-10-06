@@ -1005,6 +1005,9 @@ pub struct GetWindowStateTool {
 
 const COLD_START_WALK_TIMEOUT_MS: u64 = 2_000;
 
+/// The AT-SPI walker's own node budget when the caller gives none.
+const LINUX_DEFAULT_MAX_ELEMENTS: usize = 5_000;
+
 fn linux_snapshot_timeout_ms(timeout: Option<&Value>, has_prior_snapshot: bool) -> u64 {
     cua_driver_core::tool_schema::resolve_timeout_ms_with_first_snapshot_grace(
         timeout,
@@ -1020,24 +1023,31 @@ impl Tool for GetWindowStateTool {
     fn def(&self) -> &ToolDef {
         GWS_DEF.get_or_init(|| ToolDef {
             name: "get_window_state".into(),
-            description: "Walk a running app's AT-SPI tree and return BOTH a \
-                structured `elements` array (preferred) AND a Markdown rendering of \
-                the same tree (back-compat). Every actionable element is tagged \
-                with [element_index N] in the markdown and as `element_index` in \
-                the structured array; pass each element's `element_token` to \
-                `click`, `type_text`, `set_value`, etc.\n\n\
-                PREFERRED CONSUMERS read `structuredContent.elements` (one entry \
-                per indexed row with `element_index`, `role`, `label`, `value`, \
-                `enabled`, `selected`, `actions` (names of AT-SPI actions exposed \
-                by the element, omitted when empty), \
-                `frame: {x,y,w,h}` when AT-SPI reports usable bounds, \
-                `parent_index`, `depth`). The markdown `tree_markdown` stays \
-                available and unchanged in shape for existing text-parsing \
-                callers — but new fields will only be added to the structured \
-                side. Set `query` to project BOTH representations to matching \
-                rows plus their ancestor chain while preserving original indices. \
-                `total_element_count` reports the complete snapshot and \
-                `returned_element_count` reports the projection.\n\n\
+            description: "Walk a running app's AT-SPI tree and return it ONCE, as \
+                compact Markdown by default (`tree_format:\"markdown\"`). Every actionable \
+                element is tagged `[N]` (an element_index); its element_token is \
+                `<snapshot_id>:N`, where `snapshot_id` is printed in the response header and \
+                returned in structuredContent. Pass `tree_format:\"elements\"` for the \
+                structured `elements` array instead (explicit `element_token`, `role`, \
+                `label`, `value`, `enabled`, `selected`, `actions`, `frame: {x,y,w,h}` when \
+                AT-SPI reports usable bounds, `parent_index`, `depth`), or `\"both\"` for \
+                both (about twice the size). Set `query` to project the tree to matching rows \
+                plus their ancestor chain while preserving original indices; \
+                `total_element_count` reports the complete snapshot.\n\n\
+                Size: a read is bounded by default (`max_elements` 250 actionable nodes). \
+                When the walk stops at that budget the response says `Tree truncated at \
+                max_elements=…` and `truncated: true`; pass a larger `max_elements`, or \
+                `query` / `max_depth`, to reach the rest. `_note` is omitted unless \
+                `verbose:true`. `full_output:true` restores the previous full response: both \
+                representations, all metadata, and the walker's own limits (≤5 000 nodes).\n\n\
+                DIFF READS: pass `since: <snapshot_id>` from an earlier read of the same window \
+                to get only what changed: `+` added rows, `~` changed rows, `-` removed rows \
+                (their ids are the old snapshot's), or `no change since …`. Rows not listed keep \
+                their previous `[N]` unless a `reindexed:` line says otherwise. The response \
+                carries a NEW snapshot_id: use it in element_tokens. An unknown, expired, \
+                other-window or differently-scoped (query/max_elements/max_depth) `since` falls \
+                back to a full read and `since_status` says why. The focused element is not \
+                reported on Linux yet.\n\n\
                 Always returns BOTH the element tree AND a screenshot — ground on \
                 both and cross-check (the tree lies on some surfaces). Choose the \
                 modality at ACTION time: an element ax action \
@@ -1055,11 +1065,9 @@ impl Tool for GetWindowStateTool {
                 `include_screenshot:false` is an error. Optional `max_dimension` \
                 caps the returned screenshot's long edge in pixels for a cheap \
                 thumbnail.\n\n\
-                Optional `max_elements` / `max_depth` bound the AT-SPI walk to \
-                mitigate context-window blow-up on Electron / large web apps \
-                that produce 10k+ element trees. When applied, BOTH \
-                the markdown and the structured elements are truncated \
-                identically. Omit both for current default behaviour.\n\n\
+                Optional `max_elements` / `max_depth` bound the AT-SPI walk \
+                (Electron / large web apps produce 10k+ element trees). Markdown and \
+                structured elements are truncated identically. Default: `max_elements` 250.\n\n\
                 TIME BUDGET: `timeout_ms` (default 1000) bounds the whole AT-SPI \
                 walk. When omitted, a window's first snapshot gets a 2000 ms \
                 cold-start budget so Chromium/Electron can finish publishing its \
@@ -1085,24 +1093,24 @@ impl Tool for GetWindowStateTool {
                 popup's own AT-SPI toplevel so its menu items get element indices \
                 (then click them by element_token). Omitting window_id while a popup \
                 of this pid is open walks that popup.".into(),
-            input_schema: json!({"type":"object","required":["pid"],"properties":{
+            input_schema: cua_driver_core::window_state_view::extend_input_schema(json!({"type":"object","required":["pid"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":{"type":"integer","description":"Process ID that owns the window."},
                 "window_id":{"type":"integer","description":"Native window identifier from list_windows, or the `popup.window_id` a click / right_click result named (an open context menu / popover; its menu items then get element indices). Omitted: the pid's open popup menu when one is mapped, else its focused / active / largest window."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
                 "include_accessibility_tree":{"type":"boolean",
-                    "description":"Default true — walk the AT-SPI tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the AT-SPI walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
+                    "description":"Default true — walk the AT-SPI tree and return it (per `tree_format`) alongside the screenshot. Set false to SKIP the AT-SPI walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
                 "include_screenshot":{"type":"boolean",
                     "description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string",
                     "description":"When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output carries screenshot_file_path instead."},
                 "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
-                "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Omit for the default (5 000). Lower for huge web/Electron trees."},
+                "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Default 250 (5 000 with full_output:true); the response states when the tree was cut. Raise it to read further into a large window."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps."},
                 "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
                 "max_dimension":{"type":"integer","minimum":1,"description":"Legacy optional cap on the returned screenshot's long edge. Applied on top of the configured max_image_dimension ceiling when max_image_dimension is omitted."},
                 "max_image_dimension":{"type":"integer","minimum":0,"description":"Per-call long-edge override. This value wins over configured and legacy limits; 0 returns native-resolution PNG bytes. Omit to preserve configured behavior."}
-            },"additionalProperties":false}),
+            },"additionalProperties":false})),
             read_only: true, destructive: false, idempotent: false, open_world: false,
         })
     }
@@ -1184,6 +1192,10 @@ impl Tool for GetWindowStateTool {
         // time: an element ax action (element_token) or element px action (x,y).
         // We don't even read the arg; it stays in the schema only so old callers
         // don't trip additionalProperties:false.
+        let view = match cua_driver_core::window_state_view::ViewOptions::from_args(&args) {
+            Ok(view) => view,
+            Err(refusal) => return refusal,
+        };
         let query = args.opt_str("query");
         let session_id = args.opt_str("_session_id");
         // include_screenshot (default true) — the perf opt-out. The tree+screenshot
@@ -1210,10 +1222,15 @@ impl Tool for GetWindowStateTool {
         });
         // Optional caps — when omitted, the AT-SPI walker uses its built-in
         // defaults (#22865).
-        let max_elements = args
-            .get("max_elements")
-            .and_then(|v| v.as_u64())
-            .map(|v| v.max(1) as usize);
+        let max_elements = Some(
+            view.max_elements(
+                &args,
+                LINUX_DEFAULT_MAX_ELEMENTS,
+                args.get("_observation_only")
+                    .and_then(|value| value.as_bool())
+                    == Some(true),
+            ),
+        );
         let max_depth = args
             .get("max_depth")
             .and_then(|v| v.as_u64())
@@ -1750,6 +1767,24 @@ impl Tool for GetWindowStateTool {
                          skipped (include_accessibility_tree:false){reason_note}."
                     ))
                     .with_structured(structured);
+                }
+
+                if !observation_only {
+                    cua_driver_core::window_state_view::apply(
+                        &view,
+                        &cua_driver_core::window_state_view::ViewContext {
+                            pid: i64::from(pid),
+                            window_id: xid,
+                            key: cua_driver_core::window_state_view::ViewKey {
+                                query: query.clone(),
+                                max_elements: max_elements.unwrap_or(LINUX_DEFAULT_MAX_ELEMENTS),
+                                max_depth,
+                            },
+                            focus_probe: None,
+                        },
+                        &mut content,
+                        &mut structured,
+                    );
                 }
 
                 ToolResult {

@@ -755,8 +755,15 @@ macro_rules! define_native_window_methods {
 
             pub async fn get_window_state(
                 &self,
-                input: GetWindowStateInput,
+                mut input: GetWindowStateInput,
             ) -> Result<WindowStateOutput, DriverError> {
+                // The typed snapshot is read by programs, not budgeted
+                // against a model context: keep the full response (both tree
+                // representations, platform walk limits) unless the caller
+                // picks a leaner shape.
+                if input.tree_format.is_none() && input.full_output.is_none() {
+                    input.full_output = Some(true);
+                }
                 self.invoke_typed(GetWindowStateInput::TOOL_NAME, input)
                     .await?
                     .window_state_success()

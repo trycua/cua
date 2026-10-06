@@ -487,6 +487,7 @@ impl McpDriver {
         let id = self.next_id;
         self.next_id += 1;
         let timeout = call_timeout(self.recording_started, tool, cfg!(target_os = "macos"));
+        let args = crate::driver::with_full_window_state(tool, args);
         self.send(serde_json::json!({
             "jsonrpc": "2.0", "id": id, "method": "tools/call",
             "params": { "name": tool, "arguments": args }

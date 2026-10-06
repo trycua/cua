@@ -122,6 +122,11 @@ For authorized foreground input, use the Cua action's
 
 When a cua-driver call surprises you, diagnose cua-driver first:
 
+- **Large tree or repeated reads?** `get_window_state` returns one compact
+  markdown tree capped at 250 nodes; pass `since:<snapshot_id>` for a diff
+  (`no change since …; focused element is …` names the focused row on macOS)
+  and `tree_format:"elements"` for structured rows. `full_output:true` restores
+  the old payload (both forms, `_note`, `background_input`, 2 000 nodes).
 - **Empty `tree_markdown`?** `get_window_state` returns **both** the
   AX tree and a screenshot by default: there's nothing to configure and
   no capture mode to pick. An empty tree means the surface isn't AX (a

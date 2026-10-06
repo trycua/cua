@@ -1652,6 +1652,10 @@
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "full_output": {
+            "description": "Restore the previous full response (both representations, all\nmetadata, platform walk limits).",
+            "type": "boolean"
+          },
           "include_accessibility_tree": {
             "type": "boolean"
           },
@@ -1689,11 +1693,28 @@
           "session": {
             "type": "string"
           },
+          "since": {
+            "description": "Return only what changed since this earlier `snapshot_id`.",
+            "type": "string"
+          },
           "timeout_ms": {
             "description": "Wall-clock budget for the accessibility walk in milliseconds\n(default 1000 on every platform). A walk that runs out returns a\npartial tree flagged `truncated` rather than failing.",
             "maximum": 120000,
             "minimum": 100,
             "type": "integer"
+          },
+          "tree_format": {
+            "description": "Tree representation to return: `markdown` (default), `elements`, or\n`both`.",
+            "enum": [
+              "markdown",
+              "elements",
+              "both"
+            ],
+            "type": "string"
+          },
+          "verbose": {
+            "description": "Include `_note` and the full `background_input` report.",
+            "type": "boolean"
           },
           "window_id": {
             "minimum": 1,
@@ -1919,6 +1940,18 @@
               "null"
             ]
           },
+          "since": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "since_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "snapshot_id": {
             "type": [
               "string",
@@ -1932,6 +1965,18 @@
               "null"
             ]
           },
+          "tree_diff": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tree_format": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "tree_markdown": {
             "type": [
               "string",
@@ -1941,6 +1986,12 @@
           "truncated": {
             "type": [
               "boolean",
+              "null"
+            ]
+          },
+          "truncation_hint": {
+            "type": [
+              "string",
               "null"
             ]
           },

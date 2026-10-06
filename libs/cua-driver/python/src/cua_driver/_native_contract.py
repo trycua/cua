@@ -4157,7 +4157,7 @@ class _UniffiFfiConverterTypeGetSessionStateInput(_UniffiConverterRustBuffer):
 
 @dataclass
 class GetWindowStateInput:
-    def __init__(self, *, pid:int, window_id:int, session:typing.Optional[str], query:typing.Optional[str], include_accessibility_tree:typing.Optional[bool], include_screenshot:typing.Optional[bool], screenshot_out_file:typing.Optional[str], max_elements:typing.Optional[int], max_depth:typing.Optional[int], max_dimension:typing.Optional[int], max_image_dimension:typing.Optional[int], timeout_ms:typing.Optional[int] = _DEFAULT):
+    def __init__(self, *, pid:int, window_id:int, session:typing.Optional[str], query:typing.Optional[str], include_accessibility_tree:typing.Optional[bool], include_screenshot:typing.Optional[bool], screenshot_out_file:typing.Optional[str], max_elements:typing.Optional[int], max_depth:typing.Optional[int], max_dimension:typing.Optional[int], max_image_dimension:typing.Optional[int], timeout_ms:typing.Optional[int] = _DEFAULT, tree_format:typing.Optional[str] = _DEFAULT, since:typing.Optional[str] = _DEFAULT, verbose:typing.Optional[bool] = _DEFAULT, full_output:typing.Optional[bool] = _DEFAULT):
         self.pid = pid
         self.window_id = window_id
         self.session = session
@@ -4173,12 +4173,28 @@ class GetWindowStateInput:
             self.timeout_ms = None
         else:
             self.timeout_ms = timeout_ms
+        if tree_format is _DEFAULT:
+            self.tree_format = None
+        else:
+            self.tree_format = tree_format
+        if since is _DEFAULT:
+            self.since = None
+        else:
+            self.since = since
+        if verbose is _DEFAULT:
+            self.verbose = None
+        else:
+            self.verbose = verbose
+        if full_output is _DEFAULT:
+            self.full_output = None
+        else:
+            self.full_output = full_output
 
 
 
 
     def __str__(self):
-        return "GetWindowStateInput(pid={}, window_id={}, session={}, query={}, include_accessibility_tree={}, include_screenshot={}, screenshot_out_file={}, max_elements={}, max_depth={}, max_dimension={}, max_image_dimension={}, timeout_ms={})".format(self.pid, self.window_id, self.session, self.query, self.include_accessibility_tree, self.include_screenshot, self.screenshot_out_file, self.max_elements, self.max_depth, self.max_dimension, self.max_image_dimension, self.timeout_ms)
+        return "GetWindowStateInput(pid={}, window_id={}, session={}, query={}, include_accessibility_tree={}, include_screenshot={}, screenshot_out_file={}, max_elements={}, max_depth={}, max_dimension={}, max_image_dimension={}, timeout_ms={}, tree_format={}, since={}, verbose={}, full_output={})".format(self.pid, self.window_id, self.session, self.query, self.include_accessibility_tree, self.include_screenshot, self.screenshot_out_file, self.max_elements, self.max_depth, self.max_dimension, self.max_image_dimension, self.timeout_ms, self.tree_format, self.since, self.verbose, self.full_output)
     def __eq__(self, other):
         if self.pid != other.pid:
             return False
@@ -4204,6 +4220,14 @@ class GetWindowStateInput:
             return False
         if self.timeout_ms != other.timeout_ms:
             return False
+        if self.tree_format != other.tree_format:
+            return False
+        if self.since != other.since:
+            return False
+        if self.verbose != other.verbose:
+            return False
+        if self.full_output != other.full_output:
+            return False
         return True
 
 class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
@@ -4222,6 +4246,10 @@ class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
             max_dimension=_UniffiFfiConverterOptionalUInt32.read(buf),
             max_image_dimension=_UniffiFfiConverterOptionalUInt32.read(buf),
             timeout_ms=_UniffiFfiConverterOptionalUInt32.read(buf),
+            tree_format=_UniffiFfiConverterOptionalString.read(buf),
+            since=_UniffiFfiConverterOptionalString.read(buf),
+            verbose=_UniffiFfiConverterOptionalBoolean.read(buf),
+            full_output=_UniffiFfiConverterOptionalBoolean.read(buf),
         )
 
     @staticmethod
@@ -4238,6 +4266,10 @@ class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_dimension)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_image_dimension)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.timeout_ms)
+        _UniffiFfiConverterOptionalString.check_lower(value.tree_format)
+        _UniffiFfiConverterOptionalString.check_lower(value.since)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.verbose)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.full_output)
 
     @staticmethod
     def write(value, buf):
@@ -4253,6 +4285,10 @@ class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt32.write(value.max_dimension, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.max_image_dimension, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.timeout_ms, buf)
+        _UniffiFfiConverterOptionalString.write(value.tree_format, buf)
+        _UniffiFfiConverterOptionalString.write(value.since, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.verbose, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.full_output, buf)
 
 @dataclass
 class HotkeyInput:
@@ -8195,7 +8231,7 @@ class _UniffiFfiConverterSequenceTypeSnapshotImage(_UniffiConverterRustBuffer):
 
 @dataclass
 class WindowStateOutput:
-    def __init__(self, *, pid:int, window_id:int, snapshot_id:typing.Optional[str], app_name:typing.Optional[str], window_title:typing.Optional[str], tree_markdown:typing.Optional[str], elements:typing.Optional[typing.List[WindowElement]], element_count:typing.Optional[int], total_element_count:typing.Optional[int], returned_element_count:typing.Optional[int], filtered_element_count:typing.Optional[int], elements_complete:typing.Optional[bool], degraded:typing.Optional[bool], degraded_reason:typing.Optional[str], truncated:typing.Optional[bool], truncation_reason:typing.Optional[str], screenshot_width:typing.Optional[int], screenshot_height:typing.Optional[int], screenshot_scale:typing.Optional[float], screenshot_mime_type:typing.Optional[str], screenshot_file_path:typing.Optional[str], screenshot_frame_valid:typing.Optional[bool], window_bounds:typing.Optional[WindowBounds], images:typing.List[SnapshotImage]):
+    def __init__(self, *, pid:int, window_id:int, snapshot_id:typing.Optional[str], app_name:typing.Optional[str], window_title:typing.Optional[str], tree_markdown:typing.Optional[str], elements:typing.Optional[typing.List[WindowElement]], element_count:typing.Optional[int], total_element_count:typing.Optional[int], returned_element_count:typing.Optional[int], filtered_element_count:typing.Optional[int], elements_complete:typing.Optional[bool], degraded:typing.Optional[bool], degraded_reason:typing.Optional[str], truncated:typing.Optional[bool], truncation_reason:typing.Optional[str], truncation_hint:typing.Optional[str], tree_format:typing.Optional[str], since:typing.Optional[str], since_status:typing.Optional[str], tree_diff:typing.Optional[str], screenshot_width:typing.Optional[int], screenshot_height:typing.Optional[int], screenshot_scale:typing.Optional[float], screenshot_mime_type:typing.Optional[str], screenshot_file_path:typing.Optional[str], screenshot_frame_valid:typing.Optional[bool], window_bounds:typing.Optional[WindowBounds], images:typing.List[SnapshotImage]):
         self.pid = pid
         self.window_id = window_id
         self.snapshot_id = snapshot_id
@@ -8212,6 +8248,11 @@ class WindowStateOutput:
         self.degraded_reason = degraded_reason
         self.truncated = truncated
         self.truncation_reason = truncation_reason
+        self.truncation_hint = truncation_hint
+        self.tree_format = tree_format
+        self.since = since
+        self.since_status = since_status
+        self.tree_diff = tree_diff
         self.screenshot_width = screenshot_width
         self.screenshot_height = screenshot_height
         self.screenshot_scale = screenshot_scale
@@ -8225,7 +8266,7 @@ class WindowStateOutput:
 
 
     def __str__(self):
-        return "WindowStateOutput(pid={}, window_id={}, snapshot_id={}, app_name={}, window_title={}, tree_markdown={}, elements={}, element_count={}, total_element_count={}, returned_element_count={}, filtered_element_count={}, elements_complete={}, degraded={}, degraded_reason={}, truncated={}, truncation_reason={}, screenshot_width={}, screenshot_height={}, screenshot_scale={}, screenshot_mime_type={}, screenshot_file_path={}, screenshot_frame_valid={}, window_bounds={}, images={})".format(self.pid, self.window_id, self.snapshot_id, self.app_name, self.window_title, self.tree_markdown, self.elements, self.element_count, self.total_element_count, self.returned_element_count, self.filtered_element_count, self.elements_complete, self.degraded, self.degraded_reason, self.truncated, self.truncation_reason, self.screenshot_width, self.screenshot_height, self.screenshot_scale, self.screenshot_mime_type, self.screenshot_file_path, self.screenshot_frame_valid, self.window_bounds, self.images)
+        return "WindowStateOutput(pid={}, window_id={}, snapshot_id={}, app_name={}, window_title={}, tree_markdown={}, elements={}, element_count={}, total_element_count={}, returned_element_count={}, filtered_element_count={}, elements_complete={}, degraded={}, degraded_reason={}, truncated={}, truncation_reason={}, truncation_hint={}, tree_format={}, since={}, since_status={}, tree_diff={}, screenshot_width={}, screenshot_height={}, screenshot_scale={}, screenshot_mime_type={}, screenshot_file_path={}, screenshot_frame_valid={}, window_bounds={}, images={})".format(self.pid, self.window_id, self.snapshot_id, self.app_name, self.window_title, self.tree_markdown, self.elements, self.element_count, self.total_element_count, self.returned_element_count, self.filtered_element_count, self.elements_complete, self.degraded, self.degraded_reason, self.truncated, self.truncation_reason, self.truncation_hint, self.tree_format, self.since, self.since_status, self.tree_diff, self.screenshot_width, self.screenshot_height, self.screenshot_scale, self.screenshot_mime_type, self.screenshot_file_path, self.screenshot_frame_valid, self.window_bounds, self.images)
     def __eq__(self, other):
         if self.pid != other.pid:
             return False
@@ -8258,6 +8299,16 @@ class WindowStateOutput:
         if self.truncated != other.truncated:
             return False
         if self.truncation_reason != other.truncation_reason:
+            return False
+        if self.truncation_hint != other.truncation_hint:
+            return False
+        if self.tree_format != other.tree_format:
+            return False
+        if self.since != other.since:
+            return False
+        if self.since_status != other.since_status:
+            return False
+        if self.tree_diff != other.tree_diff:
             return False
         if self.screenshot_width != other.screenshot_width:
             return False
@@ -8297,6 +8348,11 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
             degraded_reason=_UniffiFfiConverterOptionalString.read(buf),
             truncated=_UniffiFfiConverterOptionalBoolean.read(buf),
             truncation_reason=_UniffiFfiConverterOptionalString.read(buf),
+            truncation_hint=_UniffiFfiConverterOptionalString.read(buf),
+            tree_format=_UniffiFfiConverterOptionalString.read(buf),
+            since=_UniffiFfiConverterOptionalString.read(buf),
+            since_status=_UniffiFfiConverterOptionalString.read(buf),
+            tree_diff=_UniffiFfiConverterOptionalString.read(buf),
             screenshot_width=_UniffiFfiConverterOptionalUInt32.read(buf),
             screenshot_height=_UniffiFfiConverterOptionalUInt32.read(buf),
             screenshot_scale=_UniffiFfiConverterOptionalFloat64.read(buf),
@@ -8325,6 +8381,11 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.degraded_reason)
         _UniffiFfiConverterOptionalBoolean.check_lower(value.truncated)
         _UniffiFfiConverterOptionalString.check_lower(value.truncation_reason)
+        _UniffiFfiConverterOptionalString.check_lower(value.truncation_hint)
+        _UniffiFfiConverterOptionalString.check_lower(value.tree_format)
+        _UniffiFfiConverterOptionalString.check_lower(value.since)
+        _UniffiFfiConverterOptionalString.check_lower(value.since_status)
+        _UniffiFfiConverterOptionalString.check_lower(value.tree_diff)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.screenshot_width)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.screenshot_height)
         _UniffiFfiConverterOptionalFloat64.check_lower(value.screenshot_scale)
@@ -8352,6 +8413,11 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.degraded_reason, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.truncated, buf)
         _UniffiFfiConverterOptionalString.write(value.truncation_reason, buf)
+        _UniffiFfiConverterOptionalString.write(value.truncation_hint, buf)
+        _UniffiFfiConverterOptionalString.write(value.tree_format, buf)
+        _UniffiFfiConverterOptionalString.write(value.since, buf)
+        _UniffiFfiConverterOptionalString.write(value.since_status, buf)
+        _UniffiFfiConverterOptionalString.write(value.tree_diff, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.screenshot_width, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.screenshot_height, buf)
         _UniffiFfiConverterOptionalFloat64.write(value.screenshot_scale, buf)

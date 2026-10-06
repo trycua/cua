@@ -43,7 +43,7 @@
    "read_only": true
   },
   {
-   "description": "Snapshot a window: structured `elements` (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`), the same tree as Markdown in `tree_markdown`, and a screenshot. Pass an element's `element_token` to click, type_text, press_key, etc.\n\nSTART NARROW: `query` (case-insensitive substring) returns only matching rows plus their ancestors, and `max_elements` / `max_depth` bound the walk, so large Electron or web trees do not flood context. Indices and tokens stay valid for the whole snapshot. A full read can be 20x larger than a targeted one.\n\nA new snapshot of the same (pid, window_id) replaces the previous one and stales its tokens (`invalidated_snapshot_ids`). `include_screenshot:false` returns the tree only; `include_accessibility_tree:false` returns only the screenshot and window metadata. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\nRefusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.",
+   "description": "Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.\n\nSTART NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring; matching rows plus ancestors) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\nDIFF READS: `since:<snapshot_id>` from an earlier read of the same window returns only what changed: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), a `reindexed:` line if indices shifted, or `no change since …; focused element is …`. The response carries a NEW snapshot_id: use it in tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read; `since_status` says why.\n\nA new snapshot of the same (pid, window_id) replaces the previous one and stales its tokens (`invalidated_snapshot_ids`). `include_screenshot:false` returns the tree only; `include_accessibility_tree:false` returns only the screenshot and window metadata. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\nRefusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {
@@ -56,6 +56,10 @@
        "vision"
       ],
       "type": "string"
+     },
+     "full_output": {
+      "description": "Default false. Set true to restore the previous full response: both `elements` and `tree_markdown`, all metadata, and the platform's own walk limits unless max_elements / max_depth are passed. Does not combine with `since`.",
+      "type": "boolean"
      },
      "include_accessibility_tree": {
       "description": "Default true. False skips the AX walk and returns the screenshot plus window metadata. Both this and include_screenshot false is an error.",
@@ -76,7 +80,7 @@
       "type": "integer"
      },
      "max_elements": {
-      "description": "Cap on AX nodes walked (depth-first; markdown and elements truncate together). Default 2000.",
+      "description": "Cap on AX nodes walked (depth-first; markdown and elements truncate together). Default 250 (2 000 with full_output:true); the response states when the tree was cut.",
       "minimum": 1,
       "type": "integer"
      },
@@ -101,12 +105,29 @@
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it.",
       "type": "string"
      },
+     "since": {
+      "description": "A `snapshot_id` from an earlier get_window_state of the same window. Returns only what changed against that snapshot: `+` added rows, `~` changed rows, `-` removed rows (removed ids are the old snapshot's), or `no change`. Falls back to a full read when the snapshot is unknown, expired, belongs to another window, or was read with a different query/max_elements/max_depth; `since_status` says which. The response still carries a NEW snapshot_id and its element_tokens; rows not listed keep their previous [N] unless a `reindexed:` line says otherwise.",
+      "type": "string"
+     },
      "timeout_ms": {
       "default": 1000,
       "description": "Wall-clock budget in milliseconds for the accessibility-tree walk (default 1000, min 100, max 120000). Bounds the WHOLE walk. When the budget runs out the tool returns the PARTIAL tree it has, flagged with `truncated: true`, `truncation_reason`, `nodes_visited`, `nodes_pending` and `elements_complete: false`; retry with a larger value (e.g. 5000) or narrow with `query` / `max_depth`.",
       "maximum": 120000,
       "minimum": 100,
       "type": "integer"
+     },
+     "tree_format": {
+      "description": "Which tree representation to return. Default \"markdown\": the compact `tree_markdown` only, where a row `[N]` is addressed with element_token `<snapshot_id>:N`. \"elements\": the structured `elements` array only (per-element element_token, frame, parent_index, value). \"both\": the two together, as before; roughly doubles the size.",
+      "enum": [
+       "markdown",
+       "elements",
+       "both"
+      ],
+      "type": "string"
+     },
+     "verbose": {
+      "description": "Default false. Set true to include the `_note` string and the full `background_input` capability report (macOS), which are omitted by default to save context.",
+      "type": "boolean"
      },
      "window_id": {
       "description": "Target window ID from list_windows.",

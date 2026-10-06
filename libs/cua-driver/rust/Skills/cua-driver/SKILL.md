@@ -67,7 +67,7 @@ Check the installed version and advertised schema before using unfamiliar parame
 
 1. Select the exact target on each action. A session is lifecycle metadata, not capture scope or permission authority.
 2. Observe before input and verify the outcome at checkpoints, not after every action. `effect:"unverifiable"` and a successful exit are not task success; never replay a partial, canceled, or unknown action blindly.
-3. Use returned tokens, never invented indices. A fresh snapshot replaces prior element handles and lists them in `invalidated_snapshot_ids`; act with `element_token`.
+3. Use returned tokens, never invented indices. A fresh snapshot replaces prior element handles and lists them in `invalidated_snapshot_ids`; act with `element_token`. Reads are bounded and return one tree form by default; follow up with `since:<snapshot_id>` instead of re-reading a large window.
 4. Keep background window actions non-interfering. Foreground delivery and desktop input require authorization for visible control; an unavailable route is not permission to escalate.
 5. Never infer pixels from a missing image, a different window, or an unaccounted-for resized preview. Capture failure and an empty accessibility tree are different failures.
 6. Keep one controller for a shared desktop. Distinct sessions/cursors do not isolate focus, keyboard input, application state, or snapshot caches.
@@ -79,7 +79,7 @@ Check the installed version and advertised schema before using unfamiliar parame
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | Missing binary, mismatched daemon, unknown tool/field     | [Runtime preflight](RUNTIME.md#preflight-and-transport)                               |
 | Stale token or ambiguous window                           | Refresh `list_windows` / `get_window_state`; choose the intended live target          |
-| Large or sparse tree                                      | [Bounded observation](WORKFLOW.md#observe)                                            |
+| Large, truncated, or sparse tree; repeated reads          | [Bounded observation and `since` diffs](WORKFLOW.md#observe)                          |
 | `surface_identity_unproven` or screenshot permission wait | [Wayland capture recovery](LINUX.md#capture-recovery)                                 |
 | `background_unavailable`                                  | Verify current state; ask before foreground/desktop control if not already authorized |
 | Text did not visibly change                               | Reobserve before retrying; [text and value semantics](WORKFLOW.md#act-once)           |

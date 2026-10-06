@@ -41,17 +41,6 @@ function isCuabotInPath(): boolean {
 
 const args = process.argv.slice(2);
 
-// cuabot is no longer maintained. Warn on stderr (never stdout, which scripts
-// parse) once per invocation, and keep running as before.
-console.error(
-  [
-    'cuabot is deprecated: it has known security issues and is no longer maintained. Do not run it.',
-    'Stop it with `cuabot --stop`, then uninstall it with `npm uninstall -g cuabot`.',
-    'Use Cua Driver (https://cua.ai/docs/cua-driver) or the cua CLI (https://cua.ai/docs/cua-sdk/quickstart) instead.',
-    'More: https://cua.ai/docs/cua-sdk/guides/migrate-from-deprecated-packages',
-  ].join('\n')
-);
-
 // Parse --name / -n flag from args and return [sessionName, remainingArgs]
 function parseSessionName(inputArgs: string[]): [string | null, string[]] {
   const remaining: string[] = [];

@@ -4,20 +4,6 @@ agent - Decorator-based Computer Use Agent with liteLLM integration
 
 import logging
 import sys
-import warnings
-
-# cua-agent is no longer maintained. Python's default filters show this once,
-# when the importing code is __main__; `-W error::DeprecationWarning` turns it
-# on everywhere. Importing still works exactly as before.
-warnings.warn(
-    "cua-agent is deprecated: Cua no longer maintains it and it will not receive updates or fixes. "
-    "For desktop control, connect your coding agent to Cua Driver "
-    "(https://cua.ai/docs/cua-driver/guides/connect-your-agent) over MCP; "
-    "for sandboxes, use the cua SDK (pip install cua). "
-    "Migration guide: https://cua.ai/docs/cua-sdk/guides/migrate-from-deprecated-packages",
-    DeprecationWarning,
-    stacklevel=2,
-)
 
 # Import loops to register them
 from . import loops

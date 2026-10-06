@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+experimental-owned-supervision = ["cua-driver-core/experimental-owned-supervision"]
+
 [dependencies]
 tokio = { workspace = true }
 serde = { workspace = true }

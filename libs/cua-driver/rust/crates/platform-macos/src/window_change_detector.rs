@@ -676,3 +676,23 @@ mod tests {
         );
     }
 }
+
+/// Transfer the unchanged native snapshot/protection lease to a reserved
+/// supervisor. Admission must have happened before input; this does not prove
+/// application commitment or make native foreground restoration qualified.
+#[cfg(feature = "experimental-owned-supervision")]
+impl Snapshot {
+    pub fn supervise_owned(
+        self,
+        reservation: cua_driver_core::owned_supervision::Reservation,
+    ) -> cua_driver_core::owned_supervision::ReceiptId {
+        reservation.supervise(async move {
+            let changes = self.detect_async().await;
+            cua_driver_core::owned_supervision::Observation {
+                polled: changes.polled,
+                foreground_changed: changes.foreground_changed,
+                new_window_count: changes.new_windows.len(),
+            }
+        })
+    }
+}

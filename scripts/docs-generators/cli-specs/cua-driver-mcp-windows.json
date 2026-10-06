@@ -3159,6 +3159,70 @@
    "read_only": false
   },
   {
+   "description": "Run several action tools in ONE call, in order, and stop at the first failure. Use it when you already know the next few actions and do not need to look at the app between them (fill three fields, click, then read the result). Each step is `{tool, args}` where `tool` is one of click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag and `args` are exactly that tool's arguments. Every step goes through the same session, permission and approval checks as a direct call; a batch grants nothing extra. All steps are validated before the first one runs, so a malformed step 4 changes nothing. Element tokens and element_index values come from a get_window_state read before the batch; a step that changes the UI can invalidate later element targets, so put element-targeted actions before the actions that reshuffle the window, or use pixel targets after them.\n\nReturns per-step status (`ok` or the error message) and, when `observe` is given, ONE bounded get_window_state read after the last executed step. Without `observe` nothing is read. The batch uses one session: steps may omit `session` or repeat the batch's. `delay_ms` pauses between steps (max 2000). At most 32 steps.",
+   "destructive": true,
+   "idempotent": false,
+   "input_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "delay_ms": {
+      "description": "Pause between steps in milliseconds (not after the last). Default 0.",
+      "maximum": 2000,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "observe": {
+      "description": "Optional end-of-batch observation: arguments for ONE get_window_state call. `pid` and `window_id` default to those of the last step that names both. Defaults to include_screenshot=false and max_elements=200 to stay cheap; pass include_screenshot=true or a larger max_elements to widen it. Omit to read nothing.",
+      "type": "object"
+     },
+     "session": {
+      "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
+      "type": "string"
+     },
+     "steps": {
+      "description": "Ordered actions. Execution stops at the first failing step.",
+      "items": {
+       "additionalProperties": false,
+       "properties": {
+        "args": {
+         "description": "Arguments for that tool, as in a direct call.",
+         "type": "object"
+        },
+        "tool": {
+         "description": "Action tool to run.",
+         "enum": [
+          "click",
+          "double_click",
+          "right_click",
+          "set_value",
+          "type_text",
+          "press_key",
+          "hotkey",
+          "scroll",
+          "drag"
+         ],
+         "type": "string"
+        }
+       },
+       "required": [
+        "tool"
+       ],
+       "type": "object"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "type": "array"
+     }
+    },
+    "required": [
+     "steps"
+    ],
+    "type": "object"
+   },
+   "name": "run_actions",
+   "read_only": false
+  },
+  {
    "description": "Check the saved stable/nightly Cua Driver channel for a release on GitHub. Returns current and selected channels, current and latest versions, an `update_available` boolean, the install one-liner, and the release notes URL. Read-only — never installs. Pacman-owned Linux executables return package-manager guidance without checking GitHub. Mirror of `cua-driver check-update --json`.",
    "destructive": false,
    "idempotent": true,

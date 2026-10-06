@@ -161,13 +161,20 @@ def hypotheses(by: dict, tasks: list[str]) -> dict:
     return out
 
 
-def call_breakdown(run: Path) -> dict:
+def counted_streams(run: Path, rows: list[dict]):
+    """The stream of the counted (final) attempt of every counted trial."""
+    for r in rows:
+        stream = run / "trials" / r["trial_id"] / f"a{r['attempt']}" / "claude-stream.tsv"
+        yield r, stream
+
+
+def call_breakdown(run: Path, rows: list[dict]) -> dict:
     """Per arm and task: actions, observes, failed calls by tool, and A's use of run_actions / since / full_output."""
     stats: dict = defaultdict(lambda: defaultdict(list))
     failed: dict = defaultdict(Counter)
     usage: dict = defaultdict(Counter)
-    for meta, stream in ph.trials(run, None, None):
-        if meta.get("excluded") or not stream.exists():
+    for meta, stream in counted_streams(run, rows):
+        if not stream.exists():
             continue
         arm, task = meta["arm"], meta["task"]
         cs = [c for c in ph.calls(ph.events(stream)) if c["name"].startswith("mcp__")]
@@ -261,7 +268,7 @@ def main() -> int:
                     f"| {sum(1 for r in v if r.get('evaluator_peeks'))} | {sum(1 for r in v if r.get('side_door_flag'))} |"
                 )
         p("")
-    br = call_breakdown(args.run)
+    br = call_breakdown(args.run, rows)
     p("## Calls: actions and observes per trial (a run_actions step counts as an action)\n")
     p("| Arm | Task | Trials | MCP calls | Actions | Observes | Observes per action | Failed calls |")
     p("|---|---|---|---|---|---|---|---|")

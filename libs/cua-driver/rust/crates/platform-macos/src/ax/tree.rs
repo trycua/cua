@@ -457,20 +457,37 @@ unsafe fn walk_element(
     // This is critical for Calculator where AXTitle="" but AXDescription="2"
     // (digit buttons). Merging them would produce "2" (quoted) instead of (2)
     // (parens), breaking _find_calc_button which searches for "(2)".
-    let title = copy_string_attr(element, "AXTitle");
-    // Read AXValue once with enough type information to preserve the existing
-    // string-only markdown while also exposing numeric/boolean control state.
-    let copied_value = copy_stringish_attr(element, "AXValue");
+    // Options 0 preserves unsupported slots. Decode heterogeneous values with
+    // the same rules as the individual readers, including empty vs absent strings.
+    let mut attributes = copy_typed_attrs(
+        element,
+        &[
+            ("AXTitle", AttrKind::String),
+            ("AXValue", AttrKind::Stringish),
+            ("AXPlaceholderValue", AttrKind::String),
+            ("AXDescription", AttrKind::String),
+            ("AXIdentifier", AttrKind::String),
+            ("AXHelp", AttrKind::String),
+            ("AXEnabled", AttrKind::Bool),
+        ],
+    )
+    .into_iter();
+    let title = attributes.next().flatten().and_then(AttrValue::string);
+    let copied_value = attributes.next().flatten().and_then(AttrValue::stringish);
+    let placeholder = attributes.next().flatten().and_then(AttrValue::string);
     let value = copied_value
         .as_ref()
-        .and_then(|copied| copied.string_value.clone());
-    // AXPlaceholderValue as fallback for empty text fields.
-    let value = value
+        .and_then(|copied| copied.string_value.clone())
         .filter(|v| !v.trim().is_empty())
-        .or_else(|| copy_string_attr(element, "AXPlaceholderValue"));
-    let description = copy_string_attr(element, "AXDescription");
-    let identifier = copy_string_attr(element, "AXIdentifier");
-    let help = copy_string_attr(element, "AXHelp").filter(|h| !h.trim().is_empty());
+        .or(placeholder);
+    let description = attributes.next().flatten().and_then(AttrValue::string);
+    let identifier = attributes.next().flatten().and_then(AttrValue::string);
+    let help = attributes
+        .next()
+        .flatten()
+        .and_then(AttrValue::string)
+        .filter(|h| !h.trim().is_empty());
+    let copied_enabled = attributes.next().flatten().and_then(AttrValue::boolean);
     let actions = copy_action_names(element);
 
     let visible_title = title.as_deref().unwrap_or("").trim().to_owned();
@@ -493,7 +510,7 @@ unsafe fn walk_element(
     // the same native state also causes dispatch to refuse it, and exposing an
     // index for it invites agents to retain an unusable menu target.
     let enabled = if !actions.is_empty() || value_settable {
-        copy_bool_attr(element, "AXEnabled")
+        copied_enabled
     } else {
         None
     };
@@ -519,7 +536,19 @@ unsafe fn walk_element(
     }
 
     let element_ptr = element as usize;
-    let frame = element_screen_rect(element);
+    // Keep geometry behind the retained-node gate and expanded control state
+    // behind the actionable gate. Action names and settable probes stay separate.
+    let mut requests = vec![("AXPosition", AttrKind::Point), ("AXSize", AttrKind::Size)];
+    if is_actionable {
+        requests.extend([
+            ("AXValueDescription", AttrKind::String),
+            ("AXMinValue", AttrKind::Number),
+            ("AXMaxValue", AttrKind::Number),
+            ("AXSelected", AttrKind::Bool),
+        ]);
+    }
+    let mut remaining = copy_typed_attrs(element, &requests).into_iter();
+    let frame = batch_screen_rect(remaining.next().flatten(), remaining.next().flatten());
     // Structured `elements` only contains actionable nodes. Keep all new AX
     // round-trips behind that same gate so display-only rows pay no cost.
     let control_state = read_control_state_if_actionable(is_actionable, || ControlState {
@@ -529,13 +558,16 @@ unsafe fn walk_element(
             .or_else(|| value.clone())
             .map(|v| v.trim().to_owned())
             .filter(|v| !v.is_empty()),
-        value_description: copy_string_attr(element, "AXValueDescription")
+        value_description: remaining
+            .next()
+            .flatten()
+            .and_then(AttrValue::string)
             .map(|v| v.trim().to_owned())
             .filter(|v| !v.is_empty()),
-        min_value: copy_number_attr(element, "AXMinValue"),
-        max_value: copy_number_attr(element, "AXMaxValue"),
+        min_value: remaining.next().flatten().and_then(AttrValue::number),
+        max_value: remaining.next().flatten().and_then(AttrValue::number),
         enabled,
-        selected: copy_bool_attr(element, "AXSelected"),
+        selected: remaining.next().flatten().and_then(AttrValue::boolean),
     });
     let node = if is_actionable {
         let idx = *counter;

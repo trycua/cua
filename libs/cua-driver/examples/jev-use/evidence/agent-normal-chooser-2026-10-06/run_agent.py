@@ -206,11 +206,11 @@ def main():
                 for mode in modes:
                     row=asyncio.run(trial(host if mode=='frontier_literal_composite' else cua,sdk,http,mode,rep,smoke));out['results'].append(row)
                     resolved={event['model'] for item in out['results'] for event in item['jev'] if event.get('model')}
-                    if len(resolved)>1: raise RuntimeError('JEV server model changed during comparison')
                     out['resolved_jev_models']=sorted(resolved)
                     encoded=json.dumps(out,indent=2)
                     if key in encoded: raise RuntimeError('Secret persistence refused')
                     (HERE/('smoke-results.json' if smoke else 'results.json')).write_text(encoded+'\n')
                     print(json.dumps({k:row[k] for k in ('mode','rep','passed','error_type','wall_ms') if k in row}),flush=True)
+                    if len(resolved)>1: raise RuntimeError('JEV server model changed during comparison; evidence retained')
     finally: http.close()
 if __name__=='__main__': main()

@@ -1119,7 +1119,7 @@
     "agent": "claude-code",
     "turn_model_kind": "interactive",
     "turn_model_accepts_follow_ups": true,
-    "directory": "~/.spaces-agents/run-84a8dc1f",
+    "directory": "~/.cua/agents/run-84a8dc1f",
     "approvals_are_enforced": false,
     "notes": [
       "window suppressed by show=false"

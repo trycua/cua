@@ -55,7 +55,7 @@ delete_space {space}                -> delete it and stop metering
 | `agent_message {space, run_id, text, force}` | Next turn; refused mid-turn unless `force`. |
 | `agent_status`, `agent_list`, `agent_stop` | State, output tail, stop. |
 
-Runs live in the guest (`~/.spaces-agents/<run_id>/`) and survive the client
+Runs live in the guest (`~/.cua/agents/<run_id>/`) and survive the client
 going away. The daemon copies your agent's credential file (for example
 `~/.claude/.credentials.json`) into the Space at start;
 `CUA_SPACES_AGENT_CREDENTIALS_HOME=none` copies nothing.

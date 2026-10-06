@@ -576,3 +576,7 @@ Run the focused safety checks from the example directory:
 ```sh
 uv run --frozen python -m unittest discover -s python/tests -p test_literal_text_plan.py
 ```
+
+### Validating an ordinary model plan
+
+`validate_literal_text_plan` accepts only an exact transcription of the caller-authorized owner, ordered labels and literal values; it rejects additional actions, reordered steps and changed literals. Execution still requires fresh unique selectors and independent application checks. [Normal-chooser qualification](evidence/agent-normal-chooser-2026-10-06/README.md) compares a one-time frontier plan with the normal Cua JEV request rather than the earlier singleton control. That repeated live qualification is pending an unlocked desktop; the historical 9.1% singleton result does not establish a gain against the normal chooser.

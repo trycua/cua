@@ -5,7 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from literal_text_plan import LiteralTextStep, LiteralPlanHandoff, execute_literal_text_plan
+from literal_text_plan import LiteralTextStep, LiteralPlanHandoff, execute_literal_text_plan, validate_literal_text_plan
 
 
 def observation(token="s1:1", *, value="", pid=7, duplicate=False, truncated=False):
@@ -87,5 +87,28 @@ class Tests(unittest.IsolatedAsyncioTestCase):
             driver=Driver([])
             with self.assertRaises(LiteralPlanHandoff):await self.run_plan(driver,steps=steps)
             self.assertEqual(driver.observations,0)
+
+class PlanValidationTests(unittest.TestCase):
+    def test_exact_model_transcription(self):
+        expected=[LiteralTextStep("Email","x")]
+        self.assertEqual(validate_literal_text_plan({"owner":{"pid":7,"window_id":9},"steps":[{"label":"Email","value":"x"}]},pid=7,window_id=9,expected=expected),tuple(expected))
+    def test_model_cannot_reorder_authorized_steps(self):
+        expected=[LiteralTextStep("Name","person"),LiteralTextStep("Email","x")]
+        payload={"owner":{"pid":7,"window_id":9},"steps":[{"label":"Email","value":"x"},{"label":"Name","value":"person"}]}
+        with self.assertRaises(LiteralPlanHandoff):
+            validate_literal_text_plan(payload,pid=7,window_id=9,expected=expected)
+    def test_model_cannot_expand_or_change_authority(self):
+        base={"owner":{"pid":7,"window_id":9},"steps":[{"label":"Email","value":"x"}]}
+        variants=[]
+        for target,key,value in [("owner","pid",8),("owner","pid",True),("owner","extra",1),("step","value"," x"),("step","label","email"),("step","action","click")]:
+            item=copy.deepcopy(base)
+            if target=="owner":item["owner"][key]=value
+            if target=="step":
+                item=copy.deepcopy(base);item["steps"][0][key]=value
+            variants.append(item)
+        variants.extend([{**base,"extra":True},{**base,"steps":[]},{**base,"steps":base["steps"]*2}])
+        for item in variants:
+            with self.subTest(item=item),self.assertRaises(LiteralPlanHandoff):
+                validate_literal_text_plan(item,pid=7,window_id=9,expected=[LiteralTextStep("Email","x")])
 
 if __name__=="__main__":unittest.main()

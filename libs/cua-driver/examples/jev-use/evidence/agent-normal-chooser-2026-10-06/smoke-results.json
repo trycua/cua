@@ -1,0 +1,350 @@
+{
+  "arc_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
+  "arc_version": "0.1.1",
+  "native_version": "0.34.0",
+  "native_latest_version": "0.34.0",
+  "native_release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
+  "arc_upstream_checked_at": "2026-10-06T14:52:40.932502+00:00",
+  "candidates_checked_at": "2026-10-06T14:52:40Z",
+  "macos": "27.0.1",
+  "python": "3.12.12",
+  "cua_source_head": "11bd1e8e30dced7aaa4cc8c62d8bc68472363fb9",
+  "cua_upstream_head": "aa7a31a5f3633249db69f766256b1749feb7a652",
+  "codex_cli": "codex-cli 0.160.1",
+  "results": [
+    {
+      "mode": "chooser_only",
+      "rep": 0,
+      "smoke": true,
+      "passed": false,
+      "terminal": "handoff",
+      "requests": [],
+      "decisions": [],
+      "frontier": null,
+      "error_type": "LiteralPlanHandoff",
+      "wall_ms": 350.5018340074457,
+      "calls": [
+        {
+          "tool": "get_window_state",
+          "arguments": {
+            "pid": 33788,
+            "window_id": 13916,
+            "include_accessibility_tree": true,
+            "include_screenshot": true,
+            "timeout_ms": 1000
+          },
+          "ms": 346.3939590001246,
+          "error": false,
+          "result": {
+            "_note": "Prefer `elements` \u2014 `tree_markdown` will continue to work but new fields will only be added to the structured side. Issue #22865: use `max_elements` / `max_depth` to bound the AX walk on apps with very large trees.",
+            "app_name": "python",
+            "background_input": {
+              "exact_window": {
+                "pid": 33788,
+                "status": "ax_unresolved",
+                "window_id": 13916
+              },
+              "observation": {
+                "frame_freshness": "unknown",
+                "one_shot_capture": "unavailable"
+              },
+              "routes": [
+                {
+                  "reason": "off_space_or_ax_unresolved",
+                  "route": "accessibility",
+                  "status": "refused"
+                },
+                {
+                  "reason": "off_space_or_ax_unresolved",
+                  "route": "window_pointer",
+                  "status": "refused"
+                },
+                {
+                  "reason": "off_space_or_ax_unresolved",
+                  "route": "pid_keyboard",
+                  "status": "refused"
+                }
+              ]
+            },
+            "degraded": true,
+            "degraded_reason": "ax_window_unresolved: window_id 13916 exists and is owned by pid 33788, but none of the 0 AXWindow element(s) under that pid reports this CGWindowID. The tree is returned EMPTY on purpose: the accessibility elements reachable under this pid belong to other surfaces (the menu bar, other windows), not to the requested window, so presenting them would misground the next action.",
+            "element_count": 0,
+            "elements": [],
+            "elements_complete": false,
+            "escalation": {
+              "reason": "observation-only: the screenshot in this response IS the requested window, but background input (including px) is refused while its AX surface is unresolved \u2014 events could reach a same-process sibling window. Re-snapshot after the app settles, or act with delivery_mode:\"foreground\".",
+              "recommended": "foreground"
+            },
+            "nodes_pending": 0,
+            "nodes_visited": 0,
+            "pid": 33788,
+            "returned_element_count": 0,
+            "screenshot_error": {
+              "code": "px_capture_unavailable",
+              "reason": "window 13916 capture failed: native: ScreenCaptureKit capture failed for window 13916: SCScreenshotManager::capture_image failed for window 13916: Screenshot capture failed: Screenshot error: Failed to start stream due to audio/video capture failure; using shell fallback; shell fallback: screencapture failed for window 13916 with status exit status: 1: could not create image from window",
+              "suggestion": "re-snapshot the window after capture permission/state recovers",
+              "window_id": 13916
+            },
+            "screenshot_frame_valid": false,
+            "timeout_ms": 1000,
+            "total_element_count": 0,
+            "truncated": false,
+            "walk_elapsed_ms": 0,
+            "window_id": 13916,
+            "window_title": "Arc Bench Form"
+          },
+          "front_changed": false,
+          "cursor_changed": false,
+          "physical_mouse_recent": false
+        }
+      ],
+      "driver_calls": 1,
+      "driver_ms": 346.3939590001246,
+      "jev": [],
+      "jev_http": [],
+      "oracle_state": {
+        "name": "",
+        "email": "",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false
+    },
+    {
+      "mode": "frontier_normal",
+      "rep": 0,
+      "smoke": true,
+      "passed": false,
+      "terminal": "handoff",
+      "requests": [],
+      "decisions": [],
+      "frontier": null,
+      "error_type": "LiteralPlanHandoff",
+      "wall_ms": 318.23391700163484,
+      "calls": [
+        {
+          "tool": "get_window_state",
+          "arguments": {
+            "pid": 33809,
+            "window_id": 13923,
+            "include_accessibility_tree": true,
+            "include_screenshot": true,
+            "timeout_ms": 1000
+          },
+          "ms": 317.49600000330247,
+          "error": false,
+          "result": {
+            "_note": "Prefer `elements` \u2014 `tree_markdown` will continue to work but new fields will only be added to the structured side. Issue #22865: use `max_elements` / `max_depth` to bound the AX walk on apps with very large trees.",
+            "app_name": "python",
+            "background_input": {
+              "exact_window": {
+                "pid": 33809,
+                "status": "ax_unresolved",
+                "window_id": 13923
+              },
+              "observation": {
+                "frame_freshness": "unknown",
+                "one_shot_capture": "unavailable"
+              },
+              "routes": [
+                {
+                  "reason": "off_space_or_ax_unresolved",
+                  "route": "accessibility",
+                  "status": "refused"
+                },
+                {
+                  "reason": "off_space_or_ax_unresolved",
+                  "route": "window_pointer",
+                  "status": "refused"
+                },
+                {
+                  "reason": "off_space_or_ax_unresolved",
+                  "route": "pid_keyboard",
+                  "status": "refused"
+                }
+              ]
+            },
+            "degraded": true,
+            "degraded_reason": "ax_window_unresolved: window_id 13923 exists and is owned by pid 33809, but none of the 0 AXWindow element(s) under that pid reports this CGWindowID. The tree is returned EMPTY on purpose: the accessibility elements reachable under this pid belong to other surfaces (the menu bar, other windows), not to the requested window, so presenting them would misground the next action.",
+            "element_count": 0,
+            "elements": [],
+            "elements_complete": false,
+            "escalation": {
+              "reason": "observation-only: the screenshot in this response IS the requested window, but background input (including px) is refused while its AX surface is unresolved \u2014 events could reach a same-process sibling window. Re-snapshot after the app settles, or act with delivery_mode:\"foreground\".",
+              "recommended": "foreground"
+            },
+            "nodes_pending": 0,
+            "nodes_visited": 0,
+            "pid": 33809,
+            "returned_element_count": 0,
+            "screenshot_error": {
+              "code": "px_capture_unavailable",
+              "reason": "window 13923 capture failed: native: ScreenCaptureKit capture failed for window 13923: SCScreenshotManager::capture_image failed for window 13923: Screenshot capture failed: Screenshot error: Failed to start stream due to audio/video capture failure; using shell fallback; shell fallback: screencapture failed for window 13923 with status exit status: 1: could not create image from window",
+              "suggestion": "re-snapshot the window after capture permission/state recovers",
+              "window_id": 13923
+            },
+            "screenshot_frame_valid": false,
+            "timeout_ms": 1000,
+            "total_element_count": 0,
+            "truncated": false,
+            "walk_elapsed_ms": 0,
+            "window_id": 13923,
+            "window_title": "Arc Bench Form"
+          },
+          "front_changed": false,
+          "cursor_changed": false,
+          "physical_mouse_recent": false
+        }
+      ],
+      "driver_calls": 1,
+      "driver_ms": 317.49600000330247,
+      "jev": [],
+      "jev_http": [],
+      "oracle_state": {
+        "name": "",
+        "email": "",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false
+    },
+    {
+      "mode": "frontier_literal",
+      "rep": 0,
+      "smoke": true,
+      "passed": false,
+      "terminal": "handoff",
+      "requests": [],
+      "decisions": [],
+      "frontier": null,
+      "error_type": "LiteralPlanHandoff",
+      "wall_ms": 300.8226249949075,
+      "calls": [
+        {
+          "tool": "get_window_state",
+          "arguments": {
+            "pid": 33834,
+            "window_id": 13928,
+            "include_accessibility_tree": true,
+            "include_screenshot": true,
+            "timeout_ms": 1000
+          },
+          "ms": 300.1678339933278,
+          "error": false,
+          "result": {
+            "_note": "Prefer `elements` \u2014 `tree_markdown` will continue to work but new fields will only be added to the structured side. Issue #22865: use `max_elements` / `max_depth` to bound the AX walk on apps with very large trees.",
+            "app_name": "python",
+            "background_input": {
+              "exact_window": {
+                "pid": 33834,
+                "status": "ax_unresolved",
+                "window_id": 13928
+              },
+              "observation": {
+                "frame_freshness": "unknown",
+                "one_shot_capture": "unavailable"
+              },
+              "routes": [
+                {
+                  "reason": "off_space_or_ax_unresolved",
+                  "route": "accessibility",
+                  "status": "refused"
+                },
+                {
+                  "reason": "off_space_or_ax_unresolved",
+                  "route": "window_pointer",
+                  "status": "refused"
+                },
+                {
+                  "reason": "off_space_or_ax_unresolved",
+                  "route": "pid_keyboard",
+                  "status": "refused"
+                }
+              ]
+            },
+            "degraded": true,
+            "degraded_reason": "ax_window_unresolved: window_id 13928 exists and is owned by pid 33834, but none of the 0 AXWindow element(s) under that pid reports this CGWindowID. The tree is returned EMPTY on purpose: the accessibility elements reachable under this pid belong to other surfaces (the menu bar, other windows), not to the requested window, so presenting them would misground the next action.",
+            "element_count": 0,
+            "elements": [],
+            "elements_complete": false,
+            "escalation": {
+              "reason": "observation-only: the screenshot in this response IS the requested window, but background input (including px) is refused while its AX surface is unresolved \u2014 events could reach a same-process sibling window. Re-snapshot after the app settles, or act with delivery_mode:\"foreground\".",
+              "recommended": "foreground"
+            },
+            "nodes_pending": 0,
+            "nodes_visited": 0,
+            "pid": 33834,
+            "returned_element_count": 0,
+            "screenshot_error": {
+              "code": "px_capture_unavailable",
+              "reason": "window 13928 capture failed: native: ScreenCaptureKit capture failed for window 13928: SCScreenshotManager::capture_image failed for window 13928: Screenshot capture failed: Screenshot error: Failed to start stream due to audio/video capture failure; using shell fallback; shell fallback: screencapture failed for window 13928 with status exit status: 1: could not create image from window",
+              "suggestion": "re-snapshot the window after capture permission/state recovers",
+              "window_id": 13928
+            },
+            "screenshot_frame_valid": false,
+            "timeout_ms": 1000,
+            "total_element_count": 0,
+            "truncated": false,
+            "walk_elapsed_ms": 0,
+            "window_id": 13928,
+            "window_title": "Arc Bench Form"
+          },
+          "front_changed": false,
+          "cursor_changed": false,
+          "physical_mouse_recent": false
+        }
+      ],
+      "driver_calls": 1,
+      "driver_ms": 300.1678339933278,
+      "jev": [],
+      "jev_http": [],
+      "oracle_state": {
+        "name": "",
+        "email": "",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false
+    }
+  ],
+  "servers": {
+    "arc": {
+      "name": "arc-cua",
+      "version": "0.1.1"
+    },
+    "cua": {
+      "name": "cua-driver",
+      "version": "0.34.0"
+    }
+  }
+}

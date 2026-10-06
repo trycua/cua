@@ -1478,6 +1478,7 @@ impl Space {
   fn require(&self, name: &str) -> Result<()>;
   fn require_any(&self, names: &[&str]) -> Result<()>;
   fn os_family(&self) -> OsFamily;
+  fn reported_os(&self) -> Option<(&'static str, &str, &str)>;
   fn is_windows(&self) -> bool;
   async fn websocket_headers(&self) -> Result<Vec<(String, String)>>;
   fn websocket_url(&self, ws_path: &str) -> Result<String>;

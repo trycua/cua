@@ -561,7 +561,7 @@ pub(crate) fn os_names(space: &Space) -> (String, String) {
 
 /// The guest OS family from `GetCapabilities`: `linux`, `macos`,
 /// `windows`, or empty when not reported.
-pub(crate) fn os_family(caps: &cua_proto::env::v1::GetCapabilitiesResponse) -> String {
+pub(crate) fn os_family(caps: &cua_proto::env::v1::GetCapabilitiesResponse) -> &'static str {
     use cua_proto::env::v1::OsFamily;
     match caps.os.as_ref().map(|o| o.family()) {
         Some(OsFamily::Linux) => "linux",
@@ -569,7 +569,6 @@ pub(crate) fn os_family(caps: &cua_proto::env::v1::GetCapabilitiesResponse) -> S
         Some(OsFamily::Windows) => "windows",
         _ => "",
     }
-    .into()
 }
 
 /// Lowercase DNS label: `[a-z0-9-]`, trimmed of dashes, at most 63 chars.
@@ -1108,7 +1107,7 @@ impl Spaces {
                 .filter(|f| f.supported)
                 .map(|f| f.name.clone())
                 .collect(),
-            os: os_family(caps),
+            os: os_family(caps).into(),
             os_name,
             os_pretty_name,
             image: space

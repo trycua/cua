@@ -46,12 +46,12 @@ describe("rowToSpace", () => {
     expect(space.detail).toContain("timed out");
   });
 
-  it("maps direct and local rows, defaulting the OS to linux", () => {
+  it("maps direct and local rows, preserving an unknown OS", () => {
     const direct = rowToSpace(
       row({ id: "space://direct/10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct", os: undefined, addedAt: undefined }),
       42,
     );
-    expect(direct.os).toBe("linux");
+    expect(direct.os).toBe("unknown");
     expect(direct.detail).toBe("10.0.0.5:3211");
     expect(direct.name).toBe("10.0.0.5:3211");
     expect(direct.lastUsedAt).toBe(42);

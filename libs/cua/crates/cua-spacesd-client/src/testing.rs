@@ -152,6 +152,8 @@ pub struct MockState {
     /// Features reported unsupported, with their limitation (a host that
     /// does not share its desktop).
     withheld_features: Mutex<Vec<(String, String)>>,
+    /// Override the reported OS, including absence for an older host.
+    pub os: Mutex<Option<Option<pb::OperatingSystem>>>,
     /// `GetCapabilities.version` (default `0.0.0-mock`).
     version: Mutex<Option<String>>,
     /// `GetCapabilitiesResponse::machine_seal_public_key` (S1); empty (an
@@ -612,13 +614,19 @@ impl SystemService for Svc {
                 .unwrap_or_else(|| "0.0.0-mock".into()),
             protocol_version: cua_proto::ENV_PROTOCOL_VERSION,
             protocol_revision: cua_proto::ENV_PROTOCOL_REVISION,
-            os: Some(pb::OperatingSystem {
-                family: pb::OsFamily::Linux as i32,
-                name: "MockOS".into(),
-                version: "1".into(),
-                kernel: "mock".into(),
-                pretty_name: "MockOS 1.0.3 LTS".into(),
-            }),
+            os: self
+                .0
+                .os
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or(Some(pb::OperatingSystem {
+                    family: pb::OsFamily::Linux as i32,
+                    name: "MockOS".into(),
+                    version: "1".into(),
+                    kernel: "mock".into(),
+                    pretty_name: "MockOS 1.0.3 LTS".into(),
+                })),
             runtime: pb::Runtime::Container as i32,
             features: vec![
                 pb::Feature {

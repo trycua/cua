@@ -784,6 +784,9 @@ pub fn usage_text(used: u64, total: u64) -> String {
 /// The OS in words: the full string the Space reported ("Ubuntu 24.04.3
 /// LTS"), else its product name, else the family ("Linux").
 pub fn system_text(space: &Space) -> String {
+    if space.os == crate::model::SpaceOs::Unknown {
+        return space.os.label().into();
+    }
     [&space.os_pretty_name, &space.os_name]
         .into_iter()
         .flatten()

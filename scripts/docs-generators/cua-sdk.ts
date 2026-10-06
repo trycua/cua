@@ -463,7 +463,7 @@ export const PAGES: PageSpec[] = [
     title: 'Space',
     description: 'A connected Space: shell, files, tools, windows and the hotspot.',
     intro:
-      'A `Space` is a connected machine. Every primitive checks the spacesd feature it needs first and fails with `CapabilityMissing` when the Space lacks it. Streams, teleport and agents have their own pages.',
+      'Connected machine primitives; missing spacesd features return `CapabilityMissing`.',
     items: [
       'Space',
       'SpaceBashResult',

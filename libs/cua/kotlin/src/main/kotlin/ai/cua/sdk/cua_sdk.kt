@@ -3600,7 +3600,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_space_id() != 55610.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cua_sdk_checksum_method_space_info() != 1726.toShort()) {
+    if (lib.uniffi_cua_sdk_checksum_method_space_info() != 20024.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_join_presence() != 56636.toShort()) {
@@ -16229,7 +16229,10 @@ public interface SpaceInterface {
     fun `id`(): kotlin.String
 
     /**
-     * The registry entry.
+     * Connection-time snapshot; never refreshed. With spacesd, handshake
+     * `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown
+     * families clear them. Other fields and non-spacesd services retain
+     * registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views.
      */
     fun `info`(): SpaceInfo
 
@@ -16971,7 +16974,10 @@ open class Space: Disposable, AutoCloseable, SpaceInterface
 
 
     /**
-     * The registry entry.
+     * Connection-time snapshot; never refreshed. With spacesd, handshake
+     * `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown
+     * families clear them. Other fields and non-spacesd services retain
+     * registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views.
      */override fun `info`(): SpaceInfo {
             return FfiConverterTypeSpaceInfo.lift(
     callWithHandle {

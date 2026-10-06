@@ -84,6 +84,7 @@ pub fn scene_for_os(os: SpaceOs) -> ThumbnailScene {
         SpaceOs::Macos => ThumbnailScene::MacDesktop,
         SpaceOs::Windows => ThumbnailScene::WindowsDesktop,
         SpaceOs::Linux => ThumbnailScene::LinuxTerminal,
+        SpaceOs::Unknown => ThumbnailScene::Blank,
     }
 }
 
@@ -203,7 +204,7 @@ fn cloud_place_of(row: &SpaceRow) -> Option<&str> {
 /// Maps one registry row onto a Space. `now` stands in for a missing
 /// `added_at`.
 pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
-    let os = row.os.unwrap_or(SpaceOs::Linux);
+    let os = row.os.unwrap_or(SpaceOs::Unknown);
     let power = power_of_row(row);
     // Turned off as the SDK recorded it: not running, whatever a probe
     // that raced the turn-off said.
@@ -221,14 +222,20 @@ pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
     let namespace = cloud_namespace_of(&row.id);
     let text = |v: &Option<String>| v.clone().filter(|v| !v.trim().is_empty());
     let (os_name, os_pretty_name, image) = (
-        text(&row.os_name),
-        text(&row.os_pretty_name),
+        (os != SpaceOs::Unknown)
+            .then(|| text(&row.os_name))
+            .flatten(),
+        (os != SpaceOs::Unknown)
+            .then(|| text(&row.os_pretty_name))
+            .flatten(),
         text(&row.image),
     );
     // Until the Space reports its OS, the catalog's distribution for its
     // image names it ("Omarchy", not "Linux").
     let distro = match (&os_name, &os_pretty_name) {
-        (None, None) => image.as_deref().and_then(crate::wizard::image_distro),
+        (None, None) if os != SpaceOs::Unknown => {
+            image.as_deref().and_then(crate::wizard::image_distro)
+        }
         _ => None,
     };
     Space {
@@ -442,6 +449,58 @@ mod tests {
     }
 
     #[test]
+    fn unknown_os_stays_neutral_across_the_roster_and_details() {
+        let space = row_to_space(
+            &SpaceRow {
+                id: "relay:mac-host".into(),
+                provider: "relay".into(),
+                os: None,
+                // Neither stale names nor a known image may invent an OS.
+                os_pretty_name: Some("Ubuntu old".into()),
+                image: Some("linux:24.04".into()),
+                ..row()
+            },
+            0,
+        );
+        assert_eq!(space.os.label(), "Unknown");
+        assert_eq!(space.scene, ThumbnailScene::Blank);
+        assert_eq!(space.os_name, None);
+        assert_eq!(space.os_pretty_name, None);
+        assert_eq!(sidebar::system_text(&space), "Unknown");
+        let tile = crate::notch::tiles(std::slice::from_ref(&space), None).remove(0);
+        assert_eq!(tile.symbol, "computer");
+        assert!(tile.label.contains("Unknown"), "{}", tile.label);
+        assert!(crate::notch::os_icon_svg("computer").is_some());
+        assert_eq!(
+            crate::notch::os_icon_system_symbol("computer"),
+            Some("desktopcomputer")
+        );
+        let mut future = serde_json::to_value(&space).unwrap();
+        future["os"] = "future-os".into();
+        assert_eq!(
+            serde_json::from_value::<Space>(future).unwrap().os,
+            SpaceOs::Unknown
+        );
+        for (os, label, icon) in [
+            (SpaceOs::Macos, "macOS", "os-macos"),
+            (SpaceOs::Windows, "Windows", "os-windows"),
+            (SpaceOs::Linux, "Linux", "os-linux"),
+        ] {
+            let known = row_to_space(
+                &SpaceRow {
+                    os: Some(os),
+                    os_name: None,
+                    os_pretty_name: None,
+                    ..row()
+                },
+                0,
+            );
+            assert_eq!(sidebar::system_text(&known), label);
+            assert_eq!(crate::notch::os_icon(known.os, None), icon);
+        }
+    }
+
+    #[test]
     fn maps_a_reachable_cloud_row() {
         let s = row_to_space(&row(), 1_000);
         assert_eq!(s.name, "Brave Otter");
@@ -479,7 +538,7 @@ mod tests {
             },
             42,
         );
-        assert_eq!(d.os, SpaceOs::Linux);
+        assert_eq!(d.os.label(), "Unknown");
         assert_eq!(d.detail, "10.0.0.5:3211");
         assert_eq!(d.name, "10.0.0.5:3211");
         assert_eq!(d.last_used_at, 42);

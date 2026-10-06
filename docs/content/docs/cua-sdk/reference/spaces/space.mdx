@@ -12,7 +12,7 @@ description: "A connected Space: shell, files, tools, windows and the hotspot."
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-A `Space` is a connected machine. Every primitive checks the spacesd feature it needs first and fails with `CapabilityMissing` when the Space lacks it. Streams, teleport and agents have their own pages.
+Connected machine primitives; missing spacesd features return `CapabilityMissing`.
 
 ## `Space`
 
@@ -69,7 +69,7 @@ Returned by [`Spaces.space`](/cua-sdk/reference/spaces#spacesspace).
 | Accessor | Returns | Description |
 | --- | --- | --- |
 | `id()` | `String` | Id. |
-| `info()` | [`SpaceInfo`](/cua-sdk/reference/spaces#spaceinfo-record) | The registry entry. |
+| `info()` | [`SpaceInfo`](/cua-sdk/reference/spaces#spaceinfo-record) | Connection-time snapshot; never refreshed. With spacesd, handshake `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown families clear them. Other fields and non-spacesd services retain registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views. |
 | `services()` | `Vec<String>` | The MCP services this Space exposes: `driver` when its spacesd has the tool registry, then every declared service (reached over generic MCP; no spacesd needed). |
 
 ### `Space.bash`

@@ -19,6 +19,8 @@ pub enum AppSpaceOs {
     Windows,
     /// Linux.
     Linux,
+    /// The host has not reported a recognized operating system.
+    Unknown,
 }
 
 /// Lifecycle status of a Space.

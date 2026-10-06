@@ -30567,7 +30567,10 @@ export interface SpaceLike {
  */
     id(): string;
 /**
- * The registry entry.
+ * Connection-time snapshot; never refreshed. With spacesd, handshake
+ * `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown
+ * families clear them. Other fields and non-spacesd services retain
+ * registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views.
  */
     info(): SpaceInfo;
 /**
@@ -31394,7 +31397,10 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * The registry entry.
+ * Connection-time snapshot; never refreshed. With spacesd, handshake
+ * `os`, `os_name`, `os_pretty_name` replace record values; missing/unknown
+ * families clear them. Other fields and non-spacesd services retain
+ * registry/discovery values. `Spaces.list()`/`Spaces.resolve()` remain record views.
  */
     info(): SpaceInfo {
     return ((__rb: Uint8Array) => {
@@ -37595,7 +37601,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_id() !== 55610) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_id");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_space_info() !== 1726) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_space_info() !== 20024) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_info");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_join_presence() !== 56636) {

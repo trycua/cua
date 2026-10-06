@@ -48202,6 +48202,10 @@ public enum AppSpaceOs: Equatable, Hashable {
      * Linux.
      */
     case linux
+    /**
+     * The host has not reported a recognized operating system.
+     */
+    case unknown
 
 
 
@@ -48229,6 +48233,8 @@ public struct FfiConverterTypeAppSpaceOs: FfiConverterRustBuffer {
 
         case 3: return .linux
 
+        case 4: return .unknown
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -48247,6 +48253,10 @@ public struct FfiConverterTypeAppSpaceOs: FfiConverterRustBuffer {
 
         case .linux:
             writeInt(&buf, Int32(3))
+
+
+        case .unknown:
+            writeInt(&buf, Int32(4))
 
         }
     }

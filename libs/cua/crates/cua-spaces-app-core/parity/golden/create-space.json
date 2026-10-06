@@ -2313,7 +2313,7 @@
         "facts": [
           "Status: timed out",
           "Identifier: direct:10.0.0.5:3211 [copy direct:10.0.0.5:3211 doc.on.doc Copy / checkmark Copied 1500ms]",
-          "System: Linux"
+          "System: Unknown"
         ],
         "previewText": "Not reachable",
         "showSections": false,

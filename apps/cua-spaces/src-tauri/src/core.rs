@@ -449,7 +449,7 @@ impl SpaceRow {
             kind: (!info.kind.is_empty()).then_some(info.kind),
             arch: (!info.arch.is_empty()).then_some(info.arch),
             added_at: info.added_at,
-            os: None,
+            os: matches!(info.os.as_str(), "macos" | "windows" | "linux").then_some(info.os),
             reachable: false,
             error: None,
             host: (!info.host.is_empty()).then_some(info.host),
@@ -464,24 +464,10 @@ impl SpaceRow {
 
     fn connected(info: SpaceInfo, space: &Space) -> Self {
         let mut row = Self::from_info(info);
-        row.os = Some(os_name(space).into());
-        if let Some(name) = space
-            .capabilities()
-            .os
-            .as_ref()
-            .map(|o| o.name.clone())
-            .filter(|n| !n.is_empty())
-        {
-            row.os_name = Some(name);
-        }
-        if let Some(pretty) = space
-            .capabilities()
-            .os
-            .as_ref()
-            .map(|o| o.pretty_name.clone())
-            .filter(|n| !n.is_empty())
-        {
-            row.os_pretty_name = Some(pretty);
+        if let Some((family, name, pretty_name)) = space.reported_os() {
+            row.os = (!family.is_empty()).then(|| family.to_string());
+            row.os_name = (!name.is_empty()).then(|| name.to_string());
+            row.os_pretty_name = (!pretty_name.is_empty()).then(|| pretty_name.to_string());
         }
         if let Some((image, digest)) = space.image() {
             row.image = Some(image.to_string());
@@ -505,14 +491,6 @@ impl SpaceRow {
             .map(|f| f.name.clone())
             .collect();
         row
-    }
-}
-
-fn os_name(space: &Space) -> &'static str {
-    match space.os_family() {
-        pb::OsFamily::Macos => "macos",
-        pb::OsFamily::Windows => "windows",
-        _ => "linux",
     }
 }
 

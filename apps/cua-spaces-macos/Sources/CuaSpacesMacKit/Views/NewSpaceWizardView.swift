@@ -397,11 +397,7 @@ public struct NewSpaceWizardView: View {
     }
 
     private func osOf(_ id: String) -> AppSpaceOs {
-        switch id {
-        case "macos": return .macos
-        case "windows": return .windows
-        default: return .linux
-        }
+        AppSpaceOs(word: id) ?? .unknown
     }
 
     private func runtimeOf(_ word: String) -> AppRuntime {

@@ -363,6 +363,7 @@ pub const OS_ICONS: &[&str] = &[
 /// family's (`os-macos`, `os-windows`, `os-linux`).
 pub fn os_icon(os: SpaceOs, os_name: Option<&str>) -> &'static str {
     match os {
+        SpaceOs::Unknown => "computer",
         SpaceOs::Macos => "os-macos",
         SpaceOs::Windows => "os-windows",
         SpaceOs::Linux => {
@@ -378,6 +379,9 @@ pub fn os_icon(os: SpaceOs, os_name: Option<&str>) -> &'static str {
 /// The icon's artwork (a single-color 24 x 24 SVG; the shells tint it).
 pub fn os_icon_svg(id: &str) -> Option<&'static str> {
     Some(match id {
+        "computer" => {
+            r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M3 3h18v14h-8v3h5v2H6v-2h5v-3H3V3zm2 2v10h14V5H5z"/></svg>"#
+        }
         "os-macos" => include_str!("../../assets/os-icons/os-macos.svg"),
         "os-windows" => include_str!("../../assets/os-icons/os-windows.svg"),
         "os-linux" => include_str!("../../assets/os-icons/os-linux.svg"),
@@ -400,7 +404,11 @@ pub fn os_icon_svg(id: &str) -> Option<&'static str> {
 /// The system symbol to draw instead of the SVG on macOS (`apple.logo`
 /// for macOS Spaces), if any.
 pub fn os_icon_system_symbol(id: &str) -> Option<&'static str> {
-    (id == "os-macos").then_some("apple.logo")
+    match id {
+        "os-macos" => Some("apple.logo"),
+        "computer" => Some("desktopcomputer"),
+        _ => None,
+    }
 }
 
 /// Where a Space runs, in words, for its tile: "This Mac" for one on this

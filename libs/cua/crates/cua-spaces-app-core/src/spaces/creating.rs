@@ -314,7 +314,7 @@ pub fn pending_name(name: &str, os: SpaceOs) -> String {
     match os {
         SpaceOs::Macos => "macOS Space".into(),
         SpaceOs::Windows => "Windows Space".into(),
-        SpaceOs::Linux => "New Space".into(),
+        SpaceOs::Linux | SpaceOs::Unknown => "New Space".into(),
     }
 }
 
@@ -331,6 +331,8 @@ pub const PHASES: [&str; 6] = [
 /// The kinds of create, by how long their phases take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CreateFamily {
+    /// No recognized OS; no timing estimate.
+    Unknown,
     /// A Linux container on this Mac.
     Container,
     /// A Linux VM on this Mac, native (QEMU with HVF).
@@ -361,6 +363,7 @@ pub enum CreateFamily {
 /// does not report is 0.
 pub fn expected_seconds(family: CreateFamily) -> [f64; 6] {
     match family {
+        CreateFamily::Unknown => [0.0; 6],
         CreateFamily::Container => [1.0, 15.0, 0.3, 0.2, 3.5, 0.1],
         CreateFamily::Vm => [1.3, 19.0, 0.0, 0.2, 17.0, 0.2],
         CreateFamily::EmulatedVm => [1.4, 63.0, 0.0, 0.2, 115.0, 0.5],
@@ -373,6 +376,7 @@ pub fn expected_seconds(family: CreateFamily) -> [f64; 6] {
 /// The create's family.
 pub fn family(p: &PendingCreate) -> CreateFamily {
     match (p.provider, p.os) {
+        (_, SpaceOs::Unknown) => CreateFamily::Unknown,
         (SpaceProvider::Cloud, _) => CreateFamily::Cloud,
         (_, SpaceOs::Macos) => CreateFamily::Macos,
         (_, SpaceOs::Windows) => CreateFamily::Windows,
@@ -600,7 +604,7 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
             host_arch,
             gpu,
         } => {
-            if next.pending.iter().any(|p| &p.id == id) {
+            if *os == SpaceOs::Unknown || next.pending.iter().any(|p| &p.id == id) {
                 return next;
             }
             let image = image.clone().filter(|i| !i.trim().is_empty());
@@ -1059,6 +1063,15 @@ mod tests {
             bytes_total: Some(total),
             bytes_per_second: Some(rate),
         }
+    }
+
+    #[test]
+    fn unknown_os_cannot_start_a_create() {
+        let state = CreatesState::default();
+        assert_eq!(
+            reduce(&state, &start("pending:unknown", "", SpaceOs::Unknown)),
+            state
+        );
     }
 
     /// The first macOS create on a Mac without Lume: the built-in Lume's

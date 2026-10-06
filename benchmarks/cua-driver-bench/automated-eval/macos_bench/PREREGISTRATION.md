@@ -61,6 +61,7 @@ The 360 s and 45-turn limits are kept for the CDB tasks even though the original
 * `run_bench.py`: CDB path in `run_attempt`, window placement, final-workspace snapshot, evaluator-path scan, preflight checks for the pack, the apps and the isolation; tasks with `"status": "dropped"` are skipped; recording-test threshold 1.0 s to 0.5 s.
 * `bench_core.py`: priority order puts `CDB-*` before `MB-*`.
 * `pins.json`: VM macOS version and build, `cdb_pack` revision and digests.
+* `launch/launch_bench.command`: `--cutoff-utc` is passed as a zsh array (the first VM launch at 08:56 UTC failed on it before any trial), and the launcher minimises its own Terminal window so it does not cover task windows. The real run started at 08:57:55 UTC with this launcher; no trial had completed when this line was added.
 
 ### A1.7 Validation done before the first trial (no model call)
 

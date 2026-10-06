@@ -37,11 +37,12 @@ if [ "$GATE" != "0" ]; then
 fi
 # Keep the Mac and its display awake while the runner lives; the runner is a child of this shell.
 /usr/bin/caffeinate -dimsu -w $$ &
+CUTOFF_ARGS=(); [ -n "$CUTOFF_UTC" ] && CUTOFF_ARGS=(--cutoff-utc "$CUTOFF_UTC")  # zsh: one array, not one word
 $PY run_bench.py run \
   --run-id "$RUN_ID" \
   --build-dir "$WORK/build" \
   --phase1-runs 3 --phase2-runs 2 \
-  ${CUTOFF_UTC:+--cutoff-utc "$CUTOFF_UTC"} \
+  "${CUTOFF_ARGS[@]}" \
   ${=EXTRA_ARGS} \
   >> "$RUN_DIR/launcher.log" 2>&1
 echo $? > "$RUN_DIR/launcher.exit"

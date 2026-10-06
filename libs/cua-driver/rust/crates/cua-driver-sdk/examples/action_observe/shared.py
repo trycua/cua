@@ -75,6 +75,7 @@ class MCP:
             initialized = self.request('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},
                                                       'clientInfo': {'name': 'oh-arc-eval', 'version': '1'}})
             self.server_info = initialized['serverInfo']
+            self.backend_metadata = initialized.get('_meta',{}).get('driver_metadata')
             self.send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
             self.schemas = {t['name']: t['inputSchema'] for t in self.request('tools/list', {})['tools']}
         except BaseException:

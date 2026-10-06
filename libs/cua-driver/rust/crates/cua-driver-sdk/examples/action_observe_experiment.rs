@@ -2,84 +2,12 @@
 //! A composite response preserves action and observation results independently.
 use cua_driver_sdk::CuaDriver;
 use serde_json::{json, Value};
-use std::future::Future;
+#[path = "action_observe/operation.rs"]
+mod operation;
+use operation::{child, Cancellation, Options};
+#[cfg(test)]
+use operation::{child_envelope, composite_dispatch, observation_arguments};
 use std::io::{self, BufRead, Write};
-
-fn observation_arguments(args: &Value) -> Result<(&str, Value, Value), &'static str> {
-    let name = args
-        .get("tool")
-        .and_then(Value::as_str)
-        .ok_or("missing tool")?;
-    if !["click", "set_value", "type_text"].contains(&name) {
-        return Err("only one element action is supported");
-    }
-    let action = args
-        .get("arguments")
-        .filter(|v| v.is_object())
-        .ok_or("missing arguments")?;
-    for key in ["pid", "window_id"] {
-        if !action
-            .get(key)
-            .and_then(Value::as_i64)
-            .is_some_and(|v| v > 0)
-        {
-            return Err("explicit positive pid and window_id required");
-        }
-    }
-    if !action
-        .get("element_token")
-        .and_then(Value::as_str)
-        .is_some_and(|v| !v.is_empty())
-    {
-        return Err("observed element_token required");
-    }
-    let mut read = json!({"pid": action["pid"], "window_id": action["window_id"], "include_screenshot": false});
-    if let Some(session) = action.get("session") {
-        read["session"] = session.clone();
-    }
-    Ok((name, action.clone(), read))
-}
-
-async fn child(driver: &CuaDriver, name: &str, args: Value) -> Value {
-    match driver.call_tool(name.to_owned(), args.to_string()).await {
-        Ok(result) => child_envelope(&result.raw_json),
-        Err(_) => {
-            json!({"isError":true,"content":[{"type":"text","text":"child dispatch failed; inspect effects before retrying"}]})
-        }
-    }
-}
-
-fn child_envelope(raw: &str) -> Value {
-    match serde_json::from_str::<Value>(raw) {
-        Ok(result)
-            if result.get("content").is_some_and(Value::is_array)
-                && result.get("isError").is_none_or(Value::is_boolean) =>
-        {
-            result
-        }
-        _ => json!({"isError":true,"content":[{"type":"text","text":"unreadable child result"}]}),
-    }
-}
-
-async fn composite_dispatch<F, Fut>(args: Value, mut dispatch: F) -> Value
-where
-    F: FnMut(&str, Value) -> Fut,
-    Fut: Future<Output = Value>,
-{
-    let (name, action_args, read_args) = match observation_arguments(&args) {
-        Ok(parts) => parts,
-        Err(reason) => return json!({"isError":true,"content":[{"type":"text","text":reason}]}),
-    };
-    // Ordinary SDK calls reach the canonical registry independently. The action
-    // is dispatched exactly once, including when the observation later fails.
-    let action = dispatch(name, action_args).await;
-    let observation = dispatch("get_window_state", read_args).await;
-    let payload = json!({"action_result":action,"observation_result":observation,
-        "action_acknowledged": !action.get("isError").and_then(Value::as_bool).unwrap_or(false),
-        "observation_available": !observation.get("isError").and_then(Value::as_bool).unwrap_or(false)});
-    // A child error is data, not a request to repeat an already dispatched input.
-    json!({"content":[{"type":"text","text":payload.to_string()}],"structuredContent":payload})
-}
 
 async fn run_loop(driver: &CuaDriver) -> Result<(), Box<dyn std::error::Error>> {
     for line in io::stdin().lock().lines() {
@@ -89,10 +17,23 @@ async fn run_loop(driver: &CuaDriver) -> Result<(), Box<dyn std::error::Error>> 
         };
         let result = match request["method"].as_str().unwrap_or("") {
             "initialize" => {
-                json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"action-observe-experiment","version":env!("CARGO_PKG_VERSION")}})
+                let metadata =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), driver.metadata())
+                        .await??;
+                json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"action-observe-experiment","version":metadata.driver_version},"_meta":{"driver_metadata":metadata,"sdk_version":env!("CARGO_PKG_VERSION")}})
             }
             "tools/list" => {
                 let mut list: Value = serde_json::from_str(&driver.list_tools_json().await?)?;
+                for tool in list["tools"].as_array_mut().ok_or("invalid inventory")? {
+                    if let Some(object) = tool.as_object_mut() {
+                        if let Some(schema) = object.remove("input_schema") {
+                            object.insert("inputSchema".to_owned(), schema);
+                        }
+                        if let Some(schema) = object.remove("output_schema") {
+                            object.insert("outputSchema".to_owned(), schema);
+                        }
+                    }
+                }
                 list["tools"].as_array_mut().ok_or("invalid inventory")?.push(json!({"name":"experiment_action_observe","description":"Experimental one exact element action followed by same-window AX observation; inspect both results, never retry input from observation failure.","inputSchema":{"type":"object","properties":{"tool":{"type":"string","enum":["click","set_value","type_text"]},"arguments":{"type":"object"}},"required":["tool","arguments"],"additionalProperties":false}}));
                 list
             }
@@ -100,10 +41,12 @@ async fn run_loop(driver: &CuaDriver) -> Result<(), Box<dyn std::error::Error>> 
                 let name = request["params"]["name"].as_str().unwrap_or("");
                 let args = request["params"]["arguments"].clone();
                 if name == "experiment_action_observe" {
-                    composite_dispatch(args, |tool, arguments| {
-                        let tool = tool.to_owned();
-                        async move { child(driver, &tool, arguments).await }
-                    })
+                    operation::action_observe(
+                        driver,
+                        args,
+                        Options::default(),
+                        Cancellation::default(),
+                    )
                     .await
                 } else {
                     child(&driver, name, args).await
@@ -120,7 +63,11 @@ async fn run_loop(driver: &CuaDriver) -> Result<(), Box<dyn std::error::Error>> 
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let driver = CuaDriver::create(None)?;
+    let driver = if std::env::var("ACTION_OBSERVE_BACKEND").as_deref() == Ok("daemon") {
+        CuaDriver::connect(None)?
+    } else {
+        CuaDriver::create(None)?
+    };
     let outcome = run_loop(&driver).await;
     let shutdown = driver.shutdown().await;
     outcome?;
@@ -140,8 +87,14 @@ mod tests {
             "{}",
             "not json",
             r#"{"content":[],"isError":"false"}"#,
+            r#"{"content":[null]}"#,
+            r#"{"content":[{"type":"text"}]}"#,
         ] {
             assert_eq!(child_envelope(raw)["isError"], true);
+            assert_eq!(
+                child_envelope(raw)["content"][0]["text"],
+                "unreadable child result"
+            );
         }
     }
     #[tokio::test]
@@ -149,6 +102,8 @@ mod tests {
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let result = composite_dispatch(
             json!({"tool":"click","arguments":{"pid":7,"window_id":9,"element_token":"s1:0"}}),
+            Options::default(),
+            Cancellation::default(),
             |name, _| {
                 let name = name.to_owned();
                 let seen = seen.clone();

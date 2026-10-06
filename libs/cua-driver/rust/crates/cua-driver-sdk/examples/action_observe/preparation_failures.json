@@ -1,0 +1,422 @@
+{
+  "scope": "Nine excluded preparation attempts; no successful current scored agent qualification claimed. Later native session check found locked screen and zero active displays.",
+  "groups": [
+    {
+      "reason": "MCP startup failed before fixture; explicit nonsecret environment mapping missing",
+      "scored": false,
+      "trials": [
+        {
+          "condition": "composite",
+          "input_dispatches": 0,
+          "fixture_created": false
+        }
+      ]
+    },
+    {
+      "reason": "CLI read-only MCP approval denial",
+      "scored": false,
+      "trials": [
+        {
+          "rep": 0,
+          "condition": "baseline",
+          "model": "gpt-6-sol",
+          "returncode": 0,
+          "wall_ms": 18854.42045799573,
+          "passed": false,
+          "gateway": {
+            "condition": "baseline",
+            "calls": [],
+            "driver_server": {
+              "name": "action-observe-experiment",
+              "version": "0.34.0"
+            },
+            "passed": false,
+            "oracle_state": {
+              "name": "",
+              "email": "",
+              "subscribe": false,
+              "submitted": 0
+            },
+            "completed_fields": []
+          },
+          "turn_started_events": 1,
+          "turn_completed_events": 1,
+          "usage": [
+            {
+              "input_tokens": 91590,
+              "cached_input_tokens": 63488,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 199,
+              "reasoning_output_tokens": 28
+            }
+          ],
+          "mcp_items": 1,
+          "other_tool_items": [],
+          "visible_calls": 0,
+          "child_registry_calls": 0,
+          "driver_ms": 0
+        },
+        {
+          "rep": 0,
+          "condition": "composite",
+          "model": "gpt-6-sol",
+          "returncode": 0,
+          "wall_ms": 9140.249667005264,
+          "passed": false,
+          "gateway": {
+            "condition": "composite",
+            "calls": [],
+            "driver_server": {
+              "name": "action-observe-experiment",
+              "version": "0.34.0"
+            },
+            "passed": false,
+            "oracle_state": {
+              "name": "",
+              "email": "",
+              "subscribe": false,
+              "submitted": 0
+            },
+            "completed_fields": []
+          },
+          "turn_started_events": 1,
+          "turn_completed_events": 1,
+          "usage": [
+            {
+              "input_tokens": 52632,
+              "cached_input_tokens": 34560,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 162,
+              "reasoning_output_tokens": 17
+            }
+          ],
+          "mcp_items": 1,
+          "other_tool_items": [],
+          "visible_calls": 0,
+          "child_registry_calls": 0,
+          "driver_ms": 0
+        }
+      ]
+    },
+    {
+      "reason": "Empty AX snapshots from embedded backend; no input",
+      "scored": false,
+      "trials": [
+        {
+          "rep": 0,
+          "condition": "baseline",
+          "model": "gpt-6-sol",
+          "returncode": 0,
+          "wall_ms": 27222.721124999225,
+          "passed": false,
+          "gateway": {
+            "condition": "baseline",
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "ms": 147.00341699062847,
+                "error": false,
+                "child_dispatches": [
+                  "get_window_state"
+                ]
+              },
+              {
+                "tool": "get_window_state",
+                "ms": 66.4338329952443,
+                "error": false,
+                "child_dispatches": [
+                  "get_window_state"
+                ]
+              }
+            ],
+            "driver_server": {
+              "name": "action-observe-experiment",
+              "version": "0.34.0"
+            },
+            "passed": false,
+            "oracle_state": {
+              "name": "",
+              "email": "",
+              "subscribe": false,
+              "submitted": 0
+            },
+            "completed_fields": []
+          },
+          "turn_started_events": 1,
+          "turn_completed_events": 1,
+          "usage": [
+            {
+              "input_tokens": 70412,
+              "cached_input_tokens": 51968,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 184,
+              "reasoning_output_tokens": 18
+            }
+          ],
+          "mcp_items": 2,
+          "other_tool_items": [],
+          "visible_calls": 2,
+          "child_registry_calls": 2,
+          "driver_ms": 213.43724998587277
+        },
+        {
+          "rep": 0,
+          "condition": "composite",
+          "model": "gpt-6-sol",
+          "returncode": 0,
+          "wall_ms": 20630.330625004717,
+          "passed": false,
+          "gateway": {
+            "condition": "composite",
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "ms": 133.36937500571366,
+                "error": false,
+                "child_dispatches": [
+                  "get_window_state"
+                ]
+              },
+              {
+                "tool": "get_window_state",
+                "ms": 61.77587500133086,
+                "error": false,
+                "child_dispatches": [
+                  "get_window_state"
+                ]
+              }
+            ],
+            "driver_server": {
+              "name": "action-observe-experiment",
+              "version": "0.34.0"
+            },
+            "passed": false,
+            "oracle_state": {
+              "name": "",
+              "email": "",
+              "subscribe": false,
+              "submitted": 0
+            },
+            "completed_fields": []
+          },
+          "turn_started_events": 1,
+          "turn_completed_events": 1,
+          "usage": [
+            {
+              "input_tokens": 73464,
+              "cached_input_tokens": 54400,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 196,
+              "reasoning_output_tokens": 31
+            }
+          ],
+          "mcp_items": 2,
+          "other_tool_items": [],
+          "visible_calls": 2,
+          "child_registry_calls": 2,
+          "driver_ms": 195.14525000704452
+        }
+      ]
+    },
+    {
+      "reason": "SDK discovery input_schema translation missing; initialization failed",
+      "scored": false,
+      "trials": [
+        {
+          "rep": 0,
+          "condition": "baseline",
+          "model": "gpt-6-sol",
+          "returncode": 0,
+          "wall_ms": 16328.219167000498,
+          "passed": false,
+          "gateway": {
+            "condition": "baseline",
+            "calls": [],
+            "driver_server": null,
+            "passed": false,
+            "oracle_state": {
+              "name": null,
+              "email": null,
+              "subscribe": null,
+              "submitted": null
+            },
+            "completed_fields": []
+          },
+          "turn_started_events": 1,
+          "turn_completed_events": 1,
+          "usage": [
+            {
+              "input_tokens": 119503,
+              "cached_input_tokens": 90752,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 266,
+              "reasoning_output_tokens": 43
+            }
+          ],
+          "mcp_items": 0,
+          "other_tool_items": [],
+          "visible_calls": 0,
+          "child_registry_calls": 0,
+          "driver_ms": 0
+        },
+        {
+          "rep": 0,
+          "condition": "composite",
+          "model": "gpt-6-sol",
+          "returncode": 0,
+          "wall_ms": 30461.979540996253,
+          "passed": false,
+          "gateway": {
+            "condition": "composite",
+            "calls": [],
+            "driver_server": null,
+            "passed": false,
+            "oracle_state": {
+              "name": null,
+              "email": null,
+              "subscribe": null,
+              "submitted": null
+            },
+            "completed_fields": []
+          },
+          "turn_started_events": 1,
+          "turn_completed_events": 1,
+          "usage": [
+            {
+              "input_tokens": 88484,
+              "cached_input_tokens": 76544,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 189,
+              "reasoning_output_tokens": 0
+            }
+          ],
+          "mcp_items": 0,
+          "other_tool_items": [],
+          "visible_calls": 0,
+          "child_registry_calls": 0,
+          "driver_ms": 0
+        }
+      ]
+    },
+    {
+      "reason": "Empty AX snapshots from connected daemon; no input",
+      "scored": false,
+      "trials": [
+        {
+          "rep": 0,
+          "condition": "baseline",
+          "model": "gpt-6-sol",
+          "returncode": 0,
+          "wall_ms": 13590.373041995917,
+          "passed": false,
+          "gateway": {
+            "condition": "baseline",
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "ms": 89.64325000124518,
+                "error": false,
+                "child_dispatches": [
+                  "get_window_state"
+                ]
+              },
+              {
+                "tool": "get_window_state",
+                "ms": 70.31450000067707,
+                "error": false,
+                "child_dispatches": [
+                  "get_window_state"
+                ]
+              }
+            ],
+            "driver_server": {
+              "name": "action-observe-experiment",
+              "version": "0.34.0"
+            },
+            "passed": false,
+            "oracle_state": {
+              "name": "",
+              "email": "",
+              "subscribe": false,
+              "submitted": 0
+            },
+            "completed_fields": []
+          },
+          "turn_started_events": 1,
+          "turn_completed_events": 1,
+          "usage": [
+            {
+              "input_tokens": 70444,
+              "cached_input_tokens": 63104,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 189,
+              "reasoning_output_tokens": 37
+            }
+          ],
+          "mcp_items": 2,
+          "other_tool_items": [],
+          "visible_calls": 2,
+          "child_registry_calls": 2,
+          "driver_ms": 159.95775000192225
+        },
+        {
+          "rep": 0,
+          "condition": "composite",
+          "model": "gpt-6-sol",
+          "returncode": 0,
+          "wall_ms": 16652.72520799772,
+          "passed": false,
+          "gateway": {
+            "condition": "composite",
+            "calls": [
+              {
+                "tool": "get_window_state",
+                "ms": 87.69104100065306,
+                "error": false,
+                "child_dispatches": [
+                  "get_window_state"
+                ]
+              },
+              {
+                "tool": "get_window_state",
+                "ms": 73.37420800467953,
+                "error": false,
+                "child_dispatches": [
+                  "get_window_state"
+                ]
+              }
+            ],
+            "driver_server": {
+              "name": "action-observe-experiment",
+              "version": "0.34.0"
+            },
+            "passed": false,
+            "oracle_state": {
+              "name": "",
+              "email": "",
+              "subscribe": false,
+              "submitted": 0
+            },
+            "completed_fields": []
+          },
+          "turn_started_events": 1,
+          "turn_completed_events": 1,
+          "usage": [
+            {
+              "input_tokens": 70207,
+              "cached_input_tokens": 67584,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 193,
+              "reasoning_output_tokens": 19
+            }
+          ],
+          "mcp_items": 2,
+          "other_tool_items": [],
+          "visible_calls": 2,
+          "child_registry_calls": 2,
+          "driver_ms": 161.0652490053326
+        }
+      ]
+    }
+  ]
+}

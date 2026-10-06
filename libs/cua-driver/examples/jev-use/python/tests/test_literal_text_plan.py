@@ -79,7 +79,7 @@ class Tests(unittest.IsolatedAsyncioTestCase):
                 return result
         driver=SlowDriver([observation(),observation("s2:1")])
         async def verify(step):raise AssertionError("Timed-out input cannot authorize verification/completion")
-        with self.assertRaises(TimeoutError):
+        with self.assertRaises(asyncio.TimeoutError):
             await execute_literal_text_plan(driver,pid=7,window_id=9,platform="macos",steps=[LiteralTextStep("Email","x")],verify_step=verify,verify_final=lambda:None,verify_context=lambda observation:True,timeout_s=.02)
         self.assertEqual(len(driver.inputs),1)
     async def test_budget_and_duplicate_plan_labels_before_observation(self):

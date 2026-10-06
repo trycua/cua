@@ -7,7 +7,8 @@ last_updated: 2026-10-06
 status: review
 discussion: https://github.com/trycua/cua/issues/4771
 rfc_pr: https://github.com/trycua/cua/pull/4772
-implementation: []
+implementation:
+  - https://github.com/trycua/cua/pull/4776
 supersedes:
 superseded_by:
 ---
@@ -155,4 +156,4 @@ Existing OS permissions and target/session authorization remain authoritative. O
 
 ## Decision record
 
-Awaiting maintainer decision in #4771. Research does not authorize production implementation or change the status to accepted.
+Awaiting maintainer decision in #4771. Draft implementation #4776 prepares the first owner/snapshot-transfer increment under the default-off experimental feature. It does not enable asynchronous setters or claim acceptance.

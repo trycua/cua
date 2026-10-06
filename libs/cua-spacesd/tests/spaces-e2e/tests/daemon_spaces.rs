@@ -511,11 +511,24 @@ async fn space_service_lists_the_accounts_relay_machines() {
         .space
         .unwrap();
     assert_eq!(resolved.id, row.id);
-    // Signed out: the listing still works, without relay rows.
+    // A configured account that loses authentication must not look like
+    // successful empty discovery.
     rt.spaces().set_relay(Some(cua_spaces::RelayAccount::new(
         relay.url.clone(),
         Arc::new(cua_spaces::relay::NoAccount),
     )));
+    let error = c
+        .spaces()
+        .list_spaces(pb::ListSpacesRequest {})
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), tonic::Code::Unauthenticated);
+    assert_eq!(
+        error.message(),
+        "Relay authentication failed. Sign in again to refresh your machines."
+    );
+    // Explicitly disabling relay discovery still permits a local-only list.
+    rt.spaces().set_relay(None);
     let listed = c
         .spaces()
         .list_spaces(pb::ListSpacesRequest {})

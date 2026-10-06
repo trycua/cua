@@ -45,7 +45,7 @@ ENTRY = r"edit" if WINDOWS else r"text|entry"
 COMBO = r"combo ?box"
 # Platforms where set_value on a combo box must reach the app's change
 # handler: a failure there fails the job instead of being recorded.
-COMBO_HARD = WINDOWS
+COMBO_HARD = WINDOWS or sys.platform.startswith("linux")
 
 
 class Mcp:

@@ -774,7 +774,13 @@ fn transport_from_legacy(
         "SetCursorPos" => ActionTransport::WindowsSetCursorPos,
         "atspi" | "wayland_atspi" | "x11_atspi" => ActionTransport::LinuxAtSpiAction,
         "pty" => ActionTransport::LinuxPty,
-        "mpx_uinput" | "mpx_pointer" => ActionTransport::LinuxX11MpxUinput,
+        // set_value's keyboard fallback on Linux: the field (or combo box)
+        // is clicked open with the session's MPX pointer, or with XTest in
+        // the foreground, and typed into or picked from.
+        "mpx_uinput" | "mpx_pointer" | "click_type_mpx" | "click_select_mpx" => {
+            ActionTransport::LinuxX11MpxUinput
+        }
+        "click_type_fg" | "click_select_fg" => ActionTransport::LinuxXTest,
         "x11_xsendevent" => ActionTransport::LinuxXSendEvent,
         "x11_pixel" | "x11_pixel_fg" | "x11_xtest_fg" | "xtest" | "xtest_desktop"
         | "xtest_core_grab" => ActionTransport::LinuxXTest,
@@ -1667,6 +1673,48 @@ mod tests {
                 "{tool} cannot confirm from a delivery acknowledgement"
             );
             assert!(record.evidence.is_empty());
+        }
+    }
+
+    #[test]
+    fn linux_set_value_keyboard_fallback_paths_normalize() {
+        // A successful set_value fallback must carry an execution record;
+        // without a transport the registry reports action_outcome_mismatch.
+        for (path, mode, transport, delivery) in [
+            (
+                "click_type_fg",
+                "foreground",
+                ActionTransport::LinuxXTest,
+                ActualDelivery::Foreground,
+            ),
+            (
+                "click_select_fg",
+                "foreground",
+                ActionTransport::LinuxXTest,
+                ActualDelivery::Foreground,
+            ),
+            (
+                "click_type_mpx",
+                "background",
+                ActionTransport::LinuxX11MpxUinput,
+                ActualDelivery::Background,
+            ),
+            (
+                "click_select_mpx",
+                "background",
+                ActionTransport::LinuxX11MpxUinput,
+                ActualDelivery::Background,
+            ),
+        ] {
+            let record = ActionExecutionRecord::from_legacy(
+                "set_value",
+                &serde_json::json!({ "delivery_mode": mode }),
+                &serde_json::json!({ "path": path, "verified": false, "effect": "unverifiable" }),
+            )
+            .unwrap_or_else(|| panic!("{path} should normalize"));
+            assert_eq!(record.transport, transport, "{path}");
+            assert_eq!(record.actual_delivery, Some(delivery), "{path}");
+            record.public_result().expect("public result");
         }
     }
 

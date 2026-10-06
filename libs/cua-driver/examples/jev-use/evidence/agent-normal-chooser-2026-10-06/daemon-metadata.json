@@ -1,0 +1,15 @@
+{
+  "checked_at": "2026-10-06T14:59:40.497365+00:00",
+  "backend": "supported SDK connect to existing daemon",
+  "metadata": {
+    "capability_version": "1",
+    "contract_version": "0.8.0",
+    "driver_version": "0.34.0",
+    "embedded": false,
+    "host_bundle_id": null,
+    "mcp_protocol_version": "2025-06-18",
+    "pid": 27624,
+    "tools_list_schema_version": "1"
+  },
+  "experimental_host_sha256": "30166f4a4346e6eade16f7ca27b250d0e6c583d6e484a7bd1976f176c0f90349"
+}

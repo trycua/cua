@@ -19,10 +19,25 @@ from native_tasks import NativeTask, WindowScope, TaskStep, native_choice_reques
 from tasks import TaskParameter, TaskSources
 from choose_action import validate_request
 from decision_models import DecisionRequest, TypeSafeDecisionModel, choose
+from composite_driver import CompositeTextDriver
 from typesafe_sdk import TypeSafeClient
 import httpx2
 STEPS = (LiteralTextStep('Full name','Synthetic Person'), LiteralTextStep('Email','synthetic@example.invalid'))
 GOAL = 'First set Full name to Synthetic Person; then set Email to synthetic@example.invalid. Leave Subscribe unchecked, Record A selected, and do not submit or change any other field.'
+
+class MetadataMCP(h.MCP):
+    def request(self, method, params):
+        result=super().request(method,params)
+        if method=='initialize': self.backend_metadata=result.get('_meta',{}).get('driver_metadata')
+        return result
+
+def safe_evidence(value):
+    if isinstance(value,list): return [safe_evidence(v) for v in value]
+    if isinstance(value,dict):
+        cleaned=h.sanitize_result(value)
+        # Child MCP content duplicates its full structured payload, including pixels.
+        return {k:safe_evidence(v) for k,v in cleaned.items() if not (k=='content' and isinstance(value.get('structuredContent'),dict))}
+    return value
 
 class PublicDriver:
     def __init__(self, client): self.client = client
@@ -131,11 +146,13 @@ async def trial(client, sdk, http, mode, rep, smoke=False):
             # Common caller intent guard: chooser alternatives cannot broaden authority.
             if selected is None or selected.tool!=expected.tool or dict(selected.arguments)!=dict(expected.arguments): return 'abstain'
             return expected.id
-        result=await execute_literal_text_plan(driver,**owner,platform='macos',steps=plan,verify_step=verify_step,verify_final=verify_final,verify_context=lambda obs:safe(),choose=None if mode=='frontier_literal' else normal_choice)
+        execution_driver=CompositeTextDriver(driver,fixture.pid,window) if mode=='frontier_literal_composite' else driver
+        result=await execute_literal_text_plan(execution_driver,**owner,platform='macos',steps=plan,verify_step=verify_step,verify_final=verify_final,verify_context=lambda obs:safe(),choose=None if mode.startswith('frontier_literal') else normal_choice)
+        if isinstance(execution_driver,CompositeTextDriver): row['composite_receipts']=execution_driver.receipts
         row.update(terminal=result['status'],passed=final())
     except Exception as exc: row['error_type']=type(exc).__name__; row['error']=str(exc)[:160] if isinstance(exc,LiteralPlanHandoff) else None
     finally:
-        row['wall_ms']=(time.perf_counter()-start)*1000;row['calls']=client.calls[offset:];row['driver_calls']=len(row['calls']);row['driver_ms']=sum(c['ms'] for c in row['calls']);row['jev']=sdk.events[so:];row['jev_http']=http.events[ho:]
+        row['wall_ms']=(time.perf_counter()-start)*1000;row['calls']=safe_evidence(client.calls[offset:]);row['driver_calls']=len(row['calls']);row['driver_ms']=sum(c['ms'] for c in row['calls']);row['jev']=sdk.events[so:];row['jev_http']=http.events[ho:]
         if fixture:
             try: row['oracle_state']=fixture.state()
             finally: fixture.close()
@@ -159,13 +176,20 @@ def main():
         with ExitStack() as stack:
             arc=h.MCP([sys.executable,'-m','arc_cua','mcp'],'agent-normal-arc'); stack.callback(arc.close)
             cua=h.MCP(['cua-driver','mcp','--socket',str(Path.home()/'Library/Caches/cua-driver/cua-driver.sock')],'agent-normal-cua');stack.callback(cua.close)
+            host_path=os.environ.get('ACTION_OBSERVE_HOST')
+            if not host_path: raise RuntimeError('ACTION_OBSERVE_HOST required for actual daemon metadata preflight')
+            host=MetadataMCP(['env','ACTION_OBSERVE_BACKEND=daemon',host_path],'agent-normal-composite');stack.callback(host.close)
+            metadata=host.backend_metadata
+            if not isinstance(metadata,dict) or metadata.get('driver_version')!=versions['native_version'] or metadata.get('embedded') is not False or type(metadata.get('pid')) is not int:
+                raise RuntimeError('Actual running daemon metadata differs from latest release or is unavailable')
+            out['daemon_metadata']=metadata
             h.verify_servers(versions,arc,cua);out['servers']={'arc':arc.server_info,'cua':cua.server_info}
             smoke=os.environ.get('SMOKE_ONLY')=='1'
             for rep in range(1 if smoke else 5):
-                modes=['chooser_only','frontier_normal','frontier_literal']
+                modes=['chooser_only','frontier_normal','frontier_literal','frontier_literal_composite']
                 if rep%2: modes.reverse()
                 for mode in modes:
-                    row=asyncio.run(trial(cua,sdk,http,mode,rep,smoke));out['results'].append(row)
+                    row=asyncio.run(trial(host if mode=='frontier_literal_composite' else cua,sdk,http,mode,rep,smoke));out['results'].append(row)
                     encoded=json.dumps(out,indent=2)
                     if key in encoded: raise RuntimeError('Secret persistence refused')
                     (HERE/('smoke-results.json' if smoke else 'results.json')).write_text(encoded+'\n')

@@ -152,7 +152,17 @@ async def trial(client, sdk, http, mode, rep, smoke=False):
         row.update(terminal=result['status'],passed=final())
     except Exception as exc: row['error_type']=type(exc).__name__; row['error']=str(exc)[:160] if isinstance(exc,LiteralPlanHandoff) else None
     finally:
-        row['wall_ms']=(time.perf_counter()-start)*1000;row['calls']=safe_evidence(client.calls[offset:]);row['driver_calls']=len(row['calls']);row['driver_ms']=sum(c['ms'] for c in row['calls']);row['jev']=sdk.events[so:];row['jev_http']=http.events[ho:]
+        row['wall_ms']=(time.perf_counter()-start)*1000;row['calls']=safe_evidence(client.calls[offset:]);row['visible_mcp_calls']=len(row['calls']);row['canonical_child_calls']=0
+        for call in row['calls']:
+            if call['tool']!='experiment_action_observe':
+                row['canonical_child_calls']+=1
+            else:
+                dispatches=call.get('result',{}).get('operation',{}).get('child_dispatches')
+                if isinstance(dispatches,list) and dispatches in (['set_value'],['set_value','get_window_state']):
+                    row['canonical_child_calls']+=len(dispatches)
+                else:
+                    row['canonical_child_calls']=None;break
+        row['mcp_wall_ms']=sum(c['ms'] for c in row['calls']);row['jev']=sdk.events[so:];row['jev_http']=http.events[ho:]
         if fixture:
             try: row['oracle_state']=fixture.state()
             finally: fixture.close()

@@ -59,7 +59,6 @@ async def capture(pid: int, title: str, source: str, max_depth: int | None = Non
                     "window_id": int(window["window_id"]),
                     "include_accessibility_tree": True,
                     "include_screenshot": True,
-                    "full_output": True,
                     **({"max_depth": max_depth} if max_depth is not None else {}),
                 },
             )

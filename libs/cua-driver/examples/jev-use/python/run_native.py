@@ -97,8 +97,6 @@ async def observe(
         "window_id": window_id,
         "include_accessibility_tree": True,
         "include_screenshot": True,
-        # Candidates are built from the structured elements, uncapped.
-        "full_output": True,
         **task.scope.window_state_arguments(),
     }
     if timeout_ms is not None:

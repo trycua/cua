@@ -124,8 +124,6 @@ async function observe(
     window_id: windowId,
     include_accessibility_tree: true,
     include_screenshot: true,
-    // Candidates are built from the structured elements, uncapped.
-    full_output: true,
     ...windowStateArguments(task.scope),
     ...(timeoutMs !== undefined ? { timeout_ms: timeoutMs } : {}),
   });

@@ -2007,7 +2007,8 @@ mod pointer_anchor_tests {
 /// `capture()`: a SHA-256 over the bits of every sample of 1650 planned
 /// trajectories (6 styles x 3 timings x 8 knob sets x 11 moves, plus reduced
 /// motion) and of every effect frame of 24 scripted move-and-click runs, with
-/// a few readable spot samples. All of it must stay bit-identical.
+/// a few readable spot samples, counts and per-case sums. On the capture
+/// platform it must stay bit-identical; elsewhere, within 1e-12 relative.
 #[cfg(test)]
 mod motion_equivalence_tests {
     use super::*;
@@ -2017,33 +2018,59 @@ mod motion_equivalence_tests {
     use sha2::{Digest, Sha256};
     use std::f64::consts::{FRAC_PI_4, PI};
 
-    struct Bits(Sha256);
+    /// A SHA-256 over the exact bits of every value, plus a count and two
+    /// sums (plain and position-weighted) that survive the last-bit
+    /// differences between platforms' math libraries.
+    struct Bits {
+        sha: Sha256,
+        n: u64,
+        s0: f64,
+        s1: f64,
+    }
 
     impl Bits {
         fn new() -> Self {
-            Self(Sha256::new())
+            Self {
+                sha: Sha256::new(),
+                n: 0,
+                s0: 0.0,
+                s1: 0.0,
+            }
+        }
+        fn add(&mut self, v: f64) {
+            self.n += 1;
+            self.s0 += v;
+            self.s1 += v * (self.n % 1000) as f64;
         }
         fn f(&mut self, v: f64) {
-            self.0.update(v.to_bits().to_le_bytes());
+            self.sha.update(v.to_bits().to_le_bytes());
+            self.add(v);
         }
         fn opt(&mut self, v: Option<f64>) {
             match v {
                 Some(v) => {
-                    self.0.update([1]);
+                    self.sha.update([1]);
+                    self.add(1.0);
                     self.f(v);
                 }
-                None => self.0.update([0]),
+                None => {
+                    self.sha.update([0]);
+                    self.add(0.0);
+                }
             }
         }
         fn flag(&mut self, v: bool) {
-            self.0.update([u8::from(v)]);
+            self.sha.update([u8::from(v)]);
+            self.add(f64::from(u8::from(v)));
         }
-        fn hex(self) -> String {
-            self.0
+        fn done(self) -> (String, Value) {
+            let sha = self
+                .sha
                 .finalize()
                 .iter()
                 .map(|b| format!("{b:02x}"))
-                .collect()
+                .collect();
+            (sha, json!([self.n, self.s0, self.s1]))
         }
     }
 
@@ -2227,6 +2254,7 @@ mod motion_equivalence_tests {
                                     json!([s.t, s.x, s.y, s.heading])
                                 })
                                 .collect();
+                            let (sha, agg) = h.done();
                             cases.push(json!({
                                 "style": style.as_str(),
                                 "timing": timing.as_str(),
@@ -2237,7 +2265,8 @@ mod motion_equivalence_tests {
                                 "arrival_t": traj.arrival_t,
                                 "snap_t": traj.snap_t,
                                 "spots": spots,
-                                "sha256": h.hex(),
+                                "sha256": sha,
+                                "agg": agg,
                             }));
                         }
                     }
@@ -2340,12 +2369,14 @@ mod motion_equivalence_tests {
                         }
                         hash_frame(&mut h, &core);
                     }
+                    let (sha, agg) = h.done();
                     runs.push(json!({
                         "style": style.as_str(),
                         "effects": fx_name,
                         "capable": capable,
                         "arrivals": arrivals,
-                        "sha256": h.hex(),
+                        "sha256": sha,
+                                "agg": agg,
                     }));
                 }
             }
@@ -2357,24 +2388,60 @@ mod motion_equivalence_tests {
         json!({ "trajectories": trajectories(), "effect_runs": effect_runs() })
     }
 
-    /// Every planned trajectory and every effect frame is bit-identical to
-    /// the driver before the motion math moved into `cua-cursor-motion`.
+    /// Numbers within 1e-12 relative plus 1e-9 absolute (last-bit rounding
+    /// differences stay far below that; any real change does not); strings,
+    /// booleans and nulls exactly.
+    fn close(path: &str, was: &Value, is: &Value) {
+        match (was, is) {
+            (Value::Number(a), Value::Number(b)) => {
+                let (a, b) = (a.as_f64().unwrap(), b.as_f64().unwrap());
+                let tol = 1e-12 * a.abs().max(b.abs()) + 1e-9;
+                assert!((a - b).abs() <= tol, "{path}: {a} vs {b}");
+            }
+            (Value::Array(a), Value::Array(b)) => {
+                assert_eq!(a.len(), b.len(), "{path}: length");
+                for (i, (a, b)) in a.iter().zip(b).enumerate() {
+                    close(&format!("{path}[{i}]"), a, b);
+                }
+            }
+            (Value::Object(a), Value::Object(b)) => {
+                assert_eq!(a.len(), b.len(), "{path}: keys");
+                for (k, v) in a {
+                    if k != "sha256" {
+                        close(&format!("{path}.{k}"), v, &b[k]);
+                    }
+                }
+            }
+            _ => assert_eq!(was, is, "{path}"),
+        }
+    }
+
+    /// The motion did not change when its math moved into
+    /// `cua-cursor-motion`. On macOS arm64, where the fixture was captured,
+    /// every sample is bit-identical (the SHA-256s match). Other platforms'
+    /// math libraries round the last bit of `sin`, `exp` and friends
+    /// differently, so there the sample counts must match exactly and every
+    /// spot sample, timing and per-case sum within 1e-12 relative.
     #[test]
-    fn motion_is_bit_identical_to_the_pre_cua_cursor_motion_driver() {
+    fn motion_is_unchanged_from_the_pre_cua_cursor_motion_driver() {
         let fixture: Value =
             serde_json::from_str(include_str!("../tests/fixtures/motion_equivalence.json"))
                 .expect("fixture json");
         // Parse both through the same JSON reader: serde_json's default float
-        // parsing is not round-trip exact. The SHA-256s cover the exact bits.
+        // parsing is not round-trip exact.
         let now: Value = serde_json::from_str(&capture().to_string()).unwrap();
+        let bit_exact = cfg!(all(target_os = "macos", target_arch = "aarch64"));
         for kind in ["trajectories", "effect_runs"] {
             let (was, is) = (
                 fixture[kind].as_array().unwrap(),
                 now[kind].as_array().unwrap(),
             );
             assert_eq!(was.len(), is.len(), "{kind} count");
-            for (was, is) in was.iter().zip(is) {
-                assert_eq!(was, is, "{kind} changed");
+            for (i, (was, is)) in was.iter().zip(is).enumerate() {
+                close(&format!("{kind}[{i}]"), was, is);
+                if bit_exact {
+                    assert_eq!(was["sha256"], is["sha256"], "{kind}[{i}] bits changed");
+                }
             }
         }
         assert_eq!(fixture["trajectories"].as_array().unwrap().len(), 1650);

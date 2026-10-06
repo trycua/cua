@@ -36,6 +36,41 @@ fn yes() -> Arc<Consent> {
 }
 
 #[tokio::test]
+async fn space_shares_distinguishes_missing_from_unshared_spaces() {
+    use cua_spaces::mcp::McpServer;
+    use serde_json::json;
+
+    let home = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder().home(home.path()).build();
+    let server = McpServer::new(spaces.clone());
+
+    let missing = server
+        .call("space_shares", json!({"space": "local:nonexistent"}))
+        .await;
+    assert!(missing.is_error);
+    assert_eq!(missing.structured.unwrap()["error"]["kind"], "not_found");
+
+    let unknown_name = server
+        .call("space_shares", json!({"space": "nonexistent"}))
+        .await;
+    assert!(unknown_name.is_error);
+    assert_eq!(
+        unknown_name.structured.unwrap()["error"]["kind"],
+        "not_found"
+    );
+
+    let env = MockServer::start(MockAuth::default()).await;
+    let info = spaces
+        .add(&env.url(), None, Some("studio".into()))
+        .await
+        .unwrap();
+    let unshared = server.call("space_shares", json!({"space": info.id})).await;
+    assert!(!unshared.is_error, "{:?}", unshared.first_text());
+    let shares: serde_json::Value = serde_json::from_str(unshared.first_text().unwrap()).unwrap();
+    assert_eq!(shares["shares"], json!([]));
+}
+
+#[tokio::test]
 async fn sharing_a_space_attaches_it_and_moves_people_between_roles() {
     let relay = FakeRelay::start().await;
     relay.add_account("ada-token", "ada", Some("ada@example.com"));

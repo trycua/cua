@@ -1,0 +1,25 @@
+{
+  "baseline": {
+    "agent_visible_calls": 6,
+    "wall_ms": 29245.966584,
+    "driver_ms": 3349.6073330170475,
+    "oracle": {
+      "name": "Synthetic Person",
+      "email": "synthetic@example.invalid",
+      "subscribe": true,
+      "submitted": 0
+    }
+  },
+  "composite": {
+    "agent_visible_calls": 3,
+    "wall_ms": 14574.25225,
+    "driver_ms": 3422.747625008924,
+    "oracle": {
+      "name": "Synthetic Person",
+      "email": "synthetic@example.invalid",
+      "subscribe": true,
+      "submitted": 0
+    }
+  },
+  "limits": "One live agent pair; uncontrolled inference/scheduling and intervening analysis. Demonstrates fresh-binding execution and call count, not a reliable population latency estimate."
+}

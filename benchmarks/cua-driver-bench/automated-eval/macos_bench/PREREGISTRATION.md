@@ -115,6 +115,10 @@ A separate run (`RUN_ID=gui`) that starts after the Amendment 1 run has ended (d
 * All of the above for all trials and for unflagged trials only (A2.5).
 * The GUI-only result is **never pooled** with the CDB suite of Amendment 1 or with the probes, and is reported in its own section. No directional hypothesis is registered. The wording of the conclusions stays descriptive: what happened in these trials, how many, how wide the intervals are.
 
+### A2.9 Procedural deviation during the GUI-only run
+
+At 11:20 UTC (after 23 of the 30 trials) the first seat's five-hour window was exhausted (`rate_limit_event` status `rejected`, `five_hour` 1.00, `seven_day` 0.29, reset 12:40 UTC). The pre-registered rule is to wait for the reset. At the owner's request the VM's Claude credential was switched at 11:54 UTC to a second seat (five-hour 0.00, seven-day 0.85 at the first call) instead of waiting, and the run resumed with the same run id, model and settings. Only an access token was copied (no refresh token). The seven-day stop line of 0.95 applies to the second seat from then on. Trials before the switch ran on the first seat, trials after on the second; each row carries its own quota readings. The deviation is recorded in `runs/gui/account-switch.txt` and in the report.
+
 ### A2.8 Harness changes for this amendment
 
 `probes/CDB-G02` to `CDB-G04` (`"coding_tools": false`, `"separate_run": true`, group `CDBG`); the default schedule skips tasks with `separate_run`, so the Amendment 1 run cannot pick them up; `FrontWatcher` and `side_door_scan` in `run_bench.py` with the row fields of A2.5; tests in `tests/test_cdb_adapter.py`.

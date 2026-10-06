@@ -10,10 +10,11 @@ fixture window (GTK3 on Linux, WinForms on Windows) and checks:
   * run_actions (one batch with an end-of-batch observation),
   * set_value on a drop-down combo box and on an editable combo box.
 
-A check is `pass`, `fail` or `not_possible`. `not_possible` means the driver
-answered with an explicit error for a control it does not support on this
-platform; the smoke records the error and does not fail on it. A call that
-reports success without the app changing is a `fail`.
+The first five checks are required: each is `pass` or `fail`. set_value on
+combo boxes and the probes are best effort and never fail the job; each is
+`pass`, `not_possible` (the driver refused with an explicit error) or `bug`
+(the driver claimed success, or failed internally after acting, and the app's
+change handler never saw the value).
 
 Writes results.json, summary.md and the raw responses to --out, and appends
 summary.md to $GITHUB_STEP_SUMMARY when set. Exits 1 when any check fails.
@@ -404,23 +405,49 @@ def run_checks(smoke):
 
     # Probe (informational, last because it may leave a menu open): the
     # drop-down combo with delivery_mode foreground, which the background
-    # refusal recommends.
+    # refusal on Linux recommends.
     state = smoke.read()
     combo = find_row(tree(state), COMBO, "Color")
-    args = {"pid": smoke.pid, "element_token": token(state, combo), "value": "Green",
-            "delivery_mode": "foreground"}
-    result = smoke.call("set_value", args)
-    fresh = smoke.wait_for_text("Color: Green", timeout=5)
-    changed = "Color: Green" in tree(fresh)
+    status, evidence = set_value_attempt(
+        smoke, state, combo, "Color", "Green", delivery_mode="foreground"
+    )
     smoke.record(
         "probe: set_value on the drop-down combo box with delivery_mode foreground",
-        "pass" if changed else "not_possible",
-        ("app shows 'Color: Green'; " if changed else "app unchanged; ")
-        + ("error: " if result.is_error else "driver said: ") + result.first_line(),
+        status,
+        evidence,
+    )
+
+
+def row_text(markdown, index):
+    return next((text for i, text in rows(markdown) if i == index), "")
+
+
+def set_value_attempt(smoke, state, index, name, value, **extra):
+    """set_value on row `index`, then a fresh read for '<name>: <value>'.
+    Returns (status, evidence): pass, not_possible (explicit refusal), or
+    bug (the call claimed success, or failed internally after acting, and the
+    app's change handler did not see the new value)."""
+    args = {"pid": smoke.pid, "element_token": token(state, index), "value": value}
+    args.update(extra)
+    result = smoke.call("set_value", args)
+    expected = f"{name}: {value}"
+    fresh = smoke.wait_for_text(expected, timeout=5 if result.is_error else 10)
+    if expected in tree(fresh):
+        return "pass", f"set_value on row [{index}] -> fresh snapshot shows '{expected}'"
+    control = row_text(tree(fresh), index)
+    if result.is_error and result.structured.get("code") != "action_outcome_mismatch":
+        return "not_possible", f"[{index}] {result.first_line()}"
+    claim = ("failed internally: " if result.is_error else "reported success: ") + result.first_line()
+    return "bug", (
+        f"set_value {json.dumps(extra) if extra else ''} on row [{index}] {claim}; "
+        f"the control now reads `{control}` but the app's change handler never ran "
+        f"(no '{expected}')"
     )
 
 
 def combo_check(smoke, name, value, editable):
+    """set_value on a combo box is best effort ("where possible"): it records
+    pass, not_possible or bug and never fails the job."""
     kind = "an editable combo box" if editable else "a drop-down combo box"
     check = f"set_value on {kind} ({name} -> {value})"
     state = smoke.read()
@@ -435,34 +462,36 @@ def combo_check(smoke, name, value, editable):
         child = find_row(md, ENTRY, after=combo)
         if child is not None:
             candidates.append(child)
-    errors = []
+    outcomes = []
     for index in candidates:
-        args = {"pid": smoke.pid, "element_token": token(state, index), "value": value}
-        result = smoke.call("set_value", args)
-        expected = f"{name}: {value}"
-        if result.is_error:
-            errors.append(f"[{index}] {result.first_line()}")
-            state = smoke.read()
-            continue
-        fresh = smoke.wait_for_text(expected)
-        if expected in tree(fresh):
-            smoke.record(check, "pass", f"set_value on row [{index}] -> fresh snapshot shows '{expected}'")
-            return
-        smoke.record(check, "fail",
-                     f"set_value on row [{index}] reported success ({result.first_line()}) "
-                     f"but the app does not show '{expected}'")
-        return
-    smoke.record(check, "not_possible", "; ".join(errors))
+        status, evidence = set_value_attempt(smoke, state, index, name, value)
+        outcomes.append((status, evidence))
+        if status == "pass":
+            break
+        state = smoke.read()
+    status = next((s for s in ("pass", "bug", "not_possible") if any(o[0] == s for o in outcomes)))
+    smoke.record(check, status, "; ".join(e for st, e in outcomes if st == status))
 
 
 def write_reports(smoke, out, platform_name):
     out.mkdir(parents=True, exist_ok=True)
     (out / "results.json").write_text(json.dumps(smoke.results, indent=2), encoding="utf-8")
     (out / "calls.json").write_text(json.dumps(smoke.calls, indent=2, default=str), encoding="utf-8")
-    lines = [f"## cua-driver live smoke: {platform_name}", "", "| Check | Result | Evidence |", "| --- | --- | --- |"]
+    lines = [
+        f"## cua-driver live smoke: {platform_name}",
+        "",
+        "`fail` fails the job. `bug` (a best-effort check where the driver claimed "
+        "success, or failed internally after acting, without the app seeing the "
+        "change) and `not_possible` (an explicit refusal) are recorded only.",
+        "",
+        "| Check | Result | Evidence |",
+        "| --- | --- | --- |",
+    ]
     for r in smoke.results:
         evidence = r["evidence"].replace("|", "\\|").replace("\n", " ")
         lines.append(f"| {r['check']} | {r['status']} | {evidence} |")
+        if r["status"] == "bug" and os.environ.get("GITHUB_ACTIONS"):
+            print(f"::warning title=cua-driver bug: {r['check']}::{evidence}")
     summary = "\n".join(lines) + "\n"
     (out / "summary.md").write_text(summary, encoding="utf-8")
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")

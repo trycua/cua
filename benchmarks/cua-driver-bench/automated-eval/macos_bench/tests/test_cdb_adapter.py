@@ -116,5 +116,33 @@ class ArgvAndScanTest(unittest.TestCase):
         self.assertEqual(rb.evaluator_peeks(events, ["a.js"]), ["Read:a.js"])
 
 
+class SideDoorTest(unittest.TestCase):
+    def test_scan_flags_shell_and_scripting_apps(self) -> None:
+        events = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "tool_use", "name": "mcp__codex-cu__js", "input": {"code": "await import('node:child_process')"}},
+                        {"type": "tool_use", "name": "mcp__cua__launch_app", "input": {"bundle_id": "com.apple.Terminal"}},
+                        {"type": "tool_use", "name": "mcp__cua__click", "input": {"element_index": 3}},
+                    ]
+                },
+            }
+        ]
+        flags = rb.side_door_scan(events)
+        self.assertIn("mcp__codex-cu__js:child_process", flags)
+        self.assertIn("mcp__cua__launch_app:Terminal", flags)
+        self.assertEqual([f for f in flags if "click" in f], [])
+
+    def test_separate_run_tasks_are_not_in_the_default_schedule(self) -> None:
+        tasks = rb.load_tasks(HERE / "probes")
+        default = [t for t in tasks if rb.default_task(tasks, t)]
+        self.assertIn("CDB-S02", default)
+        self.assertNotIn("CDB-G02", default)
+        self.assertIn("CDB-G02", tasks)
+        self.assertFalse(rb.task_spec(tasks["CDB-G02"]).get("coding_tools"))
+
+
 if __name__ == "__main__":
     unittest.main()

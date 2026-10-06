@@ -8,6 +8,7 @@ Made before any analysed trial; see `PREREGISTRATION.md`, Amendment 1. Where thi
 | Secondary: probes | MB-09, MB-10, MB-11 | Reported separately, never mixed into the primary result. |
 | **Not run** | MB-01 to MB-08 | Dropped 6 Oct: unpublished original; reconstruction can't confirm or refute the claim. Files kept. |
 | **Not run** | MB-12 | Dropped 6 Oct: its live validation failed (below). Files kept. |
+| Separate run | CDB-G02, CDB-G03, CDB-G04 | GUI-only variant, Amendment 2. Reported separately, never pooled. |
 | **Not run** | the pack's fifth task (macOS-native, iOS Simulator) | Needs Xcode and an iOS Simulator runtime. The VM image has Command Line Tools only. Four of the suite's five tasks run. |
 
 Naming. "CDB-S01" is the name used for the whole suite in the request that changed the task set. The pack's first task is also called `cdb-s01`. In this repository the suite is the **CDB suite** and its tasks are CDB-S01 to CDB-S04, the pack's `cdb-s01` to `cdb-s04`.
@@ -42,6 +43,10 @@ Validation without a model (`validation/cdb_results.json`, produced by `tools/va
 MB-09, MB-10 and MB-11 are unchanged from the sections below.
 
 MB-12 needed one live validation with a model-free background actor. It failed (`validation/mb12_live.json`). The actor drives BenchLab through Cua Driver 0.34.0 with background accessibility actions only: no pointer, no focus change. Every task check passes, the pointer does not move and no input leaks. But BenchSentinel resigns key focus for about 2 s while the Category popup menu is open, so the required check `front_unchanged` fails. The popup cannot be set without opening its menu (`set_value` is refused: the popup has no accessibility children until the menu opens). A task that a clean background run cannot pass cannot validate its checker, and changing the checker after seeing this is not something to do quietly. MB-12 is therefore dropped, not changed. The finding itself is reported: opening a popup menu in a background app takes key focus from the front window for the time the menu is open.
+
+### Amendment 2: GUI-only variant (CDB-G02 to CDB-G04)
+
+Same pack tasks as CDB-S02 to CDB-S04 with no `Bash`, `Edit` or `Write` (the tool surface of the probes). A separate, later run (`RUN_ID=gui`), 5 runs per arm per task, reported separately and never pooled. Side doors (Terminal, Script Editor, Automator, Shortcuts, shell escapes) are flagged, not blocked. The rules and the analysis plan are in `PREREGISTRATION.md`, Amendment 2.
 
 ### Order
 

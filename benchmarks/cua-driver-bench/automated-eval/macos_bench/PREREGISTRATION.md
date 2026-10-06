@@ -4,7 +4,7 @@ Status: frozen when this file is committed, before any trial that enters the ana
 Date: 2026-10-05 (UTC evening). Scope: head-to-head, macOS host, one Mac. Owner: Cua Driver Bench maintainers.
 Supersedes the pilot pre-registration (private trycua/cua-driver-bench PR #59: Codex CLI with gpt-6-astra, Cua Driver arm only).
 
-**Amended once on 6 Oct 2026, before any analysed trial: see Amendment 1 immediately below. Where sections 0 to 12 differ from it, Amendment 1 wins.**
+**Amended on 6 Oct 2026, before any analysed trial: see Amendment 1 immediately below (and Amendment 2, the GUI-only variant, after it). Where sections 0 to 12 differ from them, the amendments win.**
 
 ## Amendment 1 (6 Oct 2026, before any analysed trial)
 
@@ -69,6 +69,55 @@ The 360 s and 45-turn limits are kept for the CDB tasks even though the original
 * CDB-S01 to CDB-S04: reset, byte-level verify, evaluator fails the pristine workspace, passes a scripted correct solution (score 1.0) and fails again after a second reset. Run through the adapter, inside the VM, with the evaluator isolated (`validation/cdb_results.json`).
 * MB-12: live validation with a model-free background actor failed (`validation/mb12_live.json`); MB-12 is dropped.
 * Runner preflight inside the VM: pins, both MCP servers, recording, sentinel, daemon permissions, and the CDB pack and isolation checks.
+
+
+## Amendment 2 (6 Oct 2026, before any GUI-only trial): a GUI-only variant of three CDB tasks
+
+Written and committed before the first GUI-only trial. The approved plan of Amendment 1 keeps running unchanged and finishes first, phase 2 included. This amendment adds a separate, later run. It changes nothing for the trials of Amendment 1.
+
+### A2.1 Why, and what was seen before writing it
+
+In phase 1 of the Amendment 1 run (runs 1 to 3), about 10:00 UTC on 6 Oct, the CDB results were: CDB-S01 3/3 in arm A and 3/3 in arm B; CDB-S02 0/3 and 0/3; CDB-S03 2/3 and 3/3; CDB-S04 in progress (the first runs passed in both arms). In all 12 CDB-S02 and CDB-S03 trials neither arm made a single computer-use call. With `Bash`, `Edit` and `Write` available, both arms read and edited the apps' data files directly ("I edited the data files directly. I didn't open LibreOffice Calc."). CDB-S01 and CDB-S04 do use the GUI (the brief asks for a ticket read and a browser check). So on S02 and S03 the Amendment 1 result measures coding, not the computer-use tool layer. The owner approved a GUI-only variant. The rules and the analysis plan below are fixed now, before any GUI-only data exists.
+
+### A2.2 A note on the 0/6 in CDB-S02 (not a rule; the evaluator is unchanged)
+
+The evaluator's reasons, per trial: in all six trials `blocker_recorded` failed ("expected one LHP-C17 blocker, found 0") and `blocker_audit` failed (audit replay found 0 entries and does not match the blocker store). The structured blocker has to be recorded in the chat app, whose store keeps an audit chain; nobody opened the app, so none was recorded. In addition `calendar_final` and `preservation` failed in one arm A trial (the cancelled session was left in the calendar) and `workbook_agreement` in another (the blocked row named the protected hold instead of the conflict id). The evaluator did not reject a correct end state. No evaluator change was made. If one is ever needed it will be a new amendment and will apply only to trials run after it.
+
+### A2.3 Tasks
+
+CDB-G02, CDB-G03 and CDB-G04 are the pack's `cdb-s02`, `cdb-s03` and `cdb-s04` with no coding tools. Brief wording (with the two edits of Amendment 1), evaluator, reset, apps, window frames, 360 s and 45 turns, the VM and the evaluator isolation are the same as for CDB-S02 to CDB-S04. CDB-S01 is not repeated GUI-only: its required end state includes a source-code fix and a regression test, which needs a coding tool.
+
+### A2.4 Tool surface
+
+Identical to the probes in both arms: `Skill`, `Read`, `ToolSearch` and the arm's computer-use MCP server. No `Bash`, `Edit` or `Write`. Arm A keeps its Cua Driver skill, arm B has none, as everywhere else.
+
+### A2.5 Closing the GUI side door: flag, do not block
+
+Chosen: **flag and report separately**. Blocking is not possible for both arms: the runner itself starts from Terminal.app (arm B's per-app approvals need it), and Terminal, Script Editor, Automator and Shortcuts are system apps that cannot be removed. The two arms are also not gated alike: arm B's host loop already declines per-app approvals for apps outside the task's list (Terminal and the others are declined), Cua Driver has no equivalent gate. Detection is therefore the same for both arms and a flagged trial is reported, not recoded.
+
+A trial is **flagged** when any of these happens during its agent phase:
+
+1. the frontmost app, sampled every 0.5 s, is Terminal, iTerm, Script Editor, Automator or Shortcuts;
+2. a process named Script Editor, Automator, iTerm2 or Shortcuts exists;
+3. a tool input of the computer-use server contains `Terminal`, `iTerm`, `Script Editor`, `ScriptEditor`, `Automator`, `Shortcuts`, `osascript`, `child_process`, `execSync`, `spawnSync`, `/bin/sh`, `/bin/zsh`, `/bin/bash`, `bash -c`, `zsh -c`, `subprocess` or `os.system`.
+
+Rows carry `frontmost_seen`, `side_door` and `side_door_flag`. A flagged trial stays in the success counts. The results are shown twice, with all trials and with unflagged trials only, and every flagged trial is listed with its evidence.
+
+### A2.6 Run protocol
+
+A separate run (`RUN_ID=gui`) that starts after the Amendment 1 run has ended (done, or stopped by the stop rule or the cutoff), on the same VM, with the same preflight and the same stop rule: no new trial once the VM seat's seven-day utilization is 0.95 or higher, or on any `rejected`, or after `CUTOFF_UTC`. Five runs per arm per task (30 trials) in one phase, in the order CDB-G02, CDB-G03, CDB-G04, arms interleaved inside each task block as in section 6. Only complete task blocks are analysed; the guaranteed minimum is three runs per arm.
+
+### A2.7 Analysis plan
+
+* Per task and arm: successes over trials with Wilson 95% intervals, the pack evaluator's `passed` as success, the partial score, wall time, turns, tokens, equivalent cost, and the failed checks with the evaluator's reasons.
+* Per task, the paired difference of success rates with the descriptive Fisher exact p-value of `analyze.py` (no multiplicity correction, not a decision threshold); across the three tasks the task-macro mean per arm with the hierarchical bootstrap interval of `analyze.py`, group `CDBG`.
+* Computer-use calls per trial by tool name and arm, as in the main CDB table.
+* All of the above for all trials and for unflagged trials only (A2.5).
+* The GUI-only result is **never pooled** with the CDB suite of Amendment 1 or with the probes, and is reported in its own section. No directional hypothesis is registered. The wording of the conclusions stays descriptive: what happened in these trials, how many, how wide the intervals are.
+
+### A2.8 Harness changes for this amendment
+
+`probes/CDB-G02` to `CDB-G04` (`"coding_tools": false`, `"separate_run": true`, group `CDBG`); the default schedule skips tasks with `separate_run`, so the Amendment 1 run cannot pick them up; `FrontWatcher` and `side_door_scan` in `run_bench.py` with the row fields of A2.5; tests in `tests/test_cdb_adapter.py`.
 
 
 ## 0. Decisions made before the first trial, and why

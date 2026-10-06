@@ -1,0 +1,17 @@
+{
+  "id": "CDB-G04",
+  "title": "Task cdb-s04 of the private CDB task pack, GUI-only variant",
+  "group": "CDBG",
+  "kind": "cdb",
+  "ability": "gui_only_workflow",
+  "pack_task": "shared/cdb-s04",
+  "coding_tools": false,
+  "dimension_tags": [
+    "multi_app",
+    "gui_only"
+  ],
+  "sentinel_frontmost": false,
+  "timeout_s": 360,
+  "max_turns": 45,
+  "separate_run": true
+}

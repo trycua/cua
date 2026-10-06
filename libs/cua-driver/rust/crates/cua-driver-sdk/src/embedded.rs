@@ -867,6 +867,7 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
                 | "CUA_LOG"
                 | "CUA_DRIVER_RS_TELEMETRY_ENABLED"
                 | "CUA_TELEMETRY_ENABLED"
+                | "CUA_DRIVER_RS_UPDATE_CHECK"
         )
 }
 
@@ -1268,6 +1269,32 @@ mod tests {
         }));
         assert!(values.iter().any(|variable| {
             variable.name == "CUA_TELEMETRY_ENABLED" && variable.value == "false"
+        }));
+    }
+
+    #[test]
+    fn update_check_preference_is_inherited_and_overridable() {
+        // A host that ships the driver owns its upgrade lifecycle, so it must
+        // be able to turn off the daemon's background release check the same
+        // way it turns off telemetry.
+        assert!(allowed_environment_name("CUA_DRIVER_RS_UPDATE_CHECK"));
+        assert!(allowed_environment_name("cua_driver_rs_update_check"));
+
+        let inherited = [("CUA_DRIVER_RS_UPDATE_CHECK".into(), "1".into())];
+        let values = merge_safe_environment(inherited.clone(), &[]);
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_UPDATE_CHECK" && variable.value == "1"
+        }));
+
+        let values = merge_safe_environment(
+            inherited,
+            &[EmbeddedEnvironmentVariable {
+                name: "CUA_DRIVER_RS_UPDATE_CHECK".into(),
+                value: "false".into(),
+            }],
+        );
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_UPDATE_CHECK" && variable.value == "false"
         }));
     }
 

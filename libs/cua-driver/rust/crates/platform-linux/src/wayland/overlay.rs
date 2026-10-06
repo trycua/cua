@@ -20,7 +20,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    OnceLock,
+    Arc, OnceLock,
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -70,7 +70,7 @@ enum WlOverlayCmd {
         key: CursorKey,
         x: f64,
         y: f64,
-        done: tokio::sync::oneshot::Sender<()>,
+        arrival: Arc<ArrivalFrame>,
     },
 }
 
@@ -199,17 +199,21 @@ pub fn shutdown() {
 /// Complete only after the owning cursor's arrival buffer receives a compositor
 /// frame callback. Queue loss, renderer failure and timeout refuse input.
 pub async fn animate_and_wait(key: CursorKey, x: f64, y: f64) -> anyhow::Result<()> {
-    if !CONFIG_ENABLED.load(Ordering::Acquire) {
-        // An explicitly disabled overlay does not gate real input.
-        return Ok(());
-    }
+    anyhow::ensure!(
+        CONFIG_ENABLED.load(Ordering::Acquire),
+        "Wayland cursor overlay disabled; click not sent"
+    );
     anyhow::ensure!(
         available() && ensure_started(),
         "Wayland arrival renderer unavailable"
     );
     let (done, arrived) = tokio::sync::oneshot::channel();
+    let arrival = Arc::new(ArrivalFrame::new(key.clone(), done));
+    // Cancellation also destroys a pending callback while the owner thread is
+    // stalled in a compositor roundtrip. A late event cannot authorize input.
+    let _cancel_on_drop = CancelArrivalOnDrop(Arc::downgrade(&arrival));
     tx().ok_or_else(|| anyhow::anyhow!("Wayland overlay unavailable"))?
-        .try_send(WlOverlayCmd::MoveAndWait { key, x, y, done })
+        .try_send(WlOverlayCmd::MoveAndWait { key, x, y, arrival })
         .map_err(|_| anyhow::anyhow!("Wayland overlay rejected arrival request"))?;
     wait_for_arrival(arrived, Duration::from_secs(10)).await
 }
@@ -227,25 +231,170 @@ async fn wait_for_arrival(
 struct Arrival {
     x: f64,
     y: f64,
-    done: tokio::sync::oneshot::Sender<()>,
+    frame: Arc<ArrivalFrame>,
 }
 
-struct ArrivalFrame(std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>);
+struct ArrivalFrame {
+    key: CursorKey,
+    state: std::sync::Mutex<ArrivalFrameState>,
+}
 
-impl Dispatch<WlCallback, ArrivalFrame> for OverlayState {
+struct ArrivalFrameState {
+    done: Option<tokio::sync::oneshot::Sender<()>>,
+    callback: Option<WlCallback>,
+}
+
+impl ArrivalFrame {
+    fn new(key: CursorKey, done: tokio::sync::oneshot::Sender<()>) -> Self {
+        Self {
+            key,
+            state: std::sync::Mutex::new(ArrivalFrameState {
+                done: Some(done),
+                callback: None,
+            }),
+        }
+    }
+
+    fn is_pending(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap()
+            .done
+            .as_ref()
+            .is_some_and(|done| !done.is_closed())
+    }
+
+    fn arm(&self, callback: WlCallback) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if state.done.as_ref().is_some_and(|done| !done.is_closed()) {
+            state.callback = Some(callback);
+            true
+        } else {
+            drop(state);
+            destroy_cancelled_callback(callback);
+            false
+        }
+    }
+
+    fn complete(&self) {
+        let mut state = self.state.lock().unwrap();
+        // wl_callback.done is a destructor event: wayland-client releases the
+        // protocol object automatically. Clear our handle before waking input.
+        state.callback.take();
+        if let Some(done) = state.done.take() {
+            let _ = done.send(());
+        }
+    }
+
+    fn cancel(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.done.take(); // Dropping the sender explicitly cancels its receiver.
+        let callback = state.callback.take();
+        drop(state);
+        if let Some(callback) = callback {
+            destroy_cancelled_callback(callback);
+        }
+    }
+}
+
+fn destroy_cancelled_callback(callback: WlCallback) {
+    // wl_callback has no destructor request. This is the supported equivalent
+    // of wl_proxy_destroy; later done events for this object are ignored.
+    if let Some(backend) = callback.backend().upgrade() {
+        let _ = backend.destroy_object(&callback.id());
+    }
+}
+
+struct CancelArrivalOnDrop(std::sync::Weak<ArrivalFrame>);
+
+impl Drop for CancelArrivalOnDrop {
+    fn drop(&mut self) {
+        if let Some(arrival) = self.0.upgrade() {
+            arrival.cancel();
+        }
+    }
+}
+
+#[derive(Default)]
+struct ArrivalRequests {
+    moving: HashMap<CursorKey, Arrival>,
+    frames: HashMap<CursorKey, Arc<ArrivalFrame>>,
+}
+
+impl ArrivalRequests {
+    fn cancel(&mut self, key: &CursorKey) {
+        if let Some(arrival) = self.moving.remove(key) {
+            arrival.frame.cancel();
+        }
+        if let Some(frame) = self.frames.remove(key) {
+            frame.cancel();
+        }
+    }
+
+    fn replace(&mut self, key: CursorKey, arrival: Arrival) {
+        self.cancel(&key);
+        if arrival.frame.is_pending() {
+            self.moving.insert(key, arrival);
+        }
+    }
+
+    fn prune_cancelled(&mut self) {
+        self.moving.retain(|_, arrival| {
+            let pending = arrival.frame.is_pending();
+            if !pending {
+                arrival.frame.cancel();
+            }
+            pending
+        });
+        self.frames.retain(|_, frame| {
+            let pending = frame.is_pending();
+            if !pending {
+                frame.cancel();
+            }
+            pending
+        });
+    }
+
+    fn pending(&self) -> bool {
+        !self.moving.is_empty() || !self.frames.is_empty()
+    }
+
+    fn complete(&mut self, frame: &Arc<ArrivalFrame>) {
+        // Arc identity is this request's generation. A late callback for an old
+        // request must neither remove nor complete a newer request for this key.
+        if self
+            .frames
+            .get(&frame.key)
+            .is_some_and(|current| Arc::ptr_eq(current, frame))
+        {
+            self.frames.remove(&frame.key);
+            frame.complete();
+        }
+    }
+}
+
+impl Drop for ArrivalRequests {
+    fn drop(&mut self) {
+        for arrival in self.moving.values() {
+            arrival.frame.cancel();
+        }
+        for frame in self.frames.values() {
+            frame.cancel();
+        }
+    }
+}
+
+impl Dispatch<WlCallback, Arc<ArrivalFrame>> for OverlayState {
     fn event(
         state: &mut Self,
         _: &WlCallback,
         event: wl_callback::Event,
-        data: &ArrivalFrame,
+        data: &Arc<ArrivalFrame>,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         if matches!(event, wl_callback::Event::Done { .. }) {
-            state.arrival_frames = state.arrival_frames.saturating_sub(1);
-            if let Some(done) = data.0.lock().unwrap().take() {
-                let _ = done.send(());
-            }
+            state.arrivals.complete(data);
         }
     }
 }
@@ -289,8 +438,7 @@ struct OverlayState {
     /// Replaces the per-redraw `mem::forget` leak: the previous frame's
     /// memory is reclaimed as soon as the compositor releases it.
     pending_buffers: HashMap<u32, (*mut libc::c_void, usize, i32)>,
-    arrivals: HashMap<CursorKey, Arrival>,
-    arrival_frames: usize,
+    arrivals: ArrivalRequests,
 }
 
 struct NativeOutput {
@@ -425,8 +573,7 @@ impl OverlayState {
             // lazily-created named slots take their key as the id.
             render: WlRenderMap::new(template, ()),
             pending_buffers: HashMap::new(),
-            arrivals: HashMap::new(),
-            arrival_frames: 0,
+            arrivals: ArrivalRequests::default(),
         }
     }
 }
@@ -668,7 +815,12 @@ fn wait_for_renderer_command(
     while let Ok(command) = rx.recv() {
         match command {
             WlOverlayCmd::Shutdown => return None,
-            command @ WlOverlayCmd::MoveAndWait { .. } => return Some(command),
+            WlOverlayCmd::MoveAndWait { key, x, y, arrival } => {
+                if arrival.is_pending() {
+                    return Some(WlOverlayCmd::MoveAndWait { key, x, y, arrival });
+                }
+                arrival.cancel();
+            }
             WlOverlayCmd::Remove(key) => {
                 remove_keyed_core(&mut state.render, key);
             }
@@ -764,9 +916,10 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     let mut frame_tick_needed = false;
     let mut startup_command = Some(first_command);
     loop {
+        state.arrivals.prune_cancelled();
         let wait = next_wait(
             &state.render.cursors,
-            frame_tick_needed || !state.arrivals.is_empty() || state.arrival_frames > 0,
+            frame_tick_needed || state.arrivals.pending(),
             state.topology_dirty,
         );
         let wake = startup_command
@@ -794,10 +947,12 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                     shutdown = true;
                     break;
                 }
-                Ok(WlOverlayCmd::MoveAndWait { key, x, y, done }) => {
-                    if state.render.ended.contains(&key) {
+                Ok(WlOverlayCmd::MoveAndWait { key, x, y, arrival }) => {
+                    if state.render.ended.contains(&key) || !arrival.is_pending() {
+                        arrival.cancel();
                         continue;
                     }
+                    state.arrivals.cancel(&key);
                     apply_keyed_command(
                         &mut state.render,
                         frame,
@@ -824,14 +979,21 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                         }
                     };
                     apply_keyed_command(&mut state.render, frame, key.clone(), command);
-                    state.arrivals.insert(key, Arrival { x, y, done });
+                    state.arrivals.replace(
+                        key,
+                        Arrival {
+                            x,
+                            y,
+                            frame: arrival,
+                        },
+                    );
                     dirty = true;
                 }
                 Ok(WlOverlayCmd::Cmd { key, cmd }) => {
                     dirty |= apply_keyed_command(&mut state.render, frame, key, cmd);
                 }
                 Ok(WlOverlayCmd::Remove(key)) => {
-                    state.arrivals.remove(&key);
+                    state.arrivals.cancel(&key);
                     dirty |= remove_keyed_core(&mut state.render, key);
                 }
                 Ok(WlOverlayCmd::Revive(key)) => {
@@ -1185,6 +1347,7 @@ fn redraw_output(
     ));
     let ready: Vec<CursorKey> = state
         .arrivals
+        .moving
         .iter()
         .filter_map(|(key, arrival)| {
             let core = state.render.cursors.get(key)?;
@@ -1196,9 +1359,14 @@ fn redraw_output(
         })
         .collect();
     for key in ready {
-        if let Some(arrival) = state.arrivals.remove(&key) {
-            state.arrival_frames += 1;
-            surface.frame(qh, ArrivalFrame(std::sync::Mutex::new(Some(arrival.done))));
+        if let Some(arrival) = state.arrivals.moving.remove(&key) {
+            if !arrival.frame.is_pending() {
+                continue;
+            }
+            let callback = surface.frame(qh, arrival.frame.clone());
+            if arrival.frame.arm(callback) {
+                state.arrivals.frames.insert(key, arrival.frame);
+            }
         }
     }
     surface.attach(Some(&buffer), 0, 0);
@@ -2376,6 +2544,208 @@ mod click_arrival_tests {
         assert_eq!(
             error.to_string(),
             "Wayland cursor arrival cancelled; click not sent"
+        );
+    }
+    fn request(key: &str) -> (Arc<ArrivalFrame>, tokio::sync::oneshot::Receiver<()>) {
+        let (done, arrived) = tokio::sync::oneshot::channel();
+        (Arc::new(ArrivalFrame::new(key.to_owned(), done)), arrived)
+    }
+
+    #[tokio::test]
+    async fn replacing_a_click_cancels_the_previous_request_immediately() {
+        let mut requests = ArrivalRequests::default();
+        let (first, first_wait) = request("agent");
+        let (second, mut second_wait) = request("agent");
+        requests.replace(
+            "agent".into(),
+            Arrival {
+                x: 1.0,
+                y: 2.0,
+                frame: first.clone(),
+            },
+        );
+        requests.replace(
+            "agent".into(),
+            Arrival {
+                x: 3.0,
+                y: 4.0,
+                frame: second.clone(),
+            },
+        );
+        assert_eq!(
+            wait_for_arrival(first_wait, Duration::from_secs(1))
+                .await
+                .unwrap_err()
+                .to_string(),
+            "Wayland cursor arrival cancelled; click not sent"
+        );
+        assert!(!first.is_pending());
+        assert!(matches!(
+            second_wait.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        assert!(second.is_pending());
+    }
+
+    #[tokio::test]
+    async fn dropping_the_renderer_cancels_its_pending_click() {
+        let (frame, arrived) = request("agent");
+        let mut requests = ArrivalRequests::default();
+        requests.replace(
+            "agent".into(),
+            Arrival {
+                x: 1.0,
+                y: 2.0,
+                frame,
+            },
+        );
+        drop(requests);
+        assert!(wait_for_arrival(arrived, Duration::from_secs(1))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("cancelled"));
+    }
+
+    fn callback_peer() -> (
+        Connection,
+        wayland_client::EventQueue<OverlayState>,
+        std::os::unix::net::UnixStream,
+        OverlayState,
+    ) {
+        let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+        let connection = Connection::from_socket(client).unwrap();
+        let queue = connection.new_event_queue::<OverlayState>();
+        let state = OverlayState::new(CursorConfig::default());
+        (connection, queue, server, state)
+    }
+
+    fn arm_callback(
+        connection: &Connection,
+        queue: &wayland_client::EventQueue<OverlayState>,
+        server: &mut std::os::unix::net::UnixStream,
+        state: &mut OverlayState,
+        frame: &Arc<ArrivalFrame>,
+    ) -> WlCallback {
+        use std::io::Read;
+        let callback = connection.display().sync(&queue.handle(), frame.clone());
+        assert!(frame.arm(callback.clone()));
+        state
+            .arrivals
+            .frames
+            .insert(frame.key.clone(), frame.clone());
+        connection.flush().unwrap();
+        let mut request = [0_u8; 12];
+        server.read_exact(&mut request).unwrap();
+        assert_eq!(
+            u32::from_ne_bytes(request[8..12].try_into().unwrap()),
+            callback.id().protocol_id()
+        );
+        callback
+    }
+
+    fn send_done(server: &mut std::os::unix::net::UnixStream, callback: &WlCallback) {
+        use std::io::Write;
+        let id = callback.id().protocol_id();
+        // Actual wl_callback.done destructor event, followed by wl_display.delete_id.
+        for word in [id, 12 << 16, 0, 1, (12 << 16) | 1, id] {
+            server.write_all(&word.to_ne_bytes()).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn sustained_callbacks_destroy_protocol_objects_and_return_to_baseline() {
+        let (connection, mut queue, mut server, mut state) = callback_peer();
+        for _ in 0..64 {
+            let (frame, arrived) = request("agent");
+            let callback = arm_callback(&connection, &queue, &mut server, &mut state, &frame);
+            send_done(&mut server, &callback);
+            queue.blocking_dispatch(&mut state).unwrap();
+            assert!(wait_for_arrival(arrived, Duration::from_secs(1))
+                .await
+                .is_ok());
+            assert!(!callback.is_alive());
+            assert!(connection.backend().info(callback.id()).is_err());
+            assert!(!state.arrivals.pending());
+        }
+    }
+
+    #[tokio::test]
+    async fn stalled_renderer_timeout_cleans_callback_and_cannot_authorize_a_later_click() {
+        let (connection, mut queue, mut server, mut state) = callback_peer();
+        let (first, first_wait) = request("agent");
+        let old_callback = arm_callback(&connection, &queue, &mut server, &mut state, &first);
+        let guard = CancelArrivalOnDrop(Arc::downgrade(&first));
+        assert!(wait_for_arrival(first_wait, Duration::ZERO)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("timed out"));
+        drop(guard);
+        assert!(!old_callback.is_alive());
+        state.arrivals.prune_cancelled();
+        assert!(!state.arrivals.pending());
+
+        let (second, mut second_wait) = request("agent");
+        let new_callback = arm_callback(&connection, &queue, &mut server, &mut state, &second);
+        send_done(&mut server, &old_callback);
+        queue.blocking_dispatch(&mut state).unwrap();
+        assert!(matches!(
+            second_wait.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        assert!(new_callback.is_alive());
+        assert!(state.arrivals.pending());
+        send_done(&mut server, &new_callback);
+        queue.blocking_dispatch(&mut state).unwrap();
+        assert!(wait_for_arrival(second_wait, Duration::from_secs(1))
+            .await
+            .is_ok());
+        assert!(!new_callback.is_alive());
+        assert!(!state.arrivals.pending());
+    }
+
+    #[tokio::test]
+    async fn a_late_callback_for_a_replaced_generation_cannot_complete_the_new_one() {
+        let mut requests = ArrivalRequests::default();
+        let (old, old_wait) = request("agent");
+        requests.frames.insert("agent".into(), old.clone());
+        let (new, mut new_wait) = request("agent");
+        requests.replace(
+            "agent".into(),
+            Arrival {
+                x: 3.0,
+                y: 4.0,
+                frame: new.clone(),
+            },
+        );
+        requests.frames.insert("agent".into(), new.clone());
+        requests.complete(&old);
+        assert!(wait_for_arrival(old_wait, Duration::from_secs(1))
+            .await
+            .is_err());
+        assert!(matches!(
+            new_wait.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        assert!(requests.pending());
+        requests.complete(&new);
+        assert!(wait_for_arrival(new_wait, Duration::from_secs(1))
+            .await
+            .is_ok());
+        requests.moving.remove("agent");
+        assert!(!requests.pending());
+    }
+
+    #[tokio::test]
+    async fn disabled_overlay_refuses_arrival_instead_of_authorizing_input() {
+        CONFIG_ENABLED.store(false, Ordering::Release);
+        assert_eq!(
+            animate_and_wait("agent".into(), 10.0, 20.0)
+                .await
+                .unwrap_err()
+                .to_string(),
+            "Wayland cursor overlay disabled; click not sent"
         );
     }
 }

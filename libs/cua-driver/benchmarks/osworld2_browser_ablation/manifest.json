@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "name": "Cua Driver OSWorld 2 browser-use ablation",
+  "benchmark_release": "osworld-v2-2026.06.24",
+  "osworld_code": {
+    "repository": "https://github.com/xlang-ai/OSWorld-V2.git",
+    "bootstrap_branch": "main",
+    "bootstrap_commit": "83f19747da485a29c2e406daf9e732219fef33a7",
+    "tag": "v2026.06.24",
+    "commit": "2b9b7b4eb73243d557bdbf2998fe18d8e18e19c6"
+  },
+  "tasks": {
+    "repository": "xlangai/osworld_v2_tasks",
+    "revision": "v2026.06.24",
+    "expected_count": 108
+  },
+  "assets": {
+    "repository": "xlangai/osworld_v2_assets_gated",
+    "revision": "v2026.06.24"
+  },
+  "image": {
+    "repository": "xlangai/v2-image",
+    "revision": "v2026.06.24",
+    "archive": "osworld-v2-ubuntu-x86.qcow2.zip",
+    "archive_size": 14189763267,
+    "archive_sha256": "eb737ae70b49849e24af407de6a518439a23de05a8497096a948334ce0a909aa"
+  },
+  "cua_driver": {
+    "repository": "trycua/cua",
+    "release": "cua-driver-rs-v0.12.6",
+    "version": "0.12.6",
+    "linux_x86_64_archive": "cua-driver-rs-0.12.6-linux-x86_64-binary.tar.gz",
+    "linux_x86_64_archive_sha256": "795b8464a25b036fe1a47d9cd1f560d6b4e2ab58e23630c0de3d9feff4757039",
+    "python_sdk_linux_x86_64_archive": "cua-driver-rs-0.12.6-linux-x86_64.tar.gz",
+    "python_sdk_linux_x86_64_archive_sha256": "6a8e1d3eaa310b00c236fab4838bf67b5318eff3186fd00e97bb0d50ade13fda",
+    "python_sdk_source_sha256": {
+      "__init__.py": "5cf5a40217e8810bf95993c822dc068de0acd83e443c59dd36253d98dfac85ef",
+      "_native.py": "fff84afcb1cd788f376b88908f79a84d0a40c44c4b4f56acdce6bbb274b8b273",
+      "_native_contract.py": "b1b394237cd5c15aedea8e2534d6cc9798875565bf1ccf8c078d5b694e38e6ba",
+      "wrapper.py": "7e00e214b027f252537c4b69fb21f954355c09390d0aa8a167b61247ef393868"
+    }
+  },
+  "task_hash_manifest": {
+    "path": "manifests/task_hashes.json",
+    "sha256": "3312a7df40dbd004c300804f71c57d5a23a083d6c675082fcc34c60a37f9a76c"
+  },
+  "fleet": {
+    "replicas": 1,
+    "cpu_cores": 4,
+    "memory": "8Gi",
+    "guest_ports": {
+      "server": 5000,
+      "chrome_cdp": 1337,
+      "novnc": 8006,
+      "vlc": 8080,
+      "cua_driver_proxy": 3002
+    }
+  },
+  "pilot": {
+    "task_count": 20,
+    "seeds": [
+      0,
+      1,
+      2
+    ],
+    "modes": [
+      "screenshot_only",
+      "screenshot_ax",
+      "cdp_only",
+      "combined"
+    ],
+    "expected_episodes": 240
+  }
+}

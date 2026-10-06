@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "benchmark_release": "osworld-v2-2026.06.24",
+  "purpose": "Certify the paired screenshot-plus-AX versus combined-CDP protocol before the full eligible web-task sweep.",
+  "max_estimated_model_cost_usd": 75.0,
+  "minimum_valid_pair_rate": 0.9,
+  "modes": [
+    "screenshot_ax",
+    "combined"
+  ],
+  "tasks": [
+    {
+      "task_id": "005",
+      "stratum": "os_to_web_file_upload",
+      "order": "control-first"
+    },
+    {
+      "task_id": "016",
+      "stratum": "multi_web_app",
+      "order": "treatment-first"
+    },
+    {
+      "task_id": "018",
+      "stratum": "multi_web_app_async",
+      "order": "control-first"
+    },
+    {
+      "task_id": "035",
+      "stratum": "web_to_native_document",
+      "order": "treatment-first"
+    },
+    {
+      "task_id": "038",
+      "stratum": "multi_web_app",
+      "order": "control-first"
+    },
+    {
+      "task_id": "043",
+      "stratum": "native_document_to_web",
+      "order": "treatment-first"
+    },
+    {
+      "task_id": "046",
+      "stratum": "web_and_native_media",
+      "order": "control-first"
+    },
+    {
+      "task_id": "070",
+      "stratum": "multi_web_app",
+      "order": "treatment-first"
+    },
+    {
+      "task_id": "073",
+      "stratum": "multi_web_app",
+      "order": "control-first"
+    },
+    {
+      "task_id": "098",
+      "stratum": "os_to_web_file_upload",
+      "order": "treatment-first"
+    }
+  ],
+  "paired_treatment_exclusions": [
+    {
+      "task_id": "068",
+      "reason": "Task instruction explicitly prohibits CDP/developer tools."
+    },
+    {
+      "task_id": "100",
+      "reason": "Task instruction explicitly prohibits CDP/developer tools."
+    },
+    {
+      "task_id": "101",
+      "reason": "Task instruction explicitly prohibits browser developer tools."
+    }
+  ]
+}

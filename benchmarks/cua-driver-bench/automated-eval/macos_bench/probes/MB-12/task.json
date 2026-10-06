@@ -13,5 +13,7 @@
     "--mode",
     "forms"
   ],
-  "sentinel_in_pass": true
+  "sentinel_in_pass": true,
+  "status": "dropped",
+  "dropped_note": "not run (dropped 6 Oct: live validation failed; see validation/mb12_live.json)"
 }

@@ -19,6 +19,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import claude_arms as ca
+
 ELICIT_APP = re.compile(r'Allow Computer Use to use "(.+)"\?')
 
 
@@ -66,17 +68,25 @@ def run_claude(
         stderr_path.open("wb") as err,
         elicitation_path.open("w", encoding="utf-8") as elog,
     ):
-        proc = subprocess.Popen(
-            argv,
-            cwd=str(cwd),
-            env=env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=err,
-            text=True,
-            bufsize=1,
-            start_new_session=True,
-        )
+        token_fd = ca.open_token_fd()
+        if token_fd is not None:
+            env = {**env, "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR": str(token_fd)}
+        try:
+            proc = subprocess.Popen(
+                argv,
+                cwd=str(cwd),
+                env=env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=err,
+                text=True,
+                bufsize=1,
+                start_new_session=True,
+                pass_fds=(token_fd,) if token_fd is not None else (),
+            )
+        finally:
+            if token_fd is not None:
+                os.close(token_fd)
         lock = threading.Lock()
 
         def send(obj: dict[str, Any]) -> None:

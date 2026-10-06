@@ -10,10 +10,21 @@
   "cua_skills_tree_sha256": "aed1bc3a73badfb0b988e613095ff3307b5186e2ad5a08d421eb8ac62635275d",
   "release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
   "claude_code_version": "2.1.289 (Claude Code)",
-  "macos_version": "26.6.1",
-  "macos_build": "25G76",
+  "macos_version": "26.5.2",
+  "macos_build": "25F84",
   "chatgpt_app_version": "26.930.51102",
   "unified_computer_use_plugin_version": "26.930.51102",
   "cua_repl_package_version": "0.1.0",
-  "codex_computer_use_service_version": "26.929.1001365"
+  "codex_computer_use_service_version": "26.929.1001365",
+  "environment": "Lume macOS VM on a Mac Studio host (M3 Ultra), cloned from the cached cua-base image; 6 CPU, 12 GB, 1920x1080; one VM for both arms",
+  "cdb_pack": {
+    "repo": "trycua/cua-driver-bench (private)",
+    "revision": "16a1937a79ff2ee2e48f5b5d9bb5e6f944119b5a",
+    "tree_sha256": {
+      "shared/cdb-s01": "73ecca4fe9dde1a3f658c0dee45ad0e6aeffcc52824cab79d0a76d1fa606a47e",
+      "shared/cdb-s02": "96f4a35667e90fb4272405030afc055093cbe2e628b6795099153e2274b83503",
+      "shared/cdb-s03": "9a0615c29150af95e6a133573ea3021f17222ee51480cb150427e90457f678d2",
+      "shared/cdb-s04": "240ab1b758603e938b688e4452f78a715bf4443a1df7f58535c20d8e47dc1efe"
+    }
+  }
 }

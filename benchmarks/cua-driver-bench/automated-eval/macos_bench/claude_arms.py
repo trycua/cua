@@ -53,6 +53,8 @@ SYSTEM_PROMPT = (
 
 BASE_TOOLS = ("Skill", "Read")
 TOOL_SEARCH_TOOL = "ToolSearch"
+CODING_TOOLS = ("Bash", "Edit", "Write")  # added to both arms for the CDB tasks only (TASKS.md)
+TOKEN_FILE_ENV = "CDB_CLAUDE_TOKEN_FILE"  # optional 0600 file with a CLAUDE_CODE_OAUTH_TOKEN, read by fd
 
 CUA_APP = WORK / "cua-0.34.0" / "CuaDriver-0.34.0.app"
 CUA_BIN = CUA_APP / "Contents/MacOS/cua-driver"
@@ -170,8 +172,22 @@ def claude_env() -> dict[str, str]:
     return env
 
 
-def builtin_tools(tool_search: bool = True) -> list[str]:
+def open_token_fd() -> int | None:
+    """A fresh inheritable fd on the OAuth token file (None when unset). The token never enters an
+    environment variable, an argv or a log: claude reads it from the descriptor named by
+    CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR. Every spawn needs its own fd (the offset is shared)."""
+    path = os.environ.get(TOKEN_FILE_ENV)
+    if not path:
+        return None
+    fd = os.open(path, os.O_RDONLY)
+    os.set_inheritable(fd, True)
+    return fd
+
+
+def builtin_tools(tool_search: bool = True, coding: bool = False) -> list[str]:
     tools = list(BASE_TOOLS)
+    if coding:
+        tools.extend(CODING_TOOLS)
     if tool_search:
         tools.append(TOOL_SEARCH_TOOL)
     return tools
@@ -189,6 +205,7 @@ def claude_argv(
     system_prompt: str = SYSTEM_PROMPT,
     claude_bin: Path | None = None,
     debug_file: Path | None = None,
+    coding_tools: bool = False,
 ) -> list[str]:
     """The one invocation, identical for both arms apart from the MCP config and its server name."""
     argv = [
@@ -208,7 +225,7 @@ def claude_argv(
         "--verbose",
         "--no-session-persistence",
         "--tools",
-        ",".join(builtin_tools(tool_search)),
+        ",".join(builtin_tools(tool_search, coding_tools)),
         "--setting-sources",
         "project",
         "--permission-mode",
@@ -219,7 +236,10 @@ def claude_argv(
         f"{max_budget_usd:g}",
     ]
     if server:
-        argv += ["--allowedTools", f"mcp__{server}"]
+        allowed = [f"mcp__{server}"]
+        if coding_tools:
+            allowed += [*CODING_TOOLS, "Read"]
+        argv += ["--allowedTools", ",".join(allowed)]
     if effort:
         argv += ["--effort", effort]
     if debug_file is not None:

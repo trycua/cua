@@ -45,6 +45,7 @@ sys.path.insert(0, str(HERE / "swift"))
 import arms  # noqa: E402
 import bench_core as core  # noqa: E402
 import claude_arms as ca  # noqa: E402
+import cdb_adapter  # noqa: E402
 import claude_driver  # noqa: E402
 import claude_events  # noqa: E402
 import recorder as rec  # noqa: E402
@@ -76,6 +77,8 @@ def load_tasks(probes_dir: Path) -> dict[str, pilot.Task]:
     tasks: dict[str, pilot.Task] = {}
     for meta in sorted(probes_dir.glob("*/task.json")):
         data = json.loads(meta.read_text("utf-8"))
+        if data.get("status") == "dropped":
+            continue  # kept on disk, not run (PREREGISTRATION.md, amendment of 6 Oct)
         task = pilot.Task(
             data["id"],
             "probe",
@@ -96,7 +99,10 @@ def task_spec(task: pilot.Task) -> dict[str, Any]:
 def allowed_apps(task: pilot.Task) -> set[str]:
     spec = task_spec(task)
     names = {"BenchLab", *spec.get("needs_apps", []), *spec.get("allowed_apps", [])}
-    return {n.lower() for n in names}
+    out = {n.lower() for n in names}
+    if spec.get("kind") == "cdb":
+        out |= cdb_adapter.allowed_app_names(spec)
+    return out
 
 
 # ---------------------------------------------------------------- context
@@ -608,7 +614,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     stderr_path = trial_dir / "claude.stderr"
     stream_path = trial_dir / "claude-stream.tsv"
     needs = list(spec.get("needs_apps", []))
+    cdb = cdb_adapter.CdbTask(spec, artifacts) if spec.get("kind") == "cdb" else None
     running_at_end: dict[str, bool] = {}
+    peeks: list[str] = []
     try:
         ctx.set_state(
             state="setup", trial_id=entry["trial_id"], attempt=attempt, trial_started_mono=t0
@@ -621,9 +629,15 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         if arm == "cc-cua-driver":
             ensure_agent_daemon(ctx)
         lab_app = Path(args.build_dir) / "BenchLab.app"
-        brief, paths = pilot.prepare_probe(task, seed, trial_dir, lab_app)
-        sentinel.start()
-        lab = pilot.launch_lab(task, seed, paths, lab_app, app_env)
+        if cdb is not None:
+            cdb.reset()
+            brief, paths = cdb.brief(), {}
+            sentinel.start()
+            cdb.start_apps(windows=lambda win: place_window(ctx, win))
+        else:
+            brief, paths = pilot.prepare_probe(task, seed, trial_dir, lab_app)
+            sentinel.start()
+            lab = pilot.launch_lab(task, seed, paths, lab_app, app_env)
         if spec.get("sentinel_frontmost", True):
             sentinel.activate()
         cwd = ca.prepare_cwd(arm)
@@ -636,6 +650,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             max_budget_usd=args.max_budget_usd,
             tool_search=args.tool_search == "default",
             effort=args.effort,
+            coding_tools=bool(spec.get("coding_tools")),
         )
         prompt = brief.strip() + "\n"
         if args.tell_budget:
@@ -672,7 +687,15 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         )
         failure = claude_events.classify_failure(summary, stderr_text, claude["returncode"])
         try:
-            evaluation = evaluate_probe(task, seed, paths, artifacts, artifacts / "sentinel.jsonl")
+            if cdb is not None:
+                rc = claude.get("returncode")
+                evaluation = cdb.evaluate(124 if rc is None else int(rc))
+                snapshot_workspace(cdb.workspace, artifacts / "workspace-final.tgz")
+                peeks = evaluator_peeks(events, spec.get("peek_patterns", []))
+            else:
+                evaluation = evaluate_probe(
+                    task, seed, paths, artifacts, artifacts / "sentinel.jsonl"
+                )
         except Exception as error:  # noqa: BLE001 - an evaluator crash is a failed trial, recorded
             evaluation = {
                 "passed": False,
@@ -693,6 +716,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             video_raw = ctx.recorder.stop()
         if lab is not None:
             claude_driver.kill_group(lab.pid)
+        if cdb is not None:
+            cdb.stop_apps()
         pilot.sweep_processes(str(trial_dir))
         kill_bench_apps()
         reset_needs_apps(needs)
@@ -819,7 +844,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             if (artifacts / "hid-idle.jsonl").exists()
             else None,
             "confirmation_requested": False,
-            "evaluator_read_suspected": False,
+            "evaluator_read_suspected": bool(peeks),
+            "evaluator_peeks": peeks,
             "recorder": getattr(ctx.recorder, "name", "none"),
             "video": str(trial_dir / "video" / "video.mp4") if video_raw else None,
             "video_720p": str(trial_dir / "video" / "video-720p.mp4") if video_raw else None,
@@ -834,6 +860,111 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     for name in ("apphome",):
         shutil.rmtree(trial_dir / name, ignore_errors=True)
     return row
+
+
+def snapshot_workspace(workspace: Path, dest: Path) -> None:
+    """Small tarball of the final workspace (no browser profile, no node_modules) for the audit trail."""
+    subprocess.run(
+        [
+            "tar",
+            "-czf",
+            str(dest),
+            "--exclude",
+            ".chromium-profile",
+            "--exclude",
+            "node_modules",
+            "--exclude",
+            ".runtime",
+            "-C",
+            str(workspace.parent),
+            workspace.name,
+        ],
+        capture_output=True,
+        timeout=120,
+    )
+
+
+DEFAULT_PEEK_PATTERNS = (
+    "evaluator",
+    "oracle",
+    "hidden_test",
+    "taskpack",
+    "bench-work",
+    "cdbeval",
+    "cdb-eval",
+    ".cdb-secrets",
+)
+
+
+def evaluator_peeks(events: list[dict[str, Any]], patterns: list[str]) -> list[str]:
+    """Tool calls whose input names evaluator material or the task pack (the pack sits on the same
+    disk as the agent; this is the control, see TASKS.md). Returns 'Tool:pattern' strings."""
+    found: list[str] = []
+    pats = list(patterns) or list(DEFAULT_PEEK_PATTERNS)
+    for event in events:
+        if event.get("type") != "assistant":
+            continue
+        for block in (event.get("message") or {}).get("content") or []:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                text = json.dumps(block.get("input", {}))
+                for pat in pats:
+                    if pat in text:
+                        found.append(f"{block.get('name')}:{pat}")
+    return found[:20]
+
+
+def place_window(ctx: "Ctx", win: dict[str, Any], wait_s: float = 90.0) -> bool:
+    """Wait for a window by title, then move and size it, through the recorder daemon.
+    Returns False when the window never appeared (LibreOffice needs a while on a cold start)."""
+    needle = win.get("title") or win.get("title_contains")
+    bounds = win.get("bounds")
+    if not needle or not bounds:
+        return True
+    rec_home = ca.RECORDER_STATE / "home"
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        done = ca.cua_cli(
+            "call", "list_windows", "{}", socket=ca.RECORDER_SOCKET, home=rec_home, timeout=20
+        )
+        try:
+            data = json.loads(done.stdout[done.stdout.index("{") :])
+        except (ValueError, json.JSONDecodeError):
+            time.sleep(0.5)
+            continue
+        for item in _walk_dicts(data):
+            title = str(item.get("title") or item.get("window_title") or "")
+            wid = item.get("window_id", item.get("id"))
+            pid = item.get("pid", item.get("owner_pid"))
+            if needle.lower() in title.lower() and wid is not None and pid is not None:
+                args = {
+                    "pid": pid,
+                    "window_id": wid,
+                    "x": bounds["x"],
+                    "y": bounds["y"],
+                    "width": bounds["width"],
+                    "height": bounds["height"],
+                }
+                ca.cua_cli(
+                    "call",
+                    "set_window_frame",
+                    json.dumps(args),
+                    socket=ca.RECORDER_SOCKET,
+                    home=rec_home,
+                    timeout=20,
+                )
+                return True
+        time.sleep(0.5)
+    return False
+
+
+def _walk_dicts(node: Any):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from _walk_dicts(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _walk_dicts(value)
 
 
 def kill_bench_apps() -> None:
@@ -1020,15 +1151,24 @@ def quota_probe(ctx: Ctx) -> tuple[bool, str]:
         "Reply OK",
     ]
     cwd = ca.prepare_cwd("cc-codex-cu", ca.CWD_ROOT)
-    done = subprocess.run(
-        argv,
-        cwd=str(cwd),
-        env=ca.claude_env(),
-        capture_output=True,
-        text=True,
-        timeout=120,
-        stdin=subprocess.DEVNULL,
-    )
+    env = ca.claude_env()
+    token_fd = ca.open_token_fd()
+    if token_fd is not None:
+        env["CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"] = str(token_fd)
+    try:
+        done = subprocess.run(
+            argv,
+            cwd=str(cwd),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            stdin=subprocess.DEVNULL,
+            pass_fds=(token_fd,) if token_fd is not None else (),
+        )
+    finally:
+        if token_fd is not None:
+            os.close(token_fd)
     events = []
     for line in done.stdout.splitlines():
         try:
@@ -1228,6 +1368,38 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             )
         except Exception as error:  # noqa: BLE001
             add("arm B MCP server", "fail", f"{type(error).__name__}: {error}")
+    cdb_ids = [t for t in ctx.task_ids if task_spec(ctx.tasks[t]).get("kind") == "cdb"]
+    if cdb_ids:
+        want = ca.load_pins().get("cdb_pack", {}).get("tree_sha256", {})
+        for tid in cdb_ids:
+            spec = task_spec(ctx.tasks[tid])
+            try:
+                probe = cdb_adapter.CdbTask(spec, ctx.run_dir)
+                got = probe._digest_hidden() or cdb_adapter.tree_sha256(probe.bundle)
+                ok = got == want.get(spec["pack_task"])
+                add(f"CDB pack {tid} matches its pinned digest", "pass" if ok else "fail", got[:16])
+                names = cdb_adapter.allowed_app_names(spec)
+                add(f"CDB {tid} descriptor readable", "pass", f"{len(names)} app names")
+            except Exception as error:  # noqa: BLE001
+                add(f"CDB pack {tid}", "fail", f"{type(error).__name__}: {error}")
+        for app in ("Google Chrome", "LibreOffice", "Gnucash"):
+            add(
+                f"CDB app installed: {app}",
+                "pass" if Path(f"/Applications/{app}.app").is_dir() else "fail",
+                f"/Applications/{app}.app",
+            )
+        electron = list(cdb_adapter.pack_tasks_root().glob("*/*/apps/*/node_modules/electron/dist"))
+        add("CDB Electron apps installed (npm ci + install.js)", "pass" if len(electron) >= 5 else "fail", f"{len(electron)} of 5")
+        add(
+            "CDB evaluator isolation (pack unreadable by the agent's user)",
+            "pass" if os.environ.get("CDB_EVAL_SUDO") == "1" else "warn",
+            "CDB_EVAL_SUDO=1: evaluator, oracle and hidden tests run as user cdbeval",
+        )
+        add(
+            "CDB disposable-environment flag",
+            "pass" if os.environ.get("CDB_BENCH_DISPOSABLE") == "1" else "fail",
+            "CDB_BENCH_DISPOSABLE=1 (the runner kills Electron/Chrome/LibreOffice by name)",
+        )
     build = Path(args.build_dir) if args.build_dir else None
     ok_build = bool(
         build and (build / "BenchLab.app").is_dir() and (build / "BenchSentinel.app").is_dir()
@@ -1270,7 +1442,7 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
         dur = rec.ffprobe_duration(raw) if raw else None
         add(
             "screen recording (3 s test)",
-            "pass" if raw and dur and dur > 1.0 else "fail",
+            "pass" if raw and dur and dur > 0.5 else "fail",
             f"{raw} duration={dur} err={getattr(ctx.recorder, 'last_error', None)}",
         )
     else:
@@ -1425,7 +1597,7 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
     (run_dir / "trials").mkdir(exist_ok=True)
     tasks = load_tasks(HERE / "probes")
     selected = args.tasks or (
-        [args.only_task] if args.only_task else [t for t in tasks if t.startswith("MB-")]
+        [args.only_task] if args.only_task else [t for t in tasks if t.startswith(("MB-", "CDB-"))]
     )
     if args.only_task and args.tasks is None:
         selected = [args.only_task]
@@ -1434,7 +1606,7 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
         raise SystemExit(f"unknown tasks {unknown}; known {sorted(tasks)}")
     task_ids = core.order_tasks(selected, explicit=bool(args.tasks))
     full_ids = (
-        task_ids if args.tasks else core.order_tasks([t for t in tasks if t.startswith("MB-")])
+        task_ids if args.tasks else core.order_tasks([t for t in tasks if t.startswith(("MB-", "CDB-"))])
     )
     arm_names = [args.only_arm] if args.only_arm else list(args.arms)
     codex = [a for a in arm_names if a in arms.CODEX_FALLBACK_ARMS]

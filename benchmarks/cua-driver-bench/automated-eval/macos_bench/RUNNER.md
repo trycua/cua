@@ -180,3 +180,19 @@ the Codex MCP config, the spend ledger, the `HOLD` file and the run folders.
 5. Remove `$CDB_BENCH_WORK/HOLD` when you want the run to start. Copy `launch/launch.env.example` to
    `$CDB_BENCH_WORK/launch.env` and set `CUTOFF_UTC`. Then `open -a Terminal launch/launch_bench.command`, and watch with
    `python3 launch/watch_bench.py main -f`.
+
+## Running in a VM (Amendment 1, 6 Oct 2026)
+
+The trials run in a Lume macOS VM on a separate Mac Studio, not on the owner's desktop. What the VM holds and how it is set up (nothing here is task content; the CDB task pack is private and is not in this repository):
+
+| Item | How |
+| --- | --- |
+| VM | `lume clone <cached cua base image> cdb-h2h`; `lume set cdb-h2h --cpu 6 --memory 12GB --display 1920x1080`; `lume run cdb-h2h --display none --detach --shared-dir <staging dir>`. System Settings, Displays: 1920 x 1080 (not the default 960 x 540 scaled mode). |
+| Tools | Claude Code 2.1.289 (`npm i -g --prefix /opt/homebrew`), Python 3.12 (uv) linked at `/opt/homebrew/bin/python3`, ffmpeg (Homebrew), Node and Chrome from the base image, LibreOffice and GnuCash copied from the Mac. `/opt/homebrew/bin` is where the runner expects `claude`, `ffmpeg` and `python3`. |
+| Harness | `$CDB_BENCH_WORK` is `~/bench-work`: `src/macos_bench` (this directory), `build/` (BenchLab and BenchSentinel, built in the VM with `swift/build.sh`), `cua-0.34.0/` (`tools/install_cua_driver.py`). |
+| Cua Driver permissions | The private copy needs Accessibility and Screen Recording for bundle id `com.trycua.driver` (System Settings, Privacy and Security; add `/Applications/CuaDriver.app`, a copy of the private app). Terminal.app needs Screen Recording. |
+| Arm B | The ChatGPT app and `~/.codex/computer-use/Codex Computer Use.app` copied as signed bundles (`ditto`), and the plugin cache file `~/.codex/plugins/cache/openai-bundled/unified-computer-use/<version>/.mcp.json` copied with the home directory rewritten. **Do not launch the ChatGPT app in the VM**: it updates itself on start and rewrites the plugin cache. The service needs Accessibility and Screenshots for "ChatGPT Computer Use" (its own "Enable ChatGPT Computer Use" window; Screenshots is granted by dragging the app into Screen Recording). No ChatGPT sign-in was needed for the computer surface. |
+| Claude Code | `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, kept in a 0600 file named by `CDB_CLAUDE_TOKEN_FILE`; the runner passes it to `claude` by file descriptor. |
+| CDB task pack | Agent-visible subset (apps with `node_modules`, fixture, reset scripts, launch descriptor, brief) in `$CDB_TASKPACK` (`~/cdb-runtime`); the full pack in the home of OS user `cdbeval` (0700); `/usr/local/libexec/cdb-eval-run` runs the evaluator as that user (`sudoers`: `lume ALL=(cdbeval) NOPASSWD: /usr/local/libexec/cdb-eval-run`). `CDB_EVAL_SUDO=1` selects this path. |
+
+`launch.env` for the VM sets `CDB_BENCH_WORK`, `CDB_BENCH_DISPOSABLE=1` (the runner may kill Electron, Chrome, LibreOffice and GnuCash by name), `CDB_TASKPACK`, `CDB_EVAL_SUDO=1`, `CDB_CLAUDE_TOKEN_FILE`, `RUN_ID` and `CUTOFF_UTC`. The runner is started with `open -a Terminal ~/bench-work/launch_bench.command` inside the VM, like on a Mac. Results are copied out through the shared directory after the run. When the study ends: stop and delete the VM, delete `~/.cdb-secrets`, and revoke the setup token.

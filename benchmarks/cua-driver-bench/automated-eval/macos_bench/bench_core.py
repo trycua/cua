@@ -36,11 +36,13 @@ OVERLOAD_RETRIES = 3
 
 
 def priority_key(task_id: str) -> tuple[int, int, str]:
-    """MB-01..MB-NN first in numeric order, anything else (e.g. CDB-S01) after, by name."""
+    """CDB-* first (primary result), then MB-NN probes in numeric order, anything else after, by name."""
+    if task_id.startswith("CDB-"):
+        return (0, 0, task_id)
     match = re.fullmatch(r"MB-(\d+)", task_id)
     if match:
-        return (0, int(match.group(1)), task_id)
-    return (1, 0, task_id)
+        return (1, int(match.group(1)), task_id)
+    return (2, 0, task_id)
 
 
 def order_tasks(task_ids: Iterable[str], explicit: bool = False) -> list[str]:

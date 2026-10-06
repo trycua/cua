@@ -4,6 +4,71 @@ Status: frozen when this file is committed, before any trial that enters the ana
 Date: 2026-10-05 (UTC evening). Scope: head-to-head, macOS host, one Mac. Owner: Cua Driver Bench maintainers.
 Supersedes the pilot pre-registration (private trycua/cua-driver-bench PR #59: Codex CLI with gpt-6-astra, Cua Driver arm only).
 
+**Amended once on 6 Oct 2026, before any analysed trial: see Amendment 1 immediately below. Where sections 0 to 12 differ from it, Amendment 1 wins.**
+
+## Amendment 1 (6 Oct 2026, before any analysed trial)
+
+Committed before trial 1 of the analysis. No analysed trial has run. The smoke trials (two Haiku 4.5 and three Sonnet 5.5 trials of MB-05 on 5 Oct on the owner's Mac, and a few Haiku 4.5 trials of the ported CDB tasks on 6 Oct inside the VM) are marked `smoke` in the ledger and are never analysed. The text of sections 0 to 12 below is left as committed on 5 Oct for the record. Where it differs from this amendment, **this amendment wins**. Everything not named here is unchanged: both arms run `claude -p --model claude-sonnet-5-5`; arm A is official Cua Driver 0.34.0, pinned, with its 0.34.0 skill; arm B is OpenAI's shipped `cua_repl` launcher as MCP server `codex-cu` (computer surface only); ToolSearch is on in both arms; 360 s and 45 turns; the seeds rule; the stop rule.
+
+### A1.1 What changed and why
+
+1. **The primary result is now the original cua-driver-bench suite**, ported into this runner (the "CDB suite", below). It existed before the public dispute, so it is not a reconstruction. The owner approved this change on 6 Oct 2026.
+2. **The eight AF reconstructions (MB-01 to MB-08) are dropped from the analysis.** Reason, in the words of the decision: unpublished original; a reconstruction can't confirm or refute the claim. The files stay in the repository and are marked "not run" in `TASKS.md`.
+3. **The probes MB-09, MB-10 and MB-11 are secondary**, reported separately and never pooled with the primary result. **MB-12 is dropped**: its one live validation with a model-free background actor failed (a clean background run loses key focus for about 2 s when it opens the Category popup menu, so a required disturbance check fails; see `validation/mb12_live.json`). It is dropped, not changed.
+4. **Where the trials run changed.** They run in a Lume macOS VM on a separate Mac Studio, not on the owner's desktop (section 3's "one Mac, no human at the desk" is replaced by A1.3).
+
+### A1.2 Tasks
+
+| Set | Tasks | Role |
+|---|---|---|
+| Primary | CDB-S01, CDB-S02, CDB-S03, CDB-S04 | task-macro mean of success; per-task tables |
+| Secondary | MB-09, MB-10, MB-11 | reported separately; MB-10 and MB-11 keep their "no Codex hover tool" caveat |
+| Not run | MB-12 | dropped after its live validation failed, see A1.1 item 3 |
+| Not run | MB-01 to MB-08 | dropped, see A1.1 |
+| Not run | the suite's fifth task (iOS Simulator, macOS-native) | needs Xcode and an iOS Simulator runtime, which the VM image lacks; four of the suite's five tasks run |
+
+"CDB-S01" was the name used for the whole suite when the task set was changed; the suite's first task is also called `cdb-s01`. Here the suite is the **CDB suite** and its tasks are CDB-S01 to CDB-S04.
+
+The CDB tasks are the shared tasks of the private `trycua/cua-driver-bench` repository at revision `16a1937a79ff2ee2e48f5b5d9bb5e6f944119b5a`. Their brief wording and success checkers are kept (brief verbatim except two neutral-name edits, checker unchanged). The material is proprietary, so this repository carries only the adapter, the selectors and the tree digests (`pins.json`, `cdb_pack`). `TASKS.md` lists every adaptation and why. In short: both arms also get `Bash`, `Edit` and `Write` on the CDB tasks (the original assumes a coding harness); the descriptor's terminal and editor apps are not started; the driver-participation receipt, which was non-scoring in the original, is not computed; the evaluator runs as a separate OS user and every tool input is scanned for evaluator paths (`evaluator_peeks`).
+
+The 360 s and 45-turn limits are kept for the CDB tasks even though the original private runs allowed 1200 to 1800 s. Low success rates here are not comparable with the original's.
+
+### A1.3 Environment
+
+* One Lume macOS VM (`cdb-h2h`), cloned from the cached Cua base image, on a Mac Studio (Apple M3 Ultra) that is not the owner's desk. 6 CPU, 12 GB, 1920x1080, macOS 26.5.2 (25F84). The pins for macOS in `pins.json` now name the VM's version. The same VM, one at a time, serves both arms.
+* Installed in the VM: Claude Code 2.1.289 (npm), Cua Driver 0.34.0 (the pinned private copy, same binary sha256 as before), the ChatGPT app 26.930.51102 and its shipped plugin (copied from the owner's Mac as signed bundles, never launched in the VM, because the app updates itself when it starts), BenchLab and BenchSentinel (built in the VM), Google Chrome (base image), LibreOffice 26.2.5.2 and GnuCash 5.16-3 (copied from the owner's Mac), Node 24.21.0, Electron 43.4.0 (the pack's lockfile), ffmpeg 9.0.2.
+* Reset: the workspace and apps are reset before and after every trial, as before. A VM clone or snapshot restore per trial is **not** done: the runner lives inside the VM and cannot restore its own VM, and a restore per trial would not fit the quota window. State that could leak between trials is limited to the VM's filesystem outside the reset scope.
+* Same launch: the runner starts from a Terminal.app shell inside the VM, both arms are its children with the scrubbed environment of section 2.
+* Screen recording: Cua Driver's recorder inside the VM, one video per trial. The preflight's 3-second recording test now passes at 0.5 s of video instead of 1.0 s, because the recorder writes a variable-frame-rate file and an idle VM desktop produces few frames.
+* The owner's Mac is not used for trials, and its HOLD file stays.
+
+### A1.4 Credentials and the quota seat
+
+* Claude Code in the VM authenticates with a long-lived OAuth token created with `claude setup-token` and approved by the owner's logged-in browser. The runner hands it to `claude` through a file descriptor (`CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`); it is never in an environment variable, a command line, a log or a commit.
+* The quota rule (stop starting trials at a 7-day utilization of 0.95, or on `rejected`) is unchanged and applies to the seat that the VM's token uses, as reported by `rate_limit_event`. That seat is not the one the owner's Mac uses (readings at 07:19 to 07:43 UTC on 6 Oct: Mac 0.35 with reset on 12 Oct 07:00 UTC; VM token 0.19 with reset on 9 Oct 13:00 UTC). The quota log in the report names the seat of every reading.
+
+### A1.5 Order, runs, analysis
+
+* Order: CDB-S01, CDB-S02, CDB-S03, CDB-S04, then MB-09, MB-10, MB-11. Arms are interleaved inside each task block as in section 6.
+* Runs: five per task per arm is the target, three the guaranteed minimum. Phase 1 runs 1 to 3 of every task in that order, phase 2 runs 4 and 5 only when phase 1 is complete for every task and the quota rule allows it.
+* Only complete task blocks are analysed. The primary analysis is section 8 applied to the CDB suite; the secondary analysis is section 8 applied to MB-09 to MB-11; there is no AF analysis. For the CDB suite, success is the pack evaluator's `passed` (every required check); its partial `score` is reported next to it. Trials with `evaluator_peeks` are reported separately and the headline is shown with and without them.
+* Stop rule, unchanged: no new trial once seven-day utilization is 0.95 or higher, or on any `rejected`. The trial in flight finishes. A cutoff time (`CUTOFF_UTC`) is set so that nothing runs into the owner's evening.
+
+### A1.6 Harness changes since the 5 Oct commit (all before any analysed trial)
+
+* `cdb_adapter.py` and `probes/CDB-S0x/task.json` (generic adapter, no task content); `tools/validate_cdb.py`, `tools/smoke_cdb_apps.py`; `tools/validate_mb12_live.py`; MB-12 `task.json` marked dropped.
+* `claude_arms.py`: coding tools for tasks that ask for them; `open_token_fd`. `claude_driver.py` and the quota probe pass the token descriptor.
+* `run_bench.py`: CDB path in `run_attempt`, window placement, final-workspace snapshot, evaluator-path scan, preflight checks for the pack, the apps and the isolation; tasks with `"status": "dropped"` are skipped; recording-test threshold 1.0 s to 0.5 s.
+* `bench_core.py`: priority order puts `CDB-*` before `MB-*`.
+* `pins.json`: VM macOS version and build, `cdb_pack` revision and digests.
+
+### A1.7 Validation done before the first trial (no model call)
+
+* CDB-S01 to CDB-S04: reset, byte-level verify, evaluator fails the pristine workspace, passes a scripted correct solution (score 1.0) and fails again after a second reset. Run through the adapter, inside the VM, with the evaluator isolated (`validation/cdb_results.json`).
+* MB-12: live validation with a model-free background actor failed (`validation/mb12_live.json`); MB-12 is dropped.
+* Runner preflight inside the VM: pins, both MCP servers, recording, sentinel, daemon permissions, and the CDB pack and isolation checks.
+
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

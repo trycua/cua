@@ -12,14 +12,9 @@ Not validated against the live app, because work was stopped before the GUI runs
 
 Oracle attempts: MB-09's oracle failed on 2 of the first 4 attempts with partial drags while other agents were using the desktop (a covered window, a moved pointer), and passed when retried; `validate.py` records attempts. MB-02's oracle failed intermittently until I fixed an app race (a legitimate second right-click soon after a menu closed was being ignored as a duplicate; now only a press within 300 ms of the opening press is ignored); it then passed 4 of 4.
 
-## MB-13 (CDB-S01): excluded
+## The CDB suite
 
-CDB-S01 is feasible to run locally without a VM (Cairn Desk is an installed Electron app, the web app needs only Node, the evaluator takes about 1.3 s and reset about 1.5 s), but it is excluded from this pre-registration:
-
-1. It needs a shell and coding step (fix a bug, add a regression test, restart a server), about 20 to 35 tool calls; the private bench gave it 1200 to 1800 s. The wall limit here is 360 s and 45 turns, so it would be run at a limit it was not designed for and would mostly measure the timeout.
-2. It also uses a browser (Chrome with an isolated profile), an Electron app and a protected workspace, so one trial costs several single-task slots of this schedule.
-3. The evaluator secrecy and network denial cannot be enforced on one shared account; the adapter would have to point at the private checkout and stage a copy outside any public tree.
-4. Its known procedure (the commands are in the private repo's pilot runner) is documented; it can be added after the first results if time allows.
+Superseded: the earlier plan to leave the original suite out (shell and coding step, browser, protected workspace, 360 s limit) was reversed on 6 Oct 2026. See Amendment 1 at the top of this file for what was ported and what changed.
 
 ## Known weaknesses and ambiguities
 

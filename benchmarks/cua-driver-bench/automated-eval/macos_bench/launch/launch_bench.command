@@ -23,6 +23,8 @@ RUN_DIR="$WORK/runs/$RUN_ID"
 mkdir -p "$RUN_DIR"
 rm -f "$RUN_DIR/launcher.exit"
 cd "$BENCH" || exit 1
+# Keep this Terminal window out of the way of the task windows (minimise it; the run continues).
+/usr/bin/osascript -e 'tell application "Terminal" to set miniaturized of (every window whose name contains "launch_bench") to true' >/dev/null 2>&1 &
 PY=/opt/homebrew/bin/python3; [ -x "$PY" ] || PY="$(command -v python3)"
 echo "$(date -u +%FT%TZ) launcher pid $$ run $RUN_ID" >> "$RUN_DIR/launcher.log"
 $PY tools/make_codex_cu_mcp.py "$WORK/codex-access/mcp.json" 2>&1 | tee -a "$RUN_DIR/launcher.log"

@@ -12,5 +12,7 @@
   "app_args": [
     "--mode",
     "canvas"
-  ]
+  ],
+  "status": "dropped",
+  "dropped_note": "not run (dropped 6 Oct: unpublished original; reconstruction can't confirm or refute the claim)"
 }

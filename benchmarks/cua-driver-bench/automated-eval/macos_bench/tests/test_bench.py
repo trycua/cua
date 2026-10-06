@@ -26,7 +26,7 @@ ARMS = ["cc-cua-driver", "cc-codex-cu"]
 class ScheduleTest(unittest.TestCase):
     def test_priority_order_mb_first_then_others(self) -> None:
         ids = ["CDB-S01", "MB-10", "MB-02", "MB-13", "MB-01"]
-        self.assertEqual(core.order_tasks(ids), ["MB-01", "MB-02", "MB-10", "MB-13", "CDB-S01"])
+        self.assertEqual(core.order_tasks(ids), ["CDB-S01", "MB-01", "MB-02", "MB-10", "MB-13"])
         self.assertEqual(core.order_tasks(ids, explicit=True), ids)
 
     def test_first_arm_alternates_by_task_plus_run_parity(self) -> None:

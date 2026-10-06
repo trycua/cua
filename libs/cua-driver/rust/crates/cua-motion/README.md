@@ -133,6 +133,4 @@ cargo test -p cua-motion --all-features
 
 ## License
 
-MIT. Parts of the motion configuration derive from
-[trope-cua](https://github.com/voctory/trope-cua) (MIT); see
-`libs/cua-driver/rust/THIRD_PARTY_NOTICES.md`.
+MIT.

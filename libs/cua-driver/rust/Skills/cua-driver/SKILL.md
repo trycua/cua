@@ -31,7 +31,16 @@ metadata:
 
 # cua-driver
 
-Operate one exact target, observe its state, act once, and verify the user's postcondition.
+Operate one exact target, observe it narrowly, act by element, and verify the user's postcondition at checkpoints.
+
+## Efficient loop
+
+The MCP server instructions carry the same rules, so they apply even when this file is not opened.
+
+1. Start with a targeted read: `get_window_state({pid, window_id, query:"Save"})` returns about 2K chars where a full snapshot is about 42K. Bound large trees with `max_elements` / `max_depth`, and pass `include_screenshot:false` when the tree is enough. Widen only if the target is missing.
+2. Act by `element_token`. A narrowed read keeps the full snapshot actionable, so you can act on a match without re-reading. Use pixels only for surfaces missing from the tree.
+3. Verify at checkpoints (after a meaningful state change, before finishing), not after every action. One `verify_state` or one targeted `get_window_state` is usually enough.
+4. Batch known steps in one call once the batch tool exists (CUA-1194, not yet available).
 
 ## Act
 
@@ -39,7 +48,7 @@ Operate one exact target, observe its state, act once, and verify the user's pos
 | ----------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | Check installation and capabilities       | `cua-driver --version`, `status`, `doctor`, `describe <tool>`; MCP `tools/list`                       | [Runtime](RUNTIME.md)                                 |
 | Find or open the requested app            | `list_apps`, `list_windows`, `launch_app`                                                             | Current platform guide below                          |
-| Observe one window                        | `get_window_state({pid, window_id})`                                                                  | [Workflow](WORKFLOW.md)                               |
+| Observe one window                        | `get_window_state({pid, window_id, query})`                                                           | [Workflow](WORKFLOW.md)                               |
 | Act on a control                          | `click` / `type_text` with a fresh `element_token` and exact window target                            | [Workflow](WORKFLOW.md)                               |
 | Use pixels when semantics cannot reach it | Fresh target screenshot, then `x,y` on the same target                                                | [Workflow](WORKFLOW.md)                               |
 | Verify the outcome                        | `verify_state({pid, window_id, expect})` or a fresh snapshot read by the agent                        | [Workflow](WORKFLOW.md)                               |
@@ -57,7 +66,7 @@ Check the installed version and advertised schema before using unfamiliar parame
 ## Rules
 
 1. Select the exact target on each action. A session is lifecycle metadata, not capture scope or permission authority.
-2. Observe before input and verify after it. `effect:"unverifiable"` and a successful exit are not task success; never replay a partial, canceled, or unknown action blindly.
+2. Observe before input and verify the outcome at checkpoints, not after every action. `effect:"unverifiable"` and a successful exit are not task success; never replay a partial, canceled, or unknown action blindly.
 3. Use returned tokens, never invented indices. A fresh snapshot replaces prior element handles and lists them in `invalidated_snapshot_ids`; act with `element_token`.
 4. Keep background window actions non-interfering. Foreground delivery and desktop input require authorization for visible control; an unavailable route is not permission to escalate.
 5. Never infer pixels from a missing image, a different window, or an unaccounted-for resized preview. Capture failure and an empty accessibility tree are different failures.

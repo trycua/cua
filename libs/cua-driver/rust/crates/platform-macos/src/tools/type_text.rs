@@ -57,64 +57,34 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "type_text".into(),
-        description:
-            "Insert text into the target pid via `AXSetAttribute(kAXSelectedText)`. \
-             Works for standard Cocoa text fields and text views. No keystrokes are \
-             synthesized — special keys (Return / Escape / arrows) go through \
-             `press_key` / `hotkey`. For Chromium / Electron inputs that don't \
-             implement `kAXSelectedText`, the tool falls back to CGEvent \
-             character synthesis automatically when the estimated route stays \
-             within the daemon transport budget. Longer synthesized routes are \
-             refused before character events and return a safe chunk size; \
-             one-call AX insertion remains uncapped.\n\n\
-             Optional `element_token` (from the last \
-             `get_window_state` snapshot) directs the write to a specific field. \
-             Without `element_token`, the write goes to the pid's currently \
-             focused element.\n\n\
-             WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, \
-             X's compose box): AXValue is not independent proof that the \
-             renderer/DOM observed an AX write or synthesized keystrokes. The \
-             driver detects this at the element level (an AXWebArea ancestor) and \
-             refuses to trust AXValue-only read-back there. Electron AX targets that \
-             are web content or cannot be proven native refuse background delivery \
-             before mutation because the AX route cannot establish exact renderer \
-             focus; use the px form or explicit foreground delivery. Other web-content \
-             paths return effect:\"unverifiable\" + \
-             escalation, never a false \"confirmed\" (a \
-             browser's own native address bar/toolbar stays trusted). For a browser \
-             TAB the reliable path is the `page` tool (drives the DOM via CDP); for \
-             an embedded web view use this tool's px form: pass x,y (no \
-             element_token) to pixel-click the field then type, in one call. NOTE: \
-             a px focus-click won't reliably open+focus a CLOSED control; AX-press \
-             to open/activate it first (works in the background), then px-type. \
-             Always confirm via the screenshot; if px-background still drops, \
-             escalate to delivery_mode:\"foreground\"."
-            .into(),
+        description: "Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `element_token`, or the pid's focused element. Does not press keys: use `press_key` / `hotkey` for Return, Escape, arrows. If AX insertion is unsupported (Chromium/Electron), it falls back to CGEvent typing when the route fits the transport budget; longer routes are refused with a safe chunk size.\n\
+            \n\
+            Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:\"unverifiable\"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Confirm from the screenshot, and use `delivery_mode:\"foreground\"` only if background still drops the text.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["text"],
             "properties": {
-                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
                 "pid":  { "type": "integer", "description": "Target process ID." },
-                "text": { "type": "string",  "description": "Text to insert at the target's cursor." },
+                "text": { "type": "string",  "description": "Text to insert." },
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID. Omit when element_token is supplied (the token carries it)."
+                    "description": "Window ID. Omit with element_token."
                 },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "x": { "type": "number", "description": "Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_token) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click." },
-                "y": { "type": "number", "description": "Screenshot-pixel Y of the field (see x)." },
+                "x": { "type": "number", "description": "Screenshot-pixel X of the field (get_window_state PNG, as in click). With y and no element_token, pixel-clicks to focus, then types." },
+                "y": { "type": "number", "description": "Screenshot-pixel Y (see x)." },
                 "delay_ms": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 200,
-                    "description": "Milliseconds between characters in the CGEvent fallback path. Default 30. Ignored when the AX path succeeds."
+                    "description": "Ms between characters in the CGEvent fallback. Default 30."
                 },
-                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id to type into the frontmost application." },
+                "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "\"desktop\" with no pid/window_id types into the frontmost app." },
                 "delivery_mode": {
                     "type": "string",
                     "enum": ["background", "foreground"],
-                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": AX insert, then CGEvent keystrokes if needed — no focus steal; native controls can be confirmed via AXValue read-back, while web-content writes remain effect:\"unverifiable\". \"foreground\": briefly front the window, type, restore the prior frontmost — the explicit last resort for focus-sensitive surfaces (e.g. WhatsApp/Catalyst) where background keystrokes don't land. Re-call with \"foreground\" when a background attempt remains unverifiable and a fresh snapshot shows the text did not appear."
+                    "description": "Default \"background\": AX insert, then CGEvent keys, no focus steal. \"foreground\": front the window, type, restore; last resort for surfaces (WhatsApp/Catalyst) where background keys do not land."
                 }
             },
             "additionalProperties": false

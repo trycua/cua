@@ -21,34 +21,30 @@ Effect: destructive. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Click against a target pid. **Prefer `element_token` over pixel coordinates**: the token works on backgrounded / minimized / hidden / off-Space windows, identifies one exact snapshot element, and tells you what you're clicking via the cached element's role + label. Reach for `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface that doesn't appear in the AX tree.
+Click a target pid. Prefer `element_token` (from get_window_state): it identifies one snapshot element, works on backgrounded, minimized or off-Space windows, and moves no cursor or focus. Use `x, y` only for canvas / video / WebGL / custom-drawn surfaces missing from the AX tree.
 
-Two addressing modes:
+- element_token: AX action path. Tokens are scoped to (pid, window_id) and stale once the window is snapshotted again.
+- x, y: window-local pixels of the get_window_state screenshot, sent as CGEvent mouse events. Needs a visible window. `modifier` takes cmd/shift/option/ctrl.
 
-- element_token (from get_window_state): AX action path. Works on backgrounded/hidden windows. No cursor move, no focus steal. The snapshot cache is scoped per (pid, window_id) and is replaced by the next snapshot of the same window: re-snapshot every turn before clicking.
-
-- x, y (window-local screenshot pixels, top-left origin of the PNG returned by get_window_state): CGEvent path. Synthesizes mouse events and posts to pid. Use modifier for cmd/shift/option/ctrl. Needs a visible on-screen window to anchor the conversion.
-
-button: "left" (default), "right", or "middle". Defaults to left so the field is fully back-compat: omit it and you get the legacy left-click behaviour. Pixel path: routes through the CGEvent left/right/middle mouse-button primitives. AX path: "right" maps to AXShowMenu (same surface as the dedicated `right_click` tool); "middle" has no AX equivalent and falls back to a pixel middle-click at the element's center.
-action: press (default), show_menu, pick, confirm, cancel, open.
-from_zoom: set true after a zoom call to auto-translate zoom-image pixel coordinates to full-window space.
+`button` defaults to left; on the AX path "right" maps to AXShowMenu and "middle" falls back to a pixel click at the element center. `action`: press (default), show_menu, pick, confirm, cancel, open. `from_zoom:true` translates zoom-image pixels after a `zoom` call.
 
 **macOS parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="click--macos--action"></span>`action` | `string` |  | AX action: press, show_menu, pick, confirm, cancel, open. |
-| <span id="click--macos--button"></span>`button` | `"left" \| "right" \| "middle"` |  | Mouse button. Default: "left"; omit for legacy left-click behaviour. Pixel path uses the matching CGEvent primitive; AX path maps "right" to AXShowMenu and falls back to a pixel middle-click at the element's center for "middle". |
-| <span id="click--macos--capture_id"></span>`capture_id` | `string` |  | Optional immutable source capture ID returned by get_window_state or get_desktop_state. With x,y, Driver atomically admits and consumes that exact capture before dispatch; stale, mismatched, or out-of-bounds captures are refused without fallback. |
+| <span id="click--macos--action"></span>`action` | `string` |  | AX action. |
+| <span id="click--macos--button"></span>`button` | `"left" \| "right" \| "middle"` |  | Mouse button. Default left. |
+| <span id="click--macos--capture_id"></span>`capture_id` | `string` |  | Optional capture ID from get_window_state or get_desktop_state. With x,y it is consumed atomically; stale or mismatched captures are refused. |
 | <span id="click--macos--count"></span>`count` | `integer` |  | Click count (pixel path only). Default 1. |
-| <span id="click--macos--debug_image_out"></span>`debug_image_out` | `string` |  | Optional file path. When set on a pixel-addressed click, captures a fresh screenshot, draws a red crosshair at (x, y), and writes the PNG. Use to verify coordinate spaces. Requires window_id; incompatible with from_zoom. |
-| <span id="click--macos--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Best-effort-background ladder rung (default "background"). "background": perform the AX action or post the CGEvent without fronting. "foreground": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require "foreground" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_token) → snapshot → background pixel (x/y) → snapshot → delivery_mode:"foreground". |
-| <span id="click--macos--from_zoom"></span>`from_zoom` | `boolean` |  | When true, x and y are in the last zoom image for this pid; driver translates back to full-window coordinates. |
+| <span id="click--macos--debug_image_out"></span>`debug_image_out` | `string` |  | Write a screenshot with a crosshair at (x, y) to this path. Needs window_id; not with from_zoom. |
+| <span id="click--macos--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Default "background" (no fronting). "foreground" briefly fronts the window, acts, then restores the prior app; needs window_id and is required for modified clicks. Escalate in order: AX element_token, background pixel, foreground, checking state between rungs; a click has no read-back except list-row selection. |
+| <span id="click--macos--from_zoom"></span>`from_zoom` | `boolean` |  | x and y are in the last zoom image for this pid. |
 | <span id="click--macos--modifier"></span>`modifier` | `string[]` |  | Modifier keys: cmd, shift, option/alt, ctrl. |
 | <span id="click--macos--pid"></span>`pid` | `integer` |  | Target process ID. |
-| <span id="click--macos--scope"></span>`scope` | `"window" \| "desktop"` |  | Coordinate frame for a windowless screen-absolute click (default "window"). Pass "desktop" when sending x,y with NO pid/window_id: the coordinates are then true screen pixels (read from get_desktop_state with scope="desktop"). Per-call; not a setting. |
-| <span id="click--macos--window_id"></span>`window_id` | `integer` |  | Target window ID. Omit when element_token is supplied (the token carries it). |
-| <span id="click--macos--x"></span>`x` | `number` |  | X in screenshot pixels. A window target uses the get_window_state PNG; a desktop target uses the native get_desktop_state PNG. The driver reverses Retina backing scale and any window-image downscale. |
+| <span id="click--macos--scope"></span>`scope` | `"window" \| "desktop"` |  | Default "window". "desktop": x,y with no pid/window_id are true screen pixels from get_desktop_state. |
+| <span id="click--macos--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
+| <span id="click--macos--window_id"></span>`window_id` | `integer` |  | Target window ID. Omit with element_token. |
+| <span id="click--macos--x"></span>`x` | `number` |  | X in screenshot pixels (get_window_state PNG, or get_desktop_state PNG for a desktop target). |
 | <span id="click--macos--y"></span>`y` | `number` |  | Y in screenshot pixels from the image selected by target. |
 
 </Tab>
@@ -78,6 +74,7 @@ button: "left" (default), "right", or "middle". Defaults to left so the field is
 | <span id="click--linux--modifier"></span>`modifier` | `string[]` |  | Modifier keys held during the action: cmd, shift, option/alt, ctrl. |
 | <span id="click--linux--pid"></span>`pid` | `integer` |  | Target process ID. Required unless scope is "desktop". |
 | <span id="click--linux--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Coordinate frame (default "window"). Pass "desktop" with x,y and no pid/window_id for a screen-absolute click in get_desktop_state coordinates. |
+| <span id="click--linux--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="click--linux--window_id"></span>`window_id` | `integer` |  | Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it). |
 | <span id="click--linux--x"></span>`x` | `number` |  | Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:"desktop" (or coordinate_frame:"desktop"). |
 | <span id="click--linux--y"></span>`y` | `number` |  | Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x. |
@@ -110,6 +107,7 @@ Windows-only convenience: `button: "left"|"right"|"middle"` switches the mouse b
 | <span id="click--windows--modifier"></span>`modifier` | `string[]` |  | Modifier keys held during the action: cmd, shift, option/alt, ctrl. |
 | <span id="click--windows--pid"></span>`pid` | `integer` |  | Target process ID for window scope. Omit with scope=desktop for screen-absolute coordinates from get_desktop_state. |
 | <span id="click--windows--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Coordinate frame (default "window"). Pass "desktop" with x,y and no pid/window_id for a screen-absolute click in get_desktop_state coordinates. |
+| <span id="click--windows--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="click--windows--window_id"></span>`window_id` | `integer` |  | HWND of the target window. Omit when element_token is supplied (the token carries it). |
 | <span id="click--windows--x"></span>`x` | `number` |  | X in window-local screenshot pixels: same space as the PNG get_window_state returns. Must be provided together with y. |
 | <span id="click--windows--y"></span>`y` | `number` |  | Y in window-local screenshot pixels. Must be provided together with x. |
@@ -122,5 +120,4 @@ Windows-only convenience: `button: "left"|"right"|"middle"` switches the mouse b
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="click--element_token"></span>`element_token` | `string` |  | Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
-| <span id="click--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 | <span id="click--target"></span>`target` | `window target \| desktop target` |  | Exact capture/input target selected independently for each action. `display_id="primary"` is the portable desktop target in this release. Platforms that cannot address another display reject it explicitly rather than silently changing coordinate spaces. |

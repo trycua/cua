@@ -55,7 +55,7 @@ List, launch, quit, front and arrange apps and windows. [Reference](/cua-driver/
 | Tool | Description | Platforms |
 | --- | --- | --- |
 | <span id="list_apps"></span>[`list_apps`](/cua-driver/reference/mcp-tools/apps-and-windows#list_apps) | List macOS apps, both currently running and installed-but-not-running, with per-app state flags: - running: is a process for this app live? | macOS, Linux, Windows |
-| <span id="list_windows"></span>[`list_windows`](/cua-driver/reference/mcp-tools/apps-and-windows#list_windows) | List all layer-0 top-level windows currently known to WindowServer. | macOS, Linux, Windows |
+| <span id="list_windows"></span>[`list_windows`](/cua-driver/reference/mcp-tools/apps-and-windows#list_windows) | List layer-0 top-level windows known to WindowServer, including off-screen ones (minimized, other Space, hidden). | macOS, Linux, Windows |
 | <span id="launch_app"></span>[`launch_app`](/cua-driver/reference/mcp-tools/apps-and-windows#launch_app) | Launch a macOS app in the background: the target does NOT come to the foreground. | macOS, Linux, Windows |
 | <span id="kill_app"></span>[`kill_app`](/cua-driver/reference/mcp-tools/apps-and-windows#kill_app) | Force-terminate a process by pid (kill -9 equivalent on macOS / Linux; taskkill /F equivalent on Windows). | macOS, Linux, Windows |
 | <span id="bring_to_front"></span>[`bring_to_front`](/cua-driver/reference/mcp-tools/apps-and-windows#bring_to_front) | Persistently activate an app and leave it in the foreground. | macOS, Linux, Windows |
@@ -69,7 +69,7 @@ Screenshots, accessibility trees, verification and visual regions of a window. [
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="get_window_state"></span>[`get_window_state`](/cua-driver/reference/mcp-tools/window-state#get_window_state) | Walk a running app's AX tree and return BOTH a structured `elements` array (preferred) AND a Markdown rendering of the same tree (back-compat). | macOS, Linux, Windows |
+| <span id="get_window_state"></span>[`get_window_state`](/cua-driver/reference/mcp-tools/window-state#get_window_state) | Snapshot a window: structured `elements` (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`), the same tree as Markdown in `tree_markdown`, and a screenshot. | macOS, Linux, Windows |
 | <span id="get_accessibility_tree"></span>[`get_accessibility_tree`](/cua-driver/reference/mcp-tools/window-state#get_accessibility_tree) | Return a lightweight snapshot of the desktop: running regular apps and on-screen visible windows with their bounds, z-order, and owner pid. | macOS, Linux, Windows |
 | <span id="verify_state"></span>[`verify_state`](/cua-driver/reference/mcp-tools/window-state#verify_state) | Deterministically verify bounded predicates against one exact window. | macOS, Linux, Windows |
 | <span id="parse_visual_regions"></span>[`parse_visual_regions`](/cua-driver/reference/mcp-tools/window-state#parse_visual_regions) | Parse one immutable registered capture into model-neutral text and icon regions. | macOS, Linux, Windows |
@@ -91,7 +91,7 @@ Click by element or pixel. [Reference](/cua-driver/reference/mcp-tools/click).
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="click"></span>[`click`](/cua-driver/reference/mcp-tools/click#click) | Click against a target pid. | macOS, Linux, Windows |
+| <span id="click"></span>[`click`](/cua-driver/reference/mcp-tools/click#click) | Click a target pid. | macOS, Linux, Windows |
 
 ## Double-click and right-click tools
 
@@ -122,7 +122,7 @@ Type text into a field or window. [Reference](/cua-driver/reference/mcp-tools/ke
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="type_text"></span>[`type_text`](/cua-driver/reference/mcp-tools/keyboard#type_text) | Insert text into the target pid via `AXSetAttribute(kAXSelectedText)`. | macOS, Linux, Windows |
+| <span id="type_text"></span>[`type_text`](/cua-driver/reference/mcp-tools/keyboard#type_text) | Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `element_token`, or the pid's focused element. | macOS, Linux, Windows |
 
 ## Key and shortcut tools
 
@@ -130,7 +130,7 @@ Press keys and keyboard shortcuts. [Reference](/cua-driver/reference/mcp-tools/k
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="press_key"></span>[`press_key`](/cua-driver/reference/mcp-tools/keys-and-shortcuts#press_key) | Press and release a single key. | macOS, Linux, Windows |
+| <span id="press_key"></span>[`press_key`](/cua-driver/reference/mcp-tools/keys-and-shortcuts#press_key) | Press and release one key. | macOS, Linux, Windows |
 | <span id="hotkey"></span>[`hotkey`](/cua-driver/reference/mcp-tools/keys-and-shortcuts#hotkey) | Press a key combination: e.g. | macOS, Linux, Windows |
 
 ## Value and clipboard tools
@@ -139,7 +139,7 @@ Set element values and read or write the clipboard. [Reference](/cua-driver/refe
 
 | Tool | Description | Platforms |
 | --- | --- | --- |
-| <span id="set_value"></span>[`set_value`](/cua-driver/reference/mcp-tools/values-and-clipboard#set_value) | Set a value on a UI element. | macOS, Linux, Windows |
+| <span id="set_value"></span>[`set_value`](/cua-driver/reference/mcp-tools/values-and-clipboard#set_value) | Set an element's value by `element_token`. | macOS, Linux, Windows |
 | <span id="clipboard_read"></span>[`clipboard_read`](/cua-driver/reference/mcp-tools/values-and-clipboard#clipboard_read) | List available system clipboard types and optionally return privacy-sensitive plain text. | macOS, Linux, Windows |
 | <span id="clipboard_write"></span>[`clipboard_write`](/cua-driver/reference/mcp-tools/values-and-clipboard#clipboard_write) | Replace the system clipboard with exactly one value: plain text, an image from an absolute local path, or a file URL from an absolute local path. | macOS, Linux, Windows |
 

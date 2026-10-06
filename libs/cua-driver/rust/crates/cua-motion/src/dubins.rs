@@ -1,4 +1,4 @@
-//! Dubins path planner — 1:1 port of the Swift `AgentCursorRenderer` Dubins
+//! Dubins path planner (the `classic` glide) — 1:1 port of the Swift `AgentCursorRenderer` Dubins
 //! implementation (`planPath` / `planDubins` / `DubinsPlannedPath`).
 //!
 //! Plans a minimum-turning-radius arc–straight–arc path from `(x0,y0,th0)`

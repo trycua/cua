@@ -1,0 +1,29 @@
+[package]
+name = "cua-motion"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license = "MIT"
+repository.workspace = true
+readme = "README.md"
+documentation = "https://docs.rs/cua-motion"
+description = "Agent cursor motion: the paths, timing and effects behind Cua Driver's cursor."
+keywords = ["cursor", "animation", "motion", "fitts", "agent"]
+categories = ["graphics", "mathematics"]
+
+[features]
+default = []
+# Serialize/Deserialize for the public types (styles accept their motion-lab
+# ids as aliases).
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[[example]]
+name = "export_golden"
+required-features = ["serde"]

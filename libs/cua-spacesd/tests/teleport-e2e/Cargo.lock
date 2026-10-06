@@ -1383,6 +1383,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-motion"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "cua-proto"
 version = "0.1.0"
 dependencies = [
@@ -1641,6 +1648,7 @@ dependencies = [
  "anyhow",
  "cua-driver-contract",
  "cua-driver-core",
+ "cua-motion",
  "fontdue",
  "image",
  "indexmap",

@@ -1391,6 +1391,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-motion"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cua-perception"
 version = "0.2.1"
 dependencies = [
@@ -1424,6 +1432,7 @@ dependencies = [
  "anyhow",
  "cua-driver-contract",
  "cua-driver-core",
+ "cua-motion",
  "fontdue",
  "image",
  "indexmap",

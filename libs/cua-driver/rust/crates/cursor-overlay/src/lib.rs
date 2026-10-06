@@ -3,7 +3,9 @@
 //! Platform renderers (macOS, Windows, Linux) depend on this crate for:
 //! - `CursorConfig` — theme, accessibility, visibility, and motion settings
 //! - `MotionConfig` — glide duration, spring, dwell, idle-hide timings
-//! - `CubicBezier` + `PathPlanner` — Bezier path math (ported 1:1 from C#)
+//! - `CubicBezier` — Bezier path math (ported 1:1 from C#)
+//! - `trajectory` — the motion styles, timing and effect geometry, which live
+//!   in the `cua-motion` crate (shared with the `@trycua/motion` web package)
 //! - `OverlayCommand` — messages sent from MCP tools to the overlay thread
 //! - `SurfaceFit` — keeps each platform's overlay surface fitted to the live
 //!   display geometry, so screen-coordinate cursors stay on the pointer
@@ -14,7 +16,6 @@ pub mod capture_exclusion;
 pub mod capture_utils;
 pub mod motion;
 pub mod motion_defaults;
-pub mod path_planner;
 pub mod render_map;
 pub mod render_state;
 pub mod session_badge;
@@ -22,6 +23,8 @@ pub mod surface_fit;
 pub mod theme;
 pub mod theme_artifact;
 pub mod trajectory;
+/// The `classic` glide's Dubins planner, now in `cua-motion`.
+pub use cua_motion::dubins as path_planner;
 pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
@@ -403,30 +406,12 @@ pub enum OverlayCommand {
     ShowFocusRect(Option<[f64; 4]>),
 }
 
-/// Distance, in points, between a cursor's pointer point and its anchor.
-///
-/// `RenderStateCore::pos` is the anchor that path motion, the session badge,
-/// and platform damage regions follow. The theme hotspot is drawn at the
-/// pointer point, `POINTER_ANCHOR_OFFSET` points from the anchor opposite the
-/// heading, so a cursor anchored by [`anchor_for_pointer`] draws its tip on
-/// the requested coordinate at every heading and backing scale.
-pub const POINTER_ANCHOR_OFFSET: f64 = 16.0;
-
-/// Anchor that places a cursor's hotspot on `(x, y)` at `heading`.
-pub fn anchor_for_pointer(x: f64, y: f64, heading: f64) -> (f64, f64) {
-    (
-        x + heading.cos() * POINTER_ANCHOR_OFFSET,
-        y + heading.sin() * POINTER_ANCHOR_OFFSET,
-    )
-}
-
-/// Pointer point, where the theme hotspot is drawn, for an anchor at `heading`.
-pub fn pointer_for_anchor(x: f64, y: f64, heading: f64) -> (f64, f64) {
-    (
-        x - heading.cos() * POINTER_ANCHOR_OFFSET,
-        y - heading.sin() * POINTER_ANCHOR_OFFSET,
-    )
-}
+// `RenderStateCore::pos` is the anchor that path motion, the session badge,
+// and platform damage regions follow. The theme hotspot is drawn at the
+// pointer point, `POINTER_ANCHOR_OFFSET` points from the anchor opposite the
+// heading, so a cursor anchored by `anchor_for_pointer` draws its tip on the
+// requested coordinate at every heading and backing scale.
+pub use cua_motion::{anchor_for_pointer, pointer_for_anchor, POINTER_ANCHOR_OFFSET};
 
 /// Cursor key for a named session's keyboard and text feedback: the explicit
 /// `session` label, else the trusted lifecycle `_session_id`. Anonymous calls

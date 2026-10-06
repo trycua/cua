@@ -1,14 +1,12 @@
 //! Golden parity with the motion lab, the design source of truth.
 //!
 //! `tests/fixtures/motion_parity.json` is exported by
-//! `tools/cursor-gallery/motion-lab/test/export-parity.mjs`: every scene,
+//! `libs/cua-driver/tools/cursor-gallery/motion-lab/test/export-parity.mjs`: every scene,
 //! seed 7, each shipped style and timing mode. Each Rust trajectory must
 //! match the lab within 0.5 pt at every exported sample time.
 
-use cursor_overlay::trajectory::{
-    apply_timing, generate, plan_move, MoveCtx, MoveRequest, Pt, Raw, Rng,
-};
-use cursor_overlay::{MotionConfig, MotionStyle, MotionTiming};
+use cua_motion::plan::{apply_timing, generate, MoveCtx, Raw};
+use cua_motion::{plan_move, MotionParams, MotionStyle, MotionTiming, MoveRequest, Pt, Rng};
 use serde_json::Value;
 use std::f64::consts::FRAC_PI_4;
 
@@ -72,10 +70,10 @@ fn shipped_styles_match_the_motion_lab() {
             }
             // The classic glide is planned in anchor space; at rest heading
             // the anchor is a constant offset from the hotspot.
-            let motion = MotionConfig {
+            let motion = MotionParams {
                 style,
                 timing,
-                ..MotionConfig::default()
+                ..MotionParams::default()
             };
             let traj = plan_move(
                 &motion,
@@ -89,11 +87,11 @@ fn shipped_styles_match_the_motion_lab() {
                     reduced_motion: false,
                 },
             );
-            let (ox, oy) = cursor_overlay::anchor_for_pointer(0.0, 0.0, FRAC_PI_4);
+            let (ox, oy) = cua_motion::anchor_for_pointer(0.0, 0.0, FRAC_PI_4);
             traj.samples
                 .iter()
                 .map(|s| {
-                    let (ax, ay) = cursor_overlay::anchor_for_pointer(s.x, s.y, s.heading);
+                    let (ax, ay) = cua_motion::anchor_for_pointer(s.x, s.y, s.heading);
                     Raw {
                         t: s.t * 1000.0,
                         x: ax - ox,
@@ -103,7 +101,7 @@ fn shipped_styles_match_the_motion_lab() {
                 .collect()
         } else {
             let mut rng = Rng::from_seed(seed);
-            let (mut raw, snap) = generate(style, &ctx, &MotionConfig::default(), &mut rng);
+            let (mut raw, snap) = generate(style, &ctx, &MotionParams::default(), &mut rng);
             let mut events: Vec<f64> = snap.into_iter().collect();
             apply_timing(&mut raw, &mut events, &ctx, timing, fixed_ms);
             if let (Some(lab_snap), Some(rust_snap)) = (case["snap_ms"].as_f64(), events.first()) {
@@ -143,7 +141,7 @@ fn shipped_styles_match_the_motion_lab() {
             .fold(0.0f64, f64::max);
         if style == MotionStyle::Classic && (case_worst > TOLERANCE_PT || !duration_ok) {
             // The lab's JS Dubins port can pick a different arc word than
-            // path_planner.rs for a few poses; classic keeps the Rust planner.
+            // dubins.rs for a few poses; classic keeps the Rust planner.
             classic_misses.push(name);
         } else if case_worst > worst.0 {
             worst = (case_worst, name);

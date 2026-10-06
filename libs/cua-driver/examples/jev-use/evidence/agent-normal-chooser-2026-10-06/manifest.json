@@ -1,0 +1,34 @@
+{
+  "measured_source_commit": "d95fa463446750f0dbff122c4c2b1e67af3913cd",
+  "measured_runner_sha256": "820b9f63a63e9c8b22c31f0e386a5f6f77227be0c85ae9e41b57cbe2ee0b0153",
+  "traces": {
+    "results": {
+      "file": "results.json.gz",
+      "raw_bytes": 1344171,
+      "raw_sha256": "a07c102047b7cca3754b9f976143aceb2261d0483a45964e676dd2e930e801ad",
+      "compressed_bytes": 52006,
+      "compressed_sha256": "9bd270ea4ae6848b5f20839309b6d43d655c5d640d614c4e3efae7a6a0372b61"
+    },
+    "smoke-results": {
+      "file": "smoke-results.json.gz",
+      "raw_bytes": 269975,
+      "raw_sha256": "4e291e37fb274d53c1886a3a449f7439f522a04e4ff6b74984b6093fe44a2a85",
+      "compressed_bytes": 12088,
+      "compressed_sha256": "e811d1cd04201ef1ea3cd75bf08fddfc13eccfc1ba1023a985c96942d1396a99"
+    },
+    "locked-smoke-results": {
+      "file": "locked-smoke-results.json.gz",
+      "raw_bytes": 14228,
+      "raw_sha256": "496fa76b3f4a786fbfa4402118b4f09181a2206856b7e477db6a95f2cb3d78f3",
+      "compressed_bytes": 2185,
+      "compressed_sha256": "74f37861d9459235b7fef96eb149fa96bd50a3c19116dcd7b51ad24b515965e3"
+    },
+    "readiness-smoke-results": {
+      "file": "readiness-smoke-results.json.gz",
+      "raw_bytes": 762273,
+      "raw_sha256": "191ba54b9adb991977e4f2b16635dd3781b6fb5b09c54240cfa71ae7174fa117",
+      "compressed_bytes": 15275,
+      "compressed_sha256": "9c55236c68eeae7f369bc0bc41307c04d6f1e6ec9a479c3d8747b5e9f3370b02"
+    }
+  }
+}

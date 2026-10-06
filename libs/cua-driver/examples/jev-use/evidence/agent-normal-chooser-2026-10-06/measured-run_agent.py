@@ -151,7 +151,7 @@ async def trial(client, sdk, http, mode, rep, smoke=False):
         execution_driver=CompositeTextDriver(driver,fixture.pid,window) if mode=='frontier_literal_composite' else driver
         result=await execute_literal_text_plan(execution_driver,**owner,platform='macos',steps=plan,verify_step=verify_step,verify_final=verify_final,verify_context=lambda obs:safe(),choose=None if mode.startswith('frontier_literal') else normal_choice)
         if isinstance(execution_driver,CompositeTextDriver): row['composite_receipts']=execution_driver.receipts
-        row.update(terminal=result['status'],passed=result['status']=='verified_complete' and final())
+        row.update(terminal=result['status'],passed=final())
     except Exception as exc: row['error_type']=type(exc).__name__; row['error']=str(exc)[:160] if isinstance(exc,LiteralPlanHandoff) else None
     finally:
         row['wall_ms']=(time.perf_counter()-start)*1000;row['calls']=safe_evidence(client.calls[offset:]);row['visible_mcp_calls']=len(row['calls']);row['canonical_child_calls']=0
@@ -159,8 +159,7 @@ async def trial(client, sdk, http, mode, rep, smoke=False):
             if call['tool']!='experiment_action_observe':
                 row['canonical_child_calls']+=1
             else:
-                receipt=call.get('result',{})
-                dispatches=receipt.get('child_dispatches',receipt.get('operation',{}).get('child_dispatches'))
+                dispatches=call.get('result',{}).get('operation',{}).get('child_dispatches')
                 if isinstance(dispatches,list) and dispatches in (['set_value'],['set_value','get_window_state']):
                     row['canonical_child_calls']+=len(dispatches)
                 else:

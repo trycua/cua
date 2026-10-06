@@ -7,10 +7,10 @@ Cua Driver moves its agent cursor with **Cua Cursor Motion**, an MIT-licensed
 library you can use on its own. It comes in two packages that give the same
 trajectories:
 
-- [`cua-cursor-motion`](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/cua-cursor-motion),
+- `cua-cursor-motion` (`libs/cua-driver/rust/crates/cua-cursor-motion`),
   the Rust crate the driver plans every move with;
-- [`libs/typescript/cursor-motion`](https://github.com/trycua/cua/tree/main/libs/typescript/cursor-motion),
-  a TypeScript port with a canvas player that draws the Cua cursor.
+- `@trycua/cursor-motion` (`libs/typescript/cursor-motion`), a TypeScript
+  port with a canvas player that draws the Cua cursor.
 
 Both are tested against the same golden trajectories, so a motion you tune on
 a web page plays the same way in the driver.

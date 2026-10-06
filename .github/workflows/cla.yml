@@ -39,4 +39,4 @@ jobs:
           path-to-signatures: "signatures/version1/cla.json"
           path-to-document: "https://github.com/${{ github.repository }}/blob/main/CLA.md"
           branch: "cla-signatures"
-          allowlist: "f-trycua,injaneity,ddupont808,dependabot[bot],github-actions[bot]"
+          allowlist: "f-trycua,francedot,injaneity,ddupont808,JaiCode08,cuaclaw,dependabot[bot],github-actions[bot],release-please[bot]"

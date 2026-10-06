@@ -558,7 +558,7 @@
       "type": "array"
      },
      "pid": {
-      "description": "Target process ID. Required unless scope is \"desktop\".",
+      "description": "Target process ID. Required unless scope is \"desktop\" or element_token is supplied (the token carries the pid).",
       "type": "integer"
      },
      "scope": {
@@ -1700,7 +1700,7 @@
       "type": "string"
      },
      "pid": {
-      "description": "Target process ID. Required unless scope is \"desktop\".",
+      "description": "Target process ID. Required unless scope is \"desktop\" or element_token is supplied (the token carries the pid).",
       "type": "integer"
      },
      "scope": {

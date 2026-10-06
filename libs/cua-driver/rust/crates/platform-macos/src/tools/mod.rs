@@ -686,6 +686,42 @@ impl ToolState {
     }
 }
 
+/// The target pid of an element-addressable call. An explicit `pid` wins; a
+/// call that carries only an `element_token` takes the pid the token was
+/// minted for, as the schemas promise ("the token carries it").
+pub(super) fn target_pid(
+    state: &ToolState,
+    args: &serde_json::Value,
+) -> Result<i32, cua_driver_core::protocol::ToolResult> {
+    use cua_driver_core::tool_args::ArgsExt;
+    if args.get("pid").is_some_and(|pid| !pid.is_null()) {
+        return args.require_i32("pid");
+    }
+    if let Some(pid) = state.snapshots.pid_for_token(args) {
+        return Ok(pid);
+    }
+    if args
+        .get("element_token")
+        .is_some_and(|token| !token.is_null())
+    {
+        return Err(cua_driver_core::protocol::ToolResult::error(
+            "element_token is stale or unknown; call get_window_state again to refresh \
+             (a current token names its own pid).",
+        )
+        .with_structured(serde_json::json!({
+            "status": "refused",
+            "refusal": {
+                "code": "stale_element_token",
+                "message": "element_token is stale or unknown; call get_window_state again to refresh",
+            },
+        })));
+    }
+    Err(cua_driver_core::protocol::ToolResult::error(
+        "Missing required integer field: pid. Pass pid, or pass an element_token from the \
+         current get_window_state (a token names its own pid).",
+    ))
+}
+
 pub(super) fn screenshot_scale(
     state: &ToolState,
     args: &serde_json::Value,

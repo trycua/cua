@@ -1,5 +1,5 @@
 // The TypeScript port must reproduce the Rust crate's golden trajectories:
-// libs/cua-driver/rust/crates/cua-motion/fixtures/golden.json.
+// libs/cua-driver/rust/crates/cua-cursor-motion/fixtures/golden.json.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
@@ -18,7 +18,10 @@ import {
 
 const golden = JSON.parse(
   readFileSync(
-    new URL('../../../cua-driver/rust/crates/cua-motion/fixtures/golden.json', import.meta.url),
+    new URL(
+      '../../../cua-driver/rust/crates/cua-cursor-motion/fixtures/golden.json',
+      import.meta.url
+    ),
     'utf8'
   )
 );

@@ -1,11 +1,11 @@
-name: "CI: @trycua/motion"
+name: "CI: @trycua/cursor-motion"
 
 on:
   pull_request:
     paths:
-      - "libs/typescript/motion/**"
-      - "libs/cua-driver/rust/crates/cua-motion/fixtures/**"
-      - ".github/workflows/ci-ts-motion.yml"
+      - "libs/typescript/cursor-motion/**"
+      - "libs/cua-driver/rust/crates/cua-cursor-motion/fixtures/**"
+      - ".github/workflows/ci-ts-cursor-motion.yml"
       - ".github/workflows/ts-reusable-build.yml"
 
 env:
@@ -20,8 +20,8 @@ jobs:
   build:
     uses: ./.github/workflows/ts-reusable-build.yml
     with:
-      package_name: "motion"
-      package_dir: "libs/typescript/motion"
+      package_name: "cursor-motion"
+      package_dir: "libs/typescript/cursor-motion"
       package_manager: "pnpm"
 
   test:
@@ -36,13 +36,13 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          package_json_file: libs/typescript/motion/package.json
+          package_json_file: libs/typescript/cursor-motion/package.json
       - name: Install dependencies
-        working-directory: libs/typescript/motion
+        working-directory: libs/typescript/cursor-motion
         run: pnpm install --frozen-lockfile
       - name: Typecheck
-        working-directory: libs/typescript/motion
+        working-directory: libs/typescript/cursor-motion
         run: pnpm typecheck
       - name: Test
-        working-directory: libs/typescript/motion
+        working-directory: libs/typescript/cursor-motion
         run: pnpm test

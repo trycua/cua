@@ -209,3 +209,7 @@ pre {
     monospace;
   white-space: pre;
 }
+
+header a {
+  color: var(--blue);
+}

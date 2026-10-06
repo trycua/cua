@@ -78,10 +78,10 @@ export function driverSnippets(params: Partial<MotionParams>, session = 'demo'):
   return { configSet, cursorMotion, setAgentCursorMotion: call, callOnly };
 }
 
-/** TypeScript for planning these params with `@trycua/motion`. */
+/** TypeScript for planning these params with `@trycua/cursor-motion`. */
 export function paramsSnippet(params: Partial<MotionParams>): string {
   return [
-    "import { planMove } from '@trycua/motion';",
+    "import { planMove } from './vendor/cua-cursor-motion.js';",
     '',
     `const params = ${JSON.stringify(changedKnobs(motionParams(params)), null, 2)};`,
     'const trajectory = planMove(params, { from, to, target });',
@@ -97,7 +97,7 @@ export function specSnippet(spec: MotionSpec): string {
         ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, r(x)]))
         : v;
   return [
-    "import { planSpec, type MotionSpec } from '@trycua/motion';",
+    "import { planSpec, type MotionSpec } from './vendor/cua-cursor-motion.js';",
     '',
     `const spec: MotionSpec = ${JSON.stringify(r(spec), null, 2)};`,
     'const trajectory = planSpec(spec, { from, to, target });',

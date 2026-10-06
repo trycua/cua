@@ -1,4 +1,4 @@
-// Cua Motion playground. Plain ES module over the built package (../dist).
+// Cua Cursor Motion playground. Plain ES module over the built package (../dist).
 // The cursor is drawn inside the canvas; the page's own pointer is untouched.
 import * as M from '../dist/index.js';
 
@@ -526,7 +526,7 @@ function renderExport() {
     text = state.mode === 'custom' ? M.specSnippet(state.spec) : M.paramsSnippet(state.params);
   } else if (state.mode === 'custom') {
     text =
-      '# Custom motions play in your own renderer (Rust: cua-motion plan_spec,\n' +
+      '# Custom motions play in your own renderer (Rust: cua-cursor-motion plan_spec,\n' +
       '# TypeScript: planSpec). Cua Driver takes one of the six styles and its\n' +
       '# knobs: pick a style to get its cua-driver config.';
   } else {

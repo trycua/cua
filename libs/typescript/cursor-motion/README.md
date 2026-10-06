@@ -1,4 +1,4 @@
-# @trycua/motion
+# @trycua/cursor-motion
 
 The agent cursor motions of [Cua Driver](https://cua.ai/docs/cua-driver) for
 the web: six motion styles, Fitts timing, the comet trail and the other
@@ -6,15 +6,39 @@ effects, an API for designing your own motions, and a small canvas player
 that draws the real Cua cursor.
 
 It is a TypeScript port of the Rust crate
-[`cua-motion`](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/cua-motion),
+[`cua-cursor-motion`](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/cua-cursor-motion),
 which Cua Driver uses for every move. Both are tested against the same golden
 trajectories, so a motion you design here plays the same in the driver. No
 runtime dependencies; about 14 KB gzipped.
 
+## Use it
+
+Cua Cursor Motion is not published to npm. It lives in the
+[trycua/cua](https://github.com/trycua/cua) repository. Build it once from a
+checkout and copy the single-file ES module and its types into your project:
+
+```bash
+git clone --depth 1 https://github.com/trycua/cua
+cd cua/libs/typescript
+pnpm install
+pnpm --filter @trycua/cursor-motion build
+cp cursor-motion/dist/index.js   ../../../my-app/src/vendor/cua-cursor-motion.js
+cp cursor-motion/dist/index.d.ts ../../../my-app/src/vendor/cua-cursor-motion.d.ts
+```
+
+```ts
+import { MotionPlayer, planMove } from './vendor/cua-cursor-motion.js';
+```
+
+The file has no imports, so it also works from a plain `<script type="module">`.
+In a TypeScript project with a bundler you can instead copy
+`libs/typescript/cursor-motion/src/` into your source tree and import the
+folder. `tests/vendoring.test.ts` checks both ways.
+
 ## Play a motion
 
 ```ts
-import { MotionPlayer } from '@trycua/motion';
+import { MotionPlayer } from './vendor/cua-cursor-motion.js';
 
 const player = new MotionPlayer(document.querySelector('canvas')!);
 player.place({ x: 80, y: 300 });
@@ -32,7 +56,7 @@ real mouse pointer.
 ## Plan a move yourself
 
 ```ts
-import { planMove, effects, anchorForPointer } from '@trycua/motion';
+import { planMove, effects, anchorForPointer } from './vendor/cua-cursor-motion.js';
 
 const trajectory = planMove(
   { style: 'spring_settle', timing: 'fitts' },
@@ -66,7 +90,7 @@ duration model, a heading mode, effects and a trail. The arc styles are
 specs, so start from one:
 
 ```ts
-import { planSpec, specForStyle } from '@trycua/motion';
+import { planSpec, specForStyle } from './vendor/cua-cursor-motion.js';
 
 const spec = specForStyle('spring_settle')!;
 spec.ease = { type: 'cubic_bezier', x1: 0.3, y1: 0, x2: 0.1, y2: 1 };
@@ -106,17 +130,17 @@ config:
 ```bash
 cd libs/typescript
 pnpm install
-pnpm --filter @trycua/motion playground   # http://127.0.0.1:4173/playground/
+pnpm --filter @trycua/cursor-motion playground   # http://127.0.0.1:4173/playground/
 ```
 
 ## Tests
 
 ```bash
-pnpm --filter @trycua/motion test
+pnpm --filter @trycua/cursor-motion test
 ```
 
 `tests/golden.test.ts` replays every case in
-`libs/cua-driver/rust/crates/cua-motion/fixtures/golden.json` (all styles,
+`libs/cua-driver/rust/crates/cua-cursor-motion/fixtures/golden.json` (all styles,
 timings and custom specs, with effect frames) and must match the Rust crate
 within 1e-6 pt. Today the worst deviation is 5e-10 pt.
 

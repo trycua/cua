@@ -1,19 +1,47 @@
 ---
 title: Design cursor motions
-description: Cua Motion, the open-source library behind Cua Driver's agent cursor. Plan the six motions, design your own, and play them on a web page.
+description: Cua Cursor Motion, the open-source library behind Cua Driver's agent cursor. Plan the six motions, design your own, and play them on a web page.
 ---
 
-Cua Driver moves its agent cursor with **Cua Motion**, an MIT-licensed
+Cua Driver moves its agent cursor with **Cua Cursor Motion**, an MIT-licensed
 library you can use on its own. It comes in two packages that give the same
 trajectories:
 
-- [`cua-motion`](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/cua-motion),
+- [`cua-cursor-motion`](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/cua-cursor-motion),
   the Rust crate the driver plans every move with;
-- [`@trycua/motion`](https://github.com/trycua/cua/tree/main/libs/typescript/motion),
+- [`libs/typescript/cursor-motion`](https://github.com/trycua/cua/tree/main/libs/typescript/cursor-motion),
   a TypeScript port with a canvas player that draws the Cua cursor.
 
 Both are tested against the same golden trajectories, so a motion you tune on
 a web page plays the same way in the driver.
+
+## Use it from the repository
+
+Cua Cursor Motion is not published to crates.io or npm. Use it straight from
+[trycua/cua](https://github.com/trycua/cua).
+
+In Rust, add a git dependency. Cargo finds the crate inside the repository:
+
+```toml skip="no-runner"
+[dependencies]
+cua-cursor-motion = { git = "https://github.com/trycua/cua" }
+```
+
+On the web, build the single-file ES module once and copy it with its types
+into your project:
+
+```bash skip="host-install"
+git clone --depth 1 https://github.com/trycua/cua
+cd cua/libs/typescript
+pnpm install
+pnpm --filter @trycua/cursor-motion build
+cp cursor-motion/dist/index.js   ../../../my-app/src/vendor/cua-cursor-motion.js
+cp cursor-motion/dist/index.d.ts ../../../my-app/src/vendor/cua-cursor-motion.d.ts
+```
+
+The file has no imports, so it also loads from a plain
+`<script type="module">`. In a TypeScript project with a bundler you can copy
+`libs/typescript/cursor-motion/src/` instead.
 
 ## Plan a move
 
@@ -23,7 +51,7 @@ takes a style (`signature_arc`, `spring_settle`, `magnetic`, `comet_swoop`,
 the shape knobs of `set_agent_cursor_motion`.
 
 ```ts skip="no-runner"
-import { planMove } from '@trycua/motion';
+import { planMove } from './vendor/cua-cursor-motion.js';
 
 const trajectory = planMove(
   { style: 'spring_settle', timing: 'fitts' },
@@ -33,7 +61,7 @@ const { x, y, heading } = trajectory.sampleAt(0.3);
 ```
 
 ```rust skip="no-runner"
-use cua_motion::{plan_move, MotionParams, MotionStyle, MotionTiming, MoveRequest, Pt};
+use cua_cursor_motion::{plan_move, MotionParams, MotionStyle, MotionTiming, MoveRequest, Pt};
 
 let params = MotionParams { style: MotionStyle::SpringSettle, timing: MotionTiming::Fitts, ..Default::default() };
 let request = MoveRequest {
@@ -54,7 +82,7 @@ ripple inside a `<canvas>`. It never moves, hides or restyles the page's own
 mouse pointer.
 
 ```ts skip="no-runner"
-import { MotionPlayer } from '@trycua/motion';
+import { MotionPlayer } from './vendor/cua-cursor-motion.js';
 
 const player = new MotionPlayer(document.querySelector('canvas')!);
 player.place({ x: 80, y: 300 });
@@ -73,7 +101,7 @@ a heading mode, effects and a trail. `signature_arc`, `spring_settle` and
 `comet_swoop` are specs themselves, so start from one:
 
 ```ts skip="no-runner"
-import { planSpec, specForStyle } from '@trycua/motion';
+import { planSpec, specForStyle } from './vendor/cua-cursor-motion.js';
 
 const spec = specForStyle('signature_arc')!;
 spec.ease = { type: 'cubic_bezier', x1: 0.3, y1: 0, x2: 0.1, y2: 1 };
@@ -95,7 +123,7 @@ Driver config. Run it from a checkout:
 ```bash skip="host-install"
 cd libs/typescript
 pnpm install
-pnpm --filter @trycua/motion playground
+pnpm --filter @trycua/cursor-motion playground
 ```
 
 It opens at `http://127.0.0.1:4173/playground/`. For a built-in style, the

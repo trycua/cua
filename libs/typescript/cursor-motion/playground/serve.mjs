@@ -1,5 +1,5 @@
 // Serve the playground and the built package with no dependencies:
-//   pnpm --filter @trycua/motion playground        # http://127.0.0.1:4173/playground/
+//   pnpm --filter @trycua/cursor-motion playground        # http://127.0.0.1:4173/playground/
 //   PORT=8080 HOST=0.0.0.0 node playground/serve.mjs
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -34,5 +34,5 @@ createServer(async (req, res) => {
     res.writeHead(404).end('not found');
   }
 }).listen(port, host, () =>
-  console.log(`Cua Motion playground: http://${host}:${port}/playground/`)
+  console.log(`Cua Cursor Motion playground: http://${host}:${port}/playground/`)
 );

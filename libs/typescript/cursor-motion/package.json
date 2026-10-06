@@ -1,18 +1,19 @@
 {
-  "name": "@trycua/motion",
+  "name": "@trycua/cursor-motion",
   "version": "0.1.0",
+  "private": true,
   "packageManager": "pnpm@10.11.0",
-  "description": "Agent cursor motions from Cua Driver: paths, Fitts timing, trails, and a canvas player.",
+  "description": "Agent cursor motions from Cua Driver: paths, Fitts timing, trails, and a canvas player. Used from the trycua/cua repository; not published.",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://github.com/trycua/cua/tree/main/libs/typescript/motion",
+  "homepage": "https://github.com/trycua/cua/tree/main/libs/typescript/cursor-motion",
   "bugs": {
     "url": "https://github.com/trycua/cua/issues"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/trycua/cua.git",
-    "directory": "libs/typescript/motion"
+    "directory": "libs/typescript/cursor-motion"
   },
   "author": "cua",
   "keywords": [
@@ -36,9 +37,6 @@
       "import": "./dist/index.js"
     },
     "./package.json": "./package.json"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "scripts": {
     "build": "tsdown",

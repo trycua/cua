@@ -118,7 +118,7 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  motion:
+  cursor-motion:
     devDependencies:
       '@types/node':
         specifier: ^22.15.17

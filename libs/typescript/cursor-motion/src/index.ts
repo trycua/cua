@@ -17,7 +17,8 @@ export {
   type MoveRequest,
   type Sample,
 } from './plan';
-export * as effects from './effects';
+import * as effects from './effects';
+export { effects };
 export {
   DEFAULT_TRAIL,
   type TrailSpec,

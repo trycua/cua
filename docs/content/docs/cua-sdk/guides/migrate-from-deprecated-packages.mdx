@@ -32,7 +32,7 @@ desktop you could watch. Stop it, uninstall it and remove what it created:
 cuabot --stop                      # repeat with --name <session> for each named session
 npm uninstall -g cuabot            # or delete any local node_modules/cuabot
 docker rm -f cuabot-xpra
-docker rmi trycua/cuabot:latest
+docker images -q trycua/cuabot | xargs docker rmi
 rm -rf ~/.cuabot
 ```
 

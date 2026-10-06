@@ -9,7 +9,7 @@
 > cuabot --stop                      # also: cuabot --name <session> --stop, for each named session
 > npm uninstall -g cuabot            # or delete any local node_modules/cuabot
 > docker rm -f cuabot-xpra           # the sandbox container it created
-> docker rmi trycua/cuabot:latest
+> docker images -q trycua/cuabot | xargs docker rmi
 > rm -rf ~/.cuabot
 > ```
 >

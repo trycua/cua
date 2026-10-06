@@ -62,6 +62,7 @@ The 360 s and 45-turn limits are kept for the CDB tasks even though the original
 * `bench_core.py`: priority order puts `CDB-*` before `MB-*`.
 * `pins.json`: VM macOS version and build, `cdb_pack` revision and digests.
 * `launch/launch_bench.command`: `--cutoff-utc` is passed as a zsh array (the first VM launch at 08:56 UTC failed on it before any trial), and the launcher minimises its own Terminal window so it does not cover task windows. The real run started at 08:57:55 UTC with this launcher; no trial had completed when this line was added.
+* `cdb_adapter.py`: the substitution `${workspace_uri}` (used by two launch descriptors for the LibreOffice profile) was missing, so LibreOffice never opened and the first CDB-S02 trials ended as harness exceptions before the agent started (3 attempts, 09:05 to 09:10 UTC). The runner was stopped after the CDB-S01 block (6 trials, all run with the same adapter and unaffected), the 3 harness-exception rows were moved to `runs/main/excluded-harness-bug/` (kept for audit, not counted), the substitution was added, the apps of CDB-S02, S03 and S04 were started once without a model to check windows and then the run resumed at 09:24 UTC with the same run id.
 
 ### A1.7 Validation done before the first trial (no model call)
 

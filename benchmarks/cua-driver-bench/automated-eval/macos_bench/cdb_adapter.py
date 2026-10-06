@@ -141,6 +141,7 @@ class CdbTask:
         values = {
             "python": sys.executable,
             "workspace": str(self.workspace),
+            "workspace_uri": self.workspace.as_uri(),
             "bundle": str(self.bundle),
             "HOME": str(Path.home()),
             "artifacts": str(self.artifacts),

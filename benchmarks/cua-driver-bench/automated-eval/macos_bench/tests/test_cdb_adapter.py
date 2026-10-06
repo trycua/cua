@@ -80,6 +80,8 @@ class AdapterTest(unittest.TestCase):
             task.sub("${python} ${workspace} ${unknown}").split()[2], "${unknown}"
         )
         self.assertEqual([a["id"] for a in task.apps()], ["web", "desk", "browser"])
+        self.assertEqual(task.sub("${workspace_uri}"), task.workspace.as_uri())
+        self.assertTrue(task.sub("${workspace_uri}").startswith("file:///"))
 
     def test_kill_only_in_disposable_vm(self) -> None:
         os.environ.pop("CDB_BENCH_DISPOSABLE", None)

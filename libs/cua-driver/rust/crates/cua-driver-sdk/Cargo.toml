@@ -23,6 +23,7 @@ tracing = { workspace = true }
 uniffi = { workspace = true, features = ["tokio"] }
 uuid = { workspace = true }
 cursor-overlay = { path = "../cursor-overlay" }
+cua-cursor-motion = { path = "../cua-cursor-motion" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 platform-macos = { path = "../platform-macos" }

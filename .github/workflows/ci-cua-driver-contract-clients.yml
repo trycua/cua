@@ -18,6 +18,7 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-bindgen/**"
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
       - "libs/cua-driver/rust/crates/cua-driver-sdk/**"
+      - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
       - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua-driver/rust/crates/platform-macos/**"
@@ -46,6 +47,7 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-bindgen/**"
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
       - "libs/cua-driver/rust/crates/cua-driver-sdk/**"
+      - "libs/cua-driver/rust/crates/cua-cursor-motion/**"
       - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua-driver/rust/crates/platform-macos/**"
@@ -319,7 +321,7 @@ jobs:
         working-directory: libs/cua-driver/python
         run: |
           CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src \
-            python -m unittest tests/test_uniffi_loader.py tests/test_remote_channel.py -v
+            python -m unittest tests/test_uniffi_loader.py tests/test_remote_channel.py tests/test_cursor_motion.py -v
           python -m pip install --extra-index-url https://wheels.cua.ai/simple cua-fleet==0.1.17
           CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src python -m pytest tests/test_fleet.py -q
           CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src python -c \

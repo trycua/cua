@@ -3225,7 +3225,7 @@ fn run_recording_render(args: &[String]) {
 /// `cua-driver update [--apply]` — check for a newer release and optionally apply it.
 ///
 /// Shares the GitHub releases fetch with the startup banner via
-/// [`crate::version_check::fetch_latest_version`] so both code paths agree on
+/// [`crate::version_check::fetch_latest_version_for`] so both code paths agree on
 /// tag filtering and HTTP semantics. `--apply` delegates to the canonical
 /// installer script — see [`crate::updater`] for why we go through the script
 /// instead of re-implementing the asset resolution + atomic swap + GC in Rust.
@@ -3281,7 +3281,7 @@ pub fn run_update_cmd(apply: bool, json: bool) {
         println!("Checking for updates…");
     }
 
-    let latest = crate::version_check::fetch_latest_version();
+    let latest = crate::version_check::fetch_latest_version_for(selected_channel);
     match latest {
         Err(e) => {
             crate::telemetry::capture_update_checked(
@@ -3299,12 +3299,22 @@ pub fn run_update_cmd(apply: bool, json: bool) {
                     apply_started_at.elapsed(),
                 );
             }
-            // The shared helper returns a human-readable error string for
-            // the CLI surface — pass it through so the user can see why
-            // (timeout, parse error, etc.) instead of just "unreachable".
+            // Say why the lookup failed (timeout, HTTP status, parse error,
+            // or no release for this channel) instead of just "unreachable".
+            // The Windows update E2E retries on the "Could not reach GitHub"
+            // line, so only request failures may print it.
             tracing::debug!(target: "cua_driver::update", "fetch failed: {e}");
             if !json {
-                println!("Could not reach GitHub — check your connection and try again.");
+                match &e {
+                    crate::version_check::FetchError::Request(reason) => {
+                        println!("Could not reach GitHub — check your connection and try again.");
+                        println!("Reason: {reason}");
+                    }
+                    crate::version_check::FetchError::NoMatchingRelease { .. } => {
+                        println!("Could not find a {selected_channel} release: {e}.");
+                    }
+                    crate::version_check::FetchError::PackageManaged => println!("{e}"),
+                }
             }
             process::exit(1);
         }

@@ -1,7 +1,7 @@
 name: "CI: platform-linux off Linux"
 
 # `cargo test --workspace` must keep compiling on developer Macs, so the Linux
-# adapter and its tests are checked on macOS. Trigger on the adapter and the
+# adapter and its tests are run on macOS. Trigger on the adapter and the
 # workspace crates it depends on, not on unrelated platform code.
 on:
   pull_request:
@@ -51,6 +51,6 @@ jobs:
           workspaces: "libs/cua-driver/rust -> target"
           key: platform-linux-off-linux
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Check platform-linux and its tests off Linux
+      - name: Test platform-linux off Linux
         working-directory: libs/cua-driver/rust
-        run: cargo check --locked -p platform-linux --all-targets
+        run: cargo test --locked -p platform-linux --all-targets

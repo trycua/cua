@@ -74,34 +74,9 @@ jobs:
       release_name: "cuabot v${{ needs.prepare.outputs.version }}"
       module_path: "libs/cuabot"
       body: |
-        ## Quick Start
+        ## Deprecated
 
-        ```bash
-        npx cuabot
-        ```
+        cuabot has known security issues and is no longer maintained. Do not run it.
+        Stop it with `cuabot --stop`, then uninstall it with `npm uninstall -g cuabot`.
 
-        Or install globally:
-
-        ```bash
-        npm install -g cuabot
-        cuabot
-        ```
-
-        ## Usage
-
-        ```bash
-        cuabot                     # Run default agent (or setup)
-        cuabot claude              # Run Claude Code in sandbox
-        cuabot gemini              # Run Gemini CLI in sandbox
-        cuabot codex               # Run Codex CLI in sandbox
-        cuabot chromium            # Open sandboxed Chromium
-
-        cuabot --screenshot        # Take screenshot
-        cuabot --type "hello"      # Type text
-        cuabot --click 100 200     # Click at coordinates
-        ```
-
-        ## Documentation
-
-        - [Getting Started](https://cua.ai/docs/cuabot/cuabot)
-        - [Installation Guide](https://cua.ai/docs/cuabot/install)
+        See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/migrate-from-deprecated-packages).

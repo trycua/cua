@@ -171,4 +171,6 @@ jobs:
       release_name: "cua-agent v${{ needs.prepare.outputs.version }}"
       module_path: "libs/python/agent"
       body: |
+        **Deprecated:** cua-agent is no longer maintained. See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/migrate-from-deprecated-packages).
+
         **Dependencies:** cua-sandbox ${{ needs.prepare.outputs.sandbox_version }}, cua-core ${{ needs.prepare.outputs.core_version }}

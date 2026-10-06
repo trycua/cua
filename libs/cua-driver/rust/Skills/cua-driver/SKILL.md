@@ -40,7 +40,7 @@ The MCP server instructions carry the same rules, so they apply even when this f
 1. Start with a targeted read: `get_window_state({pid, window_id, query:"Save"})` returns about 2K chars where a full snapshot is about 42K. Bound large trees with `max_elements` / `max_depth`, and pass `include_screenshot:false` when the tree is enough. Widen only if the target is missing.
 2. Act by `element_token`. A narrowed read keeps the full snapshot actionable, so you can act on a match without re-reading. Use pixels only for surfaces missing from the tree.
 3. Verify at checkpoints (after a meaningful state change, before finishing), not after every action. One `verify_state` or one targeted `get_window_state` is usually enough.
-4. Batch known steps in one call once the batch tool exists (CUA-1194, not yet available).
+4. Batch known steps in one `run_actions` call (stops at the first failure, one optional bounded read at the end); see [Workflow](WORKFLOW.md#batch-known-actions).
 
 ## Act
 

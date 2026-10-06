@@ -19,7 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::drive_settings::{StorageAction, StorageInput, StorageRequest, StorageState};
-use crate::model::{SpaceKind, SpaceOs};
+use crate::model::SpaceKind;
 use crate::onboarding::{
     OnboardingAction, OnboardingMode, OnboardingState, OnboardingStep, StorageChoice,
 };
@@ -333,15 +333,6 @@ fn after_answers(before: &OnboardingState, after: &OnboardingState) -> Onboardin
 
 // ---- Space creates -------------------------------------------------------------
 
-fn os_word(os: SpaceOs) -> &'static str {
-    match os {
-        SpaceOs::Unknown => "unknown",
-        SpaceOs::Macos => "macos",
-        SpaceOs::Windows => "windows",
-        SpaceOs::Linux => "linux",
-    }
-}
-
 fn kind_word(k: Option<SpaceKind>) -> &'static str {
     match k {
         Some(SpaceKind::Container) => "container",
@@ -353,7 +344,7 @@ fn kind_word(k: Option<SpaceKind>) -> &'static str {
 fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, now_ms: i64) -> TelemetrySignal {
     TelemetrySignal::SpaceCreate {
         location: p.provider.as_str().into(),
-        guest_os: os_word(p.os).into(),
+        guest_os: p.os.as_str().into(),
         kind: kind_word(p.kind).into(),
         outcome: outcome.into(),
         failed_phase: if outcome == "ok" {
@@ -390,7 +381,7 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
             let started = after.pending.iter().find(|p| &p.id == id).map(|p| {
                 TelemetrySignal::SpaceCreateStarted {
                     location: p.provider.as_str().into(),
-                    guest_os: os_word(p.os).into(),
+                    guest_os: p.os.as_str().into(),
                     kind: kind_word(p.kind).into(),
                     gpu: p.gpu,
                 }
@@ -741,7 +732,7 @@ pub fn welcome_left(t: &cua_telemetry::Telemetry, on: bool) -> std::io::Result<(
 mod tests {
     use super::*;
     use crate::drive_settings::DriveMountInput;
-    use crate::model::SpaceProvider;
+    use crate::model::{SpaceOs, SpaceProvider};
     use crate::onboarding::{initial, reduce};
 
     fn pages(v: &[TelemetrySignal]) -> Vec<String> {
@@ -842,6 +833,44 @@ mod tests {
         p.phase = phase.into();
         p.error = error.map(str::to_string);
         p.clone()
+    }
+
+    #[test]
+    fn create_telemetry_preserves_os_words() {
+        for (os, expected) in [
+            (SpaceOs::Macos, "macos"),
+            (SpaceOs::Windows, "windows"),
+            (SpaceOs::Linux, "linux"),
+            (SpaceOs::Unknown, "unknown"),
+        ] {
+            let mut p = pending("pending:os", "booting", None);
+            p.os = os;
+            let finished = create_event(&p, "ok", false, 2_000);
+            let finished = serde_json::to_value(finished).unwrap();
+            let started = creates(
+                &CreatesState::default(),
+                &CreateAction::Start {
+                    id: p.id.clone(),
+                    name: "test".into(),
+                    os,
+                    provider: SpaceProvider::Local,
+                    now: 1_000,
+                    image: None,
+                    kind: Some(SpaceKind::Vm),
+                    host_arch: None,
+                    gpu: false,
+                },
+                1_000,
+            );
+            let event = started.iter().find_map(|s| match s {
+                TelemetrySignal::SpaceCreateStarted { guest_os, .. } => Some(guest_os.as_str()),
+                _ => None,
+            });
+            assert_eq!(
+                (finished["guestOs"].as_str(), event),
+                (Some(expected), (os != SpaceOs::Unknown).then_some(expected))
+            );
+        }
     }
 
     #[test]

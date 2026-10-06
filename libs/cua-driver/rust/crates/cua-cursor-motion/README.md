@@ -9,6 +9,21 @@ Cua Driver plans every agent cursor move with this crate, and the
 tested against the same golden trajectories. There is no runtime dependency;
 the `serde` feature adds `Serialize`/`Deserialize` to the public types.
 
+## Use it
+
+Cua Cursor Motion is not published to crates.io. It lives in the
+[trycua/cua](https://github.com/trycua/cua) repository; add it as a git
+dependency:
+
+```toml
+[dependencies]
+cua-cursor-motion = { git = "https://github.com/trycua/cua" }
+# Pin a commit for reproducible builds, and add features = ["serde"] if needed:
+# cua-cursor-motion = { git = "https://github.com/trycua/cua", rev = "<commit>", features = ["serde"] }
+```
+
+Cargo finds the crate inside the repository's Cua Driver workspace by name.
+
 ## Plan a move
 
 A move is planned once, as samples at 120 Hz. Play it back by time at any

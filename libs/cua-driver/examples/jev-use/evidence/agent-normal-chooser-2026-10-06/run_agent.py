@@ -81,10 +81,12 @@ def frontier_plan(owner, source):
     report={'ms':(time.perf_counter()-start)*1000,'requested_model':'gpt-6-sol','resolved_model':None,'turns':sum(e.get('type')=='turn.completed' for e in events),'usage':[e['usage'] for e in events if e.get('type')=='turn.completed'],'events':events}
     if done.returncode or any(e.get('type') not in allowed for e in events): return None,report
     items=[e['item'] for e in events if e.get('type')=='item.completed']
-    if len(items)!=1 or items[0].get('type')!='agent_message': return None,report
+    if any(item.get('type') not in {'agent_message','reasoning'} for item in items): return None,report
+    messages=[item for item in items if item.get('type')=='agent_message']
+    if len(messages)!=1: return None,report
     usage=[e['usage'] for e in events if e.get('type')=='turn.completed']
     if len(usage)!=1: return None,report
-    return json.loads(items[0]['text']), report
+    return json.loads(messages[0]['text']), report
 
 async def trial(client, sdk, http, mode, rep, smoke=False):
     fixture=None; offset=len(client.calls); so=len(sdk.events); ho=len(http.events)
@@ -195,7 +197,7 @@ def main():
             metadata=host.backend_metadata
             if not isinstance(metadata,dict) or metadata.get('driver_version')!=versions['native_version'] or metadata.get('embedded') is not False or type(metadata.get('pid')) is not int:
                 raise RuntimeError('Actual running daemon metadata differs from latest release or is unavailable')
-            out['daemon_metadata']=metadata
+            out['daemon_metadata']=metadata;out['operation_server_info']=host.server_info
             h.verify_servers(versions,arc,cua);out['servers']={'arc':arc.server_info,'cua':cua.server_info}
             smoke=os.environ.get('SMOKE_ONLY')=='1'
             for rep in range(1 if smoke else 5):

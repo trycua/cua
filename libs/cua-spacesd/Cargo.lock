@@ -1353,6 +1353,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-cursor-motion"
+version = "0.34.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "cua-driver-contract"
 version = "0.34.0"
 dependencies = [
@@ -1892,6 +1899,7 @@ name = "cursor-overlay"
 version = "0.34.0"
 dependencies = [
  "anyhow",
+ "cua-cursor-motion",
  "cua-driver-contract",
  "cua-driver-core",
  "fontdue",

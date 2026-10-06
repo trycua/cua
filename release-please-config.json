@@ -96,6 +96,11 @@
           "path": "/libs/cua-spacesd/Cargo.lock",
           "jsonpath": "$.package[?(@.name.value=='cursor-overlay')].version"
         },
+{
+          "type": "toml",
+          "path": "/libs/cua-spacesd/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-cursor-motion')].version"
+        },
         {
           "type": "toml",
           "path": "/libs/cua-spacesd/Cargo.lock",
@@ -136,6 +141,11 @@
           "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
           "jsonpath": "$.package[?(@.name.value=='cursor-overlay')].version"
         },
+{
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-cursor-motion')].version"
+        },
         {
           "type": "toml",
           "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
@@ -175,6 +185,11 @@
           "type": "toml",
           "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
           "jsonpath": "$.package[?(@.name.value=='cursor-overlay')].version"
+        },
+{
+          "type": "toml",
+          "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-cursor-motion')].version"
         },
         {
           "type": "toml",

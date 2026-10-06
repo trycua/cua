@@ -164,7 +164,9 @@ async def trial(client, sdk, http, mode, rep, smoke=False):
                     row['canonical_child_calls']=None;break
         row['mcp_wall_ms']=sum(c['ms'] for c in row['calls']);row['jev']=sdk.events[so:];row['jev_http']=http.events[ho:]
         if fixture:
-            try: row['oracle_state']=fixture.state()
+            try:
+                row['oracle_state']=fixture.state()
+                row['oracle_passed']=all(row['oracle_state'].get(k)==v for k,v in {'name':'Synthetic Person','email':'synthetic@example.invalid','subscribe':False,'submitted':0,'record':'Record A','dialog':False}.items())
             finally: fixture.close()
     row['false_completion']=row['terminal']=='verified_complete' and not row['passed']
     return row
@@ -174,7 +176,7 @@ def main():
     session = Quartz.CGSessionCopyCurrentDictionary() or {}
     if session.get('CGSSessionScreenIsLocked'):
         raise RuntimeError('Live evaluation requires the unlocked desktop; no fixture/input started')
-    subprocess.run(['git','-C',str(CUA),'fetch','origin','main'],check=True,capture_output=True); versions=h.candidate_versions();versions['cua_source_head']=subprocess.check_output(['git','-C',str(CUA),'rev-parse','HEAD'],text=True).strip();versions['cua_upstream_head']=subprocess.check_output(['git','-C',str(CUA),'rev-parse','origin/main'],text=True).strip();subprocess.run(['git','-C',str(CUA),'merge-base','--is-ancestor',versions['cua_upstream_head'],'HEAD'],check=True);versions['recipe_file_sha256']=hashlib.sha256((CUA/'libs/cua-driver/examples/jev-use/python/literal_text_plan.py').read_bytes()).hexdigest();versions['runner_sha256']=hashlib.sha256(Path(__file__).read_bytes()).hexdigest();versions['codex_cli']=subprocess.check_output(['codex','--version'],text=True).strip()
+    subprocess.run(['git','-C',str(CUA),'fetch','origin','main'],check=True,capture_output=True); versions=h.candidate_versions();versions['cua_source_head']=subprocess.check_output(['git','-C',str(CUA),'rev-parse','HEAD'],text=True).strip();versions['cua_upstream_head']=subprocess.check_output(['git','-C',str(CUA),'rev-parse','origin/main'],text=True).strip();subprocess.run(['git','-C',str(CUA),'merge-base','--is-ancestor',versions['cua_upstream_head'],'HEAD'],check=True);versions['recipe_file_sha256']=hashlib.sha256((CUA/'libs/cua-driver/examples/jev-use/python/literal_text_plan.py').read_bytes()).hexdigest();versions['runner_sha256']=hashlib.sha256(Path(__file__).read_bytes()).hexdigest();versions['native_release_commit']=subprocess.check_output(['gh','api','repos/trycua/cua/git/ref/tags/cua-driver-rs-v'+versions['native_version'],'--jq','.object.sha'],text=True).strip();versions['codex_cli']=subprocess.check_output(['codex','--version'],text=True).strip()
     key=os.environ.get('TYPESAFE_API_KEY')
     if not key:
         command=json.loads(os.environ['JEV_CREDENTIAL_COMMAND']); fetched=subprocess.run(command,capture_output=True,text=True,timeout=30)
@@ -188,6 +190,7 @@ def main():
             cua=h.MCP(['cua-driver','mcp','--socket',str(Path.home()/'Library/Caches/cua-driver/cua-driver.sock')],'agent-normal-cua');stack.callback(cua.close)
             host_path=os.environ.get('ACTION_OBSERVE_HOST')
             if not host_path: raise RuntimeError('ACTION_OBSERVE_HOST required for actual daemon metadata preflight')
+            out['operation_host_sha256']=hashlib.sha256(Path(host_path).read_bytes()).hexdigest()
             host=MetadataMCP(['env','ACTION_OBSERVE_BACKEND=daemon',host_path],'agent-normal-composite');stack.callback(host.close)
             metadata=host.backend_metadata
             if not isinstance(metadata,dict) or metadata.get('driver_version')!=versions['native_version'] or metadata.get('embedded') is not False or type(metadata.get('pid')) is not int:

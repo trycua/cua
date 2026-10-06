@@ -1,9 +1,6 @@
 name: Cua Driver Benchmark
 
 on:
-  push:
-    branches:
-      - cua-driver-bench-fleet-orchestration
   workflow_dispatch:
     inputs:
       baseline_ref:
@@ -34,10 +31,10 @@ jobs:
     name: Fleet Linux/X11 benchmark
     runs-on: ubuntu-latest
     env:
-      BENCH_BASELINE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.baseline_ref || 'db5d0f4caf3a66eb31c8d6e24394cec962899257' }}
-      BENCH_CANDIDATE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_ref || '4299751b51ce4ac25bb42ce84f5a98b3c18c6773' }}
-      BENCH_TASKS: ${{ github.event_name == 'workflow_dispatch' && inputs.tasks || 'CDB-S01,CDB-S03' }}
-      BENCH_MAX_PARALLEL_TASKS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_parallel_tasks || '2' }}
+      BENCH_BASELINE_REF: ${{ inputs.baseline_ref }}
+      BENCH_CANDIDATE_REF: ${{ inputs.candidate_ref }}
+      BENCH_TASKS: ${{ inputs.tasks }}
+      BENCH_MAX_PARALLEL_TASKS: ${{ inputs.max_parallel_tasks }}
     steps:
       - name: Check out benchmark repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -60,55 +57,6 @@ jobs:
           npm install --global --no-audit --no-fund @openai/codex
           codex --version
           aws --version
-
-      - name: Retrieve authorized task pack
-        id: task_pack
-        env:
-          GH_TOKEN: ${{ secrets.CDB_TASK_PACK_GH_TOKEN }}
-          TASK_PACK_REPOSITORY: ${{ vars.CDB_TASK_PACK_REPOSITORY }}
-          TASK_PACK_REF: ${{ vars.CDB_TASK_PACK_REF }}
-          REQUESTED_TASKS: ${{ env.BENCH_TASKS }}
-        run: |
-          set -euo pipefail
-          source_dir="$RUNNER_TEMP/cua-driver-bench-task-pack-source"
-          tasks_root="$source_dir/tasks"
-
-          test -n "$GH_TOKEN"
-          test -n "$TASK_PACK_REPOSITORY"
-          test -n "$TASK_PACK_REF"
-          test ! -e "$source_dir"
-
-          gh auth setup-git
-          gh repo clone "$TASK_PACK_REPOSITORY" "$source_dir" -- \
-            --filter=blob:none \
-            --no-checkout
-          git -C "$source_dir" fetch --depth=1 origin "$TASK_PACK_REF"
-          git -C "$source_dir" sparse-checkout init --no-cone
-
-          IFS=',' read -r -a requested_tasks <<< "$REQUESTED_TASKS"
-          sparse_paths=()
-          for task in "${requested_tasks[@]}"; do
-            task="${task//[[:space:]]/}"
-            case "$task" in
-              CDB-S01|CDB-S02|CDB-S03|CDB-S04)
-                sparse_paths+=("/tasks/shared/${task,,}/")
-                ;;
-              *)
-                echo "Unsupported task: $task" >&2
-                exit 1
-                ;;
-            esac
-          done
-          test "${#sparse_paths[@]}" -gt 0
-          printf '%s\n' "${sparse_paths[@]}" | \
-            git -C "$source_dir" sparse-checkout set --no-cone --stdin
-          git -C "$source_dir" checkout --detach FETCH_HEAD
-
-          for task in "${requested_tasks[@]}"; do
-            task="${task//[[:space:]]/}"
-            test -f "$tasks_root/shared/${task,,}/task.cuabench.json"
-          done
-          echo "tasks_root=$tasks_root" >> "$GITHUB_OUTPUT"
 
       - name: Install Cua Driver build dependencies
         run: |
@@ -273,6 +221,55 @@ jobs:
           PY
           "$RELEASE_DIR/binary/cua-driver" --version
 
+      - name: Retrieve authorized task pack
+        id: task_pack
+        env:
+          GH_TOKEN: ${{ secrets.CDB_TASK_PACK_GH_TOKEN }}
+          TASK_PACK_REPOSITORY: ${{ vars.CDB_TASK_PACK_REPOSITORY }}
+          TASK_PACK_REF: ${{ vars.CDB_TASK_PACK_REF }}
+          REQUESTED_TASKS: ${{ env.BENCH_TASKS }}
+        run: |
+          set -euo pipefail
+          source_dir="$RUNNER_TEMP/cua-driver-bench-task-pack-source"
+          tasks_root="$source_dir/tasks"
+
+          test -n "$GH_TOKEN"
+          test -n "$TASK_PACK_REPOSITORY"
+          test -n "$TASK_PACK_REF"
+          test ! -e "$source_dir"
+
+          gh auth setup-git
+          gh repo clone "$TASK_PACK_REPOSITORY" "$source_dir" -- \
+            --filter=blob:none \
+            --no-checkout
+          git -C "$source_dir" fetch --depth=1 origin "$TASK_PACK_REF"
+          git -C "$source_dir" sparse-checkout init --no-cone
+
+          IFS=',' read -r -a requested_tasks <<< "$REQUESTED_TASKS"
+          sparse_paths=()
+          for task in "${requested_tasks[@]}"; do
+            task="${task//[[:space:]]/}"
+            case "$task" in
+              CDB-S01|CDB-S02|CDB-S03|CDB-S04)
+                sparse_paths+=("/tasks/shared/${task,,}/")
+                ;;
+              *)
+                echo "Unsupported task: $task" >&2
+                exit 1
+                ;;
+            esac
+          done
+          test "${#sparse_paths[@]}" -gt 0
+          printf '%s\n' "${sparse_paths[@]}" | \
+            git -C "$source_dir" sparse-checkout set --no-cone --stdin
+          git -C "$source_dir" checkout --detach FETCH_HEAD
+
+          for task in "${requested_tasks[@]}"; do
+            task="${task//[[:space:]]/}"
+            test -f "$tasks_root/shared/${task,,}/task.cuabench.json"
+          done
+          echo "tasks_root=$tasks_root" >> "$GITHUB_OUTPUT"
+
       - name: Run Fleet benchmark
         id: benchmark
         working-directory: benchmarks/cua-driver-bench
@@ -321,6 +318,7 @@ jobs:
             "$RUNNER_TEMP/cua-driver-bench-task-pack.tar.gz"
 
       - name: Remove private trial inputs
+        id: private_scrub
         if: ${{ always() && steps.benchmark.outputs.run_dir != '' }}
         env:
           RUN_DIR: ${{ steps.benchmark.outputs.run_dir }}
@@ -348,7 +346,7 @@ jobs:
 
       - name: Collect artifacts
         id: collect
-        if: ${{ always() && steps.benchmark.outputs.run_dir != '' }}
+        if: ${{ always() && steps.benchmark.outputs.run_dir != '' && steps.private_scrub.outcome == 'success' }}
         env:
           RUN_DIR: ${{ steps.benchmark.outputs.run_dir }}
         run: |
@@ -359,8 +357,19 @@ jobs:
             && -f "$RUN_DIR/report/index.html" \
             && -d "$RUN_DIR/trials" ]]; then
             echo "bundle=report" >> "$GITHUB_OUTPUT"
+            complete="$(python - "$RUN_DIR/comparison.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              report = json.load(stream)
+          print("true" if report.get("execution", {}).get("complete") is True else "false")
+          PY
+            )"
+            echo "complete=$complete" >> "$GITHUB_OUTPUT"
           elif [[ -f "$RUN_DIR/fleet-failures.json" ]]; then
             echo "bundle=failure" >> "$GITHUB_OUTPUT"
+            echo "complete=false" >> "$GITHUB_OUTPUT"
           else
             echo "Benchmark output is incomplete." >&2
             exit 1
@@ -368,6 +377,7 @@ jobs:
 
       - name: Publish to S3
         id: publish
+        if: ${{ always() && steps.collect.outcome == 'success' && steps.collect.outputs.bundle == 'report' }}
         working-directory: benchmarks/cua-driver-bench
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -423,6 +433,8 @@ jobs:
           REQUESTED_TASKS: ${{ env.BENCH_TASKS }}
           MAX_PARALLEL_TASKS: ${{ env.BENCH_MAX_PARALLEL_TASKS }}
           BENCHMARK_OUTCOME: ${{ steps.benchmark.outcome }}
+          BUNDLE_COMPLETE: ${{ steps.collect.outputs.complete }}
+          PRIVATE_SCRUB_OUTCOME: ${{ steps.private_scrub.outcome }}
           S3_URI: ${{ steps.publish.outputs.s3_uri }}
           REPORT_URL: ${{ steps.publish.outputs.report_url }}
           PUBLIC_ACCESS: ${{ steps.publish.outputs.public_access }}
@@ -443,6 +455,8 @@ jobs:
             printf 'Tasks: `%s`\n' "$REQUESTED_TASKS"
             printf 'Maximum parallel task shards: `%s`\n' "$MAX_PARALLEL_TASKS"
             printf 'Benchmark: `%s`\n' "${BENCHMARK_OUTCOME:-not run}"
+            printf 'Result bundle complete: `%s`\n' "${BUNDLE_COMPLETE:-not available}"
+            printf 'Private input scrub: `%s`\n' "${PRIVATE_SCRUB_OUTCOME:-not run}"
             echo
             if [[ -n "$S3_URI" ]]; then
               printf 'S3: `%s`\n' "$S3_URI"

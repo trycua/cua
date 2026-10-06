@@ -1,0 +1,1 @@
+{"type": "object", "properties": {"completed": {"type": "boolean"}}, "required": ["completed"], "additionalProperties": false}

@@ -1,0 +1,98 @@
+{
+  "condition": "baseline",
+  "setup_calls": [
+    {
+      "tool": "list_windows",
+      "ms": 3.048166006919928
+    },
+    {
+      "tool": "get_window_state",
+      "ms": 270.7369999989169
+    }
+  ],
+  "calls": [
+    {
+      "tool": "get_window_state",
+      "ms": 73.35400000738446,
+      "error": false,
+      "child_dispatches": [
+        "get_window_state"
+      ]
+    },
+    {
+      "tool": "set_value",
+      "ms": 1605.6889579922426,
+      "error": false,
+      "child_dispatches": [
+        "set_value"
+      ]
+    },
+    {
+      "tool": "get_window_state",
+      "ms": 65.2669590053847,
+      "error": false,
+      "child_dispatches": [
+        "get_window_state"
+      ]
+    },
+    {
+      "tool": "set_value",
+      "ms": 1387.1944999991683,
+      "error": false,
+      "child_dispatches": [
+        "set_value"
+      ]
+    },
+    {
+      "tool": "get_window_state",
+      "ms": 147.2116249933606,
+      "error": false,
+      "child_dispatches": [
+        "get_window_state"
+      ]
+    },
+    {
+      "tool": "click",
+      "ms": 1604.8234579939162,
+      "error": false,
+      "child_dispatches": [
+        "click"
+      ]
+    },
+    {
+      "tool": "get_window_state",
+      "ms": 69.81183399329893,
+      "error": false,
+      "child_dispatches": [
+        "get_window_state"
+      ]
+    }
+  ],
+  "driver_server": {
+    "name": "action-observe-experiment",
+    "version": "0.34.0"
+  },
+  "driver_metadata": {
+    "capability_version": "1",
+    "contract_version": "0.8.0",
+    "driver_version": "0.34.0",
+    "embedded": false,
+    "host_bundle_id": null,
+    "mcp_protocol_version": "2025-06-18",
+    "pid": 27624,
+    "tools_list_schema_version": "1"
+  },
+  "final_observation_verified": true,
+  "passed": true,
+  "oracle_state": {
+    "name": "Synthetic Person",
+    "email": "synthetic@example.invalid",
+    "subscribe": true,
+    "submitted": 0
+  },
+  "completed_fields": [
+    "Email",
+    "Full name",
+    "Subscribe"
+  ]
+}

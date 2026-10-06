@@ -20,6 +20,17 @@ def validate_action(tool, action, snapshot, pid, window, attempted):
     if tool!=expected_tool or (VALUES[label] is not None and action.get('value')!=VALUES[label]) or (VALUES[label] is None and 'value' in action): raise ValueError('not one of the permitted literal actions')
     return label
 
+def verified_snapshot(snapshot):
+    if not isinstance(snapshot,dict):return False
+    elements=projected(snapshot)['elements']
+    for label,value in VALUES.items():
+        matches=[e for e in elements if e.get('label',e.get('name'))==label]
+        if len(matches)!=1:return False
+        if value is None:
+            if matches[0].get('selected') is not True or matches[0].get('value')!='1':return False
+        elif matches[0].get('value')!=value:return False
+    return True
+
 def owned_window(client, pid):
     def discover():
         data,error=client.call('list_windows',pid=pid,on_screen_only=True)
@@ -94,7 +105,7 @@ def run():
             print(json.dumps({'jsonrpc':'2.0','id':ident,'result':result}),flush=True)
     finally:
         state=fixture.state() if fixture else {}
-        evidence={'condition':condition,'setup_calls':setup_calls,'calls':rows,'driver_server':client.server_info if client else None,'driver_metadata':getattr(client,'backend_metadata',None) if client else None,'passed':all(state.get(k)==v for k,v in {'name':VALUES['Full name'],'email':VALUES['Email'],'subscribe':True,'submitted':0}.items()),'oracle_state':{k:state.get(k) for k in ('name','email','subscribe','submitted')},'completed_fields':sorted(completed)}
+        evidence={'condition':condition,'setup_calls':setup_calls,'calls':rows,'driver_server':client.server_info if client else None,'driver_metadata':getattr(client,'backend_metadata',None) if client else None,'final_observation_verified':verified_snapshot(snapshot),'passed':verified_snapshot(snapshot) and all(state.get(k)==v for k,v in {'name':VALUES['Full name'],'email':VALUES['Email'],'subscribe':True,'submitted':0}.items()),'oracle_state':{k:state.get(k) for k in ('name','email','subscribe','submitted')},'completed_fields':sorted(completed)}
         try:
             if client: client.close()
         finally:

@@ -1,0 +1,98 @@
+{
+  "condition": "baseline",
+  "setup_calls": [
+    {
+      "tool": "list_windows",
+      "ms": 6.220625000423752
+    },
+    {
+      "tool": "get_window_state",
+      "ms": 151.1946669925237
+    }
+  ],
+  "calls": [
+    {
+      "tool": "get_window_state",
+      "ms": 83.59604098950513,
+      "error": false,
+      "child_dispatches": [
+        "get_window_state"
+      ]
+    },
+    {
+      "tool": "set_value",
+      "ms": 1624.7557080059778,
+      "error": false,
+      "child_dispatches": [
+        "set_value"
+      ]
+    },
+    {
+      "tool": "get_window_state",
+      "ms": 81.02379200863652,
+      "error": false,
+      "child_dispatches": [
+        "get_window_state"
+      ]
+    },
+    {
+      "tool": "set_value",
+      "ms": 1399.6863749925978,
+      "error": false,
+      "child_dispatches": [
+        "set_value"
+      ]
+    },
+    {
+      "tool": "get_window_state",
+      "ms": 68.26604099478573,
+      "error": false,
+      "child_dispatches": [
+        "get_window_state"
+      ]
+    },
+    {
+      "tool": "click",
+      "ms": 1521.1434160009958,
+      "error": false,
+      "child_dispatches": [
+        "click"
+      ]
+    },
+    {
+      "tool": "get_window_state",
+      "ms": 65.97804201010149,
+      "error": false,
+      "child_dispatches": [
+        "get_window_state"
+      ]
+    }
+  ],
+  "driver_server": {
+    "name": "action-observe-experiment",
+    "version": "0.34.0"
+  },
+  "driver_metadata": {
+    "capability_version": "1",
+    "contract_version": "0.8.0",
+    "driver_version": "0.34.0",
+    "embedded": false,
+    "host_bundle_id": null,
+    "mcp_protocol_version": "2025-06-18",
+    "pid": 27624,
+    "tools_list_schema_version": "1"
+  },
+  "final_observation_verified": true,
+  "passed": true,
+  "oracle_state": {
+    "name": "Synthetic Person",
+    "email": "synthetic@example.invalid",
+    "subscribe": true,
+    "submitted": 0
+  },
+  "completed_fields": [
+    "Email",
+    "Full name",
+    "Subscribe"
+  ]
+}

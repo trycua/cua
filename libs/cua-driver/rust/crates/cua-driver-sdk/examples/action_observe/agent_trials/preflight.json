@@ -1,0 +1,59 @@
+{
+  "fixture_source_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
+  "preflight_started_at": "2026-10-06T15:11:27.391680+00:00",
+  "source_checked_at": "2026-10-06T15:11:30.470919+00:00",
+  "daemon_metadata_checked_at": "2026-10-06T15:11:28.916920+00:00",
+  "release_check": {
+    "cache_hit": false,
+    "checked_at": "2026-10-06T15:11:27Z",
+    "current_channel": "stable",
+    "current_version": "0.34.0",
+    "error": null,
+    "install_command": null,
+    "latest_version": "0.34.0",
+    "release_notes_url": null,
+    "selected_channel": "stable",
+    "source": "github_releases",
+    "update_available": false
+  },
+  "daemon_server": {
+    "name": "cua-driver",
+    "version": "0.34.0"
+  },
+  "sdk_backend_metadata": {
+    "capability_version": "1",
+    "contract_version": "0.8.0",
+    "driver_version": "0.34.0",
+    "embedded": false,
+    "host_bundle_id": null,
+    "mcp_protocol_version": "2025-06-18",
+    "pid": 27624,
+    "tools_list_schema_version": "1"
+  },
+  "daemon_permissions": {
+    "accessibility": true,
+    "direct_capture_error": null,
+    "direct_capture_status": "not_checked",
+    "screen_recording": true,
+    "screen_recording_capturable": null,
+    "source": {
+      "attribution": "driver-daemon",
+      "bundle_id": "com.trycua.driver",
+      "disclaim_env": false,
+      "executable": "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
+      "note": "These booleans reflect the CuaDriver daemon's own TCC identity (com.trycua.driver) because this process is its own responsible process.",
+      "pid": 27624,
+      "responsible_ppid": 1
+    }
+  },
+  "sdk_upstream_commit": "aa7a31a5f3633249db69f766256b1749feb7a652",
+  "sdk_head": "c0f35c5943cf5b6594775156c0e12e9b8593579a",
+  "source_file_sha256": {
+    "operation.rs": "150df5b8195d5254a40837d42c0eef6008cc280b72e07dd5946bc70f21d0e762",
+    "agent_gateway.py": "184352ec010715991f50bd797f30f87aedc43bc6dd09cf7b212cc50c878ca7bc",
+    "run_agent_trials.py": "c891bce1416b324a64c0b3a9c31fa7702d968317d1718f1343e136eaf8f3f40f",
+    "shared.py": "ebfec4cee3109bbcc10d067d5f94fe7b1784cb2d108710fd80ce20e89d5523ff",
+    "action_observe_experiment.rs": "36002758da218f2a93d6766cb682adac547de36f0ade4f288767a5382cb2d7d6"
+  },
+  "backend": "supported CuaDriver.connect existing signed daemon; same backend both arms"
+}

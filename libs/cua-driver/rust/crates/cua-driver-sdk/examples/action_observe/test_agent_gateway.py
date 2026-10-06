@@ -59,4 +59,13 @@ class WindowDiscoveryTests(unittest.TestCase):
             def call(self,name,**args):return ({'windows':[{'pid':7,'title':'Arc Bench Form','window_id':9,'is_on_screen':True}]} if name=='list_windows' else {'pid':7,'window_id':9,'snapshot_id':'fresh','elements':[]}),False
         with patch.object(agent_gateway,'wait_for',lambda fn,timeout:fn()):self.assertIsNone(agent_gateway.owned_window(Client(),7))
 
+class VerificationTests(unittest.TestCase):
+    def test_complete_current_snapshot_required(self):
+        elements=[{'label':label,'role':'AXCheckBox' if label=='Subscribe' else 'AXTextField','value':'1' if value is None else value,'selected':True} for label,value in agent_gateway.VALUES.items()]
+        self.assertTrue(agent_gateway.verified_snapshot({'elements':elements}))
+        self.assertFalse(agent_gateway.verified_snapshot(None))
+        self.assertFalse(agent_gateway.verified_snapshot({'elements':elements[:-1]}))
+        self.assertFalse(agent_gateway.verified_snapshot({'elements':elements+[elements[0]]}))
+        self.assertFalse(agent_gateway.verified_snapshot({'elements':[{**e,'value':'0'} if e['label']=='Subscribe' else e for e in elements]}))
+
 if __name__=='__main__':unittest.main()

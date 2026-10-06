@@ -1204,6 +1204,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-cursor-motion"
+version = "0.34.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cua-driver"
 version = "0.34.0"
 dependencies = [
@@ -1391,14 +1399,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cua-motion"
-version = "0.34.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "cua-perception"
 version = "0.2.1"
 dependencies = [
@@ -1430,9 +1430,9 @@ name = "cursor-overlay"
 version = "0.34.0"
 dependencies = [
  "anyhow",
+ "cua-cursor-motion",
  "cua-driver-contract",
  "cua-driver-core",
- "cua-motion",
  "fontdue",
  "image",
  "indexmap",

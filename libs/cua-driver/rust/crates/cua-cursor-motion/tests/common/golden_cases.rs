@@ -2,11 +2,11 @@
 //
 // `examples/export_golden.rs` writes them to `fixtures/golden.json`;
 // `tests/golden.rs` checks the fixture still matches this crate, and
-// `libs/typescript/motion/tests/golden.test.ts` checks the TypeScript port
+// `libs/typescript/cursor-motion/tests/golden.test.ts` checks the TypeScript port
 // against the same file.
 
-use cua_motion::effects::{self, EffectFrame};
-use cua_motion::{
+use cua_cursor_motion::effects::{self, EffectFrame};
+use cua_cursor_motion::{
     plan_move, plan_spec, ArcShape, Duration, Ease, Heading, MotionEffects, MotionParams,
     MotionSpec, MotionStyle, MotionTiming, MoveRequest, PathShape, Pt, ResolvedEffects, Rng,
     Settle, TrailSpec, Trajectory,
@@ -99,7 +99,7 @@ fn traj_json(traj: &Trajectory, with_effects: bool) -> Value {
             .map(|k| {
                 let t = traj.duration() * k;
                 let s = traj.sample_at(t);
-                let pos = cua_motion::anchor_for_pointer(s.x, s.y, s.heading);
+                let pos = cua_cursor_motion::anchor_for_pointer(s.x, s.y, s.heading);
                 let mut frame = effects::motion_frame(traj, t, pos, true);
                 let all = ResolvedEffects {
                     ripple: true,
@@ -324,7 +324,7 @@ pub fn golden() -> Value {
             let mut rng = Rng::from_seed(seed);
             json!({
                 "seed": seed,
-                "hash": cua_motion::rng::hash_string(seed),
+                "hash": cua_cursor_motion::rng::hash_string(seed),
                 "values": (0..4).map(|_| rng.next_f64()).collect::<Vec<_>>(),
             })
         })
@@ -358,7 +358,7 @@ pub fn golden() -> Value {
     })
     .collect();
     json!({
-        "source": "libs/cua-driver/rust/crates/cua-motion/examples/export_golden.rs",
+        "source": "libs/cua-driver/rust/crates/cua-cursor-motion/examples/export_golden.rs",
         "grid": GRID,
         "rng": rng,
         "eases": eases,

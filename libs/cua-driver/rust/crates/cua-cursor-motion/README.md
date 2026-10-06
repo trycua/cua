@@ -1,11 +1,11 @@
-# cua-motion
+# cua-cursor-motion
 
 The agent cursor motions of [Cua Driver](https://cua.ai/docs/cua-driver) as a
 small Rust library: six motion styles, three timing modes, the comet trail and
 the other effects, and an API for designing your own motions.
 
 Cua Driver plans every agent cursor move with this crate, and the
-[`@trycua/motion`](https://github.com/trycua/cua/tree/main/libs/typescript/motion) web package is a port that is
+[`@trycua/cursor-motion`](https://github.com/trycua/cua/tree/main/libs/typescript/cursor-motion) web package is a port that is
 tested against the same golden trajectories. There is no runtime dependency;
 the `serde` feature adds `Serialize`/`Deserialize` to the public types.
 
@@ -15,7 +15,7 @@ A move is planned once, as samples at 120 Hz. Play it back by time at any
 frame rate:
 
 ```rust
-use cua_motion::{plan_move, MotionParams, MotionStyle, MotionTiming, MoveRequest, Pt};
+use cua_cursor_motion::{plan_move, MotionParams, MotionStyle, MotionTiming, MoveRequest, Pt};
 
 let params = MotionParams {
     style: MotionStyle::CometSwoop,
@@ -57,8 +57,8 @@ trail, the speed glow, the magnet glow, the click ripple and the click squish.
 Painting is up to you.
 
 ```rust
-# use cua_motion::{plan_move, MotionParams, MoveRequest, Pt};
-use cua_motion::{anchor_for_pointer, effects};
+# use cua_cursor_motion::{plan_move, MotionParams, MoveRequest, Pt};
+use cua_cursor_motion::{anchor_for_pointer, effects};
 # let trajectory = plan_move(&MotionParams::default(), &MoveRequest::new(Pt::new(0.0, 0.0), Pt::new(500.0, 200.0)));
 let t = 0.3;
 let s = trajectory.sample_at(t);
@@ -81,7 +81,7 @@ or settle, a duration model, a heading mode, effects and a trail.
 start from one of them:
 
 ```rust
-use cua_motion::{
+use cua_cursor_motion::{
     plan_spec, ArcShape, Duration, Ease, MotionParams, MotionSpec, MotionStyle, MoveRequest,
     PathShape, Pt, Settle, TrailSpec,
 };
@@ -112,7 +112,7 @@ styles plus the knobs of `set_agent_cursor_motion`.
 
 ```bash
 cd libs/cua-driver/rust
-cargo test -p cua-motion --all-features
+cargo test -p cua-cursor-motion --all-features
 ```
 
 - `tests/motion_parity.rs` checks every style and timing mode against the
@@ -123,11 +123,11 @@ cargo test -p cua-motion --all-features
   change:
 
   ```bash
-  cargo run -p cua-motion --features serde --example export_golden \
-    > crates/cua-motion/fixtures/golden.json
+  cargo run -p cua-cursor-motion --features serde --example export_golden \
+    > crates/cua-cursor-motion/fixtures/golden.json
   ```
 
-- `cursor-overlay`'s `motion_is_bit_identical_to_the_pre_cua_motion_driver`
+- `cursor-overlay`'s `motion_is_bit_identical_to_the_pre_cua_cursor_motion_driver`
   proves the driver's trajectories and effect frames did not change when the
   math moved here.
 

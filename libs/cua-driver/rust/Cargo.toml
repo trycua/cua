@@ -13,7 +13,7 @@ members = [
     "crates/platform-windows",
     "crates/platform-linux",
     "crates/cursor-overlay",
-    "crates/cua-motion",
+    "crates/cua-cursor-motion",
     "crates/cursor-theme-cli",
     "crates/pip-preview",
     "crates/cua-perception",

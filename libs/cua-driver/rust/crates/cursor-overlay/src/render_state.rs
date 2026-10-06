@@ -783,9 +783,9 @@ impl RenderStateCore {
 // ── Motion effects ───────────────────────────────────────────────────────
 //
 // The effect geometry (trail, glow, magnet, ripple, squish) comes from
-// `cua_motion::effects`; this module only paints it.
+// `cua_cursor_motion::effects`; this module only paints it.
 
-use cua_motion::effects::{self, EffectFrame, CLICK_FX_SECS, MAGNET_INFLATE};
+use cua_cursor_motion::effects::{self, EffectFrame, CLICK_FX_SECS, MAGNET_INFLATE};
 
 /// Effect colour: the session tint lifted toward white.
 fn effect_rgb(tint: [u8; 4]) -> (u8, u8, u8) {
@@ -2001,7 +2001,7 @@ mod pointer_anchor_tests {
     }
 }
 
-/// Proof that moving the motion math into the `cua-motion` crate changed no
+/// Proof that moving the motion math into the `cua-cursor-motion` crate changed no
 /// behaviour. `tests/fixtures/motion_equivalence.json` was captured from the
 /// driver before the move (origin/main 79a4a4635) by this module's
 /// `capture()`: a SHA-256 over the bits of every sample of 1650 planned
@@ -2358,9 +2358,9 @@ mod motion_equivalence_tests {
     }
 
     /// Every planned trajectory and every effect frame is bit-identical to
-    /// the driver before the motion math moved into `cua-motion`.
+    /// the driver before the motion math moved into `cua-cursor-motion`.
     #[test]
-    fn motion_is_bit_identical_to_the_pre_cua_motion_driver() {
+    fn motion_is_bit_identical_to_the_pre_cua_cursor_motion_driver() {
         let fixture: Value =
             serde_json::from_str(include_str!("../tests/fixtures/motion_equivalence.json"))
                 .expect("fixture json");

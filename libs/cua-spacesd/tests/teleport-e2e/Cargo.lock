@@ -1272,6 +1272,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-cursor-motion"
+version = "0.34.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "cua-driver-contract"
 version = "0.34.0"
 dependencies = [
@@ -1380,13 +1387,6 @@ dependencies = [
  "thiserror 2.0.20",
  "x25519-dalek",
  "zeroize",
-]
-
-[[package]]
-name = "cua-motion"
-version = "0.34.0"
-dependencies = [
- "serde",
 ]
 
 [[package]]
@@ -1646,9 +1646,9 @@ name = "cursor-overlay"
 version = "0.34.0"
 dependencies = [
  "anyhow",
+ "cua-cursor-motion",
  "cua-driver-contract",
  "cua-driver-core",
- "cua-motion",
  "fontdue",
  "image",
  "indexmap",

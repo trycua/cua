@@ -99,7 +99,7 @@
 {
           "type": "toml",
           "path": "/libs/cua-spacesd/Cargo.lock",
-          "jsonpath": "$.package[?(@.name.value=='cua-motion')].version"
+          "jsonpath": "$.package[?(@.name.value=='cua-cursor-motion')].version"
         },
         {
           "type": "toml",
@@ -144,7 +144,7 @@
 {
           "type": "toml",
           "path": "/libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
-          "jsonpath": "$.package[?(@.name.value=='cua-motion')].version"
+          "jsonpath": "$.package[?(@.name.value=='cua-cursor-motion')].version"
         },
         {
           "type": "toml",
@@ -189,7 +189,7 @@
 {
           "type": "toml",
           "path": "/libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
-          "jsonpath": "$.package[?(@.name.value=='cua-motion')].version"
+          "jsonpath": "$.package[?(@.name.value=='cua-cursor-motion')].version"
         },
         {
           "type": "toml",

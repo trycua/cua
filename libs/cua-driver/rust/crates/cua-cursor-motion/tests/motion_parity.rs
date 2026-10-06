@@ -5,8 +5,8 @@
 //! seed 7, each shipped style and timing mode. Each Rust trajectory must
 //! match the lab within 0.5 pt at every exported sample time.
 
-use cua_motion::plan::{apply_timing, generate, MoveCtx, Raw};
-use cua_motion::{plan_move, MotionParams, MotionStyle, MotionTiming, MoveRequest, Pt, Rng};
+use cua_cursor_motion::plan::{apply_timing, generate, MoveCtx, Raw};
+use cua_cursor_motion::{plan_move, MotionParams, MotionStyle, MotionTiming, MoveRequest, Pt, Rng};
 use serde_json::Value;
 use std::f64::consts::FRAC_PI_4;
 
@@ -87,11 +87,11 @@ fn shipped_styles_match_the_motion_lab() {
                     reduced_motion: false,
                 },
             );
-            let (ox, oy) = cua_motion::anchor_for_pointer(0.0, 0.0, FRAC_PI_4);
+            let (ox, oy) = cua_cursor_motion::anchor_for_pointer(0.0, 0.0, FRAC_PI_4);
             traj.samples
                 .iter()
                 .map(|s| {
-                    let (ax, ay) = cua_motion::anchor_for_pointer(s.x, s.y, s.heading);
+                    let (ax, ay) = cua_cursor_motion::anchor_for_pointer(s.x, s.y, s.heading);
                     Raw {
                         t: s.t * 1000.0,
                         x: ax - ox,

@@ -4,9 +4,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-// The styles, timing modes and effect switches live in `cua-motion`, the
-// single source of truth for cursor motion shared with `@trycua/motion`.
-pub use cua_motion::{MotionEffects, MotionStyle, MotionTiming, ResolvedEffects, DEFAULT_FIXED_MS};
+// The styles, timing modes and effect switches live in `cua-cursor-motion`, the
+// single source of truth for cursor motion shared with `@trycua/cursor-motion`.
+pub use cua_cursor_motion::{
+    MotionEffects, MotionStyle, MotionTiming, ResolvedEffects, DEFAULT_FIXED_MS,
+};
 
 /// Runtime-tunable timing and path-shape parameters.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -205,9 +207,9 @@ impl MotionConfig {
         self.effects.resolve(self.style.default_effects())
     }
 
-    /// The fields that shape motion, for `cua_motion::plan_move`.
-    pub fn params(&self) -> cua_motion::MotionParams {
-        cua_motion::MotionParams {
+    /// The fields that shape motion, for `cua_cursor_motion::plan_move`.
+    pub fn params(&self) -> cua_cursor_motion::MotionParams {
+        cua_cursor_motion::MotionParams {
             style: self.style,
             timing: self.timing,
             effects: self.effects,

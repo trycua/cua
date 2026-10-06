@@ -253,7 +253,7 @@ export function catmullRom(points, alpha = 0.5) {
 
 // ---------------------------------------------------------------------------
 // Dubins (arc-straight-arc) planner: a JS port of
-// cua-motion dubins.rs, used to reproduce today's Cua Driver glide.
+// cua-cursor-motion dubins.rs, used to reproduce today's Cua Driver glide.
 // ---------------------------------------------------------------------------
 
 const mod2pi = (x) => {

@@ -1,12 +1,12 @@
 [package]
-name = "cua-motion"
+name = "cua-cursor-motion"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license = "MIT"
 repository.workspace = true
 readme = "README.md"
-documentation = "https://docs.rs/cua-motion"
+documentation = "https://docs.rs/cua-cursor-motion"
 description = "Agent cursor motion: the paths, timing and effects behind Cua Driver's cursor."
 keywords = ["cursor", "animation", "motion", "fitts", "agent"]
 categories = ["graphics", "mathematics"]

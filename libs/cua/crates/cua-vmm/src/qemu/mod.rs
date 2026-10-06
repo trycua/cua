@@ -46,7 +46,8 @@ pub struct QemuConfig {
     pub resolver: Option<Arc<dyn DiskResolver>>,
     /// Allow installing QEMU through the host package manager when missing.
     pub allow_install: bool,
-    /// How long `stop` waits for an ACPI shutdown before forcing `quit`.
+    /// ACPI shutdown timeout. A timeout fails without forcing guest power off.
+    /// Zero explicitly selects immediate QMP `quit` (for disposable fixtures).
     pub graceful_stop: Duration,
     /// Allocate a VNC display per instance.
     pub vnc: bool,
@@ -105,6 +106,13 @@ pub struct QemuState {
     pub qmp_port: Option<u16>,
     #[serde(default)]
     pub pid: Option<u32>,
+    /// Written at launch; protects Windows PIDs from reuse or legacy adoption.
+    #[cfg(windows)]
+    #[serde(default)]
+    pub process_identity: Option<host::windows_process::Identity>,
+    /// A crash between spawning and persisting the PID is uncertain ownership.
+    #[serde(default)]
+    pub launch_pending: bool,
     #[serde(default)]
     pub accel: String,
     #[serde(default)]
@@ -176,6 +184,34 @@ pub struct QemuRuntime {
 
 const LAYERS: &str = "_layers";
 
+/// Retains the verified Windows process object through launch and shutdown.
+struct ProcessGuard {
+    pid: Option<u32>,
+    #[cfg(windows)]
+    process: Option<host::windows_process::Process>,
+}
+
+impl ProcessGuard {
+    fn exited() -> Self {
+        Self {
+            pid: None,
+            #[cfg(windows)]
+            process: None,
+        }
+    }
+
+    fn state(&self) -> Result<host::ProcessState> {
+        #[cfg(windows)]
+        if let Some(process) = &self.process {
+            return process.state();
+        }
+        match self.pid {
+            Some(pid) => host::process_state(pid),
+            None => Ok(host::ProcessState::Exited),
+        }
+    }
+}
+
 impl QemuRuntime {
     pub fn new(cfg: QemuConfig) -> Self {
         Self {
@@ -204,6 +240,25 @@ impl QemuRuntime {
         self.cfg.root.join(LAYERS)
     }
 
+    /// Kernel file lock coordinates independent CLI/daemon runtime instances.
+    /// Keep the file: deleting it would let another caller lock a different inode.
+    fn lifecycle_lock(&self) -> Result<std::fs::File> {
+        std::fs::create_dir_all(&self.cfg.root)?;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(self.cfg.root.join(".lifecycle.lock"))?;
+        match file.try_lock() {
+            Ok(()) => Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) => Err(VmmError::other(
+                "another QEMU lifecycle operation is in progress; state was not changed",
+            )),
+            Err(std::fs::TryLockError::Error(e)) => Err(e.into()),
+        }
+    }
+
     /// Load persisted state for `name`.
     pub fn load(&self, name: &str) -> Result<QemuState> {
         let p = self.state_path(name);
@@ -220,6 +275,31 @@ impl QemuRuntime {
         })
     }
 
+    /// Read-only reconciliation for synchronous disk/log cleanup callers.
+    /// Inspection errors mean uncertain ownership and must retain the evidence.
+    pub fn inspect_status(&self, name: &str) -> Result<Status> {
+        // A scanner must not see "stopped" while a launch owns the root lock
+        // but has not yet spawned/persisted its process. Open only an existing
+        // lock file so inspecting legacy state creates no filesystem entries.
+        let _guard = match std::fs::File::open(self.cfg.root.join(".lifecycle.lock")) {
+            Ok(file) => {
+                match file.try_lock_shared() {
+                    Ok(()) => {}
+                    Err(std::fs::TryLockError::WouldBlock) => {
+                        return Err(VmmError::other(
+                            "another QEMU lifecycle operation is in progress; ownership is uncertain",
+                        ));
+                    }
+                    Err(std::fs::TryLockError::Error(e)) => return Err(e.into()),
+                }
+                Some(file)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.into()),
+        };
+        self.status_of(&self.load(name)?)
+    }
+
     fn save(&self, st: &QemuState) -> Result<()> {
         let dir = self.dir(&st.name);
         std::fs::create_dir_all(&dir)?;
@@ -229,21 +309,133 @@ impl QemuRuntime {
         Ok(())
     }
 
-    fn is_running(st: &QemuState) -> bool {
-        st.pid.is_some_and(host::pid_alive)
+    fn inspect_process(&self, st: &QemuState) -> Result<ProcessGuard> {
+        if let Some(pid) = st.pid {
+            #[cfg(windows)]
+            {
+                let Some(process) = host::windows_process::Process::open(pid)? else {
+                    return self.inspect_unrecorded(st);
+                };
+                if process.state()? == host::ProcessState::Exited {
+                    return self.inspect_unrecorded(st);
+                }
+                let identity = st.process_identity.as_ref().ok_or_else(|| VmmError::ProcessIdentity {
+                    pid,
+                    detail: "live legacy PID has no recorded creation time/executable; refusing to adopt it".into(),
+                })?;
+                process.verify(identity)?;
+                return Ok(ProcessGuard {
+                    pid: Some(pid),
+                    process: Some(process),
+                });
+            }
+            #[cfg(not(windows))]
+            return match host::process_state(pid)? {
+                host::ProcessState::Running => Ok(ProcessGuard { pid: Some(pid) }),
+                host::ProcessState::Exited => self.inspect_unrecorded(st),
+            };
+        }
+        self.inspect_unrecorded(st)
     }
 
-    fn status_of(st: &QemuState) -> Status {
-        match st.kind {
-            EntryKind::Base | EntryKind::Checkpoint => Status::Stopped,
-            EntryKind::Instance if Self::is_running(st) => {
-                if st.paused {
-                    Status::Paused
-                } else {
-                    Status::Running
+    fn inspect_unrecorded(&self, st: &QemuState) -> Result<ProcessGuard> {
+        self.inspect_unrecorded_except(st, None)
+    }
+
+    fn inspect_unrecorded_except(
+        &self,
+        st: &QemuState,
+        confirmed_exited_pid: Option<u32>,
+    ) -> Result<ProcessGuard> {
+        if st.kind != EntryKind::Instance {
+            return Ok(ProcessGuard::exited());
+        }
+        // The old Windows launch bug could clear state.pid while leaving QEMU
+        // alive. A leftover pidfile is evidence to inspect, never authority to kill.
+        let pidfile = self.dir(&st.name).join("qemu.pid");
+        match std::fs::read_to_string(&pidfile) {
+            Ok(raw) => {
+                let pid = raw.trim().parse::<u32>().map_err(|e| VmmError::State {
+                    path: pidfile.clone(),
+                    detail: format!("invalid QEMU pidfile: {e}"),
+                })?;
+                // Only a retained Windows kernel object can prove this PID's
+                // exit without reopening it. Other pidfiles remain uncertain.
+                if Some(pid) != confirmed_exited_pid
+                    && host::process_state(pid)? == host::ProcessState::Running
+                {
+                    return Err(VmmError::ProcessIdentity {
+                        pid,
+                        detail:
+                            "pidfile is live but no process identity is recorded; state preserved"
+                                .into(),
+                    });
                 }
             }
-            EntryKind::Instance => Status::Stopped,
+            Err(e)
+                if e.kind() == std::io::ErrorKind::NotFound
+                    && (!st.launch_pending || st.pid.is_some()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(VmmError::State {
+                    path: self.state_path(&st.name),
+                    detail:
+                        "launch was interrupted before PID ownership was recorded; state preserved"
+                            .into(),
+                });
+            }
+            Err(e) => return Err(e.into()),
+        }
+        #[cfg(windows)]
+        {
+            if let Some(port) = st.qmp_port
+                && let Some(pid) = host::windows_process::listener_pid(port)?
+            {
+                return Err(VmmError::ProcessIdentity {
+                    pid,
+                    detail:
+                        "recorded QMP endpoint is still occupied without recorded process ownership"
+                            .into(),
+                });
+            }
+            self.check_disk_unowned(st)?;
+        }
+        Ok(ProcessGuard::exited())
+    }
+
+    #[cfg(windows)]
+    fn check_disk_unowned(&self, st: &QemuState) -> Result<()> {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Deny sharing while probing the existing disk. Any previous reader or
+        // writer (including unrecorded QEMU) makes this fail conservatively.
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&st.disk)
+            .map_err(|e| {
+                VmmError::other(format!(
+                    "cannot establish exclusive ownership of sandbox '{}' disk: {e}",
+                    st.name
+                ))
+            })?;
+        Ok(())
+    }
+
+    fn is_running(&self, st: &QemuState) -> Result<bool> {
+        Ok(self.inspect_process(st)?.state()? == host::ProcessState::Running)
+    }
+
+    fn status_of(&self, st: &QemuState) -> Result<Status> {
+        match st.kind {
+            EntryKind::Base | EntryKind::Checkpoint => Ok(Status::Stopped),
+            EntryKind::Instance if self.is_running(st)? => {
+                if st.paused {
+                    Ok(Status::Paused)
+                } else {
+                    Ok(Status::Running)
+                }
+            }
+            EntryKind::Instance => Ok(Status::Stopped),
         }
     }
 
@@ -402,6 +594,9 @@ impl QemuRuntime {
                 vnc_display: None,
                 qmp_port: None,
                 pid: None,
+                #[cfg(windows)]
+                process_identity: None,
+                launch_pending: false,
                 accel: String::new(),
                 ssh: spec_like.ssh.clone(),
                 restrict_network: spec_like.restrict_network,
@@ -443,22 +638,58 @@ impl QemuRuntime {
         st: &mut QemuState,
         spec: &StartSpec,
         loadvm: Option<String>,
+        reuse_ports: bool,
+        launched: &mut Option<ProcessGuard>,
     ) -> Result<()> {
+        if self.is_running(st)? {
+            return Err(VmmError::invalid(
+                "refusing to launch a second QEMU for a running instance",
+            ));
+        }
+        #[cfg(windows)]
+        self.check_disk_unowned(st)?;
         let bin = self.binary(st.arch).await?;
         let dir = self.dir(&st.name);
         let mut guest_ports: Vec<u16> = spec.ports.clone();
         if st.ssh.is_some() && !guest_ports.contains(&22) {
             guest_ports.push(22);
         }
-        let mut free = host::free_ports(guest_ports.len() + 1)?;
-        let qmp_port = free.pop().expect("allocated");
-        st.ports = guest_ports.iter().copied().zip(free).collect();
-        st.qmp_port = Some(qmp_port);
-        st.vnc_display = if self.cfg.vnc {
-            host::free_vnc_display(0)
+        let qmp_port = if reuse_ports {
+            if guest_ports.iter().any(|port| !st.ports.contains_key(port)) {
+                return Err(VmmError::invalid(
+                    "cold start requests a forward absent from the saved QEMU state",
+                ));
+            }
+            st.qmp_port
+                .ok_or_else(|| VmmError::other("cold start has no saved QMP endpoint"))?
         } else {
-            None
+            let mut free = host::free_ports(guest_ports.len() + 1)?;
+            let qmp_port = free
+                .pop()
+                .ok_or_else(|| VmmError::other("no QMP port allocated"))?;
+            st.ports = guest_ports.iter().copied().zip(free).collect();
+            st.qmp_port = Some(qmp_port);
+            st.vnc_display = if self.cfg.vnc {
+                host::free_vnc_display(0)
+            } else {
+                None
+            };
+            qmp_port
         };
+        // Preserve fixed guest endpoints; never redirect after a collision.
+        // Release these probes immediately before spawn: QEMU itself must bind
+        // them and its failure remains a real startup failure if a race occurs.
+        let ports = st
+            .ports
+            .values()
+            .copied()
+            .chain([qmp_port])
+            .chain(st.vnc_display.map(|display| 5900 + display));
+        let mut reservations = Vec::new();
+        for port in ports {
+            reservations.push(std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
+                .map_err(|e| VmmError::other(format!("saved QEMU loopback port {port} is unavailable; no process launched: {e}")))?);
+        }
         st.accel = self.accel_for(st.arch);
         st.cpus = spec.cpus;
         st.memory_mb = spec.memory_mb;
@@ -487,7 +718,11 @@ impl QemuRuntime {
         st.paused = false;
 
         let pidfile = dir.join("qemu.pid");
-        let _ = std::fs::remove_file(&pidfile);
+        match std::fs::remove_file(&pidfile) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
         let cfg = args::LaunchConfig {
             binary: bin.clone(),
             name: st.name.clone(),
@@ -517,13 +752,28 @@ impl QemuRuntime {
             dir.join("cmdline"),
             format!("{} {}\n", bin.display(), argv.join(" ")),
         )?;
+        let log_path = dir.join("qemu.log");
+        // These errors establish that no child was created, so prepare stdio
+        // before persisting the marker reserved for uncertain post-spawn state.
+        #[cfg(windows)]
+        let (stdout, stderr) = {
+            let log = std::fs::File::create(&log_path)?;
+            (log.try_clone()?, log)
+        };
         tracing::info!(sandbox = %st.name, accel = %st.accel, "starting qemu");
+        st.pid = None;
+        #[cfg(windows)]
+        {
+            st.process_identity = None;
+        }
+        st.launch_pending = true;
+        self.save(st)?;
+        drop(reservations);
 
         // Launch detached: on Unix a throwaway `sh` backgrounds QEMU and exits,
         // so QEMU is re-parented to init (no zombie in long-lived callers) and
         // survives this process, while its stderr (crash reports, hvf/tcg
         // errors) goes to qemu.log instead of /dev/null as with -daemonize.
-        let log_path = dir.join("qemu.log");
         #[cfg(unix)]
         {
             let out = tokio::process::Command::new("/bin/sh")
@@ -539,23 +789,57 @@ impl QemuRuntime {
                 .parse::<u32>()
                 .map_err(|e| VmmError::other(format!("could not launch {}: {e}", bin.display())))?;
             st.pid = Some(pid);
+            *launched = Some(ProcessGuard { pid: Some(pid) });
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            let log = std::fs::File::create(&log_path)?;
-            let child = std::process::Command::new(&bin)
+            let child = match std::process::Command::new(&bin)
                 .args(&argv)
-                .stdout(log.try_clone()?)
-                .stderr(log)
-                .spawn()?;
+                .stdin(std::process::Stdio::null())
+                .stdout(stdout)
+                .stderr(stderr)
+                .spawn()
+            {
+                Ok(child) => child,
+                Err(e) => {
+                    st.launch_pending = false;
+                    self.save(st)?;
+                    return Err(e.into());
+                }
+            };
             st.pid = Some(child.id());
+            // Persist the known PID first. If inspection fails or the caller
+            // crashes, a later call must refuse uncertain ownership, not relaunch.
+            let process = launched.insert(ProcessGuard {
+                pid: st.pid,
+                process: Some(host::windows_process::Process::from_child(&child)?),
+            });
+            self.save(st)?;
+            if process.state()? == host::ProcessState::Running {
+                let identity = process
+                    .process
+                    .as_ref()
+                    .ok_or_else(|| VmmError::other("missing spawned process handle"))?
+                    .identity()?;
+                let expected = std::fs::canonicalize(&bin)?;
+                if !host::windows_process::same_path(&identity.executable, &expected) {
+                    return Err(VmmError::ProcessIdentity {
+                        pid: child.id(),
+                        detail: "spawned executable differs from selected QEMU".into(),
+                    });
+                }
+                st.process_identity = Some(identity);
+            }
         }
+        st.launch_pending = false;
         self.save(st)?;
 
-        let pid = st.pid.expect("set above");
+        let process = launched
+            .as_ref()
+            .ok_or_else(|| VmmError::other("missing spawned process"))?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
         let mut q = loop {
-            if !host::pid_alive(pid) {
+            if process.state()? == host::ProcessState::Exited {
                 return Err(VmmError::Command {
                     cmd: format!("{} (see {})", bin.display(), dir.join("cmdline").display()),
                     code: None,
@@ -565,8 +849,19 @@ impl QemuRuntime {
                     ),
                 });
             }
-            match QmpClient::connect(&format!("127.0.0.1:{qmp_port}")).await {
+            match self.connect_qmp_with_process(st, process).await {
                 Ok(q) => break q,
+                Err(e @ VmmError::ProcessIdentity { .. }) => return Err(e),
+                Err(e @ VmmError::ProcessCheck { .. }) => return Err(e),
+                Err(e @ VmmError::Io(_))
+                    if !matches!(&e, VmmError::Io(source) if matches!(source.kind(),
+                        std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::UnexpectedEof
+                            | std::io::ErrorKind::BrokenPipe)) =>
+                {
+                    return Err(e);
+                }
                 Err(e) if tokio::time::Instant::now() >= deadline => return Err(e),
                 Err(_) => tokio::time::sleep(Duration::from_millis(200)).await,
             }
@@ -580,17 +875,17 @@ impl QemuRuntime {
         Ok(())
     }
 
-    fn instance(&self, st: &QemuState) -> Instance {
-        Instance {
+    fn instance(&self, st: &QemuState) -> Result<Instance> {
+        Ok(Instance {
             name: st.name.clone(),
             backend: BackendKind::Qemu,
-            status: Self::status_of(st),
+            status: self.status_of(st)?,
             endpoints: self.endpoints_of(st),
             isolation: Isolation::Vm {
                 accel: st.accel.clone(),
             },
             arch: Some(st.arch),
-        }
+        })
     }
 
     fn endpoints_of(&self, st: &QemuState) -> Endpoints {
@@ -625,20 +920,70 @@ impl QemuRuntime {
     /// Open a QMP session to a running instance.
     pub async fn qmp(&self, name: &str) -> Result<QmpClient> {
         let st = self.load(name)?;
-        if !Self::is_running(&st) {
+        if !self.is_running(&st)? {
             return Err(VmmError::invalid(format!(
                 "sandbox '{name}' is not running"
+            )));
+        }
+        self.connect_qmp(&st).await
+    }
+
+    async fn connect_qmp(&self, st: &QemuState) -> Result<QmpClient> {
+        // Hold and validate the original process object before binding its QMP
+        // endpoint to a VM name/disk. Never authenticate an endpoint from PID alone.
+        let process = self.inspect_process(st)?;
+        self.connect_qmp_with_process(st, &process).await
+    }
+
+    async fn connect_qmp_with_process(
+        &self,
+        st: &QemuState,
+        process: &ProcessGuard,
+    ) -> Result<QmpClient> {
+        if process.pid != st.pid {
+            return Err(VmmError::other(
+                "held QEMU process differs from recorded PID",
+            ));
+        }
+        if process.state()? != host::ProcessState::Running {
+            return Err(VmmError::invalid(format!(
+                "sandbox '{}' is not running",
+                st.name
             )));
         }
         let port = st
             .qmp_port
             .ok_or_else(|| VmmError::other("no QMP port recorded"))?;
-        QmpClient::connect(&format!("127.0.0.1:{port}")).await
+        #[cfg(windows)]
+        host::windows_process::require_listener_owner(
+            process
+                .pid
+                .ok_or_else(|| VmmError::other("missing running PID"))?,
+            port,
+        )?;
+        let mut q = QmpClient::connect(&format!("127.0.0.1:{port}")).await?;
+        #[cfg(windows)]
+        q.verify_instance(
+            process
+                .pid
+                .ok_or_else(|| VmmError::other("missing running PID"))?,
+            &st.name,
+            &st.disk,
+        )
+        .await?;
+        if process.state()? != host::ProcessState::Running {
+            return Err(VmmError::invalid(
+                "QEMU exited during QMP ownership verification",
+            ));
+        }
+        Ok(q)
     }
 
     /// Restore an internal snapshot taken by [`Runtime::checkpoint`] on a
     /// running instance (in place, RAM included).
     pub async fn restore(&self, name: &str, snapshot: &str) -> Result<()> {
+        let _g = self.lock.lock().await;
+        let _process_lock = self.lifecycle_lock()?;
         let mut q = self.qmp(name).await?;
         q.loadvm(snapshot).await?;
         let mut st = self.load(name)?;
@@ -706,57 +1051,142 @@ impl QemuRuntime {
     }
 
     fn all_states(&self) -> Result<Vec<QemuState>> {
-        let Ok(rd) = std::fs::read_dir(&self.cfg.root) else {
-            return Ok(vec![]);
+        let rd = match std::fs::read_dir(&self.cfg.root) {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+            Err(e) => return Err(e.into()),
         };
         let mut out = Vec::new();
-        for e in rd.flatten() {
+        for e in rd {
+            let e = e?;
             let name = e.file_name().to_string_lossy().to_string();
-            if name == LAYERS || !e.path().join("state.json").exists() {
+            if name == LAYERS
+                || name == ".lifecycle.lock"
+                || !e.path().join("state.json").try_exists()?
+            {
                 continue;
             }
-            if let Ok(st) = self.load(&name) {
-                out.push(st);
-            }
+            out.push(self.load(&name)?);
         }
         out.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(out)
     }
 
-    async fn wait_exit(pid: u32, timeout: Duration) -> bool {
+    async fn wait_exit(process: &ProcessGuard, timeout: Duration) -> Result<bool> {
         let deadline = tokio::time::Instant::now() + timeout;
         while tokio::time::Instant::now() < deadline {
-            if !host::pid_alive(pid) {
-                return true;
+            if process.state()? == host::ProcessState::Exited {
+                return Ok(true);
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
-        !host::pid_alive(pid)
+        Ok(process.state()? == host::ProcessState::Exited)
     }
 
-    async fn force_stop(&self, st: &mut QemuState, graceful: Duration) -> Result<()> {
-        let Some(pid) = st.pid.filter(|p| host::pid_alive(*p)) else {
-            st.pid = None;
-            return Ok(());
-        };
-        if !graceful.is_zero() {
-            if let Ok(mut q) = self.qmp(&st.name).await {
-                let _ = q.system_powerdown().await;
-            }
-            if Self::wait_exit(pid, graceful).await {
-                st.pid = None;
-                return Ok(());
-            }
+    fn clear_exited_process(&self, st: &mut QemuState) -> Result<()> {
+        let process = self.inspect_process(st)?;
+        self.clear_exited_process_with(st, &process)
+    }
+
+    fn clear_exited_process_with(&self, st: &mut QemuState, process: &ProcessGuard) -> Result<()> {
+        // A failed inspection, mismatched PID or unrecorded writer preserves
+        // all evidence. Only proven exit authorizes removing the owned pidfile.
+        if process.pid.is_some() && process.pid != st.pid {
+            return Err(VmmError::other(
+                "held QEMU process differs from recorded PID",
+            ));
         }
-        if let Ok(mut q) = self.qmp(&st.name).await {
-            let _ = q.quit().await;
+        if process.state()? != host::ProcessState::Exited {
+            return Err(VmmError::other(
+                "QEMU is still alive; process state was not cleared",
+            ));
         }
-        if !Self::wait_exit(pid, Duration::from_secs(5)).await {
-            host::signal(pid, "KILL");
-            Self::wait_exit(pid, Duration::from_secs(5)).await;
+        // Keep the confirmed Windows process object open while checking other
+        // evidence. Its own stale pidfile must not trigger OpenProcess again;
+        // a different pidfile, occupied QMP endpoint or disk still refuses cleanup.
+        self.inspect_unrecorded_except(st, if cfg!(windows) { process.pid } else { None })?;
+        match std::fs::remove_file(self.dir(&st.name).join("qemu.pid")) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
         }
         st.pid = None;
-        Ok(())
+        #[cfg(windows)]
+        {
+            st.process_identity = None;
+        }
+        st.launch_pending = false;
+        st.paused = false;
+        // Keep allocated ports for a cold resume; endpoints() hides them while
+        // stopped. No listener is claimed to exist after confirmed process exit.
+        self.save(st)
+    }
+
+    async fn stop_process(&self, st: &mut QemuState, graceful: Duration) -> Result<()> {
+        let process = self.inspect_process(st)?;
+        if process.state()? == host::ProcessState::Exited {
+            return self.clear_exited_process_with(st, &process);
+        }
+        let mut q = self.connect_qmp_with_process(st, &process).await?;
+        let timeout = if graceful.is_zero() {
+            // Only an explicitly configured zero timeout chooses power cutoff;
+            // ordinary stop/delete never escalates from ACPI to quit or kill.
+            q.quit().await?;
+            Duration::from_secs(5)
+        } else {
+            // A paused guest cannot service ACPI. Persist the actual resumed
+            // state so a refused/timed-out shutdown does not still report paused.
+            if q.status().await? == "paused" {
+                q.cont().await?;
+                st.paused = false;
+                self.save(st)?;
+            }
+            q.system_powerdown().await?;
+            graceful
+        };
+        if !Self::wait_exit(&process, timeout).await? {
+            return Err(VmmError::Timeout {
+                name: st.name.clone(),
+                secs: timeout.as_secs(),
+                detail: "QEMU has not exited; no forced shutdown or state cleanup performed".into(),
+            });
+        }
+        self.clear_exited_process_with(st, &process)
+    }
+
+    fn failed_launch(
+        &self,
+        st: &mut QemuState,
+        error: VmmError,
+        launched: Option<&ProcessGuard>,
+    ) -> VmmError {
+        let inspected;
+        let process = match launched {
+            Some(process) => process,
+            None => match self.inspect_process(st) {
+                Ok(process) => {
+                    inspected = process;
+                    &inspected
+                }
+                Err(inspect) => {
+                    return VmmError::other(format!(
+                        "{error}; process ownership is uncertain: {inspect}; state preserved"
+                    ));
+                }
+            },
+        };
+        match process.state() {
+            Ok(host::ProcessState::Exited) => match self.clear_exited_process_with(st, process) {
+                Ok(()) => error,
+                Err(cleanup) => VmmError::other(format!(
+                    "{error}; exit cleanup failed: {cleanup}; state preserved"
+                )),
+            },
+            Ok(host::ProcessState::Running) => error,
+            Err(inspect) => VmmError::other(format!(
+                "{error}; process ownership is uncertain: {inspect}; state preserved"
+            )),
+        }
     }
 }
 
@@ -776,7 +1206,7 @@ impl QemuRuntime {
                 if ok {
                     break;
                 }
-                if !Self::is_running(&self.load(&st.name)?) {
+                if !self.is_running(&self.load(&st.name)?)? {
                     return Err(VmmError::other(format!(
                         "qemu for '{}' exited while waiting for {probe:?} (see {})",
                         st.name,
@@ -952,6 +1382,7 @@ impl Runtime for QemuRuntime {
     async fn ensure_base(&self, image: &ImageSource, base_name: &str) -> Result<CheckpointInfo> {
         validate_name(base_name)?;
         let _g = self.lock.lock().await;
+        let _process_lock = self.lifecycle_lock()?;
         if let Ok(st) = self.load(base_name) {
             if st.kind != EntryKind::Base {
                 return Err(VmmError::AlreadyExists(base_name.to_string()));
@@ -986,6 +1417,9 @@ impl Runtime for QemuRuntime {
             vnc_display: None,
             qmp_port: None,
             pid: None,
+            #[cfg(windows)]
+            process_identity: None,
+            launch_pending: false,
             accel: String::new(),
             ssh: None,
             restrict_network: false,
@@ -1025,53 +1459,53 @@ impl Runtime for QemuRuntime {
         validate_name(&spec.name)?;
         crate::types::reject_sidecars(BackendKind::Qemu, spec)?;
         crate::cloudinit::check_guest_support(spec)?;
-        let mut st = {
-            let _g = self.lock.lock().await;
-            match self.load(&spec.name) {
-                Ok(st) => {
-                    if st.kind != EntryKind::Instance {
-                        return Err(VmmError::invalid(format!(
-                            "'{}' is a {:?} (a fork source); fork it into a new instance first",
-                            spec.name, st.kind
-                        )));
-                    }
-                    st
+        let _g = self.lock.lock().await;
+        let _process_lock = self.lifecycle_lock()?;
+        let mut st = match self.load(&spec.name) {
+            Ok(st) => {
+                if st.kind != EntryKind::Instance {
+                    return Err(VmmError::invalid(format!(
+                        "'{}' is a {:?} (a fork source); fork it into a new instance first",
+                        spec.name, st.kind
+                    )));
                 }
-                Err(VmmError::NotFound(_)) => {
-                    let (backing, iso) = match &spec.image {
-                        ImageSource::Existing => return Err(VmmError::NotFound(spec.name.clone())),
-                        ImageSource::Disk { path }
-                            if path
-                                .extension()
-                                .is_some_and(|e| e.eq_ignore_ascii_case("iso")) =>
-                        {
-                            (None, Some(path.clone()))
-                        }
-                        other => (
-                            Some(
-                                self.resolve_source(
-                                    other,
-                                    spec.effective_arch(),
-                                    spec.registry_auth.as_ref(),
-                                )
-                                .await?,
-                            ),
-                            None,
-                        ),
-                    };
-                    let source = match &spec.image {
-                        ImageSource::Oci { reference } => Some(reference.clone()),
-                        ImageSource::Disk { path } => Some(path.display().to_string()),
-                        ImageSource::Existing => None,
-                    };
-                    self.create_instance(&spec.name, backing.as_deref(), iso, spec, source)
-                        .await?
-                }
-                Err(e) => return Err(e),
+                st
             }
+            Err(VmmError::NotFound(_)) => {
+                let (backing, iso) = match &spec.image {
+                    ImageSource::Existing => return Err(VmmError::NotFound(spec.name.clone())),
+                    ImageSource::Disk { path }
+                        if path
+                            .extension()
+                            .is_some_and(|e| e.eq_ignore_ascii_case("iso")) =>
+                    {
+                        (None, Some(path.clone()))
+                    }
+                    other => (
+                        Some(
+                            self.resolve_source(
+                                other,
+                                spec.effective_arch(),
+                                spec.registry_auth.as_ref(),
+                            )
+                            .await?,
+                        ),
+                        None,
+                    ),
+                };
+                let source = match &spec.image {
+                    ImageSource::Oci { reference } => Some(reference.clone()),
+                    ImageSource::Disk { path } => Some(path.display().to_string()),
+                    ImageSource::Existing => None,
+                };
+                self.create_instance(&spec.name, backing.as_deref(), iso, spec, source)
+                    .await?
+            }
+            Err(e) => return Err(e),
         };
 
-        if !Self::is_running(&st) {
+        if !self.is_running(&st)? {
+            let reuse_ports = st.qmp_port.is_some();
             // Linux guests always get SSH access: the caller's, the one this
             // instance already has, or a managed per-instance key.
             let spec_owned;
@@ -1079,6 +1513,7 @@ impl Runtime for QemuRuntime {
             if spec.ssh.is_none()
                 && spec.cloud_init_user_data.is_none()
                 && spec.os == GuestOs::Linux
+                && !reuse_ports
             {
                 let ssh = match st.ssh.clone() {
                     Some(s) => Some(s),
@@ -1091,24 +1526,39 @@ impl Runtime for QemuRuntime {
                     spec = &spec_owned;
                 }
             }
-            if spec.ssh.is_some() {
+            if spec.ssh.is_some() && !reuse_ports {
                 st.ssh = spec.ssh.clone();
             }
-            // Always seed a Linux guest (see `seed_for_spec`).
-            self.write_seed(&mut st, spec).await?;
-            if let Some(gb) = spec.disk_size_gb {
-                img::grow_to(&st.disk, gb).await?;
+            // A cold restart retains the installed guest's seed/token/disk.
+            if !reuse_ports {
+                self.write_seed(&mut st, spec).await?;
+                if let Some(gb) = spec.disk_size_gb {
+                    img::grow_to(&st.disk, gb).await?;
+                }
             }
             crate::progress::report(crate::progress::Progress::phase(
                 crate::progress::Phase::Booting,
             ));
-            if let Err(e) = self.launch(&mut st, spec, None).await {
-                let _ = self.force_stop(&mut st, Duration::ZERO).await;
-                let _ = self.save(&st);
-                return Err(e);
+            let mut launched = None;
+            if let Err(e) = self
+                .launch(&mut st, spec, None, reuse_ports, &mut launched)
+                .await
+            {
+                return Err(self.failed_launch(&mut st, e, launched.as_ref()));
             }
+        } else {
+            match self.connect_qmp(&st).await?.status().await?.as_str() {
+                "running" => st.paused = false,
+                "paused" => st.paused = true,
+                status => {
+                    return Err(VmmError::other(format!(
+                        "existing QEMU guest status is '{status}'; no second process launched"
+                    )));
+                }
+            }
+            self.save(&st)?;
         }
-        let inst = self.instance(&st);
+        let inst = self.instance(&st)?;
         if !spec.probes.is_empty() {
             crate::progress::report(crate::progress::Progress::phase(
                 crate::progress::Phase::WaitingForServices,
@@ -1119,14 +1569,16 @@ impl Runtime for QemuRuntime {
     }
 
     async fn stop(&self, name: &str) -> Result<()> {
+        let _g = self.lock.lock().await;
+        let _process_lock = self.lifecycle_lock()?;
         let mut st = self.load(name)?;
         let graceful = self.cfg.graceful_stop;
-        self.force_stop(&mut st, graceful).await?;
-        st.paused = false;
-        self.save(&st)
+        self.stop_process(&mut st, graceful).await
     }
 
     async fn suspend(&self, name: &str) -> Result<()> {
+        let _g = self.lock.lock().await;
+        let _process_lock = self.lifecycle_lock()?;
         let mut q = self.qmp(name).await?;
         q.stop().await?;
         let mut st = self.load(name)?;
@@ -1135,17 +1587,53 @@ impl Runtime for QemuRuntime {
     }
 
     async fn resume(&self, name: &str) -> Result<Instance> {
-        let mut q = self.qmp(name).await?;
-        q.cont().await?;
+        let _g = self.lock.lock().await;
+        let _process_lock = self.lifecycle_lock()?;
         let mut st = self.load(name)?;
-        st.paused = false;
-        self.save(&st)?;
-        Ok(self.instance(&st))
+        if st.kind != EntryKind::Instance {
+            return Err(VmmError::invalid("a QEMU fork source cannot be resumed"));
+        }
+        if self.is_running(&st)? {
+            let mut q = self.connect_qmp(&st).await?;
+            q.cont().await?;
+            let status = q.status().await?;
+            if status != "running" {
+                return Err(VmmError::other(format!(
+                    "QEMU resume did not enter running state: '{status}'"
+                )));
+            }
+            st.paused = false;
+            self.save(&st)?;
+        } else {
+            // Boot this same disk using recorded resources. Do not recreate
+            // cloud-init/EFI or silently change a fixed MCP endpoint.
+            let mut spec = StartSpec::new(name, ImageSource::Existing);
+            spec.arch = Some(st.arch);
+            spec.os = st.os;
+            spec.cpus = st.cpus;
+            spec.memory_mb = st.memory_mb;
+            spec.ports = st.ports.keys().copied().collect();
+            spec.ssh = st.ssh.clone();
+            spec.restrict_network = st.restrict_network;
+            spec.extra_args = st.extra_args.clone();
+            spec.gpu = st.gpu.clone();
+            let reuse_ports = st.qmp_port.is_some();
+            self.clear_exited_process(&mut st)?;
+            let mut launched = None;
+            if let Err(e) = self
+                .launch(&mut st, &spec, None, reuse_ports, &mut launched)
+                .await
+            {
+                return Err(self.failed_launch(&mut st, e, launched.as_ref()));
+            }
+        }
+        self.instance(&st)
     }
 
     async fn fork(&self, source: &str, new_name: &str) -> Result<()> {
         validate_name(new_name)?;
         let _g = self.lock.lock().await;
+        let _process_lock = self.lifecycle_lock()?;
         if self.state_path(new_name).exists() {
             return Err(VmmError::AlreadyExists(new_name.to_string()));
         }
@@ -1155,7 +1643,7 @@ impl Runtime for QemuRuntime {
             None => (source, None),
         };
         let mut src = self.load(src_name)?;
-        if Self::is_running(&src) {
+        if self.is_running(&src)? {
             return Err(VmmError::invalid(format!(
                 "'{src_name}' is running; stop it (or checkpoint it) before forking"
             )));
@@ -1197,6 +1685,9 @@ impl Runtime for QemuRuntime {
             vnc_display: None,
             qmp_port: None,
             pid: None,
+            #[cfg(windows)]
+            process_identity: None,
+            launch_pending: false,
             snapshots: vec![],
             paused: false,
             seed_iso: None,
@@ -1210,8 +1701,9 @@ impl Runtime for QemuRuntime {
     async fn checkpoint(&self, name: &str, checkpoint: &str) -> Result<CheckpointInfo> {
         validate_name(checkpoint)?;
         let _g = self.lock.lock().await;
+        let _process_lock = self.lifecycle_lock()?;
         let mut st = self.load(name)?;
-        if Self::is_running(&st) {
+        if self.is_running(&st)? {
             // Live: internal snapshot of RAM + devices + disks inside the
             // instance's qcow2. Restore with `restore()`, or fork `name@ckpt`
             // once stopped.
@@ -1242,6 +1734,9 @@ impl Runtime for QemuRuntime {
             firmware,
             ports: BTreeMap::new(),
             pid: None,
+            #[cfg(windows)]
+            process_identity: None,
+            launch_pending: false,
             qmp_port: None,
             vnc_display: None,
             snapshots: vec![],
@@ -1262,8 +1757,10 @@ impl Runtime for QemuRuntime {
     /// `vm@snapshot`.
     async fn delete_checkpoint(&self, checkpoint: &str) -> Result<()> {
         if let Some((vm, snap)) = checkpoint.split_once('@') {
+            let _g = self.lock.lock().await;
+            let _process_lock = self.lifecycle_lock()?;
             let mut st = self.load(vm)?;
-            if Self::is_running(&st) {
+            if self.is_running(&st)? {
                 self.qmp(vm).await?.delvm(snap).await?;
             } else {
                 let d = st.disk.display().to_string();
@@ -1281,38 +1778,55 @@ impl Runtime for QemuRuntime {
     }
 
     async fn list(&self) -> Result<Vec<InstanceSummary>> {
-        Ok(self
-            .all_states()?
-            .iter()
-            .map(|st| InstanceSummary {
+        let mut list = Vec::new();
+        for st in self.all_states()? {
+            list.push(InstanceSummary {
                 name: st.name.clone(),
                 backend: BackendKind::Qemu,
-                status: Self::status_of(st),
-            })
-            .collect())
+                status: self.status(&st.name).await?,
+            });
+        }
+        Ok(list)
     }
 
     async fn status(&self, name: &str) -> Result<Status> {
-        Ok(Self::status_of(&self.load(name)?))
+        let st = self.load(name)?;
+        if self.status_of(&st)? == Status::Stopped {
+            return Ok(Status::Stopped);
+        }
+        match self.connect_qmp(&st).await?.status().await?.as_str() {
+            "running" => Ok(Status::Running),
+            "paused" | "prelaunch" => Ok(Status::Paused),
+            status => Ok(Status::Unknown(format!(
+                "QEMU process is alive, guest status is '{status}'"
+            ))),
+        }
     }
 
     async fn delete(&self, name: &str) -> Result<()> {
         let _g = self.lock.lock().await;
+        let _process_lock = self.lifecycle_lock()?;
         let mut st = self.load(name)?;
-        self.force_stop(&mut st, Duration::ZERO).await?;
+        self.stop_process(&mut st, self.cfg.graceful_stop).await?;
         std::fs::remove_dir_all(self.dir(name))?;
         self.gc_layers().await
     }
 
     async fn endpoints(&self, name: &str) -> Result<Endpoints> {
-        Ok(self.endpoints_of(&self.load(name)?))
+        let st = self.load(name)?;
+        if self.is_running(&st)? {
+            self.connect_qmp(&st).await?;
+            Ok(self.endpoints_of(&st))
+        } else {
+            Ok(Endpoints::default())
+        }
     }
 
     /// Slirp-aware: whether the guest side of a forwarded connection
     /// reaches ESTABLISHED (`info usernet`).
     async fn guest_tcp_listening(&self, name: &str, guest_port: u16) -> Result<Option<bool>> {
         let st = self.load(name)?;
-        if !Self::is_running(&st) {
+        if !self.is_running(&st)? {
             return Ok(Some(false));
         }
         self.guest_tcp_established(&st, guest_port).await.map(Some)
@@ -1336,6 +1850,28 @@ mod tests {
             root: dir.to_path_buf(),
             ..Default::default()
         })
+    }
+
+    #[tokio::test]
+    async fn unreadable_saved_state_is_not_skipped_by_list() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("qemu");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join(".lifecycle.lock"), b"").unwrap();
+        assert!(rt(&root).list().await.unwrap().is_empty());
+        std::fs::create_dir_all(root.join("vm")).unwrap();
+        std::fs::write(root.join("vm/state.json"), b"not JSON").unwrap();
+        assert!(matches!(
+            rt(&root).list().await,
+            Err(VmmError::State { .. })
+        ));
+
+        let not_a_directory = tmp.path().join("file");
+        std::fs::write(&not_a_directory, b"fixture").unwrap();
+        assert!(matches!(
+            rt(&not_a_directory).list().await,
+            Err(VmmError::Io(_))
+        ));
     }
 
     /// Exercises create → fork → checkpoint → gc against real qemu-img

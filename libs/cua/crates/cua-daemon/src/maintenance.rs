@@ -122,7 +122,8 @@ pub async fn run(
         config.orphan_reap_after,
         now,
         dry_run,
-        &cua_vmm::host::pid_alive,
+        // Unknown ownership must retain the instance and its lease.
+        &|pid| cua_vmm::host::pid_alive(pid).unwrap_or(true),
     )
     .await;
     let gc = match gc {

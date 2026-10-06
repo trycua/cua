@@ -123,7 +123,7 @@ pub async fn quick_reap(state_dir: Option<&str>) {
     // Only build the runtimes when some lease is actually stale.
     let stale = state.leases().into_iter().any(|l| {
         l.pid != std::process::id()
-            && !cua_vmm::host::pid_alive(l.pid)
+            && cua_vmm::host::pid_alive(l.pid).is_ok_and(|alive| !alive)
             && now
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -141,7 +141,8 @@ pub async fn quick_reap(state_dir: Option<&str>) {
         config.orphan_reap_after,
         now,
         false,
-        &cua_vmm::host::pid_alive,
+        // An inspection error never grants permission to reap a lease.
+        &|pid| cua_vmm::host::pid_alive(pid).unwrap_or(true),
     )
     .await;
     for r in reaped {

@@ -295,6 +295,15 @@ pub async fn collect(scanner: &Scanner, opts: GcOptions) -> GcReport {
             None => return GcReport::skipped("another cua cache cleanup is running"),
         }
     };
+    // A partial QEMU inventory cannot establish which cached disks/layers
+    // remain backing files. Retain them when state or ownership is unknown.
+    let qemu = cua_vmm::qemu::QemuRuntime::new(cua_vmm::qemu::QemuConfig {
+        root: scanner.layout().qemu(),
+        ..Default::default()
+    });
+    if let Err(error) = cua_vmm::Runtime::list(&qemu).await {
+        return GcReport::skipped(format!("QEMU ownership/state is uncertain: {error}"));
+    }
     let mut report = scanner.scan_at(opts.now).await;
     if let Some(b) = opts.budget {
         report.budget_bytes = b.resolve(

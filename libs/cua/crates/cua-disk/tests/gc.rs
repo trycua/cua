@@ -81,6 +81,9 @@ fn qemu_sandbox(l: &Layout, name: &str, backing: &Path) {
         vnc_display: None,
         qmp_port: None,
         pid: None,
+        #[cfg(windows)]
+        process_identity: None,
+        launch_pending: false,
         accel: String::new(),
         ssh: None,
         restrict_network: false,
@@ -99,6 +102,73 @@ fn config(budget: Budget) -> CacheConfig {
         budget,
         ..CacheConfig::default()
     }
+}
+
+#[tokio::test]
+async fn pending_qemu_launch_is_unknown_and_keeps_its_disk_chain() {
+    let d = tempfile::tempdir().unwrap();
+    let l = Layout::new(d.path());
+    let used = cached_disk(&l, "pending-base", 1, days_ago(30));
+    qemu_sandbox(&l, "pending-vm", &used.join("disk.qcow2"));
+    let state_path = l.qemu().join("pending-vm/state.json");
+    let mut state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap();
+    state["launch_pending"] = true.into();
+    std::fs::write(&state_path, serde_json::to_vec(&state).unwrap()).unwrap();
+    let scanner = Scanner::new(l.clone(), config(Budget::Off), None, None);
+    let report = scanner.scan_at(now()).await;
+    let vm = report
+        .items
+        .iter()
+        .find(|i| i.name == "pending-vm")
+        .unwrap();
+    assert_eq!(vm.status.as_deref(), Some("unknown"));
+    assert!(!vm.evictable);
+    state["launch_pending"] = false.into();
+    std::fs::write(&state_path, serde_json::to_vec(&state).unwrap()).unwrap();
+    std::fs::write(
+        l.qemu().join("pending-vm/qemu.pid"),
+        std::process::id().to_string(),
+    )
+    .unwrap();
+    let legacy = scanner.scan_at(now()).await;
+    let vm = legacy
+        .items
+        .iter()
+        .find(|i| i.name == "pending-vm")
+        .unwrap();
+    assert_eq!(vm.status.as_deref(), Some("unknown"));
+    let _ = collect(&scanner, opts(None, true, false)).await;
+    assert!(used.join("disk.qcow2").exists());
+    assert!(state_path.exists());
+}
+
+#[tokio::test]
+async fn unreadable_qemu_inventory_prevents_backing_disk_cleanup() {
+    let d = tempfile::tempdir().unwrap();
+    let l = Layout::new(d.path());
+    let base = cached_disk(&l, "uncertain-base", 1, days_ago(30));
+    let layers = l.qemu().join("_layers");
+    std::fs::create_dir_all(&layers).unwrap();
+    let layer = layers.join("retained.qcow2");
+    cua_disk::qcow2::write_header(&layer, Some(&base.join("disk.qcow2"))).unwrap();
+    qemu_sandbox(&l, "uncertain-vm", &layer);
+    let state = l.qemu().join("uncertain-vm/state.json");
+    let corrupt = b"interrupted state write";
+    std::fs::write(&state, corrupt).unwrap();
+    let scanner = Scanner::new(l, config(Budget::Off), None, None);
+    let result = collect(&scanner, opts(None, true, false)).await;
+    assert!(
+        result
+            .skipped
+            .as_deref()
+            .is_some_and(|reason| reason.starts_with("QEMU ownership/state is uncertain:")),
+        "{result:?}"
+    );
+    assert!(result.removed.is_empty());
+    assert!(base.join("disk.qcow2").exists());
+    assert!(layer.exists());
+    assert_eq!(std::fs::read(state).unwrap(), corrupt);
 }
 
 fn opts(budget: Option<Budget>, all: bool, dry_run: bool) -> GcOptions {

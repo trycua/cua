@@ -21,6 +21,7 @@ use std::{
 struct Runtime {
     instances: Mutex<HashMap<String, InstanceStatus>>,
     calls: Mutex<Vec<String>>,
+    failure: Mutex<Option<&'static str>>,
 }
 
 impl Runtime {
@@ -57,11 +58,17 @@ impl LocalRuntime for Runtime {
 
     async fn stop(&self, name: &str) -> RuntimeResult<()> {
         self.calls.lock().unwrap().push(format!("stop {name}"));
+        if *self.failure.lock().unwrap() == Some("stop") {
+            return Err(RuntimeError::Other("fixture: shutdown unconfirmed".into()));
+        }
         self.set(name, InstanceStatus::Stopped)
     }
 
     async fn resume(&self, name: &str) -> RuntimeResult<LocalInstance> {
         self.calls.lock().unwrap().push(format!("resume {name}"));
+        if *self.failure.lock().unwrap() == Some("resume") {
+            return Err(RuntimeError::Other("fixture: cold boot failed".into()));
+        }
         self.set(name, InstanceStatus::Running)?;
         Ok(LocalInstance {
             name: name.into(),
@@ -223,4 +230,43 @@ async fn resume_of_a_record_whose_vm_is_gone_is_refused() {
         "{err:?}"
     );
     assert!(rt.calls().is_empty());
+}
+
+#[tokio::test]
+async fn restart_does_not_resume_or_claim_success_after_unconfirmed_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let name = "cua-e2e-stop-failure";
+    let rt = Runtime::with(name, InstanceStatus::Running);
+    *rt.failure.lock().unwrap() = Some("stop");
+    let d = daemon(dir.path(), rt.clone(), name);
+
+    let err = d.restart(name).await.unwrap_err();
+    assert!(
+        err.to_string().contains("fixture: shutdown unconfirmed"),
+        "{err}"
+    );
+    assert_eq!(rt.calls(), [format!("stop {name}")]);
+    assert_eq!(recorded_status(&d, name), "running");
+    assert_eq!(rt.status(name).await.unwrap(), InstanceStatus::Running);
+}
+
+#[tokio::test]
+async fn restart_records_confirmed_stop_when_cold_boot_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let name = "cua-e2e-cold-boot-failure";
+    let rt = Runtime::with(name, InstanceStatus::Running);
+    *rt.failure.lock().unwrap() = Some("resume");
+    let d = daemon(dir.path(), rt.clone(), name);
+
+    let err = d.restart(name).await.unwrap_err();
+    assert!(
+        err.to_string().contains("fixture: cold boot failed"),
+        "{err}"
+    );
+    assert_eq!(
+        rt.calls(),
+        [format!("stop {name}"), format!("resume {name}")]
+    );
+    assert_eq!(rt.status(name).await.unwrap(), InstanceStatus::Stopped);
+    assert_eq!(recorded_status(&d, name), "stopped");
 }

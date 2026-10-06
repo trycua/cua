@@ -49,6 +49,9 @@ fn qemu_state(h: &Home, name: &str, disk: &Path, created_at: u64) {
         vnc_display: None,
         qmp_port: None,
         pid: None,
+        #[cfg(windows)]
+        process_identity: None,
+        launch_pending: false,
         accel: String::new(),
         ssh: None,
         restrict_network: false,

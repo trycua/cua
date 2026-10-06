@@ -197,6 +197,8 @@ Reading the phase 1 results at 23:50 UTC on 6 Oct (before any phase 2 probe tria
 
 Decision, made before any phase 2 probe trial: from phase 2 on, the runner moves the real pointer to an empty point of the menu bar (1000, 12) through the recorder daemon before every trial and records the read-back in the row (`pointer_parked`, flag `--park-pointer`). Nothing else changes. In the report, the phase 1 MB-10 trials are shown but marked as confounded and are not used for success comparisons; H1 to H3 are reported as registered (all eight tasks, all complete runs) and, labelled post-hoc, without MB-10. MB-11 (tooltip) is less exposed (the tooltip needs a fresh hover), but its phase 1 and phase 2 results are also shown separately.
 
+The restart to load this change exposed a harness gap: a resumed run had no block timings, so the registered "phase 2 block must fit before the cutoff" check (unknown estimate means do not start) stopped it at once (`STOPPED_TIME`, 23:51 UTC, no trial lost). The runner now seeds the block timings of a resumed run from the summed trial wall times of finished blocks. The rule itself is unchanged.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

@@ -1959,6 +1959,15 @@ def run_loop(ctx: Ctx) -> str:
     done = set() if args.smoke else core.completed_trial_ids(rows)
     blocks = ctx.blocks()
     ctx.set_state(blocks_total=len(blocks))
+    if not ctx.block_durations:
+        # A resumed run has no block timings yet: seed them from the counted trials of finished blocks
+        # (sum of trial wall times, so a stop inside a block does not inflate it), so block_fits can decide.
+        per_block: dict[str, float] = {}
+        for row in core.load_rows(ctx.results_path):
+            if row.get("final") and not row.get("smoke") and row.get("wall_s"):
+                per_block[row["block"]] = per_block.get(row["block"], 0.0) + float(row["wall_s"])
+        finished = {b["id"] for b in blocks if all(e["trial_id"] in done for e in b["entries"])}
+        ctx.block_durations.extend(v for k, v in per_block.items() if k in finished)
     reason = "DONE"
     complete = 0
     try:

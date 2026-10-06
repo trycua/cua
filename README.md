@@ -218,10 +218,21 @@ uv tool run --from 'cua-bench[browser]' playwright install chromium
 | [cua-spacesd](libs/cua-spacesd/README.md)         | In-sandbox daemon on port 3211: processes, files, desktop, streaming (gRPC)          |
 | [Cua Spaces for macOS](apps/cua-spaces-macos/README.md) | The Spaces app on macOS: menu bar and notch, live streams, teleport, agent threads   |
 | [Cua Spaces core](apps/cua-spaces/README.md)            | The shared Spaces app core, and the Tauri app for Linux and Windows                  |
-| [cua-agent](libs/python/agent/README.md)                | AI agent framework for computer-use tasks                                            |
 | [cua-bench](libs/cua-bench/README.md)                   | Benchmarks and RL environments for computer-use                                      |
 | [lume](https://cua.ai/docs/lume/reference/cli) | macOS/Linux VM management on Apple Silicon                                          |
 | [lumier](libs/lumier/README.md)                         | Docker-compatible interface for Lume VMs                                             |
+
+### Deprecated packages
+
+Cua no longer maintains these. They will not receive updates or fixes, and existing releases stay on npm and PyPI. See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/migrate-from-deprecated-packages).
+
+| Package                                                  | Registry | Use instead                                                                                                                                      |
+| -------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [cuabot](libs/cuabot/README.md)                          | npm      | **Do not run it:** it has known security issues. Stop it and uninstall it ([how](libs/cuabot/README.md)), then use Cua Driver or the `cua` CLI. |
+| `cua-computer`                                           | PyPI     | The [`cua` SDK](#cua-sdk-and-cli) for sandboxes, [Cua Driver](#cua-driver) for the machine you are on                                           |
+| `cua-computer-server`                                    | PyPI     | Images that ship [cua-spacesd](libs/cua-spacesd/README.md), or [Cua Driver](#cua-driver)                                                         |
+| [cua-agent](libs/python/agent/README.md)                 | PyPI     | A coding agent with the [Cua Driver MCP](https://cua.ai/docs/cua-driver/guides/connect-your-agent), or `sandbox.agents()` in the `cua` SDK       |
+| [cua-som](libs/python/som/README.md)                     | PyPI     | [Cua Driver](#cua-driver)                                                                                                                        |
 
 ---
 

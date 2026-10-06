@@ -1177,7 +1177,7 @@
     },
     {
      "default_value": false,
-     "help": "Skip the 20-hour on-disk cache and force a GitHub request.",
+     "help": "Skip the 1-hour on-disk cache and look up the latest release again.",
      "name": "no-cache",
      "short_name": null
     }

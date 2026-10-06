@@ -157,10 +157,16 @@ cua-driver update --apply
 ```
 
 `check-update` only checks (`--json` for scripts, `--no-cache` to skip the
-20-hour cache); `update --apply` runs the canonical installer. Then restart the
+1-hour cache); `update --apply` runs the canonical installer. Then restart the
 daemon with your usual start command (`open -n -g -a CuaDriver --args serve`,
 `cua-driver autostart kick`, or `cua-driver serve`), keeping any mode flags. The
 same check is the `check_for_update` MCP tool.
+
+The check reads the version the installer itself would install, so it agrees
+with `curl -fsSL https://cua.ai/driver/install.sh | bash`, and it does not spend
+GitHub's REST API quota for stable releases. When GitHub's API does answer with
+a rate limit (nightly lookups and fallbacks), the message says so and shows when
+the limit resets; set `GITHUB_TOKEN` or `GH_TOKEN` to use your own quota.
 
 ```bash test="cli-shape" id="cua-driver-update-2"
 if cua-driver check-update --json | jq -e '.update_available' > /dev/null; then

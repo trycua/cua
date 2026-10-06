@@ -9138,6 +9138,17 @@
        "aliases": [],
        "default_value": false,
        "env": null,
+       "help": "When sign-in is needed, use a device code to approve it in a browser on another machine. The account session is not saved",
+       "hidden": false,
+       "name": "remote",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
        "help": "Share this machine's own desktop as a Space",
        "hidden": false,
        "name": "desktop",

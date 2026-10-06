@@ -23,6 +23,7 @@ machine is shared with, or enroll devices.
 
 | Option | Effect |
 |--------|--------|
+| `--remote` | When sign-in is needed, print a device code to approve in a browser on another machine (for example over SSH). The account session is not saved. Cannot be combined with `--direct`. |
 | `--direct ip:port` | Serve on your LAN (or a forwarded port) with a local env token instead of the relay. No account needed. |
 | `--relay URL` | Another relay (`CUA_RELAY_URL`, default `https://relay.cua.ai`); any self-hosted `cua-relay` works. |
 | `--name NAME` | Display name (default: host name). |

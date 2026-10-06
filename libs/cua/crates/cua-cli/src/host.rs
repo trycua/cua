@@ -34,6 +34,10 @@ pub enum HostCmd {
         /// Relay URL (default $CUA_RELAY_URL, else https://relay.cua.ai).
         #[arg(long, conflicts_with = "direct")]
         relay: Option<String>,
+        /// When sign-in is needed, use a device code to approve it in a
+        /// browser on another machine. The account session is not saved.
+        #[arg(long, conflicts_with = "direct")]
+        remote: bool,
         /// Serve directly on ip:port with a local env token (LAN /
         /// port-forwarded) instead of joining a relay.
         #[arg(long)]
@@ -846,8 +850,10 @@ impl SetupTokens {
     }
 
     /// The stored session, else an interactive sign-in that is not saved.
-    pub fn session_or_sign_in() -> Self {
-        Self::new(Arc::new(SessionTokens), || Box::pin(sign_in_for_setup()))
+    pub fn session_or_sign_in(flow: cua_auth::Flow) -> Self {
+        Self::new(Arc::new(SessionTokens), move || {
+            Box::pin(sign_in_for_setup(flow))
+        })
     }
 
     /// Whether the sign-in was held in memory only.
@@ -878,12 +884,9 @@ impl AccountTokens for SetupTokens {
 }
 
 /// Signs in for `cua host setup` without storing the session.
-async fn sign_in_for_setup() -> cua_host::Result<String> {
+async fn sign_in_for_setup(flow: cua_auth::Flow) -> cua_host::Result<String> {
     let unauth = |e: cua_auth::Error| cua_host::Error::Unauthenticated(e.to_string());
-    let pending = auth::session()
-        .begin_login(cua_auth::Flow::Auto)
-        .await
-        .map_err(unauth)?;
+    let pending = auth::session().begin_login(flow).await.map_err(unauth)?;
     eprintln!("Sign in to cua.ai to register this machine (the session is not stored here):");
     eprintln!("  {}", pending.url);
     if let Some(code) = &pending.user_code {
@@ -910,8 +913,12 @@ impl AccountTokens for SessionTokens {
 }
 
 pub fn host_err(e: cua_host::Error) -> CuaError {
+    let message = e.to_string();
+    host_error(e, message)
+}
+
+fn host_error(e: cua_host::Error, m: String) -> CuaError {
     use cua_host::Error as E;
-    let m = e.to_string();
     match e {
         E::InvalidArgument(_) | E::Conflict(_) => CuaError::InvalidArgument(m),
         E::Unauthenticated(_) => CuaError::Unauthenticated(m),
@@ -1196,6 +1203,7 @@ pub async fn run_host(
     match cmd {
         HostCmd::Setup {
             relay,
+            remote: _, // Selected by the command's SetupTokens.
             direct,
             name,
             allow,
@@ -1234,7 +1242,13 @@ pub async fn run_host(
             }
             opts.max_spaces = max_spaces;
             opts.allow_any_address = allow_any_address;
-            let s = host.setup(opts, tokens).await.map_err(host_err)?;
+            let s = host
+                .setup_staged(opts, tokens)
+                .await
+                .map_err(|(stage, e)| {
+                    let message = format!("host setup failed at {}: {e}", stage.as_str());
+                    host_error(e, message)
+                })?;
             emit(&s, json, out)?;
             if allow_any_address && s.provide_spaces {
                 eprintln!(
@@ -2131,6 +2145,96 @@ mod tests {
         });
         assert_eq!(stored.access_token().await.unwrap(), "acct");
         assert!(!stored.used_ephemeral());
+    }
+
+    /// The CLI keeps the core's failure stage without changing its error
+    /// category or exit status. No real OS service is called.
+    #[tokio::test]
+    async fn setup_errors_keep_the_stage_and_error_category() {
+        struct RefuseInstall;
+        impl ServiceManager for RefuseInstall {
+            fn kind(&self) -> RunnerKind {
+                RunnerKind::Process
+            }
+            fn install(&self, _: &cua_host::ServiceSpec) -> cua_host::Result<()> {
+                Err(cua_host::Error::Service("fixture install refused".into()))
+            }
+            fn start(&self) -> cua_host::Result<()> {
+                panic!("must not start")
+            }
+            fn stop(&self) -> cua_host::Result<()> {
+                panic!("must not stop")
+            }
+            fn uninstall(&self) -> cua_host::Result<()> {
+                panic!("must not uninstall")
+            }
+            fn state(&self) -> cua_host::ServiceState {
+                panic!("must not read service state")
+            }
+        }
+        let relay = FakeRelay::start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let driver = dir.path().join("fixture-spacesd");
+        std::fs::write(&driver, b"fixture only").unwrap();
+        let missing = dir.path().join("missing-spacesd");
+        for (stage, code, message) in [
+            ("preflight", 2, "there is nothing to share"),
+            ("token", 6, "fixture sign-in refused"),
+            ("register", 6, "account token required"),
+            ("download", 2, "does not exist"),
+            ("service", 1, "fixture install refused"),
+        ] {
+            let tokens = SetupTokens::new(Arc::new(cua_host::NoAccount), move || {
+                Box::pin(async move {
+                    if stage == "token" {
+                        Err(cua_host::Error::Unauthenticated(
+                            "fixture sign-in refused".into(),
+                        ))
+                    } else {
+                        Ok("unrecognized-account".into())
+                    }
+                })
+            });
+            let mut args = vec!["setup", "--driver-bin", driver.to_str().unwrap()];
+            if matches!(stage, "token" | "register") {
+                args.extend(["--relay", &relay.url]);
+            } else {
+                args.extend(["--direct", "127.0.0.1:3211"]);
+            }
+            if stage == "preflight" {
+                args.extend(["--no-desktop", "--no-provide-spaces"]);
+            }
+            if stage == "download" {
+                args[2] = missing.to_str().unwrap();
+            }
+            let mut out = Vec::new();
+            let error = run_host(
+                parse(&args),
+                &dir.path().join(stage),
+                &tokens,
+                None,
+                Some(Arc::new(RefuseInstall)),
+                true,
+                &mut out,
+            )
+            .await
+            .unwrap_err();
+            assert!(out.is_empty());
+            assert_eq!(crate::exit_code(&error), code, "{stage}: {error}");
+            match stage {
+                "preflight" | "download" => assert!(matches!(&error, CuaError::InvalidArgument(_))),
+                "token" | "register" => assert!(matches!(&error, CuaError::Unauthenticated(_))),
+                "service" => assert!(matches!(&error, CuaError::Runtime(_))),
+                _ => unreachable!(),
+            }
+            let text = error.to_string();
+            assert!(
+                text.contains(&format!("host setup failed at {stage}:")),
+                "{text}"
+            );
+            assert!(text.contains(message), "{text}");
+        }
+        assert_eq!(relay.register_calls(), 1);
     }
 
     /// `--allow` sharing stays, is confirmed before it widens access, and is

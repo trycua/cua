@@ -101,7 +101,7 @@ async def trial(client, sdk, http, mode, rep, smoke=False):
             if len(matches)==1:
                 candidate_window = matches[0].get('window_id')
                 if type(candidate_window) is int:
-                    probe = await driver.call('get_window_state', {'pid':fixture.pid,'window_id':candidate_window,'include_accessibility_tree':True,'include_screenshot':False,'timeout_ms':1000})
+                    probe = await driver.call('get_window_state', {'pid':fixture.pid,'window_id':candidate_window,'include_accessibility_tree':True,'include_screenshot':True,'timeout_ms':1000})
                     observed = NativeObservation.from_window_state(probe,expected_pid=fixture.pid,expected_window_id=candidate_window)
                     visible_source = NativeAccessibilitySource.from_observation(observed,'macos')
                     if all(visible_source.find('text_input',step.label) is not None for step in STEPS):

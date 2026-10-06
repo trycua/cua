@@ -6,6 +6,8 @@
 
 * **cua-driver:** `get_window_state` returns one tree representation by default (compact markdown; `tree_format` selects `elements` or `both`), walks at most 250 nodes unless `max_elements` says otherwise and says when it truncated, and omits `_note` / `background_input` unless `verbose:true`. `full_output:true` restores the previous full response. New `since:<snapshot_id>` returns only added, changed and removed rows (CUA-1192, CUA-1193). The typed SDKs keep the full response unless a shape is requested.
 
+* **cua-driver:** `run_actions` runs an ordered list of action tools (click, double_click, right_click, set_value, type_text, press_key, hotkey, scroll, drag) in one call, stops at the first failure, and returns per-step status plus one optional bounded `get_window_state` observation. Every step passes the same session, permission and approval checks as a direct call (CUA-1194).
+
 ### Bug Fixes
 
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.

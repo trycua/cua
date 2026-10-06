@@ -76,6 +76,25 @@ If a text action returns `unverifiable`, take a fresh snapshot before retrying. 
 
 Keep `delivery_mode:"background"` as the default for window input. The route may use accessibility hit-testing even when addressed by pixels: pixel coordinates do not promise physical pointer delivery. Read the returned `route` instead of inferring it from the tool name.
 
+## Batch known actions
+
+When the next several actions are already decided and nothing between them needs a look, send them as one `run_actions` call instead of one call per action. The batch runs the same tools in order, stops at the first failure, and returns per-step status plus at most one bounded observation. Typical fit: fill several fields, then press a button, then read the result. Do not batch across a point where the answer decides the next step, or when a step reshuffles the window and invalidates element tokens used by later steps (use pixel targets after it, or split the batch there).
+
+```bash
+cua-driver run_actions '{"session":"run-1","steps":[
+  {"tool":"set_value","args":{"pid":844,"element_token":"s0000002a:14","value":"Ada"}},
+  {"tool":"set_value","args":{"pid":844,"element_token":"s0000002a:15","value":"Lovelace"}},
+  {"tool":"click","args":{"target":{"kind":"window","pid":844,"window_id":10725},"element_token":"s0000002a:21"}},
+  {"tool":"press_key","args":{"pid":844,"key":"return"}}
+ ],"delay_ms":100,"observe":{"max_elements":120}}'
+```
+
+- `tool` is one of `click`, `double_click`, `right_click`, `set_value`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag`; `args` are exactly that tool's arguments. Run `describe run_actions` and `describe <tool>` for schemas. Up to 32 steps.
+- Every step is validated before the first runs, so a malformed step changes nothing. Each step then passes the same session, permission, capability-manifest and approval checks as a direct call; a batch grants nothing a single call lacks, and a refused step ends the batch like any other failure.
+- A batch has one session. Set `session` on `run_actions`; a step may repeat it but not name another.
+- `observe` is optional and reads once, after the last executed step (also after a failure): `get_window_state` arguments, `pid`/`window_id` taken from the last step that names both, `include_screenshot:false` and `max_elements:200` unless you override. Omit `observe` to read nothing.
+- Read `steps[].ok` and `failed_step`. Steps before a failure did run and are not rolled back; steps after it did not. Observe before repairing, as for a single `unverifiable` action.
+
 ## Pixel coordinates
 
 Ground window actions on the PNG from that exact `get_window_state`; ground desktop actions on `get_desktop_state`. Origins are top-left, increasing downward. The driver handles its own window capture scaling; do not add window offsets to window-local input.

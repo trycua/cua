@@ -50,6 +50,7 @@ The MCP server instructions carry the same rules, so they apply even when this f
 | Find or open the requested app            | `list_apps`, `list_windows`, `launch_app`                                                             | Current platform guide below                          |
 | Observe one window                        | `get_window_state({pid, window_id, query})`                                                           | [Workflow](WORKFLOW.md)                               |
 | Act on a control                          | `click` / `type_text` with a fresh `element_token` and exact window target                            | [Workflow](WORKFLOW.md)                               |
+| Run several decided actions in one call   | `run_actions({steps:[{tool,args},...], observe?})`; stops at the first failure                        | [Workflow](WORKFLOW.md#batch-known-actions)           |
 | Use pixels when semantics cannot reach it | Fresh target screenshot, then `x,y` on the same target                                                | [Workflow](WORKFLOW.md)                               |
 | Verify the outcome                        | `verify_state({pid, window_id, expect})` or a fresh snapshot read by the agent                        | [Workflow](WORKFLOW.md)                               |
 | Operate the authorized desktop            | `get_desktop_state` → input with `target:{kind:"desktop",display_id:"primary"}` → `get_desktop_state` | [Workflow](WORKFLOW.md), [Linux](LINUX.md) on Wayland |

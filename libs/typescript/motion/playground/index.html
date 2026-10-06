@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cua Motion playground</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./playground.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Cua Motion</h1>
+      <p>
+        The agent cursor motions of Cua Driver. Drag the start and end points, tune the curve, and
+        copy the config.
+      </p>
+    </header>
+    <main>
+      <section class="stage-wrap">
+        <canvas
+          id="stage"
+          aria-label="Motion stage: the Cua cursor moves between two points"
+        ></canvas>
+        <div class="stage-bar">
+          <button id="replay" type="button">Replay</button>
+          <label
+            >Speed
+            <select id="speed">
+              <option value="1">1x</option>
+              <option value="0.5">0.5x</option>
+              <option value="0.25">0.25x</option>
+              <option value="0.1">0.1x</option>
+            </select></label
+          >
+          <label><input id="loop" type="checkbox" checked /> Loop</label>
+          <label><input id="ghost" type="checkbox" checked /> Path</label>
+          <span id="stats"></span>
+        </div>
+        <canvas id="speedplot" aria-label="Speed over time"></canvas>
+      </section>
+      <aside id="controls">
+        <fieldset>
+          <legend>Motion</legend>
+          <label class="row"
+            >Style
+            <select id="style"></select
+          ></label>
+          <label class="row"
+            >Timing
+            <select id="timing">
+              <option value="native">native</option>
+              <option value="fitts">fitts</option>
+              <option value="fixed">fixed</option>
+            </select></label
+          >
+          <div id="glide-row"></div>
+          <div id="target-row"></div>
+        </fieldset>
+        <fieldset id="knobs"><legend>Shape</legend></fieldset>
+        <fieldset id="custom" hidden><legend>Custom motion</legend></fieldset>
+        <fieldset id="effects"><legend>Effects</legend></fieldset>
+        <button id="to-custom" type="button">Edit as a custom motion</button>
+      </aside>
+    </main>
+    <section id="export">
+      <h2>Config</h2>
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" data-tab="ts" aria-selected="true">TypeScript</button>
+        <button type="button" role="tab" data-tab="driver" aria-selected="false">cua-driver</button>
+      </div>
+      <pre id="snippet"></pre>
+      <button id="copy" type="button">Copy</button>
+    </section>
+    <script type="module" src="./playground.js"></script>
+  </body>
+</html>

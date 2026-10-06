@@ -44,9 +44,8 @@ BUTTON = r"(push )?button"
 ENTRY = r"edit" if WINDOWS else r"text|entry"
 COMBO = r"combo ?box"
 # Platforms where set_value on a combo box must reach the app's change
-# handler: a failure there fails the job instead of being recorded. None yet;
-# the Windows and Linux combo-box fixes each turn on their platform.
-COMBO_HARD = False
+# handler: a failure there fails the job instead of being recorded.
+COMBO_HARD = WINDOWS
 
 
 class Mcp:

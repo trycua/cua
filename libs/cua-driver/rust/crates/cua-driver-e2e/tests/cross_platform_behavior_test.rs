@@ -483,7 +483,15 @@ fn screenshot_scale(state: &ToolResponse) -> (f64, f64) {
 }
 
 fn screenshot_scale_for_platform(state: &serde_json::Value, linux: bool) -> (f64, f64) {
-    let window_role = if linux { "frame" } else { "AXWindow" };
+    if linux {
+        // A cropped capture excludes decorations; its dimensions cannot establish
+        // a resize against the decorated AT-SPI frame. The capture reports its
+        // actual resize factor, and omits it for an unresized image.
+        let scale = state["frame_scale"].as_f64().unwrap_or(1.0);
+        assert!(scale.is_finite() && scale > 0.0, "invalid capture scale: {scale}");
+        return (scale, scale);
+    }
+    let window_role = "AXWindow";
     let capture = (
         state["screenshot_width"].as_f64().unwrap_or(0.0),
         state["screenshot_height"].as_f64().unwrap_or(0.0),
@@ -521,10 +529,11 @@ fn screenshot_local_point(
 }
 
 #[test]
-fn linux_frame_geometry_drives_resized_screenshot_scale() {
+fn linux_capture_scale_does_not_use_decorated_frame_dimensions() {
     let state = serde_json::json!({
         "screenshot_width": 1568,
         "screenshot_height": 852,
+        "frame_scale": 0.8,
         "elements": [{
             "element_index": 0,
             "role": "frame",
@@ -537,8 +546,10 @@ fn linux_frame_geometry_drives_resized_screenshot_scale() {
     });
 
     let linux_scale = screenshot_scale_for_platform(&state, true);
-    assert!((linux_scale.0 - 1568.0 / 1896.0).abs() < f64::EPSILON);
-    assert!((linux_scale.1 - 852.0 / 1030.0).abs() < f64::EPSILON);
+    assert_eq!(linux_scale, (0.8, 0.8));
+    let mut unresized = state.clone();
+    unresized.as_object_mut().unwrap().remove("frame_scale");
+    assert_eq!(screenshot_scale_for_platform(&unresized, true), (1.0, 1.0));
 
     let ax_scale = screenshot_scale_for_platform(&state, false);
     assert!((ax_scale.0 - 1568.0 / 1000.0).abs() < f64::EPSILON);
@@ -550,6 +561,7 @@ fn resized_screenshot_coordinates_use_capture_scale() {
     let state = serde_json::json!({
         "screenshot_width": 1568,
         "screenshot_height": 852,
+        "frame_scale": 0.8,
         "elements": [{
             "role": "frame",
             "frame": {"x": 12, "y": 38, "w": 1896, "h": 1030}
@@ -558,8 +570,8 @@ fn resized_screenshot_coordinates_use_capture_scale() {
     let scale = screenshot_scale_for_platform(&state, true);
     let point = screenshot_local_point((949.0, 398.0), (12.0, 38.0), scale);
 
-    assert!((point.0 - 774.903).abs() < 0.001);
-    assert!((point.1 - 297.786).abs() < 0.001);
+    assert!((point.0 - 749.6).abs() < 0.001);
+    assert!((point.1 - 288.0).abs() < 0.001);
     assert!(point.0 < 1568.0);
     assert!(point.1 < 852.0);
 }

@@ -100,6 +100,21 @@ struct NotchGeometry: Equatable {
         safeAreaTop: 32, auxLeftWidth: 662, auxRightWidth: 662)
     static let fallback = NotchGeometry(appNotchLayout(screen: fallbackScreen, prompt: false))
 
+    /// How far the tab's square end tucks under the notch.
+    static let tabTuck: CGFloat = 20
+
+    /// The closed notch's hover area: its margin plus the tab as drawn
+    /// (`tabWidth`, outside the notch), else the core's widest `tabFrame`.
+    /// Only the drawn tab: the space past it is the menu bar's, where the
+    /// first status item (or the menu bar's overflow chevron) sits.
+    func closedHover(tabWidth: CGFloat?) -> CGRect {
+        let rect = CGRect(x: (stage.width - closedHit.width) / 2, y: 0,
+                          width: closedHit.width, height: closedHit.height)
+        guard notchStyle else { return rect }
+        return rect.union(CGRect(x: stage.width / 2 + notch.width / 2, y: 0,
+                                 width: tabWidth ?? tab.width, height: tab.height))
+    }
+
     /// The shape's size for a stage shape (the ears sit outside the notch).
     func size(_ shape: NotchStage.Shape, radii: (closed: AppNotchRadii, open: AppNotchRadii)) -> CGSize {
         switch shape {
@@ -125,6 +140,9 @@ struct NotchContentView: View {
     @State private var content: NotchStage.Shape?
     /// The "N Spaces" tab (animated with the shape, not with the core).
     @State private var tabShown: Bool
+    /// The tab as drawn (content-sized, at most the core's `tabFrame`),
+    /// tuck included; nil until measured.
+    @State private var tabDrawnWidth: CGFloat?
     @State private var inside = false
     /// A click opened the panel: the search takes the keyboard (hover never
     /// steals it from the app in front).
@@ -265,12 +283,12 @@ struct NotchContentView: View {
     private func hover(_ phase: HoverPhase, g: NotchGeometry) {
         var now = false
         if case .active(let p) = phase {
-            let open = stage.shape.isOpen
-            let s = open ? g.size(stage.shape, radii: radii) : g.closedHit
-            var rect = CGRect(x: (g.stage.width - s.width) / 2, y: 0, width: s.width, height: s.height)
-            if !open, g.notchStyle { rect = rect.union(CGRect(x: g.stage.width / 2 + g.notch.width / 2, y: 0,
-                                                              width: g.tab.width, height: g.tab.height)) }
-            now = rect.contains(p)
+            if stage.shape.isOpen {
+                let s = g.size(stage.shape, radii: radii)
+                now = CGRect(x: (g.stage.width - s.width) / 2, y: 0, width: s.width, height: s.height).contains(p)
+            } else {
+                now = g.closedHover(tabWidth: tabDrawnWidth.map { $0 - NotchGeometry.tabTuck }).contains(p)
+            }
         }
         guard now != inside else { return }
         inside = now
@@ -298,7 +316,7 @@ struct NotchContentView: View {
     /// the core's insets (none toward the notch, a hair outside), so it
     /// barely widens the notch.
     private func tab(_ v: AppNotchView, g: NotchGeometry) -> some View {
-        let tuck: CGFloat = 20
+        let tuck = NotchGeometry.tabTuck
         let ear = CGFloat(radii.closed.top)
         return Button { focusOnOpen = true; model.send(.click) } label: { Color.clear }
             .buttonStyle(NotchButtonStyle(forced: model.highlight.state(for: .tab), pressedScale: 1) { _, s in
@@ -312,6 +330,7 @@ struct NotchContentView: View {
                 .background(NotchTabShape(ear: ear, corner: 10).fill(.black))
                 .contentShape(.rect)
             })
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { tabDrawnWidth = $0 }
             .frame(width: g.tab.width + tuck, height: g.tab.height, alignment: .leading)
             .offset(x: g.notch.width / 2 + (g.tab.width + tuck) / 2 - tuck)
             .help(v.countLabel)

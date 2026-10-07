@@ -81,6 +81,24 @@ struct NotchTests {
         #expect(motion.openResponse > 0.12)
     }
 
+    /// The closed hover area ends at the drawn tab, so the menu bar item
+    /// right of it (a status item, the overflow chevron) keeps its hover
+    /// and clicks; before the tab is measured it is the core's widest tab.
+    @Test func closedHoverEndsAtTheDrawnTab() {
+        let g = NotchGeometry.fallback
+        let tabStart = g.stage.width / 2 + g.notch.width / 2
+        let y = g.tab.height / 2
+        let drawn: CGFloat = 44
+        let hover = g.closedHover(tabWidth: drawn)
+        #expect(hover.contains(CGPoint(x: tabStart + drawn - 1, y: y)))
+        #expect(!hover.contains(CGPoint(x: tabStart + drawn + 1, y: y)))
+        #expect(!hover.contains(CGPoint(x: tabStart + g.tab.width - 1, y: y)))
+        #expect(g.closedHover(tabWidth: nil).contains(CGPoint(x: tabStart + g.tab.width - 1, y: y)))
+        // The notch and its margin stay hoverable.
+        #expect(hover.contains(CGPoint(x: g.stage.width / 2, y: y)))
+        #expect(hover.contains(CGPoint(x: (g.stage.width - g.closedHit.width) / 2 + 1, y: y)))
+    }
+
 
     func spaces() async -> [AppSpace] {
         let m = ViewModelTests().makeModel(FixtureSpacesBackend())

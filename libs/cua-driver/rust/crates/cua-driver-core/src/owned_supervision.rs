@@ -49,7 +49,8 @@ impl ReceiptState {
         matches!(self, Self::Finished(_) | Self::Failed | Self::Interrupted)
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Refusal {
     Closed,
     Capacity,
@@ -60,7 +61,14 @@ pub enum Refusal {
     InvalidCapacity,
     InvalidScope,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForegroundGuardReport {
+    pub foreground_preserved: bool,
+    pub physical_input_unchanged: bool,
+}
+type ForegroundGuard = Arc<dyn Fn() -> Option<ForegroundGuardReport> + Send + Sync>;
 struct Entry {
+    foreground_guard: Option<ForegroundGuard>,
     activation_signal: Option<Arc<std::sync::atomic::AtomicBool>>,
     scope: String,
     state: watch::Sender<ReceiptState>,
@@ -113,6 +121,7 @@ impl Owner {
         inner.entries.insert(
             id.0,
             Entry {
+                foreground_guard: None,
                 activation_signal: None,
                 scope: trusted_scope.into(),
                 state,
@@ -140,6 +149,25 @@ impl Owner {
     }
     pub fn read(&self, trusted_scope: &str, id: &ReceiptId) -> Result<ReceiptState, Refusal> {
         Ok(self.subscribe(trusted_scope, id)?.borrow().clone())
+    }
+    /// Fresh driver-bound foreground/input evidence. Clone the closure before
+    /// reading OS state so native work never runs under the receipt-map lock.
+    pub fn foreground_guard(
+        &self,
+        trusted_scope: &str,
+        id: &ReceiptId,
+    ) -> Result<Option<ForegroundGuardReport>, Refusal> {
+        let check = {
+            let inner = self.inner.lock().unwrap();
+            inner
+                .entries
+                .get(&id.0)
+                .filter(|e| e.scope == trusted_scope)
+                .ok_or(Refusal::Unavailable)?
+                .foreground_guard
+                .clone()
+        };
+        Ok(check.and_then(|check| check()))
     }
     /// A native callback signal can be read while full observation remains
     /// pending. Absence is explicit; false is never application commitment.
@@ -240,6 +268,20 @@ impl Drop for FinishGuard {
     }
 }
 impl Reservation {
+    /// Bind an internal native check to the same owner and trusted scope.
+    pub fn bind_foreground_guard(
+        &mut self,
+        check: impl Fn() -> Option<ForegroundGuardReport> + Send + Sync + 'static,
+    ) {
+        self.owner
+            .inner
+            .lock()
+            .unwrap()
+            .entries
+            .get_mut(&self.id.0)
+            .unwrap()
+            .foreground_guard = Some(Arc::new(check));
+    }
     /// Bind driver-owned callback evidence before ownership transfer. This is
     /// not a public tool argument and carries no application outcome claim.
     pub fn bind_activation_signal(&mut self, signal: Arc<std::sync::atomic::AtomicBool>) {
@@ -304,6 +346,52 @@ mod tests {
             new_window_count: 0,
         }
     }
+    #[tokio::test]
+    async fn foreground_guard_is_fresh_scoped_and_absence_is_explicit() {
+        let owner = Owner::new(1).unwrap();
+        let context = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let mut reservation = owner.reserve("owner").unwrap();
+        let state = context.clone();
+        reservation.bind_foreground_guard(move || {
+            Some(ForegroundGuardReport {
+                foreground_preserved: state.load(std::sync::atomic::Ordering::Acquire),
+                physical_input_unchanged: true,
+            })
+        });
+        let id = reservation.supervise(async { observation() });
+        assert_eq!(
+            owner
+                .foreground_guard("owner", &id)
+                .unwrap()
+                .unwrap()
+                .foreground_preserved,
+            true
+        );
+        context.store(false, std::sync::atomic::Ordering::Release);
+        assert_eq!(
+            owner
+                .foreground_guard("owner", &id)
+                .unwrap()
+                .unwrap()
+                .foreground_preserved,
+            false
+        );
+        assert_eq!(
+            owner.foreground_guard("other", &id),
+            Err(Refusal::Unavailable)
+        );
+        owner
+            .fence("owner", &id, Duration::from_secs(1))
+            .await
+            .unwrap();
+        owner.release("owner", &id).unwrap();
+        let id = owner
+            .reserve("owner")
+            .unwrap()
+            .supervise(async { observation() });
+        assert_eq!(owner.foreground_guard("owner", &id), Ok(None));
+    }
+
     #[tokio::test]
     async fn activation_signal_is_live_scoped_and_retained_while_pending() {
         let owner = Owner::new(1).unwrap();

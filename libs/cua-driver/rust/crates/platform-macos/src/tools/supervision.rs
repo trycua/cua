@@ -76,10 +76,29 @@ impl Tool for ReceiptTool {
             self.state.supervision.read(scope, &id)
         };
         match outcome {
-            Ok(status) => ToolResult::text("Observation status only; independently verify application commitment.").with_structured(serde_json::json!({"receipt_id":id,"supervision":status,"activation_after_dispatch":self.state.supervision.activation_observed(scope,&id).ok().flatten(),"application_commit":"unverified"})),
-            Err(e) => ToolResult::error(format!("supervision receipt: {e:?}; input must not be replayed without fresh observation.")),
+            Ok(status) => ToolResult::text("Observation status only; independently verify application commitment.").with_structured(serde_json::json!({"receipt_id":id,"supervision":status,"activation_after_dispatch":self.state.supervision.activation_observed(scope,&id).ok().flatten(),"foreground_guard":self.state.supervision.foreground_guard(scope,&id).ok().flatten(),"application_commit":"unverified"})),
+            Err(e) => ToolResult::error(format!("supervision receipt: {e:?}; input must not be replayed without fresh observation.")).with_structured(serde_json::json!({"refusal":e,"replay_allowed":false})),
         }
     }
+}
+
+#[cfg(test)]
+pub(super) fn test_state() -> Arc<ToolState> {
+    // Receipt tests must not load the user's persisted driver configuration.
+    Arc::new(ToolState {
+        supervision: cua_driver_core::owned_supervision::Owner::new(128).unwrap(),
+        snapshots: Arc::new(crate::ax::snapshot::Snapshots::new()),
+        cursor_registry: Arc::new(crate::cursor::state::CursorRegistry::new()),
+        capture_bindings: Arc::new(super::capture_binding::MacCaptureBindings::new(Arc::new(
+            cua_driver_core::capture_runtime::CaptureService::default(),
+        ))),
+        config: Arc::new(std::sync::RwLock::new(Default::default())),
+        session_config: Arc::new(super::SessionConfigRegistry::new()),
+        cdp_sessions: Arc::new(crate::browser::CdpSessionCache::new()),
+        cursor_overlay_available: false,
+        host_owns_permission_ux: true,
+        host_bundle_id: None,
+    })
 }
 
 #[cfg(test)]
@@ -114,7 +133,7 @@ mod tests {
     }
     #[tokio::test]
     async fn timeout_and_foreign_scope_cannot_cancel_or_release_observer() {
-        let state = Arc::new(ToolState::default());
+        let state = test_state();
         let (send, receive) = tokio::sync::oneshot::channel();
         let id = state
             .supervision
@@ -163,7 +182,7 @@ mod tests {
     }
     #[tokio::test]
     async fn missing_explicit_session_and_invalid_timeout_refuse() {
-        let state = Arc::new(ToolState::default());
+        let state = test_state();
         let id = state
             .supervision
             .reserve("owner")

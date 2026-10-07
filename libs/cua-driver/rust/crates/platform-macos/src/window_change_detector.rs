@@ -687,6 +687,13 @@ impl Snapshot {
         mut reservation: cua_driver_core::owned_supervision::Reservation,
         foreground_preserved_after_dispatch: bool,
     ) -> cua_driver_core::owned_supervision::ReceiptId {
+        if let Some(check) = self
+            ._lease
+            .as_ref()
+            .and_then(|lease| lease.foreground_guard())
+        {
+            reservation.bind_foreground_guard(check);
+        }
         let activation = self
             ._lease
             .as_ref()

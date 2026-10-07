@@ -263,7 +263,7 @@ fn click_at_xy_desktop_inner(
 /// A warp alone posts no mouse event. AppKit then only re-evaluates tracking
 /// areas when the pointer crosses into a different window, so a second warp
 /// inside the same window never fires `mouseEntered`/`mouseMoved`, and
-/// hover-revealed controls stay hidden. Follow the warp with one `MouseMoved`
+/// hover-revealed controls stay hidden. Follow the warp with a `MouseMoved`
 /// at the same point through the HID tap, as a physical mouse would.
 pub fn move_cursor_desktop(x: f64, y: f64) -> anyhow::Result<()> {
     use core_graphics::display::CGDisplay;

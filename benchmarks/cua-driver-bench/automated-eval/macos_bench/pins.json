@@ -28,12 +28,13 @@
     }
   },
   "cua_main": {
-    "note": "Amendment 5 (run v036): Cua Driver built from main at the merge of #4820 inside the VM (tools/vm_main_build, cargo build --locked --release, rustc 1.97.1), ad-hoc signed private app CuaDriverBenchMain.app, bundle id com.trycua.driver.benchmain. The Amendment 3 (v035) build was 365f5e3, binary af059a7f..., skills e0d64711... (see the history of this file).",
-    "git_sha": "ccaacd8fda023f55a299689beefcc76389a617b1",
+    "note": "Amendment 6 mini-runs: main at the commit of the latest mini-run (A6.5 lists every one); built in the VM with tools/vm_main_build. Earlier builds: v036 ccaacd8fd (Amendment 5), v035 365f5e3 (Amendment 3); see the history of this file.",
+    "git_sha": "45469a59c931ddccd78f9c18f1bbba4cb4cdd7be",
     "version": "0.34.0",
     "version_string": "cua-driver 0.34.0",
-    "binary_sha256": "bffa727c840c85128d53e5fca0dab2fdd27014f23b69c3603896f3762d8dce77",
+    "binary_sha256": "170dc2a748cb23bd075b010b6c7de4b2a6957604399d8ffd188971469177a9cd",
     "skills_tree_sha256": "668c0235269abd40553a98840eb800f30627a838c1df1d56ff3418d95fd60a0a",
-    "skills_source": "libs/cua-driver/rust/Skills/cua-driver at git_sha"
+    "skills_source": "libs/cua-driver/rust/Skills/cua-driver at git_sha",
+    "script_binary_sha256": "c2e8a11eb1cba26f84ed76f1156a82a56a2f34d13924abedda43b62cc6ee5f9d"
   }
 }

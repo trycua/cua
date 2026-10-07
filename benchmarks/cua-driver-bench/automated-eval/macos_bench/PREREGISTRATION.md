@@ -370,6 +370,7 @@ Fixes are general driver or guidance changes. Nothing is tuned to a task's evalu
 
 | Id | Main commit | A binary sha256 | AX binary sha256 | Skill tree sha256 | Arms | Written (UTC) |
 |---|---|---|---|---|---|---|
+| v037a | `45469a59c931` (#4822 merged: run_script, off by default) | `170dc2a748cb` | `c2e8a11eb1cb` | `668c0235269a` | A, AX, B | 2026-10-07T23:42Z |
 
 ### A6.6 Harness changes for this amendment
 

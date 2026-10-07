@@ -23,16 +23,16 @@ Add an opt-in receipt lifecycle for exact-bound native text writes. Driver retur
 
 Current macOS action invocation includes the roughly one-second window-change wait. The tool registry holds the global desktop-action coordinator through invocation, so independent text writes accumulate waits even when callers launch them concurrently. Moving observation into an independently owned task can release input locks after actual input and focus handling without shortening protection.
 
-A private native experiment on Cua main `5227ad637590a15976413b1a33f8693fac0e9a7e` with the broad AX batching patch measured the following two-field task. Actual Cua backend was 0.34.0; Arc source was `74ffae1108b1cb4b1f6b161084af12646f544ba5`, actual server 0.1.1. Candidates were checked before each scored trial.
+A private native experiment on Cua main `5227ad637590a15976413b1a33f8693fac0e9a7e` with the broad AX batching patch measured the following two-field task. Actual Cua backend was 0.34.0; Reference source was `74ffae1108b1cb4b1f6b161084af12646f544ba5`, actual server 0.1.1. Candidates were checked before each scored trial.
 
 | Path | Median | Meaning |
 |---|---:|---|
 | Original serial observation waits | 2,639 ms | Full task decision |
 | Independently owned, overlapping full waits | 1,519 ms | Full supervision fence plus final value read |
 | Combined application evidence and supervision | 1,573 ms | Full fence plus application outcome proof |
-| Combined in final alternating Arc comparison | 443 ms | Application commit and fresh AX proof; supervision still owned |
+| Combined in final alternating Reference comparison | 443 ms | Application commit and fresh AX proof; supervision still owned |
 | Same combined comparison | 1,492 ms | Full supervision fence finishes |
-| Arc in that comparison | 502 ms | Same application acknowledgment and independent value criterion |
+| Reference in that comparison | 502 ms | Same application acknowledgment and independent value criterion |
 
 The final comparison has four scored alternating pairs after warmup; all ten rows passed values, owned foreground and interference checks. The earlier four-arm matrix has three scored repetitions per arm after warmup. These small samples on one owned AppKit fixture establish feasibility, not general application or agent performance. No model or JEV calls were involved.
 

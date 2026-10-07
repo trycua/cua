@@ -20,7 +20,7 @@ use crate::{
     tool::{Tool, ToolDef, ToolRegistry},
 };
 
-pub(crate) mod locate;
+pub mod locate;
 
 use locate::{Check, ElementSpec, Locator, Window, WindowSpec};
 

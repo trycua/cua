@@ -175,6 +175,7 @@ fn is_scoped_action(tool_name: &str) -> bool {
             | "press_key"
             | "hotkey"
             | "set_value"
+            | "dispatch_set_value"
     )
 }
 

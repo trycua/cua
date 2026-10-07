@@ -333,7 +333,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         // contract is intentionally narrower than `type_text`'s. It
         // still accepts `element_token`, hence the tokens claim.
         "type_text_chars" => &["input.keyboard.type", "accessibility.element_tokens"],
-        "set_value" => &[
+        "set_value" | "dispatch_set_value" => &[
             // Bulk-set an editable field's value — semantically a
             // typing surface, even though the implementation skips
             // per-key events.
@@ -695,6 +695,8 @@ pub struct ToolRegistry {
     cursor_outcome_readers: Vec<crate::session::CursorOutcomeReaderRegistration>,
     _recording_state_readers: Vec<crate::session::RecordingStateReaderRegistration>,
     runtime_cleanups: Vec<RuntimeCleanup>,
+    #[cfg(feature = "experimental-owned-supervision")]
+    supervision_owners: Vec<crate::owned_supervision::Owner>,
     capture_service: Arc<crate::capture_runtime::CaptureService>,
     /// Runtime-owned protected-consent broker shared by every resource
     /// adapter. Keeping it at the canonical dispatch boundary prevents
@@ -769,6 +771,8 @@ impl ToolRegistry {
             cursor_outcome_readers: Vec::new(),
             _recording_state_readers: vec![recording_state_reader],
             runtime_cleanups: Vec::new(),
+            #[cfg(feature = "experimental-owned-supervision")]
+            supervision_owners: Vec::new(),
             capture_service,
             approval_broker,
             protected_resource_grants,
@@ -884,6 +888,28 @@ impl ToolRegistry {
         registration: crate::session::CursorOutcomeReaderRegistration,
     ) {
         self.cursor_outcome_readers.push(registration);
+    }
+
+    #[cfg(feature = "experimental-owned-supervision")]
+    pub fn retain_supervision_owner(&mut self, owner: crate::owned_supervision::Owner) {
+        self.supervision_owners.push(owner);
+    }
+
+    #[cfg(feature = "experimental-owned-supervision")]
+    pub async fn drain_supervision(
+        &self,
+        deadline: std::time::Duration,
+    ) -> Result<(), crate::owned_supervision::Refusal> {
+        for owner in &self.supervision_owners {
+            owner.close();
+        }
+        let began = std::time::Instant::now();
+        for owner in &self.supervision_owners {
+            owner
+                .drain(deadline.saturating_sub(began.elapsed()))
+                .await?;
+        }
+        Ok(())
     }
 
     pub fn retain_runtime_cleanup(&mut self, cleanup: impl FnOnce() + Send + Sync + 'static) {
@@ -2870,6 +2896,7 @@ fn is_physical_desktop_action(tool: &str) -> bool {
             | "press_key"
             | "hotkey"
             | "set_value"
+            | "dispatch_set_value"
             | "bring_to_front"
             | "set_window_frame"
     )

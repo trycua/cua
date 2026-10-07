@@ -283,6 +283,7 @@ const DESKTOP_INPUT_OPERATIONS: &[&str] = &[
     "press_key",
     "hotkey",
     "set_value",
+    "dispatch_set_value",
     "bring_to_front",
     "set_window_frame",
 ];
@@ -864,7 +865,10 @@ fn advertised_enforcement_for(tool: &str) -> RiskEnforcement {
 pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
     let class = match tool {
         // Public driver/OS metadata with no user-content payload.
-        "get_screen_size"
+        "get_action_supervision"
+        | "fence_action_supervision"
+        | "release_action_supervision"
+        | "get_screen_size"
         | "get_cursor_position"
         | "get_config"
         | "get_session"
@@ -892,6 +896,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "press_key"
         | "hotkey"
         | "set_value"
+        | "dispatch_set_value"
         | "run_actions"
         | "invoke_menu"
         | "launch_app"
@@ -1193,6 +1198,7 @@ fn enforce_hard_invariants(
             | "press_key"
             | "hotkey"
             | "set_value"
+            | "dispatch_set_value"
             | "kill_app"
             | "bring_to_front"
             | "get_accessibility_tree"

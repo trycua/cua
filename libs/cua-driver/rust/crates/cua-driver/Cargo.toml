@@ -77,6 +77,7 @@ platform-linux = { path = "../platform-linux" }
 
 [features]
 default = []
+experimental-owned-supervision = ["cua-driver-sdk/experimental-owned-supervision"]
 # Local review builds may replace the production extension trust root with an
 # explicitly supplied Ed25519 public key. The build script rejects release
 # profiles and missing/invalid overrides; ordinary artifacts never enable it.

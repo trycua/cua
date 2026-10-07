@@ -62,5 +62,6 @@ core-foundation = "0.10"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphics", "NSGraphicsContext", "NSRunningApplication", "libc"] }
 
 [dev-dependencies]
+libc = "0.2"
 cua-spacesd-client = { workspace = true, features = ["testing"] }
 tempfile.workspace = true

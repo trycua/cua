@@ -1136,7 +1136,7 @@ extension Server {
                     vncPolicy: vncPolicy,
                     telemetryTransport: .http
                 )
-                Logger.info("VM started successfully in background task", metadata: ["name": name])
+                Logger.info("VM run ended in background task", metadata: ["name": name])
             } catch {
                 Logger.error(
                     "Failed to start VM in background task",

@@ -123,7 +123,7 @@ For authorized foreground input, use the Cua action's
 When a cua-driver call surprises you, diagnose cua-driver first:
 
 - **Large tree or repeated reads?** `get_window_state` returns one compact
-  markdown tree capped at 250 nodes; pass `since:<snapshot_id>` for a diff
+  markdown tree capped at 250 nodes; pass `since:"latest"` for a diff
   (`no change since …; focused element is …` names the focused row on macOS)
   and `tree_format:"elements"` for structured rows. `full_output:true` restores
   the old payload (both forms, `_note`, `background_input`, 2 000 nodes).
@@ -163,8 +163,10 @@ response, and only switch _dispatch rung_ on a real signal:
 1. **Re-snapshot and read the tree diff**: a changed `AXValue`, a new
    element, a collapsed menu, a disabled button. If the tree shows the
    change, you're done. When you only need the tree diff and don't need
-   fresh pixels, pass `include_screenshot:false` to skip the grab: a
-   **perf** knob, not a mode flip.
+   fresh pixels, pass `since:"latest"` and `include_screenshot:false` to
+   skip the grab: a **perf** knob, not a mode flip. The window keeps its
+   last screenshot's pixel frame while its size is unchanged, so `x,y`
+   from that screenshot still work afterwards.
 2. **Trust the screenshot and do an element px action** when the tree
    **lies**: the action response carried `effect:"suspected_noop"`, the
    re-snapshot came back `degraded` (empty tree), or the tree looks

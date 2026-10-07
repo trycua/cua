@@ -205,7 +205,7 @@ Note: `element_token` is accepted for cross-platform parity but currently no-op 
 | --- | --- | --- | --- |
 | <span id="scroll--by"></span>`by` | `"line" \| "page"` |  | Scroll granularity. Default: line. |
 | <span id="scroll--direction"></span>`direction` | `"up" \| "down" \| "left" \| "right"` | required | Scroll direction. |
-| <span id="scroll--element_token"></span>`element_token` | `string` |  | Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
+| <span id="scroll--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
 | <span id="scroll--target"></span>`target` | `window target \| desktop target` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 
 **Example arguments**

@@ -8999,6 +8999,7 @@ impl Tool for ZoomTool {
             description: "Zoom into a rectangular region of a window screenshot at full (native) \
                 resolution. Use this when `get_window_state` returned a resized image and you \
                 need to read small text, identify icons, or verify UI details.\n\n\
+                Corners, not a size: x1,y1 is the top-left and x2,y2 the bottom-right (x,y,width,height is also accepted and converted). \
                 Coordinates `x1, y1, x2, y2` are in the same pixel space as the screenshot \
                 returned by `get_window_state` (i.e. the resized image if `max_image_dimension` \
                 is active). The maximum zoom region width is 500 px in scaled-image coordinates.\n\n\

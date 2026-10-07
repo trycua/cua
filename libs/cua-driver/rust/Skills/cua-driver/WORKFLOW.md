@@ -41,10 +41,11 @@ By default the tree comes back **once**, as compact `tree_markdown` (`tree_forma
 
 - Use `query` to project matching rows plus ancestors without renumbering their indices.
 - A read walks at most 250 nodes by default. When it stops there the response says `Tree truncated at max_elements=…` (`truncated:true`, `truncation_hint`). Pass a larger `max_elements`, or narrow with `query` / `max_depth`. Truncation does not prove absence.
-- After the first read, pass `since:<snapshot_id>` to get only what changed: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), or `no change since …; focused element is …` (focus is reported on macOS only). The response carries a new `snapshot_id`: use it in tokens (`<new id>:N`). Rows not listed keep their `[N]` unless a `reindexed:` line says otherwise. An unknown, expired, other-window, or differently-scoped `since` returns a full read, and `since_status` says why. A diff reads the rendered tree rows only; it does not prove the screenshot is unchanged.
+- After the first read, pass `since:"latest"` (or `since:<snapshot_id>`) to get only what changed. `latest` is this window's most recent read with the same `query`, `max_elements` and `max_depth`. You get: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), or `no change since …; focused element is …` (focus is reported on macOS only). The response carries a new `snapshot_id`: use it in tokens (`<new id>:N`). Rows not listed keep their `[N]` unless a `reindexed:` line says otherwise. An unknown, expired, other-window, or differently-scoped `since` returns a full read, and `since_status` says why. A diff reads the rendered tree rows only; it does not prove the screenshot is unchanged.
 - `_note`, `background_input`, and (Linux) `frame_note` are omitted unless `verbose:true`; a degraded snapshot keeps `background_input`.
-- Use `include_screenshot:false` only when tree-only observation is enough; it cannot ground a pixel action.
-- Where advertised, `include_accessibility_tree:false` requests capture without a tree walk. Check the installed schema first.
+- `include_screenshot:false` returns the tree only. On macOS the window keeps the pixel frame of its last screenshot while its size is unchanged, so `x,y` read off that screenshot still work; elsewhere, and after a resize, take a new screenshot before a pixel action.
+- Where advertised, `include_accessibility_tree:false` requests capture without a tree walk. On macOS it keeps the current snapshot's rows and tokens valid. Use it when you only need to look; do not use `max_elements:1` or a `query` that matches nothing for that, because those replace the snapshot with an almost empty one.
+- Row numbers belong to one read. A narrower re-read (smaller `max_elements`, `max_depth`, another `query`) can stop before a row you saw earlier, and `<new snapshot_id>:N` for that row is then out of range. Use rows printed in the read whose `snapshot_id` you use.
 - `capture_mode` is deprecated and ignored. Do not change configuration to repair a sparse tree.
 - Use `screenshot_out_file` to save a PNG instead of inlining it, then actually read the image. Use an absolute, run-scoped output path.
 
@@ -52,7 +53,7 @@ The accessibility model may lag or disagree with rendered state: Electron text s
 
 ## Act once
 
-Use an opaque `element_token` from the latest snapshot of the intended window. Do not derive or edit tokens. A later snapshot can invalidate a pending action, including when another agent observes the same window.
+Use the `element_token` `<snapshot_id>:N` for row `[N]` of the latest snapshot of the intended window, for example `"s0000002a:11"`. A bare `"11"` is accepted only together with `window_id` and then means row 11 of that window's current snapshot. Do not mix a row number from one read with the `snapshot_id` of another. A later snapshot can invalidate a pending action, including when another agent observes the same window.
 
 Example CLI window action, with IDs and token replaced from the preceding response:
 
@@ -78,7 +79,7 @@ Keep `delivery_mode:"background"` as the default for window input. The route may
 
 ## Batch known actions
 
-When the next several actions are already decided and nothing between them needs a look, send them as one `run_actions` call instead of one call per action. The batch runs the same tools in order, stops at the first failure, and returns per-step status plus at most one bounded observation. Typical fit: fill several fields, then press a button, then read the result. Do not batch across a point where the answer decides the next step, or when a step reshuffles the window and invalidates element tokens used by later steps (use pixel targets after it, or split the batch there).
+`run_actions` is the default way to act. When the next action or actions are decided, send them as one `run_actions` call with `observe:true` instead of one call per action followed by a read. Even a single step pays off: the action and the look at its result become one call. The batch runs the same tools in order, stops at the first failure, and returns per-step status plus at most one bounded observation. Typical fit: fill several fields, then press a button, then read the result. Do not batch across a point where the answer decides the next step, or when a step reshuffles the window and invalidates element tokens used by later steps (use pixel targets after it, or split the batch there).
 
 ```bash
 cua-driver run_actions '{"session":"run-1","steps":[
@@ -86,13 +87,13 @@ cua-driver run_actions '{"session":"run-1","steps":[
   {"tool":"set_value","args":{"pid":844,"element_token":"s0000002a:15","value":"Lovelace"}},
   {"tool":"click","args":{"target":{"kind":"window","pid":844,"window_id":10725},"element_token":"s0000002a:21"}},
   {"tool":"press_key","args":{"pid":844,"key":"return"}}
- ],"delay_ms":100,"observe":{"max_elements":120}}'
+ ],"delay_ms":100,"observe":true}'
 ```
 
-- `tool` is one of `click`, `double_click`, `right_click`, `set_value`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag`; `args` are exactly that tool's arguments. Run `describe run_actions` and `describe <tool>` for schemas. Up to 32 steps.
+- `tool` is one of `click`, `double_click`, `right_click`, `set_value`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag` (`press` and `type` are accepted for `press_key` and `type_text`); `args` are exactly that tool's arguments. Observation tools cannot run inside a batch: use `observe`. Run `describe run_actions` and `describe <tool>` for schemas. Up to 32 steps.
 - Every step is validated before the first runs, so a malformed step changes nothing. Each step then passes the same session, permission, capability-manifest and approval checks as a direct call; a batch grants nothing a single call lacks, and a refused step ends the batch like any other failure.
 - A batch has one session. Set `session` on `run_actions`; a step may repeat it but not name another.
-- `observe` is optional and reads once, after the last executed step (also after a failure): `get_window_state` arguments, `pid`/`window_id` taken from the last step that names both, `include_screenshot:false` and `max_elements:200` unless you override. Omit `observe` to read nothing.
+- `observe` is optional and reads once, after the last executed step (also after a failure). Pass `true` or `get_window_state` arguments; `pid`/`window_id` come from the last step that names both. Defaults: `since:"latest"` (only what changed since your last read of that window with the same view; a full read if there is none), `include_screenshot:false`, `max_elements:250`. Pass `include_screenshot:true` to see the window, or `since:null` for a full read. Omit `observe` to read nothing.
 - Read `steps[].ok` and `failed_step`. Steps before a failure did run and are not rolled back; steps after it did not. Observe before repairing, as for a single `unverifiable` action.
 
 ## Pixel coordinates
@@ -101,7 +102,7 @@ Ground window actions on the PNG from that exact `get_window_state`; ground desk
 
 The harness may downsample the displayed preview independently of the returned PNG. Use the returned dimensions and the original file. If measuring on a resized preview, account for its exact scale in both axes; do not assume the preview is native resolution. Do not guess from accessibility frames or another app's geometry.
 
-After movement, resize, navigation, or a competing desktop interaction, reobserve. When using `zoom`, read its schema and preserve the `from_zoom` mapping on the supported follow-up action. A manually cropped image requires its crop offset; an untracked crop is not an action coordinate source.
+After movement, resize, navigation, or a competing desktop interaction, reobserve. `zoom` takes a region as corners, `x1,y1` (top-left) to `x2,y2` (bottom-right); `x,y,width,height` is converted. Preserve the `from_zoom` mapping on the supported follow-up action. A manually cropped image requires its crop offset; an untracked crop is not an action coordinate source.
 
 For tiny targets, inspect at full resolution or annotate a copy without changing its dimensions. Keep the raw evidence unmodified. `debug_image_out`, where advertised, captures an action diagnostic; it is not a pre-action approval step.
 

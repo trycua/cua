@@ -87,7 +87,7 @@ Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is requi
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="double_click--element_token"></span>`element_token` | `string` |  | Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
+| <span id="double_click--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
 | <span id="double_click--pid"></span>`pid` | `integer` | required | Target process ID. |
 | <span id="double_click--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 
@@ -169,7 +169,7 @@ Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is requi
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="right_click--element_token"></span>`element_token` | `string` |  | Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
+| <span id="right_click--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
 | <span id="right_click--pid"></span>`pid` | `integer` | required | Target process ID. |
 | <span id="right_click--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 

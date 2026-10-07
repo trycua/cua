@@ -96,7 +96,7 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixel coordinates, with 20% padding added on each side. The output image is at most 500 px wide.
+Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixel coordinates, with 20% padding added on each side. The output image is at most 500 px wide. Corners, not a size: x1,y1 is the top-left and x2,y2 the bottom-right (x,y,width,height is also accepted and converted).
 
 After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates back to full-window space. Coordinate actions return `screenshot_context_missing` when no current snapshot contains a screenshot owned by this session. `from_zoom` actions return `zoom_context_missing` when the zoom was never created or was replaced; call `get_window_state`, then `zoom`, again on the same connection.
 
@@ -114,7 +114,7 @@ After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordin
 </Tab>
 <Tab value="Linux">
 
-Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixels, with 20% padding. Output is at most 500 px wide.
+Capture a cropped JPEG of a window region (x1,y1)–(x2,y2) in screenshot pixels, with 20% padding. Output is at most 500 px wide. Corners, not a size: x1,y1 is the top-left and x2,y2 the bottom-right (x,y,width,height is also accepted and converted).
 
 After a zoom, pass from_zoom=true to click/type_text to auto-translate coordinates back to full-window space. Coordinate actions return `screenshot_context_missing` when no current snapshot contains a screenshot owned by this session. `from_zoom` actions return `zoom_context_missing` when the zoom was never created or was replaced; call `get_window_state`, then `zoom`, again on the same connection.
 
@@ -134,7 +134,7 @@ After a zoom, pass from_zoom=true to click/type_text to auto-translate coordinat
 
 Zoom into a rectangular region of a window screenshot at full (native) resolution. Use this when `get_window_state` returned a resized image and you need to read small text, identify icons, or verify UI details.
 
-Coordinates `x1, y1, x2, y2` are in the same pixel space as the screenshot returned by `get_window_state` (i.e. the resized image if `max_image_dimension` is active). The maximum zoom region width is 500 px in scaled-image coordinates.
+Corners, not a size: x1,y1 is the top-left and x2,y2 the bottom-right (x,y,width,height is also accepted and converted). Coordinates `x1, y1, x2, y2` are in the same pixel space as the screenshot returned by `get_window_state` (i.e. the resized image if `max_image_dimension` is active). The maximum zoom region width is 500 px in scaled-image coordinates.
 
 A 20% padding is automatically added on every side of the requested region so the target remains visible even if the caller's coordinates are slightly off.
 

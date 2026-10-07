@@ -196,17 +196,88 @@ impl ToolDef {
     }
 }
 
-/// First argument name absent from the tool's advertised closed schema.
+/// The argument names absent from the tool's advertised closed schema, as one
+/// refusal message that also lists the accepted names, so the caller can fix
+/// every name in one retry instead of guessing one at a time.
 fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
     let schema = advertised_runtime_input_schema(&def.name, &def.input_schema);
     if schema["additionalProperties"] != false {
         return None;
     }
     let properties = schema.get("properties").and_then(Value::as_object);
-    args.as_object()?
+    let unknown: Vec<&str> = args
+        .as_object()?
         .keys()
-        .find(|name| !properties.is_some_and(|properties| properties.contains_key(*name)))
-        .cloned()
+        .filter(|name| !properties.is_some_and(|properties| properties.contains_key(*name)))
+        .map(String::as_str)
+        .collect();
+    if unknown.is_empty() {
+        return None;
+    }
+    let accepted: Vec<&str> = properties
+        .map(|properties| {
+            properties
+                .keys()
+                .map(String::as_str)
+                .filter(|name| *name != "session")
+                .collect()
+        })
+        .unwrap_or_default();
+    let noun = if unknown.len() == 1 {
+        "argument"
+    } else {
+        "arguments"
+    };
+    Some(format!(
+        "{noun} {}; accepted: {}",
+        unknown.join(", "),
+        accepted.join(", ")
+    ))
+}
+
+/// `zoom` takes a region as two corners (`x1,y1`-`x2,y2`). Models reach for
+/// `x, y, width, height` (and pass numbers as strings), so rewrite that shape
+/// into corners before the closed schema is checked. Explicit corners win.
+fn normalize_zoom_args(tool_name: &str, args: &mut Value) {
+    if tool_name != "zoom" {
+        return;
+    }
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+    for key in [
+        "x1", "y1", "x2", "y2", "x", "y", "width", "height", "w", "h",
+    ] {
+        if let Some(number) = arguments
+            .get(key)
+            .and_then(Value::as_str)
+            .and_then(|text| text.trim().parse::<f64>().ok())
+        {
+            arguments.insert(key.to_owned(), serde_json::json!(number));
+        }
+    }
+    for (short, long) in [("w", "width"), ("h", "height")] {
+        if !arguments.contains_key(long) {
+            if let Some(value) = arguments.remove(short) {
+                arguments.insert(long.to_owned(), value);
+            }
+        }
+    }
+    let num = |arguments: &serde_json::Map<String, Value>, key: &str| {
+        arguments.get(key).and_then(Value::as_f64)
+    };
+    for (origin, extent, first, second) in [("x", "width", "x1", "x2"), ("y", "height", "y1", "y2")]
+    {
+        if arguments.contains_key(first) || arguments.contains_key(second) {
+            continue;
+        }
+        if let (Some(start), Some(size)) = (num(arguments, origin), num(arguments, extent)) {
+            arguments.remove(origin);
+            arguments.remove(extent);
+            arguments.insert(first.to_owned(), serde_json::json!(start));
+            arguments.insert(second.to_owned(), serde_json::json!(start + size));
+        }
+    }
 }
 
 pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
@@ -1287,6 +1358,7 @@ impl ToolRegistry {
         // Normalize deprecated public argument spellings before any policy,
         // consent, recording, or implementation layer interprets the call.
         normalize_delivery_mode_args(tool.def(), &mut args);
+        normalize_zoom_args(resolved_name, &mut args);
         let unknown_argument = unknown_argument(tool.def(), &args);
         if let Err(result) = crate::action_target::normalize_action_target(resolved_name, &mut args)
         {
@@ -1451,10 +1523,10 @@ impl ToolRegistry {
             );
         }
 
-        if let Some(name) = unknown_argument {
+        if let Some(detail) = unknown_argument {
             return protected_refusal(
                 "invalid_arguments",
-                &format!("{resolved_name}: unknown argument {name}"),
+                &format!("{resolved_name}: unknown {detail}"),
             );
         }
 
@@ -6464,5 +6536,79 @@ mod capability_tests {
             .any(|adapter| {
                 adapter["id"] == "browser_prepare.existing_profile" && adapter["state"] == "active"
             }));
+    }
+}
+
+#[cfg(test)]
+mod argument_shape_tests {
+    use super::{normalize_zoom_args, unknown_argument, ToolDef};
+    use serde_json::json;
+
+    fn zoom_def() -> ToolDef {
+        ToolDef {
+            name: "zoom".into(),
+            description: String::new(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "window_id": {"type": "integer"}, "pid": {"type": "integer"},
+                    "x1": {"type": "number"}, "y1": {"type": "number"},
+                    "x2": {"type": "number"}, "y2": {"type": "number"}
+                },
+                "additionalProperties": false
+            }),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        }
+    }
+
+    #[test]
+    fn zoom_accepts_origin_and_size_as_corners() {
+        // The exact shape models sent in the v035 bench (numbers as strings).
+        let mut args = json!({"pid": 1, "window_id": 928, "x": "0", "y": "100", "width": "1180", "height": "640"});
+        normalize_zoom_args("zoom", &mut args);
+        assert_eq!(
+            args,
+            json!({"pid": 1, "window_id": 928, "x1": 0.0, "y1": 100.0, "x2": 1180.0, "y2": 740.0})
+        );
+        assert_eq!(unknown_argument(&zoom_def(), &args), None);
+
+        let mut short = json!({"window_id": 1, "x": 10, "y": 20, "w": 5, "h": 6});
+        normalize_zoom_args("zoom", &mut short);
+        assert_eq!(
+            short,
+            json!({"window_id": 1, "x1": 10.0, "y1": 20.0, "x2": 15.0, "y2": 26.0})
+        );
+
+        let mut corners = json!({"window_id": 1, "x1": "1", "y1": 2, "x2": 3, "y2": 4});
+        normalize_zoom_args("zoom", &mut corners);
+        assert_eq!(
+            corners,
+            json!({"window_id": 1, "x1": 1.0, "y1": 2, "x2": 3, "y2": 4})
+        );
+
+        let mut other_tool = json!({"x": 1, "width": 2});
+        normalize_zoom_args("click", &mut other_tool);
+        assert_eq!(other_tool, json!({"x": 1, "width": 2}));
+    }
+
+    #[test]
+    fn unknown_arguments_are_all_named_with_the_accepted_ones() {
+        let detail = unknown_argument(
+            &zoom_def(),
+            &json!({"window_id": 1, "height": 2, "width": 3}),
+        )
+        .unwrap();
+        assert_eq!(
+            detail,
+            "arguments height, width; accepted: pid, window_id, x1, x2, y1, y2"
+        );
+        let detail = unknown_argument(&zoom_def(), &json!({"window_id": 1, "height": 2})).unwrap();
+        assert!(
+            detail.starts_with("argument height; accepted: "),
+            "{detail}"
+        );
     }
 }

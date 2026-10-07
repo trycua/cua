@@ -475,3 +475,20 @@ async fn a_popup_on_top_does_not_hide_the_main_window() {
     assert!(message.contains("searched 2 windows"), "{message}");
     assert!(message.contains("window 7"), "{message}");
 }
+
+#[tokio::test]
+async fn a_check_only_step_names_the_window_to_observe() {
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [{"expect": {"app": "Demo", "text": "Email", "timeout_ms": 0}}], "observe": true}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(
+        result.structured_content.unwrap()["observation"]["ok"],
+        true
+    );
+    assert_eq!(
+        harness.calls("get_window_state").last().unwrap()["window_id"],
+        7
+    );
+}

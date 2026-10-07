@@ -1096,16 +1096,31 @@ fn fields_hold(check: &Check, element: &Value) -> bool {
         }
     }
     if let Some(expected) = check.selected {
-        if element
-            .get("selected")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-            != expected
-        {
+        if selected_state(element).unwrap_or(false) != expected {
             return false;
         }
     }
     true
+}
+
+/// An element's on/off state: `selected` when the platform reports it,
+/// else a checkbox-style value ("1"/"0", "true"/"false", "on"/"off"), as
+/// Chromium reports web checkboxes.
+fn selected_state(element: &Value) -> Option<bool> {
+    if let Some(selected) = element.get("selected").and_then(Value::as_bool) {
+        return Some(selected);
+    }
+    match element
+        .get("value")
+        .and_then(Value::as_str)?
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "1" | "true" | "on" | "checked" => Some(true),
+        "0" | "false" | "off" | "unchecked" => Some(false),
+        _ => None,
+    }
 }
 
 fn row_matches(row: &str, spec: &ElementSpec) -> bool {
@@ -1446,6 +1461,28 @@ mod tests {
         assert!(evaluate(&check(json!({"text": "Error", "gone": true})), &read).is_ok());
         let still = evaluate(&check(json!({"text": "Saved", "gone": true})), &read).unwrap_err();
         assert_eq!(still.code, "still_present");
+    }
+
+    #[test]
+    fn selected_falls_back_to_a_checkbox_value() {
+        let mut checkbox = element(3, "AXCheckBox", "Accept terms");
+        checkbox["value"] = json!("1");
+        let read = read(vec![checkbox], "");
+        let check = Check::parse(
+            &json!({"role": "checkbox", "name": "Accept terms", "selected": true}),
+            0,
+        )
+        .unwrap();
+        assert!(evaluate(&check, &read).is_ok());
+        let check = Check::parse(
+            &json!({"role": "checkbox", "name": "Accept terms", "selected": false}),
+            0,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluate(&check, &read).unwrap_err().code,
+            "unexpected_state"
+        );
     }
 
     #[test]

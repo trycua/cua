@@ -380,8 +380,9 @@ impl Plan {
                 .is_some_and(|action| !action.window.is_empty())
                 || step
                     .wait_for
-                    .as_ref()
-                    .is_some_and(|check| !check.window.is_empty());
+                    .iter()
+                    .chain(step.expect.iter())
+                    .any(|check| !check.window.is_empty());
             let needs_window = step
                 .action
                 .as_ref()
@@ -551,6 +552,7 @@ async fn run_step(
     last_window: &mut Option<Window>,
 ) -> StepOutcome {
     let label = step.label();
+    let step_has_no_action = step.action.is_none();
     let mut report = json!({ "index": index, "tool": label });
     let mut notes: Vec<String> = Vec::new();
 
@@ -701,6 +703,14 @@ async fn run_step(
     for (nth, check) in step.expect.iter().enumerate() {
         match locator.check(check, &fallback).await {
             Ok(outcome) => {
+                if let Some(window) = &outcome.window {
+                    if last_window.is_none() || step_has_no_action {
+                        *last_window = Some(window.clone());
+                    }
+                }
+                if !check.window.is_empty() && step_has_no_action {
+                    *context = check.window.clone();
+                }
                 checked.push(json!({
                     "ok": true,
                     "check": check.describe(),

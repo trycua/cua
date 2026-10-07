@@ -60,7 +60,7 @@ mod native {
                         return Err("missing owned receipt".into());
                     }
                     receipts.push((receipt.clone(), args["session"].clone()));
-                    json!({"receipt":receipt,"status":if result["structuredContent"]["input_disposition"]=="attempted" {"dispatched"}else{"uncertain"},"completion_claim":false})
+                    json!({"dispatch":result["structuredContent"],"receipt":receipt,"status":if result["structuredContent"]["input_disposition"]=="attempted" {"dispatched"}else{"uncertain"},"completion_claim":false})
                 }
                 "research/fence" => {
                     let mut outcomes = serde_json::Map::new();

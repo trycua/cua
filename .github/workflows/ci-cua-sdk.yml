@@ -226,6 +226,9 @@ jobs:
         run: |
           cargo run --locked -q -p cua-spaces-contract --bin cua-spaces-contract-gen -- --check
           cargo run --locked -q -p cua-spaces --bin cua-spaces-control-fixtures -- --check
+      - name: cua-spaces compiles with reduced feature sets
+        if: runner.os == 'Linux'
+        run: libs/cua/scripts/check-cua-spaces-features.sh --locked
 
   kotlin:
     # The generated binding must compile (an exported `close` once clashed

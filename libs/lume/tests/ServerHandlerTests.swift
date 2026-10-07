@@ -70,35 +70,19 @@ private final class GuestStopVMFactory: VMFactory {
 @MainActor
 @Test("A macOS guest that stopped by itself is not counted as running")
 func guestStoppedVMIsNotCountedAsRunning() async throws {
-  let tempConfigDir = FileManager.default.temporaryDirectory
+  // The VM lives in a throwaway directory addressed by path, so the test
+  // never reads or changes the user's Lume configuration.
+  let storage = FileManager.default.temporaryDirectory
     .appendingPathComponent(UUID().uuidString)
-  let tempHomeDir = FileManager.default.temporaryDirectory
-    .appendingPathComponent(UUID().uuidString)
-  try FileManager.default.createDirectory(at: tempConfigDir, withIntermediateDirectories: true)
-  try FileManager.default.createDirectory(at: tempHomeDir, withIntermediateDirectories: true)
-  defer {
-    try? FileManager.default.removeItem(at: tempConfigDir)
-    try? FileManager.default.removeItem(at: tempHomeDir)
-  }
+  try FileManager.default.createDirectory(at: storage, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: storage) }
 
-  let previousXDGConfigHome = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
-  setenv("XDG_CONFIG_HOME", tempConfigDir.path, 1)
-  defer {
-    if let previousXDGConfigHome {
-      setenv("XDG_CONFIG_HOME", previousXDGConfigHome, 1)
-    } else {
-      unsetenv("XDG_CONFIG_HOME")
-    }
-  }
-
-  let settingsManager = SettingsManager(fileManager: .default)
-  try settingsManager.setHomeDirectory(path: tempHomeDir.path)
-  let home = Home(settingsManager: settingsManager, fileManager: .default)
+  let home = Home(fileManager: .default)
   let factory = GuestStopVMFactory()
   let controller = LumeController(home: home, vmFactory: factory)
 
-  let name = "guest-stop-\(UUID().uuidString.prefix(8))"
-  let vmDir = try home.getVMDirectory(name)
+  let name = "guest-stop-\(UUID().uuidString.prefix(8).lowercased())"
+  let vmDir = try home.getVMDirectoryFromPath(name, storagePath: storage.path)
   try FileManager.default.createDirectory(at: vmDir.dir.url, withIntermediateDirectories: true)
   try Data(repeating: 0, count: 1024).write(to: vmDir.diskPath.url)
   try Data(repeating: 0, count: 1024).write(to: vmDir.nvramPath.url)
@@ -106,9 +90,11 @@ func guestStoppedVMIsNotCountedAsRunning() async throws {
     os: "macOS", cpuCount: 1, memorySize: 1024, diskSize: 1024, display: "1024x768")
   config.setMacAddress("00:11:22:33:44:56")
   try vmDir.saveConfig(config)
+  defer { SharedVM.shared.removeVM(name: name) }
 
   let run = Task { @MainActor in
-    try await controller.runVM(name: name, noDisplay: true, vncPolicy: .disabled)
+    try await controller.runVM(
+      name: name, noDisplay: true, storage: storage.path, vncPolicy: .disabled)
   }
   let clock = ContinuousClock()
   let deadline = clock.now.advanced(by: .seconds(5))
@@ -117,12 +103,12 @@ func guestStoppedVMIsNotCountedAsRunning() async throws {
   }
   let service = try #require(factory.services.first)
   #expect(service.state == .running)
-  #expect(Server.runningMacOSGuestCount(try controller.runningVMs()) == 1)
+  #expect(Server.runningMacOSGuestCount(try controller.runningVMs(storage: storage.path)) == 1)
 
   // The guest powers itself off; nothing calls stop.
   service.simulateGuestStop()
   try await run.value
 
-  #expect(try controller.runningVMs().isEmpty)
+  #expect(try controller.runningVMs(storage: storage.path).isEmpty)
   #expect(SharedVM.shared.getVM(name: name) == nil)
 }

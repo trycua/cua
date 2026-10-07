@@ -187,17 +187,17 @@ final class LumeController {
 
     // MARK: - Public VM Management Methods
 
-    /// Lists all virtual machines in the system
-    /// Uses a lightweight path that reads config directly without instantiating full VM objects
-    /// The VMs whose guests are running, across all storage locations. Cache
-    /// entries for guests that already stopped are dropped first, so a guest
-    /// that shut itself down is not counted as running.
+    /// The VMs whose guests are running, across all storage locations unless
+    /// `storage` names one. Cache entries for guests that already stopped are
+    /// dropped first, so a guest that shut itself down is not counted as running.
     @MainActor
-    public func runningVMs() throws -> [VMDetails] {
+    public func runningVMs(storage: String? = nil) throws -> [VMDetails] {
         SharedVM.shared.removeStoppedVMs()
-        return try list(storage: nil).filter { $0.status == "running" }
+        return try list(storage: storage).filter { $0.status == "running" }
     }
 
+    /// Lists all virtual machines in the system
+    /// Uses a lightweight path that reads config directly without instantiating full VM objects
     @MainActor
     public func list(storage: String? = nil) throws -> [VMDetails] {
         do {

@@ -1,5 +1,8 @@
 //! Foreground-only capture attested by the nested compositor. No focus changes.
 use anyhow::{bail, Context, Result};
+use std::io::{BufReader, Write};
+use std::os::fd::AsRawFd;
+use std::os::unix::net::UnixStream;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Attestation {
@@ -78,9 +81,33 @@ fn verify_bounds(target: &Attestation, width: u32, height: u32) -> Result<()> {
     Ok(())
 }
 
-fn query(pid: u32) -> Result<Attestation> {
-    let replies = super::inject_exchange(&[format!("c {pid}")])?;
-    Attestation::parse(replies.first().context("missing capture attestation")?)
+struct Control {
+    reader: BufReader<UnixStream>,
+    writer: UnixStream,
+}
+
+impl Control {
+    fn from_socket(socket: UnixStream, expected_peer: libc::pid_t) -> Result<Self> {
+        if super::hyprland::peer_pid(socket.as_raw_fd())? != expected_peer {
+            bail!("capture control and Wayland connections belong to different compositors");
+        }
+        socket.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+        socket.set_write_timeout(Some(std::time::Duration::from_secs(5)))?;
+        let mut result = Self {
+            reader: BufReader::new(socket.try_clone()?),
+            writer: socket,
+        };
+        writeln!(result.writer, "{}", super::INJECT_PROTO_HELLO)?;
+        result.writer.flush()?;
+        super::parse_inject_hello(&super::read_inject_line(&mut result.reader)?)?;
+        Ok(result)
+    }
+
+    fn query(&mut self, pid: u32) -> Result<Attestation> {
+        writeln!(self.writer, "c {pid}")?;
+        self.writer.flush()?;
+        Attestation::parse(&super::read_inject_line(&mut self.reader)?)
+    }
 }
 
 fn fresh_title(pid: u32, window_id: u64) -> Result<String> {
@@ -114,12 +141,18 @@ pub(super) fn screenshot(window_id: u64, requested_pid: Option<u32>) -> Result<V
         None => unique_pid(window_id, &super::list_windows_dispatch(None))?,
     };
     let title = fresh_title(pid, window_id)?;
-    let before = query(pid)?;
+    let connection = wayland_client::Connection::connect_to_env()?;
+    let peer = super::hyprland::peer_pid(connection.backend().poll_fd().as_raw_fd())?;
+    let socket = super::inject_socket_path().context("CUA_INJECT_SOCKET not set")?;
+    // Keep both connections alive through capture: reconnecting could accept
+    // another compositor with coincidentally identical window metadata.
+    let mut control = Control::from_socket(UnixStream::connect(socket)?, peer)?;
+    let before = control.query(pid)?;
     before.binds(pid, &title)?;
     // Stay on the nested Wayland connection: portal/X11 fallbacks may capture
     // another desktop and cannot be bound by this compositor attestation.
-    let pixels = super::screenshot_bytes()?;
-    let after = query(pid)?;
+    let pixels = super::capture_via_screencopy_on_connection(connection)?;
+    let after = control.query(pid)?;
     after.binds(pid, &fresh_title(pid, window_id)?)?;
     verify_stable(&before, &after)?;
     let (width, height) = crate::capture::png_dimensions_pub(&pixels)?;
@@ -138,6 +171,33 @@ pub(super) fn screenshot(window_id: u64, requested_pid: Option<u32>) -> Result<V
 mod tests {
     use super::*;
     const VALID: &str = "capture 12 14 0 0 640 480 9 546172676574";
+
+    #[test]
+    fn refuses_a_control_socket_from_a_different_compositor_before_handshake() {
+        let (client, _server) = UnixStream::pair().unwrap();
+        let peer = super::super::hyprland::peer_pid(client.as_raw_fd()).unwrap();
+        let wrong_peer = if peer == 1 { 2 } else { 1 };
+        let error = Control::from_socket(client, wrong_peer).err().unwrap();
+        assert!(error.to_string().contains("different compositors"));
+    }
+
+    #[test]
+    fn matched_control_peer_retains_the_handshake_and_capture_protocol() {
+        let (client, mut server) = UnixStream::pair().unwrap();
+        let peer = super::super::hyprland::peer_pid(client.as_raw_fd()).unwrap();
+        let worker = std::thread::spawn(move || {
+            let mut reader = BufReader::new(server.try_clone().unwrap());
+            let hello = super::super::read_inject_line(&mut reader).unwrap();
+            assert_eq!(hello.trim(), super::super::INJECT_PROTO_HELLO);
+            writeln!(server, "{}", super::super::INJECT_PROTO_HELLO).unwrap();
+            let query = super::super::read_inject_line(&mut reader).unwrap();
+            assert_eq!(query.trim(), "c 12");
+            writeln!(server, "{VALID}").unwrap();
+        });
+        let mut control = Control::from_socket(client, peer).unwrap();
+        assert!(control.query(12).unwrap().binds(12, "Target").is_ok());
+        worker.join().unwrap();
+    }
 
     #[test]
     fn id_only_capture_requires_a_unique_fresh_process_binding() {

@@ -770,7 +770,10 @@ fn capture_via_grim() -> anyhow::Result<Vec<u8>> {
 /// request a copy, wait for Ready, swap channels, encode PNG. Returns an error
 /// if any global is missing or the compositor flags the capture as failed.
 fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
-    let conn = Connection::connect_to_env()?;
+    capture_via_screencopy_on_connection(Connection::connect_to_env()?)
+}
+
+fn capture_via_screencopy_on_connection(conn: Connection) -> anyhow::Result<Vec<u8>> {
     let mut queue = conn.new_event_queue::<State>();
     let qh = queue.handle();
     conn.display().get_registry(&qh, ());

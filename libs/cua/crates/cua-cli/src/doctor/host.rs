@@ -180,6 +180,17 @@ pub async fn host_checks(cua: &Arc<Cua>, runtime_type: Option<&str>, arch: &str)
         ),
         wants_gvisor,
     ));
+    if gvisor && vmm["container"]["gvisor_allow_suid"].as_bool() == Some(false) {
+        checks.push(with_severity(
+            Check::new(
+                "host.gvisor_setuid",
+                Status::Warn,
+                "runsc is registered without --allow-suid: the Space user cannot sudo or mount FUSE",
+            )
+            .fix("`sudo runsc install -- --allow-suid && sudo systemctl restart docker` (Colima: add `runtimeArgs: [--allow-suid]` under docker.runtimes.runsc and `colima restart`)"),
+            wants_gvisor,
+        ));
+    }
     let qemu_arch = if arch == "arm64" { "aarch64" } else { "x86_64" };
     let accel = vmm["host"]["accel"][qemu_arch]
         .as_str()

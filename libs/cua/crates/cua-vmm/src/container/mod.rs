@@ -214,6 +214,17 @@ impl ContainerRuntime {
         Ok(v)
     }
 
+    /// The extra arguments the engine runs runtime `name` with (`None` when
+    /// it is not registered).
+    pub async fn runtime_args(&self, name: &str) -> Result<Option<Vec<String>>> {
+        let info = self.docker.info().await.map_err(engine_err)?;
+        Ok(info
+            .runtimes
+            .unwrap_or_default()
+            .remove(name)
+            .map(|r| r.runtime_args.unwrap_or_default()))
+    }
+
     /// Decide `runsc` vs `runc`, provisioning gVisor when permitted.
     pub async fn resolve_oci_runtime(&self) -> Result<String> {
         let mut cached = self.oci_runtime.lock().await;

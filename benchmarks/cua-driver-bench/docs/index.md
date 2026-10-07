@@ -2,7 +2,7 @@
 
 Choose documentation by the kind of help you need. Tutorials teach through a
 guided run. How-to guides solve a specific operation. Reference pages describe
-the interfaces. Explanation pages discuss the benchmark's design and tradeoffs.
+the interfaces. Explanation pages discuss the design and tradeoffs of the benchmark.
 
 ## Tutorials
 
@@ -28,6 +28,7 @@ the interfaces. Explanation pages discuss the benchmark's design and tradeoffs.
 ## Explanation
 
 - [Benchmark design](explanation/benchmark-design.md)
+- [Fleet execution boundary](fleet-boundary.md)
 - [Outcome, participation, certification, and comparison](explanation/outcome-participation-certification-and-comparison.md)
 - [Profiles, systems, and comparisons](explanation/profiles-systems-and-comparisons.md)
 - [Task-difficulty calibration](explanation/task-difficulty-calibration.md)
@@ -36,3 +37,13 @@ the interfaces. Explanation pages discuss the benchmark's design and tradeoffs.
 
 - [Public monorepo boundary](decisions/0001-public-monorepo-boundary.md)
 - [Snapshot provenance](../PROVENANCE.md)
+
+## Active benchmark paths
+
+- Local comparisons write results under `artifacts/automated-eval/`.
+- Fleet comparisons use isolated Linux/X11 workers and write results under `automated-eval/fleet-results/`.
+- Task shards can run in parallel, but each shard runs its baseline before its candidate.
+- Fleet defaults to two active task shards. Local execution defaults to one.
+- Parallel local execution requires one prestarted Linux/X11 display for each active shard.
+- The manual GitHub Actions workflow builds driver refs, retrieves selected private tasks, runs Fleet, and preserves the result bundle.
+- S3 publishing uploads the static report. The GitHub Actions artifact remains the fallback for public-access failures.

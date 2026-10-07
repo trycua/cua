@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import ctypes
 import ctypes.util
+import importlib.util
 import json
+import multiprocessing
 import os
 import queue
 import re
@@ -21,12 +24,13 @@ import tomllib
 import urllib.error
 import urllib.request
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from cua_bench_runtime import engine
 from cua_bench_runtime.adapters.agent_harnesses.production import (
@@ -53,6 +57,19 @@ from cua_bench_runtime.errors import (
 from cua_bench_runtime.model import AgentOutcome, EnvironmentHandle, ObserverReport, TrialContext
 from cua_bench_runtime.process import clean_environment, command_for, run_process
 from cua_bench_runtime.signals import InterruptFlag
+
+try:
+    from reporting import papercut_count_for_trial, write_html_bundle
+except ModuleNotFoundError:
+    _REPORTING_SPEC = importlib.util.spec_from_file_location(
+        "cdb_reporting", Path(__file__).with_name("reporting.py")
+    )
+    if _REPORTING_SPEC is None or _REPORTING_SPEC.loader is None:
+        raise
+    _REPORTING_MODULE = importlib.util.module_from_spec(_REPORTING_SPEC)
+    _REPORTING_SPEC.loader.exec_module(_REPORTING_MODULE)
+    papercut_count_for_trial = _REPORTING_MODULE.papercut_count_for_trial
+    write_html_bundle = _REPORTING_MODULE.write_html_bundle
 
 
 SHARED_TASKS = ("CDB-S01", "CDB-S02", "CDB-S03", "CDB-S04")
@@ -83,11 +100,42 @@ GUI_ENVIRONMENT = (
 )
 SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+X11_DISPLAY_SERVER = re.compile(r"^(?P<server>.*:[0-9]+)(?:\.[0-9]+)?$")
 DEFAULT_BASELINE = "0.22.2"
 DEFAULT_CANDIDATE = "0.23.2"
 FOREGROUND_SAMPLE_HZ = 5
 CURSOR_DEVIATION_THRESHOLD_PX = 10
 FOREGROUND_DISTURBANCE_MEASUREMENT = "x11_controlled_focus_drag_cursor_v2"
+PAPERCUT_INSTRUCTION = """Keep track of all papercuts you encounter while completing this task.
+
+A papercut is a concrete, actionable friction in the tools, Cua Driver,
+environment, instructions, or agent/developer experience. Record small issues
+even if you successfully work around them.
+
+Do not interrupt task completion to report papercuts. Complete the task first.
+
+At the end of the session, include a final section exactly delimited by:
+
+<PAPERCUTS>
+...
+</PAPERCUTS>
+
+Inside it, emit one Markdown list item per papercut. Each item should briefly
+state what happened, why it was friction, and the likely area or component
+involved. If there were no papercuts, emit:
+
+<PAPERCUTS>
+None
+</PAPERCUTS>
+"""
+GUI_INTEGRITY_INSTRUCTION = """When the task requires a state change through a GUI application, make that
+change only through the declared application with the configured Cua Driver.
+Do not use shell commands, backing files, internal store modules, application
+APIs, IPC, or injected scripts to bypass a required GUI interaction. If the
+required interaction cannot be completed, leave it incomplete and report the
+blocker as a papercut instead of fabricating the final state.
+"""
+FAILED_ACTION_EFFECTS = frozenset({"refused"})
 _X11_NONE = 0
 _X11_POINTER_ROOT = 1
 _X11_IS_VIEWABLE = 2
@@ -95,6 +143,7 @@ _X11_BUTTON_MASK = sum(1 << bit for bit in range(8, 13))
 _XRECORD_FROM_SERVER = 0
 _XRECORD_FROM_CLIENT = 1
 _XRECORD_ALL_CLIENTS = 3
+ShardOutput = TypeVar("ShardOutput")
 
 
 @dataclass(frozen=True)
@@ -103,6 +152,7 @@ class DriverRelease:
     root: Path
     binary: Path
     manifest: Path
+    binary_version: str | None = None
     skill_kind: str | None = None
     skill_source: Path | None = None
 
@@ -122,6 +172,14 @@ class ComparisonConfig:
     model: str
     reasoning_effort: str
     timeout_seconds: float
+    max_parallel_tasks: int = 1
+    local_displays: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class TaskShard:
+    task: str
+    releases: tuple[DriverRelease, ...]
 
 
 @dataclass(frozen=True)
@@ -138,6 +196,14 @@ class TrialMetrics:
     termination: str
     codex_tokens: Mapping[str, int] | None = None
     error: str | None = None
+    participation_required: bool = False
+    participation_status: str | None = None
+    participation_passed: bool | None = None
+    participation_detail: str | None = None
+    recorded_cua_calls: int | None = None
+    recorded_input_actions: int | None = None
+    recording_input_actions_complete: bool | None = None
+    recording_detail: str | None = None
     foreground_disturbance_available: bool = False
     foreground_disturbance_measurement: str | None = None
     foreground_disturbance_error: str | None = None
@@ -154,6 +220,14 @@ class TrialMetrics:
     foreground_disturbances: int | None = None
     focus_window_transitions: int | None = None
     cursor_deviation_episodes: int | None = None
+    papercut_count: int | None = None
+
+
+@dataclass(frozen=True)
+class TaskShardResult(Generic[ShardOutput]):
+    shard: TaskShard
+    output: ShardOutput | None = None
+    error: Exception | None = None
 
 
 @dataclass(frozen=True)
@@ -507,12 +581,16 @@ def discover_driver_releases(drivers_root: Path, platform: str) -> dict[str, Dri
                 f"release directory {directory.name} does not match manifest version "
                 f"{manifest.get('version')!r}"
             )
+        binary_version = manifest.get("binaryVersion", directory.name)
+        if not isinstance(binary_version, str) or SEMVER.fullmatch(binary_version) is None:
+            raise ValueError(f"release manifest has invalid binaryVersion for {directory.name}")
         skill_kind, skill_source = _find_skill_source(directory)
         releases[directory.name] = DriverRelease(
             version=directory.name,
             root=directory.resolve(),
             binary=(directory / "binary" / _driver_binary_name(platform)).resolve(),
             manifest=manifest_path.resolve(),
+            binary_version=binary_version,
             skill_kind=skill_kind,
             skill_source=skill_source.resolve() if skill_source else None,
         )
@@ -586,8 +664,90 @@ def load_launch_descriptor(bundle: Path, platform: str) -> dict[str, Any]:
     return descriptor
 
 
-def _gui_environment() -> dict[str, str]:
-    return {name: os.environ[name] for name in GUI_ENVIRONMENT if name in os.environ}
+def _gui_environment(display: str | None = None) -> dict[str, str]:
+    environment = {name: os.environ[name] for name in GUI_ENVIRONMENT if name in os.environ}
+    if display is not None:
+        environment.pop("WAYLAND_DISPLAY", None)
+        environment.pop("DBUS_SESSION_BUS_ADDRESS", None)
+        environment["DISPLAY"] = display.strip()
+    return environment
+
+
+def _x11_display_server(display: str) -> str:
+    normalized = display.strip()
+    match = X11_DISPLAY_SERVER.fullmatch(normalized)
+    return match.group("server") if match is not None else normalized
+
+
+def _local_gui_environments(config: ComparisonConfig) -> tuple[dict[str, str], ...]:
+    base = _gui_environment()
+    if config.platform != "linux":
+        if config.local_displays:
+            raise ValueError("--local-display is available only for Linux/X11 runs")
+        if config.max_parallel_tasks > 1:
+            raise ValueError("parallel local comparisons require isolated Linux/X11 displays")
+        return (base,)
+
+    displays = config.local_displays
+    if not displays:
+        current_display = base.get("DISPLAY")
+        displays = (current_display,) if current_display else ()
+    if not displays or any(not display.strip() for display in displays):
+        raise ValueError("Linux shared-task runs require an X11 display")
+    display_servers = tuple(_x11_display_server(display) for display in displays)
+    if len(set(display_servers)) != len(display_servers):
+        raise ValueError("local display assignments must be unique")
+
+    active_shards = min(config.max_parallel_tasks, len(config.tasks))
+    if len(displays) < active_shards:
+        raise ValueError(
+            "parallel local comparisons require one unique --local-display "
+            "for each active task shard"
+        )
+    return tuple(_gui_environment(display) for display in displays[:active_shards])
+
+
+def _isolated_local_environment(gui_environment: Mapping[str, str], root: Path) -> dict[str, str]:
+    directories = {
+        "HOME": root / "home",
+        "TMPDIR": root / "tmp",
+        "XDG_CACHE_HOME": root / "cache",
+        "XDG_CONFIG_HOME": root / "config",
+        "XDG_DATA_HOME": root / "data",
+        "XDG_RUNTIME_DIR": root / "runtime",
+        "XDG_STATE_HOME": root / "state",
+    }
+    for directory in directories.values():
+        directory.mkdir(parents=True, exist_ok=True)
+    directories["XDG_RUNTIME_DIR"].chmod(0o700)
+    return {**gui_environment, **{name: str(path) for name, path in directories.items()}}
+
+
+@contextmanager
+def _process_environment(environment: Mapping[str, str]):
+    names = set(environment) | set(GUI_ENVIRONMENT)
+    previous = {name: os.environ.get(name) for name in names}
+    for name in GUI_ENVIRONMENT:
+        if name not in environment:
+            os.environ.pop(name, None)
+    os.environ.update(environment)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _preflight_x11_environment(gui_environment: Mapping[str, str]) -> None:
+    display_name = gui_environment.get("DISPLAY", "").strip()
+    if not display_name:
+        raise ValueError("Linux shared-task runs require an X11 display")
+    with _process_environment(gui_environment):
+        source = _X11SampleSource(display_name)
+        source.close()
 
 
 def _resolve_executable(command: Sequence[str]) -> list[str]:
@@ -602,6 +762,24 @@ def _resolve_executable(command: Sequence[str]) -> list[str]:
     if resolved is None:
         raise FileNotFoundError(command[0])
     return [resolved, *command[1:]]
+
+
+def _linux_root_gui_command(command: Sequence[str], kind: str) -> list[str]:
+    resolved = list(command)
+    getuid = getattr(os, "geteuid", None)
+    if (
+        not sys.platform.startswith("linux")
+        or getuid is None
+        or getuid() != 0
+        or "--no-sandbox" in resolved
+    ):
+        return resolved
+    if kind == "browser":
+        return [resolved[0], "--no-sandbox", *resolved[1:]]
+    if kind == "electron":
+        index = 2 if Path(resolved[0]).name == "npx" else 1
+        return [*resolved[:index], "--no-sandbox", *resolved[index:]]
+    return resolved
 
 
 def _run_preflight_command(
@@ -649,7 +827,7 @@ def _verify_driver_identity(release: DriverRelease) -> None:
         raise ValueError(
             f"Cua Driver identity check failed for {release.version}: {type(error).__name__}"
         ) from error
-    expected = f"cua-driver {release.version}"
+    expected = f"cua-driver {release.binary_version or release.version}"
     if completed.returncode != 0 or expected not in completed.stdout.strip():
         raise ValueError(
             f"Cua Driver identity check failed for {release.version}: "
@@ -688,10 +866,14 @@ def _descriptor_variables(bundle: Path, workspace: Path) -> dict[str, str]:
     }
 
 
-def _preflight_task(bundle: Path, platform: str) -> None:
+def _preflight_task(
+    bundle: Path,
+    platform: str,
+    gui_environment: Mapping[str, str] | None = None,
+) -> None:
     descriptor = load_launch_descriptor(bundle, platform)
     variables = _descriptor_variables(bundle, bundle / ".preflight-workspace")
-    environment = {**os.environ, **_gui_environment()}
+    environment = {**os.environ, **(gui_environment or _gui_environment())}
     for prerequisite in descriptor.get("prerequisites", []):
         if not isinstance(prerequisite, dict) or not isinstance(prerequisite.get("check"), list):
             raise ValueError(f"invalid prerequisite in {bundle}")
@@ -760,20 +942,25 @@ def preflight(
     config: ComparisonConfig,
     releases: Sequence[DriverRelease],
     task_manifests: Sequence[Path],
+    gui_environments: Sequence[Mapping[str, str]],
 ) -> str:
     host = detect_platform()
     if config.platform != host:
         raise ValueError(
             f"selected platform {config.platform} cannot execute on host platform {host}"
         )
-    if config.platform == "linux" and not os.environ.get("DISPLAY"):
-        raise ValueError("Linux shared-task runs require DISPLAY for X11 or XWayland")
+    if not gui_environments:
+        raise ValueError("local execution requires at least one GUI environment")
     if not config.codex.is_file():
         raise ValueError(f"Codex CLI is missing: {config.codex}")
+    if config.platform == "linux":
+        for gui_environment in gui_environments:
+            _preflight_x11_environment(gui_environment)
     for release in releases:
         _verify_driver_identity(release)
-    for manifest in task_manifests:
-        _preflight_task(manifest.parent, config.platform)
+    for index, manifest in enumerate(task_manifests):
+        gui_environment = gui_environments[index % len(gui_environments)]
+        _preflight_task(manifest.parent, config.platform, gui_environment)
         _evaluator_node_options(manifest.parent, config.platform)
     version = _preflight_codex(config)
     _codex_provider_environment(config.codex_home)
@@ -1821,7 +2008,7 @@ def _local_adapter_override(
         observer = SocketCuaRecordingObserver(
             release.binary,
             endpoint,
-            release.version,
+            release.binary_version or release.version,
             gui_environment,
         )
         forwarding_agent = EnvironmentSubprocessHarness(agent, agent_environment)
@@ -1956,17 +2143,30 @@ def _render_toml_table(path: tuple[str, ...], values: Mapping[str, Any]) -> list
     return lines
 
 
-def _codex_provider_config(codex_home: Path) -> tuple[list[str], str | None]:
+def _codex_provider_config(codex_home: Path) -> tuple[list[str], str | None, bool]:
     path = codex_home / "config.toml"
-    if not path.is_file():
-        return [], None
-    try:
-        document = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
-        raise ValueError(f"Codex config is invalid: {path}") from error
+    document: Mapping[str, Any] = {}
+    if path.is_file():
+        try:
+            document = tomllib.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+            raise ValueError(f"Codex config is invalid: {path}") from error
     provider_name = document.get("model_provider")
     if provider_name is None:
-        return [], None
+        base_url = os.environ.get("OPENAI_BASE_URL")
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not base_url or not api_key:
+            return [], None, False
+        provider_name = "cdb-local"
+        provider = {
+            "name": "CDB Local Gateway",
+            "base_url": base_url,
+            "env_key": "OPENAI_API_KEY",
+            "wire_api": "responses",
+        }
+        lines = [f"model_provider = {_toml_value(provider_name)}"]
+        lines.extend(_render_toml_table(("model_providers", provider_name), provider))
+        return lines, "OPENAI_API_KEY", True
     if not isinstance(provider_name, str) or not provider_name:
         raise ValueError("Codex model_provider must be a non-empty string")
     providers = document.get("model_providers")
@@ -1981,17 +2181,23 @@ def _codex_provider_config(codex_home: Path) -> tuple[list[str], str | None]:
         raise ValueError("Codex model provider env_key is invalid")
     lines = [f"model_provider = {_toml_value(provider_name)}"]
     lines.extend(_render_toml_table(("model_providers", provider_name), provider))
-    return lines, environment_key
+    return lines, environment_key, False
 
 
 def _codex_provider_environment(codex_home: Path) -> dict[str, str]:
-    _provider_lines, environment_key = _codex_provider_config(codex_home)
+    _provider_lines, environment_key, uses_environment_gateway = _codex_provider_config(codex_home)
     if environment_key is None:
         return {}
     environment_value = os.environ.get(environment_key)
     if environment_value is None:
         raise RuntimeError("Codex model provider requires environment variable " + environment_key)
-    return {environment_key: environment_value}
+    environment = {environment_key: environment_value}
+    if uses_environment_gateway:
+        base_url = os.environ.get("OPENAI_BASE_URL")
+        if base_url is None:
+            raise RuntimeError("local Codex model provider requires OPENAI_BASE_URL")
+        environment["OPENAI_BASE_URL"] = base_url
+    return environment
 
 
 def _codex_telemetry(
@@ -2080,6 +2286,7 @@ def _launch_apps(
     gui_environment: Mapping[str, str],
 ) -> list[dict[str, Any]]:
     processes: list[dict[str, Any]] = []
+    launched: list[tuple[str, bool, subprocess.Popen[bytes]]] = []
     process_path = artifacts / "app-processes.json"
     for raw_app in descriptor["apps"]:
         if not isinstance(raw_app, dict):
@@ -2095,7 +2302,9 @@ def _launch_apps(
             environment.pop(str(name), None)
         cwd = Path(app.get("cwd", variables["bundle"])).resolve()
         try:
-            command = _resolve_executable(app["command"])
+            command = _linux_root_gui_command(
+                _resolve_executable(app["command"]), str(app.get("kind", ""))
+            )
         except (KeyError, FileNotFoundError, ValueError):
             if optional:
                 processes.append({"app_id": app_id, "kind": app.get("kind"), "skipped": True})
@@ -2128,15 +2337,17 @@ def _launch_apps(
             "skipped": False,
         }
         processes.append(record)
+        launched.append((app_id, optional, process))
         _write_json(process_path, processes)
         ready = app.get("ready")
-        if isinstance(ready, dict) and isinstance(ready.get("url"), str):
+        ready_url = ready.get("http", ready.get("url")) if isinstance(ready, dict) else None
+        if isinstance(ready, dict) and isinstance(ready_url, str):
             deadline = time.monotonic() + float(ready.get("timeout_seconds", 15))
             while time.monotonic() < deadline:
                 if process.poll() is not None:
                     raise RuntimeError(f"app {app_id} exited before readiness")
                 try:
-                    with urllib.request.urlopen(ready["url"], timeout=1.0) as response:
+                    with urllib.request.urlopen(ready_url, timeout=1.0) as response:
                         if response.status < 500:
                             break
                 except (OSError, urllib.error.URLError):
@@ -2144,6 +2355,9 @@ def _launch_apps(
             else:
                 raise TimeoutError(f"app {app_id} readiness timed out")
     time.sleep(1.0)
+    for app_id, optional, process in launched:
+        if not optional and process.poll() is not None:
+            raise RuntimeError(f"app {app_id} exited during startup")
     return processes
 
 
@@ -2154,9 +2368,9 @@ def _run_codex(
     bundle: Path,
     gui_environment: Mapping[str, str],
 ) -> int:
-    brief = bundle / str(config["brief"])
-    if not brief.is_file():
-        raise FileNotFoundError(f"participant brief is missing: {brief}")
+    source_brief = bundle / str(config["brief"])
+    if not source_brief.is_file():
+        raise FileNotFoundError(f"participant brief is missing: {source_brief}")
     events_path = artifacts / "codex-events.jsonl"
     stderr_path = artifacts / "codex.stderr"
     run_path = artifacts / "codex-run.json"
@@ -2165,9 +2379,21 @@ def _run_codex(
         home = Path(temporary).resolve()
         codex_home = home / ".codex"
         codex_home.mkdir(parents=True)
+        brief = home / "participant-brief.md"
+        brief.write_text(
+            source_brief.read_text(encoding="utf-8").rstrip()
+            + "\n\n"
+            + GUI_INTEGRITY_INSTRUCTION
+            + "\n"
+            + PAPERCUT_INSTRUCTION,
+            encoding="utf-8",
+            newline="\n",
+        )
         source_codex_home = Path(str(config["codex_home"]))
         _link_auth(source_codex_home, codex_home)
-        provider_lines, _provider_environment_key = _codex_provider_config(source_codex_home)
+        provider_lines, _provider_environment_key, _uses_environment_gateway = (
+            _codex_provider_config(source_codex_home)
+        )
         route = ModelRoute(
             route_id="local.codex.primary",
             role="primary",
@@ -2377,6 +2603,45 @@ Get-CimInstance Win32_Process |
     )
 
 
+def _linux_process_groups_for_path(path: Path) -> tuple[int, ...]:
+    if not sys.platform.startswith("linux"):
+        return ()
+    root = path.resolve()
+    root_bytes = os.fsencode(str(root))
+    current_group = os.getpgrp()
+    groups: set[int] = set()
+    try:
+        processes = tuple(Path("/proc").iterdir())
+    except OSError:
+        return ()
+    for process in processes:
+        if not process.name.isdigit():
+            continue
+        pid = int(process.name)
+        if pid == os.getpid():
+            continue
+        belongs_to_trial = False
+        try:
+            cwd = Path(os.readlink(process / "cwd"))
+            belongs_to_trial = cwd == root or root in cwd.parents
+        except OSError:
+            pass
+        if not belongs_to_trial:
+            try:
+                belongs_to_trial = root_bytes in (process / "cmdline").read_bytes()
+            except OSError:
+                continue
+        if not belongs_to_trial:
+            continue
+        try:
+            process_group = os.getpgid(pid)
+        except OSError:
+            continue
+        if process_group > 0 and process_group != current_group:
+            groups.add(process_group)
+    return tuple(sorted(groups))
+
+
 def _cleanup_trial_processes(trial_dir: Path) -> None:
     artifacts = trial_dir / "artifacts"
     paths = (artifacts / "codex-process.json", artifacts / "app-processes.json")
@@ -2394,6 +2659,10 @@ def _cleanup_trial_processes(trial_dir: Path) -> None:
             if isinstance(pid, int) and pid > 0 and pid not in seen:
                 seen.add(pid)
                 _terminate_process_group(pid)
+    for pid in _linux_process_groups_for_path(trial_dir):
+        if pid not in seen:
+            seen.add(pid)
+            _terminate_process_group(pid)
     for pid in _windows_processes_for_path(trial_dir):
         if pid not in seen:
             seen.add(pid)
@@ -2584,8 +2853,15 @@ def _foreground_disturbance_metrics(trial_dir: Path) -> dict[str, Any]:
 
 
 def _is_successful_input_action(item: Mapping[str, Any]) -> bool:
-    if item.get("status") != "completed":
+    if item.get("status") != "completed" or item.get("error") is not None:
         return False
+    result = item.get("result")
+    if isinstance(result, Mapping):
+        structured = result.get("structured_content")
+        if not isinstance(structured, Mapping):
+            structured = result.get("structuredContent")
+        if isinstance(structured, Mapping) and structured.get("effect") in FAILED_ACTION_EFFECTS:
+            return False
     tool = item.get("tool")
     if tool in INPUT_ACTIONS:
         return True
@@ -2643,9 +2919,71 @@ def _recorded_cua_metrics(trial_dir: Path) -> tuple[int, int]:
         if not isinstance(action, dict):
             continue
         cua_calls += 1
-        if action.get("tool") in INPUT_ACTIONS and action.get("result_error") is False:
+        action_truth = action.get("action_truth")
+        effect = action_truth.get("effect") if isinstance(action_truth, Mapping) else None
+        if (
+            action.get("tool") in INPUT_ACTIONS
+            and action.get("result_error") is False
+            and effect not in FAILED_ACTION_EFFECTS
+        ):
             input_actions += 1
     return cua_calls, input_actions
+
+
+def _recording_metrics(trial_dir: Path, expected_input_actions: int) -> dict[str, Any]:
+    recording = trial_dir / "observer" / "cua-driver-recording"
+    if not any(recording.glob("turn-*/action.json")):
+        return {
+            "recorded_cua_calls": None,
+            "recorded_input_actions": None,
+            "recording_input_actions_complete": None,
+            "recording_detail": "Cua Driver recording evidence is unavailable",
+        }
+    recorded_cua_calls, recorded_input_actions = _recorded_cua_metrics(trial_dir)
+    complete = recorded_input_actions >= expected_input_actions
+    detail = None
+    if not complete:
+        detail = (
+            f"recorded {recorded_input_actions} of "
+            f"{expected_input_actions} successful input actions"
+        )
+    return {
+        "recorded_cua_calls": recorded_cua_calls,
+        "recorded_input_actions": recorded_input_actions,
+        "recording_input_actions_complete": complete,
+        "recording_detail": detail,
+    }
+
+
+def _participation_metrics(result: Mapping[str, Any]) -> dict[str, Any]:
+    participation = result.get("participation")
+    if not isinstance(participation, Mapping):
+        return {
+            "participation_required": False,
+            "participation_status": None,
+            "participation_passed": None,
+            "participation_detail": None,
+        }
+    requirements = participation.get("requirements")
+    reasons: list[str] = []
+    if isinstance(requirements, list):
+        for requirement in requirements:
+            if not isinstance(requirement, Mapping):
+                continue
+            if requirement.get("status") == "satisfied":
+                continue
+            reason = requirement.get("reason")
+            if isinstance(reason, str) and reason:
+                reasons.append(reason)
+    passed = participation.get("passed")
+    return {
+        "participation_required": participation.get("required") is True,
+        "participation_status": (
+            str(participation["status"]) if participation.get("status") is not None else None
+        ),
+        "participation_passed": passed if isinstance(passed, bool) else None,
+        "participation_detail": "; ".join(dict.fromkeys(reasons)) or None,
+    }
 
 
 def _trial_cua_metrics(trial_dir: Path) -> tuple[int, int]:
@@ -2660,6 +2998,7 @@ def extract_trial_metrics(
     trial_id: str,
 ) -> TrialMetrics:
     disturbance_metrics = _foreground_disturbance_metrics(trial_dir)
+    papercut_count = papercut_count_for_trial(trial_dir)
     result_path = trial_dir / "result.json"
     try:
         result = json.loads(result_path.read_text(encoding="utf-8"))
@@ -2676,9 +3015,12 @@ def extract_trial_metrics(
             input_actions=0,
             termination="missing_result",
             error=f"{type(error).__name__}: {error}",
+            papercut_count=papercut_count,
             **disturbance_metrics,
         )
     cua_calls, input_actions = _trial_cua_metrics(trial_dir)
+    recording_metrics = _recording_metrics(trial_dir, input_actions)
+    participation_metrics = _participation_metrics(result)
     evaluation = result.get("evaluation")
     passed = bool(isinstance(evaluation, dict) and evaluation.get("passed") is True)
     score_value = evaluation.get("score") if isinstance(evaluation, dict) else None
@@ -2745,6 +3087,9 @@ def extract_trial_metrics(
         termination=termination,
         codex_tokens=tokens,
         error=result.get("error") if isinstance(result.get("error"), str) else None,
+        papercut_count=papercut_count,
+        **participation_metrics,
+        **recording_metrics,
         **disturbance_metrics,
     )
 
@@ -2773,6 +3118,7 @@ def failed_trial_metrics(
         input_actions=0,
         termination="orchestration_error",
         error=f"{type(error).__name__}: {error}",
+        papercut_count=(papercut_count_for_trial(trial_dir) if trial_dir is not None else None),
         **disturbance_metrics,
     )
 
@@ -2794,6 +3140,10 @@ def compare_pair(baseline: TrialMetrics, candidate: TrialMetrics) -> dict[str, A
 
     score_delta = delta(candidate.score, baseline.score)
     if baseline.termination != "completed" or candidate.termination != "completed":
+        signal = "incomplete"
+    elif (baseline.participation_required and baseline.participation_passed is not True) or (
+        candidate.participation_required and candidate.participation_passed is not True
+    ):
         signal = "incomplete"
     elif baseline.score is None or candidate.score is None:
         signal = "incomplete"
@@ -2852,6 +3202,7 @@ def compare_pair(baseline: TrialMetrics, candidate: TrialMetrics) -> dict[str, A
                 _codex_token_value(candidate.codex_tokens, "output_tokens"),
                 _codex_token_value(baseline.codex_tokens, "output_tokens"),
             ),
+            "papercuts": delta(candidate.papercut_count, baseline.papercut_count),
         },
         "signal": signal,
     }
@@ -2882,6 +3233,20 @@ def _markdown_value(value: Any) -> str:
     return str(value).replace("|", "\\|")
 
 
+def _markdown_link(label: Any, target: Any) -> str:
+    if target is None:
+        return _markdown_value(label)
+    return f"[{_markdown_value(label)}]({_markdown_value(target)})"
+
+
+def _recording_coverage_value(trial: Mapping[str, Any]) -> str | None:
+    recorded = trial.get("recorded_input_actions")
+    expected = trial.get("input_actions")
+    if not isinstance(recorded, int) or not isinstance(expected, int):
+        return None
+    return f"{recorded}/{expected}"
+
+
 def render_markdown(report: Mapping[str, Any]) -> str:
     lines = [
         "# Cua Driver Local Diagnostic Comparison",
@@ -2895,19 +3260,61 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             "scores, pass/fail, or comparison signals."
         ),
         "",
-        "## Trials",
+        (
+            "> Required driver participation failures make comparison signals "
+            "incomplete. Recording coverage shows captured successful input "
+            "actions versus transcript-counted successful input actions."
+        ),
         "",
-        (
-            "| Task | Version | Pass | Score | Total ms | Cua calls | "
-            "Input actions | Focus drops | Drag interruptions | "
-            "Cursor deviations | FG disturbances | Input tokens | "
-            "Cached tokens | Output tokens | Termination |"
-        ),
-        (
-            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | "
-            "---: | ---: | ---: | ---: | ---: | --- |"
-        ),
     ]
+    execution = report.get("execution")
+    if isinstance(execution, Mapping):
+        lines.extend(
+            (
+                "## Execution",
+                "",
+                f"- Backend: {_markdown_value(execution.get('backend'))}",
+                (
+                    "- Maximum parallel task shards: "
+                    f"{_markdown_value(execution.get('max_parallel_tasks'))}"
+                ),
+                f"- Complete: {_markdown_value(execution.get('complete'))}",
+                "",
+            )
+        )
+        failures = execution.get("infrastructure_failures")
+        if isinstance(failures, list) and failures:
+            lines.extend(
+                (
+                    "| Task | Infrastructure failure |",
+                    "| --- | --- |",
+                )
+            )
+            lines.extend(
+                f"| {_markdown_value(failure.get('task'))} | "
+                f"{_markdown_value(failure.get('error'))} |"
+                for failure in failures
+                if isinstance(failure, Mapping)
+            )
+            lines.append("")
+
+    lines.extend(
+        (
+            "## Trials",
+            "",
+            (
+                "| Task | Version | Trajectory | Pass | Participation | Score | "
+                "Total ms | Cua calls | Input actions | Recorded actions | "
+                "Focus drops | Drag interruptions | "
+                "Cursor deviations | FG disturbances | Input tokens | "
+                "Cached tokens | Output tokens | Termination | Papercuts |"
+            ),
+            (
+                "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | "
+                "---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |"
+            ),
+        )
+    )
     for trial in report["trials"]:
         codex_tokens = trial.get("codex_tokens")
         lines.append(
@@ -2917,11 +3324,14 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                 for value in (
                     trial["task"],
                     trial["version"],
+                    _markdown_link("view", trial.get("trajectory_html")),
                     trial["passed"],
+                    trial.get("participation_status"),
                     trial["score"],
                     trial["total_ms"],
                     trial["cua_calls"],
                     trial["input_actions"],
+                    _recording_coverage_value(trial),
                     trial.get("foreground_keyboard_focus_drops"),
                     trial.get("foreground_drag_interruptions"),
                     trial.get("foreground_cursor_trajectory_deviations"),
@@ -2930,6 +3340,42 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                     _codex_token_value(codex_tokens, "cache_read_tokens"),
                     _codex_token_value(codex_tokens, "output_tokens"),
                     trial["termination"],
+                    _markdown_link(
+                        trial.get("papercut_count"),
+                        trial.get("papercuts_md")
+                        if trial.get("papercut_count") is not None
+                        else None,
+                    ),
+                )
+            )
+            + " |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Diagnostic Integrity",
+            "",
+            (
+                "| Task | Version | Participation required | Participation "
+                "status | Participation detail | Recording complete | "
+                "Recording detail |"
+            ),
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for trial in report["trials"]:
+        lines.append(
+            "| "
+            + " | ".join(
+                _markdown_value(value)
+                for value in (
+                    trial["task"],
+                    trial["version"],
+                    trial.get("participation_required", False),
+                    trial.get("participation_status"),
+                    trial.get("participation_detail"),
+                    trial.get("recording_input_actions_complete"),
+                    trial.get("recording_detail"),
                 )
             )
             + " |"
@@ -2976,11 +3422,11 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                 "| Task | Baseline score | Candidate score | Score Δ | "
                 "Time Δ ms | Call Δ | Action Δ | Focus-drop Δ | Drag Δ | "
                 "Cursor Δ | Disturbance Δ | Input token Δ | Cached token Δ | "
-                "Output token Δ | Signal |"
+                "Output token Δ | Papercut Δ | Signal |"
             ),
             (
                 "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
-                "---: | ---: | ---: | ---: | ---: | ---: | --- |"
+                "---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
             ),
         ]
     )
@@ -3004,6 +3450,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                     comparison["delta"]["input_tokens"],
                     comparison["delta"]["cached_tokens"],
                     comparison["delta"]["output_tokens"],
+                    comparison["delta"].get("papercuts"),
                     comparison["signal"],
                 )
             )
@@ -3018,7 +3465,8 @@ def build_plan(config: ComparisonConfig) -> dict[str, Any]:
     candidate_name = config.candidate if config.candidate != config.baseline else None
     candidate = require_release(releases, candidate_name) if candidate_name is not None else None
     selected_releases = (baseline,) if candidate is None else (baseline, candidate)
-    manifests = [task_path(config.tasks_root, task) for task in config.tasks]
+    shards = build_task_shards(config.tasks, selected_releases)
+    manifests = [task_path(config.tasks_root, shard.task) for shard in shards]
     for manifest in manifests:
         load_launch_descriptor(manifest.parent, config.platform)
     return {
@@ -3026,11 +3474,12 @@ def build_plan(config: ComparisonConfig) -> dict[str, Any]:
         "diagnostic": True,
         "baseline": asdict(baseline),
         "candidate": asdict(candidate) if candidate is not None else None,
-        "tasks": list(config.tasks),
+        "tasks": [shard.task for shard in shards],
+        "max_parallel_tasks": config.max_parallel_tasks,
         "trials": [
-            {"task": task, "version": release.version}
-            for release in selected_releases
-            for task in config.tasks
+            {"task": shard.task, "version": release.version}
+            for shard in shards
+            for release in shard.releases
         ],
     }
 
@@ -3039,17 +3488,71 @@ def _trial_id(task: str, version: str, run_stamp: str) -> str:
     return f"{task}-{version}-{run_stamp}"
 
 
+def build_task_shards(
+    tasks: Sequence[str], releases: Sequence[DriverRelease]
+) -> tuple[TaskShard, ...]:
+    ordered_releases = tuple(releases)
+    selected_tasks = set(tasks)
+    ordered_tasks = tuple(task for task in SHARED_TASKS if task in selected_tasks)
+    return tuple(TaskShard(task=task, releases=ordered_releases) for task in ordered_tasks)
+
+
+def schedule_task_shards(
+    shards: Sequence[TaskShard],
+    run_shard: Callable[[TaskShard], ShardOutput],
+    *,
+    max_parallel_tasks: int = 2,
+) -> tuple[TaskShardResult[ShardOutput], ...]:
+    if max_parallel_tasks < 1:
+        raise ValueError("max parallel tasks must be at least 1")
+
+    def capture(shard: TaskShard) -> TaskShardResult[ShardOutput]:
+        try:
+            return TaskShardResult(shard=shard, output=run_shard(shard))
+        except Exception as error:  # noqa: BLE001 - preserve other completed shards
+            return TaskShardResult(shard=shard, error=error)
+
+    if max_parallel_tasks == 1 or len(shards) <= 1:
+        return tuple(capture(shard) for shard in shards)
+
+    with ThreadPoolExecutor(max_workers=min(max_parallel_tasks, len(shards))) as executor:
+        futures = [executor.submit(capture, shard) for shard in shards]
+        return tuple(future.result() for future in futures)
+
+
+async def schedule_task_shards_async(
+    shards: Sequence[TaskShard],
+    run_shard: Callable[[TaskShard], Awaitable[ShardOutput]],
+    *,
+    max_parallel_tasks: int = 2,
+) -> tuple[TaskShardResult[ShardOutput], ...]:
+    if max_parallel_tasks < 1:
+        raise ValueError("max parallel tasks must be at least 1")
+
+    semaphore = asyncio.Semaphore(max_parallel_tasks)
+
+    async def capture(shard: TaskShard) -> TaskShardResult[ShardOutput]:
+        async with semaphore:
+            try:
+                return TaskShardResult(shard=shard, output=await run_shard(shard))
+            except Exception as error:  # noqa: BLE001 - preserve other completed shards
+                return TaskShardResult(shard=shard, error=error)
+
+    return tuple(await asyncio.gather(*(capture(shard) for shard in shards)))
+
+
 def _run_trial(
     config: ComparisonConfig,
     release: DriverRelease,
     task: str,
     run_stamp: str,
+    gui_environment: Mapping[str, str],
 ) -> TrialMetrics:
     trial_id = _trial_id(task, release.version, run_stamp)
     trial_root = config.output / "trials" / trial_id
     launcher = config.output / "launchers" / f"{trial_id}.py"
     runtime_log = config.output / "runtime" / f"{trial_id}.driver-daemon"
-    gui_environment = _gui_environment()
+    gui_environment = dict(gui_environment)
     daemon: DriverDaemon | None = None
     materialized_trial: Path | None = None
     try:
@@ -3104,22 +3607,213 @@ def _run_trial(
     return extract_trial_metrics(materialized_trial, task, release.version, trial_id)
 
 
+def _local_shard_state_path(config: ComparisonConfig, shard: TaskShard) -> Path:
+    return config.output / "shards" / shard.task / "trials.json"
+
+
+def _validate_local_shard_output(
+    shard: TaskShard,
+    trials: Sequence[TrialMetrics],
+    *,
+    allow_partial: bool,
+) -> None:
+    expected = tuple((shard.task, release.version) for release in shard.releases)
+    actual = tuple((trial.task, trial.version) for trial in trials)
+    if actual != expected[: len(actual)] or (not allow_partial and len(actual) != len(expected)):
+        raise RuntimeError(
+            f"task shard returned unexpected trials: {actual!r}; expected {expected!r}"
+        )
+
+
+def _load_local_shard_state(config: ComparisonConfig, shard: TaskShard) -> tuple[TrialMetrics, ...]:
+    path = _local_shard_state_path(config, shard)
+    if not path.is_file():
+        return ()
+    document = json.loads(path.read_text(encoding="utf-8"))
+    values = document.get("trials") if isinstance(document, dict) else None
+    if not isinstance(values, list):
+        raise RuntimeError(f"local task shard state is invalid: {path}")
+    trials = tuple(TrialMetrics(**value) for value in values if isinstance(value, dict))
+    if len(trials) != len(values):
+        raise RuntimeError(f"local task shard state is invalid: {path}")
+    return trials
+
+
+def _run_local_task_shard(
+    config: ComparisonConfig,
+    shard: TaskShard,
+    run_stamp: str,
+    gui_environment: Mapping[str, str],
+) -> tuple[TrialMetrics, ...]:
+    trials: list[TrialMetrics] = []
+    with _process_environment(gui_environment):
+        for release in shard.releases:
+            trials.append(_run_trial(config, release, shard.task, run_stamp, gui_environment))
+            _write_json(
+                _local_shard_state_path(config, shard),
+                {"trials": [asdict(trial) for trial in trials]},
+            )
+    return tuple(trials)
+
+
+def _capture_local_task_shard(
+    config: ComparisonConfig,
+    shard: TaskShard,
+    run_stamp: str,
+    gui_environment: Mapping[str, str],
+) -> TaskShardResult[tuple[TrialMetrics, ...]]:
+    try:
+        output = _run_local_task_shard(config, shard, run_stamp, gui_environment)
+        _validate_local_shard_output(shard, output, allow_partial=False)
+    except Exception as error:  # noqa: BLE001 - preserve other completed shards
+        wrapped = RuntimeError(f"{type(error).__name__}: {error}")
+        try:
+            partial_output = _load_local_shard_state(config, shard)
+            _validate_local_shard_output(shard, partial_output, allow_partial=True)
+        except Exception as state_error:  # noqa: BLE001 - report corrupt shard state
+            wrapped = RuntimeError(f"{wrapped}; shard state recovery failed: {state_error}")
+            partial_output = ()
+        return TaskShardResult(shard=shard, output=partial_output or None, error=wrapped)
+    return TaskShardResult(shard=shard, output=output)
+
+
+def schedule_local_task_shards(
+    config: ComparisonConfig,
+    shards: Sequence[TaskShard],
+    run_stamp: str,
+    gui_environments: Sequence[Mapping[str, str]],
+) -> tuple[TaskShardResult[tuple[TrialMetrics, ...]], ...]:
+    if config.max_parallel_tasks == 1 or len(shards) <= 1:
+        return schedule_task_shards(
+            shards,
+            lambda shard: _run_local_task_shard(config, shard, run_stamp, gui_environments[0]),
+            max_parallel_tasks=1,
+        )
+
+    executor_count = min(config.max_parallel_tasks, len(shards))
+    if len(gui_environments) < executor_count:
+        raise ValueError("local execution does not have enough isolated GUI environments")
+    process_context = multiprocessing.get_context("spawn")
+    executors = [
+        ProcessPoolExecutor(max_workers=1, mp_context=process_context)
+        for _ in range(executor_count)
+    ]
+    results: list[TaskShardResult[tuple[TrialMetrics, ...]] | None] = [None] * len(shards)
+    pending = iter(enumerate(shards))
+    active: dict[Any, tuple[int, int, TaskShard]] = {}
+
+    def submit_next(executor_index: int) -> bool:
+        try:
+            shard_index, shard = next(pending)
+        except StopIteration:
+            return False
+        future = executors[executor_index].submit(
+            _capture_local_task_shard,
+            config,
+            shard,
+            run_stamp,
+            gui_environments[executor_index],
+        )
+        active[future] = (shard_index, executor_index, shard)
+        return True
+
+    try:
+        for executor_index in range(executor_count):
+            submit_next(executor_index)
+        while active:
+            completed, _ = wait(active, return_when=FIRST_COMPLETED)
+            for future in completed:
+                shard_index, executor_index, shard = active.pop(future)
+                try:
+                    result = future.result()
+                except Exception as error:  # noqa: BLE001 - preserve other completed shards
+                    try:
+                        partial_output = _load_local_shard_state(config, shard)
+                        _validate_local_shard_output(shard, partial_output, allow_partial=True)
+                    except Exception as state_error:  # noqa: BLE001 - report corrupt shard state
+                        error = RuntimeError(f"{error}; shard state recovery failed: {state_error}")
+                        partial_output = ()
+                    result = TaskShardResult(
+                        shard=shard,
+                        output=partial_output or None,
+                        error=error,
+                    )
+                results[shard_index] = result
+                submit_next(executor_index)
+        assert all(result is not None for result in results)
+        return tuple(result for result in results if result is not None)
+    finally:
+        for executor in executors:
+            executor.shutdown(wait=True, cancel_futures=False)
+
+
 def run_comparison(config: ComparisonConfig) -> tuple[dict[str, Any], Path, Path]:
     if config.timeout_seconds <= 30:
         raise ValueError("timeout must be greater than 30 seconds")
+    if config.max_parallel_tasks < 1:
+        raise ValueError("max parallel tasks must be at least 1")
     releases = discover_driver_releases(config.drivers_root, config.platform)
     baseline = require_release(releases, config.baseline)
     candidate_name = config.candidate if config.candidate != config.baseline else None
     candidate = require_release(releases, candidate_name) if candidate_name is not None else None
     selected_releases = (baseline,) if candidate is None else (baseline, candidate)
-    manifests = [task_path(config.tasks_root, task) for task in config.tasks]
-    codex_version = preflight(config, selected_releases, manifests)
+    shards = build_task_shards(config.tasks, selected_releases)
+    gui_environments = _local_gui_environments(config)
+    manifests = [task_path(config.tasks_root, shard.task) for shard in shards]
+    codex_version = preflight(config, selected_releases, manifests, gui_environments)
     config.output.mkdir(parents=True, exist_ok=False)
     run_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     trials: list[TrialMetrics] = []
-    for release in selected_releases:
-        for task in config.tasks:
-            trials.append(_run_trial(config, release, task, run_stamp))
+    if config.max_parallel_tasks > 1 and len(shards) > 1:
+        with tempfile.TemporaryDirectory(prefix="cdb-local-instances-") as temporary:
+            root = Path(temporary)
+            isolated_environments = tuple(
+                _isolated_local_environment(environment, root / f"executor-{index + 1}")
+                for index, environment in enumerate(gui_environments)
+            )
+            shard_results = schedule_local_task_shards(
+                config, shards, run_stamp, isolated_environments
+            )
+    else:
+        shard_results = schedule_local_task_shards(config, shards, run_stamp, gui_environments)
+    infrastructure_failures: list[dict[str, str]] = []
+    for shard_result in shard_results:
+        shard_trials = shard_result.output or ()
+        result_error = shard_result.error
+        try:
+            _validate_local_shard_output(
+                shard_result.shard,
+                shard_trials,
+                allow_partial=result_error is not None,
+            )
+        except Exception as validation_error:  # noqa: BLE001 - preserve other shards
+            result_error = validation_error
+            shard_trials = ()
+        trials.extend(shard_trials)
+        completed_versions = {trial.version for trial in shard_trials}
+        failure_details = [
+            f"{trial.version}: {trial.error or trial.termination}"
+            for trial in shard_trials
+            if trial.termination == "orchestration_error"
+        ]
+        if result_error is not None:
+            failure_details.append(f"{type(result_error).__name__}: {result_error}")
+        if failure_details:
+            infrastructure_failures.append(
+                {"task": shard_result.shard.task, "error": "; ".join(failure_details)}
+            )
+        for release in shard_result.shard.releases:
+            if release.version in completed_versions:
+                continue
+            missing_error = result_error or RuntimeError("task shard returned incomplete output")
+            trials.append(
+                failed_trial_metrics(
+                    shard_result.shard.task,
+                    release.version,
+                    _trial_id(shard_result.shard.task, release.version, run_stamp),
+                    missing_error,
+                )
+            )
     comparisons = build_comparisons(trials, config.baseline, candidate_name)
     report = {
         "schema_version": "1",
@@ -3129,6 +3823,12 @@ def run_comparison(config: ComparisonConfig) -> tuple[dict[str, Any], Path, Path
         "platform": config.platform,
         "baseline": config.baseline,
         "candidate": candidate_name,
+        "execution": {
+            "backend": "local",
+            "max_parallel_tasks": config.max_parallel_tasks,
+            "complete": not infrastructure_failures,
+            "infrastructure_failures": infrastructure_failures,
+        },
         "drivers": {
             "baseline": {
                 "version": baseline.version,
@@ -3152,6 +3852,11 @@ def run_comparison(config: ComparisonConfig) -> tuple[dict[str, Any], Path, Path
             "version": codex_version,
             "model": config.model,
             "reasoning_effort": config.reasoning_effort,
+        },
+        "papercuts": {
+            "enabled": True,
+            "marker": "<PAPERCUTS>...</PAPERCUTS>",
+            "affects_signal": False,
         },
         "foreground_disturbance": {
             "measurement": FOREGROUND_DISTURBANCE_MEASUREMENT,
@@ -3186,6 +3891,11 @@ def run_comparison(config: ComparisonConfig) -> tuple[dict[str, Any], Path, Path
     }
     json_path = config.output / "comparison.json"
     markdown_path = config.output / "comparison.md"
+    write_html_bundle(report, config.output)
     _write_json(json_path, report)
-    markdown_path.write_text(render_markdown(report), encoding="utf-8", newline="\n")
+    markdown = render_markdown(report)
+    markdown_path.write_text(markdown, encoding="utf-8", newline="\n")
+    (config.output / "report" / "comparison.md").write_text(
+        markdown, encoding="utf-8", newline="\n"
+    )
     return report, json_path, markdown_path

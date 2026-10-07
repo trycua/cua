@@ -15,6 +15,14 @@ authorized task root when running the benchmark; see [`tasks/README.md`](tasks/R
 Start with the [documentation index](docs/index.md) or the
 [benchmark definition](definition.md).
 
+## Diagnostic execution
+
+Use [Automated Driver Evaluation](automated-eval/README.md) for local and Fleet
+diagnostic runs.
+
+Use [Fleet execution boundary](docs/fleet-boundary.md) for backend boundaries
+and Fleet replacement notes.
+
 ## Import status
 
 This is a sanitized snapshot import from Cua Driver Bench. The source revision,

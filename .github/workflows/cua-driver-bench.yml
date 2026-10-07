@@ -1,0 +1,479 @@
+name: Cua Driver Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_ref:
+        description: "Baseline git ref"
+        required: true
+        default: "main"
+      candidate_ref:
+        description: "Candidate git ref"
+        required: true
+      tasks:
+        description: "Comma-separated benchmark tasks"
+        required: true
+        default: "CDB-S01,CDB-S03"
+      max_parallel_tasks:
+        description: "Maximum task shards to run at the same time"
+        required: true
+        default: "2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cua-driver-bench-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: Fleet Linux/X11 benchmark
+    runs-on: ubuntu-latest
+    env:
+      BENCH_BASELINE_REF: ${{ inputs.baseline_ref }}
+      BENCH_CANDIDATE_REF: ${{ inputs.candidate_ref }}
+      BENCH_TASKS: ${{ inputs.tasks }}
+      BENCH_MAX_PARALLEL_TASKS: ${{ inputs.max_parallel_tasks }}
+    steps:
+      - name: Check out benchmark repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Install benchmark tools
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check \
+            -e 'libs/cua-bench-runtime[fleet]'
+          npm install --global --no-audit --no-fund @openai/codex
+          codex --version
+          aws --version
+
+      - name: Install Cua Driver build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            libx11-dev \
+            libxi-dev \
+            libxtst-dev \
+            libxext-dev \
+            libwayland-dev \
+            libxkbcommon-dev
+          rustup toolchain install stable --profile minimal --target x86_64-unknown-linux-gnu
+
+      - name: Resolve refs
+        id: refs
+        env:
+          BASELINE_REF: ${{ env.BENCH_BASELINE_REF }}
+          CANDIDATE_REF: ${{ env.BENCH_CANDIDATE_REF }}
+        run: |
+          set -euo pipefail
+          source_repo="$RUNNER_TEMP/cua-driver-source.git"
+          baseline_dir="$RUNNER_TEMP/cua-driver-builds/baseline"
+          candidate_dir="$RUNNER_TEMP/cua-driver-builds/candidate"
+
+          git init --bare "$source_repo"
+          git -C "$source_repo" remote add origin https://github.com/trycua/cua.git
+          mkdir -p "$(dirname "$baseline_dir")"
+
+          git -C "$source_repo" fetch --depth=1 origin "$BASELINE_REF"
+          baseline_sha="$(git -C "$source_repo" rev-parse 'FETCH_HEAD^{commit}')"
+          git -C "$source_repo" worktree add --detach "$baseline_dir" "$baseline_sha"
+
+          git -C "$source_repo" fetch --depth=1 origin "$CANDIDATE_REF"
+          candidate_sha="$(git -C "$source_repo" rev-parse 'FETCH_HEAD^{commit}')"
+          git -C "$source_repo" worktree add --detach "$candidate_dir" "$candidate_sha"
+
+          echo "baseline_sha=$baseline_sha" >> "$GITHUB_OUTPUT"
+          echo "candidate_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+          echo "baseline_dir=$baseline_dir" >> "$GITHUB_OUTPUT"
+          echo "candidate_dir=$candidate_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Build baseline
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cua-driver-builds/baseline-target
+          DRIVER_SOURCE: ${{ steps.refs.outputs.baseline_dir }}
+          DRIVER_REF: ${{ env.BENCH_BASELINE_REF }}
+          DRIVER_SHA: ${{ steps.refs.outputs.baseline_sha }}
+          RELEASE_DIR: ${{ github.workspace }}/benchmarks/cua-driver-bench/cua-drivers/0.0.1
+          RELEASE_VERSION: 0.0.1
+          COMPARISON_ROLE: baseline
+        run: |
+          set -euo pipefail
+          cargo +stable build \
+            --locked \
+            -p cua-driver \
+            -p cursor-theme-cli \
+            -p cua-driver-sdk \
+            --release \
+            --features cua-driver/portal-input \
+            --target x86_64-unknown-linux-gnu \
+            --manifest-path "$DRIVER_SOURCE/libs/cua-driver/rust/Cargo.toml"
+
+          mkdir -p "$RELEASE_DIR/binary"
+          cp "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/release/cua-driver" \
+            "$RELEASE_DIR/binary/cua-driver"
+          chmod 0755 "$RELEASE_DIR/binary/cua-driver"
+          if [[ -d "$DRIVER_SOURCE/libs/cua-driver/rust/Skills/cua-driver" ]]; then
+            mkdir -p "$RELEASE_DIR/skills/cua-driver"
+            cp -R "$DRIVER_SOURCE/libs/cua-driver/rust/Skills/cua-driver/." \
+              "$RELEASE_DIR/skills/cua-driver/"
+          fi
+
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import tomllib
+          from pathlib import Path
+
+          source = Path(os.environ["DRIVER_SOURCE"])
+          release = Path(os.environ["RELEASE_DIR"])
+          with (source / "libs/cua-driver/rust/Cargo.toml").open("rb") as stream:
+              binary_version = tomllib.load(stream)["workspace"]["package"]["version"]
+          binary = release / "binary/cua-driver"
+          manifest = {
+              "schemaVersion": 1,
+              "product": "cua-driver-rs",
+              "version": os.environ["RELEASE_VERSION"],
+              "binaryVersion": binary_version,
+              "sha": os.environ["DRIVER_SHA"],
+              "source": os.environ["DRIVER_REF"],
+              "comparisonRole": os.environ["COMPARISON_ROLE"],
+              "binarySha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+              "diagnosticBuild": True,
+          }
+          (release / "release-manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+          "$RELEASE_DIR/binary/cua-driver" --version
+
+      - name: Build candidate
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cua-driver-builds/candidate-target
+          DRIVER_SOURCE: ${{ steps.refs.outputs.candidate_dir }}
+          DRIVER_REF: ${{ env.BENCH_CANDIDATE_REF }}
+          DRIVER_SHA: ${{ steps.refs.outputs.candidate_sha }}
+          RELEASE_DIR: ${{ github.workspace }}/benchmarks/cua-driver-bench/cua-drivers/0.0.2
+          RELEASE_VERSION: 0.0.2
+          COMPARISON_ROLE: candidate
+        run: |
+          set -euo pipefail
+          cargo +stable build \
+            --locked \
+            -p cua-driver \
+            -p cursor-theme-cli \
+            -p cua-driver-sdk \
+            --release \
+            --features cua-driver/portal-input \
+            --target x86_64-unknown-linux-gnu \
+            --manifest-path "$DRIVER_SOURCE/libs/cua-driver/rust/Cargo.toml"
+
+          mkdir -p "$RELEASE_DIR/binary"
+          cp "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/release/cua-driver" \
+            "$RELEASE_DIR/binary/cua-driver"
+          chmod 0755 "$RELEASE_DIR/binary/cua-driver"
+          if [[ -d "$DRIVER_SOURCE/libs/cua-driver/rust/Skills/cua-driver" ]]; then
+            mkdir -p "$RELEASE_DIR/skills/cua-driver"
+            cp -R "$DRIVER_SOURCE/libs/cua-driver/rust/Skills/cua-driver/." \
+              "$RELEASE_DIR/skills/cua-driver/"
+          fi
+
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import tomllib
+          from pathlib import Path
+
+          source = Path(os.environ["DRIVER_SOURCE"])
+          release = Path(os.environ["RELEASE_DIR"])
+          with (source / "libs/cua-driver/rust/Cargo.toml").open("rb") as stream:
+              binary_version = tomllib.load(stream)["workspace"]["package"]["version"]
+          binary = release / "binary/cua-driver"
+          manifest = {
+              "schemaVersion": 1,
+              "product": "cua-driver-rs",
+              "version": os.environ["RELEASE_VERSION"],
+              "binaryVersion": binary_version,
+              "sha": os.environ["DRIVER_SHA"],
+              "source": os.environ["DRIVER_REF"],
+              "comparisonRole": os.environ["COMPARISON_ROLE"],
+              "binarySha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+              "diagnosticBuild": True,
+          }
+          (release / "release-manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+          "$RELEASE_DIR/binary/cua-driver" --version
+
+      - name: Retrieve authorized task pack
+        id: task_pack
+        env:
+          GH_TOKEN: ${{ secrets.CDB_TASK_PACK_GH_TOKEN }}
+          TASK_PACK_REPOSITORY: ${{ vars.CDB_TASK_PACK_REPOSITORY }}
+          TASK_PACK_REF: ${{ vars.CDB_TASK_PACK_REF }}
+          REQUESTED_TASKS: ${{ env.BENCH_TASKS }}
+        run: |
+          set -euo pipefail
+          source_dir="$RUNNER_TEMP/cua-driver-bench-task-pack-source"
+          tasks_root="$source_dir/tasks"
+
+          test -n "$GH_TOKEN"
+          test -n "$TASK_PACK_REPOSITORY"
+          test -n "$TASK_PACK_REF"
+          test ! -e "$source_dir"
+
+          gh auth setup-git
+          gh repo clone "$TASK_PACK_REPOSITORY" "$source_dir" -- \
+            --filter=blob:none \
+            --no-checkout
+          git -C "$source_dir" fetch --depth=1 origin "$TASK_PACK_REF"
+          git -C "$source_dir" sparse-checkout init --no-cone
+
+          IFS=',' read -r -a requested_tasks <<< "$REQUESTED_TASKS"
+          sparse_paths=()
+          for task in "${requested_tasks[@]}"; do
+            task="${task//[[:space:]]/}"
+            case "$task" in
+              CDB-S01|CDB-S02|CDB-S03|CDB-S04)
+                sparse_paths+=("/tasks/shared/${task,,}/")
+                ;;
+              *)
+                echo "Unsupported task: $task" >&2
+                exit 1
+                ;;
+            esac
+          done
+          test "${#sparse_paths[@]}" -gt 0
+          printf '%s\n' "${sparse_paths[@]}" | \
+            git -C "$source_dir" sparse-checkout set --no-cone --stdin
+          git -C "$source_dir" checkout --detach FETCH_HEAD
+
+          for task in "${requested_tasks[@]}"; do
+            task="${task//[[:space:]]/}"
+            test -f "$tasks_root/shared/${task,,}/task.cuabench.json"
+          done
+          echo "tasks_root=$tasks_root" >> "$GITHUB_OUTPUT"
+
+      - name: Run Fleet benchmark
+        id: benchmark
+        working-directory: benchmarks/cua-driver-bench
+        env:
+          CUA_CLIENT_ID: ${{ secrets.CUA_CLIENT_ID }}
+          CUA_CLIENT_SECRET: ${{ secrets.CUA_CLIENT_SECRET }}
+          CUA_TOKEN_URL: https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token
+          CUA_FLEET_BASE_URL: https://run.cua.ai
+          CUA_POOL_NAME: ${{ vars.CUA_POOL_NAME }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+          OPENAI_FLEET_BASE_URL: ${{ vars.OPENAI_FLEET_BASE_URL }}
+          REQUESTED_TASKS: ${{ env.BENCH_TASKS }}
+          MAX_PARALLEL_TASKS: ${{ env.BENCH_MAX_PARALLEL_TASKS }}
+          TASKS_ROOT: ${{ steps.task_pack.outputs.tasks_root }}
+        run: |
+          set -euo pipefail
+          run_dir="$RUNNER_TEMP/cua-driver-bench-results"
+          test ! -e "$run_dir"
+          echo "run_dir=$run_dir" >> "$GITHUB_OUTPUT"
+
+          IFS=',' read -r -a requested_tasks <<< "$REQUESTED_TASKS"
+          task_arguments=()
+          for task in "${requested_tasks[@]}"; do
+            task="${task//[[:space:]]/}"
+            test -n "$task"
+            task_arguments+=(--task "$task")
+          done
+
+          python automated-eval/cli.py fleet \
+            --model small \
+            --reasoning-effort high \
+            --tasks-root "$TASKS_ROOT" \
+            --drivers-root cua-drivers \
+            --baseline 0.0.1 \
+            --candidate 0.0.2 \
+            --output "$run_dir" \
+            --max-parallel-tasks "$MAX_PARALLEL_TASKS" \
+            "${task_arguments[@]}"
+
+      - name: Remove authorized task pack
+        if: ${{ always() }}
+        run: |
+          rm -rf \
+            "$RUNNER_TEMP/cua-driver-bench-task-pack-source" \
+            "$RUNNER_TEMP/cua-driver-bench-task-pack.tar.gz"
+
+      - name: Remove private trial inputs
+        id: private_scrub
+        if: ${{ always() && steps.benchmark.outputs.run_dir != '' }}
+        env:
+          RUN_DIR: ${{ steps.benchmark.outputs.run_dir }}
+        run: |
+          set -euo pipefail
+          if [[ ! -d "$RUN_DIR" ]]; then
+            exit 0
+          fi
+          find "$RUN_DIR" \
+            -type d \
+            -path '*/trials/*/inputs' \
+            -prune \
+            -exec rm -rf -- {} +
+          find "$RUN_DIR" \
+            -type f \
+            -path '*/trials/*/inputs.manifest.json' \
+            -delete
+          if find "$RUN_DIR" \
+            \( -type d -path '*/trials/*/inputs' \
+            -o -type f -path '*/trials/*/inputs.manifest.json' \) \
+            -print -quit | grep -q .; then
+            echo "Private trial inputs remain in the result bundle." >&2
+            exit 1
+          fi
+
+      - name: Collect artifacts
+        id: collect
+        if: ${{ always() && steps.benchmark.outputs.run_dir != '' && steps.private_scrub.outcome == 'success' }}
+        env:
+          RUN_DIR: ${{ steps.benchmark.outputs.run_dir }}
+        run: |
+          set -euo pipefail
+          test -d "$RUN_DIR"
+          if [[ -f "$RUN_DIR/comparison.md" \
+            && -f "$RUN_DIR/comparison.json" \
+            && -f "$RUN_DIR/report/index.html" \
+            && -d "$RUN_DIR/trials" ]]; then
+            echo "bundle=report" >> "$GITHUB_OUTPUT"
+            complete="$(python - "$RUN_DIR/comparison.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              report = json.load(stream)
+          print("true" if report.get("execution", {}).get("complete") is True else "false")
+          PY
+            )"
+            echo "complete=$complete" >> "$GITHUB_OUTPUT"
+          elif [[ -f "$RUN_DIR/fleet-failures.json" ]]; then
+            echo "bundle=failure" >> "$GITHUB_OUTPUT"
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Benchmark output is incomplete." >&2
+            exit 1
+          fi
+
+      - name: Publish to S3
+        id: publish
+        if: ${{ always() && steps.collect.outcome == 'success' && steps.collect.outputs.bundle == 'report' }}
+        working-directory: benchmarks/cua-driver-bench
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+          AWS_S3_BUCKET: cua-agent-artifacts
+          AWS_S3_REPORT_PREFIX: cua-driver-bench
+          RUN_DIR: ${{ steps.benchmark.outputs.run_dir }}
+        run: |
+          set -euo pipefail
+          publish_log="$RUNNER_TEMP/cua-driver-bench-publish.log"
+
+          set +e
+          python automated-eval/cli.py publish --run-dir "$RUN_DIR" 2>&1 | tee "$publish_log"
+          publish_status="${PIPESTATUS[0]}"
+          set -e
+
+          s3_uri="$(sed -n 's/^\[s3\] uploading report to //p' "$publish_log" | tail -n 1)"
+          if [[ "$publish_status" -eq 0 ]]; then
+            report_url="$(sed -n 's/^REPORT_URL=//p' "$publish_log" | tail -n 1)"
+            test -n "$s3_uri"
+            test -n "$report_url"
+            echo "s3_uri=$s3_uri" >> "$GITHUB_OUTPUT"
+            echo "report_url=$report_url" >> "$GITHUB_OUTPUT"
+            echo "public_access=available" >> "$GITHUB_OUTPUT"
+          elif grep -Fq "Report uploaded successfully to:" "$publish_log" \
+            && grep -Fq "HTTP object is not publicly readable" "$publish_log"; then
+            test -n "$s3_uri"
+            echo "s3_uri=$s3_uri" >> "$GITHUB_OUTPUT"
+            echo "public_access=unavailable" >> "$GITHUB_OUTPUT"
+            echo "Report upload succeeded, but public HTTP access returned 403."
+          else
+            exit "$publish_status"
+          fi
+
+      - name: Upload Actions artifact
+        id: artifact
+        if: ${{ always() && steps.collect.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cua-driver-bench-${{ github.run_id }}
+          path: ${{ steps.benchmark.outputs.run_dir }}
+          if-no-files-found: error
+
+      - name: Write summary
+        if: ${{ always() }}
+        env:
+          BASELINE_REF: ${{ env.BENCH_BASELINE_REF }}
+          BASELINE_SHA: ${{ steps.refs.outputs.baseline_sha }}
+          CANDIDATE_REF: ${{ env.BENCH_CANDIDATE_REF }}
+          CANDIDATE_SHA: ${{ steps.refs.outputs.candidate_sha }}
+          REQUESTED_TASKS: ${{ env.BENCH_TASKS }}
+          MAX_PARALLEL_TASKS: ${{ env.BENCH_MAX_PARALLEL_TASKS }}
+          BENCHMARK_OUTCOME: ${{ steps.benchmark.outcome }}
+          BUNDLE_COMPLETE: ${{ steps.collect.outputs.complete }}
+          PRIVATE_SCRUB_OUTCOME: ${{ steps.private_scrub.outcome }}
+          S3_URI: ${{ steps.publish.outputs.s3_uri }}
+          REPORT_URL: ${{ steps.publish.outputs.report_url }}
+          PUBLIC_ACCESS: ${{ steps.publish.outputs.public_access }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
+          ARTIFACT_OUTCOME: ${{ steps.artifact.outcome }}
+        run: |
+          set -euo pipefail
+          {
+            echo "# Cua Driver Benchmark"
+            echo
+            printf 'Baseline ref: `%s`\n' "$BASELINE_REF"
+            printf 'Baseline SHA: `%s`\n' "${BASELINE_SHA:-unresolved}"
+            echo
+            printf 'Candidate ref: `%s`\n' "$CANDIDATE_REF"
+            printf 'Candidate SHA: `%s`\n' "${CANDIDATE_SHA:-unresolved}"
+            echo
+            echo "Platform: Linux/X11"
+            printf 'Tasks: `%s`\n' "$REQUESTED_TASKS"
+            printf 'Maximum parallel task shards: `%s`\n' "$MAX_PARALLEL_TASKS"
+            printf 'Benchmark: `%s`\n' "${BENCHMARK_OUTCOME:-not run}"
+            printf 'Result bundle complete: `%s`\n' "${BUNDLE_COMPLETE:-not available}"
+            printf 'Private input scrub: `%s`\n' "${PRIVATE_SCRUB_OUTCOME:-not run}"
+            echo
+            if [[ -n "$S3_URI" ]]; then
+              printf 'S3: `%s`\n' "$S3_URI"
+            else
+              printf 'S3 publish: `%s`\n' "${PUBLISH_OUTCOME:-not run}"
+            fi
+            if [[ -n "$REPORT_URL" ]]; then
+              echo
+              printf 'Report URL: %s\n' "$REPORT_URL"
+            elif [[ "$PUBLIC_ACCESS" == "unavailable" ]]; then
+              echo
+              echo "Note: report upload succeeded but public HTTP access currently returns 403."
+            fi
+            echo
+            if [[ "$ARTIFACT_OUTCOME" == "success" ]]; then
+              printf 'GitHub artifact: `cua-driver-bench-%s`\n' "$GITHUB_RUN_ID"
+            else
+              printf 'GitHub artifact upload: `%s`\n' "${ARTIFACT_OUTCOME:-not run}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

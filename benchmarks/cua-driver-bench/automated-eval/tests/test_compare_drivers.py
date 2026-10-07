@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 from dataclasses import asdict
 import os
+import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,6 +71,55 @@ def _write_foreground_evidence(trial: Path) -> None:
 
 
 class CompareDriversTests(unittest.TestCase):
+    @staticmethod
+    def _release(version: str) -> compare_drivers.DriverRelease:
+        return compare_drivers.DriverRelease(
+            version=version,
+            root=Path(f"/release/{version}"),
+            binary=Path(f"/release/{version}/cua-driver"),
+            manifest=Path(f"/release/{version}/release-manifest.json"),
+        )
+
+    @staticmethod
+    def _trial(task: str, version: str) -> compare_drivers.TrialMetrics:
+        return compare_drivers.TrialMetrics(
+            task,
+            version,
+            f"{task}-{version}",
+            None,
+            True,
+            1.0,
+            100,
+            2,
+            1,
+            "completed",
+        )
+
+    def test_linux_root_gui_commands_disable_chromium_sandbox(self) -> None:
+        with (
+            patch.object(compare_drivers.sys, "platform", "linux"),
+            patch.object(compare_drivers.os, "geteuid", return_value=0),
+        ):
+            browser = compare_drivers._linux_root_gui_command(
+                ["/usr/bin/chromium", "https://example.test"], "browser"
+            )
+            electron = compare_drivers._linux_root_gui_command(
+                ["/usr/bin/npx", "electron", "."], "electron"
+            )
+
+        self.assertEqual(browser[1], "--no-sandbox")
+        self.assertEqual(electron[2], "--no-sandbox")
+
+    def test_non_root_gui_commands_are_unchanged(self) -> None:
+        command = ["/usr/bin/chromium", "https://example.test"]
+        with (
+            patch.object(compare_drivers.sys, "platform", "linux"),
+            patch.object(compare_drivers.os, "geteuid", return_value=1000),
+        ):
+            resolved = compare_drivers._linux_root_gui_command(command, "browser")
+
+        self.assertEqual(resolved, command)
+
     def test_codex_runtime_root_uses_cache_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             cache_home = Path(temporary) / "cache"
@@ -104,16 +156,129 @@ command = "unrelated"
                 encoding="utf-8",
             )
 
-            lines, environment_key = compare_drivers._codex_provider_config(codex_home)
+            lines, environment_key, uses_environment_gateway = (
+                compare_drivers._codex_provider_config(codex_home)
+            )
             rendered = compare_drivers.tomllib.loads("\n".join(lines))
 
         self.assertEqual(environment_key, "GATEWAY_API_KEY")
+        self.assertFalse(uses_environment_gateway)
         self.assertEqual(rendered["model_provider"], "gateway")
         self.assertEqual(
             rendered["model_providers"]["gateway"]["base_url"],
             "https://gateway.invalid/v1",
         )
         self.assertNotIn("mcp_servers", rendered)
+
+    def test_uses_environment_gateway_when_no_provider_is_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            codex_home = Path(temporary)
+            (codex_home / "config.toml").write_text(
+                'model = "ignored"\n',
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "OPENAI_BASE_URL": "https://gateway.invalid/v1",
+                    "OPENAI_API_KEY": "test-key",
+                },
+            ):
+                lines, environment_key, uses_environment_gateway = (
+                    compare_drivers._codex_provider_config(codex_home)
+                )
+                environment = compare_drivers._codex_provider_environment(codex_home)
+            rendered = compare_drivers.tomllib.loads("\n".join(lines))
+
+        self.assertEqual(environment_key, "OPENAI_API_KEY")
+        self.assertTrue(uses_environment_gateway)
+        self.assertEqual(rendered["model_provider"], "cdb-local")
+        self.assertEqual(
+            rendered["model_providers"]["cdb-local"]["base_url"],
+            "https://gateway.invalid/v1",
+        )
+        self.assertEqual(
+            environment,
+            {
+                "OPENAI_API_KEY": "test-key",
+                "OPENAI_BASE_URL": "https://gateway.invalid/v1",
+            },
+        )
+
+    def test_environment_gateway_requires_both_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            codex_home = Path(temporary)
+            with patch.dict(
+                os.environ,
+                {"OPENAI_BASE_URL": "https://gateway.invalid/v1"},
+                clear=True,
+            ):
+                lines, environment_key, uses_environment_gateway = (
+                    compare_drivers._codex_provider_config(codex_home)
+                )
+
+        self.assertEqual(lines, [])
+        self.assertIsNone(environment_key)
+        self.assertFalse(uses_environment_gateway)
+
+    def test_configured_provider_precedes_environment_gateway(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            codex_home = Path(temporary)
+            (codex_home / "config.toml").write_text(
+                """
+model_provider = "configured"
+
+[model_providers.configured]
+name = "Configured"
+base_url = "https://configured.invalid/v1"
+env_key = "CONFIGURED_API_KEY"
+wire_api = "responses"
+""".strip(),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "OPENAI_BASE_URL": "https://gateway.invalid/v1",
+                    "OPENAI_API_KEY": "test-key",
+                },
+            ):
+                lines, environment_key, uses_environment_gateway = (
+                    compare_drivers._codex_provider_config(codex_home)
+                )
+            rendered = compare_drivers.tomllib.loads("\n".join(lines))
+
+        self.assertEqual(environment_key, "CONFIGURED_API_KEY")
+        self.assertFalse(uses_environment_gateway)
+        self.assertEqual(rendered["model_provider"], "configured")
+        self.assertNotIn("cdb-local", rendered["model_providers"])
+
+    def test_configured_provider_named_cdb_local_is_not_environment_gateway(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            codex_home = Path(temporary)
+            (codex_home / "config.toml").write_text(
+                """
+model_provider = "cdb-local"
+
+[model_providers.cdb-local]
+name = "Configured"
+base_url = "https://configured.invalid/v1"
+env_key = "CONFIGURED_API_KEY"
+wire_api = "responses"
+""".strip(),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "CONFIGURED_API_KEY": "configured-key",
+                    "OPENAI_BASE_URL": "https://gateway.invalid/v1",
+                    "OPENAI_API_KEY": "test-key",
+                },
+            ):
+                environment = compare_drivers._codex_provider_environment(codex_home)
+
+        self.assertEqual(environment, {"CONFIGURED_API_KEY": "configured-key"})
 
     def test_discovers_required_evaluator_node_contract(self) -> None:
         bundle = MODULE_PATH.parents[1] / "tasks" / "shared" / "cdb-s01"
@@ -245,6 +410,26 @@ command = "unrelated"
         self.assertIn("final app inventory unavailable", report.detail)
         self.assertIsNone(observer.client)
 
+    def test_local_adapter_observer_uses_embedded_binary_version(self) -> None:
+        release = compare_drivers.DriverRelease(
+            version="3719.0.1",
+            root=Path("/release/3719.0.1"),
+            binary=Path("/release/3719.0.1/cua-driver"),
+            manifest=Path("/release/3719.0.1/release-manifest.json"),
+            binary_version="0.28.2",
+        )
+        adapters = (
+            SimpleNamespace(),
+            SimpleNamespace(command=Path("agent"), expected_digest="digest"),
+            SimpleNamespace(),
+            SimpleNamespace(),
+        )
+        with patch.object(compare_drivers, "local_adapters", return_value=adapters):
+            with compare_drivers._local_adapter_override(release, "socket", {}, {}):
+                _environment, _agent, observer, _evaluator = compare_drivers.engine.adapters()
+
+        self.assertEqual(observer.expected_version, "0.28.2")
+
     def test_wait_for_codex_stops_after_terminal_event_grace(self) -> None:
         process = SimpleNamespace(pid=123, returncode=None, poll=lambda: None)
         with (
@@ -276,8 +461,13 @@ command = "unrelated"
             with (
                 patch.object(
                     compare_drivers,
-                    "_windows_processes_for_path",
+                    "_linux_process_groups_for_path",
                     return_value=(202,),
+                ),
+                patch.object(
+                    compare_drivers,
+                    "_windows_processes_for_path",
+                    return_value=(303,),
                 ),
                 patch.object(compare_drivers, "_terminate_process_group") as terminate,
             ):
@@ -285,8 +475,24 @@ command = "unrelated"
 
         self.assertEqual(
             [call.args[0] for call in terminate.call_args_list],
-            [101, 202],
+            [101, 202, 303],
         )
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux /proc only")
+    def test_linux_process_group_discovery_tracks_trial_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            trial = Path(temporary)
+            process = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                cwd=trial,
+                start_new_session=True,
+            )
+            try:
+                groups = compare_drivers._linux_process_groups_for_path(trial)
+                self.assertIn(process.pid, groups)
+            finally:
+                process.terminate()
+                process.wait(timeout=5)
 
     def test_discovers_semver_releases_and_matching_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -578,21 +784,28 @@ command = "unrelated"
             artifacts.mkdir()
 
             def call(
-                tool: str, status: str = "completed", server: str = "cua"
+                tool: str,
+                status: str = "completed",
+                server: str = "cua",
+                effect: str | None = None,
             ) -> dict[str, object]:
+                item: dict[str, object] = {
+                    "type": "mcp_tool_call",
+                    "server": server,
+                    "tool": tool,
+                    "status": status,
+                }
+                if effect is not None:
+                    item["result"] = {"structured_content": {"effect": effect}}
                 return {
                     "type": "item.completed",
-                    "item": {
-                        "type": "mcp_tool_call",
-                        "server": server,
-                        "tool": tool,
-                        "status": status,
-                    },
+                    "item": item,
                 }
 
             events = [
                 call("get_window_state"),
                 call("click"),
+                call("browser_click", effect="refused"),
                 call("browser_click"),
                 call("scroll", status="failed"),
                 call("click", server="other"),
@@ -602,7 +815,23 @@ command = "unrelated"
                 encoding="utf-8",
             )
 
-            self.assertEqual(compare_drivers._codex_cua_metrics(trial), (4, 2))
+            recording = trial / "observer" / "cua-driver-recording" / "turn-00001"
+            recording.mkdir(parents=True)
+            (recording / "action.json").write_text(
+                json.dumps({"tool": "click", "result_error": False}),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(compare_drivers._codex_cua_metrics(trial), (5, 2))
+            self.assertEqual(
+                compare_drivers._recording_metrics(trial, 2),
+                {
+                    "recorded_cua_calls": 1,
+                    "recorded_input_actions": 1,
+                    "recording_input_actions_complete": False,
+                    "recording_detail": "recorded 1 of 2 successful input actions",
+                },
+            )
 
     def test_extracts_metrics_from_raw_trial(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -655,6 +884,17 @@ command = "unrelated"
                         "status": "completed",
                         "elapsed_ms": 1234,
                         "evaluation": {"passed": True, "score": 0.75},
+                        "participation": {
+                            "required": True,
+                            "status": "failed",
+                            "passed": False,
+                            "requirements": [
+                                {
+                                    "status": "unsatisfied",
+                                    "reason": "application identity unavailable",
+                                }
+                            ],
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -679,6 +919,13 @@ command = "unrelated"
             self.assertEqual(metrics.score, 0.75)
             self.assertEqual(metrics.cua_calls, 3)
             self.assertEqual(metrics.input_actions, 1)
+            self.assertTrue(metrics.participation_required)
+            self.assertEqual(metrics.participation_status, "failed")
+            self.assertFalse(metrics.participation_passed)
+            self.assertEqual(metrics.participation_detail, "application identity unavailable")
+            self.assertEqual(metrics.recorded_cua_calls, 3)
+            self.assertEqual(metrics.recorded_input_actions, 1)
+            self.assertTrue(metrics.recording_input_actions_complete)
             self.assertEqual(metrics.codex_tokens["input_tokens"], 12)
             self.assertEqual(metrics.codex_tokens["cache_read_tokens"], 7)
             self.assertEqual(metrics.codex_tokens["output_tokens"], 5)
@@ -918,10 +1165,10 @@ command = "unrelated"
         self.assertIn("Focus-drop Δ | Drag Δ | Cursor Δ | Disturbance Δ", markdown)
         self.assertIn("## Foreground Disturbance Availability", markdown)
         self.assertIn(
-            "| CDB-S01 | 0.22.2 | no | 0.5 | 100 | 10 | 4 | 1 | 1 | 1 | 3 | 100 | 60 | 20 | completed |",
+            "| CDB-S01 | 0.22.2 | view | no | — | 0.5 | 100 | 10 | 4 | — | 1 | 1 | 1 | 3 | 100 | 60 | 20 | completed | — |",
             markdown,
         )
-        self.assertIn("| 1 | 1 | 1 | 3 | -10 | 10 | -2 | improved |", markdown)
+        self.assertIn("| -10 | 10 | -2 | — | improved |", markdown)
 
     def test_foreground_disturbances_do_not_affect_comparison_signal(self) -> None:
         baseline = compare_drivers.TrialMetrics(
@@ -970,6 +1217,43 @@ command = "unrelated"
         self.assertEqual(comparison["delta"]["foreground_disturbances"], 100)
         self.assertEqual(comparison["signal"], "unchanged")
 
+    def test_required_participation_failure_makes_signal_incomplete(self) -> None:
+        baseline = compare_drivers.TrialMetrics(
+            "CDB-S01",
+            "0.22.2",
+            "a",
+            None,
+            True,
+            1.0,
+            100,
+            10,
+            4,
+            "completed",
+            participation_required=True,
+            participation_status="failed",
+            participation_passed=False,
+        )
+        candidate = compare_drivers.TrialMetrics(
+            "CDB-S01",
+            "0.23.2",
+            "b",
+            None,
+            True,
+            1.0,
+            100,
+            10,
+            4,
+            "completed",
+            participation_required=True,
+            participation_status="passed",
+            participation_passed=True,
+        )
+
+        self.assertEqual(
+            compare_drivers.compare_pair(baseline, candidate)["signal"],
+            "incomplete",
+        )
+
     def test_normalizes_single_and_comparison_release_selection(self) -> None:
         self.assertEqual(
             compare_drivers.normalize_release_selection(None, None),
@@ -995,6 +1279,520 @@ command = "unrelated"
             ("0.23.2", None),
         )
 
+    def test_task_shards_run_in_parallel_and_aggregate_canonically(self) -> None:
+        baseline = self._release("0.22.2")
+        candidate = self._release("0.23.2")
+        shards = compare_drivers.build_task_shards(("CDB-S02", "CDB-S01"), (baseline, candidate))
+        barrier = threading.Barrier(2)
+        release_first = threading.Event()
+
+        def run_shard(shard: compare_drivers.TaskShard):
+            barrier.wait(timeout=2)
+            if shard.task == "CDB-S01":
+                release_first.wait(timeout=2)
+            else:
+                release_first.set()
+            return tuple(self._trial(shard.task, release.version) for release in shard.releases)
+
+        results = compare_drivers.schedule_task_shards(shards, run_shard)
+
+        self.assertEqual([result.shard.task for result in results], ["CDB-S01", "CDB-S02"])
+        self.assertEqual(
+            [[trial.version for trial in result.output or ()] for result in results],
+            [["0.22.2", "0.23.2"], ["0.22.2", "0.23.2"]],
+        )
+
+    def test_task_shard_serial_mode_and_failures_preserve_other_results(self) -> None:
+        release = self._release("0.23.2")
+        shards = compare_drivers.build_task_shards(("CDB-S01", "CDB-S02", "CDB-S03"), (release,))
+        calls: list[str] = []
+
+        def run_shard(shard: compare_drivers.TaskShard):
+            calls.append(shard.task)
+            if shard.task == "CDB-S02":
+                raise RuntimeError("worker unavailable")
+            return (self._trial(shard.task, release.version),)
+
+        results = compare_drivers.schedule_task_shards(shards, run_shard, max_parallel_tasks=1)
+
+        self.assertEqual(calls, ["CDB-S01", "CDB-S02", "CDB-S03"])
+        self.assertEqual([result.shard.task for result in results], calls)
+        self.assertEqual(len(results[0].output or ()), 1)
+        self.assertIsInstance(results[1].error, RuntimeError)
+        self.assertEqual(len(results[2].output or ()), 1)
+
+    def test_async_task_shards_limit_concurrency_and_keep_order(self) -> None:
+        release = self._release("0.23.2")
+        shards = compare_drivers.build_task_shards(("CDB-S03", "CDB-S01", "CDB-S02"), (release,))
+        active = 0
+        peak = 0
+        lock = asyncio.Lock()
+
+        async def run_shard(shard: compare_drivers.TaskShard):
+            nonlocal active, peak
+            async with lock:
+                active += 1
+                peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            async with lock:
+                active -= 1
+            if shard.task == "CDB-S02":
+                raise RuntimeError("worker unavailable")
+            return shard.task
+
+        results = asyncio.run(
+            compare_drivers.schedule_task_shards_async(shards, run_shard, max_parallel_tasks=2)
+        )
+
+        self.assertEqual(peak, 2)
+        self.assertEqual(
+            [result.shard.task for result in results],
+            ["CDB-S01", "CDB-S02", "CDB-S03"],
+        )
+        self.assertEqual(results[0].output, "CDB-S01")
+        self.assertIsInstance(results[1].error, RuntimeError)
+        self.assertEqual(results[2].output, "CDB-S03")
+
+    def test_local_parallel_displays_are_unique_and_preserve_gui_environment(self) -> None:
+        config = SimpleNamespace(
+            platform="linux",
+            local_displays=(":91", ":92"),
+            max_parallel_tasks=2,
+            tasks=("CDB-S01", "CDB-S03"),
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "DISPLAY": ":0",
+                "WAYLAND_DISPLAY": "wayland-0",
+                "XAUTHORITY": "/tmp/test-xauthority",
+                "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/test-dbus",
+                "XDG_RUNTIME_DIR": "/run/user/1000",
+            },
+            clear=True,
+        ):
+            environments = compare_drivers._local_gui_environments(config)
+
+        self.assertEqual([item["DISPLAY"] for item in environments], [":91", ":92"])
+        self.assertEqual(
+            [item["XAUTHORITY"] for item in environments],
+            ["/tmp/test-xauthority", "/tmp/test-xauthority"],
+        )
+        self.assertTrue(all("WAYLAND_DISPLAY" not in item for item in environments))
+        self.assertTrue(all("DBUS_SESSION_BUS_ADDRESS" not in item for item in environments))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            isolated = tuple(
+                compare_drivers._isolated_local_environment(environment, root / str(index))
+                for index, environment in enumerate(environments)
+            )
+
+        self.assertNotEqual(isolated[0]["HOME"], isolated[1]["HOME"])
+        self.assertNotEqual(isolated[0]["XDG_RUNTIME_DIR"], isolated[1]["XDG_RUNTIME_DIR"])
+
+    def test_x11_preflight_uses_assigned_environment_and_closes_source(self) -> None:
+        observed: dict[str, object] = {}
+
+        class Source:
+            def __init__(self, display_name: str) -> None:
+                observed["display"] = display_name
+                observed["home"] = os.environ.get("HOME")
+                observed["wayland"] = os.environ.get("WAYLAND_DISPLAY")
+
+            def close(self) -> None:
+                observed["closed"] = True
+
+        with (
+            patch.dict(
+                os.environ,
+                {"HOME": "/home/parent", "WAYLAND_DISPLAY": "wayland-0"},
+                clear=False,
+            ),
+            patch.object(compare_drivers, "_X11SampleSource", Source),
+        ):
+            compare_drivers._preflight_x11_environment({"DISPLAY": ":91", "HOME": "/tmp/cdb-home"})
+            self.assertEqual(os.environ["HOME"], "/home/parent")
+            self.assertEqual(os.environ["WAYLAND_DISPLAY"], "wayland-0")
+
+        self.assertEqual(observed["display"], ":91")
+        self.assertEqual(observed["home"], "/tmp/cdb-home")
+        self.assertIsNone(observed["wayland"])
+        self.assertTrue(observed["closed"])
+
+    def test_x11_preflight_rejects_inaccessible_display(self) -> None:
+        with (
+            patch.object(
+                compare_drivers,
+                "_X11SampleSource",
+                side_effect=RuntimeError("could not open display"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "could not open display"),
+        ):
+            compare_drivers._preflight_x11_environment({"DISPLAY": ":404"})
+
+    def test_local_parallel_displays_require_one_unique_display_per_active_shard(self) -> None:
+        config = SimpleNamespace(
+            platform="linux",
+            local_displays=(":91",),
+            max_parallel_tasks=2,
+            tasks=("CDB-S01", "CDB-S03"),
+        )
+
+        with self.assertRaisesRegex(ValueError, "one unique --local-display"):
+            compare_drivers._local_gui_environments(config)
+
+        config.local_displays = (":91", ":91")
+        with self.assertRaisesRegex(ValueError, "must be unique"):
+            compare_drivers._local_gui_environments(config)
+
+        config.local_displays = (":91", ":91.0")
+        with self.assertRaisesRegex(ValueError, "must be unique"):
+            compare_drivers._local_gui_environments(config)
+
+    def test_local_parallel_scheduler_uses_one_process_executor_per_display(self) -> None:
+        release = self._release("0.23.2")
+        shards = compare_drivers.build_task_shards(("CDB-S03", "CDB-S01", "CDB-S02"), (release,))
+        environments = ({"DISPLAY": ":91"}, {"DISPLAY": ":92"})
+        calls: list[tuple[str, str]] = []
+        executors = []
+
+        class ImmediateFuture:
+            def __init__(self, value):
+                self.value = value
+
+            def result(self):
+                return self.value
+
+        class ImmediateExecutor:
+            def __init__(self, *, max_workers, mp_context):
+                self.max_workers = max_workers
+                self.start_method = mp_context.get_start_method()
+                self.submitted = []
+                self.shutdown_arguments = None
+                executors.append(self)
+
+            def submit(self, function, *arguments):
+                self.submitted.append(arguments[1].task)
+                return ImmediateFuture(function(*arguments))
+
+            def shutdown(self, *, wait, cancel_futures):
+                self.shutdown_arguments = (wait, cancel_futures)
+
+        def run_shard(_config, shard, _run_stamp, environment):
+            calls.append((shard.task, environment["DISPLAY"]))
+            return (self._trial(shard.task, release.version),)
+
+        wait_calls = 0
+
+        def complete_available_executor(active, *, return_when):
+            nonlocal wait_calls
+            self.assertEqual(return_when, compare_drivers.FIRST_COMPLETED)
+            futures = list(active)
+            selected = futures[1] if wait_calls == 0 else futures[0]
+            wait_calls += 1
+            return {selected}, set(futures) - {selected}
+
+        config = SimpleNamespace(max_parallel_tasks=2)
+        with (
+            patch.object(compare_drivers, "ProcessPoolExecutor", ImmediateExecutor),
+            patch.object(compare_drivers, "wait", side_effect=complete_available_executor),
+            patch.object(compare_drivers, "_run_local_task_shard", side_effect=run_shard),
+        ):
+            results = compare_drivers.schedule_local_task_shards(
+                config, shards, "20261005T000000Z", environments
+            )
+
+        self.assertEqual([executor.max_workers for executor in executors], [1, 1])
+        self.assertEqual([executor.start_method for executor in executors], ["spawn", "spawn"])
+        self.assertEqual(executors[0].submitted, ["CDB-S01"])
+        self.assertEqual(executors[1].submitted, ["CDB-S02", "CDB-S03"])
+        self.assertEqual(
+            calls,
+            [("CDB-S01", ":91"), ("CDB-S02", ":92"), ("CDB-S03", ":92")],
+        )
+        self.assertEqual(
+            [result.shard.task for result in results],
+            ["CDB-S01", "CDB-S02", "CDB-S03"],
+        )
+        self.assertEqual(
+            [executor.shutdown_arguments for executor in executors],
+            [(True, False), (True, False)],
+        )
+
+    def test_local_parallel_scheduler_runs_with_spawned_processes(self) -> None:
+        script = f"""
+from pathlib import Path
+from types import SimpleNamespace
+import json
+import os
+import sys
+import time
+sys.path.insert(0, {str(MODULE_PATH.parent)!r})
+import compare_drivers
+
+
+def run_shard(config, shard, _run_stamp, environment):
+    marker = config.output / f"{{shard.task}}.ready"
+    marker.write_text("ready", encoding="utf-8")
+    deadline = time.monotonic() + 5
+    while len(tuple(config.output.glob("*.ready"))) < 2:
+        if time.monotonic() >= deadline:
+            raise RuntimeError("task shards did not overlap")
+        time.sleep(0.01)
+    (config.output / f"{{shard.task}}.json").write_text(
+        json.dumps(
+            {{
+                "pid": os.getpid(),
+                "display": environment["DISPLAY"],
+                "home": environment["HOME"],
+            }}
+        ),
+        encoding="utf-8",
+    )
+    release = shard.releases[0]
+    return (
+        compare_drivers.TrialMetrics(
+            shard.task,
+            release.version,
+            f"{{shard.task}}-{{release.version}}",
+            None,
+            True,
+            1.0,
+            100,
+            1,
+            1,
+            "completed",
+        ),
+    )
+
+
+compare_drivers._run_local_task_shard = run_shard
+
+if __name__ == "__main__":
+    output = Path(sys.argv[1])
+    config = SimpleNamespace(max_parallel_tasks=2, output=output)
+    release = compare_drivers.DriverRelease(
+        "0.23.2",
+        Path("/release/0.23.2"),
+        Path("/release/0.23.2/cua-driver"),
+        Path("/release/0.23.2/release-manifest.json"),
+    )
+    shards = (
+        compare_drivers.TaskShard("CDB-S01", (release,)),
+        compare_drivers.TaskShard("CDB-S03", (release,)),
+    )
+    environments = (
+        {{"DISPLAY": ":91", "HOME": "/tmp/cdb-91"}},
+        {{"DISPLAY": ":92", "HOME": "/tmp/cdb-92"}},
+    )
+    results = compare_drivers.schedule_local_task_shards(
+        config, shards, "20261006T000000Z", environments
+    )
+    payloads = [
+        json.loads((output / f"{{result.shard.task}}.json").read_text(encoding="utf-8"))
+        for result in results
+    ]
+    if [result.shard.task for result in results] != ["CDB-S01", "CDB-S03"]:
+        raise SystemExit(1)
+    if any(result.error is not None for result in results):
+        raise SystemExit(2)
+    if len({{payload["pid"] for payload in payloads}}) != 2:
+        raise SystemExit(3)
+    if [payload["display"] for payload in payloads] != [":91", ":92"]:
+        raise SystemExit(4)
+    if [payload["home"] for payload in payloads] != ["/tmp/cdb-91", "/tmp/cdb-92"]:
+        raise SystemExit(5)
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "spawn-smoke.py"
+            path.write_text(script, encoding="utf-8")
+            completed = subprocess.run(
+                [sys.executable, str(path), str(root)],
+                cwd=MODULE_PATH.parent,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_markdown_reports_incomplete_shard_execution(self) -> None:
+        markdown = compare_drivers.render_markdown(
+            {
+                "execution": {
+                    "backend": "fleet",
+                    "max_parallel_tasks": 2,
+                    "complete": False,
+                    "infrastructure_failures": [{"task": "CDB-S02", "error": "worker unavailable"}],
+                },
+                "trials": [],
+                "comparisons": [],
+            }
+        )
+
+        self.assertIn("## Execution", markdown)
+        self.assertIn("- Complete: no", markdown)
+        self.assertIn("| CDB-S02 | worker unavailable |", markdown)
+
+    def test_local_task_shard_runs_baseline_then_candidate(self) -> None:
+        baseline = self._release("0.22.2")
+        candidate = self._release("0.23.2")
+        shard = compare_drivers.TaskShard("CDB-S01", (baseline, candidate))
+        calls: list[str] = []
+        observed_environments: list[dict[str, str | None]] = []
+
+        def run_trial(_config, release, task, _run_stamp, _gui_environment):
+            calls.append(release.version)
+            observed_environments.append(
+                {
+                    "display": os.environ.get("DISPLAY"),
+                    "home": os.environ.get("HOME"),
+                    "wayland": os.environ.get("WAYLAND_DISPLAY"),
+                }
+            )
+            return self._trial(task, release.version)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            config = SimpleNamespace(output=Path(temporary))
+            environment = {
+                "DISPLAY": ":91",
+                "HOME": str(Path(temporary) / "home"),
+                "XDG_RUNTIME_DIR": str(Path(temporary) / "runtime"),
+            }
+            with (
+                patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0"}),
+                patch.object(compare_drivers, "_run_trial", side_effect=run_trial),
+            ):
+                trials = compare_drivers._run_local_task_shard(
+                    config, shard, "20261005T000000Z", environment
+                )
+                self.assertEqual(os.environ["WAYLAND_DISPLAY"], "wayland-0")
+
+        self.assertEqual(calls, ["0.22.2", "0.23.2"])
+        self.assertEqual([trial.version for trial in trials], calls)
+        self.assertEqual(
+            observed_environments,
+            [
+                {"display": ":91", "home": environment["HOME"], "wayland": None},
+                {"display": ":91", "home": environment["HOME"], "wayland": None},
+            ],
+        )
+
+    def test_local_task_shard_recovers_completed_baseline_after_candidate_failure(self) -> None:
+        baseline = self._release("0.22.2")
+        candidate = self._release("0.23.2")
+        shard = compare_drivers.TaskShard("CDB-S01", (baseline, candidate))
+        completed = self._trial("CDB-S01", baseline.version)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            config = SimpleNamespace(output=Path(temporary))
+            with patch.object(
+                compare_drivers,
+                "_run_trial",
+                side_effect=[completed, RuntimeError("candidate process exited")],
+            ):
+                result = compare_drivers._capture_local_task_shard(
+                    config,
+                    shard,
+                    "20261006T000000Z",
+                    {"DISPLAY": ":91", "HOME": str(Path(temporary) / "home")},
+                )
+
+        self.assertIsInstance(result.error, RuntimeError)
+        self.assertEqual([trial.version for trial in result.output or ()], [baseline.version])
+
+    def test_local_task_shard_contract_rejects_wrong_or_reversed_trials(self) -> None:
+        baseline = self._release("0.22.2")
+        candidate = self._release("0.23.2")
+        shard = compare_drivers.TaskShard("CDB-S01", (baseline, candidate))
+
+        with self.assertRaisesRegex(RuntimeError, "unexpected trials"):
+            compare_drivers._validate_local_shard_output(
+                shard,
+                (
+                    self._trial("CDB-S01", candidate.version),
+                    self._trial("CDB-S01", baseline.version),
+                ),
+                allow_partial=False,
+            )
+        with self.assertRaisesRegex(RuntimeError, "unexpected trials"):
+            compare_drivers._validate_local_shard_output(
+                shard,
+                (self._trial("CDB-S03", baseline.version),),
+                allow_partial=True,
+            )
+
+    def test_cli_parallel_defaults_keep_local_serial(self) -> None:
+        cli_path = MODULE_PATH.with_name("cli.py")
+        spec = importlib.util.spec_from_file_location("test_compare_drivers_cli", cli_path)
+        assert spec is not None and spec.loader is not None
+        cli = importlib.util.module_from_spec(spec)
+        with (
+            patch.dict(sys.modules, {"compare_drivers": compare_drivers}),
+            patch.object(sys, "path", [str(MODULE_PATH.parent), *sys.path]),
+        ):
+            spec.loader.exec_module(cli)
+
+        required = ["--tasks-root", "/tasks", "--model", "small", "--codex", sys.executable]
+        local_arguments = cli.build_parser().parse_args(required)
+        fleet_arguments = cli.build_parser(fleet=True).parse_args(required)
+        serial_arguments = cli.build_parser(fleet=True).parse_args(
+            [*required, "--max-parallel-tasks", "1"]
+        )
+        parallel_local_arguments = cli.build_parser().parse_args(
+            [
+                *required,
+                "--max-parallel-tasks",
+                "2",
+                "--local-display",
+                ":91",
+                "--local-display",
+                ":92",
+            ]
+        )
+
+        self.assertEqual(local_arguments.max_parallel_tasks, 1)
+        self.assertIsNone(local_arguments.local_displays)
+        self.assertEqual(fleet_arguments.max_parallel_tasks, 2)
+        self.assertEqual(serial_arguments.max_parallel_tasks, 1)
+        self.assertEqual(parallel_local_arguments.max_parallel_tasks, 2)
+        self.assertEqual(parallel_local_arguments.local_displays, [":91", ":92"])
+
+    def test_cli_returns_failure_for_incomplete_execution(self) -> None:
+        cli_path = MODULE_PATH.with_name("cli.py")
+        spec = importlib.util.spec_from_file_location("test_compare_drivers_cli_exit", cli_path)
+        assert spec is not None and spec.loader is not None
+        cli = importlib.util.module_from_spec(spec)
+        with (
+            patch.dict(sys.modules, {"compare_drivers": compare_drivers}),
+            patch.object(sys, "path", [str(MODULE_PATH.parent), *sys.path]),
+        ):
+            spec.loader.exec_module(cli)
+
+        self.assertEqual(
+            cli._result_exit_code(
+                {"execution": {"complete": False}},
+                fleet=True,
+            ),
+            2,
+        )
+        self.assertEqual(
+            cli._result_exit_code(
+                {"execution": {"complete": True}},
+                fleet=True,
+            ),
+            0,
+        )
+        self.assertEqual(
+            cli._result_exit_code(
+                {"execution": {"complete": False}},
+                fleet=False,
+            ),
+            2,
+        )
+
     def test_single_release_plan_has_one_trial_and_no_candidate(self) -> None:
         release = compare_drivers.DriverRelease(
             version="0.23.2",
@@ -1016,6 +1814,7 @@ command = "unrelated"
             model="large",
             reasoning_effort="high",
             timeout_seconds=1800,
+            max_parallel_tasks=1,
         )
         with (
             patch.object(
@@ -1063,6 +1862,8 @@ command = "unrelated"
                 model="large",
                 reasoning_effort="high",
                 timeout_seconds=1800,
+                max_parallel_tasks=1,
+                local_displays=(":99",),
             )
             with (
                 patch.object(
@@ -1107,6 +1908,64 @@ command = "unrelated"
         comparison_section = markdown.split("## Baseline vs Candidate", 1)[1]
         self.assertIn("| Task | Baseline score | Candidate score |", comparison_section)
         self.assertNotIn("| CDB-S01 |", comparison_section)
+
+    def test_local_orchestration_error_marks_execution_incomplete(self) -> None:
+        release = self._release("0.23.2")
+        trial = compare_drivers.TrialMetrics(
+            task="CDB-S01",
+            version="0.23.2",
+            trial_id="trial",
+            trial_dir=None,
+            passed=False,
+            score=None,
+            total_ms=None,
+            cua_calls=0,
+            input_actions=0,
+            termination="orchestration_error",
+            error="RuntimeError: driver failed to start",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "report"
+            config = compare_drivers.ComparisonConfig(
+                repo_root=MODULE_PATH.parents[1],
+                tasks_root=MODULE_PATH.parents[1] / "tasks",
+                drivers_root=Path("/release"),
+                baseline="0.23.2",
+                candidate=None,
+                tasks=("CDB-S01",),
+                output=output,
+                platform="linux",
+                codex=Path("/codex"),
+                codex_home=Path("/codex-home"),
+                model="large",
+                reasoning_effort="high",
+                timeout_seconds=1800,
+                max_parallel_tasks=1,
+                local_displays=(":99",),
+            )
+            with (
+                patch.object(
+                    compare_drivers,
+                    "discover_driver_releases",
+                    return_value={"0.23.2": release},
+                ),
+                patch.object(compare_drivers, "require_release", return_value=release),
+                patch.object(
+                    compare_drivers,
+                    "task_path",
+                    return_value=Path("/tasks/shared/cdb-s01/task.cuabench.json"),
+                ),
+                patch.object(compare_drivers, "preflight", return_value="codex-cli"),
+                patch.object(compare_drivers, "_run_trial", return_value=trial),
+            ):
+                report, _, _ = compare_drivers.run_comparison(config)
+
+        self.assertFalse(report["execution"]["complete"])
+        self.assertEqual(report["execution"]["infrastructure_failures"][0]["task"], "CDB-S01")
+        self.assertIn(
+            "0.23.2: RuntimeError: driver failed to start",
+            report["execution"]["infrastructure_failures"][0]["error"],
+        )
 
     def test_noncompleted_trial_comparison_is_incomplete(self) -> None:
         baseline = compare_drivers.TrialMetrics(

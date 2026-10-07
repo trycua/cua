@@ -29,7 +29,7 @@ fn def() -> &'static ToolDef {
         name: "get_window_state".into(),
         description: "Snapshot a window: the accessibility tree plus a screenshot. By default the tree is ONE compact Markdown rendering (`tree_format:\"markdown\"`): a row `[N]` is addressed with `element_token` `<snapshot_id>:N`, where `snapshot_id` is in the response header and in structuredContent. `tree_format:\"elements\"` returns the structured `elements` array instead (`element_index`, `element_token`, `role`, `label`, `value`, `actions`, `frame`, `parent_index`, `depth`); `\"both\"` returns both (about twice the size). Pass the token to click, type_text, press_key, etc.\n\
             \n\
-            START NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring; matching rows plus ancestors; it searches the whole window, at least 2 000 nodes, whatever `max_elements` says) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\
+            START NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring; matching rows plus ancestors) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\
             \n\
             DIFF READS (use them for every re-read after acting): `since:\"latest\"`, or `since:<snapshot_id>` from an earlier read of the same window, returns only what changed: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), a `reindexed:` line if indices shifted, or `no change since …; focused element is …`. The response carries a NEW snapshot_id: use it in tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read; `since_status` says why.\n\
             \n\
@@ -43,7 +43,7 @@ fn def() -> &'static ToolDef {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it." },
                 "pid": { "type": "integer", "description": "Target process ID." },
                 "window_id": { "type": "integer", "description": "Target window ID from list_windows." },
-                "query": { "type": "string", "description": "Case-insensitive substring filter: returns matching rows plus ancestors; element_index values are not renumbered. Searches the whole window (at least 2 000 nodes) even with a small max_elements. Try this before a full read." },
+                "query": { "type": "string", "description": "Case-insensitive substring filter: returns matching rows plus ancestors; element_index values are not renumbered. Try this before a full read." },
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
                 "include_accessibility_tree": {
                     "type": "boolean",

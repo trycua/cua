@@ -1,6 +1,6 @@
 """Owned synthetic fixture: normal Cua JEV choices versus validated frontier plan.
 
-External config: OH_COMPARISON_SOURCE, ARC_EVAL_SOURCE, CUA_LITERAL_SOURCE,
+External config: OH_COMPARISON_SOURCE, REFERENCE_EVAL_SOURCE, CUA_LITERAL_SOURCE,
 JEV_CREDENTIAL_COMMAND (JSON argv) or TYPESAFE_API_KEY. No user apps.
 """
 import asyncio, hashlib, importlib.util, json, os, subprocess, sys, time
@@ -8,7 +8,7 @@ from contextlib import ExitStack
 from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CUA = Path(os.environ['CUA_LITERAL_SOURCE'])
-BASE = Path(os.environ['OH_COMPARISON_SOURCE']) / 'experiments/arc-cua-comparison-2026-10-05'
+BASE = Path(os.environ['REFERENCE_FIXTURE_SOURCE'])
 spec = importlib.util.spec_from_file_location('owned_fixture_harness', BASE/'run.py')
 h = importlib.util.module_from_spec(spec); sys.modules[spec.name] = h; spec.loader.exec_module(h)
 sys.path.insert(0, str(CUA/'libs/cua-driver/examples/jev-use/python'))
@@ -97,7 +97,7 @@ async def trial(client, sdk, http, mode, rep, smoke=False):
         window = None
         for attempt in range(20):
             listed = await driver.call('list_windows', {'pid':fixture.pid})
-            matches = [w for w in listed.get('windows',[]) if w.get('title')=='Arc Bench Form' and w.get('is_on_screen') is True]
+            matches = [w for w in listed.get('windows',[]) if w.get('title')=='Reference Bench Form' and w.get('is_on_screen') is True]
             if len(matches)==1:
                 candidate_window = matches[0].get('window_id')
                 if type(candidate_window) is int:
@@ -137,7 +137,7 @@ async def trial(client, sdk, http, mode, rep, smoke=False):
             if generated is None: raise LiteralPlanHandoff('Frontier planning failed')
             plan=validate_literal_text_plan(generated,**owner,expected=STEPS)
         names={'Full name':'name','Email':'email'}
-        task=NativeTask(id='owned-literal-fields',goal='First set Full name to parameter name; then set Email to parameter email. Leave Subscribe unchecked and Record A selected. Do not submit.',scope=WindowScope('Arc Bench Form'),allowed_actions=frozenset({'set_text'}),oracle=None,check=lambda s:'verified' if final() else 'pending',parameters=tuple(TaskParameter(names[s.label],s.value) for s in plan),steps=tuple(TaskStep('Set '+s.label,source.find('text_input',s.label).handle.id+':set:'+names[s.label]) for s in plan))
+        task=NativeTask(id='owned-literal-fields',goal='First set Full name to parameter name; then set Email to parameter email. Leave Subscribe unchecked and Record A selected. Do not submit.',scope=WindowScope('Reference Bench Form'),allowed_actions=frozenset({'set_text'}),oracle=None,check=lambda s:'verified' if final() else 'pending',parameters=tuple(TaskParameter(names[s.label],s.value) for s in plan),steps=tuple(TaskStep('Set '+s.label,source.find('text_input',s.label).handle.id+':set:'+names[s.label]) for s in plan))
         async def normal_choice(expected, obs):
             sources=TaskSources(ax=NativeAccessibilitySource.from_observation(obs,'macos'))
             native_step=task.plan(sources); request=native_choice_request(task,sources,native_step,history)
@@ -188,7 +188,7 @@ def main():
     try:
         sdk=RecordingSDK(TypeSafeClient(api_key=key,model='jev-latest',http_client=http))
         with ExitStack() as stack:
-            arc=h.MCP([sys.executable,'-m','arc_cua','mcp'],'agent-normal-arc'); stack.callback(arc.close)
+            reference=h.MCP([sys.executable,'-m',os.environ['REFERENCE_MODULE'],'mcp'],'agent-normal-reference'); stack.callback(reference.close)
             cua=h.MCP(['cua-driver','mcp','--socket',str(Path.home()/'Library/Caches/cua-driver/cua-driver.sock')],'agent-normal-cua');stack.callback(cua.close)
             host_path=os.environ.get('ACTION_OBSERVE_HOST')
             if not host_path: raise RuntimeError('ACTION_OBSERVE_HOST required for actual daemon metadata preflight')
@@ -198,7 +198,7 @@ def main():
             if not isinstance(metadata,dict) or metadata.get('driver_version')!=versions['native_version'] or metadata.get('embedded') is not False or type(metadata.get('pid')) is not int:
                 raise RuntimeError('Actual running daemon metadata differs from latest release or is unavailable')
             out['daemon_metadata']=metadata;out['operation_server_info']=host.server_info
-            h.verify_servers(versions,arc,cua);out['servers']={'arc':arc.server_info,'cua':cua.server_info}
+            h.verify_servers(versions,reference,cua);out['servers']={'reference':reference.server_info,'cua':cua.server_info}
             smoke=os.environ.get('SMOKE_ONLY')=='1'
             for rep in range(1 if smoke else 5):
                 modes=['chooser_only','frontier_normal','frontier_literal','frontier_literal_composite']

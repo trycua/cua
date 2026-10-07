@@ -1,6 +1,11 @@
 import unittest
 from bounded import LiteralStep,perform,Handoff
-from arc_cua.models import ActionKind,DesktopElement,DesktopSnapshot,Decision
+import importlib, os
+_reference_module = importlib.import_module(os.environ['REFERENCE_MODULE'] + '.models')
+ActionKind = getattr(_reference_module, 'ActionKind')
+DesktopElement = getattr(_reference_module, 'DesktopElement')
+DesktopSnapshot = getattr(_reference_module, 'DesktopSnapshot')
+Decision = getattr(_reference_module, 'Decision')
 
 class Backend:
     def __init__(self,elements=None):

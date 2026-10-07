@@ -1,9 +1,16 @@
 """Experimental caller-owned literal steps; no natural-language planner or driver hook."""
 from dataclasses import dataclass,replace
 import time
-from arc_cua import Subtask
-from arc_cua.models import ActionKind,ExecutableAction
-from arc_cua.validation import materialize_action
+import importlib, os
+_reference_module = importlib.import_module(os.environ['REFERENCE_MODULE'] + '')
+Subtask = getattr(_reference_module, 'Subtask')
+import importlib, os
+_reference_module = importlib.import_module(os.environ['REFERENCE_MODULE'] + '.models')
+ActionKind = getattr(_reference_module, 'ActionKind')
+ExecutableAction = getattr(_reference_module, 'ExecutableAction')
+import importlib, os
+_reference_module = importlib.import_module(os.environ['REFERENCE_MODULE'] + '.validation')
+materialize_action = getattr(_reference_module, 'materialize_action')
 
 @dataclass(frozen=True)
 class LiteralStep:

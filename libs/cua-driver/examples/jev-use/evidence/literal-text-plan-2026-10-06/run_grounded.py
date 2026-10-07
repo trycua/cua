@@ -3,13 +3,17 @@ import json,os,sys,time,subprocess
 from pathlib import Path
 from contextlib import ExitStack
 HERE=Path(__file__).resolve().parent
-BASE=Path(os.environ['OH_COMPARISON_SOURCE'])/'experiments/arc-cua-comparison-2026-10-05'
+BASE=Path(os.environ['REFERENCE_FIXTURE_SOURCE'])
 sys.path[:0]=[str(BASE),str(BASE/'jev-matched'),str(BASE/'decision-layer')]
 from run import MCP,Fixture,windows,wait_for,candidate_versions,verify_servers
 from run_matched import TimedClient
 from mcp_backend import MCPBackend
-from arc_cua.policies import TypeSafeJevPolicy
-from arc_cua.models import ActionKind
+import importlib, os
+_reference_module = importlib.import_module(os.environ['REFERENCE_MODULE'] + '.policies')
+TypeSafeJevPolicy = getattr(_reference_module, 'TypeSafeJevPolicy')
+import importlib, os
+_reference_module = importlib.import_module(os.environ['REFERENCE_MODULE'] + '.models')
+ActionKind = getattr(_reference_module, 'ActionKind')
 from bounded import LiteralStep,perform
 ALL_STEPS=(LiteralStep('Full name','TextField',ActionKind.SET_VALUE,'Synthetic Person'),LiteralStep('Email','TextField',ActionKind.SET_VALUE,'synthetic@example.invalid'),LiteralStep('Subscribe','CheckBox',ActionKind.CLICK))
 
@@ -20,7 +24,7 @@ def run(client,policy,rep):
     fixture=None;offset=len(client.calls);provider=policy.transport.client if policy else None;request_offset=len(provider.requests) if provider else 0
     row={'decisions':[],'mode':'grounded_jev' if policy else 'grounded_literal','rep':rep,'passed':False,'terminal':'handoff'};started=time.perf_counter()
     try:
-        fixture=Fixture();window=wait_for(lambda:windows(fixture.pid).get('Arc Bench Form'),8);backend=MCPBackend(client,'cua',fixture.pid,window)
+        fixture=Fixture();window=wait_for(lambda:windows(fixture.pid).get('Reference Bench Form'),8);backend=MCPBackend(client,'cua',fixture.pid,window)
         def verify_all():
             state=fixture.state()
             return all(state.get(k)==v for k,v in {'name':'Synthetic Person','email':'synthetic@example.invalid','subscribe':len(STEPS)==3,'submitted':0}.items())
@@ -51,9 +55,9 @@ def main():
     try:
         policy=TypeSafeJevPolicy(api_key=key,model='jev-latest',client=provider)
         with ExitStack() as stack:
-            arc=MCP([sys.executable,'-m','arc_cua','mcp'],'grounded-arc');stack.callback(arc.close)
+            reference=MCP([sys.executable,'-m',os.environ['REFERENCE_MODULE'],'mcp'],'grounded-reference');stack.callback(reference.close)
             cua=MCP(['cua-driver','mcp','--socket',str(Path.home()/'Library/Caches/cua-driver/cua-driver.sock')],'grounded-cua');stack.callback(cua.close)
-            verify_servers(versions,arc,cua);output['running_servers']={'arc':arc.server_info,'cua':cua.server_info}
+            verify_servers(versions,reference,cua);output['running_servers']={'reference':reference.server_info,'cua':cua.server_info}
             for rep in range(3):
                 for candidate in ((policy,None) if rep%2==0 else (None,policy)):
                     row=run(cua,candidate,rep);output['results'].append(row)

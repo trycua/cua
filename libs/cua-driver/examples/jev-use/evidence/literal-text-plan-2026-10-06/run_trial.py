@@ -3,11 +3,13 @@ import json,os,sys,time,subprocess
 from pathlib import Path
 from contextlib import ExitStack
 HERE=Path(__file__).resolve().parent
-BASE=Path(os.environ['OH_COMPARISON_SOURCE'])/'experiments/arc-cua-comparison-2026-10-05'
+BASE=Path(os.environ['REFERENCE_FIXTURE_SOURCE'])
 sys.path[:0]=[str(BASE),str(BASE/'jev-matched'),str(BASE/'decision-layer')]
 from run import MCP,Fixture,windows,wait_for,candidate_versions,verify_servers,observe,find,act
 from run_matched import TimedClient,trial
-from arc_cua.policies import TypeSafeJevPolicy
+import importlib, os
+_reference_module = importlib.import_module(os.environ['REFERENCE_MODULE'] + '.policies')
+TypeSafeJevPolicy = getattr(_reference_module, 'TypeSafeJevPolicy')
 STEPS=(('Full name','SET_VALUE','Synthetic Person','name'),('Email','SET_VALUE','synthetic@example.invalid','email'),('Subscribe','CLICK',None,'subscribe'))
 
 def step(client,fixture,window,item):
@@ -19,7 +21,7 @@ def step(client,fixture,window,item):
     # Check current desired checkbox state, not a blind toggle.
     if field=='subscribe' and str(target.get('value')) not in ('0','False','false'):raise RuntimeError('Checkbox state ambiguous or already checked')
     response,error=act(client,fixture,window,snapshot,target,kind,value)
-    if error or (client.name=='arc' and response.get('status')!='done'):raise RuntimeError('Bound action refused; do not retry input')
+    if error or (client.name=='reference' and response.get('status')!='done'):raise RuntimeError('Bound action refused; do not retry input')
     expected=True if field=='subscribe' else value
     state=wait_for(lambda:fixture.state() if fixture.state().get(field)==expected else None,3)
     if state.get('submitted')!=0:raise RuntimeError('Forbidden submission')
@@ -28,7 +30,7 @@ def step(client,fixture,window,item):
 def deterministic(client,mode,rep):
     fixture=None;offset=len(client.calls);start=time.perf_counter();row={'driver':client.name,'mode':mode,'rep':rep,'caller_invocations':0,'decision_provider_calls':0,'verified_steps':[]}
     try:
-        fixture=Fixture();window=wait_for(lambda:windows(fixture.pid).get('Arc Bench Form'),8)
+        fixture=Fixture();window=wait_for(lambda:windows(fixture.pid).get('Reference Bench Form'),8)
         start=time.perf_counter()
         if mode=='bounded':
             row['caller_invocations']+=1
@@ -47,7 +49,7 @@ def deterministic(client,mode,rep):
         if fixture:
             row['oracle_state']=fixture.state()
             try:
-                if client.name=='arc':client.call('release',pid=fixture.pid)
+                if client.name=='reference':client.call('release',pid=fixture.pid)
             finally:fixture.close()
     row['false_completion']=row['terminal']=='verified_complete' and not row['passed']
     return row
@@ -66,9 +68,9 @@ def main():
     try:
         policy=TypeSafeJevPolicy(api_key=key,model='jev-latest',client=provider)
         with ExitStack() as stack:
-            arc=MCP([sys.executable,'-m','arc_cua','mcp'],'bounded-arc');stack.callback(arc.close)
+            reference=MCP([sys.executable,'-m',os.environ['REFERENCE_MODULE'],'mcp'],'bounded-reference');stack.callback(reference.close)
             cua=MCP(['cua-driver','mcp','--socket',str(Path.home()/'Library/Caches/cua-driver/cua-driver.sock')],'bounded-cua');stack.callback(cua.close)
-            verify_servers(versions,arc,cua);output['running_servers']={'arc':arc.server_info,'cua':cua.server_info}
+            verify_servers(versions,reference,cua);output['running_servers']={'reference':reference.server_info,'cua':cua.server_info}
             for rep in range(3):
                 for mode in (('stepwise','bounded','jev') if rep%2==0 else ('jev','bounded','stepwise')):
                     if mode=='jev':

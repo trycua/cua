@@ -1,10 +1,10 @@
 {
-  "arc_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
-  "arc_version": "0.1.1",
+  "reference_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
+  "reference_version": "0.1.1",
   "native_version": "0.34.0",
   "native_latest_version": "0.34.0",
   "native_release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
-  "arc_upstream_checked_at": "2026-10-06T13:39:54.440916+00:00",
+  "reference_upstream_checked_at": "2026-10-06T13:39:54.440916+00:00",
   "candidates_checked_at": "2026-10-06T13:39:53Z",
   "macos": "27.0.1",
   "python": "3.12.12",
@@ -384,8 +384,8 @@
     }
   ],
   "running_servers": {
-    "arc": {
-      "name": "arc-cua",
+    "reference": {
+      "name": "reference",
       "version": "0.1.1"
     },
     "cua": {

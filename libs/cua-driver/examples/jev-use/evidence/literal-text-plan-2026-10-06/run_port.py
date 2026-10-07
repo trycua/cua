@@ -2,16 +2,27 @@
 import asyncio,json,os,sys,time,subprocess,hashlib
 from pathlib import Path
 from contextlib import ExitStack
-HERE=Path(__file__).resolve().parent;BASE=Path(os.environ['OH_COMPARISON_SOURCE'])/'experiments/arc-cua-comparison-2026-10-05'
+HERE=Path(__file__).resolve().parent;BASE=Path(os.environ['REFERENCE_FIXTURE_SOURCE'])
 sys.path[:0]=[str(BASE),str(BASE/'jev-matched')]
 from run import MCP,Fixture,windows,wait_for,candidate_versions,verify_servers
 from run_matched import TimedClient
 sys.path.insert(0,str(Path(os.environ['CUA_LITERAL_SOURCE'])/'libs/cua-driver/examples/jev-use/python'))
 from literal_text_plan import LiteralTextStep,execute_literal_text_plan
-from arc_cua import Subtask
-from arc_cua.models import ActionKind,ExecutableAction,DesktopElement,DesktopSnapshot
-from arc_cua.validation import materialize_action
-from arc_cua.policies import TypeSafeJevPolicy
+import importlib, os
+_reference_module = importlib.import_module(os.environ['REFERENCE_MODULE'] + '')
+Subtask = getattr(_reference_module, 'Subtask')
+import importlib, os
+_reference_module = importlib.import_module(os.environ['REFERENCE_MODULE'] + '.models')
+ActionKind = getattr(_reference_module, 'ActionKind')
+ExecutableAction = getattr(_reference_module, 'ExecutableAction')
+DesktopElement = getattr(_reference_module, 'DesktopElement')
+DesktopSnapshot = getattr(_reference_module, 'DesktopSnapshot')
+import importlib, os
+_reference_module = importlib.import_module(os.environ['REFERENCE_MODULE'] + '.validation')
+materialize_action = getattr(_reference_module, 'materialize_action')
+import importlib, os
+_reference_module = importlib.import_module(os.environ['REFERENCE_MODULE'] + '.policies')
+TypeSafeJevPolicy = getattr(_reference_module, 'TypeSafeJevPolicy')
 from native import eligible_controls
 STEPS=(LiteralTextStep('Full name','Synthetic Person'),LiteralTextStep('Email','synthetic@example.invalid'))
 
@@ -26,7 +37,7 @@ async def trial(client,policy,rep):
     fixture=None;offset=len(client.calls);provider=policy.transport.client if policy else None;request_offset=len(provider.requests) if provider else 0
     row={'mode':'literal_with_jev' if policy else 'literal_without_jev','rep':rep,'passed':False,'terminal':'handoff','decisions':[]};started=time.perf_counter()
     try:
-        fixture=Fixture();window=wait_for(lambda:windows(fixture.pid).get('Arc Bench Form'),8)
+        fixture=Fixture();window=wait_for(lambda:windows(fixture.pid).get('Reference Bench Form'),8)
         def final_state():return all(fixture.state().get(k)==v for k,v in {'name':'Synthetic Person','email':'synthetic@example.invalid','subscribe':False,'submitted':0,'record':'Record A'}.items())
         async def verify_final():return final_state()
         async def verify_step(step):
@@ -42,7 +53,7 @@ async def trial(client,policy,rep):
             if len(controls)!=1:return 'abstain'
             target=controls[0]
             element=DesktopElement(id=target.id,role='TextField',name=target.label,value=target.value,actions=(ActionKind.SET_VALUE,))
-            snapshot=DesktopSnapshot(application='Owned fixture',window='Arc Bench Form',revision=observation.snapshot_id,elements=(element,))
+            snapshot=DesktopSnapshot(application='Owned fixture',window='Reference Bench Form',revision=observation.snapshot_id,elements=(element,))
             task=Subtask(goal=f'Set {target.label} to the supplied value by performing the single offered SET_VALUE action.',inputs={'value':candidate.arguments['value']},constraints=('Do not click any other control or submit.',),verification=(f'{target.label} equals the supplied value',),max_actions=1)
             decision=await asyncio.to_thread(policy.decide,subtask=task,snapshot=snapshot,history=[])
             row['decisions'].append({'label':target.label,'kind':decision.kind.value if decision.kind else None,'terminal':decision.terminal.value if decision.terminal else None,'confidence':decision.confidence})
@@ -73,9 +84,9 @@ def main():
     try:
         policy=TypeSafeJevPolicy(api_key=key,model='jev-latest',client=provider)
         with ExitStack() as stack:
-            arc=MCP([sys.executable,'-m','arc_cua','mcp'],'literal-port-arc');stack.callback(arc.close)
+            reference=MCP([sys.executable,'-m',os.environ['REFERENCE_MODULE'],'mcp'],'literal-port-reference');stack.callback(reference.close)
             cua=MCP(['cua-driver','mcp','--socket',str(Path.home()/'Library/Caches/cua-driver/cua-driver.sock')],'literal-port-cua');stack.callback(cua.close)
-            verify_servers(versions,arc,cua);output['running_servers']={'arc':arc.server_info,'cua':cua.server_info}
+            verify_servers(versions,reference,cua);output['running_servers']={'reference':reference.server_info,'cua':cua.server_info}
             for rep in range(3):
                 for candidate in ((policy,None) if rep%2==0 else (None,policy)):
                     row=asyncio.run(trial(cua,candidate,rep));output['results'].append(row);models={r['reported_model'] for item in output['results'] for r in item['provider_requests']}

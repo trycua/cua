@@ -95,7 +95,7 @@ impl Tool for SetValueTool {
                 let mut d = def().clone();
                 d.name = "dispatch_set_value".into();
                 d.description = "Experimental exact-bound native text dispatch. Returns an owned supervision receipt, never application commitment. Requires an explicit session. Use get_action_supervision or fence_action_supervision; independently verify application outcome before dependent input.".into();
-                d.input_schema["properties"]["settle"] = serde_json::json!({"type":"boolean","default":false,"description":"Wait for the exact native field value to react and remain quiet for 150 ms. Delayed-focus protection stays owned separately. This is not application commitment."});
+                d.input_schema["properties"]["settle"] = serde_json::json!({"type":"boolean","default":false,"description":"Wait for the exact on-screen native field value to react and remain quiet for 150 ms. Delayed-focus protection stays owned separately. This is not application commitment."});
                 d.input_schema["required"] = serde_json::json!(["pid", "window_id", "element_token", "value", "session"]);
                 d
             });
@@ -276,6 +276,11 @@ impl Tool for SetValueTool {
 
         #[cfg(feature = "experimental-owned-supervision")]
         let settlement_probe = if settle {
+            if !crate::windows::window_info_by_id(window_id)
+                .is_some_and(|w| w.pid == pid && w.is_on_screen)
+            {
+                return ToolResult::error("settlement_unavailable: settling requires an on-screen native window; no input was sent.").with_structured(serde_json::json!({"refusal":"settlement_unavailable","input_sent":false}));
+            }
             let guard = element_guard.clone();
             let before = tokio::task::spawn_blocking(move || unsafe {
                 copy_string_attr(guard.as_ptr() as AXUIElementRef, "AXValue")
@@ -1397,7 +1402,8 @@ fn settle_native_field(
         std::thread::sleep(POLL);
         let value = unsafe {
             let ptr = element.as_ptr() as AXUIElementRef;
-            if crate::windows::window_info_by_id(window_id).is_some_and(|w| w.pid == pid)
+            if crate::windows::window_info_by_id(window_id)
+                .is_some_and(|w| w.pid == pid && w.is_on_screen)
                 && crate::ax::exact_target::element_window_id(ptr) == Some(window_id)
                 && copy_string_attr(ptr, "AXRole").as_deref() == Some("AXTextField")
             {

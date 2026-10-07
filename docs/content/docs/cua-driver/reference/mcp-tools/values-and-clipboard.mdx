@@ -80,7 +80,7 @@ For free-form text entry that the target accepts via keystrokes only, prefer `ty
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="set_value--element_token"></span>`element_token` | `string` |  | Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
+| <span id="set_value--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
 | <span id="set_value--pid"></span>`pid` | `integer` | required | Target process ID. |
 
 **Example arguments**

@@ -336,13 +336,12 @@ pub struct WindowStateOutput {
     /// Which representation this response carries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tree_format: Option<String>,
-    /// The `since` snapshot_id the caller asked to diff against (`latest`
-    /// resolves to that window's most recent read of the same view).
+    /// The `since` snapshot_id the caller asked to diff against.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<String>,
     /// `diff`, `no_change`, or the reason a full read was returned instead
     /// (`unknown_snapshot`, `other_window`, `view_changed`, `too_much_changed`,
-    /// `diff_too_large`, `no_snapshot`, `no_baseline`).
+    /// `diff_too_large`, `no_snapshot`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since_status: Option<String>,
     /// Added/changed/removed rows against `since`, one per line.

@@ -119,5 +119,5 @@ Windows-only convenience: `button: "left"|"right"|"middle"` switches the mouse b
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="click--element_token"></span>`element_token` | `string` |  | Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
+| <span id="click--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
 | <span id="click--target"></span>`target` | `window target \| desktop target` |  | Exact capture/input target selected independently for each action. `display_id="primary"` is the portable desktop target in this release. Platforms that cannot address another display reject it explicitly rather than silently changing coordinate spaces. |

@@ -26,6 +26,7 @@ struct SpaceDetailView: View {
     /// Connect (or Try again) was pressed: the stream opens even with
     /// "Connect to the desktop automatically" off.
     @State private var connectRequested = false
+    @State private var providerFailed = false
     @Environment(\.openWindow) private var openWindow
     private let copy = appSpaceDetailCopy()
 
@@ -34,10 +35,12 @@ struct SpaceDetailView: View {
     private var off: Bool { space.power.map { $0.off || $0.turningOn == false } ?? false }
     /// What the live parts (stream, polling) restart on.
     private var live: String { "\(space.id) \(deleting) \(off)" }
+    /// Provider creation can fail before a stream session exists.
+    private var providerPhase: AppStreamPhase { providerFailed ? .failed : .noSession }
 
     var body: some View {
         let detail = model.detail(space)
-        let wantsStream = model.cover(detail, requested: connectRequested, stream: .noSession).openStream
+        let wantsStream = model.cover(detail, requested: connectRequested, stream: providerPhase).openStream
         ScrollViewReader { scroller in
             Form {
                 if let note = detail.desktopNote {
@@ -169,7 +172,7 @@ struct SpaceDetailView: View {
             }
         } else {
             StreamPhaseReader(session: detail.canStream ? session : nil) { phase in
-                let cover = model.cover(detail, requested: connectRequested, stream: phase)
+                let cover = model.cover(detail, requested: connectRequested, stream: session == nil ? providerPhase : phase)
                 ZStack {
                     if let session, detail.canStream {
                         SpaceScreenView(session: session, isInteractive: true, showsControls: false)
@@ -192,6 +195,7 @@ struct SpaceDetailView: View {
     /// failed one again.
     private func press(_ cover: AppDesktopCover) {
         connectRequested = true
+        providerFailed = false
         guard cover.kind == .status, let session else { return }
         Task {
             await session.stop()
@@ -312,7 +316,7 @@ struct SpaceDetailView: View {
     private func connect(_ detail: AppSpaceDetail) async {
         // The core decides: auto-connect on, or Connect pressed.
         guard session == nil,
-              model.cover(detail, requested: connectRequested, stream: .noSession).openStream else { return }
+              model.cover(detail, requested: connectRequested, stream: providerPhase).openStream else { return }
         do {
             let provider = try await model.backend.streamProvider(id: space.id)
             guard !Task.isCancelled else { return }
@@ -329,6 +333,7 @@ struct SpaceDetailView: View {
             }
         } catch {
             guard !Task.isCancelled else { return }
+            providerFailed = true
             model.show(error: "Could not open \(space.name): \(LiveSpacesBackend.words(error))")
         }
     }
@@ -338,6 +343,7 @@ struct SpaceDetailView: View {
     private func disconnect() {
         keepLastFrame()
         connectRequested = false
+        providerFailed = false
         agents = nil
         pips?.popInAll()
         if let session { Task { await session.stop() } }

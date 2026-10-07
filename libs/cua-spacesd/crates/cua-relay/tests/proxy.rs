@@ -172,10 +172,19 @@ fn proxy_tunnel_keeps_native_tls_verification() {
                 .unwrap()
                 .starts_with("CONNECT relay.invalid:443 HTTP/1.1\r\n"));
             stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await.unwrap();
-            assert!(
-                tls.accept(stream).await.is_err(),
-                "untrusted origin unexpectedly accepted"
-            );
+            // Schannel can finish the server handshake before the client
+            // rejects its certificate. The client must send no application
+            // data, regardless of when the server observes the rejection.
+            if let Ok(mut stream) = tls.accept(stream).await {
+                let mut byte = [0];
+                let read = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut byte))
+                    .await
+                    .expect("rejected TLS connection remained open");
+                assert!(
+                    matches!(read, Ok(0) | Err(_)),
+                    "client sent application data to an untrusted origin"
+                );
+            }
         });
         let config = JoinConfig::new(
             "wss://relay.invalid/?origin-secret-canary".into(),
@@ -194,7 +203,10 @@ fn proxy_tunnel_keeps_native_tls_verification() {
             "{end:?}"
         );
         assert!(!format!("{end:?}").contains("canary"));
-        proxy_task.await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), proxy_task)
+            .await
+            .expect("TLS fixture server did not finish")
+            .unwrap();
     });
 }
 

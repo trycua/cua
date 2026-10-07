@@ -37,10 +37,11 @@ Operate one exact target, observe it narrowly, act by element, and verify the us
 
 The MCP server instructions carry the same rules, so they apply even when this file is not opened.
 
-1. Start with a targeted read: `get_window_state({pid, window_id, query:"Save"})` returns about 2K chars where a full snapshot is about 42K. Bound large trees with `max_elements` / `max_depth`, and pass `include_screenshot:false` when the tree is enough. Widen only if the target is missing.
-2. Act by `element_token`. A narrowed read keeps the full snapshot actionable, so you can act on a match without re-reading. Use pixels only for surfaces missing from the tree.
-3. Verify at checkpoints (after a meaningful state change, before finishing), not after every action. One `verify_state` or one targeted `get_window_state` is usually enough.
-4. Batch known steps in one `run_actions` call (stops at the first failure, one optional bounded read at the end); see [Workflow](WORKFLOW.md#batch-known-actions).
+1. Start with a targeted read: `get_window_state({pid, window_id, query:"Save"})` returns about 2K chars where a full snapshot is about 42K. Bound large trees with `max_elements` / `max_depth`. Widen only if the target is missing.
+2. Act by `element_token`: row `[N]` of a read is `<snapshot_id>:N` (for example `"s0000002a:11"`, not `"11"`). Use pixels only for surfaces missing from the tree.
+3. Act through `run_actions` with `observe:true`, even for a single step. It runs the steps, stops at the first failure, and returns only what changed since your last read, so you do not need a separate read after acting; see [Workflow](WORKFLOW.md#batch-known-actions).
+4. To re-read a window, pass `since:"latest"`: you get the changed rows, not the whole tree. To just look, use `include_accessibility_tree:false` where advertised (on macOS it keeps the current tokens valid). Do not use `max_elements:1` or a junk `query` to get a picture.
+5. Verify at checkpoints (after a meaningful state change, before finishing), not after every action. One `verify_state` or one targeted `get_window_state` is usually enough.
 
 ## Act
 
@@ -50,7 +51,7 @@ The MCP server instructions carry the same rules, so they apply even when this f
 | Find or open the requested app            | `list_apps`, `list_windows`, `launch_app`                                                             | Current platform guide below                          |
 | Observe one window                        | `get_window_state({pid, window_id, query})`                                                           | [Workflow](WORKFLOW.md)                               |
 | Act on a control                          | `click` / `type_text` with a fresh `element_token` and exact window target                            | [Workflow](WORKFLOW.md)                               |
-| Run several decided actions in one call   | `run_actions({steps:[{tool,args},...], observe?})`; stops at the first failure                        | [Workflow](WORKFLOW.md#batch-known-actions)           |
+| Act and see what changed in one call      | `run_actions({steps:[{tool,args},...], observe:true})`; stops at the first failure                    | [Workflow](WORKFLOW.md#batch-known-actions)           |
 | Use pixels when semantics cannot reach it | Fresh target screenshot, then `x,y` on the same target                                                | [Workflow](WORKFLOW.md)                               |
 | Verify the outcome                        | `verify_state({pid, window_id, expect})` or a fresh snapshot read by the agent                        | [Workflow](WORKFLOW.md)                               |
 | Operate the authorized desktop            | `get_desktop_state` → input with `target:{kind:"desktop",display_id:"primary"}` → `get_desktop_state` | [Workflow](WORKFLOW.md), [Linux](LINUX.md) on Wayland |
@@ -68,7 +69,7 @@ Check the installed version and advertised schema before using unfamiliar parame
 
 1. Select the exact target on each action. A session is lifecycle metadata, not capture scope or permission authority.
 2. Observe before input and verify the outcome at checkpoints, not after every action. `effect:"unverifiable"` and a successful exit are not task success; never replay a partial, canceled, or unknown action blindly.
-3. Use returned tokens, never invented indices. A fresh snapshot replaces prior element handles and lists them in `invalidated_snapshot_ids`; act with `element_token`. Reads are bounded and return one tree form by default; follow up with `since:<snapshot_id>` instead of re-reading a large window.
+3. Use returned tokens, never invented indices. A fresh snapshot replaces prior element handles and lists them in `invalidated_snapshot_ids`; act with `element_token`. Reads are bounded and return one tree form by default; follow up with `since:"latest"` instead of re-reading a large window.
 4. Keep background window actions non-interfering. Foreground delivery and desktop input require authorization for visible control; an unavailable route is not permission to escalate.
 5. Never infer pixels from a missing image, a different window, or an unaccounted-for resized preview. Capture failure and an empty accessibility tree are different failures.
 6. Keep one controller for a shared desktop. Distinct sessions/cursors do not isolate focus, keyboard input, application state, or snapshot caches.

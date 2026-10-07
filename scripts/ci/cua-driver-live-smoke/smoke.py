@@ -402,6 +402,10 @@ def run_checks(smoke):
     # 7. element_token alone, no pid: the token names its pid.
     token_without_pid_check(smoke)
 
+    # 7b. Lean-read ergonomics from the v035 bench: since:"latest", a bare row
+    # number as element_token, run_actions observe:true, zoom x/y/width/height.
+    lean_read_ergonomics_check(smoke)
+
     # 8. The drop-down combo with delivery_mode foreground (last because a
     # broken route may leave a popup open), then a click by token must still
     # land, which it does not while a popup holds the pointer grab.
@@ -473,6 +477,54 @@ def token_without_pid_check(smoke):
         "; ".join(problems)
         or f"click {json.dumps(args)} -> Count: {(before or 0) + 1}; a stale token -> "
         f"stale_element_token ({stale.first_line()})",
+    )
+
+
+def lean_read_ergonomics_check(smoke):
+    check = "since:latest, bare row token, run_actions observe:true, zoom x/y/width/height"
+    problems = []
+    smoke.read()
+    latest = smoke.read(since="latest")
+    if latest.structured.get("since_status") not in ("diff", "no_change"):
+        problems.append(f"since=latest gave since_status={latest.structured.get('since_status')!r}")
+
+    state = smoke.read()
+    before = count_value(tree(state))
+    increment = find_row(tree(state), BUTTON, "Increment")
+    row_args = {"pid": smoke.pid, "window_id": smoke.window_id, "element_token": str(increment)}
+    click = smoke.call("click", row_args)
+    after = smoke.wait_for_text(f"Count: {(before or 0) + 1}")
+    if click.is_error:
+        problems.append(f"click {json.dumps(row_args)} -> {click.first_line()}")
+    elif f"Count: {(before or 0) + 1}" not in tree(after):
+        problems.append(f"bare row click ok but the count did not move from {before}")
+
+    increment = find_row(tree(after), BUTTON, "Increment")
+    batch = smoke.call("run_actions", {
+        "steps": [{"tool": "click", "args": {"pid": smoke.pid, "window_id": smoke.window_id,
+                                             "element_token": token(after, increment)}}],
+        "observe": True,
+    })
+    observed = ((batch.structured.get("observation") or {}).get("state") or {})
+    if batch.is_error or observed.get("since_status") not in ("diff", "no_change"):
+        problems.append(
+            f"run_actions observe:true -> is_error={batch.is_error}, "
+            f"since_status={observed.get('since_status')!r}: {batch.first_line()}"
+        )
+
+    smoke.read()
+    zoom = smoke.call("zoom", {"pid": smoke.pid, "window_id": smoke.window_id,
+                               "x": "0", "y": "0", "width": "120", "height": "60"})
+    if zoom.is_error and "unknown argument" in zoom.text:
+        problems.append(f"zoom x/y/width/height -> {zoom.first_line()}")
+    smoke.record(
+        check,
+        "fail" if problems else "pass",
+        "; ".join(problems)
+        or f"since=latest -> {latest.structured.get('since_status')}; click element_token "
+        f"{str(increment)!r} + window_id -> Count moved; observe:true -> "
+        f"{observed.get('since_status')}; zoom x/y/width/height -> "
+        f"{'ok' if not zoom.is_error else zoom.first_line()}",
     )
 
 

@@ -65,6 +65,8 @@ impl Harness {
                             "text": {"type": "string"},
                             "fail": {"type": "boolean"},
                             "include_screenshot": {"type": "boolean"},
+                            "since": {"type": "string"},
+                            "full_output": {"type": "boolean"},
                             "max_elements": {"type": "integer", "minimum": 1}
                         },
                         "additionalProperties": false
@@ -283,7 +285,14 @@ async fn observation_inherits_the_window_and_stays_bounded() {
     assert_eq!(observed["pid"], 42);
     assert_eq!(observed["window_id"], 7);
     assert_eq!(observed["include_screenshot"], false);
-    assert_eq!(observed["max_elements"], 200);
+    assert_eq!(
+        observed["max_elements"], 250,
+        "the plain-read budget, so `latest` finds it"
+    );
+    assert_eq!(
+        observed["since"], "latest",
+        "the observation is a diff by default"
+    );
 
     harness
         .run(json!({
@@ -393,4 +402,57 @@ async fn the_batch_is_advertised_with_its_schema() {
         .map(|value| value.as_str().unwrap())
         .collect();
     assert_eq!(listed, super::BATCHABLE_TOOLS);
+}
+
+#[tokio::test]
+async fn observe_true_reads_a_diff_and_since_null_reads_in_full() {
+    let harness = Harness::new();
+    let step = json!([{"tool": "click", "args": {"pid": 42, "window_id": 7}}]);
+
+    let result = harness.run(json!({"steps": step, "observe": true})).await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let observed = harness.last("get_window_state");
+    assert_eq!(observed["window_id"], 7);
+    assert_eq!(observed["since"], "latest");
+
+    harness
+        .run(json!({"steps": step, "observe": {"since": null}}))
+        .await;
+    assert!(harness.last("get_window_state").get("since").is_none());
+
+    harness
+        .run(json!({"steps": step, "observe": {"full_output": true}}))
+        .await;
+    assert!(harness.last("get_window_state").get("since").is_none());
+
+    harness
+        .run(json!({"steps": step, "observe": {"since": "s0000002a"}}))
+        .await;
+    assert_eq!(harness.last("get_window_state")["since"], "s0000002a");
+
+    harness.run(json!({"steps": step, "observe": false})).await;
+    assert_eq!(
+        harness.hits("get_window_state"),
+        4,
+        "observe:false reads nothing"
+    );
+}
+
+#[tokio::test]
+async fn common_tool_name_slips_map_to_the_batchable_tool() {
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "press", "args": {"pid": 1}},
+            {"tool": "type", "args": {"pid": 1, "text": "x"}},
+        ]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(harness.hits("press_key"), 1);
+    assert_eq!(harness.hits("type_text"), 1);
+
+    let refused = harness
+        .run(json!({"steps": [{"tool": "get_window_state", "args": {"pid": 1}}]}))
+        .await;
+    assert_eq!(refused.is_error, Some(true));
 }

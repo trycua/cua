@@ -31,9 +31,9 @@ fn def() -> &'static ToolDef {
             \n\
             START NARROW: a read walks at most 250 nodes by default and says `Tree truncated at max_elements=…` (`truncated:true`) when it stops; raise `max_elements`, or use `query` (case-insensitive substring; matching rows plus ancestors) and `max_depth`. Indices and tokens stay valid for the whole snapshot. `verbose:true` adds `_note` and the full `background_input` report; `full_output:true` restores the previous full response (both representations, all metadata, ≤2 000 nodes).\n\
             \n\
-            DIFF READS: `since:<snapshot_id>` from an earlier read of the same window returns only what changed: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), a `reindexed:` line if indices shifted, or `no change since …; focused element is …`. The response carries a NEW snapshot_id: use it in tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read; `since_status` says why.\n\
+            DIFF READS (use them for every re-read after acting): `since:\"latest\"`, or `since:<snapshot_id>` from an earlier read of the same window, returns only what changed: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), a `reindexed:` line if indices shifted, or `no change since …; focused element is …`. The response carries a NEW snapshot_id: use it in tokens. An unknown, expired, other-window or differently-scoped (query/max_elements/max_depth) `since` falls back to a full read; `since_status` says why.\n\
             \n\
-            A new snapshot of the same (pid, window_id) replaces the previous one and stales its tokens (`invalidated_snapshot_ids`). `include_screenshot:false` returns the tree only; `include_accessibility_tree:false` returns only the screenshot and window metadata. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\
+            A new snapshot of the same (pid, window_id) replaces the previous one and stales its tokens (`invalidated_snapshot_ids`). `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look). The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\
             \n\
             Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.".into(),
         input_schema: cua_driver_core::window_state_view::extend_input_schema(serde_json::json!({
@@ -472,23 +472,52 @@ impl Tool for GetWindowStateTool {
             .map(|r| r.tree_markdown.clone())
             .unwrap_or_default();
 
-        let snapshot_payload = prepared_snapshot.or_else(|| {
-            screenshot_resize_scale
-                .is_some()
-                .then(|| crate::ax::snapshot::AxSnapshot::from_nodes(&[]))
-        });
-        let (snapshot_id, replaced) = snapshot_payload
-            .filter(|_| scope_matched && !observation_only)
-            .and_then(|payload| {
-                self.state.snapshots.publish_for_session(
+        // Window size in points: the captured bounds, or, for a tree-only
+        // read, a cheap WindowServer lookup. A tree-only read keeps the last
+        // screenshot's pixel frame while the window keeps this size.
+        let window_size = screenshot_frame
+            .as_ref()
+            .map(|(bounds, _)| (bounds.width, bounds.height))
+            .or_else(|| {
+                (prepared_snapshot.is_some() && !observation_only)
+                    .then(|| crate::windows::window_bounds_by_id(window_id))
+                    .flatten()
+                    .map(|bounds| (bounds.width, bounds.height))
+            });
+        // A screenshot-only read adds an image but no new element rows, so it
+        // refreshes the current snapshot's frame and keeps its tokens valid.
+        let refreshed = match (&prepared_snapshot, screenshot_resize_scale) {
+            (None, Some(scale)) if scope_matched && !observation_only => {
+                self.state.snapshots.refresh_screenshot_for_session(
                     pid,
                     u64::from(window_id),
-                    payload,
                     session_id.as_deref(),
-                    screenshot_resize_scale,
+                    scale,
+                    window_size,
                 )
-            })
-            .unzip();
+            }
+            _ => None,
+        };
+        let snapshot_payload = prepared_snapshot.or_else(|| {
+            (screenshot_resize_scale.is_some() && refreshed.is_none())
+                .then(|| crate::ax::snapshot::AxSnapshot::from_nodes(&[]))
+        });
+        let (snapshot_id, replaced) = match refreshed {
+            Some(id) => (Some(id), None),
+            None => snapshot_payload
+                .filter(|_| scope_matched && !observation_only)
+                .and_then(|payload| {
+                    self.state.snapshots.publish_sized_for_session(
+                        pid,
+                        u64::from(window_id),
+                        payload,
+                        session_id.as_deref(),
+                        screenshot_resize_scale,
+                        window_size,
+                    )
+                })
+                .unzip(),
+        };
         let capture_id = match (snapshot_id, screenshot.as_ref()) {
             (Some(_), Some((png, _, width, height, native_width, native_height, _, _))) => {
                 match self.state.capture_bindings.publish_window(
@@ -587,6 +616,14 @@ impl Tool for GetWindowStateTool {
         }
         if let Some(capture_id) = capture_id {
             structured["capture_id"] = serde_json::json!(capture_id);
+        }
+        if let Some(id) = refreshed {
+            let sid = cua_driver_core::element_token::format_snapshot_id(id);
+            content.push(Content::text(format!(
+                "Screenshot only: snapshot {sid} keeps its rows, and its element_tokens \
+                 ({sid}:N) stay valid."
+            )));
+            structured["screenshot_refreshed_snapshot"] = serde_json::json!(true);
         }
         // Best-effort-background ladder, rung (2). Both rungs point the agent at
         // the same next move: an empty AX tree means element_index has nothing

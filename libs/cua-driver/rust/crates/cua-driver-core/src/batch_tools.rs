@@ -41,8 +41,17 @@ pub const BATCHABLE_TOOLS: &[&str] = &[
 pub const MAX_STEPS: usize = 32;
 /// Longest pause between two steps.
 pub const MAX_DELAY_MS: u64 = 2_000;
-/// Default `max_elements` for the end-of-batch observation.
-const DEFAULT_OBSERVE_MAX_ELEMENTS: u64 = 200;
+/// Default `max_elements` for the end-of-batch observation: the same budget as
+/// a plain read, so its automatic `since` diff finds that read as a baseline.
+const DEFAULT_OBSERVE_MAX_ELEMENTS: usize = crate::window_state_view::DEFAULT_MAX_ELEMENTS;
+/// Step tool names models reach for that mean a batchable tool.
+const TOOL_ALIASES: &[(&str, &str)] = &[
+    ("press", "press_key"),
+    ("key", "press_key"),
+    ("keypress", "press_key"),
+    ("type", "type_text"),
+    ("set", "set_value"),
+];
 const MESSAGE_LIMIT: usize = 300;
 const OBSERVE_TOOL: &str = "get_window_state";
 
@@ -63,9 +72,12 @@ impl Tool for RunActionsTool {
     fn def(&self) -> &ToolDef {
         DEF.get_or_init(|| ToolDef {
             name: RUN_ACTIONS_TOOL.into(),
-            description: "Run several action tools in ONE call, in order, and stop at the first \
-                failure. Use it when you already know the next few actions and do not need to \
-                look at the app between them (fill three fields, click, then read the result). \
+            description: "The default way to act: run one or more action tools in ONE call, in \
+                order, stop at the first failure, and (with `observe`) get what changed in the \
+                same response. Use it whenever you know the next action(s) and would otherwise \
+                re-read the window after them: fill three fields, click, and see the result in \
+                one call instead of five. Even a single step plus `observe:true` replaces an \
+                action call followed by a get_window_state call. \
                 Each step is `{tool, args}` where `tool` is one of click, double_click, \
                 right_click, set_value, type_text, press_key, hotkey, scroll, drag and `args` \
                 are exactly that tool's arguments. Every step goes through the same session, \
@@ -76,8 +88,10 @@ impl Tool for RunActionsTool {
                 invalidate later element targets, so put element-targeted actions before the \
                 actions that reshuffle the window, or use pixel targets after them.\n\n\
                 Returns per-step status (`ok` or the error message) and, when `observe` is \
-                given, ONE bounded get_window_state read after the last executed step. \
-                Without `observe` nothing is read. The batch uses one session: steps may \
+                given, ONE bounded get_window_state read after the last executed step. That \
+                read is a `since:\"latest\"` diff by default: only the rows that changed \
+                since your last read of the window, plus a new snapshot_id. Without \
+                `observe` nothing is read. The batch uses one session: steps may \
                 omit `session` or repeat the batch's. `delay_ms` pauses between steps (max \
                 2000). At most 32 steps."
                 .into(),
@@ -108,7 +122,8 @@ impl Tool for RunActionsTool {
                     },
                     "observe": {
                         "type": "object",
-                        "description": "Optional end-of-batch observation: arguments for ONE get_window_state call. `pid` and `window_id` default to those of the last step that names both. Defaults to include_screenshot=false and max_elements=200 to stay cheap; pass include_screenshot=true or a larger max_elements to widen it. Omit to read nothing."
+                        "type": ["object", "boolean"],
+                        "description": "Optional end-of-batch observation: `true`, or arguments for ONE get_window_state call. `pid` and `window_id` default to those of the last step that names both. Defaults to since=\"latest\" (only what changed since your last read of that window with the same query/max_elements/max_depth; a full read when there is none), include_screenshot=false and max_elements=250; pass include_screenshot=true to see the window, or since=null for a full read. Omit to read nothing."
                     }
                 },
                 "additionalProperties": false
@@ -224,7 +239,7 @@ impl Plan {
         }
 
         let observe = match object.get("observe") {
-            None | Some(Value::Null) => None,
+            None | Some(Value::Null) | Some(Value::Bool(false)) => None,
             Some(value) => Some(parse_observe(registry, value, &steps, session.as_deref())?),
         };
         Ok(Self {
@@ -354,6 +369,10 @@ fn parse_step(
         .get("tool")
         .and_then(Value::as_str)
         .ok_or_else(|| PlanError::step(index, "`tool` must be a string"))?;
+    let name = TOOL_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == name)
+        .map_or(name, |(_, tool)| *tool);
     let tool = BATCHABLE_TOOLS
         .iter()
         .copied()
@@ -384,13 +403,15 @@ fn parse_observe(
     steps: &[Step],
     session: Option<&str>,
 ) -> Result<Value, PlanError> {
-    let mut args = value
-        .as_object()
-        .cloned()
-        .map(Value::Object)
-        .ok_or_else(|| {
-            PlanError::batch("`observe` must be an object of get_window_state arguments")
-        })?;
+    let mut args = match value {
+        Value::Bool(true) => Value::Object(Map::new()),
+        Value::Object(object) => Value::Object(object.clone()),
+        _ => {
+            return Err(PlanError::batch(
+                "`observe` must be true or an object of get_window_state arguments",
+            ))
+        }
+    };
     prepare_args(&mut args, session)
         .map_err(|message| PlanError::batch(format!("observe: {message}")))?;
     let object = args.as_object_mut().expect("object");
@@ -418,6 +439,21 @@ fn parse_observe(
     object
         .entry("max_elements")
         .or_insert_with(|| json!(DEFAULT_OBSERVE_MAX_ELEMENTS));
+    // Diff against the caller's last read of the window unless it asked for
+    // a full read (`since:null` or `full_output:true`).
+    let full_output = object.get("full_output").and_then(Value::as_bool) == Some(true);
+    match object.get("since") {
+        Some(Value::Null) => {
+            object.remove("since");
+        }
+        None if !full_output => {
+            object.insert(
+                "since".to_owned(),
+                json!(crate::window_state_view::SINCE_LATEST),
+            );
+        }
+        _ => {}
+    }
     validate_against_schema(registry, OBSERVE_TOOL, &args)
         .map_err(|message| PlanError::batch(format!("observe: {message}")))?;
     Ok(args)

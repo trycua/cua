@@ -14,6 +14,10 @@ use std::sync::Arc;
 pub use cua_host::relay::{AccountTokens, NoAccount, StaticToken};
 pub use cua_host::{ConnectedClient, DEFAULT_RELAY_URL, Identity, relay_url_from_env};
 
+/// The spacesd feature a Space needs to be shared through the relay
+/// (hosts from `cua host setup` are already joined).
+pub const RELAY_ATTACH_FEATURE: &str = "relay_attach";
+
 /// A machine row of the relay directory.
 pub type RelayMachine = cua_host::Machine;
 

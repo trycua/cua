@@ -14,6 +14,7 @@ import objc
 class EvalForm(fixture_form.Form):
     def build(self):
         objc.super(EvalForm, self).build()
+        self.window.setTitle_("Reference Bench Form")
         self.submit_button = next(v for v in self.window.contentView().subviews()
                                   if isinstance(v, AppKit.NSButton) and v.title() == 'Submit')
         self.record_label = AppKit.NSTextField.labelWithString_('Record A')

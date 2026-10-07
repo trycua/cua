@@ -69,7 +69,7 @@ cua-driver click '{"target":{"kind":"window","pid":844,"window_id":10725},"eleme
 | Focus a visible field and type  | `type_text` with `x,y,text`, when that form is advertised                      |
 | Replace an exposed native value | `set_value` with `pid,element_token,value` (its own schema, no `target`)       |
 | Send a key or combination       | `press_key` with `key`, or `hotkey` with `keys`                                |
-| Scroll / drag                   | Inspect `describe scroll` / `describe drag`; units and supported shapes matter |
+| Scroll / drag                   | `scroll` takes `direction` and `amount` (wheel notches); signed `dx`/`dy` is converted (positive `dy` is down; up to 50 is notches, more is pixels at 100 px per notch). Inspect `describe drag` |
 
 Text insertion and value replacement are different intents. Setting a field does not prove a form submission, navigation, or rename committed. Open a collapsed search/input control and reobserve before typing into it; one focus-click may not both open and focus it. Inspect the existing value/selection before replacing content.
 
@@ -90,7 +90,7 @@ cua-driver run_actions '{"session":"run-1","steps":[
  ],"delay_ms":100,"observe":true}'
 ```
 
-- `tool` is one of `click`, `double_click`, `right_click`, `set_value`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag` (`press` and `type` are accepted for `press_key` and `type_text`); `args` are exactly that tool's arguments. Observation tools cannot run inside a batch: use `observe`. Run `describe run_actions` and `describe <tool>` for schemas. Up to 32 steps.
+- `tool` is one of `click`, `double_click`, `right_click`, `set_value`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag` (`press` and `type` are accepted for `press_key` and `type_text`); `args` are exactly that tool's arguments. Observation tools cannot run inside a batch: use `observe`. A `get_window_state` as the last step, with no `observe`, is taken as the observation. Run `describe run_actions` and `describe <tool>` for schemas. Up to 32 steps.
 - Every step is validated before the first runs, so a malformed step changes nothing. Each step then passes the same session, permission, capability-manifest and approval checks as a direct call; a batch grants nothing a single call lacks, and a refused step ends the batch like any other failure.
 - A batch has one session. Set `session` on `run_actions`; a step may repeat it but not name another.
 - `observe` is optional and reads once, after the last executed step (also after a failure). Pass `true` or `get_window_state` arguments; `pid`/`window_id` come from the last step that names both. Defaults: `since:"latest"` (only what changed since your last read of that window with the same view; a full read if there is none), `include_screenshot:false`, `max_elements:250`. Pass `include_screenshot:true` to see the window, or `since:null` for a full read. Omit `observe` to read nothing.

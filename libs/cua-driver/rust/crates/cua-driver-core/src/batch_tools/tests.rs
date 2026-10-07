@@ -66,6 +66,10 @@ impl Harness {
                             "fail": {"type": "boolean"},
                             "include_screenshot": {"type": "boolean"},
                             "since": {"type": "string"},
+                            "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
+                            "amount": {"type": "integer", "minimum": 1, "maximum": 50},
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
                             "full_output": {"type": "boolean"},
                             "max_elements": {"type": "integer", "minimum": 1}
                         },
@@ -202,8 +206,8 @@ async fn validates_every_step_before_running_any() {
     let harness = Harness::new();
     let cases = [
         (
-            json!({"tool": "get_window_state", "args": {}}),
-            "cannot run in a batch",
+            json!({"tool": "zoom", "args": {}}),
+            "reads state and a batch only acts",
         ),
         (
             json!({"tool": "run_actions", "args": {}}),
@@ -455,4 +459,87 @@ async fn common_tool_name_slips_map_to_the_batchable_tool() {
         .run(json!({"steps": [{"tool": "get_window_state", "args": {"pid": 1}}]}))
         .await;
     assert_eq!(refused.is_error, Some(true));
+}
+
+#[tokio::test]
+async fn scroll_steps_accept_dx_dy_like_a_direct_call() {
+    let harness = Harness::new();
+    // The live-check shape: {"dy": 500} in a batch step.
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "scroll", "args": {"pid": 1, "window_id": 2, "x": 600, "y": 500, "dy": 500}},
+            {"tool": "scroll", "args": {"pid": 1, "window_id": 2, "x": 600, "y": 500, "dx": "-4"}},
+        ]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let calls = harness.calls["scroll"].lock().unwrap().clone();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(
+        (calls[0]["direction"].clone(), calls[0]["amount"].clone()),
+        (json!("down"), json!(5))
+    );
+    assert_eq!(
+        (calls[1]["direction"].clone(), calls[1]["amount"].clone()),
+        (json!("left"), json!(4))
+    );
+    assert!(calls
+        .iter()
+        .all(|c| c.get("dy").is_none() && c.get("dx").is_none()));
+
+    let refused = harness
+        .run(json!({"steps": [{"tool": "scroll", "args": {"pid": 1, "dx": 1, "dy": 1}}]}))
+        .await;
+    assert_eq!(refused.is_error, Some(true));
+    assert!(
+        text(&refused).contains("one axis per call"),
+        "{}",
+        text(&refused)
+    );
+    assert_eq!(harness.hits("scroll"), 2, "a refused batch runs nothing");
+}
+
+#[tokio::test]
+async fn a_trailing_read_becomes_the_observation_and_a_middle_one_points_to_observe() {
+    let harness = Harness::new();
+    // The v035 / live-check shape: act, act, then get_window_state as a step.
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
+            {"tool": "click", "args": {"pid": 7, "window_id": 3, "text": "x"}},
+            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3, "max_elements": 70}},
+        ]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let structured = result.structured_content.unwrap();
+    assert_eq!(structured["total"], 2, "the read is not counted as a step");
+    assert_eq!(structured["observation"]["ok"], true);
+    let observed = harness.last("get_window_state");
+    assert_eq!(observed["max_elements"], 70);
+    assert_eq!(observed["since"], "latest");
+    assert_eq!(harness.hits("click"), 2);
+
+    let refused = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
+            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3}},
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
+        ]}))
+        .await;
+    assert_eq!(refused.is_error, Some(true));
+    let message = text(&refused);
+    assert!(message.contains("step 2 of the batch"), "{message}");
+    assert!(
+        message.contains("Put get_window_state arguments in `observe`"),
+        "{message}"
+    );
+
+    // With an explicit observe, a trailing read is not silently dropped.
+    let both = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
+            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3}},
+        ], "observe": true}))
+        .await;
+    assert_eq!(both.is_error, Some(true));
+    assert_eq!(harness.hits("get_window_state"), 1);
 }

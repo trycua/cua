@@ -60,13 +60,18 @@ pub fn rotate_all_with(layout: &Layout, lume_daemon_logs: &[PathBuf]) -> Vec<Pat
     // (the file becomes sparse: little disk, a hole for readers); a stopped
     // instance's console is cut to its tail.
     if let Ok(rd) = std::fs::read_dir(layout.qemu()) {
+        let runtime = cua_vmm::qemu::QemuRuntime::new(cua_vmm::qemu::QemuConfig {
+            root: layout.qemu(),
+            ..Default::default()
+        });
         for e in rd.flatten() {
             let dir = e.path();
-            let running = std::fs::read(dir.join("state.json"))
-                .ok()
-                .and_then(|b| serde_json::from_slice::<cua_vmm::qemu::QemuState>(&b).ok())
-                .and_then(|s| s.pid)
-                .is_some_and(cua_vmm::host::pid_alive);
+            let running = match runtime.inspect_status(&e.file_name().to_string_lossy()) {
+                Ok(cua_vmm::Status::Stopped) => false,
+                Ok(cua_vmm::Status::Running | cua_vmm::Status::Paused) => true,
+                // Keep diagnostic evidence when process ownership is unknown.
+                _ => continue,
+            };
             let q = dir.join("qemu.log");
             if logs::copy_truncate(&q, MAX_BYTES, 1).unwrap_or(false) {
                 done.push(q);
@@ -98,6 +103,17 @@ pub fn rotate_all_with(layout: &Layout, lume_daemon_logs: &[PathBuf]) -> Vec<Pat
 mod tests {
     use super::*;
 
+    fn write_vm_state(vm: &std::path::Path, pending: bool) {
+        let disk = vm.join("disk.qcow2");
+        std::fs::write(&disk, b"test disk ownership only").unwrap();
+        let state = serde_json::json!({
+            "name": "box", "kind": "instance", "arch": "x86_64", "os": "windows",
+            "disk": disk, "disk_format": "qcow2", "firmware": {"type": "bios"},
+            "cpus": 1, "memory_mb": 256, "created_at": 1, "launch_pending": pending
+        });
+        std::fs::write(vm.join("state.json"), serde_json::to_vec(&state).unwrap()).unwrap();
+    }
+
     #[test]
     fn caps_service_and_vm_logs() {
         let d = tempfile::tempdir().unwrap();
@@ -110,6 +126,7 @@ mod tests {
         .unwrap();
         let vm = l.qemu().join("box");
         std::fs::create_dir_all(&vm).unwrap();
+        write_vm_state(&vm, false);
         std::fs::write(vm.join("serial.log"), vec![b's'; (MAX_BYTES + 10) as usize]).unwrap();
         std::fs::write(vm.join("qemu.log"), b"small").unwrap();
         let done = rotate_all(&l);
@@ -126,6 +143,30 @@ mod tests {
             CONSOLE_TAIL
         );
         assert_eq!(std::fs::read(vm.join("qemu.log")).unwrap(), b"small");
+    }
+
+    #[test]
+    fn uncertain_vm_keeps_startup_and_serial_evidence() {
+        let d = tempfile::tempdir().unwrap();
+        let l = Layout::new(d.path());
+        let vm = l.qemu().join("box");
+        std::fs::create_dir_all(&vm).unwrap();
+        let evidence = vec![b'e'; (MAX_BYTES + 10) as usize];
+        for file in ["qemu.log", "serial.log"] {
+            std::fs::write(vm.join(file), &evidence).unwrap();
+        }
+        write_vm_state(&vm, true);
+        assert!(rotate_all(&l).is_empty());
+        // Legacy 0.4.1 could lose state.pid while its QEMU pidfile remained live.
+        write_vm_state(&vm, false);
+        std::fs::write(vm.join("qemu.pid"), std::process::id().to_string()).unwrap();
+        assert!(rotate_all(&l).is_empty());
+        std::fs::write(vm.join("state.json"), b"incomplete state").unwrap();
+        assert!(rotate_all(&l).is_empty());
+        for file in ["qemu.log", "serial.log"] {
+            assert_eq!(std::fs::read(vm.join(file)).unwrap(), evidence);
+            assert!(!vm.join(format!("{file}.1")).exists());
+        }
     }
 
     #[test]

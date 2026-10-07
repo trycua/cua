@@ -69,6 +69,18 @@ pub enum VmmError {
     #[error("QMP: {0}")]
     Qmp(String),
 
+    /// Process inspection failed. This is unknown state, never evidence of exit.
+    #[error("cannot determine process {pid} state: {source}")]
+    ProcessCheck {
+        pid: u32,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// A live PID cannot be identified as the QEMU process this instance launched.
+    #[error("refusing process {pid}: {detail}")]
+    ProcessIdentity { pid: u32, detail: String },
+
     /// A state file could not be parsed.
     #[error("corrupt state file {path}: {detail}")]
     State { path: PathBuf, detail: String },

@@ -103,6 +103,54 @@ impl QmpClient {
             .to_string())
     }
 
+    /// Verify the existing QMP name and writable disk before acting on a VM.
+    #[cfg(windows)]
+    pub(crate) async fn verify_instance(
+        &mut self,
+        pid: u32,
+        name: &str,
+        disk: &Path,
+    ) -> Result<()> {
+        let identity = self.execute("query-name", None).await?;
+        if identity.get("name").and_then(Value::as_str) != Some(name) {
+            return Err(VmmError::ProcessIdentity {
+                pid,
+                detail: "QMP name does not match the recorded instance".into(),
+            });
+        }
+        let expected = std::fs::canonicalize(disk)?;
+        let blocks = self.execute("query-block", None).await?;
+        let mut matches = false;
+        if let Some(blocks) = blocks.as_array() {
+            for block in blocks {
+                let Some(inserted) = block.get("inserted") else {
+                    continue;
+                };
+                if block.get("device").and_then(Value::as_str) != Some("disk0")
+                    || inserted.get("ro").and_then(Value::as_bool) != Some(false)
+                {
+                    continue;
+                }
+                let filename = inserted
+                    .pointer("/image/filename")
+                    .or_else(|| inserted.get("file"));
+                let Some(filename) = filename.and_then(Value::as_str) else {
+                    continue;
+                };
+                if let Ok(actual) = std::fs::canonicalize(filename) {
+                    matches |= crate::host::windows_process::same_path(&actual, &expected);
+                }
+            }
+        }
+        if !matches {
+            return Err(VmmError::ProcessIdentity {
+                pid,
+                detail: "QMP writable disk0 does not match the recorded instance".into(),
+            });
+        }
+        Ok(())
+    }
+
     /// Save the framebuffer to a PNG file (path is on the host).
     pub async fn screendump(&mut self, path: &Path) -> Result<()> {
         self.execute(
@@ -160,7 +208,8 @@ impl QmpClient {
     pub async fn quit(&mut self) -> Result<()> {
         // The connection may drop before the reply arrives.
         match self.execute("quit", None).await {
-            Ok(_) | Err(VmmError::Qmp(_)) => Ok(()),
+            Ok(_) => Ok(()),
+            Err(VmmError::Qmp(message)) if message == "connection closed by QEMU" => Ok(()),
             Err(e) => Err(e),
         }
     }

@@ -363,6 +363,10 @@ impl Scanner {
     fn scan_qemu(&self, items: &mut Vec<Item>) -> HashMap<PathBuf, Vec<String>> {
         use cua_vmm::qemu::{EntryKind, QemuState};
         let root = self.layout.qemu();
+        let runtime = cua_vmm::qemu::QemuRuntime::new(cua_vmm::qemu::QemuConfig {
+            root: root.clone(),
+            ..Default::default()
+        });
         let mut used: HashMap<PathBuf, Vec<String>> = HashMap::new();
         let Ok(rd) = std::fs::read_dir(&root) else {
             return used;
@@ -387,7 +391,12 @@ impl Scanner {
                 let f = std::fs::canonicalize(&f).unwrap_or(f);
                 used.entry(f).or_default().push(st.name.clone());
             }
-            let running = st.pid.is_some_and(cua_vmm::host::pid_alive);
+            let status = match runtime.inspect_status(&st.name) {
+                Ok(cua_vmm::Status::Running | cua_vmm::Status::Paused) => "running",
+                Ok(cua_vmm::Status::Stopped) => "stopped",
+                Ok(cua_vmm::Status::Provisioning) => "provisioning",
+                Ok(cua_vmm::Status::Unknown(_)) | Err(_) => "unknown",
+            };
             let (category, kind) = match st.kind {
                 EntryKind::Instance if name.starts_with("cua-build-") => {
                     (Category::Builds, "build-vm")
@@ -404,7 +413,7 @@ impl Scanner {
                 bytes: disk::allocated_size(&dir),
                 last_used: disk::last_used(&dir).map(unix),
                 created: Some(st.created_at),
-                status: Some(if running { "running" } else { "stopped" }.into()),
+                status: Some(status.into()),
                 ephemeral: st.name.starts_with("cua-eph-"),
                 ..Default::default()
             });

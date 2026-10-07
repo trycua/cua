@@ -9,6 +9,16 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Result, VmmError};
 use crate::types::Arch;
 
+#[cfg(windows)]
+pub mod windows_process;
+
+/// Process exit is distinct from an inspection error (unknown state).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProcessState {
+    Running,
+    Exited,
+}
+
 /// Host operating system.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -193,23 +203,43 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Whether a process with this pid is alive.
-pub fn pid_alive(pid: u32) -> bool {
+/// Inspect a PID without treating access or inspection errors as process exit.
+pub fn process_state(pid: u32) -> Result<ProcessState> {
+    if pid == 0 {
+        return Err(VmmError::invalid("process ID must be nonzero"));
+    }
     #[cfg(unix)]
     {
-        // kill(pid, 0) via the `kill` utility keeps us free of libc bindings.
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+        let pid_native = libc::pid_t::try_from(pid)
+            .map_err(|_| VmmError::invalid("process ID exceeds the host PID range"))?;
+        // SAFETY: a positive PID and signal 0 only probe existence/permission.
+        if unsafe { libc::kill(pid_native, 0) } == 0 {
+            return Ok(ProcessState::Running);
+        }
+        let source = std::io::Error::last_os_error();
+        if source.raw_os_error() == Some(libc::ESRCH) {
+            Ok(ProcessState::Exited)
+        } else {
+            Err(VmmError::ProcessCheck { pid, source })
+        }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = pid;
-        false
+        match windows_process::Process::open(pid)? {
+            Some(process) => process.state(),
+            None => Ok(ProcessState::Exited),
+        }
     }
+    #[cfg(not(any(unix, windows)))]
+    Err(VmmError::Unsupported {
+        backend: "host",
+        op: "process inspection",
+    })
+}
+
+/// Whether a process is alive; an error means its state is unknown.
+pub fn pid_alive(pid: u32) -> Result<bool> {
+    process_state(pid).map(|state| state == ProcessState::Running)
 }
 
 /// Send a signal (`TERM`, `KILL`, ...) to a pid.

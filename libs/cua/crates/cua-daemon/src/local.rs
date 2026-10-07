@@ -54,6 +54,9 @@ fn pick_owner<R>(
         match status {
             Ok(()) => return Ok((kind, rt)),
             Err(VmmError::NotFound(_)) => {}
+            // A present QEMU entry with uncertain ownership must not fall
+            // through to a same-name instance on another backend.
+            Err(e) if kind == BackendKind::Qemu => return Err(rt_err(e)),
             Err(e) => unreachable = unreachable.or(Some(e)),
         }
     }
@@ -899,18 +902,9 @@ impl LocalRuntime for VmmLocal {
     }
 
     async fn resume(&self, name: &str) -> RuntimeResult<LocalInstance> {
-        let (kind, rt) = self.owner(name).await?;
-        // QEMU resumes a paused VM over QMP; a stopped one has no process
-        // to resume and no start spec to boot from.
-        if kind == BackendKind::Qemu && rt.status(name).await.map_err(rt_err)? == Status::Stopped {
-            return Err(RuntimeError::Unsupported {
-                backend: "qemu".into(),
-                op: format!(
-                    "starting {name} again: a QEMU VM resumes from suspend only, and this one \
-                     was stopped (its disk is kept; delete it and create a new one)"
-                ),
-            });
-        }
+        let (_, rt) = self.owner(name).await?;
+        // The QEMU backend owns both paused and cold resume, including the
+        // persisted disk, resources, endpoint and process-identity checks.
         let inst = rt.resume(name).await.map_err(rt_err)?;
         Ok(LocalInstance {
             backend: runtime_label(&inst),
@@ -957,12 +951,14 @@ impl LocalRuntime for VmmLocal {
             let Ok(rt) = self.runtime(kind).await else {
                 continue;
             };
-            if let Ok(list) = rt.list().await {
-                out.extend(list.into_iter().map(|s| LocalSummary {
+            match rt.list().await {
+                Ok(list) => out.extend(list.into_iter().map(|s| LocalSummary {
                     name: s.name,
                     backend: s.backend.as_str().to_string(),
                     status: status_of(s.status),
-                }));
+                })),
+                Err(e) if kind == BackendKind::Qemu => return Err(rt_err(e)),
+                Err(_) => {}
             }
         }
         Ok(out)
@@ -1489,6 +1485,31 @@ mod tests {
             ],
         );
         assert!(matches!(r, Ok((BackendKind::Lume, ()))));
+    }
+
+    #[test]
+    fn uncertain_qemu_owner_does_not_select_another_backend() {
+        use super::{BackendKind, RuntimeError, VmmError, pick_owner};
+        let error = pick_owner(
+            "space",
+            vec![
+                (
+                    BackendKind::Qemu,
+                    Err(VmmError::ProcessIdentity {
+                        pid: 123,
+                        detail: "fixture: QEMU ownership is uncertain".into(),
+                    }),
+                    (),
+                ),
+                (BackendKind::Lume, Ok(()), ()),
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            RuntimeError::Other(why)
+                if why == "refusing process 123: fixture: QEMU ownership is uncertain"
+        ));
     }
 
     #[test]

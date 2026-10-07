@@ -668,9 +668,10 @@ impl Discovery {
     }
 }
 
-/// Whether `pid` is a live process.
+/// Conservative legacy predicate: a process inspection error retains the
+/// daemon record. VM lifecycle uses the fallible VMM API directly.
 pub fn pid_alive(pid: u32) -> bool {
-    pid != 0 && cua_vmm::host::pid_alive(pid)
+    pid != 0 && cua_vmm::host::pid_alive(pid).unwrap_or(true)
 }
 
 /// Whether a server accepts connections on the Unix socket at `path`

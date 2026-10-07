@@ -2344,8 +2344,10 @@ impl Sandboxes {
             (ProviderKind::Local, _) => {
                 let rt = self.local()?;
                 rt.stop(name).await?;
-                rt.resume(name).await?;
-                self.inner.state.set_status(name, "running")
+                // If the next boot fails, the last confirmed state is
+                // stopped. Reuse resume's readiness checks for a cold boot.
+                self.inner.state.set_status(name, "stopped")?;
+                self.resume(name).await
             }
             (ProviderKind::Fleet, _) => Err(fleet_lifecycle_unsupported("restart")),
             (kind, _) => Err(Error::Unsupported {

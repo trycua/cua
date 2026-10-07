@@ -39,10 +39,16 @@ png = { version = "0.18", optional = true }
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock"] }
 
 [dev-dependencies]
 # Opt-in QEMU test: the SDK client checks the guest accepts the delivered token.
 cua-spacesd-client = { path = "../cua-spacesd-client" }
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
+
+[[test]]
+name = "qemu_windows_lifecycle"
+path = "tests/qemu_windows_lifecycle.rs"
+harness = false
+required-features = ["qemu"]

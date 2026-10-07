@@ -94,7 +94,25 @@ fn fresh_title(pid: u32, window_id: u64) -> Result<String> {
         .context("capture target disappeared from fresh window enumeration")
 }
 
-pub(super) fn screenshot(window_id: u64, pid: u32) -> Result<Vec<u8>> {
+fn unique_pid(window_id: u64, windows: &[super::WindowInfo]) -> Result<u32> {
+    let mut matches = windows.iter().filter(|w| w.xid == window_id);
+    let pid = matches
+        .next()
+        .and_then(|w| w.pid)
+        .filter(|pid| *pid > 0)
+        .context("fresh window enumeration did not bind a process")?;
+    if matches.next().is_some() {
+        bail!("fresh window enumeration returned an ambiguous window identity");
+    }
+    Ok(pid)
+}
+
+pub(super) fn screenshot(window_id: u64, requested_pid: Option<u32>) -> Result<Vec<u8>> {
+    // ID-only callers (including zoom) still need a fresh, unique process binding.
+    let pid = match requested_pid {
+        Some(pid) => pid,
+        None => unique_pid(window_id, &super::list_windows_dispatch(None))?,
+    };
     let title = fresh_title(pid, window_id)?;
     let before = query(pid)?;
     before.binds(pid, &title)?;
@@ -120,6 +138,27 @@ pub(super) fn screenshot(window_id: u64, pid: u32) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
     const VALID: &str = "capture 12 14 0 0 640 480 9 546172676574";
+
+    #[test]
+    fn id_only_capture_requires_a_unique_fresh_process_binding() {
+        let window = |id, pid| super::super::WindowInfo {
+            xid: id,
+            pid,
+            app_name: String::new(),
+            title: "Target".into(),
+            is_on_screen: true,
+            z_index: None,
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 480,
+        };
+        assert_eq!(unique_pid(9, &[window(9, Some(12))]).unwrap(), 12);
+        assert!(unique_pid(9, &[window(8, Some(12))]).is_err());
+        assert!(unique_pid(9, &[window(9, None)]).is_err());
+        assert!(unique_pid(9, &[window(9, Some(0))]).is_err());
+        assert!(unique_pid(9, &[window(9, Some(12)), window(9, Some(13))]).is_err());
+    }
 
     #[test]
     fn exact_target_requires_pid_and_full_title() {

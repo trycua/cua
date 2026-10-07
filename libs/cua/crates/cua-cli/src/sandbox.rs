@@ -2062,9 +2062,34 @@ pub fn save_env_token(name: &str, token: Option<&str>) -> Result<(), CuaError> {
     )
 }
 
-/// A spacesd client for a named sandbox. Direct sandboxes use the
-/// remembered token (or `CUA_ENV_TOKEN`).
+/// Canonical `relay:<machine-id>` when `name` is a relay Space, including
+/// the legacy `space://relay/…` spelling. An invalid `relay:` spelling is
+/// `None`, so the sandbox path reports that ref error.
+pub(crate) fn relay_space_id(name: &str) -> Option<String> {
+    let r = cua_sandbox_core::refs::SandboxRef::parse(name).ok()?;
+    matches!(r, cua_sandbox_core::refs::SandboxRef::Relay { .. }).then(|| r.to_string())
+}
+
+/// A spacesd client for a named sandbox or a relay Space. Direct sandboxes
+/// use the remembered token (or `CUA_ENV_TOKEN`). A relay Space opens
+/// through the Spaces API; the sandboxes API does not attach those machines.
 pub async fn env_of(cua: &Cua, name: &str) -> Result<Arc<cua_sdk::SpacesdClient>, CuaError> {
+    if let Some(id) = relay_space_id(name) {
+        // The SDK attaches the signed-in relay account only when its `host`
+        // feature is on. This binary reaches those Spaces the way `cua mcp` does.
+        crate::host::attach_relay_account(cua, || {
+            crate::host::daemon_relay_account(&crate::util::cua_home())
+        });
+        let spaces = cua.spaces();
+        // `Spaces::space` looks the machine up in the relay directory cache.
+        // An embedded runtime fills that cache on list, not on connect. A
+        // qualified id that is not in the directory is not a Space yet.
+        let listed = spaces.list().await?;
+        if !listed.iter().any(|s| s.id == id) {
+            return Err(CuaError::NotFound(format!("Space {id}")));
+        }
+        return spaces.space(id).await?.spacesd();
+    }
     let sbx = cua.sandboxes();
     let info = sbx.get(name.to_string()).await?;
     if info.location == "direct"

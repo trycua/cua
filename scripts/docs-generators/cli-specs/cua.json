@@ -4879,7 +4879,7 @@
   },
   {
    "abstract": "One-shot computer actions against the selected target",
-   "after_help": "Examples:\n  # Act on a sandbox, then take a screenshot\n  cua do switch dev\n  cua do screenshot",
+   "after_help": "Examples:\n  # Act on a sandbox, then take a screenshot\n  cua do switch dev\n  cua do screenshot\n  # A relay Space (`cua spaces ls`)\n  cua do switch relay:0123abcd4567ef89",
    "aliases": [],
    "arguments": [],
    "flags": [
@@ -4902,13 +4902,13 @@
    "subcommand_optional": false,
    "subcommands": [
     {
-     "abstract": "Select the target: a sandbox name, `host`, `url <URL>`, or a legacy `<provider> <name>` pair",
-     "after_help": "Examples:\n  cua do switch dev\n  cua do switch cloud:dev\n  # This machine (after `cua do-host-consent`)\n  cua do switch host",
+     "abstract": "Select the target: a sandbox name or ref, a relay Space (`relay:<id>`), `host`, `url <URL>`, or a legacy `<provider> <name>` pair",
+     "after_help": "Examples:\n  cua do switch dev\n  cua do switch cloud:dev\n  cua do switch relay:0123abcd4567ef89\n  # This machine (after `cua do-host-consent`)\n  cua do switch host",
      "aliases": [],
      "arguments": [
       {
        "default_value": null,
-       "help": "Sandbox name or ref, `host`, `url`, or a legacy provider word",
+       "help": "Sandbox name or ref, `relay:<id>`, `host`, `url`, or a legacy provider word",
        "hidden": false,
        "is_optional": false,
        "name": "TARGET",

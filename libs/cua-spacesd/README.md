@@ -212,6 +212,12 @@ by path, never the reverse.
 Needs `protoc` (the contract is generated at build time). The macOS build
 needs the macOS 26 SDK (ScreenCaptureKit bindings).
 
+The Windows executable declares Per-Monitor V2 DPI awareness at process
+startup, so the linked driver uses physical pixels for desktop capture,
+window bounds and input on scaled displays. The `windows_dpi` binary test
+checks the actual child process's awareness without enabling desktop services
+or sending input; it runs with the ordinary workspace tests.
+
 ```sh
 cd libs/cua-spacesd
 cargo build -p cua-spacesd

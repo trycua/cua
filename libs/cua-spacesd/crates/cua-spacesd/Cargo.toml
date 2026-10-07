@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[build-dependencies]
+embed-resource = "2"
+
 [dependencies]
 cua-driver-core = { path = "../../../cua-driver/rust/crates/cua-driver-core" }
 cua-spacesd-desktop = { path = "../cua-spacesd-desktop" }
@@ -67,5 +70,6 @@ platform-windows = { path = "../../../cua-driver/rust/crates/platform-windows" }
 [target.'cfg(target_os = "windows")'.dev-dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
+    "Win32_UI_HiDpi",
     "Win32_UI_WindowsAndMessaging",
 ] }

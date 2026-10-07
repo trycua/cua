@@ -53,7 +53,8 @@ fn def() -> &'static ToolDef {
                         Equivalent to passing the field directly."
                 },
                 "value": {
-                    "description": "New value for `key`. JSON type depends on the key."
+                    "type": "string",
+                    "description": "New value for `key` in the {key, value} shape. Typed as a string for function-calling portability (Vertex/Gemini): pass string-valued keys here (experimental_pip_geometry, cursor.motion.*); for integer or boolean keys prefer the matching typed field (max_image_dimension, experimental_pip). A raw JSON number or boolean is still accepted here at runtime."
                 },
                 "max_image_dimension": {
                     "type": "integer",

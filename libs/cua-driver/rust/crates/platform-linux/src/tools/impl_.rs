@@ -13244,7 +13244,7 @@ impl Tool for SetConfigTool {
                 save the default cursor motion for sessions started afterwards.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
                 "key":{"type":"string","description":"Name of a single config field to write ({key, value} shape). Pair with `value`."},
-                "value":{"description":"New value for `key`. JSON type depends on the key."},
+                "value":{"type":"string","description":"New value for `key` in the {key, value} shape. Typed as a string for function-calling portability (Vertex/Gemini): pass string-valued keys here (capture_mode, experimental_pip_geometry, cursor.motion.*); for integer or boolean keys prefer the matching typed field (max_image_dimension, experimental_pip). A raw JSON number or boolean is still accepted here at runtime."},
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"Legacy per-field shape. Default capture mode for get_window_state. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Legacy per-field shape. Max dimension for screenshot resizing (0 = no limit)."},
                 "experimental_pip":{"type":"boolean","description":"Enable the experimental PiP preview window (applies next restart; Linux backend stubbed)."},

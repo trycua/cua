@@ -32,6 +32,17 @@ fn normalize_schema(value: &mut Value) {
     match value {
         Value::Object(object) => {
             object.remove("title");
+            // Children first so nested unions/consts are already portable before
+            // we rewrite this node (#4798 Vertex/Gemini tools/list subset).
+            for child in object.values_mut() {
+                normalize_schema(child);
+            }
+            collapse_null_union(object, "anyOf");
+            collapse_null_union(object, "oneOf");
+            flatten_tagged_kind_one_of(object);
+            rewrite_const_as_enum(object);
+            rewrite_nullable_type_array(object);
+            ensure_string_enum_type(object);
             if object.get("type").and_then(Value::as_str) == Some("object") {
                 object
                     .entry("properties")
@@ -43,9 +54,6 @@ fn normalize_schema(value: &mut Value) {
                     .entry("additionalProperties")
                     .or_insert(Value::Bool(true));
             }
-            for child in object.values_mut() {
-                normalize_schema(child);
-            }
         }
         Value::Array(values) => {
             for child in values {
@@ -53,6 +61,180 @@ fn normalize_schema(value: &mut Value) {
             }
         }
         _ => {}
+    }
+}
+
+fn is_null_type_schema(schema: &Value) -> bool {
+    schema.get("type").and_then(Value::as_str) == Some("null")
+        && schema
+            .as_object()
+            .is_some_and(|object| object.keys().all(|key| key == "type"))
+}
+
+/// Optional fields already omit to mean "unset"; drop `| null` unions so the
+/// advertised node keeps a single string `type` for Vertex/Gemini.
+fn collapse_null_union(object: &mut serde_json::Map<String, Value>, keyword: &str) {
+    let Some(Value::Array(variants)) = object.get(keyword).cloned() else {
+        return;
+    };
+    let mut kept = Vec::new();
+    let mut saw_null = false;
+    for variant in variants {
+        if is_null_type_schema(&variant) {
+            saw_null = true;
+            continue;
+        }
+        kept.push(variant);
+    }
+    if !saw_null {
+        return;
+    }
+    match kept.len() {
+        0 => {
+            object.remove(keyword);
+            object.insert("type".into(), Value::String("null".into()));
+        }
+        1 => {
+            object.remove(keyword);
+            if let Value::Object(inner) = kept.remove(0) {
+                for (key, value) in inner {
+                    object.entry(key).or_insert(value);
+                }
+            } else {
+                // Non-object singleton should not occur for Option<T> schemas.
+                object.insert(keyword.into(), Value::Array(kept));
+            }
+        }
+        _ => {
+            object.insert(keyword.into(), Value::Array(kept));
+        }
+    }
+}
+
+/// schemars tagged enums become `oneOf` of objects with `kind: {const: ...}`.
+/// Vertex rejects both the untyped combinator and `const`; flatten to one
+/// object with `kind` as a string enum and optional sibling fields.
+fn flatten_tagged_kind_one_of(object: &mut serde_json::Map<String, Value>) {
+    let Some(Value::Array(variants)) = object.get("oneOf").cloned() else {
+        return;
+    };
+    if variants.is_empty() || object.contains_key("anyOf") || object.contains_key("allOf") {
+        return;
+    }
+    let mut kinds = Vec::new();
+    let mut properties = serde_json::Map::new();
+    let mut additional = None;
+    for variant in &variants {
+        let Some(variant_object) = variant.as_object() else {
+            return;
+        };
+        if variant_object.get("type").and_then(Value::as_str) != Some("object") {
+            return;
+        }
+        let Some(variant_properties) = variant_object.get("properties").and_then(Value::as_object)
+        else {
+            return;
+        };
+        let Some(kind_schema) = variant_properties.get("kind") else {
+            return;
+        };
+        let kind = kind_schema
+            .get("const")
+            .or_else(|| {
+                kind_schema
+                    .get("enum")
+                    .and_then(Value::as_array)
+                    .and_then(|values| (values.len() == 1).then(|| &values[0]))
+            })
+            .and_then(Value::as_str);
+        let Some(kind) = kind else {
+            return;
+        };
+        kinds.push(Value::String(kind.to_owned()));
+        for (name, schema) in variant_properties {
+            if name == "kind" {
+                continue;
+            }
+            properties
+                .entry(name.clone())
+                .or_insert_with(|| schema.clone());
+        }
+        match (&additional, variant_object.get("additionalProperties")) {
+            (None, Some(value)) => additional = Some(value.clone()),
+            (Some(Value::Bool(false)), Some(Value::Bool(true))) => {
+                additional = Some(Value::Bool(true))
+            }
+            _ => {}
+        }
+    }
+    if kinds.is_empty() {
+        return;
+    }
+    object.remove("oneOf");
+    object.insert("type".into(), Value::String("object".into()));
+    let mut kind_schema = serde_json::Map::new();
+    kind_schema.insert("type".into(), Value::String("string".into()));
+    kind_schema.insert("enum".into(), Value::Array(kinds));
+    properties.insert("kind".into(), Value::Object(kind_schema));
+    object.insert("properties".into(), Value::Object(properties));
+    object.insert(
+        "required".into(),
+        Value::Array(vec![Value::String("kind".into())]),
+    );
+    object.insert(
+        "additionalProperties".into(),
+        additional.unwrap_or(Value::Bool(true)),
+    );
+}
+
+fn rewrite_const_as_enum(object: &mut serde_json::Map<String, Value>) {
+    let Some(const_value) = object.remove("const") else {
+        return;
+    };
+    if object.get("enum").is_none() {
+        object.insert("enum".into(), Value::Array(vec![const_value.clone()]));
+    }
+    if object.get("type").is_none() {
+        let type_name = match &const_value {
+            Value::String(_) => "string",
+            Value::Bool(_) => "boolean",
+            Value::Number(number) if number.is_i64() || number.is_u64() => "integer",
+            Value::Number(_) => "number",
+            Value::Array(_) => "array",
+            Value::Object(_) => "object",
+            Value::Null => "null",
+        };
+        if type_name != "null" {
+            object.insert("type".into(), Value::String(type_name.into()));
+        }
+    }
+}
+
+fn rewrite_nullable_type_array(object: &mut serde_json::Map<String, Value>) {
+    let Some(Value::Array(types)) = object.get("type").cloned() else {
+        return;
+    };
+    let non_null: Vec<Value> = types
+        .iter()
+        .filter(|value| value.as_str() != Some("null"))
+        .cloned()
+        .collect();
+    if non_null.len() == 1 && types.iter().any(|value| value.as_str() == Some("null")) {
+        // Prefer omission over `nullable: true`: optional inputs already mean
+        // "unset" when the field is absent, matching Gemini-facing enum fields.
+        object.insert(
+            "type".into(),
+            non_null.into_iter().next().expect("len == 1"),
+        );
+    }
+}
+
+fn ensure_string_enum_type(object: &mut serde_json::Map<String, Value>) {
+    let Some(values) = object.get("enum").and_then(Value::as_array) else {
+        return;
+    };
+    if values.iter().all(Value::is_string) && object.get("type").is_none() {
+        object.insert("type".into(), Value::String("string".into()));
     }
 }
 
@@ -252,7 +434,8 @@ impl JsonSchema for DesktopScope {
     }
 
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        json_schema!({ "const": "desktop" })
+        // Vertex/Gemini reject `const`; a one-value string enum stays portable.
+        json_schema!({ "type": "string", "enum": ["desktop"] })
     }
 }
 
@@ -850,12 +1033,10 @@ impl JsonSchema for ClickInput {
         "ClickInput".into()
     }
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {
-        let mut schema = ClickWireInput::json_schema(generator);
-        schema.insert("oneOf".into(), serde_json::json!([
-            {"required":["x","y"], "not":{"required":["element_token"]}},
-            {"required":["element_token"], "not":{"anyOf":[{"required":["x"]},{"required":["y"]},{"required":["capture_id"]}]}}
-        ]));
-        schema
+        // Advertise a plain object: Vertex/Gemini and Bedrock reject top-level
+        // oneOf/anyOf. Mutual exclusion of x/y vs element_token stays enforced
+        // by TryFrom/validate (#4798).
+        ClickWireInput::json_schema(generator)
     }
 }
 
@@ -1146,7 +1327,7 @@ mod tests {
         }
         let schema = ClickInput::input_schema();
         assert_eq!(schema["required"], json!(["target", "delivery_mode"]));
-        assert!(schema["oneOf"].is_array());
+        assert!(schema.get("oneOf").is_none());
         assert!(schema["properties"].get("position").is_none());
         assert!(schema["properties"].get("capture_id").is_some());
         assert_eq!(schema["properties"]["capture_id"]["minLength"], 1);
@@ -1214,8 +1395,13 @@ mod tests {
         assert_eq!(schema["type"], "object");
         assert_eq!(schema["additionalProperties"], false);
         assert_eq!(schema["required"], json!(["x", "y"]));
-        assert_eq!(schema["properties"]["scope"]["const"], "desktop");
-        assert!(schema["properties"]["target"]["anyOf"].is_array());
+        assert_eq!(
+            schema["properties"]["scope"],
+            json!({ "type": "string", "enum": ["desktop"], "description": "Deprecated flat desktop target retained for wire compatibility." })
+        );
+        assert_eq!(schema["properties"]["target"]["type"], "object");
+        assert!(schema["properties"]["target"].get("anyOf").is_none());
+        assert!(schema["properties"]["target"].get("oneOf").is_none());
         assert_eq!(
             schema["properties"]["button"],
             json!({ "type": "string", "enum": ["left", "right", "middle"] })

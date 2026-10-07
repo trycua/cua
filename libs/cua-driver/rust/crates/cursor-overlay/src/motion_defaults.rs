@@ -214,7 +214,9 @@ pub fn config_schema_properties() -> Map<String, Value> {
     properties.insert(
         KEY_PREFIX.to_owned(),
         json!({
-            "description": "Pass null (or `default`) to clear every saved cursor motion default."
+            "type": "string",
+            "enum": ["default"],
+            "description": "Pass `default` (or omit / null at runtime) to clear every saved cursor motion default."
         }),
     );
     properties
@@ -535,6 +537,15 @@ mod tests {
         assert!(properties.contains_key(KEY_PREFIX));
         for name in EFFECT_NAMES {
             assert!(properties.contains_key(&format!("cursor.motion.effects.{name}")));
+        }
+        // Vertex/Gemini reject description-only nodes (#4798).
+        assert_eq!(properties[KEY_PREFIX]["type"], "string");
+        assert_eq!(properties[KEY_PREFIX]["enum"], json!(["default"]));
+        for schema in properties.values() {
+            assert!(
+                schema.get("type").and_then(Value::as_str).is_some(),
+                "set_config cursor.motion.* fields need a single string type: {schema}"
+            );
         }
     }
 }

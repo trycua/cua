@@ -396,7 +396,7 @@ mod tests {
             <NumericFormatFixture as ToolOutput>::output_schema(),
         ];
 
-        for schema in schemas {
+        for (index, schema) in schemas.into_iter().enumerate() {
             for property in ["count", "frame", "ratio"] {
                 assert!(schema["properties"][property].get("format").is_none());
             }
@@ -406,10 +406,14 @@ mod tests {
                 serde_json::json!({"type": "string"})
             );
             assert_eq!(schema["required"], serde_json::json!(["format"]));
-            assert_eq!(
-                schema["properties"]["annotation"]["const"],
-                serde_json::json!({"format": "uint32"})
-            );
+            // Input schemas rewrite `const` into a one-value `enum` for
+            // Vertex/Gemini (#4798); the literal payload must survive intact.
+            let literal = if index == 0 {
+                &schema["properties"]["annotation"]["enum"][0]
+            } else {
+                &schema["properties"]["annotation"]["const"]
+            };
+            assert_eq!(literal, &serde_json::json!({"format": "uint32"}));
             assert_eq!(
                 schema["properties"]["annotation"]["default"],
                 serde_json::json!({"format": "uint64"})

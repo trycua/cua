@@ -176,27 +176,47 @@ unsafe fn ax_window_records(app: AXUIElementRef, pid: i32, window_id: u32) -> Ve
         .collect()
 }
 
-/// Count independently AX-mapped, non-minimized sibling top-level windows.
+/// One same-session WindowServer row as the keyboard-ambiguity count sees it.
+struct WindowServerRow {
+    pid: i32,
+    window_id: u32,
+    /// On screen and of real size. An ordered-out window (LibreOffice's
+    /// `VCL ImplGetDefaultWindow`, a closed Chrome omnibox popup) cannot be
+    /// the key window, so process-scoped keys can never reach it.
+    visible: bool,
+}
+
+/// Count independently AX-mapped, visible, non-minimized sibling top-level
+/// windows that could receive process-scoped key events instead of the target.
 ///
 /// WindowServer may expose several layer-0 compositor surfaces for one native
 /// Electron, Tauri, or WebKit window. A raw same-pid CGWindow row is therefore
 /// not enough to prove another process-scoped keyboard destination. Requiring a
 /// fresh `AXWindows` mapping preserves the fail-closed two-window guard while
 /// ignoring render surfaces that cannot independently become the AX key window.
+///
+/// AppKit sends a process's key events to its key window. When AX proves the
+/// target is that window (`target_is_key`), no sibling can receive them, so a
+/// sibling such as an open omnibox popup does not make the target ambiguous.
 fn count_competing_keyboard_destinations(
     pid: i32,
     target_window_id: u32,
-    window_server_rows: impl IntoIterator<Item = (i32, u32)>,
+    window_server_rows: impl IntoIterator<Item = WindowServerRow>,
     ax_records: &[AxWindowRecord],
+    target_is_key: bool,
 ) -> usize {
+    if target_is_key {
+        return 0;
+    }
     window_server_rows
         .into_iter()
-        .filter(|(owner_pid, window_id)| {
-            *owner_pid == pid
-                && *window_id != target_window_id
-                && ax_records
-                    .iter()
-                    .any(|record| record.window_id == *window_id && record.minimized != Some(true))
+        .filter(|row| {
+            row.pid == pid
+                && row.window_id != target_window_id
+                && row.visible
+                && ax_records.iter().any(|record| {
+                    record.window_id == row.window_id && record.minimized != Some(true)
+                })
         })
         .count()
 }
@@ -223,13 +243,14 @@ pub fn gather_background_facts(
     // SAFETY: the application element is created and released here; window
     // elements are released inside ax_window_records; the caller guarantees
     // element_ptr stays retained.
-    let (records, app_hidden, element) = unsafe {
+    let (records, app_hidden, element, focused_window_id) = unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
             (
                 Vec::new(),
                 None,
                 element_ptr.map(|_| ElementAncestry::Unproven),
+                None,
             )
         } else {
             // Electron/Chromium apps may need per-process-lifetime enablement
@@ -242,8 +263,13 @@ pub fn gather_background_facts(
                 Some(_) => ElementAncestry::OutsideTargetWindow,
                 None => ElementAncestry::Unproven,
             });
+            let focused_window_id = copy_element_attr(app, "AXFocusedWindow").and_then(|window| {
+                let window_id = ax_get_window_id(window);
+                CFRelease(window as CFTypeRef);
+                window_id
+            });
             CFRelease(app as CFTypeRef);
-            (records, app_hidden, element)
+            (records, app_hidden, element, focused_window_id)
         }
     };
 
@@ -251,10 +277,15 @@ pub fn gather_background_facts(
     let competing_keyboard_destinations = count_competing_keyboard_destinations(
         pid,
         window_id,
-        all_windows()
-            .iter()
-            .map(|window| (window.pid, window.window_id)),
+        all_windows().iter().map(|window| WindowServerRow {
+            pid: window.pid,
+            window_id: window.window_id,
+            visible: window.is_on_screen
+                && window.bounds.width >= 2.0
+                && window.bounds.height >= 2.0,
+        }),
         &records,
+        target.is_some() && focused_window_id == Some(window_id),
     );
 
     BackgroundTargetFacts {
@@ -269,7 +300,10 @@ pub fn gather_background_facts(
 
 #[cfg(test)]
 mod tests {
-    use super::{count_competing_keyboard_destinations, resolve_owning_window, AxWindowRecord};
+    use super::{
+        count_competing_keyboard_destinations, resolve_owning_window, AxWindowRecord,
+        WindowServerRow,
+    };
 
     /// A fake AX node: (role, AXParent index, CGWindowID).
     type FakeNode = (&'static str, Option<usize>, Option<u32>);
@@ -337,46 +371,83 @@ mod tests {
         }
     }
 
+    fn rows<const N: usize>(rows: [(i32, u32); N]) -> Vec<WindowServerRow> {
+        rows.into_iter()
+            .map(|(pid, window_id)| WindowServerRow {
+                pid,
+                window_id,
+                visible: true,
+            })
+            .collect()
+    }
+
     #[test]
     fn compositor_surfaces_do_not_create_keyboard_ambiguity() {
-        let rows = [(42, 10), (42, 11), (42, 12), (42, 13), (42, 14), (42, 15)];
+        let rows = rows([(42, 10), (42, 11), (42, 12), (42, 13), (42, 14), (42, 15)]);
         let records = [ax_window(10, Some(false))];
 
         assert_eq!(
-            count_competing_keyboard_destinations(42, 10, rows, &records),
+            count_competing_keyboard_destinations(42, 10, rows, &records, false),
             0
         );
     }
 
     #[test]
     fn independently_mapped_sibling_remains_ambiguous() {
-        let rows = [(42, 10), (42, 11)];
+        let rows = rows([(42, 10), (42, 11)]);
         let records = [ax_window(10, Some(false)), ax_window(11, Some(false))];
 
         assert_eq!(
-            count_competing_keyboard_destinations(42, 10, rows, &records),
+            count_competing_keyboard_destinations(42, 10, rows, &records, false),
             1
         );
     }
 
     #[test]
     fn minimized_mapped_sibling_is_not_a_keyboard_destination() {
-        let rows = [(42, 10), (42, 11)];
+        let rows = rows([(42, 10), (42, 11)]);
         let records = [ax_window(10, Some(false)), ax_window(11, Some(true))];
 
         assert_eq!(
-            count_competing_keyboard_destinations(42, 10, rows, &records),
+            count_competing_keyboard_destinations(42, 10, rows, &records, false),
             0
         );
     }
 
     #[test]
     fn unmapped_window_server_sibling_is_not_a_keyboard_destination() {
-        let rows = [(42, 10), (42, 99), (7, 11)];
+        let rows = rows([(42, 10), (42, 99), (7, 11)]);
         let records = [ax_window(10, Some(false)), ax_window(11, Some(false))];
 
         assert_eq!(
-            count_competing_keyboard_destinations(42, 10, rows, &records),
+            count_competing_keyboard_destinations(42, 10, rows, &records, false),
+            0
+        );
+    }
+
+    #[test]
+    fn off_screen_mapped_sibling_is_not_a_keyboard_destination() {
+        // LibreOffice lists `VCL ImplGetDefaultWindow` in AXWindows, but it is
+        // ordered out and can never be the key window (bench CDB-S02).
+        let mut rows = rows([(42, 10), (42, 11)]);
+        rows[1].visible = false;
+        let records = [ax_window(10, Some(false)), ax_window(11, Some(false))];
+
+        assert_eq!(
+            count_competing_keyboard_destinations(42, 10, rows, &records, false),
+            0
+        );
+    }
+
+    #[test]
+    fn a_proven_key_target_has_no_competing_destination() {
+        // Chrome with its omnibox popup open: the popup is visible and
+        // AX-mapped, but the browser window stays key (bench CDB-G04).
+        let rows = rows([(42, 10), (42, 11)]);
+        let records = [ax_window(10, Some(false)), ax_window(11, Some(false))];
+
+        assert_eq!(
+            count_competing_keyboard_destinations(42, 10, rows, &records, true),
             0
         );
     }

@@ -600,7 +600,7 @@ fn focus_record(wid: u32) -> [u8; 0xF8] {
 
 /// The CGWindowID of `pid`'s key window: its `AXFocusedWindow`, else its
 /// frontmost on-screen layer-0 window.
-fn key_window_of_pid(pid: pid_t) -> Option<u32> {
+pub(crate) fn key_window_of_pid(pid: pid_t) -> Option<u32> {
     use crate::ax::bindings::{ax_get_window_id, copy_element_attr, AXUIElementCreateApplication};
     let focused = unsafe {
         let app = AXUIElementCreateApplication(pid);

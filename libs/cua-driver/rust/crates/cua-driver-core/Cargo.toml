@@ -6,6 +6,7 @@ license.workspace = true
 publish = false
 
 [features]
+experimental-owned-supervision = []
 default = ["yaml", "rego"]
 yaml = ["dep:regex"]
 rego = ["dep:regorus"]

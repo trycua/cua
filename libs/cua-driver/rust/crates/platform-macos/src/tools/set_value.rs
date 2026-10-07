@@ -33,11 +33,22 @@ use super::ToolState;
 
 pub struct SetValueTool {
     state: Arc<ToolState>,
+    #[cfg(feature = "experimental-owned-supervision")]
+    owned: bool,
 }
 
 impl SetValueTool {
+    #[cfg(feature = "experimental-owned-supervision")]
+    pub fn new_owned(state: Arc<ToolState>) -> Self {
+        Self { state, owned: true }
+    }
+
     pub fn new(state: Arc<ToolState>) -> Self {
-        Self { state }
+        Self {
+            state,
+            #[cfg(feature = "experimental-owned-supervision")]
+            owned: false,
+        }
     }
 }
 
@@ -77,11 +88,29 @@ fn def() -> &'static ToolDef {
 #[async_trait]
 impl Tool for SetValueTool {
     fn def(&self) -> &ToolDef {
+        #[cfg(feature = "experimental-owned-supervision")]
+        if self.owned {
+            static OWNED_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+            return OWNED_DEF.get_or_init(|| {
+                let mut d = def().clone();
+                d.name = "dispatch_set_value".into();
+                d.description = "Experimental exact-bound native text dispatch. Returns an owned supervision receipt, never application commitment. Requires an explicit session. Use get_action_supervision or fence_action_supervision; independently verify application outcome before dependent input.".into();
+                d.input_schema["required"] = serde_json::json!(["pid", "window_id", "element_token", "value", "session"]);
+                d
+            });
+        }
         def()
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        #[cfg(feature = "experimental-owned-supervision")]
+        if self.owned
+            && (args.get("window_id").and_then(Value::as_u64).is_none()
+                || args.get("element_token").and_then(Value::as_str).is_none())
+        {
+            return ToolResult::error("binding_required: owned dispatch requires an exact window_id and current element_token; no input was sent.").with_structured(serde_json::json!({"refusal":"binding_required","input_sent":false}));
+        }
         let pid = match super::target_pid(&self.state, &args) {
             Ok(v) => v,
             Err(e) => return e,
@@ -184,11 +213,55 @@ impl Tool for SetValueTool {
             Some(window_id),
         );
 
+        #[cfg(feature = "experimental-owned-supervision")]
+        let reservation = if self.owned {
+            if args
+                .get("_public_session_label")
+                .and_then(Value::as_str)
+                .is_none()
+            {
+                return ToolResult::error(
+                    "session_required: owned dispatch requires a non-default explicit session.",
+                );
+            }
+            let role = unsafe { copy_string_attr(element_ptr as AXUIElementRef, "AXRole") };
+            if ax_echo_surface || role.as_deref() != Some("AXTextField") {
+                return ToolResult::error(
+                    "unsupported: owned dispatch requires a native AXTextField; no input was sent.",
+                );
+            }
+            let Some(scope) = args.get("_session_id").and_then(Value::as_str) else {
+                return ToolResult::error(
+                    "session_required: owned dispatch needs a trusted explicit runtime session.",
+                );
+            };
+            match self.state.supervision.reserve(scope) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    return ToolResult::error(format!(
+                        "supervision admission refused: {e:?}; no input was sent."
+                    ))
+                }
+            }
+        } else {
+            None
+        };
+
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations
         // in Chromium-based apps; the AXPopUpButton path also AXPresses a
         // child option which can trigger app activation in some setups.
         let prior_front = apps::frontmost_pid();
+        #[cfg(feature = "experimental-owned-supervision")]
+        let prior_window = prior_front.and_then(crate::input::skylight::key_window_of_pid);
+        #[cfg(feature = "experimental-owned-supervision")]
+        if self.owned
+            && !prior_front.zip(prior_window).is_some_and(|(pid, w)| {
+                crate::input::skylight::front_process_matches(pid, w) == Some(true)
+            })
+        {
+            return ToolResult::error("foreground_unavailable: owned dispatch needs a freshly bound prior foreground window; no input was sent.");
+        }
         let snapshot = WindowChangeDetector::snapshot(prior_front);
 
         let result = focus_guard::with_focus_suppressed(
@@ -204,7 +277,41 @@ impl Tool for SetValueTool {
         )
         .await;
 
+        #[cfg(feature = "experimental-owned-supervision")]
+        let foreground_preserved = prior_front.zip(prior_window).is_some_and(|(pid, w)| {
+            apps::frontmost_pid() == Some(pid)
+                && crate::input::skylight::front_process_matches(pid, w) == Some(true)
+        });
+        #[cfg(feature = "experimental-owned-supervision")]
+        let (changes, receipt) = match reservation {
+            Some(r) => (
+                crate::window_change_detector::Changes::not_polled(),
+                Some(snapshot.supervise_owned(r, foreground_preserved)),
+            ),
+            None => (snapshot.detect_async().await, None),
+        };
+        #[cfg(not(feature = "experimental-owned-supervision"))]
         let changes = snapshot.detect_async().await;
+
+        #[cfg(feature = "experimental-owned-supervision")]
+        if let Some(receipt) = receipt {
+            let (disposition, immediate_readback, error) = match result {
+                Ok(Ok(outcome)) if foreground_preserved => {
+                    ("attempted", outcome.verified.unwrap_or(false), None)
+                }
+                Ok(Ok(_)) => (
+                    "uncertain",
+                    false,
+                    Some("foreground_changed_after_dispatch".into()),
+                ),
+                Ok(Err(e)) => ("uncertain", false, Some(e.to_string())),
+                Err(e) => ("uncertain", false, Some(e.to_string())),
+            };
+            // Even an uncertain mutation retains its receipt. Do not instruct
+            // the client to replay it or project readback as committed effect.
+            return ToolResult::text("Native input attempted; supervision is owned and pending. Application commitment requires independent evidence.")
+                .with_structured(serde_json::json!({"receipt_id": receipt, "supervision": "pending_owned", "foreground_preserved_after_dispatch": foreground_preserved, "activation_after_dispatch": self.state.supervision.activation_observed(args["_session_id"].as_str().unwrap(), &receipt).ok().flatten(), "input_disposition": disposition, "immediate_readback": immediate_readback, "application_commit": "unverified", "error": error}));
+        }
 
         match result {
             Ok(Ok(mut outcome)) => {
@@ -957,6 +1064,28 @@ mod tests {
         is_file_name_cell, is_get_info_name_field, SetValueOutcome, GET_INFO_RENAME_ROUTE,
         LIST_RENAME_ROUTE,
     };
+
+    #[cfg(feature = "experimental-owned-supervision")]
+    #[tokio::test]
+    async fn owned_dispatch_requires_explicit_current_binding_before_native_work() {
+        use super::SetValueTool;
+        use cua_driver_core::tool::Tool;
+        let state = crate::tools::supervision::test_state();
+        let owned = SetValueTool::new_owned(state.clone());
+        assert_eq!(
+            owned.def().input_schema["required"],
+            serde_json::json!(["pid", "window_id", "element_token", "value", "session"])
+        );
+        let result = owned
+            .invoke(serde_json::json!({"pid":1,"value":"text","session":"explicit"}))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.unwrap(),
+            serde_json::json!({"refusal":"binding_required","input_sent":false})
+        );
+        assert_eq!(SetValueTool::new(state).def().name, "set_value");
+    }
 
     #[test]
     fn a_listed_file_name_is_a_file_name_cell() {

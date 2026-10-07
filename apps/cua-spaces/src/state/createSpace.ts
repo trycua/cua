@@ -11,6 +11,11 @@ import type { FleetSync } from "./cloud";
  * the engine the person chose (`auto` unless they picked one). Resolves with
  * the Space id; until then the Space shows as `pendingId`'s row.
  */
+/** The empty home's one click: the wizard's default image of `os` on this Mac. */
+export function quickLocalPlan(os: "linux" | "macos", env: object): CreatePlan {
+  return core<CreatePlan>("wizard.quickPlan", { os, env });
+}
+
 export function createFromPlan(
   sync: Pick<FleetSync, "createSpace">,
   plan: CreatePlan,

@@ -292,13 +292,13 @@ pub fn percent(permille: u32) -> String {
 }
 
 /// The selection the window shows: the chosen id if it still exists, else
-/// the first Space that is not this machine, else the first.
+/// the first Space that is not this machine. This machine alone is not a
+/// selection, so a roster with no Spaces shows the empty home.
 pub fn effective_selection<'a>(spaces: &'a [Space], selected_id: &str) -> Option<&'a Space> {
     spaces
         .iter()
         .find(|s| s.id == selected_id)
         .or_else(|| spaces.iter().find(|s| s.id != THIS_MACHINE_ID))
-        .or_else(|| spaces.first())
 }
 
 /// Builds the sidebar for `spaces` filtered by `query`.
@@ -1210,6 +1210,31 @@ mod tests {
     }
 
     const SHARED: &[&str] = &["desktop_stream", "window_stream", "host_spaces"];
+
+    /// No Spaces yet: nothing is selected, so the window shows the empty
+    /// home. Choosing This machine still selects it. A real Space wins over it.
+    #[test]
+    fn this_machine_alone_is_not_the_selection() {
+        use crate::host::this_machine_space;
+        use crate::model::SpaceOs;
+        let host = this_machine_space(None, 0, SpaceOs::Macos);
+        let alone = sidebar(std::slice::from_ref(&host), "", "");
+        assert_eq!(alone.selected_id, None);
+        assert!(alone.this_machine.is_some());
+        assert!(alone.sections.is_empty());
+        assert_eq!(
+            sidebar(std::slice::from_ref(&host), "", "this-mac")
+                .selected_id
+                .as_deref(),
+            Some("this-mac")
+        );
+        let mut other = host.clone();
+        other.id = "local:aurora".into();
+        assert_eq!(
+            sidebar(&[host, other], "", "").selected_id.as_deref(),
+            Some("local:aurora")
+        );
+    }
 
     /// Enrolled: nothing changes. Not enrolled, waiting or expired: the
     /// machine is listed, Connect is greyed out under the notice, Status

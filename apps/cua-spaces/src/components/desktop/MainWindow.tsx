@@ -47,7 +47,7 @@ import { canRunContainer, canRunMacos, type LocalStatus } from '../../native/loc
 import { createWindowDragBridge, type WindowDragBridge } from '../../native/windowDrag';
 import type { PortalAction } from '../../state/portal';
 import { useFleetSync } from '../../state/cloud';
-import { createFromPlan } from '../../state/createSpace';
+import { createFromPlan, quickLocalPlan } from '../../state/createSpace';
 import { RadialProgress } from '../RadialProgress';
 import { InstallerFlow } from '../InstallerFlow';
 import { SettingsPanel } from '../SettingsPanel';
@@ -77,6 +77,7 @@ import type { Experiments } from '../../model/experiments';
 import { useExperiments } from '../../state/experiments';
 import { createLoginItemBridge, type LoginItemBridge } from '../../native/loginItem';
 import { launchPlan, readLaunchChoice, writeLaunchChoice } from '../../model/loginItem';
+import { telemetryBridge } from '../../native/telemetry';
 import { Sym } from './Sym';
 
 export interface MainWindowProps {
@@ -476,6 +477,50 @@ export function MainWindow({
         });
     },
     [fleet, sync, openSpace]
+  );
+
+  // The empty home's one click: the core's default image of that system on
+  // this Mac (the same plan the wizard would summarize), then the usual create.
+  const createQuick = useCallback(
+    (os: 'linux' | 'macos') => {
+      const plan = quickLocalPlan(os, {
+        defaultLocation:
+          sync.defaultLocation.value === 'cloud'
+            ? 'cloud'
+            : isCloudWord(sync.defaultLocation.value)
+              ? 'yours'
+              : 'local',
+        cloudAvailable,
+        localAvailable,
+        localReason: local?.error ?? null,
+        localBackends: live ? (local?.backends ?? []) : null,
+        maxCpus: Math.max(2, Math.min(16, globalThis.navigator?.hardwareConcurrency || 8)),
+        hostArch: sync.hostArch ?? local?.hostArch ?? null,
+        storage: live ? (local?.storage ?? null) : null,
+        cloudPricing: live && sync.fleetConfigured ? cloudPricing : null,
+        clouds,
+        hosts,
+        experiments,
+        gpus: live ? gpus : null,
+      });
+      telemetryBridge().recordSignals([{ type: 'space-wizard', action: 'submitted' }]);
+      startCreate(plan);
+    },
+    [
+      cloudAvailable,
+      cloudPricing,
+      clouds,
+      experiments,
+      gpus,
+      hosts,
+      live,
+      local,
+      localAvailable,
+      startCreate,
+      sync.defaultLocation.value,
+      sync.fleetConfigured,
+      sync.hostArch,
+    ]
   );
 
   // The power button: the row says Suspending (and the like) at once; a
@@ -880,14 +925,42 @@ export function MainWindow({
                   <span className="dw-empty-art">
                     <Sym name="square.grid.2x2" />
                   </span>
-                  <h2>{sync.rosterError ? "Spaces could not be loaded" : chrome.emptyTitle}</h2>
-                  <button
-                    type="button"
-                    className="dw-btn dw-btn-primary dw-btn-lg"
-                    onClick={() => setWizard(true)}
-                  >
-                    {chrome.emptyAction}
-                  </button>
+                  {sync.rosterError ? (
+                    <>
+                      <h2>Spaces could not be loaded</h2>
+                      <button
+                        type="button"
+                        className="dw-btn dw-btn-primary dw-btn-lg"
+                        onClick={() => setWizard(true)}
+                      >
+                        {chrome.emptyCustomize}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <h2>{chrome.emptyTitle}</h2>
+                      <p>{chrome.emptyDetail}</p>
+                      <div className="dw-empty-actions">
+                        <button
+                          type="button"
+                          className="dw-btn dw-btn-primary dw-btn-lg"
+                          onClick={() => createQuick('linux')}
+                        >
+                          {chrome.emptyAction}
+                        </button>
+                        <button type="button" className="dw-btn" onClick={() => createQuick('macos')}>
+                          {chrome.emptySecondary}
+                        </button>
+                        <button
+                          type="button"
+                          className="dw-btn dw-btn-quiet"
+                          onClick={() => setWizard(true)}
+                        >
+                          {chrome.emptyCustomize}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               ) : isHost ? (
                 <div className="dw-content-inner">

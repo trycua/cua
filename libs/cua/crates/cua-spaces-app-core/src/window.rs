@@ -51,8 +51,17 @@ pub struct MainChrome {
     pub settings_shortcut: String,
     /// With no Spaces: the heading.
     pub empty_title: String,
-    /// With no Spaces: the button.
+    /// With no Spaces: the primary button (one-click Linux on this Mac).
     pub empty_action: String,
+    /// With no Spaces: the line under the heading (size and what it includes).
+    #[serde(default)]
+    pub empty_detail: String,
+    /// With no Spaces: the secondary button (one-click macOS on this Mac).
+    #[serde(default)]
+    pub empty_secondary: String,
+    /// With no Spaces: opens the full New Space wizard.
+    #[serde(default)]
+    pub empty_customize: String,
     /// The sidebar's Volume page entry ("Volume"); none while the Cua Volume
     /// experiment is off (the page and its route are hidden; a mounted
     /// volume stays mounted).
@@ -79,8 +88,11 @@ pub fn chrome(input: &ChromeInput) -> MainChrome {
         }),
         settings_label: "Settings".into(),
         settings_shortcut: "\u{2318},".into(),
-        empty_title: "No Spaces yet".into(),
-        empty_action: "New Space".into(),
+        empty_title: "You have no Spaces yet".into(),
+        empty_action: "Create a Linux Space (about 1 minute)".into(),
+        empty_detail: crate::wizard::first_linux_detail(),
+        empty_secondary: crate::wizard::macos_quick_label(),
+        empty_customize: "Customize".into(),
         volume_label: volume_shown(input.experiments.as_ref()).then(|| "Volume".into()),
     }
 }
@@ -252,6 +264,19 @@ pub fn menu(input: &MenuInput) -> Vec<MenuItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_empty_home_offers_linux_first_and_macos_second() {
+        let c = chrome(&ChromeInput::default());
+        assert_eq!(c.empty_title, "You have no Spaces yet");
+        assert_eq!(c.empty_action, "Create a Linux Space (about 1 minute)");
+        assert_eq!(c.empty_detail, crate::wizard::first_linux_detail());
+        assert_eq!(c.empty_secondary, crate::wizard::macos_quick_label());
+        assert_eq!(c.empty_customize, "Customize");
+        assert!(c.empty_detail.contains("3.2 GB"));
+        assert!(c.empty_detail.contains("7.1 GB"));
+        assert!(c.empty_secondary.contains("32 GB"));
+    }
 
     #[test]
     fn the_account_line_prefers_the_identity() {

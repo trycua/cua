@@ -6480,8 +6480,14 @@ pub struct AppMainChrome {
     pub settings_shortcut: String,
     /// With no Spaces: the heading.
     pub empty_title: String,
-    /// With no Spaces: the button.
+    /// With no Spaces: the primary button (one-click Linux on this Mac).
     pub empty_action: String,
+    /// With no Spaces: the line under the heading (size and what it includes).
+    pub empty_detail: String,
+    /// With no Spaces: the secondary button (one-click macOS on this Mac).
+    pub empty_secondary: String,
+    /// With no Spaces: opens the full New Space wizard.
+    pub empty_customize: String,
     /// The sidebar's Volume page entry ("Volume"); none while the Cua Volume
     /// experiment is off (the page and its route are hidden; a mounted
     /// volume stays mounted).

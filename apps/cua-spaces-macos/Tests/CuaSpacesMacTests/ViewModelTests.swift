@@ -443,7 +443,11 @@ struct ViewModelTests {
         let open = appOpenableCount(spaces: model.spaces)
         #expect(model.menuBar.map(\.label) == appMenuBar(spaces: open).map(\.label))
         #expect(model.notch.view.tab.count == String(open))
-        #expect(model.chrome.emptyTitle == "No Spaces yet")
+        #expect(model.chrome.emptyTitle == "You have no Spaces yet")
+        #expect(model.chrome.emptyAction == "Create a Linux Space (about 1 minute)")
+        #expect(model.chrome.emptyDetail.contains("3.2 GB") && model.chrome.emptyDetail.contains("7.1 GB"))
+        #expect(model.chrome.emptySecondary == "Create a macOS Space (about 32 GB)")
+        #expect(model.chrome.emptyCustomize == "Customize")
         #expect(model.chrome.signInLabel == nil, "no account: signing in is not offered")
     }
 
@@ -496,6 +500,26 @@ struct ViewModelTests {
         for _ in 0..<50 where backend.created.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
         #expect(backend.created.first?.name == "demo")
         #expect(backend.created.first?.cpus == cpus)
+        #expect(backend.created.first?.memoryMb == 4096)
+    }
+
+    /// A fresh install's roster is only This machine. Nothing is selected, so
+    /// the window is the empty home, and one click creates the default Linux
+    /// image on this Mac without opening the wizard.
+    @Test func thisMachineAloneOpensTheEmptyHome() async {
+        let backend = FixtureSpacesBackend(rows: [])
+        let model = makeModel(backend, host: FixtureHost())
+        await model.refresh()
+        #expect(model.sidebar.thisMachine?.name == "This machine")
+        #expect(model.sidebar.sections.isEmpty)
+        #expect(model.selection == nil)
+        await model.createQuick(os: .linux)
+        #expect(!model.showingNewSpace)
+        for _ in 0..<50 where backend.created.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(backend.created.first?.image == "ghcr.io/trycua/linux:24.04")
+        #expect(backend.created.first?.on == "local")
+        #expect(backend.created.first?.kind == .container)
+        #expect(backend.created.first?.cpus == 2)
         #expect(backend.created.first?.memoryMb == 4096)
     }
 

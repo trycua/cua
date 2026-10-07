@@ -2217,6 +2217,70 @@ pub const MAX_DISK_GB: u32 = 1024;
 /// The symbol a warning fact shows (SF Symbols; the web app maps it).
 pub use crate::model::WARNING_SYMBOL;
 
+/// Built-in Linux runtime disk download, compressed, per catalog arch.
+/// Mirrors `cua_vmm::managed::{DISK_SIZE_ARM64, DISK_SIZE_AMD64}` (the
+/// first Linux Space downloads this once). Colima and Lima sit beside it
+/// and are small next to the image.
+fn linux_runtime_download(arch: &str) -> u64 {
+    match arch {
+        "amd64" | "x86_64" => 457_760_272,
+        _ => 424_641_499,
+    }
+}
+
+/// Disk measured after one default Linux Space and brief use (issue #4817).
+/// The empty state's high end: the image's unpacked size plus the runtime
+/// download is the low end, and this is what one Space actually occupied.
+const LINUX_FIRST_OBSERVED_BYTES: u64 = 71 * (1 << 30) / 10;
+
+/// The first published image of `os` that can run on this Mac.
+fn first_local_image(os: SpaceOs) -> SandboxImage {
+    catalog()
+        .images
+        .iter()
+        .find(|i| i.os == os && can_place(i, Location::Local))
+        .cloned()
+        .unwrap_or_else(|| panic!("a local {os:?} image"))
+}
+
+/// Unpacked image plus the runtime download, smallest and largest arch,
+/// then the measured first-Space footprint. `(low, high)`.
+fn first_linux_footprint() -> (u64, u64) {
+    let image = first_local_image(SpaceOs::Linux);
+    let low = image
+        .sizes
+        .as_ref()
+        .and_then(|s| {
+            s.platforms
+                .iter()
+                .map(|p| p.unpacked.saturating_add(linux_runtime_download(&p.arch)))
+                .min()
+        })
+        .unwrap_or(0);
+    (low, LINUX_FIRST_OBSERVED_BYTES)
+}
+
+/// The empty home's line under the heading.
+pub fn first_linux_detail() -> String {
+    let (low, high) = first_linux_footprint();
+    format!(
+        "About {} to {} the first time, including the Linux runtime.",
+        size_text(low),
+        size_text(high)
+    )
+}
+
+/// The empty home's macOS button: the default image's unpacked size.
+pub fn macos_quick_label() -> String {
+    let image = first_local_image(SpaceOs::Macos);
+    let unpacked = image
+        .sizes
+        .as_ref()
+        .and_then(|s| s.platforms.iter().map(|p| p.unpacked).max())
+        .unwrap_or(0);
+    format!("Create a macOS Space (about {})", size_text(unpacked))
+}
+
 /// `560 MB`, `1.2 GB`, `150 GB` (binary units, like the memory slider).
 pub fn size_text(bytes: u64) -> String {
     let gb = bytes as f64 / GIB as f64;
@@ -2991,6 +3055,18 @@ pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
     }
 }
 
+/// One click from the empty home: the default image of `os` on this Mac,
+/// with the wizard's default size, whatever Settings last chose for Run on.
+pub fn quick_local_plan(os: SpaceOs, env: &WizardEnv) -> CreatePlan {
+    let mut state = initial(env);
+    state.placement = Location::Local;
+    state.picked = true;
+    state = reduce(&state, &WizardAction::ChooseOs { os }, env);
+    state.placement = Location::Local;
+    state.picked = true;
+    view(&state, env).plan
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3025,6 +3101,34 @@ mod tests {
             experiments: crate::experiments::Experiments::default(),
             gpus: None,
         }
+    }
+
+    /// The empty home's one click is the wizard's default image on this Mac,
+    /// even when Settings would open the wizard somewhere else.
+    #[test]
+    fn a_quick_plan_is_the_default_image_on_this_mac() {
+        let mut cloud = env();
+        cloud.default_location = Location::Cloud;
+        cloud.cloud_available = true;
+        let linux = quick_local_plan(SpaceOs::Linux, &cloud);
+        assert_eq!(linux.placement, Location::Local);
+        assert_eq!(linux.image.image_ref, "ghcr.io/trycua/linux:24.04");
+        assert_eq!(linux.image.variant, SpaceKind::Container);
+        assert_eq!(linux.runtime, Runtime::Auto);
+        assert_eq!((linux.cpus, linux.memory_mb), (Some(2), Some(4096)));
+        assert_eq!(linux.disk_gb, None);
+        assert!(linux.gpu.is_none());
+        assert!(linux.open_when_ready && linux.open_desktop);
+        let macos = quick_local_plan(SpaceOs::Macos, &env());
+        assert_eq!(macos.placement, Location::Local);
+        assert_eq!(macos.image.image_ref, "ghcr.io/trycua/macos:26");
+        assert_eq!(macos.image.variant, SpaceKind::Vm);
+        assert_eq!((macos.cpus, macos.memory_mb), (Some(4), Some(8192)));
+        assert_eq!(
+            first_linux_detail(),
+            "About 3.2 GB to 7.1 GB the first time, including the Linux runtime."
+        );
+        assert_eq!(macos_quick_label(), "Create a macOS Space (about 32 GB)");
     }
 
     /// The "Your cloud" experiment on.

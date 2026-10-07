@@ -581,7 +581,7 @@
         "account: Not signed in",
         "signIn: Sign in",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / New Space",
+        "empty: You have no Spaces yet / Create a Linux Space (about 1 minute) / About 3.2 GB to 7.1 GB the first time, including the Linux runtime. / Create a macOS Space (about 32 GB) / Customize",
         "volume: Volume"
       ]
     },
@@ -594,7 +594,7 @@
         "account: API key",
         "signIn: -",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / New Space",
+        "empty: You have no Spaces yet / Create a Linux Space (about 1 minute) / About 3.2 GB to 7.1 GB the first time, including the Linux runtime. / Create a macOS Space (about 32 GB) / Customize",
         "volume: Volume"
       ]
     },
@@ -607,7 +607,7 @@
         "account: ada@example.com",
         "signIn: -",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / New Space",
+        "empty: You have no Spaces yet / Create a Linux Space (about 1 minute) / About 3.2 GB to 7.1 GB the first time, including the Linux runtime. / Create a macOS Space (about 32 GB) / Customize",
         "volume: Volume"
       ]
     },

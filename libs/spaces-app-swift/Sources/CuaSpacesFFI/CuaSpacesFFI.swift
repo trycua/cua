@@ -17396,9 +17396,21 @@ public struct AppMainChrome: Equatable, Hashable {
      */
     public var emptyTitle: String
     /**
-     * With no Spaces: the button.
+     * With no Spaces: the primary button (one-click Linux on this Mac).
      */
     public var emptyAction: String
+    /**
+     * With no Spaces: the line under the heading (size and what it includes).
+     */
+    public var emptyDetail: String
+    /**
+     * With no Spaces: the secondary button (one-click macOS on this Mac).
+     */
+    public var emptySecondary: String
+    /**
+     * With no Spaces: opens the full New Space wizard.
+     */
+    public var emptyCustomize: String
     /**
      * The sidebar's Volume page entry ("Volume"); none while the Cua Volume
      * experiment is off (the page and its route are hidden; a mounted
@@ -17440,8 +17452,17 @@ public struct AppMainChrome: Equatable, Hashable {
          * With no Spaces: the heading.
          */emptyTitle: String,
         /**
-         * With no Spaces: the button.
+         * With no Spaces: the primary button (one-click Linux on this Mac).
          */emptyAction: String,
+        /**
+         * With no Spaces: the line under the heading (size and what it includes).
+         */emptyDetail: String,
+        /**
+         * With no Spaces: the secondary button (one-click macOS on this Mac).
+         */emptySecondary: String,
+        /**
+         * With no Spaces: opens the full New Space wizard.
+         */emptyCustomize: String,
         /**
          * The sidebar's Volume page entry ("Volume"); none while the Cua Volume
          * experiment is off (the page and its route are hidden; a mounted
@@ -17458,6 +17479,9 @@ public struct AppMainChrome: Equatable, Hashable {
         self.settingsShortcut = settingsShortcut
         self.emptyTitle = emptyTitle
         self.emptyAction = emptyAction
+        self.emptyDetail = emptyDetail
+        self.emptySecondary = emptySecondary
+        self.emptyCustomize = emptyCustomize
         self.volumeLabel = volumeLabel
     }
 
@@ -17488,6 +17512,9 @@ public struct FfiConverterTypeAppMainChrome: FfiConverterRustBuffer {
                 settingsShortcut: FfiConverterString.read(from: &buf),
                 emptyTitle: FfiConverterString.read(from: &buf),
                 emptyAction: FfiConverterString.read(from: &buf),
+                emptyDetail: FfiConverterString.read(from: &buf),
+                emptySecondary: FfiConverterString.read(from: &buf),
+                emptyCustomize: FfiConverterString.read(from: &buf),
                 volumeLabel: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -17504,6 +17531,9 @@ public struct FfiConverterTypeAppMainChrome: FfiConverterRustBuffer {
         FfiConverterString.write(value.settingsShortcut, into: &buf)
         FfiConverterString.write(value.emptyTitle, into: &buf)
         FfiConverterString.write(value.emptyAction, into: &buf)
+        FfiConverterString.write(value.emptyDetail, into: &buf)
+        FfiConverterString.write(value.emptySecondary, into: &buf)
+        FfiConverterString.write(value.emptyCustomize, into: &buf)
         FfiConverterOptionString.write(value.volumeLabel, into: &buf)
     }
 }
@@ -62461,6 +62491,17 @@ public func appWizardPlacementOptions(state: AppWizardState, env: AppWizardEnv) 
 })
 }
 /**
+ * The empty home's one click: the default image of `os` on this Mac.
+ */
+public func appWizardQuickPlan(os: AppSpaceOs, env: AppWizardEnv) -> AppCreatePlan  {
+    return try!  FfiConverterTypeAppCreatePlan_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_wizard_quick_plan(
+        FfiConverterTypeAppSpaceOs_lower(os),
+        FfiConverterTypeAppWizardEnv_lower(env),$0
+    )
+})
+}
+/**
  * Advances the wizard.
  */
 public func appWizardReduce(state: AppWizardState, action: AppWizardAction, env: AppWizardEnv) -> AppWizardState  {
@@ -63606,6 +63647,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_wizard_placement_options() != 3294) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_wizard_quick_plan() != 29489) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_wizard_reduce() != 39558) {

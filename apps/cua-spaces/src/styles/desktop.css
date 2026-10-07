@@ -757,6 +757,12 @@
   width: 28px;
   height: 28px;
 }
+.dw-empty-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
 
 /* ---------- Sheet (the New Space wizard) ---------- */
 

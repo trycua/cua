@@ -414,6 +414,19 @@ public final class AppModel {
     }
 
     public func openNewSpace() async {
+        wizard.reset(env: await loadWizardEnv())
+        showingNewSpace = true
+        telemetry?.record([.spaceWizard(action: "opened")])
+        self.cloud.onConnected = { [weak self] in self?.cloudsChanged() }
+    }
+
+    /// The empty home's one click: the core's default image of `os` on this Mac.
+    public func createQuick(os: AppSpaceOs) async {
+        create(appWizardQuickPlan(os: os, env: await loadWizardEnv()))
+    }
+
+    /// What New Space and the empty home's one click both read.
+    private func loadWizardEnv() async -> AppWizardEnv {
         async let runtimesProbe = backend.localRuntimes()
         async let storageProbe = backend.localStorage()
         async let pricingProbe = backend.cloudPricing()
@@ -425,11 +438,7 @@ public final class AppModel {
         await self.cloud.refresh()
         let (runtimes, storage, pricing, gpus) = await (runtimesProbe, storageProbe, pricingProbe, gpusProbe)
         hosts = await hostsProbe
-        wizard.reset(env: wizardEnv(cloud: cloud, runtimes: runtimes, storage: storage, pricing: pricing,
-                                    gpus: gpus))
-        showingNewSpace = true
-        telemetry?.record([.spaceWizard(action: "opened")])
-        self.cloud.onConnected = { [weak self] in self?.cloudsChanged() }
+        return wizardEnv(cloud: cloud, runtimes: runtimes, storage: storage, pricing: pricing, gpus: gpus)
     }
 
     /// The connected clouds changed ("Connect a cloud"): the open wizard

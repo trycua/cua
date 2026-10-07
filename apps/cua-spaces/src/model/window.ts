@@ -258,7 +258,14 @@ export interface MainChrome {
   settingsLabel: string;
   settingsShortcut: string;
   emptyTitle: string;
+  /** One-click Linux on this Mac. */
   emptyAction: string;
+  /** Size range under the heading. */
+  emptyDetail: string;
+  /** One-click macOS on this Mac. */
+  emptySecondary: string;
+  /** Opens the full New Space wizard. */
+  emptyCustomize: string;
   /** The sidebar's Volume page entry; null while Cua Volume is off. */
   volumeLabel?: string | null;
 }

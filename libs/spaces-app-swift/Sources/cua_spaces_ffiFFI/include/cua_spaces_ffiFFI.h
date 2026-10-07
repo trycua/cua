@@ -1862,6 +1862,11 @@ RustBuffer uniffi_cua_spaces_ffi_fn_func_app_wizard_initial(RustBuffer env, Rust
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_wizard_placement_options(RustBuffer state, RustBuffer env, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_WIZARD_QUICK_PLAN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_WIZARD_QUICK_PLAN
+RustBuffer uniffi_cua_spaces_ffi_fn_func_app_wizard_quick_plan(RustBuffer os, RustBuffer env, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_WIZARD_REDUCE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_WIZARD_REDUCE
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_wizard_reduce(RustBuffer state, RustBuffer action, RustBuffer env, RustCallStatus *_Nonnull out_status
@@ -3722,6 +3727,12 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_app_wizard_initial(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_WIZARD_PLACEMENT_OPTIONS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_WIZARD_PLACEMENT_OPTIONS
 uint16_t uniffi_cua_spaces_ffi_checksum_func_app_wizard_placement_options(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_WIZARD_QUICK_PLAN
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_WIZARD_QUICK_PLAN
+uint16_t uniffi_cua_spaces_ffi_checksum_func_app_wizard_quick_plan(void
 
 );
 #endif

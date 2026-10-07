@@ -62,6 +62,68 @@ describe("MainWindow", () => {
     expect(host.state.onboarding).toMatchObject({ completed: true, mode: "client" });
   });
 
+  it("finishing onboarding with no Spaces opens the empty home, not This machine", async () => {
+    const { host } = setup({ listSpaces: async () => [] }, false);
+    fireEvent.click(await screen.findByRole("button", { name: "Get started" }));
+    await screen.findByText("Signed in as ada@example.com.");
+    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+    await screen.findByRole("heading", { name: "AI agents" });
+    fireEvent.click(await screen.findByRole("button", { name: "Skip" }));
+    await screen.findByRole("heading", { name: "Where should Cua Spaces show up?" });
+    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
+    fireEvent.click(await screen.findByText("Access other machines"));
+    fireEvent.click(await screen.findByRole("button", { name: "Start using Cua Spaces" }));
+    expect(await screen.findByRole("heading", { name: "You have no Spaces yet" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 1, name: "This machine" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Create a Linux Space (about 1 minute)" })).toBeInTheDocument();
+    expect(host.state.onboarding).toMatchObject({ completed: true, mode: "client" });
+  });
+
+  it("with no Spaces, lands on a one-click Linux create and keeps macOS second", async () => {
+    const { createSpace } = setup({ listSpaces: async () => [] });
+    expect(await screen.findByRole("heading", { name: "You have no Spaces yet" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Cua Spaces");
+    expect(screen.getByText(/3\.2 GB to 7\.1 GB/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Create a Linux Space (about 1 minute)" }));
+    await waitFor(() =>
+      expect(createSpace).toHaveBeenCalledWith(
+        expect.objectContaining({
+          image: "ghcr.io/trycua/linux:24.04",
+          on: "local",
+          kind: "container",
+          runtime: "auto",
+          cpus: 2,
+          memoryMb: 4096,
+        }),
+        expect.stringMatching(/^pending:/),
+      ),
+    );
+    expect(screen.queryByRole("dialog", { name: "New Space" })).toBeNull();
+  });
+
+  it("Customize on the empty home opens the full wizard", async () => {
+    setup({ listSpaces: async () => [] });
+    fireEvent.click(await screen.findByRole("button", { name: "Customize" }));
+    expect(await screen.findByRole("dialog", { name: "New Space" })).toBeInTheDocument();
+  });
+
+  it("the empty home's macOS button creates the default macOS image", async () => {
+    const { createSpace } = setup({ listSpaces: async () => [] });
+    fireEvent.click(await screen.findByRole("button", { name: /Create a macOS Space \(about 32 GB\)/ }));
+    await waitFor(() =>
+      expect(createSpace).toHaveBeenCalledWith(
+        expect.objectContaining({
+          image: "ghcr.io/trycua/macos:26",
+          on: "local",
+          kind: "vm",
+          cpus: 4,
+          memoryMb: 8192,
+        }),
+        expect.stringMatching(/^pending:/),
+      ),
+    );
+  });
+
   it("lists Spaces by where they run, with This machine first", async () => {
     setup();
     const cloud = await screen.findByRole("listbox", { name: "Cua Cloud" });

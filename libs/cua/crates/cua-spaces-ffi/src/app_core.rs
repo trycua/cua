@@ -998,6 +998,12 @@ pub fn app_wizard_view(state: AppWizardState, env: AppWizardEnv) -> AppWizardVie
     core::wizard::view(&state, &env)
 }
 
+/// The empty home's one click: the default image of `os` on this Mac.
+#[uniffi::export]
+pub fn app_wizard_quick_plan(os: AppSpaceOs, env: AppWizardEnv) -> AppCreatePlan {
+    core::wizard::quick_local_plan(os, &env)
+}
+
 /// The SDK call a plan makes (`create_space`).
 #[uniffi::export]
 pub fn app_wizard_create_args(plan: AppCreatePlan) -> AppCreateSpaceArgs {

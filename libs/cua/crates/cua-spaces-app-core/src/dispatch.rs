@@ -63,6 +63,7 @@ pub const METHODS: &[&str] = &[
     "wizard.initial",
     "wizard.reduce",
     "wizard.view",
+    "wizard.quickPlan",
     "wizard.createArgs",
     "wizard.pickerImages",
     "wizard.pickerGroups",
@@ -397,6 +398,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("env")?,
         )),
         "wizard.view" => out(wizard::view(&a.get("state")?, &a.get("env")?)),
+        "wizard.quickPlan" => out(wizard::quick_local_plan(a.get("os")?, &a.get("env")?)),
         "wizard.createArgs" => out(wizard::create_args(&a.get("plan")?)),
         "wizard.placementOptions" => {
             out(wizard::placement_options(&a.get("state")?, &a.get("env")?))

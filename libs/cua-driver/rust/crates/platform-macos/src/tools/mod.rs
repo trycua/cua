@@ -704,17 +704,7 @@ pub(super) fn target_pid(
         .get("element_token")
         .is_some_and(|token| !token.is_null())
     {
-        return Err(cua_driver_core::protocol::ToolResult::error(
-            "element_token is stale or unknown; call get_window_state again to refresh \
-             (a current token names its own pid).",
-        )
-        .with_structured(serde_json::json!({
-            "status": "refused",
-            "refusal": {
-                "code": "stale_element_token",
-                "message": "element_token is stale or unknown; call get_window_state again to refresh",
-            },
-        })));
+        return Err(cua_driver_core::element_token::stale_token_without_pid());
     }
     Err(cua_driver_core::protocol::ToolResult::error(
         "Missing required integer field: pid. Pass pid, or pass an element_token from the \

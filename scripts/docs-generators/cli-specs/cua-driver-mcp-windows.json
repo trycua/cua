@@ -596,7 +596,7 @@
       "type": "array"
      },
      "pid": {
-      "description": "Target process ID for window scope. Omit with scope=desktop for screen-absolute coordinates from get_desktop_state.",
+      "description": "Target process ID for window scope. Optional with element_token (the token carries the pid). Omit with scope=desktop for screen-absolute coordinates from get_desktop_state.",
       "type": "integer"
      },
      "scope": {
@@ -1393,7 +1393,7 @@
       "type": "string"
      },
      "pid": {
-      "description": "Target process ID for window scope. Omit with scope=desktop for screen-absolute coordinates from get_desktop_state.",
+      "description": "Target process ID for window scope. Optional with element_token (the token carries the pid). Omit with scope=desktop for screen-absolute coordinates from get_desktop_state.",
       "type": "integer"
      },
      "scope": {

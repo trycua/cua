@@ -18,6 +18,8 @@ mod right_click;
 mod scroll;
 mod set_value;
 mod set_window_frame;
+#[cfg(feature = "experimental-owned-supervision")]
+mod supervision;
 mod type_text;
 // `screenshot` / `screenshot_compat` modules removed in PR #1692 —
 // `get_window_state` capture_mode:"vision" is the canonical screenshot
@@ -619,6 +621,8 @@ impl Default for SessionConfigRegistry {
 
 /// Shared state passed to all tools.
 pub struct ToolState {
+    #[cfg(feature = "experimental-owned-supervision")]
+    pub(crate) supervision: cua_driver_core::owned_supervision::Owner,
     pub snapshots: Arc<Snapshots>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub(crate) capture_bindings: Arc<capture_binding::MacCaptureBindings>,
@@ -671,6 +675,9 @@ impl ToolState {
         host_bundle_id: Option<String>,
     ) -> Self {
         Self {
+            #[cfg(feature = "experimental-owned-supervision")]
+            supervision: cua_driver_core::owned_supervision::Owner::new(128)
+                .expect("positive capacity"),
             snapshots: Arc::new(Snapshots::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
             capture_bindings: Arc::new(capture_binding::MacCaptureBindings::new(capture_service)),
@@ -903,6 +910,15 @@ pub fn register_all(
         hotkey::HotkeyTool::new(state.clone()),
         &pid_window_candidates,
     ));
+    #[cfg(feature = "experimental-owned-supervision")]
+    {
+        registry.register(pid_window_guarded(
+            set_value::SetValueTool::new_owned(state.clone()),
+            &pid_window_candidates,
+        ));
+        supervision::register(registry, state.clone());
+        registry.retain_supervision_owner(state.supervision.clone());
+    }
     registry.register(pid_window_guarded(
         set_value::SetValueTool::new(state.clone()),
         &pid_window_candidates,

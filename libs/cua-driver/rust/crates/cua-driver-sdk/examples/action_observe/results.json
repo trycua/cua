@@ -158,7 +158,7 @@
       }
     }
   ],
-  "arc_fixture_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
+  "reference_fixture_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
   "macos": "27.0.1",
   "python": "3.12.12",
   "cleanup": {

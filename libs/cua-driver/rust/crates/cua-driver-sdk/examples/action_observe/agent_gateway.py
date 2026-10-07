@@ -35,7 +35,7 @@ def owned_window(client, pid):
     def discover():
         data,error=client.call('list_windows',pid=pid,on_screen_only=True)
         if error: return None
-        matches=[w for w in data.get('windows',[]) if w.get('pid')==pid and w.get('title')=='Arc Bench Form' and w.get('is_on_screen') is True and isinstance(w.get('window_id'),int) and w['window_id']>0]
+        matches=[w for w in data.get('windows',[]) if w.get('pid')==pid and w.get('title')=='Reference Bench Form' and w.get('is_on_screen') is True and isinstance(w.get('window_id'),int) and w['window_id']>0]
         if len(matches)!=1: return None
         window=matches[0]['window_id']
         snapshot,error=client.call('get_window_state',pid=pid,window_id=window,include_screenshot=False)

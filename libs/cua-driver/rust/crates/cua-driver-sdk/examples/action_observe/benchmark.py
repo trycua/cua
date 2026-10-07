@@ -9,7 +9,7 @@ try:
   for composite in ((False,True) if rep%2==0 else (True,False)):
    fixture=Fixture()
    try:
-    window=wait_for(lambda:windows(fixture.pid).get('Arc Bench Form'),8)
+    window=wait_for(lambda:windows(fixture.pid).get('Reference Bench Form'),8)
     snapshot,error=client.call('get_window_state',pid=fixture.pid,window_id=window,include_screenshot=False)
     assert not error
     offset=len(client.calls);started=time.perf_counter()

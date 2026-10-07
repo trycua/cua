@@ -1,6 +1,6 @@
 """Synthetic fixture support for the optional SDK example. Never creates a virtual display.
 
-ARC_EVAL_SOURCE=/tmp/arc-cua-eval-20261005 /tmp/arc-cua-eval-venv/bin/python run.py
+Use the configured Python environment and owned AppKit fixture.
 Input is delivered only through each driver's public MCP tools. State/fault
 injection belongs to the synthetic fixture, independently of either driver.
 """
@@ -69,11 +69,11 @@ class MCP:
         self.calls = []
         self.id = 0
         self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=open(f'/tmp/arc-eval-{name}.stderr', 'w'), bufsize=0)
+                                     stderr=open(f'/tmp/reference-eval-{name}.stderr', 'w'), bufsize=0)
         self.buffer = b''
         try:
             initialized = self.request('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},
-                                                      'clientInfo': {'name': 'oh-arc-eval', 'version': '1'}})
+                                                      'clientInfo': {'name': 'oh-reference-eval', 'version': '1'}})
             self.server_info = initialized['serverInfo']
             self.backend_metadata = initialized.get('_meta',{}).get('driver_metadata')
             self.send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
@@ -134,7 +134,7 @@ class MCP:
 
 class Fixture:
     def __init__(self, start='shown'):
-        self.temp = tempfile.TemporaryDirectory(prefix='oh-arc-fixture-')
+        self.temp = tempfile.TemporaryDirectory(prefix='oh-reference-fixture-')
         self.path = Path(self.temp.name) / 'state.json'
         self.log = open(Path(self.temp.name) / 'stderr', 'w')
         self.proc = subprocess.Popen([sys.executable, str(HERE/'fixture.py'), str(self.path), start],

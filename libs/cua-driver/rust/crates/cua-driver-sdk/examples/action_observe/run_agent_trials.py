@@ -8,7 +8,7 @@ PROMPT='Use only the fixture MCP tools to complete the owned synthetic form. Obs
 
 def trial(root, condition, rep, model):
     directory=root/f'{rep}-{condition}'; directory.mkdir()
-    variables={'ACTION_OBSERVE_CONDITION':condition,'ACTION_OBSERVE_AGENT_EVIDENCE':str(directory/'gateway.json'),'ACTION_OBSERVE_BINARY':os.environ['ACTION_OBSERVE_BINARY'],'ARC_EVAL_SOURCE':os.environ['ARC_EVAL_SOURCE'],'ACTION_OBSERVE_BACKEND':'daemon'}
+    variables={'ACTION_OBSERVE_CONDITION':condition,'ACTION_OBSERVE_AGENT_EVIDENCE':str(directory/'gateway.json'),'ACTION_OBSERVE_BINARY':os.environ['ACTION_OBSERVE_BINARY'],'REFERENCE_EVAL_SOURCE':os.environ['REFERENCE_EVAL_SOURCE'],'ACTION_OBSERVE_BACKEND':'daemon'}
     env_toml='{'+','.join(key+'='+json.dumps(value) for key,value in variables.items())+'}'
     cmd=['codex','exec','--ignore-user-config','--ephemeral','--sandbox','danger-full-access','--skip-git-repo-check','--disable','shell_tool','--disable','unified_exec','-m',model,'-c','model_reasoning_effort="low"','-c','mcp_servers.fixture.command='+json.dumps(os.environ['ACTION_OBSERVE_PYTHON']),'-c','mcp_servers.fixture.args='+json.dumps([str(HERE/'agent_gateway.py')]),'-c','mcp_servers.fixture.env='+env_toml,'--output-schema',str(root/'final-schema.json'),'--json','-C',str(directory),'-']
     started=time.perf_counter()
@@ -63,7 +63,7 @@ def preflight():
     upstream=subprocess.check_output(['git','ls-remote','https://github.com/trycua/cua.git','refs/heads/main'],text=True).split()[0]
     ancestor=subprocess.check_output(['git','merge-base','HEAD',upstream],cwd=repo,text=True).strip()
     if ancestor!=upstream:raise RuntimeError('SDK example is not based on latest upstream source')
-    return {'fixture_source_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=os.environ['ARC_EVAL_SOURCE'],text=True).strip(),'preflight_started_at':started,'source_checked_at':utc(),'daemon_metadata_checked_at':metadata_checked_at,'release_check':update,'daemon_server':server,'sdk_backend_metadata':metadata,'daemon_permissions':permissions,'sdk_upstream_commit':upstream,'sdk_head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip(),'source_file_sha256':{str(p.name):hashlib.sha256(p.read_bytes()).hexdigest() for p in [HERE/'operation.rs',HERE/'agent_gateway.py',HERE/'run_agent_trials.py',HERE/'shared.py',HERE.parent/'action_observe_experiment.rs']},'backend':'supported CuaDriver.connect existing signed daemon; same backend both arms'}
+    return {'fixture_source_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=os.environ['REFERENCE_EVAL_SOURCE'],text=True).strip(),'preflight_started_at':started,'source_checked_at':utc(),'daemon_metadata_checked_at':metadata_checked_at,'release_check':update,'daemon_server':server,'sdk_backend_metadata':metadata,'daemon_permissions':permissions,'sdk_upstream_commit':upstream,'sdk_head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip(),'source_file_sha256':{str(p.name):hashlib.sha256(p.read_bytes()).hexdigest() for p in [HERE/'operation.rs',HERE/'agent_gateway.py',HERE/'run_agent_trials.py',HERE/'shared.py',HERE.parent/'action_observe_experiment.rs']},'backend':'supported CuaDriver.connect existing signed daemon; same backend both arms'}
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('output',type=Path);parser.add_argument('--pairs',type=int,default=5);parser.add_argument('--model',default='gpt-6-sol');args=parser.parse_args()

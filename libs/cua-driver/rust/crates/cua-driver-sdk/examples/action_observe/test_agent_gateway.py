@@ -48,7 +48,7 @@ class WindowDiscoveryTests(unittest.TestCase):
     def test_public_inventory_ignores_shadow_and_requires_full_controls(self):
         class Client:
             def call(self,name,**args):
-                if name=='list_windows':return {'windows':[{'pid':7,'title':'Arc Bench Form','window_id':3,'is_on_screen':False},{'pid':8,'title':'Arc Bench Form','window_id':4,'is_on_screen':True},{'pid':7,'title':'Arc Bench Form','window_id':9,'is_on_screen':True}]},False
+                if name=='list_windows':return {'windows':[{'pid':7,'title':'Reference Bench Form','window_id':3,'is_on_screen':False},{'pid':8,'title':'Reference Bench Form','window_id':4,'is_on_screen':True},{'pid':7,'title':'Reference Bench Form','window_id':9,'is_on_screen':True}]},False
                 self.window=args['window_id']
                 return {'pid':7,'window_id':9,'snapshot_id':'fresh','elements':[{'label':label,'role':'AXCheckBox' if label=='Subscribe' else 'AXTextField','element_token':'fresh:'+str(i)} for i,label in enumerate(agent_gateway.VALUES)]},False
         client=Client()
@@ -56,7 +56,7 @@ class WindowDiscoveryTests(unittest.TestCase):
         self.assertEqual(client.window,9)
     def test_empty_control_readiness_is_not_accepted(self):
         class Client:
-            def call(self,name,**args):return ({'windows':[{'pid':7,'title':'Arc Bench Form','window_id':9,'is_on_screen':True}]} if name=='list_windows' else {'pid':7,'window_id':9,'snapshot_id':'fresh','elements':[]}),False
+            def call(self,name,**args):return ({'windows':[{'pid':7,'title':'Reference Bench Form','window_id':9,'is_on_screen':True}]} if name=='list_windows' else {'pid':7,'window_id':9,'snapshot_id':'fresh','elements':[]}),False
         with patch.object(agent_gateway,'wait_for',lambda fn,timeout:fn()):self.assertIsNone(agent_gateway.owned_window(Client(),7))
 
 class VerificationTests(unittest.TestCase):

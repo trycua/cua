@@ -5,7 +5,7 @@ use std::{
     future::Future,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Reference,
     },
     time::Duration,
 };

@@ -443,6 +443,13 @@ pub(crate) struct Locator<'a> {
     session: Option<String>,
     /// Hard stop for every poll loop (the batch's own time budget).
     deadline: Instant,
+    /// When the batch ends with a default `observe`, the `max_elements` of
+    /// that read: the first lookup of each window also makes one plain
+    /// read with that budget, which `since:"latest"` remembers, so the end
+    /// observation is a diff of what the batch changed rather than a full
+    /// read of a window the caller never read.
+    baseline_max_elements: Option<u64>,
+    baselined: std::sync::Mutex<std::collections::HashSet<(i64, u64)>>,
 }
 
 impl<'a> Locator<'a> {
@@ -451,7 +458,14 @@ impl<'a> Locator<'a> {
             registry,
             session,
             deadline,
+            baseline_max_elements: None,
+            baselined: Default::default(),
         }
+    }
+
+    pub fn with_observe_baseline(mut self, max_elements: u64) -> Self {
+        self.baseline_max_elements = Some(max_elements);
+        self
     }
 
     fn with_session(&self, mut args: Value) -> Value {
@@ -670,6 +684,27 @@ impl<'a> Locator<'a> {
     /// One fresh accessibility read. It refreshes the window's element
     /// tokens, so the tokens it returns are the ones to act with.
     pub async fn read(&self, window: &Window) -> Result<Read, Miss> {
+        if let Some(max_elements) = self.baseline_max_elements {
+            let first = self
+                .baselined
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert((window.pid, window.window_id));
+            if first {
+                // Best effort: a failed baseline only means a full end read.
+                let _ = self
+                    .call(
+                        "get_window_state",
+                        json!({
+                            "pid": window.pid,
+                            "window_id": window.window_id,
+                            "max_elements": max_elements,
+                            "include_screenshot": false,
+                        }),
+                    )
+                    .await;
+            }
+        }
         let state = self
             .call(
                 "get_window_state",

@@ -280,9 +280,14 @@ async fn one_batch_crosses_screens_by_name() {
     let reads = harness.calls("get_window_state");
     let observed = reads.last().unwrap();
     assert_eq!(observed["since"], "latest");
-    assert!(reads[..reads.len() - 1]
+    // Lookup reads are full_output, which `since` never remembers; the only
+    // other reads are one plain baseline per window the batch looked in.
+    let baselines: Vec<u64> = reads[..reads.len() - 1]
         .iter()
-        .all(|read| read["full_output"] == true));
+        .filter(|read| read["full_output"] != true)
+        .map(|read| read["window_id"].as_u64().unwrap())
+        .collect();
+    assert_eq!(baselines, [7, 8], "{reads:?}");
 }
 
 #[tokio::test]
@@ -491,4 +496,32 @@ async fn a_check_only_step_names_the_window_to_observe() {
         harness.calls("get_window_state").last().unwrap()["window_id"],
         7
     );
+}
+
+#[tokio::test]
+async fn the_end_observation_diffs_against_the_batch_start() {
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [
+            {"set_value": {"app": "Demo", "role": "textfield", "name": "Email", "value": "a@b.c"}}
+        ], "observe": true}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let reads = harness.calls("get_window_state");
+    // First a plain read with the observation's budget (remembered by
+    // `since`), then the full lookup read, then the end diff.
+    assert_eq!(reads[0]["max_elements"], 250);
+    assert!(reads[0].get("full_output").is_none());
+    assert_eq!(reads[1]["full_output"], true);
+    let last = reads.last().unwrap();
+    assert_eq!(last["since"], "latest");
+    assert_eq!(last["max_elements"], 250);
+    assert_eq!(reads.len(), 3, "one baseline per window, not per poll");
+
+    // Without observe there is no baseline read.
+    let before = harness.calls("get_window_state").len();
+    harness
+        .run(json!({"steps": [{"click": {"app": "Demo", "role": "button", "name": "Next"}}]}))
+        .await;
+    assert_eq!(harness.calls("get_window_state").len(), before + 1);
 }

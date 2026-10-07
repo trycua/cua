@@ -125,7 +125,8 @@ impl Tool for RunActionsTool {
                 fresh, waits up to 3 s (step `timeout_ms`, max 10000) for the element to \
                 appear, and acts on it; with only `app` it uses that app's frontmost window, so \
                 a dialog that opened on top is found. Later steps inherit the window, so name \
-                `app` once. Several matches fail with the candidates listed; add `nth` or a \
+                `app` once. The first lookup in a window also reads it once for `observe`, so \
+                the end diff shows what the batch changed even in a window you never read. Several matches fail with the candidates listed; add `nth` or a \
                 fuller name.\n\n\
                 WAITS AND CHECKS: a step may add `wait_for` (checked before its action) and \
                 `expect` (one check or up to 4, checked after it); a step may also be only a \
@@ -428,11 +429,25 @@ impl Plan {
     async fn run(self, registry: &ToolRegistry) -> ToolResult {
         let total = self.steps.len();
         let started = Instant::now();
-        let locator = Locator::new(
+        let mut locator = Locator::new(
             registry,
             self.session.clone(),
             started + Duration::from_millis(MAX_BATCH_MS),
         );
+        // A default diff observation gets a baseline from the batch's first
+        // read of each window it looks in.
+        if let Some(observe) = &self.observe {
+            let plain_view = observe.get("query").is_none()
+                && observe.get("max_depth").is_none()
+                && observe.get("since").and_then(Value::as_str)
+                    == Some(crate::window_state_view::SINCE_LATEST);
+            if let (true, Some(max_elements)) = (
+                plain_view,
+                observe.get("max_elements").and_then(Value::as_u64),
+            ) {
+                locator = locator.with_observe_baseline(max_elements);
+            }
+        }
         let mut reports = Vec::with_capacity(total);
         let mut lines = Vec::with_capacity(total + 2);
         let mut failed_step = None;

@@ -6,21 +6,32 @@ The response distinguishes the field's `settlement`, full `supervision_status`, 
 
 The common tracker samples at 20 ms intervals, gives absent reaction a 600 ms budget, resets quiet time on every value change, and gives continued changes a two-second budget. Native AX calls can extend those budgets. A verified no-op can settle without claiming a reaction. Missing target/value evidence, a window leaving the screen, foreground/input interference, an unexpected window, or failed/lost observation refuses settlement. Every attempted write retains its receipt; an error is not permission to replay input.
 
-## Evidence and remaining work
+## Measured results
 
-Final-source local gates pass: 879 core, 102 SDK and 473 macOS tests, with six existing macOS tests ignored; feature-enabled CLI and feature-disabled SDK/macOS checks; formatting and whitespace checks. A zero-quiet-period mutation fails two keeper tests. These offline results do not replace native qualification.
+Latest upstream main `a7524cfd1` plus the experimental owned-supervision, field-settlement and broad AX-observation patches. All native arms use the same binary; the synchronous baseline is the patched build's ordinary `set_value`, not stock upstream. The reference source is `74ffae110`. Installed and running versions were checked before trials. Exact source, binary hash and check timestamps are in [offscreen-results.json](offscreen-results.json).
 
-The first native control pilot passed no-op reporting, early rejection, early activation, no reaction and continuous changes. Closing a window exposed stale AX evidence: the field remained readable and was incorrectly reported settled. The implementation now requires fresh on-screen window evidence before input and throughout settling. **That fix still needs native requalification.** Raw prior-candidate outcomes are in [field-controls-pilot.json](field-controls-pilot.json); they are not qualification of the final candidate.
+Two-field task: exact fresh bindings, per-field application transaction acknowledgement and final AX/record proof. One warm-up and four scored trials per arm, in alternating order. Median times:
 
-Two attempted comparisons were excluded: one detected competing physical input; the other failed foreground setup before text input. Both restored the original foreground application. No finished matched performance comparison is claimed.
+| Path | Verified task | Task plus full protection fence |
+| --- | ---: | ---: |
+| Synchronous Cua baseline | 2,512 ms | 2,512 ms |
+| Owned dispatch | 464 ms | 1,498 ms |
+| Owned dispatch with field settlement | 855 ms | 1,684 ms |
+| Reference driver | 493 ms | 493 ms; no Cua protection fence |
 
-The explicitly selected off-screen display now hosts the synthetic fixtures. They use a non-activating application policy, are positioned before being shown, and must pass a fresh WindowServer check proving the entire window lies on the owned virtual display before input. The controller never activates a foreground sentinel or restores the user's app. It removes only its owned display and independently verifies the original topology.
+Owned dispatch was 5.4× faster than the synchronous baseline and 6% faster than the reference in this small sample. Field settlement was 2.9× faster than baseline but added 391 ms versus owned dispatch; it was 1.7× slower than reference. Settlement adds observable reaction/quiet-value evidence. It does not eliminate the full protection fence or outperform owned dispatch when a bound application acknowledgement already supplies stronger progress evidence. These scripted fixture results do not establish general agent performance. Raw ranges and medians are in [summary.json](summary.json).
 
-The off-screen pilot completed baseline and owned writes with bound application acknowledgements and fresh field proof, without activating the target or changing the user's foreground. It was excluded from performance qualification because physical input occurred during the owned protection fence. The subsequent no-op control returned `interrupted`, with `physical_input_unchanged: false`, while retaining its receipt. This exposes a concurrency limitation: the guard observes physical input across the session, including input unrelated to the off-screen target. These are interruption evidence, not qualified speed results. See [offscreen-results.json](offscreen-results.json) and [offscreen-controls.json](offscreen-controls.json). Earlier setup failures are preserved separately.
+All twenty trials preserved foreground and detected no competing physical input. Five final field controls passed: no-op without a false reaction, early rejection, absent reaction, continuous changes, and closed-window refusal. The closed-window test exposed that WindowServer visibility can outlive application-window membership; settling now also requires the bound window in the application's fresh AXWindows list. [Field controls](offscreen-controls.json).
 
-Ordinary text trials can run off-screen. Deliberate focus-steal controls still require a separate desktop because the virtual display shares macOS foreground focus. No guest was provisioned.
+Six final transaction guards passed: wrong transaction, changed record, first/second-write rejection, late rejection, and missing acknowledgement. Pending receipts survive a zero-timeout fence, cannot be released while pending, cannot be accessed from a foreign session, and become unavailable after terminal release. [Guard and receipt evidence](offscreen-results.json). Disconnect drained the owned observer before clean process exit (879 ms), with independently committed values and preserved foreground. [Disconnect evidence](offscreen-disconnect-results.json).
 
-The remaining native gate comprises the same-build alternating baseline/owned/settled/reference comparison; re-running the six field controls after the visibility fix; wrong transaction/record, missing acknowledgement, first/second-write and late rejection controls; delayed activation after the early return; receipt lifetime and client disconnect. Those scripts are included, but their final-candidate results remain pending.
+The fixtures use a non-activating application policy and are positioned before showing. Fresh WindowServer PID/window bounds must prove placement entirely on the owned virtual display before input. Neither harness activates a sentinel or restores the user's app. All final runs removed their owned display and verified original topology. Earlier setup, stale-window and physical-input failures remain preserved as pilots; they are excluded from current timings. Receipt-release controls require separate clients so the qualification host never fences already released IDs.
+
+Local gates on latest upstream passed: 880 core, 102 SDK and 473 macOS tests; six existing macOS tests ignored. The earlier zero-quiet mutation failed two keeper tests. Final membership-change gates are recorded in the manifest.
+
+## Remaining qualification
+
+The session-wide physical-input guard still interrupts off-screen work when the user types elsewhere. Deliberate activation and concurrent-input focus-restoration tests require a separate desktop because a virtual display shares macOS focus. No guest was provisioned. Those final-candidate tests, the canonical desktop matrix and the RFC decision remain outstanding; this PR remains an experimental draft.
 
 ## Reproduce in an isolated macOS guest
 
@@ -30,4 +41,4 @@ Run `measure.py`, `field_controls.py`, `qualify.py`, `receipts.py`, and `disconn
 
 ## Off-screen text trials
 
-Supply `OFFSCREEN_MODEL_SOURCE` pointing to the existing display helper checkout, along with the build/provider variables above. Run `offscreen.py` and `offscreen_controls.py` sequentially. They refuse foreground or placement changes and exclude physical-input interference. Do not substitute the foreground harness if they refuse. Off-screen evidence does not establish safe concurrent use while the global physical-input guard remains unchanged.
+Supply `OFFSCREEN_MODEL_SOURCE` pointing to the existing display helper checkout, along with the build/provider variables above. Run `offscreen.py` and `offscreen_controls.py` sequentially. They refuse foreground or placement changes and exclude physical-input interference. Set `OFFSCREEN_QUALIFICATION_ONLY=1` for receipt/transaction checks, or `OFFSCREEN_DISCONNECT_ONLY=1` for transport-disconnect draining. Do not substitute the foreground harness if they refuse. Off-screen evidence does not establish safe concurrent use while the global physical-input guard remains unchanged.

@@ -45,7 +45,7 @@ async def one(c,sentinel,scenario):
  except Exception as error:
   row['error']=str(error);raise
  finally:
-  f.close();out['rows'].append(row);print(json.dumps({k:row.get(k) for k in ('scenario','call_ms','passed','error')}),flush=True)
+  row.setdefault('oracle',f.state());f.close();out['rows'].append(row);print(json.dumps({k:row.get(k) for k in ('scenario','call_ms','passed','error')}),flush=True)
 async def main():
  global out
  out={'versions':l.preflight(),'rows':[]};original=l.fresh_front();sentinel=Foreground(original);mover=SpaceMover();out['baseline_displays']=mover.run('displays','--online')['displays'];c=None

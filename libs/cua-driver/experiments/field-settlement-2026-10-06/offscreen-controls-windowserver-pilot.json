@@ -5,8 +5,8 @@
     "native_version": "0.34.0",
     "native_latest_version": "0.34.0",
     "native_release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
-    "reference_upstream_checked_at": "2026-10-07T03:56:36.479256+00:00",
-    "candidates_checked_at": "2026-10-07T03:56:35Z",
+    "reference_upstream_checked_at": "2026-10-07T03:54:51.006699+00:00",
+    "candidates_checked_at": "2026-10-07T03:54:50Z",
     "macos": "27.0.1",
     "python": "3.12.12"
   },
@@ -19,7 +19,7 @@
         "Y": 652.0,
         "Width": 420.0
       },
-      "call_ms": 240.02337499405257,
+      "call_ms": 265.6745830026921,
       "result": {
         "activation_after_dispatch": false,
         "application_commit": "unverified",
@@ -31,10 +31,10 @@
         "foreground_preserved_after_dispatch": true,
         "immediate_readback": true,
         "input_disposition": "attempted",
-        "receipt_id": "2372db0b-9441-4daa-b2b8-22de2eba0e6a",
+        "receipt_id": "cf37fbb4-99fe-4e9e-a64e-1fd7f4de48ca",
         "replay_allowed": false,
         "settlement": {
-          "elapsed_ms": 157,
+          "elapsed_ms": 181,
           "reacted": false,
           "status": "settled",
           "value_matches": true
@@ -52,7 +52,7 @@
           "foreground_preserved": true,
           "physical_input_unchanged": true
         },
-        "receipt_id": "2372db0b-9441-4daa-b2b8-22de2eba0e6a",
+        "receipt_id": "cf37fbb4-99fe-4e9e-a64e-1fd7f4de48ca",
         "supervision": {
           "state": "pending"
         }
@@ -64,7 +64,7 @@
           "foreground_preserved": true,
           "physical_input_unchanged": true
         },
-        "receipt_id": "2372db0b-9441-4daa-b2b8-22de2eba0e6a",
+        "receipt_id": "cf37fbb4-99fe-4e9e-a64e-1fd7f4de48ca",
         "supervision": {
           "observation": {
             "foreground_changed": false,
@@ -90,19 +90,19 @@
         "submitted_record": null,
         "submit_label": "Submit",
         "transactions": {
-          "5fc89a0ddff3491192c4d601a33e1a0a": {
+          "4acbed82d2ac47f7b77ac0953fa4411e": {
             "status": "committed",
-            "tx": "5fc89a0ddff3491192c4d601a33e1a0a",
+            "tx": "4acbed82d2ac47f7b77ac0953fa4411e",
             "field": "name",
             "value": "",
             "record": "Record A",
             "generation": 0,
-            "pid": 82580,
-            "window_id": 25656
+            "pid": 80142,
+            "window_id": 25556
           }
         },
-        "pid": 82580,
-        "window_id": 25656,
+        "pid": 80142,
+        "window_id": 25556,
         "generation": 0,
         "activation_requests": 0,
         "window_visible": true
@@ -118,7 +118,7 @@
         "Y": 652.0,
         "Width": 420.0
       },
-      "call_ms": 262.0650000171736,
+      "call_ms": 290.3569169866387,
       "result": {
         "activation_after_dispatch": false,
         "application_commit": "unverified",
@@ -130,10 +130,10 @@
         "foreground_preserved_after_dispatch": true,
         "immediate_readback": true,
         "input_disposition": "attempted",
-        "receipt_id": "3d9f6204-b443-4fe4-bd6b-c80e324dd44f",
+        "receipt_id": "f8597e0f-ee4d-46e5-b876-414129b56c86",
         "replay_allowed": false,
         "settlement": {
-          "elapsed_ms": 185,
+          "elapsed_ms": 217,
           "reacted": true,
           "status": "value_mismatch",
           "value_matches": false
@@ -151,7 +151,7 @@
           "foreground_preserved": true,
           "physical_input_unchanged": true
         },
-        "receipt_id": "3d9f6204-b443-4fe4-bd6b-c80e324dd44f",
+        "receipt_id": "f8597e0f-ee4d-46e5-b876-414129b56c86",
         "supervision": {
           "state": "pending"
         }
@@ -163,7 +163,7 @@
           "foreground_preserved": true,
           "physical_input_unchanged": true
         },
-        "receipt_id": "3d9f6204-b443-4fe4-bd6b-c80e324dd44f",
+        "receipt_id": "f8597e0f-ee4d-46e5-b876-414129b56c86",
         "supervision": {
           "observation": {
             "foreground_changed": false,
@@ -189,19 +189,19 @@
         "submitted_record": null,
         "submit_label": "Submit",
         "transactions": {
-          "3f9d6830778e4bfe9be15171dde16846": {
+          "3f9745c07c4b4bb58bd8d907d6d50025": {
             "status": "rejected",
-            "tx": "3f9d6830778e4bfe9be15171dde16846",
+            "tx": "3f9745c07c4b4bb58bd8d907d6d50025",
             "field": "name",
             "value": "REJECTED",
             "record": "Record A",
             "generation": 0,
-            "pid": 82716,
-            "window_id": 25666
+            "pid": 80284,
+            "window_id": 25566
           }
         },
-        "pid": 82716,
-        "window_id": 25666,
+        "pid": 80284,
+        "window_id": 25566,
         "generation": 0,
         "activation_requests": 0,
         "window_visible": true
@@ -217,7 +217,7 @@
         "Y": 652.0,
         "Width": 420.0
       },
-      "call_ms": 689.8954999924172,
+      "call_ms": 681.9682500208728,
       "result": {
         "activation_after_dispatch": false,
         "application_commit": "unverified",
@@ -227,12 +227,12 @@
           "physical_input_unchanged": true
         },
         "foreground_preserved_after_dispatch": true,
-        "immediate_readback": true,
+        "immediate_readback": false,
         "input_disposition": "attempted",
-        "receipt_id": "05fdac9c-e56d-45a6-8e7c-e11df1057a54",
+        "receipt_id": "bd553dcc-c0bc-424e-80b3-38271bf64fda",
         "replay_allowed": false,
         "settlement": {
-          "elapsed_ms": 612,
+          "elapsed_ms": 606,
           "reacted": false,
           "status": "no_reaction",
           "value_matches": false
@@ -250,7 +250,7 @@
           "foreground_preserved": true,
           "physical_input_unchanged": true
         },
-        "receipt_id": "05fdac9c-e56d-45a6-8e7c-e11df1057a54",
+        "receipt_id": "bd553dcc-c0bc-424e-80b3-38271bf64fda",
         "supervision": {
           "state": "pending"
         }
@@ -262,7 +262,7 @@
           "foreground_preserved": true,
           "physical_input_unchanged": true
         },
-        "receipt_id": "05fdac9c-e56d-45a6-8e7c-e11df1057a54",
+        "receipt_id": "bd553dcc-c0bc-424e-80b3-38271bf64fda",
         "supervision": {
           "observation": {
             "foreground_changed": false,
@@ -288,19 +288,19 @@
         "submitted_record": null,
         "submit_label": "Submit",
         "transactions": {
-          "8f988933113d4cf7993d770cd58649f5": {
+          "74de05997ac04cfea157c6811f23446b": {
             "status": "committed",
-            "tx": "8f988933113d4cf7993d770cd58649f5",
+            "tx": "74de05997ac04cfea157c6811f23446b",
             "field": "name",
             "value": "",
             "record": "Record A",
             "generation": 0,
-            "pid": 82749,
-            "window_id": 25672
+            "pid": 80332,
+            "window_id": 25572
           }
         },
-        "pid": 82749,
-        "window_id": 25672,
+        "pid": 80332,
+        "window_id": 25572,
         "generation": 0,
         "activation_requests": 0,
         "window_visible": true
@@ -316,7 +316,7 @@
         "Y": 652.0,
         "Width": 420.0
       },
-      "call_ms": 2080.784666002728,
+      "call_ms": 2089.3651669903193,
       "result": {
         "activation_after_dispatch": false,
         "application_commit": "unverified",
@@ -328,10 +328,10 @@
         "foreground_preserved_after_dispatch": true,
         "immediate_readback": true,
         "input_disposition": "attempted",
-        "receipt_id": "3e712e05-12df-4160-83cf-6de371902e3d",
+        "receipt_id": "479021f3-a1d0-4890-9032-93d207a63b62",
         "replay_allowed": false,
         "settlement": {
-          "elapsed_ms": 2007,
+          "elapsed_ms": 2015,
           "reacted": true,
           "status": "timed_out",
           "value_matches": true
@@ -354,7 +354,7 @@
           "foreground_preserved": true,
           "physical_input_unchanged": true
         },
-        "receipt_id": "3e712e05-12df-4160-83cf-6de371902e3d",
+        "receipt_id": "479021f3-a1d0-4890-9032-93d207a63b62",
         "supervision": {
           "observation": {
             "foreground_changed": false,
@@ -371,7 +371,7 @@
           "foreground_preserved": true,
           "physical_input_unchanged": true
         },
-        "receipt_id": "3e712e05-12df-4160-83cf-6de371902e3d",
+        "receipt_id": "479021f3-a1d0-4890-9032-93d207a63b62",
         "supervision": {
           "observation": {
             "foreground_changed": false,
@@ -397,19 +397,19 @@
         "submitted_record": null,
         "submit_label": "Submit",
         "transactions": {
-          "810c24ee46e44ea9b3c80fa9a6d0fbe0": {
+          "017e75a8f09d42fd929dfe9dcff2195b": {
             "status": "committed",
-            "tx": "810c24ee46e44ea9b3c80fa9a6d0fbe0",
+            "tx": "017e75a8f09d42fd929dfe9dcff2195b",
             "field": "name",
             "value": "Settled Person",
             "record": "Record A",
             "generation": 0,
-            "pid": 82785,
-            "window_id": 25682
+            "pid": 80422,
+            "window_id": 25582
           }
         },
-        "pid": 82785,
-        "window_id": 25682,
+        "pid": 80422,
+        "window_id": 25582,
         "generation": 0,
         "activation_requests": 0,
         "window_visible": true
@@ -425,7 +425,7 @@
         "Y": 652.0,
         "Width": 420.0
       },
-      "call_ms": 148.33666701451875,
+      "call_ms": 273.680707992753,
       "result": {
         "activation_after_dispatch": false,
         "application_commit": "unverified",
@@ -437,12 +437,12 @@
         "foreground_preserved_after_dispatch": true,
         "immediate_readback": true,
         "input_disposition": "attempted",
-        "receipt_id": "9d0a8da8-8ab4-4bc3-9001-58cc802e2638",
+        "receipt_id": "3c464f54-296e-470e-acc2-ae59ff509bfc",
         "replay_allowed": false,
         "settlement": {
-          "elapsed_ms": 70,
+          "elapsed_ms": 195,
           "reacted": true,
-          "status": "unavailable",
+          "status": "settled",
           "value_matches": true
         },
         "supervision": "pending_owned",
@@ -450,71 +450,8 @@
           "state": "pending"
         }
       },
-      "is_error": true,
-      "receipt_after_return": {
-        "activation_after_dispatch": false,
-        "application_commit": "unverified",
-        "foreground_guard": {
-          "foreground_preserved": true,
-          "physical_input_unchanged": true
-        },
-        "receipt_id": "9d0a8da8-8ab4-4bc3-9001-58cc802e2638",
-        "supervision": {
-          "state": "pending"
-        }
-      },
-      "fence": {
-        "activation_after_dispatch": false,
-        "application_commit": "unverified",
-        "foreground_guard": {
-          "foreground_preserved": true,
-          "physical_input_unchanged": true
-        },
-        "receipt_id": "9d0a8da8-8ab4-4bc3-9001-58cc802e2638",
-        "supervision": {
-          "observation": {
-            "foreground_changed": false,
-            "new_window_count": 0,
-            "polled": true
-          },
-          "state": "finished"
-        }
-      },
-      "oracle": {
-        "name": "Settled Person",
-        "email": "",
-        "subscribe": false,
-        "plan": "Basic",
-        "submitted": 0,
-        "counter": 0,
-        "dialog": false,
-        "active": false,
-        "minimized": false,
-        "hidden": false,
-        "applied": 0,
-        "record": "Record A",
-        "submitted_record": null,
-        "submit_label": "Submit",
-        "transactions": {
-          "35cad84e35e64951a375f6b6f5f3ec75": {
-            "status": "committed",
-            "tx": "35cad84e35e64951a375f6b6f5f3ec75",
-            "field": "name",
-            "value": "Settled Person",
-            "record": "Record A",
-            "generation": 0,
-            "pid": 82828,
-            "window_id": 25688
-          }
-        },
-        "pid": 82828,
-        "window_id": 25688,
-        "generation": 0,
-        "activation_requests": 0,
-        "window_visible": false
-      },
-      "foreground_preserved": true,
-      "passed": true
+      "is_error": false,
+      "error": "Wrong settlement/refusal contract"
     }
   ],
   "baseline_displays": [
@@ -532,14 +469,14 @@
       "y": 0
     }
   ],
-  "owned_display_id": 19,
+  "owned_display_id": 18,
   "owned_display": {
     "builtin": false,
     "height": 1080,
-    "id": 19,
+    "id": 18,
     "main": false,
     "model": 49374,
-    "uuid": "1244AC62-6AA3-4CCF-AFDC-249499F760DD",
+    "uuid": "DA96F60D-92E7-4288-AC1C-056F48F7184B",
     "vendor": 2577,
     "virtual": true,
     "width": 1920,

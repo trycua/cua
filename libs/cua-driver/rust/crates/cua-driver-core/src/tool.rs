@@ -6493,3 +6493,38 @@ mod capability_tests {
             }));
     }
 }
+
+#[cfg(all(test, feature = "experimental-owned-supervision"))]
+mod owned_runtime_drain_tests {
+    use super::*;
+    use crate::owned_supervision::{Observation, Owner, Refusal};
+    #[tokio::test]
+    async fn runtime_drain_closes_admission_and_retains_timed_out_observation() {
+        let owner = Owner::new(1).unwrap();
+        let (send, receive) = tokio::sync::oneshot::channel();
+        let id = owner.reserve("session").unwrap().supervise(async move {
+            receive.await.unwrap();
+            Observation {
+                polled: true,
+                foreground_changed: false,
+                new_window_count: 0,
+            }
+        });
+        let mut registry = ToolRegistry::new();
+        registry.retain_supervision_owner(owner.clone());
+        assert_eq!(
+            registry.drain_supervision(std::time::Duration::ZERO).await,
+            Err(Refusal::Timeout)
+        );
+        assert!(matches!(owner.reserve("session"), Err(Refusal::Closed)));
+        send.send(()).unwrap();
+        registry
+            .drain_supervision(std::time::Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert!(matches!(
+            owner.read("session", &id).unwrap(),
+            crate::owned_supervision::ReceiptState::Finished(_)
+        ));
+    }
+}

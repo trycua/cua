@@ -76,7 +76,7 @@ impl Tool for ReceiptTool {
             self.state.supervision.read(scope, &id)
         };
         match outcome {
-            Ok(status) => ToolResult::text("Observation status only; independently verify application commitment.").with_structured(serde_json::json!({"receipt_id":id,"supervision":status,"application_commit":"unverified"})),
+            Ok(status) => ToolResult::text("Observation status only; independently verify application commitment.").with_structured(serde_json::json!({"receipt_id":id,"supervision":status,"activation_observed":self.state.supervision.activation_observed(scope,&id).ok().flatten(),"application_commit":"unverified"})),
             Err(e) => ToolResult::error(format!("supervision receipt: {e:?}; input must not be replayed without fresh observation.")),
         }
     }
@@ -105,6 +105,13 @@ mod tests {
     fn args(id: &ReceiptId, scope: &str) -> Value {
         serde_json::json!({"_session_id":scope,"_public_session_label":"explicit","receipt_id":id,"timeout_ms":0})
     }
+    fn refusal(result: ToolResult, message: &str) {
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            serde_json::to_value(result).unwrap()["content"][0]["text"],
+            message
+        );
+    }
     #[tokio::test]
     async fn timeout_and_foreign_scope_cannot_cancel_or_release_observer() {
         let state = Arc::new(ToolState::default());
@@ -121,26 +128,18 @@ mod tests {
                     new_window_count: 0,
                 }
             });
-        assert_eq!(
+        refusal(
             tool(state.clone(), true, false)
                 .invoke(args(&id, "owner"))
-                .await
-                .is_error,
-            Some(true)
+                .await,
+            "supervision receipt: Timeout; input must not be replayed without fresh observation.",
         );
-        assert_eq!(
-            tool(state.clone(), false, false)
-                .invoke(args(&id, "other"))
-                .await
-                .is_error,
-            Some(true)
-        );
-        assert_eq!(
+        refusal(tool(state.clone(),false,false).invoke(args(&id,"other")).await,"supervision receipt: Unavailable; input must not be replayed without fresh observation.");
+        refusal(
             tool(state.clone(), false, true)
                 .invoke(args(&id, "owner"))
-                .await
-                .is_error,
-            Some(true)
+                .await,
+            "supervision receipt: Pending; pending observers cannot be released.",
         );
         assert_eq!(
             state.supervision.read("owner", &id).unwrap(),
@@ -152,37 +151,35 @@ mod tests {
             .fence("owner", &id, Duration::from_secs(1))
             .await
             .unwrap();
-        assert_ne!(
+        assert_eq!(
             tool(state.clone(), false, true)
                 .invoke(args(&id, "owner"))
                 .await
-                .is_error,
-            Some(true)
+                .structured_content
+                .unwrap()["released"],
+            true
         );
-        assert_eq!(
-            tool(state, false, false)
-                .invoke(args(&id, "owner"))
-                .await
-                .is_error,
-            Some(true)
-        );
+        refusal(tool(state,false,false).invoke(args(&id,"owner")).await,"supervision receipt: Unavailable; input must not be replayed without fresh observation.");
     }
     #[tokio::test]
     async fn missing_explicit_session_and_invalid_timeout_refuse() {
         let state = Arc::new(ToolState::default());
-        let reservation = state.supervision.reserve("owner").unwrap();
-        let id = reservation.supervise(async {
-            Observation {
-                polled: true,
-                foreground_changed: false,
-                new_window_count: 0,
-            }
-        });
+        let id = state
+            .supervision
+            .reserve("owner")
+            .unwrap()
+            .supervise(async {
+                Observation {
+                    polled: true,
+                    foreground_changed: false,
+                    new_window_count: 0,
+                }
+            });
         let mut a = args(&id, "owner");
         a.as_object_mut().unwrap().remove("_public_session_label");
-        assert_eq!(
-            tool(state.clone(), false, false).invoke(a).await.is_error,
-            Some(true)
+        refusal(
+            tool(state.clone(), false, false).invoke(a).await,
+            "session_required: explicit runtime session required",
         );
         for timeout in [
             serde_json::json!(-1),
@@ -191,9 +188,9 @@ mod tests {
         ] {
             let mut a = args(&id, "owner");
             a["timeout_ms"] = timeout;
-            assert_eq!(
-                tool(state.clone(), true, false).invoke(a).await.is_error,
-                Some(true)
+            refusal(
+                tool(state.clone(), true, false).invoke(a).await,
+                "invalid_timeout: expected integer 0..60000",
             );
         }
     }

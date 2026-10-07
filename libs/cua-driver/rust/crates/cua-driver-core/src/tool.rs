@@ -548,6 +548,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "get_recording_state" => &["recording.state"],
         "replay_trajectory" => &["recording.replay"],
         "run_actions" => &["input.batch"],
+        "run_script" => &["input.script"],
         "install_ffmpeg" => &["recording.install_dependency"],
         "install_extension" => &["extension.install"],
 
@@ -1086,6 +1087,20 @@ impl ToolRegistry {
     /// registry handle, as for `replay_trajectory`.
     fn register_batch_tools(&mut self) {
         self.register(Box::new(crate::batch_tools::RunActionsTool::new(
+            self.replay_registry.clone(),
+        )));
+        // Experimental and opt-in: only when the operator turned it on.
+        #[cfg(feature = "script")]
+        if crate::script_tool::enabled() {
+            self.register_script_tool();
+        }
+    }
+
+    /// Register the experimental `run_script` tool, which, like
+    /// `run_actions`, re-enters this registry for every driver call.
+    #[cfg(feature = "script")]
+    pub fn register_script_tool(&mut self) {
+        self.register(Box::new(crate::script_tool::RunScriptTool::new(
             self.replay_registry.clone(),
         )));
     }
@@ -1889,6 +1904,7 @@ impl ToolRegistry {
                     | "get_recording_state"
                     | "replay_trajectory"
                     | "run_actions"
+                    | "run_script"
                     | "start_session"
                     | "end_session"
             );

@@ -893,6 +893,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "hotkey"
         | "set_value"
         | "run_actions"
+        | "run_script"
         | "invoke_menu"
         | "launch_app"
         | "bring_to_front"

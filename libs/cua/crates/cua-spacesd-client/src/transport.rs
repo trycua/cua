@@ -240,22 +240,19 @@ fn native_channel(cfg: &ChannelConfig) -> Result<RawChannel> {
     }
     // Lazy: tonic reconnects transparently (with backoff) on the next call
     // after a connection drops.
-    let channel = ep.connect_lazy();
+    let channel = ep.connect_with_connector_lazy(crate::connector::ProxyConnector::new(
+        cfg.connect_timeout,
+        Some(cfg.keepalive.interval),
+    ));
     Ok(BoxCloneSyncService::new(
         channel.map_err(|e| Box::new(e) as BoxError),
     ))
 }
 
 fn grpc_web_channel(cfg: &ChannelConfig) -> Result<RawChannel> {
-    use hyper_util::{
-        client::legacy::{Client, connect::HttpConnector},
-        rt::TokioExecutor,
-    };
-    let mut http = HttpConnector::new();
-    http.enforce_http(false);
-    http.set_connect_timeout(Some(cfg.connect_timeout));
-    http.set_keepalive(Some(cfg.keepalive.interval));
-    http.set_nodelay(true);
+    use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+    let http =
+        crate::connector::ProxyConnector::new(cfg.connect_timeout, Some(cfg.keepalive.interval));
     // Name the crypto provider explicitly: other crates in a dependency graph
     // (e.g. reqwest via oci-client) may enable a second rustls backend, and
     // rustls then refuses to pick a process default on its own.

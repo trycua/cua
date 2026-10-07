@@ -84,10 +84,10 @@ jobs:
           key: cua-sdk
       - name: Format
         if: runner.os == 'Linux'
-        run: cargo fmt -p cua-sdk -p cua-daemon -p cua-cli -p cua-bindgen -p cua-media-protocol -p cua-media-transport -p cua-media-codec -p cua-media-client -p cua-viewer -p cua-logging -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --check
+        run: cargo fmt -p cua-sdk -p cua-daemon -p cua-cli -p cua-bindgen -p cua-spacesd-client -p cua-media-protocol -p cua-media-transport -p cua-media-codec -p cua-media-client -p cua-viewer -p cua-logging -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --check
       - name: Clippy (native)
         run: >
-          cargo clippy --locked -p cua-sdk -p cua-daemon -p cua-cli -p cua-bindgen
+          cargo clippy --locked -p cua-sdk -p cua-daemon -p cua-cli -p cua-bindgen -p cua-spacesd-client
           -p cua-media-protocol -p cua-media-transport -p cua-media-client -p cua-viewer -p cua-logging
           -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
           -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli
@@ -102,7 +102,7 @@ jobs:
         run: cargo test --locked -p cua-spaces --test relay --test cloud_discovery -- --test-threads=4
       - name: Test (embedded, daemon over UDS and loopback, CLI, Cua Spaces extensions)
         run: >
-          cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon -p cua-cli
+          cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon -p cua-cli -p cua-spacesd-client
           -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
           -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --test-threads=4
         env:

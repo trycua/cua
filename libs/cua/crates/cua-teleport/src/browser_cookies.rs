@@ -576,9 +576,8 @@ fn tempfile_copy(src: &Path) -> Result<TempCopy, TeleportError> {
             let _ = crate::plain_copy::copy_data_only(&from, &dir.join(format!("Cookies{suffix}")));
         }
     }
-    crate::plain_copy::copy_named("Cookies", src, &dst).map_err(|e| {
+    crate::plain_copy::copy_named("Cookies", src, &dst).inspect_err(|_| {
         let _ = std::fs::remove_dir_all(&dir);
-        e
     })?;
     Ok(TempCopy(dst))
 }

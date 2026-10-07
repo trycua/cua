@@ -56,9 +56,10 @@ delete_space {space}                -> delete it and stop metering
 | `agent_status`, `agent_list`, `agent_stop` | State, output tail, stop. |
 
 Runs live in the guest (`~/.cua/agents/<run_id>/`) and survive the client
-going away. The daemon copies your agent's credential file (for example
-`~/.claude/.credentials.json`) into the Space at start;
-`CUA_SPACES_AGENT_CREDENTIALS_HOME=none` copies nothing.
+going away. Host credential files are never copied into the Space: name
+provider key variables in `env_from_host` (or pass per-run `env`) to give a run
+its API keys, and move a signed-in agent session with
+[teleport](/spaces/guides/teleport-an-app), behind its consent screen.
 
 In TypeScript a run is a thread:
 

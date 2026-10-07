@@ -134,7 +134,20 @@ pub fn build(cfg: &LaunchConfig) -> Vec<String> {
             cfg.disk_format
         ),
     ]);
-    push(&["-device", "virtio-blk-pci,drive=disk0,bootindex=1"]);
+    // Windows boots from AHCI, as its image is built and validated: its
+    // virtio storage driver is not a boot driver there, so over virtio-blk
+    // it cannot find its system volume and lands in WinRE. Everything else
+    // boots virtio.
+    if cfg.os == GuestOs::Windows {
+        push(&[
+            "-device",
+            "ahci,id=ahci",
+            "-device",
+            "ide-hd,drive=disk0,bus=ahci.0,bootindex=1",
+        ]);
+    } else {
+        push(&["-device", "virtio-blk-pci,drive=disk0,bootindex=1"]);
+    }
     if let Some(seed) = &cfg.seed_iso {
         push(&[
             "-drive",
@@ -394,6 +407,32 @@ mod tests {
         c.install_iso = Some("/iso/deb.iso".into());
         let a = build(&c);
         assert!(has(&a, ["-device", "scsi-cd,drive=cd0,bootindex=0"]));
+    }
+
+    /// The Windows image is built and validated (libs/images/windows-2022/
+    /// build-image.sh, scripts/images/image-doctor-windows.sh) on AHCI: over
+    /// virtio-blk it cannot find its system volume and lands in WinRE
+    /// (#4777).
+    #[test]
+    fn windows_guest_boots_from_ahci_like_the_image_build() {
+        let mut c = cfg(Arch::X86_64, "kvm");
+        c.os = GuestOs::Windows;
+        c.seed_iso = None;
+        let a = build(&c);
+        assert!(has(&a, ["-device", "ahci,id=ahci"]), "{a:?}");
+        assert!(
+            has(&a, ["-device", "ide-hd,drive=disk0,bus=ahci.0,bootindex=1"]),
+            "{a:?}"
+        );
+        assert!(!a.iter().any(|x| x.starts_with("virtio-blk-pci")), "{a:?}");
+
+        // Linux guests keep virtio.
+        let a = build(&cfg(Arch::X86_64, "kvm"));
+        assert!(has(
+            &a,
+            ["-device", "virtio-blk-pci,drive=disk0,bootindex=1"]
+        ));
+        assert!(!a.iter().any(|x| x.starts_with("ahci")));
     }
 
     #[test]

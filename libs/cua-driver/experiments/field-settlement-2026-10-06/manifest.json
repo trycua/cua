@@ -1,0 +1,33 @@
+{
+  "checked_at": "2026-10-07T03:20:13.622722+00:00",
+  "implementation_commit": "936f0eee37666d39272f774a23815f391d857e87",
+  "upstream_base": "69ebe4bfbac69778c1c03cdae1178f09f8144936",
+  "checks": {
+    "core_passed": 879,
+    "sdk_passed": 102,
+    "macos_passed": 473,
+    "macos_existing_ignored": 6,
+    "zero_quiet_mutant": "rejected by two failing keeper tests",
+    "feature_enabled_cli": "passed",
+    "feature_disabled_sdk_macos": "passed",
+    "fmt": "passed",
+    "native_qualification": "pending isolated macOS guest"
+  },
+  "files": {
+    "pilot-manifest.json": "4465919aa59207bcaf5d7ee90eb9857efeaad6737f00f94aef1450e67930e5c7",
+    "measure.py": "c12880e3b485c72dab624c085fb0d4c4f844f055997f08703608cd9a21ed37f4",
+    "receipts.py": "2b7203bdb465a8a3d3f7a3c15b3c7ddcc4b3832f5bf6696eb23cb6dcb4fd004c",
+    "interference-pilot.json": "491e6a2f854b95afa9f422c32f294f798809b7fb8d14e7d4c3ecea9a662af57e",
+    "field-controls-pilot.json": "c400577bd2869850fb360be73641e56a4c3af0f71a219a3158629f02dafbbd91",
+    "setup-refusal-pilot.json": "41c7d249b2257b9a77dde253e49d040d4d1dd4c6c6c4ae6ab3cb69e18658ee03",
+    "README.md": "e030e1a58a15a6d72bdc44559d63441a981f75cf470caf248d81bbf686f4ef7c",
+    "disconnect.py": "9d70b347bf5c9eeea30362e6ac773765bdcd9990254600f5782d18e829f86e1a",
+    "live.py": "ea4c216b652357f4f169e563e3f36b01087366f89a124f52daf49deb49aab84e",
+    "reference.py": "95deebfc9880de02535527d437e93c67240d9d0a197c1b7c23ab72a8e2f717ca",
+    "REVIEW.md": "4f4482eb0418382e91d39d628c2dca332b427c10d1b9daf4d5b70d1e2becc114",
+    "field_controls.py": "eb3d7c596759380ed54cd5435778999882c096a2025d4f42885d0bfd69b14972",
+    "qualify.py": "e09a78bb7d008ea9f4dbff38c4b74c5b76e0fc161ad4a53bf64933d63fc3e3a1",
+    "fixture/fixture.py": "71d7df22a75665d20ce60bfa2ac041c6eef584b0fbd3db3b87b3f671c8b2f6d6",
+    "fixture/fixture_base.py": "4b07385cbb5221f5168274494139a427ed5f054460b20caa3638d846dc5f2627"
+  }
+}

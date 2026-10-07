@@ -132,6 +132,20 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual(cdb_adapter.electron_argv(["node", "server.js"], str(app_dir), "x"), ["node", "server.js"])
         self.assertEqual(cdb_adapter.app_display_name(DESCRIPTOR["apps"][1]), "Synthetic Desk")
 
+    def test_lab_occluders_are_windows_above_benchlab_that_overlap_it(self) -> None:
+        def w(app, z, x, y, wd=300, h=200, layer=0):
+            return {"app_name": app, "window_id": z, "z_index": z, "layer": layer, "is_on_screen": True,
+                    "bounds": {"x": x, "y": y, "width": wd, "height": h}}
+        lab = w("BenchLab", 10, 60, 80, 760, 560)
+        terminal = w("Terminal", 20, 100, 100)          # above and overlapping: occludes
+        below = w("Finder", 5, 100, 100)                 # overlapping but behind
+        aside = w("BenchSentinel", 30, 1200, 700)        # above but elsewhere
+        menubar = w("Window Server", 40, 0, 0, 1920, 25, layer=24)
+        found, above = rb.lab_occluders([lab, terminal, below, aside, menubar])
+        self.assertEqual(found["window_id"], 10)
+        self.assertEqual([x["app_name"] for x in above], ["Terminal"])
+        self.assertEqual(rb.lab_occluders([terminal]), (None, []))
+
     def test_kill_only_in_disposable_vm(self) -> None:
         os.environ.pop("CDB_BENCH_DISPOSABLE", None)
         cdb_adapter.clear_leftovers(self.spec)  # must be a no-op, never a pkill on a real desktop

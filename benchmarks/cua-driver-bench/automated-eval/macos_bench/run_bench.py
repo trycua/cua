@@ -686,6 +686,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             lab = pilot.launch_lab(task, seed, paths, lab_app, app_env)
         if spec.get("sentinel_frontmost", True):
             sentinel.activate()
+        if cdb is None and getattr(args, "check_occlusion", True):
+            row["lab_occlusion"] = ensure_lab_unoccluded(ctx)
+            row["lab_unoccluded"] = row["lab_occlusion"].get("unoccluded")
         cwd = ca.prepare_cwd(arm)
         mcp_path, server = ctx.mcp[arm]
         argv = ca.claude_argv(
@@ -1015,6 +1018,83 @@ def place_window(ctx: "Ctx", win: dict[str, Any], wait_s: float = 90.0) -> bool:
                 return True
         time.sleep(0.5)
     return False
+
+
+LAB_APP_NAME = "BenchLab"
+LAB_CLEAR_X = 840  # Amendment 4 (A4.8): x where an occluding window is moved, right of BenchLab's 60..820 frame
+
+
+def _overlap(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    return (
+        a["x"] < b["x"] + b["width"]
+        and b["x"] < a["x"] + a["width"]
+        and a["y"] < b["y"] + b["height"]
+        and b["y"] < a["y"] + a["height"]
+    )
+
+
+def lab_occluders(windows: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """BenchLab's frontmost on-screen window and every normal-layer window above it that overlaps it.
+    Cua Driver's macOS ``z_index`` grows towards the front."""
+    normal = [
+        w
+        for w in windows
+        if isinstance(w.get("bounds"), dict)
+        and w.get("z_index") is not None
+        and w.get("is_on_screen", True)
+        and (w.get("layer") or 0) == 0
+    ]
+    labs = [w for w in normal if w.get("app_name") == LAB_APP_NAME]
+    if not labs:
+        return None, []
+    lab = max(labs, key=lambda w: w["z_index"])
+    above = [
+        w
+        for w in normal
+        if w.get("app_name") != LAB_APP_NAME
+        and w["z_index"] > lab["z_index"]
+        and _overlap(w["bounds"], lab["bounds"])
+    ]
+    return lab, above
+
+
+def _brief(w: dict[str, Any]) -> dict[str, Any]:
+    return {k: w.get(k) for k in ("app_name", "title", "pid", "window_id", "z_index", "bounds")}
+
+
+def ensure_lab_unoccluded(ctx: "Ctx") -> dict[str, Any]:
+    """Amendment 4 (A4.8, CUA-1219): before a BenchLab probe, record the window stack over BenchLab and move any
+    other app's window that overlaps it to the right of it, through the recorder daemon, then check again.
+    BenchSentinel is moved like any other window. Returns the record stored in the row."""
+    rec_home = ca.RECORDER_STATE / "home"
+
+    def read() -> list[dict[str, Any]]:
+        done = ca.cua_cli("call", "list_windows", "{}", socket=ca.RECORDER_SOCKET, home=rec_home, timeout=20)
+        data = json.loads(done.stdout[done.stdout.index("{") :])
+        return [w for w in _walk_dicts(data) if "window_id" in w and "bounds" in w]
+
+    try:
+        lab, above = lab_occluders(read())
+        record: dict[str, Any] = {
+            "lab": _brief(lab) if lab else None,
+            "occluders_at_start": [_brief(w) for w in above],
+            "moved": [],
+        }
+        for w in above:
+            b = w["bounds"]
+            args = {"pid": w.get("pid"), "window_id": w["window_id"], "x": LAB_CLEAR_X, "y": b["y"],
+                    "width": b["width"], "height": b["height"]}
+            ca.cua_cli("call", "set_window_frame", json.dumps(args), socket=ca.RECORDER_SOCKET,
+                       home=rec_home, timeout=20)
+            record["moved"].append(_brief(w))
+        if above:
+            time.sleep(0.5)
+            lab, above = lab_occluders(read())
+        record["occluders_after"] = [_brief(w) for w in above]
+        record["unoccluded"] = lab is not None and not above
+        return record
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
+        return {"error": f"{type(error).__name__}: {error}", "unoccluded": None}
 
 
 PARK_POINT = (1000, 12)  # Amendment 3, A3.9: an empty stretch of the menu bar, away from every task window
@@ -1725,6 +1805,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="dir with BenchLab.app and BenchSentinel.app (swift/build.sh)",
     )
     p.add_argument("--no-sentinel", action="store_true")
+    p.add_argument(
+        "--check-occlusion",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="before a BenchLab probe, move other windows off BenchLab and record it (Amendment 4, A4.8)",
+    )
     p.add_argument(
         "--park-pointer",
         action="store_true",

@@ -244,11 +244,11 @@ impl Tool for SetValueTool {
         // child option which can trigger app activation in some setups.
         let prior_front = apps::frontmost_pid();
         #[cfg(feature = "experimental-owned-supervision")]
+        let prior_window = prior_front.and_then(crate::input::skylight::key_window_of_pid);
+        #[cfg(feature = "experimental-owned-supervision")]
         if self.owned
-            && !prior_front.is_some_and(|pid| {
-                crate::input::skylight::key_window_of_pid(pid).is_some_and(|w| {
-                    crate::input::skylight::front_process_matches(pid, w) == Some(true)
-                })
+            && !prior_front.zip(prior_window).is_some_and(|(pid, w)| {
+                crate::input::skylight::front_process_matches(pid, w) == Some(true)
             })
         {
             return ToolResult::error("foreground_unavailable: owned dispatch needs a freshly bound prior foreground window; no input was sent.");
@@ -269,10 +269,15 @@ impl Tool for SetValueTool {
         .await;
 
         #[cfg(feature = "experimental-owned-supervision")]
+        let foreground_preserved = prior_front.zip(prior_window).is_some_and(|(pid, w)| {
+            apps::frontmost_pid() == Some(pid)
+                && crate::input::skylight::front_process_matches(pid, w) == Some(true)
+        });
+        #[cfg(feature = "experimental-owned-supervision")]
         let (changes, receipt) = match reservation {
             Some(r) => (
                 crate::window_change_detector::Changes::not_polled(),
-                Some(snapshot.supervise_owned(r)),
+                Some(snapshot.supervise_owned(r, foreground_preserved)),
             ),
             None => (snapshot.detect_async().await, None),
         };
@@ -282,14 +287,21 @@ impl Tool for SetValueTool {
         #[cfg(feature = "experimental-owned-supervision")]
         if let Some(receipt) = receipt {
             let (disposition, immediate_readback, error) = match result {
-                Ok(Ok(outcome)) => ("attempted", outcome.verified.unwrap_or(false), None),
+                Ok(Ok(outcome)) if foreground_preserved => {
+                    ("attempted", outcome.verified.unwrap_or(false), None)
+                }
+                Ok(Ok(_)) => (
+                    "uncertain",
+                    false,
+                    Some("foreground_changed_after_dispatch".into()),
+                ),
                 Ok(Err(e)) => ("uncertain", false, Some(e.to_string())),
                 Err(e) => ("uncertain", false, Some(e.to_string())),
             };
             // Even an uncertain mutation retains its receipt. Do not instruct
             // the client to replay it or project readback as committed effect.
             return ToolResult::text("Native input attempted; supervision is owned and pending. Application commitment requires independent evidence.")
-                .with_structured(serde_json::json!({"receipt_id": receipt, "supervision": "pending_owned", "activation_observed": self.state.supervision.activation_observed(args["_session_id"].as_str().unwrap(), &receipt).ok().flatten(), "input_disposition": disposition, "immediate_readback": immediate_readback, "application_commit": "unverified", "error": error}));
+                .with_structured(serde_json::json!({"receipt_id": receipt, "supervision": "pending_owned", "foreground_preserved_after_dispatch": foreground_preserved, "activation_after_dispatch": self.state.supervision.activation_observed(args["_session_id"].as_str().unwrap(), &receipt).ok().flatten(), "input_disposition": disposition, "immediate_readback": immediate_readback, "application_commit": "unverified", "error": error}));
         }
 
         match result {

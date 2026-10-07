@@ -22,6 +22,7 @@ mod native {
     async fn serve() -> Result<(), Box<dyn std::error::Error>> {
         let driver = CuaDriver::create(None)?;
         let mut receipts = Vec::<(Value, Value)>::new();
+        let outcome: Result<(), Box<dyn std::error::Error>> = async {
         for line in io::stdin().lock().lines() {
             let req: Value = serde_json::from_str(&line?)?;
             let Some(id) = req.get("id") else { continue };
@@ -86,9 +87,11 @@ mod native {
             println!("{}", json!({"jsonrpc":"2.0","id":id,"result":result}));
             io::stdout().flush()?;
         }
-        // The SDK runtime drain owns outstanding native observers after EOF.
-        driver.shutdown().await?;
         Ok(())
+        }.await;
+        // EOF and request-processing errors both drain the owned observers.
+        driver.shutdown().await?;
+        outcome
     }
     pub fn run() {
         let _observer = platform_macos::focus_steal::FocusStealPreventer::shared();

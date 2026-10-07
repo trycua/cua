@@ -2583,6 +2583,7 @@ dependencies = [
  "prost",
  "rand 0.9.5",
  "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2596,6 +2597,7 @@ dependencies = [
  "tower",
  "tracing",
  "url",
+ "webpki-roots 1.0.9",
 ]
 
 [[package]]

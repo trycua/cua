@@ -49,6 +49,11 @@ async fn space_shares_distinguishes_missing_from_unshared_spaces() {
         .await;
     assert!(missing.is_error);
     assert_eq!(missing.structured.unwrap()["error"]["kind"], "not_found");
+    let missing = server
+        .call("unshare_space", json!({"space": "local:nonexistent"}))
+        .await;
+    assert!(missing.is_error);
+    assert_eq!(missing.structured.unwrap()["error"]["kind"], "not_found");
 
     let unknown_name = server
         .call("space_shares", json!({"space": "nonexistent"}))
@@ -68,6 +73,10 @@ async fn space_shares_distinguishes_missing_from_unshared_spaces() {
     assert!(!unshared.is_error, "{:?}", unshared.first_text());
     let shares: serde_json::Value = serde_json::from_str(unshared.first_text().unwrap()).unwrap();
     assert_eq!(shares["shares"], json!([]));
+    let unshared = server
+        .call("unshare_space", json!({"space": info.id}))
+        .await;
+    assert!(!unshared.is_error, "{:?}", unshared.first_text());
 }
 
 #[tokio::test]

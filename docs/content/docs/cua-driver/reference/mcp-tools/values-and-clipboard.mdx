@@ -60,7 +60,7 @@ Set a value on a UIA element via the ValuePattern interface.
 
 Two semantic modes (matching Swift's split):
 - **Standard input** (text fields, sliders, combo box edit): writes the value directly through UIA `IUIAutomationValuePattern::SetValue`. This is the canonical Windows write path, equivalent to Swift's `AXValue` write.
-- **ComboBox / select dropdown**: ValuePattern.SetValue picks the option whose text matches `value` on most native ComboBox controls.
+- **ComboBox**: on a native Win32 combo box (WinForms, MFC, dialogs) selects the option whose text matches `value` and sends the app the notifications a user's choice sends (CBN_SELENDOK, CBN_SELCHANGE), without focusing the window; an editable combo gets the text typed into its edit field. A drop-down list without that option is refused with the list of options. Other combo boxes get a UIA value write, which the app may not treat as a selection.
 
 For free-form text entry that the target accepts via keystrokes only, prefer `type_text`: UIA ValuePattern writes are ignored by some web inputs (same caveat as Swift's `AXValue`-vs-WebKit).
 

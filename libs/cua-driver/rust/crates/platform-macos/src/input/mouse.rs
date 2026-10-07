@@ -271,7 +271,14 @@ pub fn move_cursor_desktop(x: f64, y: f64) -> anyhow::Result<()> {
     CGDisplay::warp_mouse_cursor_position(point)
         .map_err(|error| anyhow::anyhow!("CGWarpMouseCursorPosition failed: {error:?}"))?;
     unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
-    post_pointer_moved(point)
+    // Let WindowServer settle the warp first: a move posted in the same
+    // instant was occasionally dropped (1 of 5 in the VM check). A second
+    // move a moment later is harmless when the first one landed.
+    for _ in 0..2 {
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        post_pointer_moved(point)?;
+    }
+    Ok(())
 }
 
 /// Post one `MouseMoved` at `point` through the global HID tap, so AppKit

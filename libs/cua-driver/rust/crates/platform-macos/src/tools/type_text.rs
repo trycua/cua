@@ -1609,11 +1609,8 @@ fn type_text_blocking(
 mod tests {
     #[test]
     fn chromium_native_field_refuses_only_background_submits() {
-        let refusal = super::chromium_native_field_submit_refusal(
-            true,
-            "file:///Users/lume/cdb-s04/logs/archive-access.log\n",
-        )
-        .expect("a submit into the address bar is refused");
+        let refusal = super::chromium_native_field_submit_refusal(true, "file:///tmp/report.log\n")
+            .expect("a submit into the address bar is refused");
         assert_eq!(refusal.code, "browser_field_needs_keystrokes");
         assert_eq!(refusal.advice, Some("foreground"));
         assert!(refusal.reason.contains("delivery_mode:\"foreground\""));

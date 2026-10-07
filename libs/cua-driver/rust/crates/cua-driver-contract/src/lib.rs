@@ -775,4 +775,125 @@ mod tests {
             );
         }
     }
+
+    /// Vertex AI / Gemini function calling rejects the whole tools/list payload
+    /// when any advertised parameter uses untyped anyOf/oneOf, `const`, a type
+    /// array such as `["number","null"]`, or an enum without a string `type`
+    /// (#4798, building on #4220).
+    fn vertex_input_schema_violations(value: &Value, path: &str, out: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                if let Some(types) = map.get("type") {
+                    if types.as_array().is_some() {
+                        out.push(format!(
+                            "{path}: type arrays are rejected by Vertex/Gemini: {types}"
+                        ));
+                    }
+                } else if map.contains_key("properties")
+                    || map.contains_key("items")
+                    || map.contains_key("enum")
+                    || map.contains_key("const")
+                    || map.contains_key("anyOf")
+                    || map.contains_key("oneOf")
+                    || map.contains_key("allOf")
+                {
+                    // Combinators and enums must still carry a concrete type, or
+                    // be rewritten before advertising. Bare annotation objects
+                    // (description-only) are also rejected.
+                    if map.contains_key("anyOf")
+                        || map.contains_key("oneOf")
+                        || map.contains_key("allOf")
+                        || map.contains_key("enum")
+                        || map.contains_key("const")
+                        || map.contains_key("properties")
+                        || map.contains_key("items")
+                    {
+                        out.push(format!(
+                            "{path}: schema node is missing a single string type field"
+                        ));
+                    }
+                }
+                if map.contains_key("const") {
+                    out.push(format!(
+                        "{path}: const is rejected by Vertex/Gemini; use a one-value enum"
+                    ));
+                }
+                for key in ["anyOf", "oneOf", "allOf"] {
+                    if map.contains_key(key) {
+                        out.push(format!(
+                            "{path}: {key} combinators are rejected by Vertex/Gemini function calling"
+                        ));
+                    }
+                }
+                if let Some(values) = map.get("enum").and_then(Value::as_array) {
+                    if map.get("type").and_then(Value::as_str) != Some("string") {
+                        out.push(format!("{path}: enum must be paired with type \"string\""));
+                    }
+                    for (index, item) in values.iter().enumerate() {
+                        if !item.is_string() {
+                            out.push(format!("{path}.enum[{index}] must be a string: {item}"));
+                        }
+                    }
+                }
+                for (key, child) in map {
+                    vertex_input_schema_violations(child, &format!("{path}.{key}"), out);
+                }
+            }
+            Value::Array(items) => {
+                for (index, item) in items.iter().enumerate() {
+                    vertex_input_schema_violations(item, &format!("{path}[{index}]"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn published_input_schemas_are_vertex_gemini_compatible() {
+        let mut violations = Vec::new();
+        for contract in manifest().tools {
+            vertex_input_schema_violations(
+                &contract.input_schema,
+                &format!("{}.input_schema", contract.name),
+                &mut violations,
+            );
+        }
+        assert!(
+            violations.is_empty(),
+            "Vertex/Gemini-incompatible input schema nodes (#4798):\n{}",
+            violations.join("\n")
+        );
+    }
+
+    #[test]
+    fn action_target_advertises_a_flat_object_for_vertex_clients() {
+        let target = action_target_schema();
+        assert_eq!(target["type"], "object", "{target}");
+        assert!(target.get("anyOf").is_none(), "{target}");
+        assert!(target.get("oneOf").is_none(), "{target}");
+        assert_eq!(
+            target["properties"]["kind"]["enum"],
+            serde_json::json!(["window", "desktop"])
+        );
+        assert_eq!(target["properties"]["kind"]["type"], "string");
+        for tool in [
+            "drag",
+            "hotkey",
+            "move_cursor",
+            "press_key",
+            "scroll",
+            "type_text",
+            "click",
+        ] {
+            let contract = tool_contract(tool).unwrap_or_else(|| panic!("{tool} contract"));
+            let schema = &contract.input_schema["properties"]["target"];
+            assert_eq!(schema["type"], "object", "{tool}: {schema}");
+            assert!(schema.get("anyOf").is_none(), "{tool}: {schema}");
+            assert!(schema.get("oneOf").is_none(), "{tool}: {schema}");
+            assert!(
+                schema.pointer("/properties/kind/const").is_none(),
+                "{tool} kind must not use const: {schema}"
+            );
+        }
+    }
 }

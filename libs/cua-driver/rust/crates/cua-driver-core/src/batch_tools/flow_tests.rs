@@ -525,3 +525,22 @@ async fn the_end_observation_diffs_against_the_batch_start() {
         .await;
     assert_eq!(harness.calls("get_window_state").len(), before + 1);
 }
+
+#[tokio::test]
+async fn a_trailing_get_window_state_in_shorthand_is_the_observation() {
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [
+            {"click": {"app": "Demo", "role": "button", "name": "Next"}},
+            {"get_window_state": {}}
+        ]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let structured = result.structured_content.unwrap();
+    assert_eq!(structured["total"], 1, "the read is not a step");
+    assert_eq!(structured["observation"]["ok"], true);
+    assert_eq!(
+        harness.calls("get_window_state").last().unwrap()["window_id"],
+        7
+    );
+}

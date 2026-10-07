@@ -222,6 +222,35 @@ pub struct SuppressionLease {
 
 impl SuppressionLease {
     #[cfg(feature = "experimental-owned-supervision")]
+    pub(crate) fn foreground_guard(
+        &self,
+    ) -> Option<
+        impl Fn() -> Option<cua_driver_core::owned_supervision::ForegroundGuardReport>
+            + Send
+            + Sync
+            + 'static,
+    > {
+        let (pid, window, hid) = {
+            let entries = self.dispatcher.entries.lock().unwrap();
+            let entry = entries.get(&self.handle.0)?;
+            (
+                entry.restore_to,
+                entry.restore_window?,
+                entry.hid_at_admission?,
+            )
+        };
+        Some(move || {
+            let current_hid = hid_counters()?;
+            Some(cua_driver_core::owned_supervision::ForegroundGuardReport {
+                foreground_preserved: crate::windows::window_info_by_id(window)
+                    .is_some_and(|w| w.pid == pid)
+                    && crate::apps::frontmost_pid() == Some(pid)
+                    && crate::input::skylight::front_process_matches(pid, window) == Some(true),
+                physical_input_unchanged: current_hid == hid,
+            })
+        })
+    }
+    #[cfg(feature = "experimental-owned-supervision")]
     pub(crate) fn activation_signal(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
         self.dispatcher
             .entries

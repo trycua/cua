@@ -33,6 +33,7 @@ use super::ToolState;
 
 pub struct SetValueTool {
     state: Arc<ToolState>,
+    #[cfg(feature = "experimental-owned-supervision")]
     owned: bool,
 }
 
@@ -45,6 +46,7 @@ impl SetValueTool {
     pub fn new(state: Arc<ToolState>) -> Self {
         Self {
             state,
+            #[cfg(feature = "experimental-owned-supervision")]
             owned: false,
         }
     }
@@ -93,7 +95,7 @@ impl Tool for SetValueTool {
                 let mut d = def().clone();
                 d.name = "dispatch_set_value".into();
                 d.description = "Experimental exact-bound native text dispatch. Returns an owned supervision receipt, never application commitment. Requires an explicit session. Use get_action_supervision or fence_action_supervision; independently verify application outcome before dependent input.".into();
-                d.input_schema["required"] = serde_json::json!(["pid", "value", "session"]);
+                d.input_schema["required"] = serde_json::json!(["pid", "window_id", "element_token", "value", "session"]);
                 d
             });
         }
@@ -102,6 +104,13 @@ impl Tool for SetValueTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        #[cfg(feature = "experimental-owned-supervision")]
+        if self.owned
+            && (args.get("window_id").and_then(Value::as_u64).is_none()
+                || args.get("element_token").and_then(Value::as_str).is_none())
+        {
+            return ToolResult::error("binding_required: owned dispatch requires an exact window_id and current element_token; no input was sent.").with_structured(serde_json::json!({"refusal":"binding_required","input_sent":false}));
+        }
         let pid = match super::target_pid(&self.state, &args) {
             Ok(v) => v,
             Err(e) => return e,
@@ -1055,6 +1064,28 @@ mod tests {
         is_file_name_cell, is_get_info_name_field, SetValueOutcome, GET_INFO_RENAME_ROUTE,
         LIST_RENAME_ROUTE,
     };
+
+    #[cfg(feature = "experimental-owned-supervision")]
+    #[tokio::test]
+    async fn owned_dispatch_requires_explicit_current_binding_before_native_work() {
+        use super::SetValueTool;
+        use cua_driver_core::tool::Tool;
+        let state = crate::tools::supervision::test_state();
+        let owned = SetValueTool::new_owned(state.clone());
+        assert_eq!(
+            owned.def().input_schema["required"],
+            serde_json::json!(["pid", "window_id", "element_token", "value", "session"])
+        );
+        let result = owned
+            .invoke(serde_json::json!({"pid":1,"value":"text","session":"explicit"}))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.unwrap(),
+            serde_json::json!({"refusal":"binding_required","input_sent":false})
+        );
+        assert_eq!(SetValueTool::new(state).def().name, "set_value");
+    }
 
     #[test]
     fn a_listed_file_name_is_a_file_name_cell() {

@@ -205,10 +205,49 @@ pub fn pid_alive(pid: u32) -> bool {
             .map(|s| s.success())
             .unwrap_or(false)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        windows_pid_alive(pid)
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
         false
+    }
+}
+
+/// Opens the pid with query rights and checks its exit code. A pid that no
+/// longer exists fails to open with `ERROR_INVALID_PARAMETER`; one we may not
+/// query (`ERROR_ACCESS_DENIED`, e.g. another user's or a protected process)
+/// exists, so it counts as alive rather than as exited.
+#[cfg(windows)]
+fn windows_pid_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_ACCESS_DENIED, GetLastError, STILL_ACTIVE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    if pid == 0 {
+        return false;
+    }
+    // SAFETY: OpenProcess takes a numeric pid and returns a handle or null;
+    // only query rights are requested.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        // SAFETY: reads this thread's last error, set by OpenProcess.
+        return unsafe { GetLastError() } == ERROR_ACCESS_DENIED;
+    }
+    let mut code = 0u32;
+    // SAFETY: `handle` is a valid process handle opened above and `code` is a
+    // live u32; the handle is closed exactly once.
+    unsafe {
+        let queried = GetExitCodeProcess(handle, &mut code) != 0;
+        CloseHandle(handle);
+        // A query failure on an open handle cannot confirm exit. (A process
+        // that exits with code 259, STILL_ACTIVE, reads as alive.)
+        !queried || code == STILL_ACTIVE as u32
     }
 }
 
@@ -242,6 +281,24 @@ mod tests {
         assert_eq!(qemu_accel(foreign), "tcg");
         #[cfg(target_os = "macos")]
         assert_eq!(qemu_accel(Arch::host()), "hvf");
+    }
+
+    /// Regression for #4756: Windows reported every pid as dead.
+    #[test]
+    fn pid_alive_tracks_a_real_process() {
+        assert!(pid_alive(std::process::id()));
+        #[cfg(windows)]
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "exit 0"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        // Reaped (and, on Windows, its last handle closed): gone.
+        drop(child);
+        assert!(!pid_alive(pid));
     }
 
     #[test]

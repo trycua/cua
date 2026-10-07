@@ -1,0 +1,99 @@
+{
+  "source_commit": "63d8998c9418d724494da9915fcb8a60b70e7e27",
+  "versions": {
+    "reference_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
+    "reference_version": "0.1.1",
+    "native_version": "0.34.0",
+    "native_latest_version": "0.34.0",
+    "native_release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
+    "reference_upstream_checked_at": "2026-10-07T03:13:05.755563+00:00",
+    "candidates_checked_at": "2026-10-07T03:13:03Z",
+    "macos": "27.0.1",
+    "python": "3.12.12"
+  },
+  "binary_sha256": "94f1d1aae4bb724d1e2e788826c8f86f0eab81ac4ac7c39406d5167dcdaac31c",
+  "native_backend": {
+    "capability_version": "1",
+    "contract_version": "0.8.0",
+    "driver_version": "0.34.0",
+    "embedded": true,
+    "host_bundle_id": null,
+    "mcp_protocol_version": "2025-06-18",
+    "pid": 67661,
+    "tools_list_schema_version": "1"
+  },
+  "reference_server": {
+    "name": "reference-driver",
+    "version": "0.1.1"
+  },
+  "rows": [
+    {
+      "candidate": "baseline",
+      "mode": "evidence",
+      "scenario": "stable",
+      "rep": 0,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "dispatches": [],
+      "decision_ms": 2183.589457999915,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": true,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "b0cdc22470f54d3484ac2aead17e7822": {
+            "status": "committed",
+            "tx": "b0cdc22470f54d3484ac2aead17e7822",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 67844,
+            "window_id": 23559
+          },
+          "2d091c0158f14bc28a0ddc21957423e6": {
+            "status": "committed",
+            "tx": "2d091c0158f14bc28a0ddc21957423e6",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 67844,
+            "window_id": 23559
+          }
+        },
+        "pid": 67844,
+        "window_id": 23559,
+        "generation": 0,
+        "activation_requests": 0
+      },
+      "foreground_preserved": false,
+      "warmup": true,
+      "verified_ms": 2183.589457999915
+    }
+  ],
+  "cleanup_restored": true
+}

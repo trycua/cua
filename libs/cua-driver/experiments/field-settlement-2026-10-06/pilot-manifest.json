@@ -1,0 +1,6 @@
+{
+  "native_pilot_source_commit": "63d8998c9",
+  "native_pilot_binary_sha256": "94f1d1aae4bb724d1e2e788826c8f86f0eab81ac4ac7c39406d5167dcdaac31c",
+  "qualification": "incomplete",
+  "publication_notes": "The native pilot predates the on-screen-window fix. Five controls passed; closed-window settling incorrectly succeeded and prompted the fix. Two comparison pilots were excluded for competing input and setup refusal. Diagnostic and window-visibility assertions were added to the scripts after those pilots. No performance result is qualified."
+}

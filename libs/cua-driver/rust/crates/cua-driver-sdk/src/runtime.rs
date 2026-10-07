@@ -225,6 +225,17 @@ impl DriverRuntime {
     pub(crate) async fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Release);
         let _drained = self.lifecycle.write().await;
+        #[cfg(feature = "experimental-owned-supervision")]
+        if let Err(error) = self
+            .registry
+            .drain_supervision(std::time::Duration::from_secs(5))
+            .await
+        {
+            tracing::warn!(
+                ?error,
+                "owned supervision drain incomplete; outcome remains uncertain"
+            );
+        }
         self.stop_lifecycle_maintenance();
         self.authorization_registry.revoke_all();
         let runtime_prefix = format!(

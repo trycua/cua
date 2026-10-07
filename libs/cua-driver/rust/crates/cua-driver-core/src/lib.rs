@@ -119,3 +119,9 @@ pub mod window_target;
 
 pub use cua_driver_contract::{CaptureScope, EscalationReason, TOOL_INVOCATION_FAILED_CODE};
 pub use recording::RecordingSession;
+
+#[cfg(feature = "experimental-owned-supervision")]
+pub mod owned_supervision;
+
+#[cfg(feature = "experimental-owned-supervision")]
+pub mod field_settlement;

@@ -1,0 +1,83 @@
+{
+  "versions": {
+    "reference_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
+    "reference_version": "0.1.1",
+    "native_version": "0.34.0",
+    "native_latest_version": "0.34.0",
+    "native_release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
+    "reference_upstream_checked_at": "2026-10-07T03:34:32.013818+00:00",
+    "candidates_checked_at": "2026-10-07T03:34:31Z",
+    "macos": "27.0.1",
+    "python": "3.12.12"
+  },
+  "rows": [
+    {
+      "scenario": "noop",
+      "verified_bounds": {
+        "X": -1880.0,
+        "Height": 328.0,
+        "Y": 652.0,
+        "Width": 420.0
+      },
+      "call_ms": 197.40425000782125,
+      "result": {
+        "activation_after_dispatch": false,
+        "application_commit": "unverified",
+        "error": null,
+        "foreground_guard": {
+          "foreground_preserved": true,
+          "physical_input_unchanged": false
+        },
+        "foreground_preserved_after_dispatch": true,
+        "immediate_readback": true,
+        "input_disposition": "attempted",
+        "receipt_id": "4415b656-328d-4900-9a32-560f07e9bae6",
+        "replay_allowed": false,
+        "settlement": {
+          "elapsed_ms": 115,
+          "reacted": false,
+          "status": "interrupted",
+          "value_matches": true
+        },
+        "supervision": "pending_owned",
+        "supervision_status": {
+          "state": "pending"
+        }
+      },
+      "is_error": true,
+      "error": "Wrong settlement/refusal contract"
+    }
+  ],
+  "baseline_displays": [
+    {
+      "builtin": true,
+      "height": 1355,
+      "id": 1,
+      "main": true,
+      "model": 41054,
+      "uuid": "37D8832A-2D66-02CA-B9F7-8F30A301B230",
+      "vendor": 1552,
+      "virtual": false,
+      "width": 2087,
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "owned_display_id": 15,
+  "owned_display": {
+    "builtin": false,
+    "height": 1080,
+    "id": 15,
+    "main": false,
+    "model": 49374,
+    "uuid": "5DA9C95D-C673-4E5D-9999-04A752146F96",
+    "vendor": 2577,
+    "virtual": true,
+    "width": 1920,
+    "x": -1920,
+    "y": 0
+  },
+  "cleanup_restored": true,
+  "display_removed": true,
+  "topology_restored": true
+}

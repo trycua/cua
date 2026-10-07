@@ -39,6 +39,7 @@ platform-linux = { path = "../platform-linux" }
 oo7 = { version = "=0.6.0", default-features = false, features = ["async-std", "native_crypto"] }
 
 [features]
+experimental-owned-supervision = ["cua-driver-core/experimental-owned-supervision", "platform-macos/experimental-owned-supervision"]
 default = []
 portal-input = ["platform-linux/portal-input"]
 portal-capture = ["platform-linux/portal-capture"]
@@ -47,3 +48,7 @@ portal-libei = ["portal-input", "portal-capture"]
 [dev-dependencies]
 tempfile = "3"
 uniffi = { workspace = true, features = ["bindgen"] }
+
+[[example]]
+name = "owned_supervision_host"
+required-features = ["experimental-owned-supervision"]

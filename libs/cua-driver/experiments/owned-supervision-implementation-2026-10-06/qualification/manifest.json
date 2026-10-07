@@ -1,0 +1,29 @@
+{
+  "checked_at": "2026-10-07T01:30:02.917308+00:00",
+  "implementation_commit": "10df8c78b71393ffcd8cd6e979321e57f9d77042",
+  "upstream_base": "12365b36d41417cae34eb0f90b49e8eaf023ac51",
+  "checks": {
+    "core_passed": 875,
+    "sdk_passed": 102,
+    "macos_passed": 473,
+    "macos_existing_ignored": 6,
+    "feature_enabled_cli": "passed",
+    "feature_disabled_sdk_macos": "passed",
+    "fmt": "passed"
+  },
+  "files": {
+    "native-receipts.json": "fd58d8d695933d6c95ad04c7bb4eccfb5014bf654ed7d4ae38af11a37085a794",
+    "measure.py": "f8d5bcad0c6ef90dac96aad3cafbd3d354d3222e6782dae689103644a5cd7466",
+    "receipts.py": "71f64cfed655f359a6ae04a97ce4864e810db93b8e87884a7f03f3ef35f7e46d",
+    "README.md": "656aeae5cd2a9ee72add852d6bf192feea808137042311ee6018517b9f403a4f",
+    "combined-commit.json": "c55fec6adbe10e6def6c2e4de86273cb893733d01ebf7b651577de1fdc6dace4",
+    "disconnect.py": "077a263f7d790fa8df41d500acaf2271f0a354dff0e56db44a39d261a6a171eb",
+    "native-disconnect.json": "c0792180a381ad13294941e74aca6461afadccaf4552a1234417511f6debefda",
+    "native-guards.json": "29061d222bf151bdf714dababd1f5ab36f6daed7f8b9d8cd478ae0d38c2162d8",
+    "live.py": "f4879a574b844a8810e823b5f7482054de76290c9ea78495e68f660a3439b53f",
+    "reference.py": "95deebfc9880de02535527d437e93c67240d9d0a197c1b7c23ab72a8e2f717ca",
+    "qualify.py": "bb09397237400a40457cbce84fda2273acf20f19c2bf525eb1b35463f582432c",
+    "fixture/fixture.py": "56d480983c5913a75678506c1f582188fc37f5e25055cfd41bce74c98e4db15b",
+    "fixture/fixture_base.py": "4b07385cbb5221f5168274494139a427ed5f054460b20caa3638d846dc5f2627"
+  }
+}

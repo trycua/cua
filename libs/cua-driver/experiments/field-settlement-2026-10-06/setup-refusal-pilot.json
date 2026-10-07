@@ -1,0 +1,67 @@
+{
+  "source_commit": "63d8998c9418d724494da9915fcb8a60b70e7e27",
+  "versions": {
+    "reference_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
+    "reference_version": "0.1.1",
+    "native_version": "0.34.0",
+    "native_latest_version": "0.34.0",
+    "native_release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
+    "reference_upstream_checked_at": "2026-10-07T03:14:43.253063+00:00",
+    "candidates_checked_at": "2026-10-07T03:14:41Z",
+    "macos": "27.0.1",
+    "python": "3.12.12"
+  },
+  "binary_sha256": "94f1d1aae4bb724d1e2e788826c8f86f0eab81ac4ac7c39406d5167dcdaac31c",
+  "native_backend": {
+    "capability_version": "1",
+    "contract_version": "0.8.0",
+    "driver_version": "0.34.0",
+    "embedded": true,
+    "host_bundle_id": null,
+    "mcp_protocol_version": "2025-06-18",
+    "pid": 69991,
+    "tools_list_schema_version": "1"
+  },
+  "reference_server": {
+    "name": "reference-driver",
+    "version": "0.1.1"
+  },
+  "rows": [
+    {
+      "candidate": "baseline",
+      "mode": "evidence",
+      "scenario": "stable",
+      "rep": 0,
+      "terminal": "handoff",
+      "strict_pass": false,
+      "writes": 0,
+      "error": "sentinel_activation_failed",
+      "dispatches": [],
+      "oracle": {
+        "name": "",
+        "email": "",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {},
+        "pid": 70160,
+        "window_id": 23620,
+        "generation": 0,
+        "activation_requests": 0
+      },
+      "foreground_preserved": false,
+      "warmup": true,
+      "verified_ms": null
+    }
+  ],
+  "cleanup_restored": true
+}

@@ -33,11 +33,22 @@ use super::ToolState;
 
 pub struct SetValueTool {
     state: Arc<ToolState>,
+    #[cfg(feature = "experimental-owned-supervision")]
+    owned: bool,
 }
 
 impl SetValueTool {
+    #[cfg(feature = "experimental-owned-supervision")]
+    pub fn new_owned(state: Arc<ToolState>) -> Self {
+        Self { state, owned: true }
+    }
+
     pub fn new(state: Arc<ToolState>) -> Self {
-        Self { state }
+        Self {
+            state,
+            #[cfg(feature = "experimental-owned-supervision")]
+            owned: false,
+        }
     }
 }
 
@@ -77,11 +88,39 @@ fn def() -> &'static ToolDef {
 #[async_trait]
 impl Tool for SetValueTool {
     fn def(&self) -> &ToolDef {
+        #[cfg(feature = "experimental-owned-supervision")]
+        if self.owned {
+            static OWNED_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+            return OWNED_DEF.get_or_init(|| {
+                let mut d = def().clone();
+                d.name = "dispatch_set_value".into();
+                d.description = "Experimental exact-bound native text dispatch. Returns an owned supervision receipt, never application commitment. Requires an explicit session. Use get_action_supervision or fence_action_supervision; independently verify application outcome before dependent input.".into();
+                d.input_schema["properties"]["settle"] = serde_json::json!({"type":"boolean","default":false,"description":"Wait for the exact on-screen native field value to react and remain quiet for 150 ms. Delayed-focus protection stays owned separately. This is not application commitment."});
+                d.input_schema["required"] = serde_json::json!(["pid", "window_id", "element_token", "value", "session"]);
+                d
+            });
+        }
         def()
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        #[cfg(feature = "experimental-owned-supervision")]
+        if self.owned
+            && (args.get("window_id").and_then(Value::as_u64).is_none()
+                || args.get("element_token").and_then(Value::as_str).is_none())
+        {
+            return ToolResult::error("binding_required: owned dispatch requires an exact window_id and current element_token; no input was sent.").with_structured(serde_json::json!({"refusal":"binding_required","input_sent":false}));
+        }
+        #[cfg(feature = "experimental-owned-supervision")]
+        if self.owned && args.get("settle").is_some_and(|v| !v.is_boolean()) {
+            return ToolResult::error("invalid_settle: expected boolean; no input was sent.")
+                .with_structured(
+                    serde_json::json!({"refusal":"invalid_settle","input_sent":false}),
+                );
+        }
+        #[cfg(feature = "experimental-owned-supervision")]
+        let settle = self.owned && args["settle"].as_bool().unwrap_or(false);
         let pid = match super::target_pid(&self.state, &args) {
             Ok(v) => v,
             Err(e) => return e,
@@ -184,13 +223,83 @@ impl Tool for SetValueTool {
             Some(window_id),
         );
 
+        #[cfg(feature = "experimental-owned-supervision")]
+        let reservation = if self.owned {
+            if args
+                .get("_public_session_label")
+                .and_then(Value::as_str)
+                .is_none()
+            {
+                return ToolResult::error(
+                    "session_required: owned dispatch requires a non-default explicit session.",
+                );
+            }
+            let role = unsafe { copy_string_attr(element_ptr as AXUIElementRef, "AXRole") };
+            if ax_echo_surface || role.as_deref() != Some("AXTextField") {
+                return ToolResult::error(
+                    "unsupported: owned dispatch requires a native AXTextField; no input was sent.",
+                );
+            }
+            let Some(scope) = args.get("_session_id").and_then(Value::as_str) else {
+                return ToolResult::error(
+                    "session_required: owned dispatch needs a trusted explicit runtime session.",
+                );
+            };
+            match self.state.supervision.reserve(scope) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    return ToolResult::error(format!(
+                        "supervision admission refused: {e:?}; no input was sent."
+                    ))
+                }
+            }
+        } else {
+            None
+        };
+
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations
         // in Chromium-based apps; the AXPopUpButton path also AXPresses a
         // child option which can trigger app activation in some setups.
         let prior_front = apps::frontmost_pid();
+        #[cfg(feature = "experimental-owned-supervision")]
+        let prior_window = prior_front.and_then(crate::input::skylight::key_window_of_pid);
+        #[cfg(feature = "experimental-owned-supervision")]
+        if self.owned
+            && !prior_front.zip(prior_window).is_some_and(|(pid, w)| {
+                crate::input::skylight::front_process_matches(pid, w) == Some(true)
+            })
+        {
+            return ToolResult::error("foreground_unavailable: owned dispatch needs a freshly bound prior foreground window; no input was sent.");
+        }
         let snapshot = WindowChangeDetector::snapshot(prior_front);
 
+        #[cfg(feature = "experimental-owned-supervision")]
+        let settlement_probe = if settle {
+            if !crate::windows::window_info_by_id(window_id)
+                .is_some_and(|w| w.pid == pid && w.is_on_screen)
+            {
+                return ToolResult::error("settlement_unavailable: settling requires an on-screen native window; no input was sent.").with_structured(serde_json::json!({"refusal":"settlement_unavailable","input_sent":false}));
+            }
+            let guard = element_guard.clone();
+            let before = tokio::task::spawn_blocking(move || unsafe {
+                copy_string_attr(guard.as_ptr() as AXUIElementRef, "AXValue")
+            })
+            .await
+            .ok()
+            .flatten();
+            let Some(before) = before else {
+                return ToolResult::error(
+                    "settlement_unavailable: field value cannot be observed; no input was sent.",
+                )
+                .with_structured(
+                    serde_json::json!({"refusal":"settlement_unavailable","input_sent":false}),
+                );
+            };
+            Some((element_guard.clone(), before, value.clone()))
+        } else {
+            None
+        };
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
             prior_front,
@@ -204,7 +313,79 @@ impl Tool for SetValueTool {
         )
         .await;
 
+        #[cfg(feature = "experimental-owned-supervision")]
+        let foreground_preserved = prior_front.zip(prior_window).is_some_and(|(pid, w)| {
+            apps::frontmost_pid() == Some(pid)
+                && crate::input::skylight::front_process_matches(pid, w) == Some(true)
+        });
+        #[cfg(feature = "experimental-owned-supervision")]
+        let (changes, receipt) = match reservation {
+            Some(r) => (
+                crate::window_change_detector::Changes::not_polled(),
+                Some(snapshot.supervise_owned(r, foreground_preserved)),
+            ),
+            None => (snapshot.detect_async().await, None),
+        };
+        #[cfg(not(feature = "experimental-owned-supervision"))]
         let changes = snapshot.detect_async().await;
+
+        #[cfg(feature = "experimental-owned-supervision")]
+        if let Some(receipt) = receipt {
+            let (disposition, immediate_readback, error) = match result {
+                Ok(Ok(outcome)) if foreground_preserved => {
+                    ("attempted", outcome.verified.unwrap_or(false), None)
+                }
+                Ok(Ok(_)) => (
+                    "uncertain",
+                    false,
+                    Some("foreground_changed_after_dispatch".into()),
+                ),
+                Ok(Err(e)) => ("uncertain", false, Some(e.to_string())),
+                Err(e) => ("uncertain", false, Some(e.to_string())),
+            };
+            // Even an uncertain mutation retains its receipt. Do not instruct
+            // the client to replay it or project readback as committed effect.
+            let scope = args["_session_id"].as_str().unwrap();
+            // Transfer protection before waiting. Cancelling this read-only wait
+            // must not cancel the owner or release its native suppression lease.
+            let settlement = if disposition == "attempted" {
+                if let Some((element, before, expected)) = settlement_probe {
+                    let owner = self.state.supervision.clone();
+                    let receipt = receipt.clone();
+                    let scope = scope.to_owned();
+                    tokio::task::spawn_blocking(move || {
+                        settle_native_field(
+                            element, pid, window_id, before, expected, owner, scope, receipt,
+                        )
+                    })
+                    .await
+                    .ok()
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let failed_settlement = settle
+                && settlement
+                    .as_ref()
+                    .is_none_or(|r| r.status != cua_driver_core::field_settlement::Status::Settled);
+            let response = if failed_settlement {
+                ToolResult::error("field_settlement_refused: input was attempted; inspect the retained receipt and fresh application state before continuing or replaying.")
+            } else {
+                ToolResult::text("Native input attempted; protection remains owned. Field settlement does not prove application commitment.")
+            };
+            let supervision_status = self.state.supervision.read(scope, &receipt).ok();
+            let supervision_label = match &supervision_status {
+                Some(cua_driver_core::owned_supervision::ReceiptState::Finished(_)) => "finished",
+                Some(cua_driver_core::owned_supervision::ReceiptState::Failed) => "failed",
+                Some(cua_driver_core::owned_supervision::ReceiptState::Interrupted) => {
+                    "interrupted"
+                }
+                _ => "pending_owned",
+            };
+            return response.with_structured(serde_json::json!({"receipt_id": receipt, "supervision": supervision_label, "supervision_status": supervision_status, "foreground_preserved_after_dispatch": foreground_preserved, "activation_after_dispatch": self.state.supervision.activation_observed(scope, &receipt).ok().flatten(), "foreground_guard":self.state.supervision.foreground_guard(scope, &receipt).ok().flatten(), "input_disposition": disposition, "immediate_readback": immediate_readback, "settlement":settlement, "application_commit": "unverified", "error": error, "replay_allowed":false}));
+        }
 
         match result {
             Ok(Ok(mut outcome)) => {
@@ -958,6 +1139,38 @@ mod tests {
         LIST_RENAME_ROUTE,
     };
 
+    #[cfg(feature = "experimental-owned-supervision")]
+    #[tokio::test]
+    async fn owned_dispatch_requires_explicit_current_binding_before_native_work() {
+        use super::SetValueTool;
+        use cua_driver_core::tool::Tool;
+        let state = crate::tools::supervision::test_state();
+        let owned = SetValueTool::new_owned(state.clone());
+        assert_eq!(
+            owned.def().input_schema["required"],
+            serde_json::json!(["pid", "window_id", "element_token", "value", "session"])
+        );
+        let result = owned
+            .invoke(serde_json::json!({"pid":1,"value":"text","session":"explicit"}))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.unwrap(),
+            serde_json::json!({"refusal":"binding_required","input_sent":false})
+        );
+        let invalid = owned.invoke(serde_json::json!({"pid":1,"window_id":1,"element_token":"invalid","value":"text","session":"explicit","settle":"yes"})).await;
+        assert_eq!(invalid.is_error, Some(true));
+        assert_eq!(
+            invalid.structured_content.unwrap(),
+            serde_json::json!({"refusal":"invalid_settle","input_sent":false})
+        );
+        assert_eq!(
+            owned.def().input_schema["properties"]["settle"]["default"],
+            false
+        );
+        assert_eq!(SetValueTool::new(state).def().name, "set_value");
+    }
+
     #[test]
     fn a_listed_file_name_is_a_file_name_cell() {
         let url = Some("file:///Users/me/lab/charlie.bin");
@@ -1168,5 +1381,54 @@ mod tests {
             outcome.detail,
             "📨 Sent (unverified) AXValue on [4] AXTextField."
         );
+    }
+}
+
+#[cfg(feature = "experimental-owned-supervision")]
+fn settle_native_field(
+    element: crate::ax::snapshot::RetainedElement,
+    pid: i32,
+    window_id: u32,
+    before: String,
+    expected: String,
+    owner: cua_driver_core::owned_supervision::Owner,
+    scope: String,
+    receipt: cua_driver_core::owned_supervision::ReceiptId,
+) -> cua_driver_core::field_settlement::Report {
+    use cua_driver_core::field_settlement::{Tracker, POLL};
+    let mut tracker = Tracker::new(before, expected);
+    let started = std::time::Instant::now();
+    loop {
+        std::thread::sleep(POLL);
+        let value = unsafe {
+            let ptr = element.as_ptr() as AXUIElementRef;
+            if crate::windows::window_info_by_id(window_id)
+                .is_some_and(|w| w.pid == pid && w.is_on_screen)
+                && crate::ax::bindings::ax_window_ids_of_pid(pid)
+                    .is_some_and(|ids| ids.contains(&window_id))
+                && crate::ax::exact_target::element_window_id(ptr) == Some(window_id)
+                && copy_string_attr(ptr, "AXRole").as_deref() == Some("AXTextField")
+            {
+                copy_string_attr(ptr, "AXValue")
+            } else {
+                None
+            }
+        };
+        let guards = owner.activation_observed(&scope, &receipt).ok().flatten() == Some(false)
+            && owner
+                .foreground_guard(&scope, &receipt)
+                .ok()
+                .flatten()
+                .is_some_and(|g| g.foreground_preserved && g.physical_input_unchanged)
+            && owner.read(&scope, &receipt).is_ok_and(|state| match state {
+                cua_driver_core::owned_supervision::ReceiptState::Pending => true,
+                cua_driver_core::owned_supervision::ReceiptState::Finished(o) => {
+                    o.polled && !o.foreground_changed && o.new_window_count == 0
+                }
+                _ => false,
+            });
+        if let Some(report) = tracker.sample(started.elapsed(), value, guards) {
+            return report;
+        }
     }
 }

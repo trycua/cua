@@ -83,6 +83,12 @@ pub struct SuppressionHandle(Uuid);
 /// Dispatcher-internal entry shape.
 #[derive(Debug)]
 struct Entry {
+    #[cfg(feature = "experimental-owned-supervision")]
+    activation_observed: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(feature = "experimental-owned-supervision")]
+    restore_window: Option<u32>,
+    #[cfg(feature = "experimental-owned-supervision")]
+    hid_at_admission: Option<[u32; 3]>,
     /// `Some(pid)` matches only that pid's activations. `None` is a
     /// wildcard — matches any activation whose pid != `restore_to`.
     /// The wildcard variant is used while a launch is in flight and the
@@ -215,6 +221,44 @@ pub struct SuppressionLease {
 }
 
 impl SuppressionLease {
+    #[cfg(feature = "experimental-owned-supervision")]
+    pub(crate) fn foreground_guard(
+        &self,
+    ) -> Option<
+        impl Fn() -> Option<cua_driver_core::owned_supervision::ForegroundGuardReport>
+            + Send
+            + Sync
+            + 'static,
+    > {
+        let (pid, window, hid) = {
+            let entries = self.dispatcher.entries.lock().unwrap();
+            let entry = entries.get(&self.handle.0)?;
+            (
+                entry.restore_to,
+                entry.restore_window?,
+                entry.hid_at_admission?,
+            )
+        };
+        Some(move || {
+            let current_hid = hid_counters()?;
+            Some(cua_driver_core::owned_supervision::ForegroundGuardReport {
+                foreground_preserved: crate::windows::window_info_by_id(window)
+                    .is_some_and(|w| w.pid == pid)
+                    && crate::apps::frontmost_pid() == Some(pid)
+                    && crate::input::skylight::front_process_matches(pid, window) == Some(true),
+                physical_input_unchanged: current_hid == hid,
+            })
+        })
+    }
+    #[cfg(feature = "experimental-owned-supervision")]
+    pub(crate) fn activation_signal(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        self.dispatcher
+            .entries
+            .lock()
+            .unwrap()
+            .get(&self.handle.0)
+            .map(|e| e.activation_observed.clone())
+    }
     /// Explicit release. Useful if the caller wants to drop the lease
     /// before its scope ends without taking the `Drop` path.
     pub fn release(mut self) {
@@ -293,6 +337,12 @@ impl Dispatcher {
     ) -> SuppressionHandle {
         let id = Uuid::new_v4();
         let entry = Entry {
+            #[cfg(feature = "experimental-owned-supervision")]
+            activation_observed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(feature = "experimental-owned-supervision")]
+            restore_window: qualified_restore_window(restore_to),
+            #[cfg(feature = "experimental-owned-supervision")]
+            hid_at_admission: hid_counters(),
             target_pid,
             allowed_pid,
             restore_to,
@@ -336,19 +386,40 @@ impl Dispatcher {
         guard
             .values()
             .filter(|e| {
-                if e.allowed_pid == Some(activated_pid) {
-                    return false;
+                let matches = e.allowed_pid != Some(activated_pid)
+                    && match e.target_pid {
+                        Some(p) => p == activated_pid,
+                        None => activated_pid != e.restore_to,
+                    };
+                #[cfg(feature = "experimental-owned-supervision")]
+                {
+                    if matches {
+                        e.activation_observed
+                            .store(true, std::sync::atomic::Ordering::Release);
+                    }
+                    if e.hid_at_admission != hid_counters() {
+                        return false;
+                    }
                 }
-                match e.target_pid {
-                    Some(p) => p == activated_pid,
-                    // Wildcard: match any activation except the restore_to
-                    // pid (don't fight ourselves when we re-activate the
-                    // prior frontmost).
-                    None => activated_pid != e.restore_to,
-                }
+                matches
             })
             .map(|e| e.restore_to)
             .collect()
+    }
+
+    #[cfg(feature = "experimental-owned-supervision")]
+    fn restore_window(&self, pid: i32) -> Option<Option<u32>> {
+        let now = Instant::now();
+        let current_hid = hid_counters();
+        self.entries
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|e| {
+                e.restore_to == pid && e.deadline > now && e.hid_at_admission == current_hid
+            })
+            .max_by_key(|e| e.deadline)
+            .map(|e| e.restore_window)
     }
 
     /// Number of entries (for tests).
@@ -515,14 +586,65 @@ fn handle_activation(dispatcher: &Arc<Dispatcher>, note: &objc2_foundation::NSNo
         pid as i32
     };
 
+    #[cfg(feature = "experimental-owned-supervision")]
+    if crate::apps::frontmost_pid() != Some(activated_pid) {
+        // Queued notifications can describe an activation already restored
+        // before this lease existed. Never restore or report that stale event.
+        return;
+    }
     let restore_pids = dispatcher.snapshot_matches(activated_pid);
     for pid in restore_pids {
+        #[cfg(feature = "experimental-owned-supervision")]
+        {
+            let Some(window) = dispatcher.restore_window(pid) else {
+                continue;
+            };
+            if let Some(window) = window {
+                if crate::windows::window_info_by_id(window).is_some_and(|w| w.pid == pid) {
+                    crate::input::skylight::set_front_process_persistently(pid, window);
+                    crate::input::skylight::make_exact_window_key(pid, window);
+                } else {
+                    continue;
+                }
+            }
+        }
         restore_focus(pid);
     }
 }
 
 /// Re-activate `pid` if it's still running. Safe to call from any
 /// thread — Apple documents `activateWithOptions:` as thread-safe.
+
+#[cfg(all(feature = "experimental-owned-supervision", not(test)))]
+fn qualified_restore_window(pid: i32) -> Option<u32> {
+    let window = crate::input::skylight::key_window_of_pid(pid)?;
+    (crate::input::skylight::front_process_matches(pid, window) == Some(true)).then_some(window)
+}
+#[cfg(all(feature = "experimental-owned-supervision", test))]
+fn qualified_restore_window(_pid: i32) -> Option<u32> {
+    None
+}
+#[cfg(all(feature = "experimental-owned-supervision", not(test)))]
+fn hid_counters() -> Option<[u32; 3]> {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGEventSourceCounterForEventType(state: i32, event: u32) -> u32;
+    }
+    // Keyboard and mouse-button activity express focus intent. Pointer
+    // motion alone must not disable delayed-activation protection.
+    Some(unsafe {
+        [
+            CGEventSourceCounterForEventType(1, 10),
+            CGEventSourceCounterForEventType(1, 1),
+            CGEventSourceCounterForEventType(1, 3),
+        ]
+    })
+}
+#[cfg(all(feature = "experimental-owned-supervision", test))]
+fn hid_counters() -> Option<[u32; 3]> {
+    None
+}
+
 fn restore_focus(pid: i32) {
     unsafe {
         if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
@@ -592,6 +714,36 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "experimental-owned-supervision")]
+    #[test]
+    fn changed_input_counters_refuse_stale_foreground_restoration() {
+        let d = Arc::new(Dispatcher::new());
+        let handle = d.add(Some(42), 7, "test.interference");
+        // Test HID reads return None. A differing admission sample models
+        // keyboard/click activity between admission and activation callback.
+        d.entries
+            .lock()
+            .unwrap()
+            .get_mut(&handle.0)
+            .unwrap()
+            .hid_at_admission = Some([1, 2, 3]);
+        assert!(d.snapshot_matches(42).is_empty());
+        assert!(d
+            .entries
+            .lock()
+            .unwrap()
+            .get(&handle.0)
+            .unwrap()
+            .activation_observed
+            .load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(d.restore_window(7), None);
+        assert_eq!(
+            d.len(),
+            1,
+            "interference must not cancel the protection owner"
+        );
+    }
+
     /// Lease Drop is the standard remove path.
     #[test]
     fn lease_drop_removes_entry() {
@@ -634,6 +786,12 @@ mod tests {
             guard.insert(
                 id,
                 Entry {
+                    #[cfg(feature = "experimental-owned-supervision")]
+                    activation_observed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    #[cfg(feature = "experimental-owned-supervision")]
+                    restore_window: None,
+                    #[cfg(feature = "experimental-owned-supervision")]
+                    hid_at_admission: None,
                     target_pid: Some(42),
                     allowed_pid: None,
                     restore_to: 7,

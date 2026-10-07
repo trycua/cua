@@ -17,6 +17,15 @@ render and do platform glue.
 | Launch at login | Settings → General: `SMAppService.mainApp`, showing what macOS reports (on, off, waiting for approval with a button to Login Items, not found); the first run's Done page ticks it. A login launch opens without the main window, and the app's daemon (host Spaces, persistent agents, Cua Volume) starts with it |
 | Notch panel | The "N Spaces" tab, Space tiles with live thumbnails, and the Teleport prompt; hover opens it after 300 ms, a dragged window or file drops on a tile. Window drags need Accessibility; the panel says so with an Open Settings button |
 
+Keyboard in the live desktop (main window and floating viewer): once you
+click the stream it has the keyboard, and Command chords go to the Space
+instead of the app's shortcuts (Super on a Linux guest, Command on macOS).
+Press and release Control+Option, or click outside the stream, to give
+Command shortcuts back to the Mac. Shortcuts macOS reserves (⌘Tab, ⌘Space,
+⌘⇧3/4/5, Mission Control) stay on the Mac: capturing them would need an
+event tap and the Accessibility permission. Policy: `KeyCapture` in
+`libs/spaces-app-swift`.
+
 ## One core, two shells
 
 ```

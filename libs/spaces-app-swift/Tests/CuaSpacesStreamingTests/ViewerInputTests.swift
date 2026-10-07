@@ -278,5 +278,45 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         #expect(provider.policies.last == "allow_activation")
         await session.stop()
     }
+
+    /// A Command chord typed while the stream has the keyboard goes to the
+    /// Space (Super on a Linux guest) before the app's own shortcuts: here a
+    /// SwiftUI ⌘N in the same window, which used to take it (#4609).
+    @Test func commandChordReachesTheSpaceBeforeTheAppsShortcuts() throws {
+        _ = NSApplication.shared
+        var shortcutFired = false
+        let session = LiveStreamSession(provider: OfflineStreamSourceProvider())
+        let root = VStack {
+            Button("New Space") { shortcutFired = true }.keyboardShortcut("n", modifiers: .command)
+            LiveStreamView(session: session, isInteractive: true).frame(width: 400, height: 300)
+        }
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 500, height: 400),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: root)
+        host.frame = CGRect(x: 0, y: 0, width: 500, height: 400)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        defer { window.contentView = nil; window.close() }
+
+        func find(_ v: NSView) -> LiveStreamInputView? {
+            if let s = v as? LiveStreamInputView { return s }
+            for sub in v.subviews { if let f = find(sub) { return f } }
+            return nil
+        }
+        let stream = try #require(find(host))
+        var keys: [String] = []
+        stream.onInput = { events in
+            for case let .key(key, down, modifiers, _) in events {
+                keys.append("\(modifiers.map(\.rawValue).joined(separator: "+"))+\(key) \(down ? "down" : "up")")
+            }
+        }
+        #expect(window.makeFirstResponder(stream))
+        NSApp.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                                         windowNumber: window.windowNumber, context: nil, characters: "n",
+                                         charactersIgnoringModifiers: "n", isARepeat: false, keyCode: 45)!)
+        #expect(keys == ["command+n down", "command+n up"], "the chord reached the Space")
+        #expect(!shortcutFired, "the app's ⌘N did not run")
+    }
 }
 #endif

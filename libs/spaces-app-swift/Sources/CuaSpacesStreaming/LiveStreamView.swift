@@ -86,6 +86,10 @@ public final class LiveStreamInputView: NSView {
     /// button-up still lands somewhere the user pointed at — and never at a
     /// sentinel.
     private var lastInFramePoint: CGPoint?
+    /// Claims Command chords for the Space before the app's menus see them
+    /// (``KeyCapture``); installed while the view is in a window.
+    private var keyMonitor: Any?
+    private var keyCapture = KeyCapture()
 
     /// The single source of the view↔surface mapping.
     public var geometry: StreamGeometry {
@@ -295,6 +299,43 @@ public final class LiveStreamInputView: NSView {
 
     // MARK: - Keyboard
 
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+            keyMonitor = nil
+        } else if keyMonitor == nil {
+            // A local monitor runs before AppKit dispatches the event, so it
+            // wins over the main menu and SwiftUI shortcuts, in a
+            // non-activating panel too.
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+                MainActor.assumeIsolated { self?.capture(event) ?? false } ? nil : event
+            }
+        }
+    }
+
+    /// Whether the event was claimed for the Space (``KeyCapture``).
+    func capture(_ event: NSEvent) -> Bool {
+        let focused = isInteractive && window != nil && event.window === window && window?.firstResponder === self
+        switch keyCapture.route(event.type, flags: event.modifierFlags, focused: focused) {
+        case .app:
+            return false
+        case .guest:
+            sendChord(event)
+            return true
+        case .release:
+            window?.makeFirstResponder(nil)
+            return false
+        }
+    }
+
+    /// AppKit does not reliably send the key-up of a Command chord to the
+    /// view, and a press with no release is a stuck key on the Space: send
+    /// the chord whole. A late real key-up is a harmless repeat.
+    private func sendChord(_ event: NSEvent) {
+        onInput?(encoder.keyEvents(for: event, down: true) + encoder.keyEvents(for: event, down: false))
+    }
+
     public override func keyDown(with event: NSEvent) {
         guard isInteractive else { return super.keyDown(with: event) }
         onInput?(encoder.keyEvents(for: event, down: true))
@@ -306,13 +347,11 @@ public final class LiveStreamInputView: NSView {
     }
 
     /// Swallow the command chords AppKit would otherwise eat, so ⌘C in the
-    /// stream reaches the Space rather than the host app.
+    /// stream reaches the Space rather than the host app (the key monitor
+    /// usually claims them first).
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard isInteractive, window?.firstResponder === self else { return false }
-        // AppKit does not reliably send the key-up of a Command chord to the
-        // view, and a press with no release is a stuck key on the Space:
-        // send the chord whole. A late real key-up is a harmless repeat.
-        onInput?(encoder.keyEvents(for: event, down: true) + encoder.keyEvents(for: event, down: false))
+        sendChord(event)
         return true
     }
 }

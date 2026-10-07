@@ -69,6 +69,7 @@ static struct wlr_foreign_toplevel_manager_v1 *g_ftl_mgr = NULL;
 static uint64_t g_capture_epoch = 1;
 struct tinywl_toplevel;
 static void cua_ftl_request_activate(struct wl_listener *listener, void *data);
+static void cua_capture_title_changed(struct wl_listener *listener, void *data);
 static void cua_maybe_focus_new_toplevel(struct tinywl_toplevel *toplevel);
 static pid_t cua_toplevel_pid(struct tinywl_toplevel *t);
 static bool cua_pid_in_family(pid_t pid, pid_t root_pid);
@@ -81,9 +82,14 @@ STRUCT_FIELD = (
     "\tbool cua_initial_activation_sent;\n"
     "\tstruct wlr_foreign_toplevel_handle_v1 *ftl;\n"
     "\tstruct wl_listener ftl_request_activate;\n"
+    "\tstruct wl_listener capture_title_changed;\n"
 )
 
 FUNCS = r"""
+static void cua_capture_title_changed(struct wl_listener *listener, void *data) {
+	(void)listener; (void)data;
+	g_capture_epoch++;
+}
 /* v1 control-protocol banner: the client sends this line, the compositor echoes
  * it to confirm both speak v1. Any other first line is refused. */
 #define CUA_PROTO_HELLO "cua-inject v1"
@@ -906,6 +912,18 @@ src = repl(src,
     "\twl_display_destroy(server.wl_display);\n"
     "\treturn 0;",
     "virtual-keyboard-cleanup")
+
+# Title changes can return to the previous value; the epoch detects that ABA.
+src = repl(src,
+    "\t/* Listen to the various events it can emit */",
+    "\ttoplevel->capture_title_changed.notify = cua_capture_title_changed;\n"
+    "\twl_signal_add(&xdg_toplevel->events.set_title, &toplevel->capture_title_changed);\n"
+    "\t/* Listen to the various events it can emit */",
+    "capture-title-listener")
+src = repl(src,
+    "\twl_list_remove(&toplevel->map.link);",
+    "\twl_list_remove(&toplevel->capture_title_changed.link);\n\twl_list_remove(&toplevel->map.link);",
+    "capture-title-listener-cleanup")
 
 # Invalidate a capture spanning any lifecycle, scene placement, or focus change.
 for call in ("wlr_seat_keyboard_notify_enter(", "wlr_scene_node_set_position(", "wlr_scene_node_raise_to_top("):

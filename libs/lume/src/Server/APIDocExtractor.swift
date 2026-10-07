@@ -327,6 +327,7 @@ enum APIDocExtractor {
             ),
             statusCodes: [
                 APIStatusCodeDoc(code: 202, description: "VM start initiated (async operation)"),
+                APIStatusCodeDoc(code: 409, description: "Host limit of running macOS guests reached"),
                 APIStatusCodeDoc(code: 400, description: "Invalid request or VM not found")
             ]
         )

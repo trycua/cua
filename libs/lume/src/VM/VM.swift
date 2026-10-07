@@ -109,6 +109,10 @@ class VM {
     /// The VM configuration
     var config: VMConfig { vmDirContext.config }
 
+    /// Whether this process is running the guest: true from the moment `run`
+    /// starts until the guest stops or the run fails.
+    var isRunActive: Bool { !sessionCleanedUp }
+
     // MARK: - VM State Management
 
     private var isRunning: Bool {

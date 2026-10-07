@@ -153,15 +153,30 @@ impl Tool for RunActionsTool {
                         "maxItems": MAX_STEPS,
                         "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
                         "items": {
-                            "type": "object",
-                            "properties": {
-                                "tool": { "type": "string", "enum": BATCHABLE_TOOLS, "description": "Action tool to run." },
-                                "args": { "type": "object", "description": "Arguments for that tool, as in a direct call, optionally with role/name/nth/app/window to name the target instead of pid/window_id/element_token." },
-                                "wait_for": { "type": "object", "description": "Check that must hold before the action: {role?, name?, text?, gone?, app?, window?, timeout_ms?}. Default timeout 5000 ms." },
-                                "expect": { "type": ["object", "array"], "description": "Check (or up to 4) that must hold after the action: {role?, name?, text?, gone?, value?, value_contains?, enabled?, selected?, app?, window?, timeout_ms?}. Default timeout 2000 ms." },
-                                "timeout_ms": { "type": "integer", "minimum": 0, "maximum": 10000, "description": "How long a named target may take to appear. Default 3000." }
-                            },
-                            "additionalProperties": { "type": "object", "description": "Shorthand: the key is an action tool name, the value its args." }
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "required": ["tool"],
+                                    "properties": {
+                                        "tool": { "type": "string", "enum": BATCHABLE_TOOLS, "description": "Action tool to run." },
+                                        "args": { "type": "object", "description": "Arguments for that tool, as in a direct call, optionally with role/name/nth/app/window to name the target instead of pid/window_id/element_token." },
+                                        "wait_for": { "type": "object", "description": "Check that must hold before the action: {role?, name?, text?, gone?, app?, window?, timeout_ms?}. Default timeout 5000 ms." },
+                                        "expect": { "type": ["object", "array"], "description": "Check (or up to 4) that must hold after the action: {role?, name?, text?, gone?, value?, value_contains?, enabled?, selected?, app?, window?, timeout_ms?}. Default timeout 2000 ms." },
+                                        "timeout_ms": { "type": "integer", "minimum": 0, "maximum": 10000, "description": "How long a named target may take to appear. Default 3000." }
+                                    },
+                                    "additionalProperties": false
+                                },
+                                {
+                                    "type": "object",
+                                    "description": "Shorthand {<tool>: args} with optional wait_for / expect / timeout_ms, or a step that is only a wait_for or expect check.",
+                                    "properties": {
+                                        "wait_for": { "type": "object" },
+                                        "expect": { "type": ["object", "array"] },
+                                        "timeout_ms": { "type": "integer", "minimum": 0, "maximum": 10000 }
+                                    },
+                                    "additionalProperties": true
+                                }
+                            ]
                         }
                     },
                     "delay_ms": {

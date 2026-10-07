@@ -398,8 +398,8 @@ async fn the_batch_is_advertised_with_its_schema() {
         .get_def(super::RUN_ACTIONS_TOOL)
         .expect("registered");
     assert_eq!(def.input_schema["required"], json!(["steps"]));
-    let listed: Vec<_> = def.input_schema["properties"]["steps"]["items"]["properties"]["tool"]
-        ["enum"]
+    let listed: Vec<_> = def.input_schema["properties"]["steps"]["items"]["anyOf"][0]["properties"]
+        ["tool"]["enum"]
         .as_array()
         .unwrap()
         .iter()

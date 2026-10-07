@@ -1,0 +1,94 @@
+{
+  "versions": {
+    "reference_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
+    "reference_version": "0.1.1",
+    "native_version": "0.34.0",
+    "native_latest_version": "0.34.0",
+    "native_release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
+    "reference_upstream_checked_at": "2026-10-07T03:27:46.752028+00:00",
+    "candidates_checked_at": "2026-10-07T03:27:46Z",
+    "macos": "27.0.1",
+    "python": "3.12.12"
+  },
+  "source_commit": "b65f5b082c14ea29b781ceb0d8e73b43d9c38722",
+  "binary_sha256": "50294637377f7ff402232ac3662ff5177c92a3b2df966266aef78bf271a0d8d7",
+  "rows": [],
+  "baseline_displays": [
+    {
+      "builtin": true,
+      "height": 1355,
+      "id": 1,
+      "main": true,
+      "model": 41054,
+      "uuid": "37D8832A-2D66-02CA-B9F7-8F30A301B230",
+      "vendor": 1552,
+      "virtual": false,
+      "width": 2087,
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "original_pid": 33534,
+  "owned_display_id": 4,
+  "display_inventory": [
+    {
+      "builtin": true,
+      "height": 1355,
+      "id": 1,
+      "main": true,
+      "model": 41054,
+      "uuid": "37D8832A-2D66-02CA-B9F7-8F30A301B230",
+      "vendor": 1552,
+      "virtual": false,
+      "width": 2087,
+      "x": 0,
+      "y": 0
+    },
+    {
+      "builtin": false,
+      "height": 1080,
+      "id": 4,
+      "main": false,
+      "model": 49374,
+      "uuid": "403154A1-B88E-4C80-B10C-58CF0C4FF246",
+      "vendor": 2577,
+      "virtual": true,
+      "width": 1920,
+      "x": -1920,
+      "y": 0
+    }
+  ],
+  "display_helper_sha256": "fb116262c6d1e3e497cb941641c6594e2fb6ceb057340b3734a4bde7c01508a9",
+  "native_backend": {
+    "capability_version": "1",
+    "contract_version": "0.8.0",
+    "driver_version": "0.34.0",
+    "embedded": true,
+    "host_bundle_id": null,
+    "mcp_protocol_version": "2025-06-18",
+    "pid": 1627,
+    "tools_list_schema_version": "1"
+  },
+  "reference_server": {
+    "name": "reference-driver",
+    "version": "0.1.1"
+  },
+  "foreground_unchanged": true,
+  "display_removed": true,
+  "final_displays": [
+    {
+      "builtin": true,
+      "height": 1355,
+      "id": 1,
+      "main": true,
+      "model": 41054,
+      "uuid": "37D8832A-2D66-02CA-B9F7-8F30A301B230",
+      "vendor": 1552,
+      "virtual": false,
+      "width": 2087,
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "topology_restored": true
+}

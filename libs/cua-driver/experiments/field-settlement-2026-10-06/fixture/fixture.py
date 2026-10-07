@@ -31,5 +31,5 @@ class TransactionForm(EvalForm):
      self.generation+=1;self.record_label.setStringValue_('Record B')
   objc.super(TransactionForm,self).tick_(timer)
 if __name__=='__main__':
- app=AppKit.NSApplication.sharedApplication();app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
+ app=AppKit.NSApplication.sharedApplication();app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyProhibited if os.environ.get("CUA_TEST_DISPLAY_ID") else AppKit.NSApplicationActivationPolicyRegular)
  form=TransactionForm.alloc().initWithPath_rows_(sys.argv[1],0);form.build();form.buildMenu();app.run()

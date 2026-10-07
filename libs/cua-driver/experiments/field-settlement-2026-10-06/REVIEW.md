@@ -18,3 +18,7 @@ The rejected shortcut is a shorter global detector timeout: that also shortens p
 The weakest assumption is that quiet AX field values are sufficient for callers' needs. They are sufficient only for a field-settlement report. Applications may reject later or expose AX echoes; generic transaction commitment remains unsupported. Adding this flag to a model does not itself establish an agent-performance gain. The matched comparison must measure actual successful task time and keep the full fence separate.
 
 Review status: experimental draft. Local code gates can be completed without desktop input. Native gates remain blocked on an isolated macOS guest after the user's host-isolation constraint. Do not mark this ready or describe the speed gain as measured until those gates pass. The canonical desktop matrix and RFC decision remain separate upstream requirements.
+
+## Off-screen qualification
+
+Verified window placement uses the owned display inventory and fresh WindowServer PID/window bounds before writes. Fixtures cannot activate themselves in this route. Neither harness activates a sentinel or restores user foreground. Two writes completed in the pilot while preserving foreground, but physical input contaminated the protection fence; the no-op settling control independently refused with `interrupted`. Neither result qualifies speed. Display removal and topology restoration passed. Intentional activation controls remain guest-only. The global physical-input guard still prevents uninterrupted concurrent use.

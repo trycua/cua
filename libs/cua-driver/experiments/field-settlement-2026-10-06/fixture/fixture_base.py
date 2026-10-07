@@ -11,6 +11,35 @@ import Foundation
 import objc
 
 
+# Construct the synthetic window on the selected display before ordering it front.
+# Display identity comes from the owned off-screen controller, never a fallback.
+if os.environ.get("CUA_TEST_DISPLAY_ID"):
+    import ast, textwrap
+    def offscreen_content_rect(self, width, height):
+        display = int(os.environ["CUA_TEST_DISPLAY_ID"])
+        screens = [screen for screen in AppKit.NSScreen.screens()
+                   if int(screen.deviceDescription()["NSScreenNumber"]) == display]
+        if len(screens) != 1:
+            raise RuntimeError("Owned off-screen display is unavailable")
+        frame = screens[0].frame()
+        return Foundation.NSMakeRect(frame.origin.x + 40, frame.origin.y + 100, width, height)
+    module_source = Path(fixture_form.__file__).read_text()
+    form_node = next(node for node in ast.parse(module_source).body if isinstance(node, ast.ClassDef) and node.name == "Form")
+    build_node = next(node for node in form_node.body if isinstance(node, ast.FunctionDef) and node.name == "build")
+    source = textwrap.dedent(ast.get_source_segment(module_source, build_node))
+    needle = "Foundation.NSMakeRect(80, 120, 420, height)"
+    if source.count(needle) != 1:
+        raise RuntimeError("Fixture construction changed; refusing physical-screen fallback")
+    source = source.replace(needle, "self.offscreen_content_rect(420, height)")
+    show = "self.window.orderFrontRegardless()"
+    if source.count(show) != 1:
+        raise RuntimeError("Fixture visibility changed; refusing physical-screen fallback")
+    source = source.replace(show, "self.window.setFrameOrigin_(self.offscreen_content_rect(420, height).origin)\n        " + show)
+    exec(source, fixture_form.__dict__)
+    fixture_form.Form.build = fixture_form.__dict__["build"]
+    fixture_form.Form.offscreen_content_rect = offscreen_content_rect
+
+
 class EvalForm(fixture_form.Form):
     def build(self):
         objc.super(EvalForm, self).build()

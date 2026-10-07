@@ -569,6 +569,7 @@
       "signals": [
         {
           "elapsedMs": 47000,
+          "errorKind": "none",
           "failedPhase": "none",
           "gpu": false,
           "guestOs": "linux",
@@ -618,6 +619,7 @@
       "signals": [
         {
           "elapsedMs": 45000,
+          "errorKind": "other",
           "failedPhase": "booting",
           "gpu": false,
           "guestOs": "windows",
@@ -672,6 +674,7 @@
       "signals": [
         {
           "elapsedMs": 7201000,
+          "errorKind": "timeout",
           "failedPhase": "pulling",
           "gpu": false,
           "guestOs": "linux",
@@ -721,6 +724,7 @@
       "signals": [
         {
           "elapsedMs": 31000,
+          "errorKind": "none",
           "failedPhase": "pulling",
           "gpu": true,
           "guestOs": "macos",
@@ -770,6 +774,7 @@
       "signals": [
         {
           "elapsedMs": 40000,
+          "errorKind": "none",
           "failedPhase": "none",
           "gpu": false,
           "guestOs": "linux",
@@ -819,6 +824,7 @@
       "signals": [
         {
           "elapsedMs": 4000,
+          "errorKind": "none",
           "failedPhase": "preparing",
           "gpu": true,
           "guestOs": "linux",

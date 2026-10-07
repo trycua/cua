@@ -149,6 +149,7 @@ fn all_builders(s: &str) -> Vec<Event> {
                 last_phase: s,
                 stalled: true,
                 gpu: true,
+                error_kind: s,
             },
             Outcome::Error,
             d,
@@ -942,13 +943,15 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
             last_phase: "pulling",
             stalled: true,
             gpu: false,
+            error_kind: "insufficient_disk",
         },
         Outcome::Ok,
         d,
     );
-    // Success never names a phase or a stall.
+    // Success never names a phase, a stall, or a failure cause.
     assert_eq!(e.props["failed_phase"], "none");
     assert_eq!(e.props["stalled"], false);
+    assert_eq!(e.props["error_kind"], "none");
     assert_eq!(e.props["time_bucket"], "40_59s");
     let e = events::space_create(
         &events::SpaceCreate {
@@ -958,14 +961,45 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
             last_phase: "none",
             stalled: false,
             gpu: true,
+            error_kind: "not a real kind",
         },
         Outcome::Error,
         Duration::from_secs(4000),
     );
     assert_eq!(e.props["failed_phase"], "other");
+    assert_eq!(e.props["error_kind"], "other");
     assert_eq!(e.props["time_bucket"], "gte_30m");
     assert_eq!(e.props["location"], "cloud");
     assert_eq!(e.props["gpu"], true);
+    let disk = events::space_create(
+        &events::SpaceCreate {
+            on: "local",
+            guest_os: "macos",
+            kind: "vm",
+            last_phase: "pulling",
+            stalled: false,
+            gpu: false,
+            error_kind: "InsufficientDisk",
+        },
+        Outcome::Error,
+        Duration::from_secs(3),
+    );
+    assert_eq!(disk.props["error_kind"], "insufficient_disk");
+    let stall = events::space_create(
+        &events::SpaceCreate {
+            on: "local",
+            guest_os: "macos",
+            kind: "vm",
+            last_phase: "waiting_for_services",
+            stalled: true,
+            gpu: false,
+            error_kind: "",
+        },
+        Outcome::Error,
+        Duration::from_secs(130),
+    );
+    assert_eq!(stall.props["error_kind"], "timeout");
+    assert_eq!(stall.props["failed_phase"], "waiting_for_services");
     // A cancel names the phase it was cancelled in, and is never a stall.
     let c = events::space_create(
         &events::SpaceCreate {
@@ -975,6 +1009,7 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
             last_phase: "pulling",
             stalled: true,
             gpu: true,
+            error_kind: "timeout",
         },
         Outcome::Cancelled,
         Duration::from_secs(25),
@@ -982,6 +1017,7 @@ fn activation_builders_keep_vocabulary_and_coarsen_the_rest() {
     assert_eq!(c.props["outcome"], "cancelled");
     assert_eq!(c.props["failed_phase"], "pulling");
     assert_eq!(c.props["stalled"], false);
+    assert_eq!(c.props["error_kind"], "none");
     assert_eq!(c.props["time_bucket"], "20_39s");
     let s = events::space_create_started("cloud", "windows", "vm", true);
     assert_eq!(

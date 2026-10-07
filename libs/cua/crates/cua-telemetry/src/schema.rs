@@ -1021,7 +1021,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::SPACE_CREATE,
-        version: 2,
+        version: 3,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &["spaces_app"],
@@ -1033,8 +1033,9 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "failed_phase",
                 Kind::Enum(CREATE_PHASES),
-                "The create phase it failed or was cancelled in (pulling, booting, ...); none when it succeeded.",
+                "The create phase it failed or was cancelled in (pulling, booting, waiting_for_services, ...); none when it succeeded.",
             ),
+            ERROR_KIND,
             p(
                 "stalled",
                 Kind::Bool,
@@ -1047,7 +1048,7 @@ pub const EVENTS: &[EventSpec] = &[
             ),
             p("gpu", Kind::Bool, "GPU acceleration was turned on."),
         ],
-        purpose: "Activation and reliability: Space create success, failure and cancel rates by kind, location and GPU, time to ready or to cancel, which phase fails or is cancelled, stall timeouts.",
+        purpose: "Activation and reliability: Space create success, failure and cancel rates by kind, location and GPU, time to ready or to cancel, which phase fails or is cancelled, and why (disk, GPU, timeout, transport), including stall timeouts.",
     },
     EventSpec {
         name: event::VOLUME_SETUP,

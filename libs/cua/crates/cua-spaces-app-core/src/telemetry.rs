@@ -82,6 +82,11 @@ pub enum TelemetrySignal {
         /// GPU acceleration was turned on.
         #[serde(default)]
         gpu: bool,
+        /// Why it failed (`insufficient_disk`, `unsupported`, `timeout`,
+        /// `transport`, ...); `none` when it succeeded or was cancelled.
+        /// The phase it failed in stays `failed_phase`.
+        #[serde(default = "none_kind")]
+        error_kind: String,
     },
     /// A Space create started (`cua_space_create_started`).
     SpaceCreateStarted {
@@ -341,7 +346,81 @@ fn kind_word(k: Option<SpaceKind>) -> &'static str {
     }
 }
 
-fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, now_ms: i64) -> TelemetrySignal {
+fn none_kind() -> String {
+    "none".into()
+}
+
+/// A create failure's `error_kind`, from the line the row shows (shells
+/// pass the message, often with the error variant's prefix already
+/// removed) and whether the row stalled. `waiting_for_services` stays a
+/// phase; this is the cause.
+fn classify_create_failure(message: &str, stalled: bool) -> &'static str {
+    let l = message.trim().to_ascii_lowercase();
+    if stalled || l.contains("made no progress") {
+        return "timeout";
+    }
+    if l.is_empty() {
+        return "other";
+    }
+    if l.contains("not enough disk")
+        || l.contains("not enough space")
+        || l.contains("insufficient disk")
+    {
+        return "insufficient_disk";
+    }
+    if l.contains("timed out") || l.contains("did not answer") || l.contains("timeout") {
+        return "timeout";
+    }
+    if l.contains("gpu") && (l.contains("support") || l.contains("acceleration")) {
+        return "unsupported";
+    }
+    if l.contains("no route to host") || l.contains("local network") {
+        return "transport";
+    }
+    // Longest prefixes first (`fleet admission denied` before `fleet`).
+    const PREFIXES: &[(&str, &str)] = &[
+        ("fleet admission denied:", "fleet_admission_denied"),
+        ("host capability missing:", "host_capability_missing"),
+        (
+            "claim secrets not delivered:",
+            "claim_secrets_not_delivered",
+        ),
+        ("cua-spacesd is not available:", "spacesd_not_available"),
+        ("provider not configured:", "provider_not_configured"),
+        ("ambiguous sandbox name:", "ambiguous_sandbox"),
+        ("capability missing:", "capability_missing"),
+        ("invalid placement:", "invalid_placement"),
+        ("invalid argument:", "invalid_argument"),
+        ("permission denied:", "permission_denied"),
+        ("pool spec mismatch:", "pool_spec_mismatch"),
+        ("teleport refused:", "teleport_refused"),
+        ("unauthenticated:", "unauthenticated"),
+        ("local runtime:", "runtime"),
+        ("not found:", "not_found"),
+        ("transport:", "transport"),
+        ("cancelled:", "cancelled"),
+        ("unsupported:", "unsupported"),
+        ("internal:", "internal"),
+        ("closed:", "closed"),
+        ("fleet:", "fleet"),
+        ("http:", "http"),
+        ("env:", "env"),
+    ];
+    for (prefix, kind) in PREFIXES {
+        if l.starts_with(prefix) {
+            return kind;
+        }
+    }
+    "other"
+}
+
+fn create_event(
+    p: &PendingCreate,
+    outcome: &str,
+    stalled: bool,
+    message: &str,
+    now_ms: i64,
+) -> TelemetrySignal {
     TelemetrySignal::SpaceCreate {
         location: p.provider.as_str().into(),
         guest_os: p.os.as_str().into(),
@@ -355,6 +434,11 @@ fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, now_ms: i64) ->
         stalled: outcome == "error" && stalled,
         elapsed_ms: (now_ms - p.started_at).max(0) as u64,
         gpu: p.gpu,
+        error_kind: if outcome == "error" {
+            classify_create_failure(message, stalled).into()
+        } else {
+            none_kind()
+        },
     }
 }
 
@@ -398,30 +482,43 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
         }
         CreateAction::Finish { id, .. } => match find(id) {
             Some(p) if p.space_id.is_none() => vec![
-                create_event(p, "ok", false, now_ms),
+                create_event(p, "ok", false, "", now_ms),
                 step("first_space_ready", true),
             ],
             _ => vec![],
         },
-        CreateAction::Fail { id, .. } => match find(id) {
+        CreateAction::Fail { id, error } => match find(id) {
             Some(p) if p.space_id.is_none() && p.cancelling => {
-                vec![create_event(p, "cancelled", false, now_ms)]
+                vec![create_event(p, "cancelled", false, "", now_ms)]
             }
+            // The row's previous error is often empty: the failure being
+            // counted is this action's message. A stall was already stored
+            // on the row.
             Some(p) if p.space_id.is_none() && (p.error.is_none() || stalled(p)) => {
-                vec![create_event(p, "error", stalled(p), now_ms)]
+                let stalled_now = stalled(p);
+                let message = if stalled_now {
+                    p.error.as_deref().unwrap_or(error)
+                } else {
+                    error.as_str()
+                };
+                vec![create_event(p, "error", stalled_now, message, now_ms)]
             }
             _ => vec![],
         },
         CreateAction::CancelDone { id } => match find(id) {
             Some(p) if p.space_id.is_none() && p.cancelling => {
-                vec![create_event(p, "cancelled", false, now_ms)]
+                vec![create_event(p, "cancelled", false, "", now_ms)]
             }
             _ => vec![],
         },
         CreateAction::Dismiss { id } => match find(id) {
-            Some(p) if p.space_id.is_none() && stalled(p) => {
-                vec![create_event(p, "error", true, now_ms)]
-            }
+            Some(p) if p.space_id.is_none() && stalled(p) => vec![create_event(
+                p,
+                "error",
+                true,
+                p.error.as_deref().unwrap_or(""),
+                now_ms,
+            )],
             _ => vec![],
         },
         _ => vec![],
@@ -618,6 +715,7 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                 stalled,
                 elapsed_ms,
                 gpu,
+                error_kind,
             } => Some(t.capture(events::space_create(
                 &events::SpaceCreate {
                     on: location,
@@ -626,6 +724,7 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                     last_phase: failed_phase,
                     stalled: *stalled,
                     gpu: *gpu,
+                    error_kind,
                 },
                 Outcome::from_word(outcome),
                 Duration::from_millis(*elapsed_ms),
@@ -845,7 +944,7 @@ mod tests {
         ] {
             let mut p = pending("pending:os", "booting", None);
             p.os = os;
-            let finished = create_event(&p, "ok", false, 2_000);
+            let finished = create_event(&p, "ok", false, "", 2_000);
             let finished = serde_json::to_value(finished).unwrap();
             let started = creates(
                 &CreatesState::default(),
@@ -899,6 +998,7 @@ mod tests {
                 stalled: false,
                 elapsed_ms: 47_000,
                 gpu: false,
+                error_kind: "none".into(),
             }
         );
         assert_eq!(ready[1], step("first_space_ready", true));
@@ -912,8 +1012,13 @@ mod tests {
         );
         assert!(matches!(
             &failed[0],
-            TelemetrySignal::SpaceCreate { failed_phase, stalled: false, outcome, .. }
-                if failed_phase == "booting" && outcome == "error"
+            TelemetrySignal::SpaceCreate {
+                failed_phase,
+                stalled: false,
+                outcome,
+                error_kind,
+                ..
+            } if failed_phase == "booting" && outcome == "error" && error_kind == "other"
         ));
         // A stalled row is counted when dismissed, not when it stalls.
         let stall = crate::spaces::creating::stall_error("pulling", 900.0);
@@ -932,7 +1037,8 @@ mod tests {
         );
         assert!(matches!(
             &gone[0],
-            TelemetrySignal::SpaceCreate { stalled: true, failed_phase, .. } if failed_phase == "pulling"
+            TelemetrySignal::SpaceCreate { stalled: true, failed_phase, error_kind, .. }
+                if failed_phase == "pulling" && error_kind == "timeout"
         ));
         // A failed (not stalled) row dismissed was already counted.
         let st = CreatesState {
@@ -950,6 +1056,69 @@ mod tests {
             )
             .is_empty()
         );
+    }
+
+    #[test]
+    fn a_create_failure_names_its_cause() {
+        let fail = |error: &str| {
+            let st = CreatesState {
+                pending: vec![pending("pending:a", "waiting_for_services", None)],
+                deleting: vec![],
+                powering: vec![],
+            };
+            creates(
+                &st,
+                &CreateAction::Fail {
+                    id: "pending:a".into(),
+                    error: error.into(),
+                },
+                5_000,
+            )
+        };
+        let kind = |error: &str| match &fail(error)[0] {
+            TelemetrySignal::SpaceCreate {
+                error_kind,
+                failed_phase,
+                outcome,
+                ..
+            } => {
+                assert_eq!(
+                    (failed_phase.as_str(), outcome.as_str()),
+                    ("waiting_for_services", "error")
+                );
+                error_kind.clone()
+            }
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(kind("boot failed at /Users/alice"), "other");
+        assert_eq!(
+            kind("not enough disk space to pull ghcr.io/trycua/macos:15: it needs about 30 GB"),
+            "insufficient_disk"
+        );
+        assert_eq!(
+            kind("insufficient disk: not enough disk space to create the Space"),
+            "insufficient_disk"
+        );
+        assert_eq!(
+            kind("Not enough space on Macintosh HD: needs 35 GB, 12 GB available."),
+            "insufficient_disk"
+        );
+        assert_eq!(
+            kind("macOS 15 guests do not support GPU acceleration (it needs macOS 26)"),
+            "unsupported"
+        );
+        assert_eq!(
+            kind("lume does not support a GPU other than `paravirtual`"),
+            "unsupported"
+        );
+        assert_eq!(kind("timed out: the daemon did not answer"), "timeout");
+        assert_eq!(
+            kind("sandbox mac: cua-spacesd did not answer within 120s"),
+            "timeout"
+        );
+        assert_eq!(kind("No route to host"), "transport");
+        assert_eq!(kind("transport: connection failed"), "transport");
+        assert_eq!(kind(""), "other");
     }
 
     #[test]

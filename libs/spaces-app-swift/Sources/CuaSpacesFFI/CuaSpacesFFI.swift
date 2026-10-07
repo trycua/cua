@@ -49638,7 +49638,12 @@ public enum AppTelemetrySignal: Equatable, Hashable {
          */elapsedMs: UInt64,
         /**
          * GPU acceleration was turned on.
-         */gpu: Bool
+         */gpu: Bool,
+        /**
+         * Why it failed (`insufficient_disk`, `unsupported`, `timeout`,
+         * `transport`, ...); `none` when it succeeded or was cancelled.
+         * The phase it failed in stays `failed_phase`.
+         */errorKind: String
     )
     /**
      * A Space create started (`cua_space_create_started`).
@@ -49771,7 +49776,7 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
         case 4: return .spaceWizard(action: try FfiConverterString.read(from: &buf)
         )
 
-        case 5: return .spaceCreate(location: try FfiConverterString.read(from: &buf), guestOs: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf), failedPhase: try FfiConverterString.read(from: &buf), stalled: try FfiConverterBool.read(from: &buf), elapsedMs: try FfiConverterUInt64.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf)
+        case 5: return .spaceCreate(location: try FfiConverterString.read(from: &buf), guestOs: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf), failedPhase: try FfiConverterString.read(from: &buf), stalled: try FfiConverterBool.read(from: &buf), elapsedMs: try FfiConverterUInt64.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf), errorKind: try FfiConverterString.read(from: &buf)
         )
 
         case 6: return .spaceCreateStarted(location: try FfiConverterString.read(from: &buf), guestOs: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf)
@@ -49826,7 +49831,7 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
             FfiConverterString.write(action, into: &buf)
 
 
-        case let .spaceCreate(location,guestOs,kind,outcome,failedPhase,stalled,elapsedMs,gpu):
+        case let .spaceCreate(location,guestOs,kind,outcome,failedPhase,stalled,elapsedMs,gpu,errorKind):
             writeInt(&buf, Int32(5))
             FfiConverterString.write(location, into: &buf)
             FfiConverterString.write(guestOs, into: &buf)
@@ -49836,6 +49841,7 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
             FfiConverterBool.write(stalled, into: &buf)
             FfiConverterUInt64.write(elapsedMs, into: &buf)
             FfiConverterBool.write(gpu, into: &buf)
+            FfiConverterString.write(errorKind, into: &buf)
 
 
         case let .spaceCreateStarted(location,guestOs,kind,gpu):

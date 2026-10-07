@@ -7,17 +7,17 @@ import Network
 
 /// Asks macOS for Local Network access for this app (fire and forget).
 ///
-/// Why: a Mac that provides Spaces boots macOS VMs (Lume, on vmnet
-/// 192.168.64.x) and its `cua daemon` (inside this app's bundle) must reach
-/// the guest. macOS blocks that ("No route to host") until Local Network
-/// access is allowed, and it asks only the first time the app reaches the
-/// local network, at most once per boot, on this Mac's own screen. The app
-/// is not even listed under System Settings > Privacy & Security > Local
-/// Network until it has been asked. Left alone, the prompt appears when the
-/// first Space is created, often from another Mac while nobody is at this
-/// one, and the create fails. So the app asks while the user is here: when
-/// "Set up for access" succeeds with Spaces provided, and when it launches
-/// on a Mac already set up to provide them.
+/// Why: reaching a guest from this Mac (a Lume VM on vmnet 192.168.64.x, or
+/// another machine on the LAN) needs Local Network access. macOS blocks
+/// that ("No route to host") until it is allowed, and it asks only the
+/// first time the app reaches the local network, at most once per boot, on
+/// this Mac's own screen. The app is not even listed under System Settings
+/// > Privacy & Security > Local Network until it has been asked. Left
+/// alone, the prompt appears when the first Space is created, often while
+/// nobody is at this Mac, and the create fails with `waiting_for_services`.
+/// So every Mac asks while someone is here: at launch, and when this Mac's
+/// setup becomes configured (a host that provides Spaces, or a controller
+/// that only accesses other machines).
 public protocol LocalNetworkPermissionRequesting: AnyObject, Sendable {
     /// Triggers the prompt if macOS has not decided yet. Never blocks.
     func request()

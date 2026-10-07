@@ -1205,6 +1205,9 @@ impl LumeRuntime {
     /// or a Linux VM shell), so a failure after that deletes it.
     async fn start_vm(&self, spec: &StartSpec, created: &mut bool) -> Result<Instance> {
         validate_name(&spec.name)?;
+        // Before Lume is started or a clone is made: a macOS guest that
+        // refuses GPU acceleration must not boot with it requested.
+        refuse_old_macos_gpu(spec)?;
         crate::types::reject_sidecars(BackendKind::Lume, spec)?;
         crate::types::reject_gpu(
             BackendKind::Lume,
@@ -1675,9 +1678,61 @@ impl Runtime for LumeRuntime {
     }
 }
 
+/// Major of a macOS guest image tag (`ghcr.io/trycua/macos:15`,
+/// `macos:26-slim` → 15, 26). `None` when the tag does not start with a
+/// number.
+fn macos_guest_major(reference: &str) -> Option<u32> {
+    let name = reference
+        .trim()
+        .split_once('@')
+        .map(|(n, _)| n)
+        .unwrap_or(reference.trim());
+    let tag = match name.rsplit_once(':') {
+        Some((_, tag)) if !tag.contains('/') => tag,
+        _ => return None,
+    };
+    let digits: String = tag.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse().ok()
+    }
+}
+
+/// GPU acceleration was tested on macOS 26. An earlier guest is refused
+/// before `lume serve`, the pull, or the clone. `on` and `paravirtual`
+/// are both a request. A ref with no numeric major is not refused here.
+fn refuse_old_macos_gpu(spec: &StartSpec) -> Result<()> {
+    if spec.gpu.is_none() || spec.os != GuestOs::Macos {
+        return Ok(());
+    }
+    let ImageSource::Oci { reference } = &spec.image else {
+        return Ok(());
+    };
+    let Some(major) = macos_guest_major(reference).filter(|m| *m < 26) else {
+        return Ok(());
+    };
+    Err(VmmError::UnsupportedImage {
+        image: reference.clone(),
+        reason: format!("macOS {major} guests do not support GPU acceleration (it needs macOS 26)"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn macos_guest_major_reads_the_tag() {
+        assert_eq!(macos_guest_major("ghcr.io/trycua/macos:15"), Some(15));
+        assert_eq!(macos_guest_major("ghcr.io/trycua/macos:26-slim"), Some(26));
+        assert_eq!(
+            macos_guest_major("ghcr.io/trycua/macos:15@sha256:abcd"),
+            Some(15)
+        );
+        assert_eq!(macos_guest_major("ghcr.io/trycua/macos:latest"), None);
+        assert_eq!(macos_guest_major("ghcr.io/trycua/linux:24.04"), Some(24));
+    }
 
     #[test]
     fn cli_get_reads_the_status_lume_reports() {

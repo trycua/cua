@@ -70,6 +70,7 @@ static uint64_t g_capture_epoch = 1;
 struct tinywl_toplevel;
 static void cua_ftl_request_activate(struct wl_listener *listener, void *data);
 static void cua_capture_title_changed(struct wl_listener *listener, void *data);
+static void cua_capture_geometry_committed(struct tinywl_toplevel *toplevel);
 static void cua_maybe_focus_new_toplevel(struct tinywl_toplevel *toplevel);
 static pid_t cua_toplevel_pid(struct tinywl_toplevel *t);
 static bool cua_pid_in_family(pid_t pid, pid_t root_pid);
@@ -83,9 +84,21 @@ STRUCT_FIELD = (
     "\tstruct wlr_foreign_toplevel_handle_v1 *ftl;\n"
     "\tstruct wl_listener ftl_request_activate;\n"
     "\tstruct wl_listener capture_title_changed;\n"
+    "\tstruct wlr_box capture_geometry;\n"
+    "\tbool capture_geometry_known;\n"
 )
 
 FUNCS = r"""
+static void cua_capture_geometry_committed(struct tinywl_toplevel *toplevel) {
+	struct wlr_box next = toplevel->xdg_toplevel->base->geometry;
+	struct wlr_box prev = toplevel->capture_geometry;
+	if (!toplevel->capture_geometry_known || next.x != prev.x || next.y != prev.y ||
+		next.width != prev.width || next.height != prev.height) {
+		g_capture_epoch++;
+		toplevel->capture_geometry = next;
+		toplevel->capture_geometry_known = true;
+	}
+}
 static void cua_capture_title_changed(struct wl_listener *listener, void *data) {
 	(void)listener; (void)data;
 	g_capture_epoch++;
@@ -912,6 +925,13 @@ src = repl(src,
     "\twl_display_destroy(server.wl_display);\n"
     "\treturn 0;",
     "virtual-keyboard-cleanup")
+
+# Track geometry commits, including resize-and-return transitions during capture.
+src = repl(src,
+    "\tstruct tinywl_toplevel *toplevel = wl_container_of(listener, toplevel, commit);",
+    "\tstruct tinywl_toplevel *toplevel = wl_container_of(listener, toplevel, commit);\n"
+    "\tcua_capture_geometry_committed(toplevel);",
+    "capture-geometry-commit")
 
 # Title changes can return to the previous value; the epoch detects that ABA.
 src = repl(src,

@@ -81,13 +81,36 @@ fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
     window_target_candidates_for_pid(windows, pid)
 }
 
+/// Smallest edge, in points, of a window a pid-only action may mean. Below it
+/// the window is a 0x0 or 1x1 helper surface, never a document or dialog.
+const MIN_TARGET_EDGE_PT: f64 = 2.0;
+
+/// Whether `window` is a window a pid-only action could mean: on screen and
+/// of real size. LibreOffice's off-screen `VCL ImplGetDefaultWindow`, its
+/// untitled off-screen helpers, and Chrome's closed omnibox popup are layer-0
+/// windows WindowServer lists but no user can see, type into, or click.
+fn is_visible_target(window: &crate::windows::WindowInfo) -> bool {
+    window.is_on_screen
+        && window.bounds.width >= MIN_TARGET_EDGE_PT
+        && window.bounds.height >= MIN_TARGET_EDGE_PT
+}
+
 fn window_target_candidates_for_pid(
     windows: impl IntoIterator<Item = crate::windows::WindowInfo>,
     pid: i32,
 ) -> Vec<WindowTargetCandidate> {
-    windows
+    let mut windows: Vec<_> = windows
         .into_iter()
         .filter(|window| window.pid == pid)
+        .collect();
+    // Only visible windows compete. When none is visible (the app is hidden,
+    // its only window is minimized or on another Space) keep them all, so a
+    // single real window still resolves and several still refuse.
+    if windows.iter().any(is_visible_target) {
+        windows.retain(is_visible_target);
+    }
+    windows
+        .into_iter()
         .map(|window| WindowTargetCandidate {
             window_id: u64::from(window.window_id),
             transient_for: None,
@@ -134,6 +157,80 @@ mod pid_window_target_tests {
                 if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
         ));
     }
+
+    fn off_screen(
+        mut window: crate::windows::WindowInfo,
+        title: &str,
+    ) -> crate::windows::WindowInfo {
+        window.is_on_screen = false;
+        window.title = title.into();
+        window
+    }
+
+    #[test]
+    fn off_screen_helpers_do_not_make_a_document_ambiguous() {
+        // LibreOffice: the document plus `VCL ImplGetDefaultWindow` and an
+        // untitled helper, both off screen (bench CDB-G03, CDB-S02).
+        let candidates = window_target_candidates_for_pid(
+            [
+                window(1680, 42),
+                off_screen(window(1679, 42), "VCL ImplGetDefaultWindow"),
+                off_screen(window(1678, 42), ""),
+            ],
+            42,
+        );
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Resolved(window) if window.window_id == 1680
+        ));
+    }
+
+    #[test]
+    fn zero_size_windows_do_not_compete() {
+        let mut helper = window(9, 42);
+        helper.bounds.width = 0.0;
+        helper.bounds.height = 0.0;
+        let candidates = window_target_candidates_for_pid([window(7, 42), helper], 42);
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Resolved(window) if window.window_id == 7
+        ));
+    }
+
+    #[test]
+    fn two_visible_documents_stay_ambiguous_despite_helpers() {
+        let candidates = window_target_candidates_for_pid(
+            [
+                window(7, 42),
+                window(8, 42),
+                off_screen(window(9, 42), "VCL ImplGetDefaultWindow"),
+            ],
+            42,
+        );
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Ambiguous(windows)
+                if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
+        ));
+    }
+
+    #[test]
+    fn an_app_with_no_visible_window_keeps_its_windows() {
+        // A hidden app or a minimized single window still resolves.
+        let candidates = window_target_candidates_for_pid([off_screen(window(7, 42), "Doc")], 42);
+        assert!(matches!(
+            resolve_pid_window_target(candidates),
+            PidWindowTargetResolution::Resolved(window) if window.window_id == 7
+        ));
+    }
+}
+
+/// The window a pid-only keyboard action means when several visible windows
+/// remain: the app's key window (`AXFocusedWindow`), which is where AppKit
+/// sends process-scoped key events anyway. `None` leaves the call refused.
+fn pid_focused_window(pid: i64) -> Option<u64> {
+    let pid = i32::try_from(pid).ok()?;
+    crate::ax::bindings::focused_window_id_of_pid(pid).map(u64::from)
 }
 
 fn pid_window_guarded<T: Tool + 'static>(
@@ -144,6 +241,19 @@ fn pid_window_guarded<T: Tool + 'static>(
         Box::new(tool),
         candidates.clone(),
     ))
+}
+
+/// [`pid_window_guarded`] for keyboard tools: when several visible windows
+/// remain, a pid-only key goes to the app's key window, as AppKit would route
+/// it, and the result names that window. Without a key window it still refuses.
+fn pid_keyboard_guarded<T: Tool + 'static>(
+    tool: T,
+    candidates: &WindowTargetCandidates,
+) -> Box<dyn Tool> {
+    Box::new(
+        PidOnlyWindowTargetGuard::new(Box::new(tool), candidates.clone())
+            .with_fallback_resolver(Arc::new(pid_focused_window)),
+    )
 }
 
 pub use check_permissions::{
@@ -891,15 +1001,15 @@ pub fn register_all(
         drag::DragTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(pid_keyboard_guarded(
         type_text::TypeTextTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(pid_keyboard_guarded(
         press_key::PressKeyTool::new(state.clone()),
         &pid_window_candidates,
     ));
-    registry.register(pid_window_guarded(
+    registry.register(pid_keyboard_guarded(
         hotkey::HotkeyTool::new(state.clone()),
         &pid_window_candidates,
     ));

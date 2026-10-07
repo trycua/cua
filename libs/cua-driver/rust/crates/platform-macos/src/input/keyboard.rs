@@ -66,27 +66,52 @@ pub fn press_key(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> 
     Ok(())
 }
 
+/// The virtual key a control character in typed text stands for.
+///
+/// Typed text is otherwise sent as a Unicode payload on key code 0 (the A
+/// key). For `\n`, `\r` and `\t` that is not a key press at all: Chrome's
+/// omnibox ignored the `\n` of `file:///…log\n` and never navigated (bench
+/// CDB-G04, CUA-1223), and LibreOffice did not commit a Name Box entry.
+/// These are sent as the real Return and Tab keys instead.
+fn control_key_for_char(ch: char) -> Option<u16> {
+    match ch {
+        '\n' | '\r' => key_name_to_code("return").ok(),
+        '\t' => key_name_to_code("tab").ok(),
+        _ => None,
+    }
+}
+
+/// The down/up pair that types `ch`: its control key when it has one,
+/// otherwise a Unicode payload on key code 0. Flags are always zero: Chrome
+/// reads the flags field to infer modifier state, and without this an
+/// uppercase char (e.g. 'E') is seen as Shift+e and the modifier leaks into
+/// the next character (Swift fix: event.flags = []).
+fn char_key_events(source: &CGEventSource, ch: char) -> anyhow::Result<(CGEvent, CGEvent)> {
+    let (key_code, payload) = match control_key_for_char(ch) {
+        Some(code) => (code, None),
+        None => (0, Some(ch.to_string())),
+    };
+    let make = |down: bool| -> anyhow::Result<CGEvent> {
+        let event = CGEvent::new_keyboard_event(source.clone(), key_code, down)
+            .map_err(|_| anyhow::anyhow!("CGEvent keyboard event failed"))?;
+        if let Some(payload) = &payload {
+            event.set_string(payload);
+        }
+        event.set_flags(CGEventFlags::CGEventFlagNull);
+        Ok(event)
+    };
+    Ok((make(true)?, make(false)?))
+}
+
 /// Type a string character-by-character to `pid`.
 pub fn type_text(pid: i32, text: &str) -> anyhow::Result<()> {
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
 
     for ch in text.chars() {
-        let ch_str = ch.to_string();
-        let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
-            .map_err(|_| anyhow::anyhow!("CGEvent keyboard down failed"))?;
-        down.set_string(&ch_str);
-        // Always zero flags: Chrome inspects the flags field to infer modifier
-        // state; without this, uppercase chars (e.g. 'E') are seen as Shift+e
-        // and the modifier leaks into the next character (Swift fix: event.flags = []).
-        down.set_flags(CGEventFlags::CGEventFlagNull);
+        let (down, up) = char_key_events(&source, ch)?;
         post_keyboard_event(pid, &down);
         key_gap_sleep();
-
-        let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
-            .map_err(|_| anyhow::anyhow!("CGEvent keyboard up failed"))?;
-        up.set_string(&ch_str);
-        up.set_flags(CGEventFlags::CGEventFlagNull);
         post_keyboard_event(pid, &up);
         key_gap_sleep();
     }
@@ -100,18 +125,9 @@ pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> a
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
 
     for ch in text.chars() {
-        let ch_str = ch.to_string();
-        let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
-            .map_err(|_| anyhow::anyhow!("CGEvent keyboard down failed"))?;
-        down.set_string(&ch_str);
-        down.set_flags(CGEventFlags::CGEventFlagNull);
+        let (down, up) = char_key_events(&source, ch)?;
         post_keyboard_event(pid, &down);
         key_gap_sleep();
-
-        let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
-            .map_err(|_| anyhow::anyhow!("CGEvent keyboard up failed"))?;
-        up.set_string(&ch_str);
-        up.set_flags(CGEventFlags::CGEventFlagNull);
         post_keyboard_event(pid, &up);
 
         // Additional inter-character delay on top of the internal key gap.
@@ -381,17 +397,9 @@ pub fn type_text_global(text: &str, inter_char_delay_ms: u64) -> anyhow::Result<
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     for ch in text.chars() {
-        let value = ch.to_string();
-        let down = CGEvent::new_keyboard_event(source.clone(), 0, true)
-            .map_err(|_| anyhow::anyhow!("CGEvent keyboard down failed"))?;
-        down.set_string(&value);
-        down.set_flags(CGEventFlags::CGEventFlagNull);
+        let (down, up) = char_key_events(&source, ch)?;
         down.post(CGEventTapLocation::HID);
         key_gap_sleep();
-        let up = CGEvent::new_keyboard_event(source.clone(), 0, false)
-            .map_err(|_| anyhow::anyhow!("CGEvent keyboard up failed"))?;
-        up.set_string(&value);
-        up.set_flags(CGEventFlags::CGEventFlagNull);
         up.post(CGEventTapLocation::HID);
         std::thread::sleep(std::time::Duration::from_millis(inter_char_delay_ms).max(key_gap()));
     }
@@ -1004,6 +1012,20 @@ mod tests {
                 physical_key_for_char(ch).is_some(),
                 "missing physical key for whitespace {ch:?}"
             );
+        }
+    }
+
+    #[test]
+    fn typed_newlines_and_tabs_are_real_return_and_tab_keys() {
+        let return_code = key_name_to_code("return").unwrap();
+        assert_eq!(control_key_for_char('\n'), Some(return_code));
+        assert_eq!(control_key_for_char('\r'), Some(return_code));
+        assert_eq!(
+            control_key_for_char('\t'),
+            Some(key_name_to_code("tab").unwrap())
+        );
+        for ch in ['a', ' ', '/', ':', 'é'] {
+            assert_eq!(control_key_for_char(ch), None, "{ch:?}");
         }
     }
 

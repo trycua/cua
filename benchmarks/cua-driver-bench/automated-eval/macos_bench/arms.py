@@ -24,7 +24,13 @@ from pathlib import Path
 
 ARMS = ("cua-driver-mcp", "codex-native-cu")  # the Codex-CLI pilot arms (run_pilot.py)
 # Claude Code arms (run_bench.py): same model, same harness, only the MCP tools differ.
-CLAUDE_ARMS = ("cc-cua-driver", "cc-codex-cu", "cc-cua-driver-main", "cc-cua-driver-main-skill")
+CLAUDE_ARMS = (
+    "cc-cua-driver",
+    "cc-codex-cu",
+    "cc-cua-driver-main",
+    "cc-cua-driver-main-skill",
+    "cc-cua-driver-script",  # Amendment 6
+)
 # cc-cua-driver-main: Amendment 3; cc-cua-driver-main-skill: Amendment 4. The default arm set of run_bench.py
 # stays the three arms of Amendment 3, so a run without --arms is unchanged.
 DEFAULT_CLAUDE_ARMS = ("cc-cua-driver", "cc-codex-cu", "cc-cua-driver-main")

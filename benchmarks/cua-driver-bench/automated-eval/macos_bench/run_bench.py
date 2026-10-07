@@ -450,7 +450,9 @@ def ensure_agent_daemon(ctx: Ctx, arm: str = "cc-cua-driver") -> None:
     if ctx.daemon is not None:
         claude_driver.kill_group(ctx.daemon.pid)
     ca.stop_cua_daemon(build.socket, build.home, build.bin)
-    ctx.daemon = ca.start_cua_daemon(build.socket, build.state, binary=build.bin)
+    ctx.daemon = ca.start_cua_daemon(
+        build.socket, build.state, binary=build.bin, env_extra=dict(build.daemon_env)
+    )
     ctx.daemon_arm = arm
 
 
@@ -485,7 +487,7 @@ def check_daemon(pins: dict[str, Any], arm: str = "cc-cua-driver") -> list[tuple
     else:  # Amendment 3: the main build is pinned by commit and binary hash, not by a release version
         main = pins.get("cua_main", {})
         ok_version = build.get("version") == main.get("version")
-        ok_sha = build.get("exe_sha256") == main.get("binary_sha256") and build.get(
+        ok_sha = build.get("exe_sha256") == main.get(spec.binary_pin) and build.get(
             "git_sha"
         ) == main.get("git_sha")
     checks = health.get("checks", {})
@@ -1577,10 +1579,15 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     for name, status, detail in check_pins(pins, ctx.arm_names):
         add(name, status, detail)
     offline = bool(getattr(args, "offline", False))
-    if any(ca.CUA_BUILDS[a].app == ca.CUA_MAIN_APP for a in ctx.arm_names if a in ca.CUA_BUILDS):
+    if any(ca.CUA_BUILDS[a].label == "main" for a in ctx.arm_names if a in ca.CUA_BUILDS):
         main = pins.get("cua_main", {})
         spec = ca.CUA_BUILDS["cc-cua-driver-main"]
         got_bin = ca.sha256_file(spec.bin) if spec.bin.is_file() else None
+        for other in [a for a in ctx.arm_names if a in ca.CUA_BUILDS and ca.CUA_BUILDS[a].label == "main"]:
+            ob = ca.CUA_BUILDS[other].bin
+            got = ca.sha256_file(ob) if ob.is_file() else None
+            key = ca.CUA_BUILDS[other].binary_pin
+            add(f"{other} binary matches cua_main.{key}", "pass" if got and got == main.get(key) else "fail", str(got))
         got_skills = ca.sha256_tree(spec.skills) if spec.skills.is_dir() else None
         add(
             "pin cua_main.binary_sha256",
@@ -1605,12 +1612,19 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             if cua_arm == "cc-cua-driver":
                 ctx.versions["cua_daemon_version"] = health.get("build", {}).get("version")
             tools = mcp_list_tools(
-                str(spec.bin), ["--socket", spec.socket, "mcp"], ca.cua_env(spec.home)
+                str(spec.bin), ["--socket", spec.socket, "mcp"], ca.build_env(cua_arm, spec.home)
             )
             add(
                 f"{cua_arm} MCP server starts and lists tools",
                 "pass" if "list_apps" in tools and len(tools) >= 50 else "fail",
                 f"{len(tools)} tools",
+            )
+            # Amendment 6: run_script is listed exactly in the arms whose daemon has the script flag
+            want_script = ca.SCRIPT_FLAG in spec.daemon_env
+            add(
+                f"{cua_arm} run_script {'listed' if want_script else 'not listed'}",
+                "pass" if ("run_script" in tools) == want_script else "fail",
+                f"run_script in tools/list: {'run_script' in tools}",
             )
         except Exception as error:  # noqa: BLE001
             add(f"{cua_arm} daemon/MCP", "fail", f"{type(error).__name__}: {error}")

@@ -702,6 +702,20 @@ class ArmsAndHostTest(unittest.TestCase):
         self.assertIn("cc-cua-driver-main-skill", arms.CLAUDE_ARMS)
         self.assertNotIn("cc-cua-driver-main-skill", arms.DEFAULT_CLAUDE_ARMS)
 
+    def test_script_arm_has_the_flag_its_own_app_and_the_addendum(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, server = ca.mcp_config_for("cc-cua-driver-script", Path(tmp))
+            entry = json.loads(path.read_text())["mcpServers"][server]
+            self.assertEqual(entry["env"]["CUA_DRIVER_EXPERIMENTAL_SCRIPT"], "1")
+            self.assertEqual(entry["command"], str(ca.CUA_SCRIPT_APP / "Contents/MacOS/cua-driver"))
+            self.assertEqual(entry["args"], ["--socket", ca.SCRIPT_SOCKET, "mcp"])
+            main, _ = ca.mcp_config_for("cc-cua-driver-main", Path(tmp) / "m")
+            self.assertNotIn("CUA_DRIVER_EXPERIMENTAL_SCRIPT", json.loads(main.read_text())["mcpServers"]["cua"]["env"])
+        self.assertTrue(ca.system_prompt_for("cc-cua-driver-script").startswith(ca.SYSTEM_PROMPT))
+        self.assertIn("run_script", ca.system_prompt_for("cc-cua-driver-script"))
+        self.assertEqual(ca.system_prompt_for("cc-cua-driver-main"), ca.SYSTEM_PROMPT)
+        self.assertIn("cc-cua-driver-script", arms.CLAUDE_ARMS)
+
     def test_three_arms_rotate_the_first_arm(self) -> None:
         arms3 = ["cc-cua-driver-main", "cc-cua-driver", "cc-codex-cu"]
         firsts = {core.arm_order(0, r, arms3)[0] for r in range(3)}

@@ -76,6 +76,19 @@ PINS_FILE = HERE / "pins.json"
 CUA_MAIN_DIR = WORK / "cua-main"
 CUA_MAIN_APP = CUA_MAIN_DIR / "CuaDriverBenchMain.app"
 MAIN_SOCKET = "/tmp/cdb-bench-cua-main.sock"
+# Amendment 6 (CUA-1214): the same main binary in its own app copy and bundle id, with the experimental
+# run_script tool switched on in the daemon (CUA_DRIVER_EXPERIMENTAL_SCRIPT=1; the registry is built in `serve`).
+CUA_SCRIPT_DIR = WORK / "cua-script"
+CUA_SCRIPT_APP = CUA_SCRIPT_DIR / "CuaDriverBenchScript.app"
+SCRIPT_SOCKET = "/tmp/cdb-bench-cua-script.sock"
+SCRIPT_FLAG = ("CUA_DRIVER_EXPERIMENTAL_SCRIPT", "1")
+RUN_SCRIPT_ADDENDUM = (
+    "\n\nFor any task with more than one or two actions, write ONE run_script call: a JavaScript async function "
+    "body that uses `cua.getApp(\"<App>\")` and app.click/typeText/setValue/pressKey/scroll with {role, name} "
+    "targets, app.waitFor({text}) between screens, and `return`s what you need to check the result. Use loops and "
+    "if/else instead of separate calls. A failed call throws with the script line and the nearest elements; fix the "
+    "script and run it again from the step that failed. Use run_actions or single tools only for one-off actions.\n"
+)
 
 
 @dataclass(frozen=True)
@@ -89,6 +102,14 @@ class CuaBuild:
     state: Path
     skills: Path
     skill_in_prompt: bool = False  # Amendment 4: SKILL.md appended to the system prompt
+    daemon_env: tuple[tuple[str, str], ...] = ()  # Amendment 6: extra daemon + MCP env (the script flag)
+    prompt_addendum: str | None = None  # Amendment 6: text appended to the system prompt
+
+    @property
+    def binary_pin(self) -> str:
+        """Key in pins.json ``cua_main`` of this app's binary hash. The script app is the same build re-signed with
+        its own identifier, so its file hash differs from the main app's (Amendment 6)."""
+        return "script_binary_sha256" if self.app == CUA_SCRIPT_APP else "binary_sha256"
 
     @property
     def bin(self) -> Path:
@@ -119,6 +140,16 @@ CUA_BUILDS = {
         CUA_MAIN_DIR / "skills" / "cua-driver",
         skill_in_prompt=True,
     ),
+    "cc-cua-driver-script": CuaBuild(
+        "cc-cua-driver-script",
+        "main",
+        CUA_SCRIPT_APP,
+        SCRIPT_SOCKET,
+        CUA_SCRIPT_DIR / "daemon-state",
+        CUA_MAIN_DIR / "skills" / "cua-driver",
+        daemon_env=(SCRIPT_FLAG,),
+        prompt_addendum=RUN_SCRIPT_ADDENDUM,
+    ),
 }
 CUA_ARMS = tuple(CUA_BUILDS)
 
@@ -132,6 +163,7 @@ ARM_DESCRIPTIONS = {
     "cc-cua-driver": "Claude Code + Cua Driver 0.34.0 MCP + Cua Driver skill (0.34.0 release)",
     "cc-cua-driver-main": "Claude Code + Cua Driver built from main (pinned commit) MCP + the skill of that commit",
     "cc-cua-driver-main-skill": "The same as cc-cua-driver-main, with the skill's SKILL.md appended to the system prompt",
+    "cc-cua-driver-script": "The main build in its own app with CUA_DRIVER_EXPERIMENTAL_SCRIPT=1 (run_script on) and the run_script addendum in the system prompt",
     "cc-codex-cu": "Claude Code + Codex computer-use cua_repl MCP (server codex-cu), no skill",
 }
 
@@ -145,9 +177,23 @@ SKILL_PROMPT_HEADER = (
 def system_prompt_for(arm: str) -> str:
     """The shared SYSTEM_PROMPT; for a skill-in-prompt arm, followed by its build's SKILL.md, verbatim."""
     build = CUA_BUILDS.get(arm)
-    if build is None or not build.skill_in_prompt:
+    if build is None:
         return SYSTEM_PROMPT
-    return SYSTEM_PROMPT + SKILL_PROMPT_HEADER + (build.skills / "SKILL.md").read_text("utf-8").strip() + "\n"
+    prompt = SYSTEM_PROMPT
+    if build.skill_in_prompt:
+        prompt += SKILL_PROMPT_HEADER + (build.skills / "SKILL.md").read_text("utf-8").strip() + "\n"
+    if build.prompt_addendum:
+        prompt += build.prompt_addendum
+    return prompt
+
+
+def build_env(arm: str, home: Path) -> dict[str, str]:
+    """cua_env plus the build's own daemon variables (Amendment 6)."""
+    env = cua_env(home)
+    build = CUA_BUILDS.get(arm)
+    if build is not None:
+        env.update(dict(build.daemon_env))
+    return env
 
 
 def sha256_file(path: Path) -> str:
@@ -202,7 +248,7 @@ def mcp_config_for(
                     "type": "stdio",
                     "command": str(build.bin),  # absolute: no PATH lookup can find another copy
                     "args": ["--socket", build.socket, "mcp"],
-                    "env": cua_env(build.home),
+                    "env": build_env(arm, build.home),
                 }
             }
         }
@@ -382,6 +428,7 @@ def start_cua_daemon(
     overlay: bool = True,
     log_name: str = "daemon.log",
     binary: Path | None = None,
+    env_extra: dict[str, str] | None = None,
 ) -> subprocess.Popen[bytes]:
     """Private daemon of the release under test: own socket, own HOME, telemetry off."""
     binary = binary or CUA_BIN
@@ -397,7 +444,7 @@ def start_cua_daemon(
     log = (state_dir / log_name).open("ab")
     proc = subprocess.Popen(
         args,
-        env=cua_env(home),
+        env={**cua_env(home), **(env_extra or {})},
         stdin=subprocess.DEVNULL,
         stdout=log,
         stderr=log,

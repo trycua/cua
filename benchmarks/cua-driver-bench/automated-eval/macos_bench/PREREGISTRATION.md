@@ -4,7 +4,7 @@ Status: frozen when this file is committed, before any trial that enters the ana
 Date: 2026-10-05 (UTC evening). Scope: head-to-head, macOS host, one Mac. Owner: Cua Driver Bench maintainers.
 Supersedes the pilot pre-registration (private trycua/cua-driver-bench PR #59: Codex CLI with gpt-6-astra, Cua Driver arm only).
 
-**Amended on 6 Oct 2026, before any analysed trial: see Amendment 1 immediately below (Amendment 2, the GUI-only variant, after it, Amendment 3, the 7 Oct before/after check of the Cua Driver 0.35.0 changes, Amendment 4, named Electron bundles and a skill-in-prompt arm, and Amendment 5, the v036 validation run of the 0.36 fixes). Where sections 0 to 12 differ from them, the amendments win.**
+**Amended on 6 Oct 2026, before any analysed trial: see Amendment 1 immediately below (Amendment 2, the GUI-only variant, after it, Amendment 3, the 7 Oct before/after check of the Cua Driver 0.35.0 changes, Amendment 4, named Electron bundles and a skill-in-prompt arm, Amendment 5, the v036 validation run of the 0.36 fixes, and Amendment 6, the mini-runs of the overnight hill-climb). Where sections 0 to 12 differ from them, the amendments win.**
 
 ## Amendment 1 (6 Oct 2026, before any analysed trial)
 
@@ -316,6 +316,76 @@ Per task and arm: success with Wilson intervals, score, wall time, turns, comput
 ### A5.7 Harness changes for this amendment
 
 `tools/analyze_v036.py` (the analysis of A5.4 and A5.5); `tools/vm_main_build/` (the build, assembly and TCC scripts used for A3 and A5, kept for the record); `pins.json` `cua_main` (the new build).
+
+## Amendment 6 (8 Oct 2026, before the first mini-run): repeatable mini-runs for the overnight hill-climb
+
+Written and committed before the first trial of any mini-run. It changes nothing about earlier runs. Mini-runs are screening runs: they tell the people fixing the driver where it fails, and they decide when a full pre-registered rerun is worth running. They are never pooled with each other or with any other run, and no claim about Cua Driver against Codex computer use rests on them.
+
+### A6.1 Protocol
+
+* **Tasks and order:** CDB-G02, CDB-G03, CDB-G04, MB-10, MB-11. Three runs each, in one phase (`--phase1-runs 3 --phase2-runs 0`).
+* **Arms**, interleaved in every task block. The first arm is `(task position + run index) mod 3` over the list (A, AX, B):
+
+| Label | Runner arm | What |
+|---|---|---|
+| A | `cc-cua-driver-main` | Cua Driver built from main at the mini-run's commit (the A5.2 recipe, `tools/vm_main_build/`), with that commit's skill as a project skill |
+| AX | `cc-cua-driver-script` | the same build, copied into its own app `CuaDriverBenchScript.app` (bundle id `com.trycua.driver.benchscript`, its own TCC rows, socket and daemon state, `tools/vm_main_build/assemble_script.sh`), with `CUA_DRIVER_EXPERIMENTAL_SCRIPT=1` in the daemon's environment and the MCP server's environment, and the `run_script` addendum of `claude_arms.RUN_SCRIPT_ADDENDUM` appended to the system prompt (the text proposed for CUA-1214 in Stream D's arm note) |
+| B | `cc-codex-cu` | unchanged |
+
+* **Preflight:** `run_script` must be listed in AX's `tools/list` and absent from A's. Both apps' binary hashes must match `pins.json` `cua_main`. The script app is the same build re-signed under its own identifier, so its file hash is pinned separately (`script_binary_sha256`). Both daemons must report the mini-run's commit.
+  * If main at that commit has no `run_script` tool (#4822 not merged yet), AX is left out and the entry says so.
+* **Everything else as in v036 (Amendments 4 and 5):**
+  * Sonnet 5.5 (Claude Code 2.1.289), 360 s and 45 turns, the shared system prompt, ToolSearch on;
+  * the same VM `cdb-h2h`, named Electron bundles, BenchLab occlusion check, pointer parking;
+  * the same reset, recorder, sentinel, evaluator isolation, side-door flags and peek scan.
+* **Run ids:** `v037a`, `v037b`, and so on. Before its first trial, each mini-run gets one line in A6.5: id, commit, the two binary hashes, the skill tree hash, and arms run.
+
+### A6.2 When a mini-run is started
+
+When a fix is merged to main and logged in the status log of the 0.36 plan, a mini-run is run on that main. Several merges that landed close together share one mini-run.
+
+### A6.3 What is reported per mini-run (`tools/analyze_mini.py`, internal)
+
+* Per arm: successes overall and per task; mean turns and mean equivalent cost; their ratios to arm B.
+* The indicative match check (A6.4).
+* The most frequent failure classes of the Cua Driver arms, with trial paths: turn cap, failed evaluator checks, and failed tool calls grouped by tool and normalised error text.
+
+Arm B's numbers stay internal (CUA-1225).
+
+### A6.4 When the full rerun is triggered
+
+A mini-run "suggests a match" when, for at least one Cua Driver arm, all three hold on that mini-run:
+* successes ≥ arm B's overall;
+* successes ≥ arm B's on each of G02, G03 and G04;
+* mean turns ≤ 1.2 × arm B's.
+
+Then a full rerun `v037-full` is registered as its own amendment before its first trial:
+* the ten v036 tasks, 3 + 2 runs;
+* arms A, AX, A0 (0.34.0) and B;
+* the definition of done above as its pre-registered decision rule, plus H1 to H3 of A5.4 for A against A0.
+
+Fixes are general driver or guidance changes. Nothing is tuned to a task's evaluator.
+
+### A6.5 Mini-run log (one line per mini-run, written before its first trial)
+
+| Id | Main commit | A binary sha256 | AX binary sha256 | Skill tree sha256 | Arms | Written (UTC) |
+|---|---|---|---|---|---|---|
+
+### A6.6 Harness changes for this amendment
+
+* `claude_arms.py`:
+  * `CuaBuild.daemon_env`, `prompt_addendum` and `binary_pin`;
+  * arm `cc-cua-driver-script`;
+  * `build_env`;
+  * `start_cua_daemon(env_extra=...)`.
+* `run_bench.py`:
+  * the daemon is started with the build's environment;
+  * the `run_script` listed or absent preflight check;
+  * per-app binary pins.
+* `arms.py`: the new arm.
+* `tools/analyze_mini.py`.
+* `tools/vm_main_build/assemble_script.sh`, and `tcc_grant.sh` with app and id arguments.
+* Tests in `tests/test_bench.py`.
 
 ## 0. Decisions made before the first trial, and why
 

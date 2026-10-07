@@ -2,8 +2,8 @@
 # Grant Accessibility + Screen Recording (system TCC.db) and Automation (user TCC.db) to the main-build app.
 # VM only (SIP is disabled in this VM). Mirrors the grants com.trycua.driver (0.34.0) already has.
 set -e
-A=~/bench-work/cua-main/CuaDriverBenchMain.app
-ID=com.trycua.driver.benchmain
+A=${1:-$HOME/bench-work/cua-main/CuaDriverBenchMain.app}
+ID=${2:-com.trycua.driver.benchmain}  # Amendment 6: tcc_grant.sh <app> <bundle id> for the script app
 REQ=$(codesign -d -r- $A 2>&1 | sed -n 's/^# *designated => //p')
 echo "$REQ" | csreq -r- -b /tmp/benchmain.csreq
 HEX=$(xxd -p /tmp/benchmain.csreq | tr -d '\n')

@@ -197,10 +197,12 @@ pub async fn start(
 /// the other Spaces tools accept it) unless it already is one.
 pub async fn register_space(cua: &Arc<Cua>, sb: &str) -> Result<(), CuaError> {
     let spaces = cua.spaces();
-    let listed = spaces.call_tool_json("list_spaces".into(), None).await?;
-    let known = listed.content_json.contains(&format!("\"{sb}\""));
-    if known {
-        return Ok(());
+    // SDK resolve verifies a cached/registered record without refreshing the
+    // unrelated relay directory. Runtime resolve alone only parses some IDs.
+    match spaces.resolve(sb.into()).await {
+        Ok(_) => return Ok(()),
+        Err(CuaError::NotFound(_)) => {}
+        Err(error) => return Err(error),
     }
     let r = spaces
         .call_tool_json("add_space".into(), Some(json!({"url": sb}).to_string()))
@@ -217,6 +219,78 @@ pub async fn register_space(cua: &Arc<Cua>, sb: &str) -> Result<(), CuaError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn registration_uses_records_during_relay_failure() {
+        for daemon in [false, true] {
+            let home = tempfile::tempdir().unwrap();
+            let relay = cua_host::testing::FakeRelay::start().await;
+            let target = cua_spacesd_client::testing::MockServer::start(Default::default()).await;
+            let runtime = cua_daemon::Runtime::new(cua_daemon::RuntimeConfig {
+                spaces_home: Some(home.path().join("spaces")),
+                state_dir: Some(home.path().join("sandboxes")),
+                ..Default::default()
+            })
+            .unwrap();
+            runtime
+                .spaces()
+                .set_relay(Some(cua_spaces::RelayAccount::new(
+                    &relay.url,
+                    Arc::new(cua_host::StaticToken("invalid-token".into())),
+                )));
+            let server = if daemon {
+                Some(
+                    cua_daemon::server::start(
+                        runtime.clone(),
+                        cua_daemon::server::ServerConfig {
+                            socket_path: None,
+                            loopback: Some("127.0.0.1:0".parse().unwrap()),
+                            token: "fixture".into(),
+                            discovery_path: Some(home.path().join("daemon.json")),
+                            bridge_ticket_ttl: Duration::from_secs(30),
+                        },
+                    )
+                    .await
+                    .unwrap(),
+                )
+            } else {
+                None
+            };
+            let cua = match &server {
+                Some(server) => {
+                    Cua::connect(server.loopback_url.clone(), Some(server.token.clone())).unwrap()
+                }
+                None => Cua::from_runtime(runtime.clone()),
+            };
+            assert!(cua.spaces().list().await.is_err());
+            // Canonical syntax is not evidence of registration.
+            let id = format!("direct:{}", target.addr);
+            assert!(matches!(
+                cua.spaces().resolve(id.clone()).await,
+                Err(CuaError::NotFound(_))
+            ));
+            register_space(&cua, &id).await.unwrap();
+            assert_eq!(runtime.spaces().registry().list().unwrap().len(), 1);
+            assert_eq!(cua.spaces().resolve(id.clone()).await.unwrap().id, id);
+            // Existing records must not be re-added (and lose their metadata).
+            let path = home.path().join("spaces/spaces.json");
+            let before = std::fs::read(&path).unwrap();
+            target
+                .state
+                .refuse_capabilities
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            register_space(&cua, &id).await.unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            // A corrupt registry is an error, not proof of absence.
+            std::fs::write(&path, b"not json").unwrap();
+            let error = register_space(&cua, &id).await.unwrap_err();
+            assert!(!matches!(error, CuaError::NotFound(_)));
+            assert_eq!(std::fs::read(&path).unwrap(), b"not json");
+            if let Some(server) = server {
+                server.shutdown();
+            }
+        }
+    }
 
     #[test]
     fn picks_the_launched_window_and_the_active_tab() {

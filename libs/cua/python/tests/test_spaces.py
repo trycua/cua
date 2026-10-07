@@ -134,6 +134,7 @@ def daemon_exercise(fixtures, cua_binary, tmp_path, teleport: bool):
         os.environ,
         CUA_HOME=str(home),
         HOME=str(home),
+        CUA_DAEMON_NO_RELAY="1",
         CUA_SPACES_TELEPORT_HOME=fixtures["teleport_host_home"],
         CUA_SPACES_AGENT_CREDENTIALS_HOME="none",
     )

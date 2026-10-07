@@ -823,3 +823,28 @@ async fn the_wizard_gets_the_first_gpu_option_of_each_runtime_that_has_one() {
         }])
     );
 }
+
+/// This is the compiled command-layer route called by Tauri list_spaces,
+/// not the frontend's injected listSpaces stub.
+#[tokio::test]
+async fn directory_failure_is_an_error_and_empty_recovery_succeeds() {
+    struct Tokens(Mutex<String>);
+    #[async_trait]
+    impl cua_host::AccountTokens for Tokens {
+        async fn access_token(&self) -> cua_host::Result<String> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+    }
+    let relay = cua_host::testing::FakeRelay::start().await;
+    relay.add_account("valid", "owner", None);
+    let tokens = Arc::new(Tokens(Mutex::new("bad".into())));
+    let home = tempfile::tempdir().unwrap();
+    let mut config = CoreConfig::hermetic(home.path());
+    config.relay = Some(cua_spaces::RelayAccount::new(&relay.url, tokens.clone()));
+    let app = AppCore::new(config);
+    let error = app.list_spaces().await.unwrap_err();
+    assert!(error.contains("Relay authentication failed"), "{error}");
+    assert!(!error.contains(&relay.url));
+    *tokens.0.lock().unwrap() = "valid".into();
+    assert!(app.list_spaces().await.unwrap().is_empty());
+}

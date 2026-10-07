@@ -158,6 +158,7 @@ async function daemonExercise(cli, teleport) {
           ...process.env,
           CUA_HOME: home,
           HOME: home,
+          CUA_DAEMON_NO_RELAY: "1",
           CUA_SPACES_TELEPORT_HOME: fx.teleport_host_home,
           CUA_SPACES_AGENT_CREDENTIALS_HOME: "none",
         },

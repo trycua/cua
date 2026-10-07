@@ -22,7 +22,14 @@ public struct MainWindow: View {
                 .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
         } detail: {
             detail
-                .safeAreaInset(edge: .top, spacing: 0) { DevicesBanner(devices: model.devices) }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    VStack(spacing: 0) {
+                        DevicesBanner(devices: model.devices)
+                        if let error = model.rosterError {
+                            SpacesDiscoveryNotice(error: error)
+                        }
+                    }
+                }
         }
         .background(WindowReader { model.dropTargets.window = $0 })
         .searchable(text: $model.query, placement: .sidebar, prompt: chrome.searchPlaceholder)
@@ -135,7 +142,7 @@ struct Sidebar: View {
                     }
                 }
             }
-            if let empty = sidebar.emptyText, sidebar.thisMachine == nil {
+            if let empty = sidebar.emptyText, sidebar.thisMachine == nil, model.rosterError == nil {
                 Text(empty).foregroundStyle(.secondary)
             }
             Section {
@@ -382,10 +389,23 @@ struct EmptySpaces: View {
     var body: some View {
         let chrome = model.chrome
         ContentUnavailableView {
-            Text(chrome.emptyTitle)
+            Text(model.rosterError == nil ? chrome.emptyTitle : "Spaces could not be loaded")
         } actions: {
             Button(chrome.emptyAction) { Task { await model.openNewSpace() } }
                 .buttonStyle(.glassProminent)
         }
+    }
+}
+
+/// Persistent discovery failure notice above the selected Space.
+struct SpacesDiscoveryNotice: View {
+    let error: String
+
+    var body: some View {
+        Text(error)
+            .foregroundStyle(.red)
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("spaces-discovery-error")
     }
 }

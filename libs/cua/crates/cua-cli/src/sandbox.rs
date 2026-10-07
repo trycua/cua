@@ -3025,6 +3025,157 @@ pub(crate) fn confirm_delete(
 mod tests {
     use super::*;
 
+    use cua_sandbox_core::{
+        InstanceStatus, LocalEndpoints, LocalInstance, LocalRuntime, LocalStartSpec, LocalSummary,
+        RuntimeError,
+    };
+    use std::{collections::BTreeMap, sync::Mutex};
+
+    struct FakeRuntime {
+        port: u16,
+        started: Mutex<Vec<LocalStartSpec>>,
+        deleted: Mutex<Vec<String>>,
+        running: Mutex<BTreeMap<String, bool>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LocalRuntime for FakeRuntime {
+        fn backend(&self) -> String {
+            "fake".into()
+        }
+        async fn start(&self, spec: &LocalStartSpec) -> Result<LocalInstance, RuntimeError> {
+            self.started.lock().unwrap().push(spec.clone());
+            self.running.lock().unwrap().insert(spec.name.clone(), true);
+            Ok(LocalInstance {
+                name: spec.name.clone(),
+                backend: "fake".into(),
+                status: InstanceStatus::Running,
+                endpoints: self.endpoints(&spec.name).await?,
+            })
+        }
+        async fn stop(&self, name: &str) -> Result<(), RuntimeError> {
+            self.running.lock().unwrap().insert(name.into(), false);
+            Ok(())
+        }
+        async fn resume(&self, name: &str) -> Result<LocalInstance, RuntimeError> {
+            Ok(LocalInstance {
+                name: name.into(),
+                backend: "fake".into(),
+                status: InstanceStatus::Running,
+                endpoints: self.endpoints(name).await?,
+            })
+        }
+        async fn list(&self) -> Result<Vec<LocalSummary>, RuntimeError> {
+            Ok(vec![])
+        }
+        async fn status(&self, name: &str) -> Result<InstanceStatus, RuntimeError> {
+            match self.running.lock().unwrap().get(name) {
+                Some(true) => Ok(InstanceStatus::Running),
+                Some(false) => Ok(InstanceStatus::Stopped),
+                None => Err(RuntimeError::NotFound(name.into())),
+            }
+        }
+        async fn delete(&self, name: &str) -> Result<(), RuntimeError> {
+            self.deleted.lock().unwrap().push(name.into());
+            self.running.lock().unwrap().remove(name);
+            Ok(())
+        }
+        async fn endpoints(&self, _name: &str) -> Result<LocalEndpoints, RuntimeError> {
+            Ok(LocalEndpoints {
+                host: "127.0.0.1".into(),
+                ports: [(3211u16, self.port)].into(),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn post_create_registration_outage_does_not_enter_cleanup() {
+        let mut images = cua_image::testing::FakeRegistry::default();
+        images.index(
+            "ghcr.io/example/discovery:1",
+            &["amd64", "arm64"],
+            false,
+            None,
+        );
+        cua_image::resolve::set_source(Some(Arc::new(images)));
+        for daemon in [false, true] {
+            let home = tempfile::tempdir().unwrap();
+            let relay = cua_host::testing::FakeRelay::start().await;
+            let srv = cua_spacesd_client::testing::MockServer::start(Default::default()).await;
+            let local = Arc::new(FakeRuntime {
+                port: srv.addr.port(),
+                started: Mutex::new(vec![]),
+                deleted: Mutex::new(vec![]),
+                running: Mutex::new(BTreeMap::new()),
+            });
+            let runtime = cua_daemon::Runtime::new(cua_daemon::RuntimeConfig {
+                local: Some(local.clone()),
+                state_dir: Some(home.path().join("sandboxes")),
+                spaces_home: Some(home.path().join("spaces")),
+                ..Default::default()
+            })
+            .unwrap();
+            runtime
+                .spaces()
+                .set_relay(Some(cua_spaces::RelayAccount::new(
+                    &relay.url,
+                    Arc::new(cua_host::StaticToken("bad".into())),
+                )));
+            let server = if daemon {
+                Some(
+                    cua_daemon::server::start(
+                        runtime.clone(),
+                        cua_daemon::server::ServerConfig {
+                            socket_path: None,
+                            loopback: Some("127.0.0.1:0".parse().unwrap()),
+                            token: "fixture".into(),
+                            discovery_path: Some(home.path().join("daemon.json")),
+                            bridge_ticket_ttl: std::time::Duration::from_secs(30),
+                        },
+                    )
+                    .await
+                    .unwrap(),
+                )
+            } else {
+                None
+            };
+            let cua = match &server {
+                Some(server) => {
+                    Cua::connect(server.loopback_url.clone(), Some(server.token.clone())).unwrap()
+                }
+                None => Cua::from_runtime(runtime.clone()),
+            };
+            let mut options = SandboxCreateOptions::auto("ghcr.io/example/discovery:1");
+            options.on = Some("local".into());
+            options.kind = Some("container".into());
+            options.name = Some("created-once".into());
+            let sandbox = cua.sandboxes().create(options).await.unwrap();
+            assert!(cua.spaces().list().await.is_err());
+            // Exercise the actual registration and failure-cleanup seam used
+            // after create by --browser, without launching a real browser.
+            let registered = crate::browse::register_space(&cua, &sandbox.id()).await;
+            let succeeded = registered.is_ok();
+            if let Err(error) = registered {
+                failed_after_create(&sandbox, false, error).await;
+            }
+            assert_eq!(local.started.lock().unwrap().len(), 1);
+            assert!(
+                local.deleted.lock().unwrap().is_empty(),
+                "directory failure deleted the created sandbox"
+            );
+            assert!(succeeded);
+            assert!(home.path().join("sandboxes/created-once.json").exists());
+            assert_eq!(
+                cua.spaces().resolve(sandbox.id()).await.unwrap().id,
+                sandbox.id()
+            );
+            if let Some(server) = server {
+                server.shutdown();
+            }
+        }
+    }
+
     #[test]
     fn sidecar_and_registry_secret_flags_parse() {
         let c = parse_sidecar("redis:7-alpine,port=6379,env=A=b=c,name=db").unwrap();

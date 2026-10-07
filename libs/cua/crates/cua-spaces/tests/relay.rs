@@ -153,14 +153,26 @@ async fn lists_owned_and_shared_relay_machines_as_spaces() {
         .build();
     let err = bad.relay_machines().await.unwrap_err();
     assert_eq!(err.tag(), "unauthenticated", "{err}");
-    // list_all tolerates an unreachable directory.
-    assert!(bad.list_all().await.unwrap().is_empty());
+    // Refresh failure must not be reported as a successful empty directory.
+    let err = bad.list_all().await.unwrap_err();
+    assert_eq!(err.tag(), "unauthenticated");
+    assert_eq!(
+        err.to_string(),
+        "Relay authentication failed. Sign in again to refresh your machines."
+    );
 }
 
 #[tokio::test]
 async fn relay_spaces_need_an_account() {
     let home = tempfile::tempdir().unwrap();
     let spaces = Spaces::builder().home(home.path()).build();
+    assert!(spaces.list_all().await.unwrap().is_empty());
+    let direct = MockServer::start(MockAuth::default()).await;
+    let registered = spaces
+        .add(&direct.url(), None, Some("local-only".into()))
+        .await
+        .unwrap();
+    assert_eq!(spaces.list_all().await.unwrap()[0].id, registered.id);
     let err = spaces.relay_machines().await.unwrap_err();
     assert_eq!(err.tag(), "host_capability_missing", "{err}");
     let err = spaces.space(&format!("relay:{MACHINE}")).await.unwrap_err();
@@ -249,6 +261,10 @@ async fn relay_spaces_carry_the_enrolled_device_session() {
         .build();
     let err = bare.relay_machines().await.unwrap_err();
     assert_eq!(err.tag(), "permission_denied", "{err}");
+    assert_eq!(
+        bare.list_all().await.unwrap_err().tag(),
+        "permission_denied"
+    );
 
     relay.fresh_sign_in("user-1");
     let device = Arc::new(
@@ -282,5 +298,99 @@ async fn relay_spaces_carry_the_enrolled_device_session() {
             .all(|(path, s)| path.starts_with(&format!("/m/{MACHINE}"))
                 && s.as_deref() == Some(session.as_str())),
         "{proxied:?}"
+    );
+}
+
+/// A failed refresh leaves the explicit cached route available, while a
+/// successful empty response replaces old directory rows.
+#[tokio::test]
+async fn discovery_failure_is_not_stale_success_and_empty_recovery_clears_cache() {
+    struct Tokens {
+        current: std::sync::Mutex<String>,
+        calls: AtomicU32,
+    }
+    #[async_trait::async_trait]
+    impl AccountTokens for Tokens {
+        async fn access_token(&self) -> cua_host::Result<String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.current.lock().unwrap().clone())
+        }
+    }
+    let relay = FakeRelay::start().await;
+    relay.add_account("owner", "owner", None);
+    relay.add_account("empty", "stranger", None);
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "owner",
+            &cua_host::relay::RegisterRequest {
+                id: MACHINE.into(),
+                name: "studio".into(),
+                allow: vec![],
+                host: None,
+                meta: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let tokens = Arc::new(Tokens {
+        current: std::sync::Mutex::new("owner".into()),
+        calls: AtomicU32::new(0),
+    });
+    let spaces = Spaces::builder()
+        .home(home.path())
+        .relay(RelayAccount::new(&relay.url, tokens.clone()))
+        .build();
+    let direct = MockServer::start(MockAuth::default()).await;
+    let local = spaces
+        .add(&direct.url(), None, Some("registered".into()))
+        .await
+        .unwrap();
+    assert_eq!(spaces.list_all().await.unwrap().len(), 2);
+    *tokens.current.lock().unwrap() = "bad".into();
+    assert_eq!(
+        spaces.list_all().await.unwrap_err().tag(),
+        "unauthenticated"
+    );
+    let calls = tokens.calls.load(Ordering::SeqCst);
+    assert_eq!(spaces.list().unwrap().len(), 2);
+    assert_eq!(
+        tokens.calls.load(Ordering::SeqCst),
+        calls,
+        "cached reads never refresh"
+    );
+    *tokens.current.lock().unwrap() = "empty".into();
+    let recovered = spaces.list_all().await.unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].id, local.id);
+    assert_eq!(spaces.list().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn discovery_errors_do_not_expose_provider_payloads() {
+    struct UnsafeError;
+    #[async_trait::async_trait]
+    impl AccountTokens for UnsafeError {
+        async fn access_token(&self) -> cua_host::Result<String> {
+            Err(cua_host::Error::Relay(format!(
+                "https://user:secret@example.invalid/?token=secret {}",
+                "untrusted".repeat(1000)
+            )))
+        }
+    }
+    let home = tempfile::tempdir().unwrap();
+    let spaces = Spaces::builder()
+        .home(home.path())
+        .relay(RelayAccount::new(
+            "http://127.0.0.1:1",
+            Arc::new(UnsafeError),
+        ))
+        .build();
+    let error = spaces.list_all().await.unwrap_err();
+    assert_eq!(error.tag(), "relay");
+    assert_eq!(
+        error.to_string(),
+        "relay: Could not refresh relay machines."
     );
 }

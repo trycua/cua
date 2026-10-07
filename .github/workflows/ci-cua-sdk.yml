@@ -98,6 +98,8 @@ jobs:
       - name: Build (wasm32)
         if: runner.os == 'Linux'
         run: cargo build --locked -p cua-sdk --target wasm32-unknown-unknown --no-default-features
+      - name: Test Spaces discovery and post-create directory failures
+        run: cargo test --locked -p cua-spaces --test relay --test cloud_discovery -- --test-threads=4
       - name: Test (embedded, daemon over UDS and loopback, CLI, Cua Spaces extensions)
         run: >
           cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon -p cua-cli

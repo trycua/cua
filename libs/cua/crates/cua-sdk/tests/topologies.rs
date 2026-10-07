@@ -42,6 +42,13 @@ enum Topology {
 }
 
 async fn world(t: Topology) -> (World, Arc<Cua>) {
+    world_with_relay(t, None).await
+}
+
+async fn world_with_relay(
+    t: Topology,
+    relay: Option<cua_spaces::RelayAccount>,
+) -> (World, Arc<Cua>) {
     let env = fixtures::start_env(Some(TOKEN), None).await;
     // Port forwards on a direct sandbox go over the driver's /tunnel.
     env.mock
@@ -59,6 +66,7 @@ async fn world(t: Topology) -> (World, Arc<Cua>) {
         ..Default::default()
     })
     .unwrap();
+    runtime.spaces().set_relay(relay);
     let (cua, daemon) = match t {
         Topology::Embedded => {
             // Host local public URLs in-process: never reach a daemon the
@@ -843,4 +851,38 @@ async fn daemon_rejects_wrong_token_and_reports_missing_daemon() {
     tokio::time::timeout(Duration::from_secs(5), h.wait())
         .await
         .expect("daemon stopped");
+}
+
+async fn discovery_refusal(t: Topology) {
+    let relay = cua_host::testing::FakeRelay::start().await;
+    let (_world, cua) = world_with_relay(
+        t,
+        Some(cua_spaces::RelayAccount::new(
+            &relay.url,
+            Arc::new(cua_host::StaticToken("invalid-token".into())),
+        )),
+    )
+    .await;
+    let error = cua.spaces().list().await.unwrap_err();
+    match error {
+        CuaError::Unauthenticated(message) => assert_eq!(
+            message,
+            "Relay authentication failed. Sign in again to refresh your machines."
+        ),
+        other => panic!("unexpected discovery refusal: {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_refusal_embedded() {
+    discovery_refusal(Topology::Embedded).await;
+}
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_refusal_daemon_socket() {
+    discovery_refusal(Topology::DaemonSocket).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_refusal_daemon_loopback() {
+    discovery_refusal(Topology::DaemonLoopback).await;
 }

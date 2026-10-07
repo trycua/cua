@@ -25,8 +25,10 @@ http.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
-hyper-util.workspace = true
+hyper-util = { workspace = true, features = ["client-proxy"] }
 hyper-rustls.workspace = true
+rustls-native-certs = "0.8"
+webpki-roots = "1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 tower.workspace = true
 tokio = { workspace = true }
@@ -45,5 +47,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 cua-spacesd-client = { path = ".", features = ["testing"] }
 tempfile.workspace = true

@@ -14,13 +14,11 @@ use std::time::Duration;
 use bytes::Bytes;
 use http::{HeaderName, HeaderValue, Method, Request, header};
 use http_body_util::{BodyExt, Full, Limited};
-use hyper_util::{
-    client::legacy::{Client, connect::HttpConnector},
-    rt::TokioExecutor,
-};
+use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 
 use crate::{
     SpacesdClient,
+    connector::ProxyConnector,
     error::{Error, Result},
     transport::{ENV_TOKEN_HEADER, FLEET_CLAIM_HEADER, HeaderInjector, ensure_crypto_provider},
 };
@@ -44,7 +42,7 @@ const RESERVED: &[&str] = &[
     cua_proto::metadata::PRINCIPAL_BIN,
 ];
 
-pub(crate) type HttpClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Full<Bytes>>;
+pub(crate) type HttpClient = Client<hyper_rustls::HttpsConnector<ProxyConnector>, Full<Bytes>>;
 
 /// One HTTP request to the spacesd.
 #[derive(Clone, Debug, Default)]
@@ -77,13 +75,9 @@ pub struct HttpReply {
 
 pub(crate) fn build_client(connect_timeout: Duration) -> Result<HttpClient> {
     ensure_crypto_provider();
-    let mut http = HttpConnector::new();
-    http.enforce_http(false);
-    http.set_connect_timeout(Some(connect_timeout));
-    http.set_nodelay(true);
+    let http = ProxyConnector::new(connect_timeout, None);
     let https = hyper_rustls::HttpsConnectorBuilder::new()
-        .with_provider_and_webpki_roots(rustls::crypto::ring::default_provider())
-        .map_err(|e| Error::Transport(e.to_string()))?
+        .with_tls_config(crate::tls::client_config()?)
         .https_or_http()
         .enable_http1()
         .wrap_connector(http);

@@ -15,6 +15,14 @@
 //! - Transports: native gRPC (HTTP/2, h2c or TLS) or gRPC-Web over
 //!   HTTP/1.1 (Fleet gateway, relays, anything HTTP/1-only). `Auto` probes
 //!   `GetCapabilities` over HTTP/2 and falls back to gRPC-Web.
+//! - Proxies: RPC and raw HTTP connections honor `HTTP_PROXY` / `HTTPS_PROXY`,
+//!   then `ALL_PROXY`, with `NO_PROXY` exclusions (including hosts and CIDRs).
+//!   Uppercase values take precedence over lowercase, even when empty; an empty
+//!   scheme-specific value permits `ALL_PROXY`. Unauthenticated HTTP proxies
+//!   use CONNECT for both HTTP and HTTPS origins. Origin TLS verification stays
+//!   enabled. Proxy credentials, HTTPS/SOCKS proxies and CGI proxy use are refused;
+//!   a selected proxy failure never falls back to a direct connection. This does
+//!   not change the separate WebSocket media and tunnel transports.
 //! - Auth: `authorization: Bearer <token>`; `x-cua-principal-bin`; through
 //!   the Fleet gateway the Fleet bearer plus `X-Cua-Fleet-Claim`, with the
 //!   env token moved to `x-cua-env-authorization`.
@@ -22,6 +30,7 @@
 
 mod client;
 mod computer;
+mod connector;
 pub mod diagnose;
 mod endpoint;
 pub mod error;
@@ -30,6 +39,7 @@ mod fs;
 mod http;
 pub mod manifest;
 mod process;
+mod tls;
 pub mod transport;
 pub mod tunnel;
 

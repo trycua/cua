@@ -374,7 +374,8 @@ fn encoder_loop(
                 Ok(encoder) => native = Some(encoder),
                 Err(error) => {
                     sink.on_event(CaptureEvent::Suspended(format!(
-                        "VideoToolbox encoder creation failed: {error}"
+                        "VideoToolbox encoder creation failed for a {}x{} frame: {error}",
+                        dimensions.0, dimensions.1
                     )));
                     continue;
                 }

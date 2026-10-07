@@ -18,9 +18,9 @@
 //!
 //! Everything here is **best-effort**: if the extension isn't installed/enabled
 //! the calls return `None` / no-op and callers keep the prior behaviour (no
-//! screen coords, no Wayland cursor). Uses a short-lived `gdbus` subprocess so
-//! there's no zbus blocking-feature or async-context coupling — the calls are
-//! infrequent (once per `get_window_state`, a few per click).
+//! screen coords, no Wayland cursor). Window snapshots use typed D-Bus replies;
+//! other calls use short-lived `gdbus` subprocesses. Both paths are bounded and
+//! can be called synchronously without depending on the caller's async context.
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::process::Command;
@@ -36,6 +36,7 @@ const DBUS_PATH: &str = "/org/freedesktop/DBus";
 const DBUS_IFACE: &str = "org.freedesktop.DBus";
 const BROWSER_HELPER_API_VERSION: u32 = 4;
 const SEMANTIC_CURSOR_API_VERSION: u32 = 8;
+const WINDOW_SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(800);
 
 #[derive(Debug, Clone)]
 struct ShellWindow {
@@ -303,18 +304,12 @@ fn wait_timeout(mut child: std::process::Child, dur: Duration) -> Option<std::pr
 /// is floating, so pixel actions derived from the returned screenshot miss
 /// their target.
 pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
-    let raw = gdbus_call("GetRects", &[])?;
+    let raw = window_snapshot(false)?;
     parse_window_origin(&raw, pid)
 }
 
 fn parse_window_origin(raw: &str, pid: u32) -> Option<(i32, i32)> {
-    // gdbus prints a GVariant tuple like `('[{"pid":..,"x":..}]',)`. Pull the
-    // JSON array out robustly (first '[' .. last ']') rather than parsing the
-    // GVariant wrapper, so an apostrophe in a window title can't break it.
-    let start = raw.find('[')?;
-    let end = raw.rfind(']')?;
-    let json = &raw[start..=end];
-    let arr: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
+    let arr: Vec<serde_json::Value> = serde_json::from_str(raw).ok()?;
     for w in &arr {
         if w.get("pid").and_then(|p| p.as_u64()) == Some(pid as u64) {
             let x = w.get("x").and_then(serde_json::Value::as_i64)? as i32;
@@ -333,7 +328,7 @@ fn parse_window_origin(raw: &str, pid: u32) -> Option<(i32, i32)> {
 /// shell already owns the authoritative stacking list, geometry, visibility,
 /// title, and PID, so use that metadata directly for `list_windows`.
 pub fn list_windows(filter_pid: Option<u32>) -> Option<Vec<WindowInfo>> {
-    let raw = gdbus_call("GetRects", &[])?;
+    let raw = window_snapshot(false)?;
     parse_windows(&raw, filter_pid)
 }
 
@@ -398,8 +393,42 @@ pub fn with_focused_window<T>(
 }
 
 fn trusted_shell_windows(filter_pid: Option<u32>) -> Option<Vec<ShellWindow>> {
-    let raw = trusted_gdbus_call("GetRects", &[])?;
+    let raw = window_snapshot(true)?;
     parse_shell_windows(&raw, filter_pid)
+}
+
+fn window_snapshot(require_browser_api: bool) -> Option<String> {
+    let owner = shell_owner(require_browser_api)?;
+    window_snapshot_for_owner(&owner)
+}
+
+fn window_snapshot_for_owner(owner: &str) -> Option<String> {
+    let owner = owner.to_owned();
+    // Like the KDE adapter, isolate the runtime from synchronous callers that
+    // may already be inside Tokio. Keep the verified unique owner as the target.
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .ok()?;
+        runtime.block_on(async move {
+            tokio::time::timeout(WINDOW_SNAPSHOT_TIMEOUT, async {
+                let connection = zbus::Connection::session().await.ok()?;
+                let proxy = zbus::Proxy::new(&connection, owner.as_str(), PATH, IFACE)
+                    .await
+                    .ok()?;
+                // gdbus's GVariant display text adds another escaping layer.
+                // A quote in any window title can otherwise hide every window.
+                proxy.call::<_, _, String>("GetRects", &()).await.ok()
+            })
+            .await
+            .ok()
+            .flatten()
+        })
+    })
+    .join()
+    .ok()
+    .flatten()
 }
 
 /// Ask GNOME Shell to focus and raise one stable-sequence window.
@@ -455,21 +484,14 @@ fn trusted_activate_window(window_id: u64) -> bool {
 }
 
 fn window_is_focused(window_id: u32) -> bool {
-    let Some(raw) = gdbus_call("GetRects", &[]) else {
+    let Some(raw) = window_snapshot(false) else {
         return false;
     };
-    let (Some(start), Some(end)) = (raw.find('['), raw.rfind(']')) else {
-        return false;
-    };
-    serde_json::from_str::<Vec<serde_json::Value>>(&raw[start..=end])
-        .ok()
-        .and_then(|windows| {
-            windows.into_iter().find(|window| {
-                window.get("id").and_then(serde_json::Value::as_u64) == Some(window_id as u64)
-            })
-        })
-        .and_then(|window| window.get("focused").and_then(serde_json::Value::as_bool))
-        .unwrap_or(false)
+    parse_shell_windows(&raw, None).is_some_and(|windows| {
+        windows
+            .into_iter()
+            .any(|window| window.info.xid == u64::from(window_id) && window.focused)
+    })
 }
 
 fn parse_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<WindowInfo>> {
@@ -482,9 +504,7 @@ fn parse_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<WindowInfo>> 
 }
 
 fn parse_shell_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<ShellWindow>> {
-    let start = raw.find('[')?;
-    let end = raw.rfind(']')?;
-    let windows: Vec<serde_json::Value> = serde_json::from_str(&raw[start..=end]).ok()?;
+    let windows: Vec<serde_json::Value> = serde_json::from_str(raw).ok()?;
 
     Some(
         windows
@@ -590,9 +610,84 @@ mod tests {
     const EXTENSION_METADATA: &str =
         include_str!("../../../../../wayland-helper/winrects@cua/metadata.json");
 
+    struct MockWinRects(String);
+
+    #[zbus::interface(name = "org.cua.WinRects")]
+    impl MockWinRects {
+        fn get_rects(&self) -> &str {
+            &self.0
+        }
+    }
+
+    #[test]
+    fn typed_window_snapshot_runs_on_private_bus() {
+        // Run the transport owner test in a child so its session address cannot
+        // race other tests or connect the mock service to the user's desktop bus.
+        let output = Command::new("dbus-run-session")
+            .arg("--")
+            .arg(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "wayland::shell_helper::tests::typed_window_snapshot_preserves_escaped_titles",
+                "--nocapture",
+            ])
+            .output()
+            .expect("dbus-run-session must be available for the private bus regression");
+
+        assert!(
+            output.status.success(),
+            "private bus regression failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "selected by typed_window_snapshot_runs_on_private_bus in a private session"]
+    async fn typed_window_snapshot_preserves_escaped_titles() {
+        let title = "Tomorrow's \"meeting\" [draft] \\ notes\n飞书";
+        let json = serde_json::json!([
+            {"id": 46, "pid": 6079, "title": title, "x": 14, "y": 12,
+             "w": 560, "h": 736, "focused": true},
+            {"id": 47, "pid": 6080, "title": "Target", "x": 66, "y": 32,
+             "w": 958, "h": 736, "focused": false}
+        ])
+        .to_string();
+        let service = zbus::connection::Builder::session()
+            .unwrap()
+            .serve_at(PATH, MockWinRects(json.clone()))
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        // Address only our unique mock owner; production still verifies GNOME's
+        // executable, uid and protocol version before entering this transport.
+        let raw = window_snapshot_for_owner(service.unique_name().unwrap().as_str())
+            .expect("typed GetRects reply");
+        assert_eq!(raw, json);
+        let windows = parse_shell_windows(&raw, None).unwrap();
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].info.title, title);
+        assert!(windows[0].focused);
+        assert_eq!(parse_window_origin(&raw, 6079), Some((14, 12)));
+        let target = parse_windows(&raw, Some(6080)).unwrap();
+        assert_eq!(target.len(), 1);
+        assert_eq!(target[0].xid, 47);
+        assert_eq!((target[0].x, target[0].y), (66, 32));
+    }
+
+    #[test]
+    fn rejects_malformed_or_display_formatted_snapshots() {
+        for raw in ["not JSON", "{}", "('[{\"pid\":6079,\"x\":14,\"y\":12}]',)"] {
+            assert!(parse_shell_windows(raw, None).is_none());
+            assert!(parse_window_origin(raw, 6079).is_none());
+        }
+    }
+
     #[test]
     fn parses_and_filters_shell_windows() {
-        let raw = r#"('[{"id":46,"pid":6079,"title":"Sentinel's window","x":66,"y":32,"w":958,"h":736,"focused":true,"minimized":false,"visible":true,"stacking":2},{"id":47,"pid":6080,"title":"Hidden","x":0,"y":0,"w":100,"h":100,"minimized":true,"visible":false,"stacking":1}]',)"#;
+        let raw = r#"[{"id":46,"pid":6079,"title":"Sentinel's window","x":66,"y":32,"w":958,"h":736,"focused":true,"minimized":false,"visible":true,"stacking":2},{"id":47,"pid":6080,"title":"Hidden","x":0,"y":0,"w":100,"h":100,"minimized":true,"visible":false,"stacking":1}]"#;
         let windows = parse_windows(raw, Some(6079)).expect("valid helper response");
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].xid, 46);
@@ -606,14 +701,14 @@ mod tests {
 
     #[test]
     fn accessibility_origin_matches_the_frame_cropped_screenshot() {
-        let raw = r#"('[{"id":46,"pid":6079,"title":"Floating GTK","x":14,"y":12,"w":560,"h":736,"buffer_x":0,"buffer_y":0}]',)"#;
+        let raw = r#"[{"id":46,"pid":6079,"title":"Floating GTK","x":14,"y":12,"w":560,"h":736,"buffer_x":0,"buffer_y":0}]"#;
 
         assert_eq!(parse_window_origin(raw, 6079), Some((14, 12)));
     }
 
     #[test]
     fn marks_minimized_shell_windows_off_screen() {
-        let raw = r#"('[{"id":47,"pid":6080,"title":"Hidden","x":0,"y":0,"w":100,"h":100,"minimized":true,"visible":false,"stacking":1}]',)"#;
+        let raw = r#"[{"id":47,"pid":6080,"title":"Hidden","x":0,"y":0,"w":100,"h":100,"minimized":true,"visible":false,"stacking":1}]"#;
         let windows = parse_windows(raw, None).expect("valid helper response");
         assert_eq!(windows.len(), 1);
         assert!(!windows[0].is_on_screen);
@@ -634,7 +729,7 @@ mod tests {
 
     #[test]
     fn preserves_exact_focus_from_shell_snapshot() {
-        let raw = r#"('[{"id":46,"pid":6079,"title":"Target","x":66,"y":32,"w":958,"h":736,"focused":false,"minimized":false,"visible":true,"stacking":2},{"id":47,"pid":6080,"title":"Sentinel","x":0,"y":0,"w":100,"h":100,"focused":true,"minimized":false,"visible":true,"stacking":3}]',)"#;
+        let raw = r#"[{"id":46,"pid":6079,"title":"Target","x":66,"y":32,"w":958,"h":736,"focused":false,"minimized":false,"visible":true,"stacking":2},{"id":47,"pid":6080,"title":"Sentinel","x":0,"y":0,"w":100,"h":100,"focused":true,"minimized":false,"visible":true,"stacking":3}]"#;
         let windows = parse_shell_windows(raw, None).expect("valid helper response");
         assert_eq!(windows.len(), 2);
         assert!(!windows[0].focused);

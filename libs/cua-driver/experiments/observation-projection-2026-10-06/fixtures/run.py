@@ -1,6 +1,6 @@
 """Matched live AX-only driver trial. Never creates a virtual display.
 
-ARC_EVAL_SOURCE=/tmp/arc-cua-eval-20261005 /tmp/arc-cua-eval-venv/bin/python run.py
+Use the configured Python environment and owned AppKit fixture.
 Input is delivered only through each driver's public MCP tools. State/fault
 injection belongs to the synthetic fixture, independently of either driver.
 """
@@ -69,11 +69,11 @@ class MCP:
         self.calls = []
         self.id = 0
         self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=open(f'/tmp/arc-eval-{name}.stderr', 'w'), bufsize=0)
+                                     stderr=open(f'/tmp/reference-eval-{name}.stderr', 'w'), bufsize=0)
         self.buffer = b''
         try:
             initialized = self.request('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},
-                                                      'clientInfo': {'name': 'oh-arc-eval', 'version': '1'}})
+                                                      'clientInfo': {'name': 'oh-reference-eval', 'version': '1'}})
             self.server_info = initialized['serverInfo']
             self.send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
             self.schemas = {t['name']: t['inputSchema'] for t in self.request('tools/list', {})['tools']}
@@ -140,7 +140,7 @@ class MCP:
 
 class Fixture:
     def __init__(self, start='shown'):
-        self.temp = tempfile.TemporaryDirectory(prefix='oh-arc-fixture-')
+        self.temp = tempfile.TemporaryDirectory(prefix='oh-reference-fixture-')
         self.path = Path(self.temp.name) / 'state.json'
         self.log = open(Path(self.temp.name) / 'stderr', 'w')
         self.proc = subprocess.Popen([sys.executable, str(HERE/'fixture.py'), str(self.path), start],
@@ -185,7 +185,7 @@ def windows(pid):
 
 def observe(client, fixture, window):
     args = {'pid': fixture.pid, 'window_id': window}
-    if client.name == 'arc':
+    if client.name == 'reference':
         result, error = client.call('observe', **args)
     else:
         result, error = client.call('get_window_state', **args, include_screenshot=False)
@@ -204,7 +204,7 @@ def find(client, snap, label):
 
 
 def act(client, fixture, window, snap, element, action='CLICK', value=None):
-    if client.name == 'arc':
+    if client.name == 'reference':
         assert action in element.get('actions', []), 'action not offered by observed element'
         args = {'snapshot': snap['snapshot'], 'element': element['id'], 'action': action, 'settle': True}
         if value is not None:
@@ -234,7 +234,7 @@ def scenario(client, case, rep):
     watcher.start()
     result = {'driver': client.name, 'case': case, 'rep': rep}
     try:
-        win = wait_for(lambda: windows(f.pid).get('Arc Bench Form'))
+        win = wait_for(lambda: windows(f.pid).get('Reference Bench Form'))
         t = time.perf_counter()
         snap = observe(client, f, win)
         if case == 'form':
@@ -242,9 +242,9 @@ def scenario(client, case, rep):
                                          ('Email', 'SET_VALUE', 'synthetic@example.invalid'),
                                          ('Subscribe', 'CLICK', None), ('Submit', 'CLICK', None)]:
                 response, error = act(client, f, win, snap, find(client, snap, label), action, value)
-                if error or (client.name == 'arc' and response.get('status') != 'done'):
+                if error or (client.name == 'reference' and response.get('status') != 'done'):
                     raise RuntimeError(str(response))
-                snap = response.get('fresh') if client.name == 'arc' else observe(client, f, win)
+                snap = response.get('fresh') if client.name == 'reference' else observe(client, f, win)
             state = wait_for(lambda: f.state() if f.state().get('submitted') == 1 else None)
             result['passed'] = all(state.get(k) == v for k,v in {
                 'name':'Synthetic Person', 'email':'synthetic@example.invalid',
@@ -253,15 +253,15 @@ def scenario(client, case, rep):
             response, error = act(client, f, win, snap, find(client, snap, 'Plan'))
             if error:
                 raise RuntimeError(str(response))
-            next_snap = response.get('fresh') if client.name == 'arc' else observe(client, f, win)
+            next_snap = response.get('fresh') if client.name == 'reference' else observe(client, f, win)
             response, error = act(client, f, win, next_snap, find(client, next_snap, 'Team'))
-            if client.name != 'arc':
+            if client.name != 'reference':
                 observe(client, f, win)
             state = wait_for(lambda: f.state() if f.state().get('plan') == 'Team' else None, 3)
             result['passed'] = state.get('plan') == 'Team'
             result['action_error'] = error
         elif case == 'menu':
-            if client.name == 'arc':
+            if client.name == 'reference':
                 commands, error = client.call('commands', pid=f.pid)
                 paths = [c['path'] for c in commands['commands'] if c['path'] == 'Bench > Increment']
                 assert len(paths) == 1
@@ -276,7 +276,7 @@ def scenario(client, case, rep):
             result['action_error'] = error
         elif case in ('hidden', 'minimized'):
             response, error = act(client, f, win, snap, find(client, snap, 'Subscribe'))
-            if client.name != 'arc':
+            if client.name != 'reference':
                 observe(client, f, win)
             result['passed'] = f.state().get('subscribe') is True and f.state().get(case) is True
             result['action_error'] = error
@@ -285,13 +285,13 @@ def scenario(client, case, rep):
             f.mutate('second')
             snap = observe(client, f, win)
             response, error = act(client, f, win, snap, find(client, snap, 'Subscribe'))
-            if client.name != 'arc':
+            if client.name != 'reference':
                 observe(client, f, win)
             state = f.state()
             result['passed'] = state.get('subscribe') is True and state.get('agree') is False
         elif case == 'delayed_sheet':
             response, error = act(client, f, win, snap, find(client, snap, 'Open 800 ms'))
-            next_snap = response.get('fresh') if client.name == 'arc' else observe(client, f, win)
+            next_snap = response.get('fresh') if client.name == 'reference' else observe(client, f, win)
             result['sheet_at_return'] = f.state().get('dialog') is True
             wait_for(lambda: f.state().get('dialog'))
             cached = find(client, next_snap, 'Submit')
@@ -316,7 +316,7 @@ def scenario(client, case, rep):
         result['calls'] = client.calls[offset:]
         result['tool_calls'] = len(result['calls'])
         result['tool_ms'] = sum(c['ms'] for c in result['calls'])
-        if client.name == 'arc':
+        if client.name == 'reference':
             client.call('release', pid=f.pid)
         f.close()
     return result
@@ -329,62 +329,63 @@ def candidate_versions():
     if (native_check.get('error') or native_check.get('update_available') or not native_check.get('latest_version')
             or native_check.get('current_version') != native_check.get('latest_version')):
         raise RuntimeError('Update Cua Driver before comparing: cua-driver update --apply')
-    source = Path(os.environ['ARC_EVAL_SOURCE']).resolve()
+    source = Path(os.environ['REFERENCE_EVAL_SOURCE']).resolve()
     commit = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
-    latest_arc = subprocess.check_output(
-        ['gh', 'api', 'repos/shhivv/arc-cua/commits/master', '--jq', '.sha'], text=True, timeout=30).strip()
-    arc_checked_at = datetime.now(timezone.utc).isoformat()
-    if commit != latest_arc:
-        raise RuntimeError('Update the arc checkout and its installed environment to upstream head before comparing')
+    latest_reference = subprocess.check_output(
+        ['gh', 'api', f"repos/{os.environ['REFERENCE_UPSTREAM_REPO']}/commits/{os.environ['REFERENCE_UPSTREAM_REF']}", '--jq', '.sha'], text=True, timeout=30).strip()
+    reference_checked_at = datetime.now(timezone.utc).isoformat()
+    if commit != latest_reference:
+        raise RuntimeError('Update the reference checkout and its installed environment to upstream head before comparing')
     subprocess.run(['git', '-C', str(source), 'diff', '--exit-code', 'HEAD', '--', 'src', 'pyproject.toml'],
                    check=True, capture_output=True)
-    import arc_cua
-    if not Path(arc_cua.__file__).resolve().is_relative_to(source):
-        raise RuntimeError('The active Python environment does not use the checked arc source')
-    arc_version = tomllib.loads((source / 'pyproject.toml').read_text())['project']['version']
-    return {'arc_commit': commit, 'arc_version': arc_version,
+    import importlib
+    reference = importlib.import_module(os.environ['REFERENCE_MODULE'])
+    if not Path(reference.__file__).resolve().is_relative_to(source):
+        raise RuntimeError('The active Python environment does not use the checked reference source')
+    reference_version = tomllib.loads((source / 'pyproject.toml').read_text())['project']['version']
+    return {'reference_commit': commit, 'reference_version': reference_version,
             'native_version': native_check['current_version'],
             'native_latest_version': native_check['latest_version'],
             'native_release': native_check['release_notes_url'] or
                 f"https://github.com/trycua/cua/releases/tag/cua-driver-rs-v{native_check['current_version']}",
-            'arc_upstream_checked_at': arc_checked_at,
+            'reference_upstream_checked_at': reference_checked_at,
             'candidates_checked_at': native_check['checked_at'],
             'macos': platform.mac_ver()[0], 'python': platform.python_version()}
 
 
-def verify_servers(versions, arc, native):
+def verify_servers(versions, reference, native):
     if native.server_info['version'] != versions['native_version']:
         raise RuntimeError('Running Cua daemon differs from the current CLI; restart it before comparing')
-    if arc.server_info['version'] != versions['arc_version']:
-        raise RuntimeError('Running arc MCP server differs from the checked source')
-    versions['servers'] = {'arc': arc.server_info, 'native': native.server_info}
+    if reference.server_info['version'] != versions['reference_version']:
+        raise RuntimeError('Running reference MCP server differs from the checked source')
+    versions['servers'] = {'reference': reference.server_info, 'native': native.server_info}
 
 
 def main():
-    reps = int(os.environ.get('ARC_EVAL_REPS', '3'))
-    cases = os.environ.get('ARC_EVAL_CASES', 'form,popup,menu,second_window,label,record,disable,sheet,delayed_sheet,hidden,minimized').split(',')
+    reps = int(os.environ.get('REFERENCE_EVAL_REPS', '3'))
+    cases = os.environ.get('REFERENCE_EVAL_CASES', 'form,popup,menu,second_window,label,record,disable,sheet,delayed_sheet,hidden,minimized').split(',')
     versions = candidate_versions()
     with ExitStack() as owned:
-        arc = MCP([sys.executable, '-m', 'arc_cua', 'mcp'], 'arc')
-        owned.callback(arc.close)
+        reference = MCP([sys.executable, '-m', os.environ['REFERENCE_MODULE'], 'mcp'], 'reference')
+        owned.callback(reference.close)
         native = MCP(['cua-driver', 'mcp', '--socket', str(Path.home()/'Library/Caches/cua-driver/cua-driver.sock')], 'native')
         owned.callback(native.close)
-        verify_servers(versions, arc, native)
+        verify_servers(versions, reference, native)
         output = {**versions, 'scope':'live AX-only synthetic AppKit, scripted selections, MCP stdio', 'results':[]}
-        result_path = HERE / os.environ.get('ARC_EVAL_RESULT_FILE', 'results.json')
+        result_path = HERE / os.environ.get('REFERENCE_EVAL_RESULT_FILE', 'results.json')
         result_path.parent.mkdir(parents=True, exist_ok=True)
-        (result_path.parent/'schemas.json').write_text(json.dumps({'arc':{k:v for k,v in arc.schemas.items() if k in
+        (result_path.parent/'schemas.json').write_text(json.dumps({'reference':{k:v for k,v in reference.schemas.items() if k in
             ('observe','act','commands','run_command','release')}, 'native':{k:v for k,v in native.schemas.items()
             if k in ('get_window_state','click','set_value','invoke_menu')}}, indent=2))
         for rep in range(reps):
             for case in cases:
-                for client in ([arc,native] if rep % 2 == 0 else [native,arc]):
+                for client in ([reference,native] if rep % 2 == 0 else [native,reference]):
                     result = scenario(client, case, rep)
                     output['results'].append(result)
                     result_path.write_text(json.dumps(output, indent=2))
                     print(json.dumps({k:result.get(k) for k in ('driver','case','rep','passed','tool_calls','tool_ms','error','refused','sheet_at_return','parked')}), flush=True)
     for case in cases:
-        for name in ('arc','native'):
+        for name in ('reference','native'):
             rows = [r for r in output['results'] if r['case'] == case and r['driver'] == name]
             print(case, name, sum(r['passed'] for r in rows), '/',len(rows), 'median tool ms', round(statistics.median(r['tool_ms'] for r in rows),1))
 

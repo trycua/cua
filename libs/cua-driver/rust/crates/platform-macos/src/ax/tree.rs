@@ -28,7 +28,7 @@ use std::time::Instant;
 pub const DEFAULT_MAX_DEPTH: usize = 25;
 
 /// Default maximum total nodes visited during a single AX walk. Chromium-family
-/// apps (Arc, VS Code, Chrome) can expose thousands of nodes; capping at 2 000
+/// apps (Reference, VS Code, Chrome) can expose thousands of nodes; capping at 2 000
 /// keeps the walk bounded while still covering realistic app chrome.
 /// When the cap is hit the walk stops early and the partial tree is returned
 /// with a warning line appended (mirrors Swift reference implementation).
@@ -236,7 +236,7 @@ pub fn walk_tree_budgeted(
         // the caller's budget, for the app to answer AX (see `super::launch`).
         let mut launch_wait = LaunchWait::new(budget.time_limit());
         let (top_level, walk_these) = loop {
-            // Chromium/Electron apps (Arc, VS Code, Electron shells) ship their
+            // Chromium/Electron apps (Reference, VS Code, Electron shells) ship their
             // web-content AX tree OFF and only build it once an assistive client
             // asks for it. Without this, the first walk of such an app returns an
             // empty/title-bar-only tree (#1616). Flip the enablement attribute,

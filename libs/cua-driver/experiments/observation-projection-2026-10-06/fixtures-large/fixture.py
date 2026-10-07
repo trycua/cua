@@ -4,7 +4,7 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(os.environ['ARC_EVAL_SOURCE']) / 'benchmarks'))
+sys.path.insert(0, str(Path(os.environ['REFERENCE_EVAL_SOURCE']) / 'benchmarks'))
 import fixture_form
 import AppKit
 import Foundation

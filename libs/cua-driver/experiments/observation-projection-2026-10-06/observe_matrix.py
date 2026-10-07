@@ -7,7 +7,7 @@ HERE=Path(__file__).resolve().parent
 CUA=Path(os.environ.get('CUA_PROJECTION_SOURCE',str(HERE.parents[3])));sys.path.insert(0,str(CUA/'libs/cua-driver/examples/jev-use/python'))
 from native import NativeObservation
 from sources import NativeAccessibilitySource
-BASE=(Path(os.environ['OH_COMPARISON_SOURCE'])/'experiments/arc-cua-comparison-2026-10-05') if os.environ.get('OH_COMPARISON_SOURCE') else HERE/'fixtures'
+BASE=(Path(os.environ['REFERENCE_FIXTURE_SOURCE'])) if os.environ.get('OH_COMPARISON_SOURCE') else HERE/'fixtures'
 spec=importlib.util.spec_from_file_location('projection_fixture_owner',BASE/'run.py');h=importlib.util.module_from_spec(spec);sys.modules[spec.name]=h;spec.loader.exec_module(h)
 class WireMCP(h.MCP):
     def request(self,method,params):
@@ -55,7 +55,7 @@ async def window_ready(client,fixture):
     driver=Driver(client)
     for _ in range(20):
         listed=await driver.call('list_windows',{'pid':fixture.pid})
-        matches=[w for w in listed.get('windows',[]) if w.get('pid')==fixture.pid and w.get('title')=='Arc Bench Form' and w.get('is_on_screen') is True]
+        matches=[w for w in listed.get('windows',[]) if w.get('pid')==fixture.pid and w.get('title')=='Reference Bench Form' and w.get('is_on_screen') is True]
         if len(matches)==1:
             window=matches[0]['window_id'];row=await observe(client,fixture,window,'full')
             if row['qualified']:return window

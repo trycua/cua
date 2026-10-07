@@ -58,3 +58,38 @@ func sshCommandEscaping() {
     #expect(formattedBash == "/bin/bash -c 'test \"$1\" = \"two words\"' argv0 'two words'")
 }
 
+@Test("A single lume ssh command argument reaches the remote shell unchanged")
+func sshSingleArgumentPassthrough() throws {
+    #expect(SSH.formatRemoteCommand(["ls -la"]) == "ls -la")
+    #expect(SSH.formatRemoteCommand(["cd /app && npm test"]) == "cd /app && npm test")
+
+    // The shape cua-vmm's LumeSshExec sends: one argument holding
+    // `/bin/sh -c '<wrapper>'`, already quoted for the remote shell.
+    let wrapper = """
+        e=$(mktemp -t cua-exec) || exit 125; ( /bin/sh -c 'echo hi'\\''s' ) 2>"$e"; rc=$?; \
+        printf '\\036CUA-EXEC-1\\036%d\\036' "$rc"; base64 < "$e"; rm -f "$e"; exit "$rc"
+        """
+    let quoted = "'" + wrapper.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    let cuaVmmCommand = "/bin/sh -c \(quoted)"
+    #expect(SSH.formatRemoteCommand([cuaVmmCommand]) == cuaVmmCommand)
+
+    let parsed = try SSH.parse(["guest", "--timeout", "0", cuaVmmCommand])
+    #expect(SSH.formatRemoteCommand(parsed.command) == cuaVmmCommand)
+}
+
+@Test("Several lume ssh command arguments keep their boundaries (#3879)")
+func sshMultipleArgumentsKeepBoundaries() throws {
+    let testArgs = try SSH.parse(["guest", "--", "/usr/bin/test", "two words", "=", "two words"])
+    #expect(
+        SSH.formatRemoteCommand(testArgs.command)
+            == "/usr/bin/test 'two words' = 'two words'")
+
+    let bashArgs = try SSH.parse([
+        "guest", "--", "/bin/bash", "-c", "test \"$1\" = \"two words\"", "argv0", "two words",
+    ])
+    #expect(
+        SSH.formatRemoteCommand(bashArgs.command)
+            == "/bin/bash -c 'test \"$1\" = \"two words\"' argv0 'two words'")
+
+    #expect(SSH.formatRemoteCommand(["printf", "%s|", "", "a'b", "$HOME"]) == "printf '%s|' '' 'a'\\''b' '$HOME'")
+}

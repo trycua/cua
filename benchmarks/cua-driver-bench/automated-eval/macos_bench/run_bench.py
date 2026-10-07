@@ -1797,8 +1797,9 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
     codex = [a for a in arm_names if a in arms.CODEX_FALLBACK_ARMS]
     if codex and not args.allow_codex_arms:
         raise SystemExit(f"arms {codex} are fallback arms; pass --allow-codex-arms")
-    if len(arm_names) not in (2, 3) and args.command == "run":
-        print(f"note: running {len(arm_names)} arm(s); the rotation rule assumes 2 or 3", file=sys.stderr)
+    if len(arm_names) < 2 and args.command == "run":
+        # the rotation (task_pos + run_index) mod n works for any n >= 2 (four arms: Amendment 4)
+        print(f"note: running {len(arm_names)} arm; there is no arm order to rotate", file=sys.stderr)
     if args.claude_bin is not None:
         ca.CLAUDE_BIN = args.claude_bin
     ctx = Ctx(

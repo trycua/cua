@@ -113,6 +113,7 @@ is safe even for apps that normally foreground on media-load
 | Screenshot                            | `get_window_state` (window) or authorized `get_desktop_state` (desktop)                | `screencapture`                                             |
 | Quit an app                           | ask the user first, then `hotkey({pid, keys:["cmd","q"]})`                             | `kill`, `killall`, `pkill`                                  |
 | Hand a file/URL to an app             | `launch_app({bundle_id, urls:[<path>]})`                                               | `open -a <App> <path>`, `open <url>`                        |
+| View a local file in the GUI          | `launch_app({bundle_id, urls:["file:///…"]})`                                          | typing `file://` into the omnibox                           |
 
 ### The narrow carve-out
 

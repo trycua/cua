@@ -49,6 +49,7 @@ The MCP server instructions carry the same rules, so they apply even when this f
 | ----------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | Check installation and capabilities       | `cua-driver --version`, `status`, `doctor`, `describe <tool>`; MCP `tools/list`                       | [Runtime](RUNTIME.md)                                 |
 | Find or open the requested app            | `list_apps`, `list_windows`, `launch_app`                                                             | Current platform guide below                          |
+| View a local file in the GUI              | `launch_app({bundle_id, urls:["file:///…"]})` opens it in that app                                    | Current platform guide below                          |
 | Observe one window                        | `get_window_state({pid, window_id, query})`                                                           | [Workflow](WORKFLOW.md)                               |
 | Act on a control                          | `click` / `type_text` with a fresh `element_token` and exact window target                            | [Workflow](WORKFLOW.md)                               |
 | Act and see what changed in one call      | `run_actions({steps:[{tool,args},...], observe:true})`; stops at the first failure                    | [Workflow](WORKFLOW.md#batch-known-actions)           |

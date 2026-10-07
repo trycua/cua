@@ -1048,6 +1048,92 @@ fn classify_target_web_area(
     }
 }
 
+/// Whether `pid` is a web browser whose omnibox and pages the foreground
+/// typing rung must activate fully (see the browser branch of the rung).
+fn is_browser_pid(pid: i32) -> bool {
+    let bundle_id = apps::bundle_id_for_pid(pid).unwrap_or_default();
+    crate::browser::browser_js::BrowserJs::supports(&bundle_id) || is_chromium_identity(&bundle_id)
+}
+
+fn is_chromium_identity(bundle_id: &str) -> bool {
+    bundle_id
+        .to_ascii_lowercase()
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| {
+            matches!(
+                token,
+                "chrome" | "chromium" | "brave" | "edgemac" | "vivaldi" | "opera" | "thorium"
+            )
+        })
+}
+
+const SELECTED_RANGE: &str = "AXSelectedTextRange";
+
+/// Copy an attribute's raw value (+1 retained), whatever its type.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef`; the caller releases the
+/// returned value.
+unsafe fn copy_raw_attr(
+    element: AXUIElementRef,
+    name: &str,
+) -> Option<core_foundation::base::CFTypeRef> {
+    use core_foundation::{base::TCFType, string::CFString};
+    let attr = CFString::new(name);
+    let mut value: core_foundation::base::CFTypeRef = std::ptr::null();
+    let err = crate::ax::bindings::AXUIElementCopyAttributeValue(
+        element,
+        attr.as_concrete_TypeRef(),
+        &mut value,
+    );
+    (err == kAXErrorSuccess && !value.is_null()).then_some(value)
+}
+
+/// Set an attribute to a raw value previously read with [`copy_raw_attr`].
+///
+/// # Safety
+///
+/// `element` and `value` must be valid for the duration of the call.
+unsafe fn set_raw_attr(
+    element: AXUIElementRef,
+    name: &str,
+    value: core_foundation::base::CFTypeRef,
+) {
+    use core_foundation::{base::TCFType, string::CFString};
+    let attr = CFString::new(name);
+    let _ = crate::ax::bindings::AXUIElementSetAttributeValue(
+        element,
+        attr.as_concrete_TypeRef(),
+        value,
+    );
+}
+
+/// After an activation, wait until WindowServer has kept `window_id`'s
+/// process front for [`FRONT_SETTLE_STABLE`], bounded by
+/// [`FRONT_SETTLE_TIMEOUT`]. Returns whether it settled.
+fn await_front_settled(pid: i32, window_id: u32) -> bool {
+    let deadline = std::time::Instant::now() + FRONT_SETTLE_TIMEOUT;
+    let mut since: Option<std::time::Instant> = None;
+    loop {
+        let now = std::time::Instant::now();
+        if crate::input::skylight::front_process_matches(pid, window_id) == Some(true) {
+            if now.duration_since(*since.get_or_insert(now)) >= FRONT_SETTLE_STABLE {
+                return true;
+            }
+        } else {
+            since = None;
+        }
+        if now >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+const FRONT_SETTLE_STABLE: std::time::Duration = std::time::Duration::from_millis(250);
+const FRONT_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
+
 /// Type via CGEvent keystrokes at the current insertion point, then verify by
 /// read-back. `type_text` is deliberately non-idempotent: it must never clear
 /// an existing value merely because AX cannot read that value back.
@@ -1216,13 +1302,13 @@ fn type_text_blocking(
         // dropped. 200ms covers that re-grab without penalizing an already
         // armed interactive stream on every text chunk.
         let foreground_settle_ms = foreground_settle_ms(pid, apps::frontmost_pid());
-        let do_type = || {
+        let do_type = |element: Option<(usize, Option<usize>)>| {
             cgevent_type_verified(
                 pid,
                 text,
                 delay_ms,
                 before.as_deref(),
-                element_ptr_and_idx,
+                element,
                 foreground_settle_ms,
                 window_id,
             )
@@ -1249,6 +1335,58 @@ fn type_text_blocking(
                 )?;
                 ((false, None), true)
             }
+            Some(wid) if is_browser_pid(pid) => {
+                // A browser needs a real activation, and its text focus kept.
+                // A SkyLight front alone is not a Cocoa activation: the
+                // omnibox suggestion window hands the front back to the
+                // previous app and the rest of the string is lost. A Cocoa
+                // activation re-installs the window's remembered first
+                // responder (the page), so keys typed after it miss the
+                // omnibox. "file:///…/archive-access.log" arrived as
+                // "file://g" (bench CDB-G04, CUA-1223). So: remember the
+                // focused field, activate exactly as bring_to_front does, wait
+                // until the front holds, put focus back on the field, type,
+                // then ask the previous app to take activation back. macOS may
+                // refuse that from a background process and leave the browser
+                // front, as it already did after a foreground omnibox Return.
+                let previous_pid = apps::frontmost_pid().filter(|previous| *previous != pid);
+                let remembered = match element_ptr_and_idx {
+                    Some(_) => None,
+                    None => unsafe { crate::ax::exact_target::focused_element_in_window(pid, wid) },
+                };
+                // The caret or selection (cmd+L selects the whole URL) is
+                // part of what activation resets: keep it too.
+                let selection = remembered
+                    .and_then(|element| unsafe { copy_raw_attr(element, SELECTED_RANGE) });
+                super::bring_to_front::activate_exact_window_blocking(pid, wid);
+                await_front_settled(pid, wid);
+                let mut typed_delivery = (false, None);
+                let fronted =
+                    crate::input::skylight::with_foreground_assist(pid as libc::pid_t, wid, || {
+                        if let Some(element) = remembered {
+                            let _ = crate::input::ax_actions::focus_element(element as usize);
+                            if let Some(selection) = selection {
+                                unsafe { set_raw_attr(element, SELECTED_RANGE, selection) };
+                            }
+                        }
+                        // The remembered field is focused again; the read-back
+                        // follows the focused element.
+                        typed_delivery = do_type(element_ptr_and_idx)?;
+                        Ok(())
+                    });
+                unsafe {
+                    if let Some(selection) = selection {
+                        CFRelease(selection);
+                    }
+                    if let Some(element) = remembered {
+                        CFRelease(element as core_foundation::base::CFTypeRef);
+                    }
+                }
+                if let Some(previous_pid) = previous_pid {
+                    super::bring_to_front::reactivate_application(previous_pid);
+                }
+                (typed_delivery, fronted?)
+            }
             Some(wid) => {
                 // Front → type → restore. The closure returns the read-back
                 // result; with_foreground_assist returns whether it actually
@@ -1259,14 +1397,14 @@ fn type_text_blocking(
                     pid as libc::pid_t,
                     wid,
                     || {
-                        typed_delivery = do_type()?;
+                        typed_delivery = do_type(element_ptr_and_idx)?;
                         Ok(())
                     },
                 )?;
                 (typed_delivery, fronted)
             }
             // No window to front — best-effort background keystrokes instead.
-            None => (do_type()?, false),
+            None => (do_type(element_ptr_and_idx)?, false),
         };
         // Only claim the `_fg` path when a front actually happened; when no
         // foregrounding occurred (no window, or SPIs unavailable) these were
@@ -1422,6 +1560,28 @@ fn type_text_blocking(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn browser_identities_take_the_activating_rung() {
+        for id in [
+            "com.google.Chrome",
+            "com.google.Chrome.canary",
+            "org.chromium.Chromium",
+            "com.brave.Browser",
+            "com.microsoft.edgemac",
+            "com.vivaldi.Vivaldi",
+        ] {
+            assert!(super::is_chromium_identity(id), "{id}");
+        }
+        for id in [
+            "org.libreoffice.script",
+            "com.apple.TextEdit",
+            "com.tinyspeck.slackmacgap",
+            "",
+        ] {
+            assert!(!super::is_chromium_identity(id), "{id}");
+        }
+    }
+
     use super::*;
 
     /// A semantic-only policy must refuse the terminal short-circuit before

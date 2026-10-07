@@ -559,13 +559,17 @@ extension Server {
             let vncPolicy = try request.validatedVNCPolicy(noDisplayDefault: false)
             let noDisplay = request.noDisplay ?? false
 
-            let runningVMCount = try LumeController().list(storage: nil)
-                .filter { $0.status == "running" }
-                .count
-            if let capacityError = Self.activeVMCapacityError(
-                runningVMCount: runningVMCount,
-                maxVMs: Self.maxActiveVMs
-            ) {
+            // Virtualization.framework runs at most two macOS guests per host
+            // and fails a third start only after the async start was accepted,
+            // so refuse it up front. Linux guests are not limited.
+            let controller = LumeController()
+            if let target = try? controller.getDetails(name: name, storage: request.storage),
+                let capacityError = Self.macOSGuestCapacityError(
+                    targetOS: target.os,
+                    runningMacOSGuests: Self.runningMacOSGuestCount(
+                        try controller.runningVMs(), excluding: target.name)
+                )
+            {
                 return HTTPResponse(
                     statusCode: .conflict,
                     headers: ["Content-Type": "application/json"],
@@ -1016,8 +1020,11 @@ extension Server {
     /// Response structure for host status endpoint
     struct HostStatusResponse: Codable {
         let status: String
+        /// Running VMs, macOS and Linux.
         let vmCount: Int
+        /// The most macOS guests the host runs at once.
         let maxVMs: Int
+        /// macOS guests that can still start.
         let availableSlots: Int
         let version: String
 
@@ -1035,18 +1042,16 @@ extension Server {
         do {
             let vmController = LumeController()
 
-            // Get all VMs across all storage locations
-            let vms = try vmController.list(storage: nil)
-
-            // Count running VMs (Apple policy: max 2 VMs per host)
-            let runningVMs = vms.filter { $0.status == "running" }
-            let maxVMs = Self.maxActiveVMs  // Apple Virtualization Framework limit
+            // Running VMs across all storage locations. Only macOS guests
+            // take one of the host's slots (Virtualization.framework limit).
+            let runningVMs = try vmController.runningVMs()
+            let maxVMs = Self.maxRunningMacOSGuests
 
             let response = HostStatusResponse(
                 status: "healthy",
                 vmCount: runningVMs.count,
                 maxVMs: maxVMs,
-                availableSlots: max(0, maxVMs - runningVMs.count),
+                availableSlots: max(0, maxVMs - Self.runningMacOSGuestCount(runningVMs)),
                 version: Lume.Version.current
             )
 
@@ -1059,12 +1064,28 @@ extension Server {
 
     // MARK: - Private Helper Methods
 
-    static let maxActiveVMs = 2
+    /// Virtualization.framework runs at most two macOS guests per host at a
+    /// time. Linux guests do not count toward this limit.
+    static let maxRunningMacOSGuests = 2
 
-    static func activeVMCapacityError(runningVMCount: Int, maxVMs: Int) -> String? {
-        runningVMCount >= maxVMs
-            ? "VM start rejected: host active VM limit reached"
-            : nil
+    static func isMacOSGuest(_ os: String) -> Bool {
+        os.lowercased() == "macos"
+    }
+
+    /// The running macOS guests in `vms`, leaving out the VM named `excluding`.
+    static func runningMacOSGuestCount(_ vms: [VMDetails], excluding name: String? = nil) -> Int {
+        vms.filter { $0.status == "running" && isMacOSGuest($0.os) && $0.name != name }.count
+    }
+
+    /// Why a VM with `targetOS` may not start while `runningMacOSGuests` macOS
+    /// guests run, or nil when it may.
+    static func macOSGuestCapacityError(
+        targetOS: String,
+        runningMacOSGuests: Int,
+        maxGuests: Int = maxRunningMacOSGuests
+    ) -> String? {
+        guard isMacOSGuest(targetOS), runningMacOSGuests >= maxGuests else { return nil }
+        return "VM start rejected: host limit of \(maxGuests) running macOS guests reached"
     }
 
     nonisolated private func startVM(

@@ -22,6 +22,12 @@ final class SharedVM {
     func removeVM(name: String) {
         runningVMs.removeValue(forKey: name)
     }
+
+    /// Drops cached VMs whose guest no longer runs in this process, such as a
+    /// guest that shut itself down.
+    func removeStoppedVMs() {
+        runningVMs = runningVMs.filter { $0.value.isRunActive }
+    }
 }
 
 // MARK: - Pull Progress Tracker
@@ -183,6 +189,15 @@ final class LumeController {
 
     /// Lists all virtual machines in the system
     /// Uses a lightweight path that reads config directly without instantiating full VM objects
+    /// The VMs whose guests are running, across all storage locations. Cache
+    /// entries for guests that already stopped are dropped first, so a guest
+    /// that shut itself down is not counted as running.
+    @MainActor
+    public func runningVMs() throws -> [VMDetails] {
+        SharedVM.shared.removeStoppedVMs()
+        return try list(storage: nil).filter { $0.status == "running" }
+    }
+
     @MainActor
     public func list(storage: String? = nil) throws -> [VMDetails] {
         do {

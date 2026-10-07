@@ -22,6 +22,35 @@ struct VersionCheckTests {
         )
     }
 
+    @Test func updateInstallerPreservesBackgroundServiceChoice() throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        #expect(
+            LumeVersionCheck.installScriptArguments(
+                homeDirectory: home,
+                installCommand: "install-lume"
+            ) == ["-c", "install-lume -s -- --no-background-service"]
+        )
+
+        let servicePlist = home.appendingPathComponent(
+            "Library/LaunchAgents/com.trycua.lume_daemon.plist"
+        )
+        try FileManager.default.createDirectory(
+            at: servicePlist.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data().write(to: servicePlist)
+
+        #expect(
+            LumeVersionCheck.installScriptArguments(
+                homeDirectory: home,
+                installCommand: "install-lume"
+            ) == ["-c", "install-lume"]
+        )
+    }
+
     @Test func stableDiscoveryRejectsDraftAndNightlyTags() {
         let releases: [[String: Any]] = [
             ["tag_name": "lume-v0.6.0", "draft": true],

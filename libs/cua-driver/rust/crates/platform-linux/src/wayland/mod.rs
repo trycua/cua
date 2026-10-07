@@ -2900,40 +2900,22 @@ fn inject_focused_target() -> anyhow::Result<(u32, u64)> {
         })
 }
 
+fn inject_scroll_axis(direction: &str) -> anyhow::Result<(u32, f64)> {
+    match direction.to_ascii_lowercase().as_str() {
+        "up" => Ok((0, -15.0)),
+        "down" | "page" => Ok((0, 15.0)),
+        "left" => Ok((1, -15.0)),
+        "right" => Ok((1, 15.0)),
+        _ => anyhow::bail!("unsupported cua-compositor scroll direction {direction:?}"),
+    }
+}
+
 fn inject_scroll_desktop(x: i32, y: i32, direction: &str, amount: u32) -> anyhow::Result<()> {
-    let windows = crate::atspi::list_windows(None);
-    let target = windows
-        .iter()
-        .filter(|window| {
-            window.is_on_screen
-                && x >= window.x
-                && y >= window.y
-                && x < window.x.saturating_add(window.width as i32)
-                && y < window.y.saturating_add(window.height as i32)
-        })
-        .max_by_key(|window| window.z_index.unwrap_or_default())
-        .or_else(|| {
-            let (pid, _) = inject_focused_target().ok()?;
-            windows.iter().find(|window| window.pid == Some(pid))
-        })
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "foreground_unavailable: no cua-compositor window contains desktop point ({x},{y})"
-            )
-        })?;
-    let pid = target.pid.ok_or_else(|| {
-        anyhow::anyhow!(
-            "foreground_unavailable: desktop point ({x},{y}) resolved to a window without a pid"
-        )
-    })?;
-    inject_scroll(
-        pid,
-        target.xid,
-        f64::from(x.saturating_sub(target.x)),
-        f64::from(y.saturating_sub(target.y)),
-        direction,
-        amount,
-    )
+    let (axis, value) = inject_scroll_axis(direction)?;
+    // Desktop input follows the compositor's current scene hit-test. AT-SPI
+    // cannot supply an authoritative stacking order for this compositor.
+    let line = format!("e {x} {y} {axis} {value:.1}");
+    inject_send(&vec![line; amount.max(1) as usize])
 }
 
 /// Reject any character the nested compositor cannot type before it reaches the
@@ -3273,13 +3255,7 @@ pub fn inject_scroll(
     amount: u32,
 ) -> anyhow::Result<()> {
     let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
-    let (axis, value) = match direction.to_ascii_lowercase().as_str() {
-        "up" => (0, -15.0),
-        "down" | "page" => (0, 15.0),
-        "left" => (1, -15.0),
-        "right" => (1, 15.0),
-        _ => anyhow::bail!("unsupported cua-compositor scroll direction {direction:?}"),
-    };
+    let (axis, value) = inject_scroll_axis(direction)?;
     let mut lines = vec![format!("m {app} 0 {x:.1} {y:.1}")];
     lines.extend((0..amount.max(1)).map(|_| format!("a {app} 0 {axis} {value:.1}")));
     inject_send(&lines)
@@ -4238,6 +4214,19 @@ mod tests {
                 "-k", "Shift_L", "-s", "30", "-M", "ctrl", "-M", "shift", "-s", "20", "-k", "7",
                 "-s", "20", "-m", "shift", "-m", "ctrl",
             ]
+        );
+    }
+
+    #[test]
+    fn scroll_axis_preserves_wheel_direction_and_rejects_unknown_input() {
+        assert_eq!(inject_scroll_axis("UP").unwrap(), (0, -15.0));
+        assert_eq!(inject_scroll_axis("down").unwrap(), (0, 15.0));
+        assert_eq!(inject_scroll_axis("page").unwrap(), (0, 15.0));
+        assert_eq!(inject_scroll_axis("left").unwrap(), (1, -15.0));
+        assert_eq!(inject_scroll_axis("right").unwrap(), (1, 15.0));
+        assert_eq!(
+            inject_scroll_axis("diagonal").unwrap_err().to_string(),
+            "unsupported cua-compositor scroll direction \"diagonal\""
         );
     }
 

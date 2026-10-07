@@ -86,17 +86,16 @@ where
             outcome = bounded.as_mut() => (None, outcome),
         }
     };
+    let consent_timed_out = outcome.is_err();
     let outcome = match outcome {
         Ok(outcome) => outcome?,
+        Err(_) if action.started() => consent.await.map_err(|mut error| {
+            error
+                .message
+                .push_str(" (consent attempt deadline expired)");
+            error
+        })?,
         Err(_) => {
-            if action.started() {
-                consent.await.map_err(|mut error| {
-                    error
-                        .message
-                        .push_str(" (consent attempt deadline expired)");
-                    error
-                })?;
-            }
             return Err(refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "browser consent did not settle within its bounded attempt",
@@ -110,13 +109,21 @@ where
             "browser consent action did not produce a confirmed outcome",
         ));
     }
-    Ok((
-        match result {
-            Some(result) => result,
-            None => claim.as_mut().await,
-        },
-        accepted,
-    ))
+    let result = match result {
+        Some(result) => result,
+        // A committed action may confirm after the consent timer; keep the
+        // original reconnect alive briefly, but never wait on it indefinitely.
+        None if consent_timed_out => tokio::time::timeout(Duration::from_secs(4), claim.as_mut())
+            .await
+            .map_err(|_| {
+                refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "browser reconnect did not settle after confirmed consent",
+                )
+            })?,
+        None => claim.as_mut().await,
+    };
+    Ok((result, accepted))
 }
 
 async fn claim_with_delayed_consent<T, Claim, Consent, MakeConsent>(
@@ -1438,7 +1445,7 @@ mod tests {
                 let result = claim_with_optional_consent(&mut claim, &action, consent).await;
                 assert!(dropped.load(Ordering::SeqCst));
                 match outcome {
-                    0 => {
+                    0 | 2 => {
                         let (claim, displayed) = result.unwrap();
                         assert_eq!(claim.is_ok(), claim_succeeds);
                         assert!(displayed && settled.load(Ordering::SeqCst));
@@ -1447,19 +1454,34 @@ mod tests {
                         result.unwrap_err().code,
                         BrowserRefusalCode::BrowserConsentRevoked
                     ),
-                    _ => {
-                        assert_eq!(
-                            result.unwrap_err().code,
-                            BrowserRefusalCode::BrowserWrongTargetRefused
-                        );
-                        assert!(
-                            settled.load(Ordering::SeqCst),
-                            "committed worker was detached on timeout"
-                        );
-                    }
+                    _ => unreachable!(),
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn late_confirmed_consent_allows_the_original_pending_claim_to_finish() {
+        let action = BrowserConsentAction::default();
+        let marker = action.clone();
+        let (confirmed, awaiting_confirmation) = tokio::sync::oneshot::channel();
+        let mut claim = Box::pin(async move {
+            awaiting_confirmation.await.unwrap();
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            Ok::<_, anyhow::Error>(7_u8)
+        });
+        let consent = async move {
+            marker.perform(|| ());
+            tokio::time::sleep(Duration::from_millis(4100)).await;
+            confirmed.send(()).unwrap();
+            Ok(BrowserConsentOutcome::Accepted)
+        };
+
+        let (result, displayed) = claim_with_optional_consent(&mut claim, &action, consent)
+            .await
+            .unwrap();
+        assert_eq!(result.unwrap(), 7);
+        assert!(displayed);
     }
 
     #[tokio::test]

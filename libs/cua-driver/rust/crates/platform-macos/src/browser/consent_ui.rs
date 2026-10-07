@@ -220,6 +220,26 @@ fn read_consent_trees(pid: i32, window_id: u32) -> Result<ConsentTrees, BrowserR
     Ok(trees)
 }
 
+fn settled_after_scan(
+    accepted_prompt: bool,
+    prompt_present: bool,
+    deadline_expired: bool,
+    attempt: u8,
+) -> Result<Option<BrowserConsentOutcome>, BrowserRefusal> {
+    if accepted_prompt && !prompt_present {
+        return Ok(Some(BrowserConsentOutcome::Accepted));
+    }
+    if deadline_expired {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!(
+                "Chrome remote-debugging consent did not settle for reconnect attempt {attempt}"
+            ),
+        ));
+    }
+    Ok(None)
+}
+
 /// Dismiss any exact Chrome-owned remote-debugging sheet before teardown.
 /// Turning off the setting does not reliably close a sheet that an existing
 /// WebSocket connection already presented.
@@ -304,20 +324,19 @@ pub async fn handle(
                     format!("could not inspect the browser consent UI: {error}"),
                 )
             })??;
-        if Instant::now() >= deadline {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                format!(
-                    "Chrome remote-debugging consent did not settle for reconnect attempt {}",
-                    request.attempt
-                ),
-            ));
-        }
         let prompt_present = trees
             .0
             .iter()
             .any(|nodes| remote_debugging_sheet_present(nodes));
         saw_prompt |= prompt_present;
+        if let Some(outcome) = settled_after_scan(
+            accepted_prompt,
+            prompt_present,
+            Instant::now() >= deadline,
+            request.attempt,
+        )? {
+            return Ok(outcome);
+        }
         let mut candidates = Vec::new();
         for nodes in &trees.0 {
             if let Some(element) = exact_allow_button(nodes)? {
@@ -353,9 +372,6 @@ pub async fn handle(
                 "multiple Chrome-owned remote-debugging consent sheets exposed semantic allow actions",
             ));
         }
-        if accepted_prompt && !prompt_present {
-            return Ok(BrowserConsentOutcome::Accepted);
-        }
         if saw_prompt && !prompt_present {
             return Err(refusal(
                 BrowserRefusalCode::BrowserConsentRevoked,
@@ -369,6 +385,22 @@ pub async fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn confirmed_closed_sheet_wins_over_elapsed_deadline() {
+        assert_eq!(
+            settled_after_scan(true, false, true, 1).unwrap(),
+            Some(BrowserConsentOutcome::Accepted)
+        );
+        assert_eq!(
+            settled_after_scan(true, true, true, 1).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+        assert_eq!(
+            settled_after_scan(false, false, true, 1).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
 
     fn node(role: &str, depth: usize, title: Option<&str>, actions: &[&str]) -> AXNode {
         AXNode {

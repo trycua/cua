@@ -848,7 +848,11 @@ impl Spaces {
     pub async fn relay_machines(&self) -> Result<Vec<crate::relay::RelayMachine>> {
         let relay = self.relay()?;
         let token = relay.tokens.access_token().await?;
-        let machines = relay.client().await?.machines(&token).await?;
+        let client = cua_host::RelayClient::new(&relay.url)?;
+        let machines = match &relay.device {
+            Some(device) => device.machines_for(&client, &token).await?,
+            None => client.machines(&token).await?,
+        };
         *self.inner.relay_cache.lock().expect("relay cache") = machines.clone();
         Ok(machines)
     }

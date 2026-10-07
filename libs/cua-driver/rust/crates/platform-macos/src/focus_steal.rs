@@ -557,6 +557,12 @@ fn handle_activation(dispatcher: &Arc<Dispatcher>, note: &objc2_foundation::NSNo
         pid as i32
     };
 
+    #[cfg(feature = "experimental-owned-supervision")]
+    if crate::apps::frontmost_pid() != Some(activated_pid) {
+        // Queued notifications can describe an activation already restored
+        // before this lease existed. Never restore or report that stale event.
+        return;
+    }
     let restore_pids = dispatcher.snapshot_matches(activated_pid);
     for pid in restore_pids {
         #[cfg(feature = "experimental-owned-supervision")]

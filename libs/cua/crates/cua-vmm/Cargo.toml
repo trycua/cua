@@ -39,7 +39,7 @@ png = { version = "0.18", optional = true }
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
 
 [dev-dependencies]
 # Opt-in QEMU test: the SDK client checks the guest accepts the delivered token.

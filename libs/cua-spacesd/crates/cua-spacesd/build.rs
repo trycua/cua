@@ -25,6 +25,14 @@ fn git(args: &[&str]) -> Option<String> {
 }
 
 fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        // The linked Windows driver expects physical pixels. Declare the
+        // process context before any async, native, or overlay thread starts.
+        println!("cargo:rerun-if-changed=cua-spacesd.rc");
+        println!("cargo:rerun-if-changed=cua-spacesd.manifest");
+        embed_resource::compile_for("cua-spacesd.rc", ["cua-spacesd"], embed_resource::NONE);
+    }
+
     println!("cargo:rerun-if-env-changed=CUA_SPACESD_GIT_SHA");
     let from_env = std::env::var("CUA_SPACESD_GIT_SHA").unwrap_or_default();
     let sha = if !from_env.trim().is_empty() {

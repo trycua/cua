@@ -122,3 +122,6 @@ pub use recording::RecordingSession;
 
 #[cfg(feature = "experimental-owned-supervision")]
 pub mod owned_supervision;
+
+#[cfg(feature = "experimental-owned-supervision")]
+pub mod field_settlement;

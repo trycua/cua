@@ -15,17 +15,19 @@
 //!    Application.Id.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use cua_driver_core::single_flight::SingleFlight;
 use windows::core::{Interface, PCWSTR};
 use windows::Win32::Foundation::MAX_PATH;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED, STGM,
 };
-use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_RAWPATH};
+use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
 
 /// Parsed metadata for an installed Windows application.
 #[derive(Debug, Clone)]
@@ -78,8 +80,7 @@ pub fn list_installed_apps() -> Vec<InstalledApp> {
 
 fn app_sort_key(a: &InstalledApp, b: &InstalledApp) -> std::cmp::Ordering {
     // Keep recently-used apps near the top when we can infer usage recency.
-    // Interface-Agent's Windows adapter sorts by LastAccessTime; mirror that
-    // behavior here, with deterministic name-based fallback.
+    // Sort by LastAccessTime, with deterministic name-based fallback.
     match (a.last_used.as_deref(), b.last_used.as_deref()) {
         (Some(ax), Some(bx)) => bx
             .cmp(ax)
@@ -175,7 +176,7 @@ fn resolve_lnk(lnk_path: &Path) -> Option<InstalledApp> {
         .ok()
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| unix_secs_to_rfc3339(d.as_secs() as i64));
+        .and_then(|d| cua_driver_core::timestamp::unix_secs_to_rfc3339(d.as_secs() as i64));
 
     let launch_path = if args.trim().is_empty() {
         target.clone()
@@ -211,7 +212,8 @@ unsafe fn read_lnk_target(lnk_path: &Path) -> windows::core::Result<(String, Str
     persist.Load(PCWSTR(wide_path.as_ptr()), STGM(0))?;
 
     let mut path_buf = vec![0u16; MAX_PATH as usize + 1];
-    shell_link.GetPath(&mut path_buf, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32)?;
+    // Raw shortcut paths can contain %windir%; launch_path consumers need the resolved target.
+    shell_link.GetPath(&mut path_buf, std::ptr::null_mut(), 0)?;
 
     // INFOTIPSIZE (1024) is the documented upper bound for the LNK
     // arguments field; allocate one extra slot for the NUL terminator.
@@ -258,128 +260,84 @@ enum UwpScanDeadlineError {
 /// retries fail fast instead of accumulating one blocked thread per
 /// `list_apps` call. Once a late worker returns, a short cooldown prevents a
 /// hot retry loop against a broken package repository or token context.
-struct UwpScanSingleFlight {
-    in_flight: AtomicBool,
-    cooldown_until_ms: AtomicU64,
-    cooldown_ms: u64,
+fn uwp_scan_single_flight() -> &'static Arc<SingleFlight> {
+    static GATE: OnceLock<Arc<SingleFlight>> = OnceLock::new();
+    GATE.get_or_init(|| Arc::new(SingleFlight::new(UWP_SCAN_RECOVERY_COOLDOWN)))
 }
 
-impl UwpScanSingleFlight {
-    const fn new(cooldown_ms: u64) -> Self {
-        Self {
-            in_flight: AtomicBool::new(false),
-            cooldown_until_ms: AtomicU64::new(0),
-            cooldown_ms,
-        }
-    }
+fn run_uwp_scan<T, F>(
+    gate: &Arc<SingleFlight>,
+    timeout: Duration,
+    f: F,
+) -> Result<T, UwpScanDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let Some(permit) = gate.try_acquire() else {
+        return Err(UwpScanDeadlineError::Busy);
+    };
+    let timed_out = permit.timeout_flag();
 
-    fn run<T, F>(self: &Arc<Self>, timeout: Duration, f: F) -> Result<T, UwpScanDeadlineError>
-    where
-        T: Send + 'static,
-        F: FnOnce() -> T + Send + 'static,
-    {
-        let now = uwp_scan_now_ms();
-        if now < self.cooldown_until_ms.load(Ordering::Acquire)
-            || self
-                .in_flight
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_err()
-        {
-            return Err(UwpScanDeadlineError::Busy);
-        }
-
-        let (tx, rx) = mpsc::channel();
-        let timed_out = Arc::new(AtomicBool::new(false));
-        let worker_timed_out = Arc::clone(&timed_out);
-        let worker_gate = Arc::clone(self);
-        let spawn = thread::Builder::new()
-            .name("cua-uwp-package-scan".to_owned())
-            .spawn(move || {
-                let _guard = UwpScanInFlightGuard {
-                    gate: worker_gate,
-                    timed_out: worker_timed_out,
-                };
-                let _ = tx.send(f());
-            });
-
-        if let Err(error) = spawn {
-            self.in_flight.store(false, Ordering::Release);
-            tracing::warn!(
-                target: "installed_apps",
-                "scan_uwp_packages: failed to start bounded WinRT worker: {error}"
-            );
-            return Err(UwpScanDeadlineError::Unavailable);
-        }
-
-        match rx.recv_timeout(timeout) {
-            Ok(result) => Ok(result),
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                timed_out.store(true, Ordering::Release);
-                // Arm the cooldown here as well as in the worker guard. The
-                // worker can return in the narrow interval between
-                // `recv_timeout` expiring and observing `timed_out`; recording
-                // it on the caller side ensures that race cannot immediately
-                // launch another package query.
-                self.cooldown_until_ms.store(
-                    uwp_scan_now_ms().saturating_add(self.cooldown_ms),
-                    Ordering::Release,
-                );
+    let (tx, rx) = mpsc::channel();
+    let spawn = thread::Builder::new()
+        .name("cua-uwp-package-scan".to_owned())
+        .spawn(move || {
+            let _ = tx.send(f());
+            if permit.timed_out() {
                 tracing::warn!(
                     target: "installed_apps",
-                    "scan_uwp_packages: current-user WinRT query exceeded {}ms; returning Start Menu apps without UWP results. No additional package worker will start until this query returns",
-                    timeout.as_millis()
+                    "scan_uwp_packages: timed-out WinRT query returned; cooling down before retry"
                 );
-                Err(UwpScanDeadlineError::Timeout)
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                tracing::warn!(
-                    target: "installed_apps",
-                    "scan_uwp_packages: bounded WinRT worker exited without a result"
-                );
-                Err(UwpScanDeadlineError::Unavailable)
-            }
-        }
+            // Dropping the permit arms the cooldown after a timeout and
+            // reopens the gate.
+            drop(permit);
+        });
+
+    if let Err(error) = spawn {
+        // The unspawned closure, and with it the permit, is already dropped,
+        // which reopened the gate.
+        tracing::warn!(
+            target: "installed_apps",
+            "scan_uwp_packages: failed to start bounded WinRT worker: {error}"
+        );
+        return Err(UwpScanDeadlineError::Unavailable);
     }
-}
 
-struct UwpScanInFlightGuard {
-    gate: Arc<UwpScanSingleFlight>,
-    timed_out: Arc<AtomicBool>,
-}
-
-impl Drop for UwpScanInFlightGuard {
-    fn drop(&mut self) {
-        if self.timed_out.load(Ordering::Acquire) {
-            self.gate.cooldown_until_ms.store(
-                uwp_scan_now_ms().saturating_add(self.gate.cooldown_ms),
-                Ordering::Release,
-            );
+    match rx.recv_timeout(timeout) {
+        Ok(result) => Ok(result),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            timed_out.store(true, Ordering::Release);
+            // Arm the cooldown here as well as when the permit drops. The
+            // worker can return in the narrow interval between `recv_timeout`
+            // expiring and observing `timed_out`; recording it on the caller
+            // side ensures that race cannot immediately launch another package
+            // query.
+            gate.arm_cooldown();
             tracing::warn!(
                 target: "installed_apps",
-                "scan_uwp_packages: timed-out WinRT query returned; cooling down for {}ms before retry",
-                self.gate.cooldown_ms
+                "scan_uwp_packages: current-user WinRT query exceeded {}ms; returning Start Menu apps without UWP results. No additional package worker will start until this query returns",
+                timeout.as_millis()
             );
+            Err(UwpScanDeadlineError::Timeout)
         }
-        self.gate.in_flight.store(false, Ordering::Release);
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            tracing::warn!(
+                target: "installed_apps",
+                "scan_uwp_packages: bounded WinRT worker exited without a result"
+            );
+            Err(UwpScanDeadlineError::Unavailable)
+        }
     }
-}
-
-fn uwp_scan_single_flight() -> &'static Arc<UwpScanSingleFlight> {
-    static GATE: OnceLock<Arc<UwpScanSingleFlight>> = OnceLock::new();
-    GATE.get_or_init(|| {
-        Arc::new(UwpScanSingleFlight::new(
-            UWP_SCAN_RECOVERY_COOLDOWN.as_millis() as u64,
-        ))
-    })
-}
-
-fn uwp_scan_now_ms() -> u64 {
-    static START: OnceLock<Instant> = OnceLock::new();
-    START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
 fn scan_uwp_packages() -> Vec<InstalledApp> {
-    match uwp_scan_single_flight().run(UWP_SCAN_TIMEOUT, scan_uwp_packages_unbounded) {
+    match run_uwp_scan(
+        uwp_scan_single_flight(),
+        UWP_SCAN_TIMEOUT,
+        scan_uwp_packages_unbounded,
+    ) {
         Ok(packages) => packages,
         Err(UwpScanDeadlineError::Busy) => {
             tracing::debug!(
@@ -620,44 +578,81 @@ fn read_install_mtime(pkg: &windows::ApplicationModel::Package) -> Option<String
     let meta = std::fs::metadata(&path).ok()?;
     let modified = meta.modified().ok()?;
     let duration = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
-    Some(unix_secs_to_rfc3339(duration.as_secs() as i64))
-}
-
-// ── Date helper ──────────────────────────────────────────────────────────────
-
-/// Format Unix epoch seconds as `YYYY-MM-DDTHH:MM:SSZ` (UTC).
-fn unix_secs_to_rfc3339(secs: i64) -> String {
-    let days = secs.div_euclid(86_400);
-    let seconds_of_day = secs.rem_euclid(86_400);
-    let hour = seconds_of_day / 3600;
-    let minute = (seconds_of_day % 3600) / 60;
-    let second = seconds_of_day % 60;
-
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y, m, d, hour, minute, second
-    )
+    cua_driver_core::timestamp::unix_secs_to_rfc3339(duration.as_secs() as i64)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+    use std::time::Instant;
+
+    #[test]
+    fn shortcut_environment_target_resolves_without_changing_arguments() {
+        unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }
+            .ok()
+            .expect("initialize COM for shortcut resolution");
+        struct Apartment;
+        impl Drop for Apartment {
+            fn drop(&mut self) {
+                unsafe { CoUninitialize() };
+            }
+        }
+        let _apartment = Apartment;
+        let directory = tempfile::tempdir().expect("create shortcut fixture directory");
+        let link_path = directory.path().join("Environment target.lnk");
+        let link_path_wide = to_wide_nul(link_path.to_str().expect("fixture path is UTF-8"));
+        let target = to_wide_nul(r"%windir%\system32\cmd.exe");
+        let expected = PathBuf::from(std::env::var_os("windir").expect("Windows directory"))
+            .join("system32")
+            .join("cmd.exe")
+            .canonicalize()
+            .expect("Windows command processor exists");
+
+        for arguments in ["", r#"/d /c echo "argument with spaces""#] {
+            let link: IShellLinkW = unsafe {
+                CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).expect("create shell link")
+            };
+            let arguments_wide = to_wide_nul(arguments);
+            let persist: IPersistFile = link.cast().expect("shell link persistence");
+            unsafe {
+                link.SetPath(PCWSTR(target.as_ptr()))
+                    .expect("set environment target");
+                link.SetArguments(PCWSTR(arguments_wide.as_ptr()))
+                    .expect("set arguments");
+                persist
+                    .Save(PCWSTR(link_path_wide.as_ptr()), true)
+                    .expect("save shortcut");
+                let mut raw = vec![0u16; MAX_PATH as usize + 1];
+                link.GetPath(
+                    &mut raw,
+                    std::ptr::null_mut(),
+                    windows::Win32::UI::Shell::SLGP_RAWPATH.0 as u32,
+                )
+                .expect("inspect raw target");
+                assert!(
+                    decode_wstr(&raw).starts_with('%'),
+                    "fixture must preserve its environment token"
+                );
+            }
+
+            let app = resolve_lnk(&link_path).expect("discover environment shortcut");
+            assert_eq!(
+                PathBuf::from(&app.bundle_id)
+                    .canonicalize()
+                    .expect("resolved executable exists"),
+                expected
+            );
+            assert!(!app.launch_path.contains("%windir%"));
+            if !arguments.is_empty() {
+                assert!(app.launch_path.ends_with(&format!(" {arguments}")));
+            }
+        }
+    }
 
     #[test]
     fn wedged_uwp_scan_has_bounded_worker_growth_and_recovers() {
-        let gate = Arc::new(UwpScanSingleFlight::new(40));
+        let gate = Arc::new(SingleFlight::new(Duration::from_millis(500)));
         let starts = Arc::new(AtomicUsize::new(0));
         let active = Arc::new(AtomicUsize::new(0));
         let max_active = Arc::new(AtomicUsize::new(0));
@@ -667,7 +662,7 @@ mod tests {
         let starts_for_worker = Arc::clone(&starts);
         let active_for_worker = Arc::clone(&active);
         let max_active_for_worker = Arc::clone(&max_active);
-        let first = gate.run(Duration::from_millis(20), move || {
+        let first = run_uwp_scan(&gate, Duration::from_millis(20), move || {
             starts_for_worker.fetch_add(1, Ordering::SeqCst);
             let now_active = active_for_worker.fetch_add(1, Ordering::SeqCst) + 1;
             max_active_for_worker.fetch_max(now_active, Ordering::SeqCst);
@@ -686,7 +681,7 @@ mod tests {
 
         for _ in 0..100 {
             assert_eq!(
-                gate.run(Duration::from_millis(20), || 99),
+                run_uwp_scan(&gate, Duration::from_millis(20), || 99),
                 Err(UwpScanDeadlineError::Busy)
             );
         }
@@ -697,18 +692,18 @@ mod tests {
             .send(())
             .expect("worker should still be listening");
         let wait_deadline = Instant::now() + Duration::from_secs(1);
-        while gate.in_flight.load(Ordering::Acquire) && Instant::now() < wait_deadline {
+        while gate.is_in_flight() && Instant::now() < wait_deadline {
             thread::yield_now();
         }
-        assert!(!gate.in_flight.load(Ordering::Acquire));
+        assert!(!gate.is_in_flight());
         assert_eq!(
-            gate.run(Duration::from_millis(20), || 99),
+            run_uwp_scan(&gate, Duration::from_millis(20), || 99),
             Err(UwpScanDeadlineError::Busy),
             "a late return should enter cooldown"
         );
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(gate.run(Duration::from_secs(1), || 42), Ok(42));
+        thread::sleep(Duration::from_millis(600));
+        assert_eq!(run_uwp_scan(&gate, Duration::from_secs(1), || 42), Ok(42));
         assert_eq!(max_active.load(Ordering::SeqCst), 1);
     }
 

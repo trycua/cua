@@ -1,0 +1,80 @@
+---
+title: Quickstart
+description: 'Run a Cua Bench registry taskset on a local desktop sandbox with one command, read the results, then run it with an agent.'
+---
+
+Pick a taskset from the [Cua Bench registry](https://cua.ai/cuabench/registry),
+run it on a local desktop sandbox, and read the score. No API key until the
+agent step.
+
+## Prerequisites
+
+- Python 3.12 or 3.13 and [uv](https://docs.astral.sh/uv/).
+- A local container runtime (Docker; gVisor when installed): check with
+  `cua runtime doctor`.
+
+## Install
+
+```bash skip="host-install"
+uv tool install cua-bench
+```
+
+## Run a registry taskset
+
+List the tasksets, then run one task of `cua-bench-basic` with its built-in
+oracle:
+
+```bash test="cli-shape" id="bench-quickstart-run"
+cb dataset list
+cb run cua-bench-basic --task-filter click-button --max-variants 1
+```
+
+`cb` fetches the taskset at its pinned version, starts a Linux desktop
+sandbox, opens the task's app as a window on it, runs the oracle, scores the
+result (`reward=1`) and releases the sandbox. A failing oracle means the task
+or your setup is broken, not the agent.
+
+## Read the results
+
+```bash test="cli-shape" id="bench-quickstart-results"
+cb run list
+cb run info <run-id>
+```
+
+Each variant's `result.json`, `run.log` and `trajectory.json` land in
+`~/.local/share/cua-bench/runs/<run-id>/`, next to a `summary.json`.
+
+## Run it with an agent
+
+```bash test="cli-shape" id="bench-quickstart-agent"
+cb run cua-bench-basic --agent cua-agent --model anthropic/claude-sonnet-4-20250514 -j 4
+```
+
+It runs every task on this machine (`--on local` is the default).
+
+## Try a task yourself
+
+`cb interact` sets up a task on a desktop you can see, waits while you solve
+it, then evaluates it and releases the sandbox:
+
+```bash test="cli-shape" id="bench-quickstart-interact"
+cb interact click-button --dataset cua-bench-basic
+```
+
+## Clean up
+
+Run results stay in `~/.local/share/cua-bench/runs` (a warning past 10 GiB,
+`CUA_BENCH_WARN_SIZE`). Keep fewer with `--keep-runs N`, `--max-age DAYS` or
+`--max-results-size SIZE` on `cb run`, or:
+
+```bash test="cli-shape" id="bench-quickstart-prune"
+cb prune --runs --keep 10
+```
+
+## Next
+
+- [Run a benchmark](/cua-bench/guides/benchmarks): every registry taskset,
+  selection, versions and pass@k.
+- [Write a task](/cua-bench/guides/write-a-task): make your own.
+- [Adapter benchmarks](/cua-bench/guides/adapter-benchmarks):
+  OSWorld-Verified and other adapters.

@@ -1,0 +1,1362 @@
+{
+  "flow": "provisioning",
+  "frames": [
+    {
+      "creates": "initial",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "start pending:1",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux New Space [Starting] 10 1%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-linux New Space, Linux, This Mac, Starting 10 Starting…",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 preparing",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux New Space [Starting] 10 1%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-linux New Space, Linux, This Mac, Starting 10 Starting…",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 pulling",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 425
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Downloading image… 42%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Downloading image…",
+            "progress": 425,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux New Space [Starting] 425 42%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-linux New Space, Linux, This Mac, Starting 425 Downloading image…",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "start pending:2",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:2",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Downloading image… 42%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Downloading image…",
+            "progress": 425,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [Starting] 10 1%",
+          "os-linux New Space [Starting] 425 42%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Starting 10 Starting…",
+          "os-linux New Space, Linux, This Mac, Starting 425 Downloading image…",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:2 creating",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 13
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Creating… 1%",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:2",
+            "previewText": "Creating…",
+            "progress": 13,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Downloading image… 42%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Downloading image…",
+            "progress": 425,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [Starting] 13 1%",
+          "os-linux New Space [Starting] 425 42%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Starting 13 Creating…",
+          "os-linux New Space, Linux, This Mac, Starting 425 Downloading image…",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 booting",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 13
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Creating… 1%",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:2",
+            "previewText": "Creating…",
+            "progress": 13,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Booting… 80%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Booting…",
+            "progress": 805,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [Starting] 13 1%",
+          "os-linux New Space [Starting] 805 80%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Starting 13 Creating…",
+          "os-linux New Space, Linux, This Mac, Starting 805 Booting…",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "fail pending:2",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 805
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Remove",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Failed",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:2",
+            "previewText": "no macOS image is configured",
+            "progress": null,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Booting… 80%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Booting…",
+            "progress": 805,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [Failed] - no macOS image is configured",
+          "os-linux New Space [Starting] 805 80%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Failed - Failed",
+          "os-linux New Space, Linux, This Mac, Starting 805 Booting…",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "progress pending:1 connecting",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 985
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Remove",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Failed",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:2",
+            "previewText": "no macOS image is configured",
+            "progress": null,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Connecting… 98%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Connecting…",
+            "progress": 985,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [Failed] - no macOS image is configured",
+          "os-linux New Space [Starting] 985 98%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Failed - Failed",
+          "os-linux New Space, Linux, This Mac, Starting 985 Connecting…",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "finish pending:1",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 1000
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Remove",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Failed",
+              "System: macOS",
+              "Kind: Virtual machine"
+            ],
+            "id": "pending:2",
+            "previewText": "no macOS image is configured",
+            "progress": null,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Ready 100%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Ready",
+            "progress": 1000,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:2",
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-macos Mac [Failed] - no macOS image is configured",
+          "os-linux New Space [Starting] 1000 100%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-macos Mac, macOS, This Mac, Failed - Failed",
+          "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "dismiss pending:2",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 1000
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Ready 100%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Ready",
+            "progress": 1000,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux New Space [Starting] 1000 100%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "start pending:3",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "System: Linux"
+            ],
+            "id": "pending:3",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Ready 100%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Ready",
+            "progress": 1000,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:3",
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Omarchy [Starting] 10 1%",
+          "os-linux New Space [Starting] 1000 100%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-linux Omarchy, Linux, Cua Cloud, Starting 10 Starting…",
+          "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "fail pending:3",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 1000
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Remove",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Failed",
+              "System: Linux"
+            ],
+            "id": "pending:3",
+            "previewText": "The Cua daemon isn't running. Start Cua, or run `cua daemon start`.",
+            "progress": null,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Ready 100%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Ready",
+            "progress": 1000,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:3",
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Omarchy [Failed] - The Cua daemon isn't running. Start Cua, or run `cua daemon start`.",
+          "os-linux New Space [Starting] 1000 100%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-linux Omarchy, Linux, Cua Cloud, Failed - Failed",
+          "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "dismiss pending:3",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 1000
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Ready 100%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Ready",
+            "progress": 1000,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux New Space [Starting] 1000 100%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "start pending:4",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 2 Spaces",
+          "permille": 10
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Starting… 1%",
+              "System: Linux"
+            ],
+            "id": "pending:4",
+            "previewText": "Starting…",
+            "progress": 10,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Ready 100%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Ready",
+            "progress": 1000,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:4",
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Cloud [Starting] 10 1%",
+          "os-linux New Space [Starting] 1000 100%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-linux Cloud, Linux, Cua Cloud, Starting 10 Starting…",
+          "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "fail pending:4",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 1000
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Remove",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Failed",
+              "System: Linux"
+            ],
+            "id": "pending:4",
+            "previewText": "You're out of Cua Cloud credit.",
+            "progress": null,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Ready 100%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Ready",
+            "progress": 1000,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:4",
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Cloud [Failed] - You're out of Cua Cloud credit.",
+          "os-linux New Space [Starting] 1000 100%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-linux Cloud, Linux, Cua Cloud, Failed - Failed",
+          "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "dismiss pending:4",
+      "frame": {
+        "activity": {
+          "kind": "provisioning",
+          "label": "Starting 1 Space",
+          "permille": 1000
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app (off)",
+              "Picture in picture (off)",
+              "Share (off)",
+              "Cancel (off)",
+              "Open (off)"
+            ],
+            "canStream": false,
+            "creditNotice": null,
+            "facts": [
+              "Status: Ready 100%",
+              "System: Linux"
+            ],
+            "id": "pending:1",
+            "previewText": "Ready",
+            "progress": 1000,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "pending:1",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux New Space [Starting] 1000 100%",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-linux New Space, Linux, This Mac, Starting 1000 Ready",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    },
+    {
+      "creates": "refreshed",
+      "frame": {
+        "activity": {
+          "kind": null,
+          "label": null,
+          "permille": null
+        },
+        "details": [
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:fresh [copy local:fresh doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:fresh",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          },
+          {
+            "actions": [
+              "Teleport an app",
+              "Picture in picture",
+              "Share",
+              "Delete Space",
+              "Open"
+            ],
+            "canStream": true,
+            "creditNotice": null,
+            "facts": [
+              "Status: Running",
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
+            ],
+            "id": "local:demo",
+            "previewText": "Loading the desktop…",
+            "progress": null,
+            "progressText": null
+          }
+        ],
+        "ids": [
+          "local:fresh",
+          "local:demo"
+        ],
+        "pending": true,
+        "rows": [
+          "os-linux Fresh [Running] - -",
+          "os-linux Demo [Running] - -"
+        ],
+        "tiles": [
+          "os-linux Fresh, Linux, This Mac, Running - -",
+          "os-linux Demo, Linux, This Mac, Running - -"
+        ]
+      }
+    }
+  ]
+}

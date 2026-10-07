@@ -92,7 +92,7 @@ The full process is documented: verify signed Archboot, create the VM, install
 the ARM64 base, pin Omarchy source, enable optional Rosetta, and validate the
 result.
 
-Guide: https://cua.ai/docs/how-to-guides/lume/run-omarchy-arm64
+Guide: https://cua.ai/docs/lume/guides/run-omarchy-arm64
 
 If you try it, tell us what works—and which ARM64 or Wayland gap we should
 close next.

@@ -34,6 +34,64 @@ fn field_equals(node: &AXNode, expected: &str) -> bool {
     .any(|value| value.trim().eq_ignore_ascii_case(expected))
 }
 
+/// Whether a native tab's accessible name belongs to the page titled
+/// `title`. Chromium names a tab after its page and can later append
+/// ` - <status>` segments, such as a memory-usage readout, once the tab has
+/// loaded. Those segments are appended asynchronously, so an exact-name
+/// proof that passed at first stops matching a few seconds later (#4121).
+/// Only that separator-delimited suffix is accepted, never a prefix or an
+/// arbitrary substring.
+fn tab_name_matches_title(node: &AXNode, title: &str) -> bool {
+    let title = title.trim();
+    if title.is_empty() {
+        return false;
+    }
+    [
+        node.title.as_deref(),
+        node.value.as_deref(),
+        node.description.as_deref(),
+        node.help.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .any(|name| {
+        name.eq_ignore_ascii_case(title)
+            || name
+                .get(..title.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(title))
+                && name[title.len()..].starts_with(" - ")
+    })
+}
+
+/// How long the omnibox may take to apply queued setup keystrokes.
+const TYPED_URL_SETTLE_TIMEOUT: Duration = Duration::from_millis(1500);
+
+/// Poll `read` until it returns exactly `expected` (trimmed, ASCII
+/// case-insensitive) or `timeout` elapses. On timeout, returns the last value
+/// observed so the refusal can say how far the field got.
+fn await_exact_value(
+    mut read: impl FnMut() -> Option<String>,
+    expected: &str,
+    timeout: Duration,
+    poll: Duration,
+) -> Result<(), Option<String>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let value = read();
+        if value
+            .as_deref()
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case(expected))
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(value);
+        }
+        std::thread::sleep(poll);
+    }
+}
+
 fn has_action(node: &AXNode, action: &str) -> bool {
     node.actions.iter().any(|value| value == action)
 }
@@ -44,20 +102,44 @@ fn release_actionable_nodes(nodes: &[AXNode]) {
     }
 }
 
+// Keep the first occurrence and its tree position for scoped child lookups.
+fn distinct_elements<'a>(
+    nodes: impl IntoIterator<Item = (usize, &'a AXNode)>,
+    same_element: impl Fn(usize, usize) -> bool,
+) -> Vec<(usize, &'a AXNode)> {
+    let mut distinct: Vec<(usize, &AXNode)> = Vec::new();
+    for (index, node) in nodes {
+        // Only nodes with an element_index hold a retained AXUIElementRef; the
+        // walker releases every other pointer, so comparing those (by CFEqual
+        // or by address, which may be reused) is unsound. They stay distinct,
+        // which keeps the ambiguity refusal fail-closed.
+        if !distinct.iter().any(|(_, prior)| {
+            prior.element_index.is_some()
+                && node.element_index.is_some()
+                && (prior.element_ptr == node.element_ptr
+                    || same_element(prior.element_ptr, node.element_ptr))
+        }) {
+            distinct.push((index, node));
+        }
+    }
+    distinct
+}
+
 fn unique_actionable(
     nodes: &[AXNode],
     role: &str,
     label: &str,
     action: &str,
 ) -> Result<Option<usize>, BrowserRefusal> {
-    let matches = nodes
-        .iter()
-        .filter(|node| node.role == role && field_equals(node, label) && has_action(node, action))
-        .map(|node| node.element_ptr)
-        .collect::<Vec<_>>();
+    let matches = distinct_elements(
+        nodes.iter().enumerate().filter(|(_, node)| {
+            node.role == role && field_equals(node, label) && has_action(node, action)
+        }),
+        is_same_element,
+    );
     match matches.as_slice() {
         [] => Ok(None),
-        [element] => Ok(Some(*element)),
+        [(_, node)] => Ok(Some(node.element_ptr)),
         _ => Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!("multiple exact {role} controls matched {label:?}"),
@@ -88,28 +170,30 @@ fn setup_page_proven(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor) -> b
 }
 
 fn native_setup_page_proven(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor) -> bool {
-    let exact_urls = nodes
-        .iter()
-        .filter(|node| {
+    let exact_urls = distinct_elements(
+        nodes.iter().enumerate().filter(|(_, node)| {
             node.role == "AXTextField"
                 && field_equals(node, "Address and search bar")
                 && node
                     .value
                     .as_deref()
                     .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
-        })
-        .count();
-    let exact_selected_tabs = nodes
-        .iter()
-        .filter(|node| {
+        }),
+        is_same_element,
+    )
+    .len();
+    let exact_selected_tabs = distinct_elements(
+        nodes.iter().enumerate().filter(|(_, node)| {
             node.role == "AXRadioButton"
                 && node.selected == Some(true)
                 && descriptor
                     .page_titles
                     .iter()
-                    .any(|title| field_equals(node, title))
-        })
-        .count();
+                    .any(|title| tab_name_matches_title(node, title))
+        }),
+        is_same_element,
+    )
+    .len();
     let omnibox_popup_open = nodes
         .iter()
         .any(|node| node.role == "AXWebArea" && field_equals(node, "Omnibox Popup"));
@@ -204,17 +288,18 @@ fn exact_omnibox_suggestion(
     nodes: &[AXNode],
     descriptor: &BrowserSetupDescriptor,
 ) -> Result<Option<usize>, BrowserRefusal> {
-    let omniboxes = nodes
-        .iter()
-        .filter(|node| {
+    let omniboxes = distinct_elements(
+        nodes.iter().enumerate().filter(|(_, node)| {
             node.role == "AXTextField"
                 && field_equals(node, "Address and search bar")
                 && node
                     .value
                     .as_deref()
                     .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
-        })
-        .count();
+        }),
+        is_same_element,
+    )
+    .len();
     match omniboxes {
         0 => return Ok(None),
         1 => {}
@@ -228,11 +313,13 @@ fn exact_omnibox_suggestion(
             ))
         }
     }
-    let popups = nodes
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| node.role == "AXWebArea" && field_equals(node, "Omnibox Popup"))
-        .collect::<Vec<_>>();
+    let popups = distinct_elements(
+        nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.role == "AXWebArea" && field_equals(node, "Omnibox Popup")),
+        is_same_element,
+    );
     let (popup_index, popup) = match popups.as_slice() {
         [] => return Ok(None),
         [(index, popup)] => (*index, *popup),
@@ -252,18 +339,20 @@ fn exact_omnibox_suggestion(
         .skip(popup_index + 1)
         .find(|(_, node)| node.depth <= popup.depth)
         .map_or(nodes.len(), |(index, _)| index);
-    let matches = nodes[popup_index + 1..end]
-        .iter()
-        .filter(|node| {
-            node.role == "AXMenuItem"
-                && node_is_exact_setup_suggestion(node, descriptor.setup_url)
-                && has_action(node, "AXPress")
-        })
-        .map(|node| node.element_ptr)
-        .collect::<Vec<_>>();
+    let matches = distinct_elements(
+        nodes[popup_index + 1..end]
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| {
+                node.role == "AXMenuItem"
+                    && node_is_exact_setup_suggestion(node, descriptor.setup_url)
+                    && has_action(node, "AXPress")
+            }),
+        is_same_element,
+    );
     match matches.as_slice() {
         [] => Ok(None),
-        [element] => Ok(Some(*element)),
+        [(_, node)] => Ok(Some(node.element_ptr)),
         _ => Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
@@ -304,17 +393,16 @@ fn select_new_tab_close_button(
         .filter(|node| node.role == "AXRadioButton" && node.element_index.is_some())
         .map(|node| node.element_ptr)
         .collect::<Vec<_>>();
-    let new_tabs = after
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| {
+    let new_tabs = distinct_elements(
+        after.iter().enumerate().filter(|(_, node)| {
             node.role == "AXRadioButton"
                 && node.element_index.is_some()
                 && !prior_tabs
                     .iter()
                     .any(|prior| same_element(*prior, node.element_ptr))
-        })
-        .collect::<Vec<_>>();
+        }),
+        &same_element,
+    );
     let (tab_index, tab) = match new_tabs.as_slice() {
         [(index, tab)] => (*index, *tab),
         [] => return Ok(None),
@@ -334,20 +422,22 @@ fn select_new_tab_close_button(
         .skip(tab_index + 1)
         .find(|(_, node)| node.depth <= tab.depth)
         .map_or(after.len(), |(index, _)| index);
-    let close_buttons = after[tab_index + 1..end]
-        .iter()
-        .filter(|node| {
-            node.role == "AXButton"
-                && descriptor
-                    .tab_close_labels
-                    .iter()
-                    .any(|label| field_equals(node, label))
-                && has_action(node, "AXPress")
-        })
-        .map(|node| node.element_ptr)
-        .collect::<Vec<_>>();
+    let close_buttons = distinct_elements(
+        after[tab_index + 1..end]
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| {
+                node.role == "AXButton"
+                    && descriptor
+                        .tab_close_labels
+                        .iter()
+                        .any(|label| field_equals(node, label))
+                    && has_action(node, "AXPress")
+            }),
+        same_element,
+    );
     match close_buttons.as_slice() {
-        [element] => Ok(Some(*element)),
+        [(_, node)] => Ok(Some(node.element_ptr)),
         [] => Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
@@ -399,6 +489,25 @@ impl PixelCheckbox {
             && (self.window_local_y - other.window_local_y).abs() <= tolerance
             && frames_agree(self.window_frame, other.window_frame, tolerance)
     }
+}
+
+/// A system prompt, such as macOS's local-network consent alert, can take key
+/// focus at the moment the bounded setup click lands and swallow it. Retry the
+/// same proven control a bounded number of times, only after the previous click
+/// had time to flip it, so a delivered click is never repeated into a toggle.
+const PIXEL_CHECKBOX_MAX_ATTEMPTS: u8 = 3;
+const PIXEL_CHECKBOX_RETRY_SETTLE: Duration = Duration::from_millis(1500);
+
+fn pixel_checkbox_click_allowed(
+    attempts: u8,
+    last_attempt: Option<Instant>,
+    now: Instant,
+    original: Option<PixelCheckbox>,
+    observed: PixelCheckbox,
+) -> bool {
+    attempts < PIXEL_CHECKBOX_MAX_ATTEMPTS
+        && last_attempt.is_none_or(|last| now.duration_since(last) >= PIXEL_CHECKBOX_RETRY_SETTLE)
+        && original.is_none_or(|original| original.same_control_as(observed, 3.0))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -703,11 +812,16 @@ fn exact_pixel_setup_checkbox(
     if !native_setup_page_committed(pid, nodes, descriptor) {
         return Ok(None);
     }
-    let window_frames = nodes
-        .iter()
-        .filter(|node| node.role == "AXWindow")
-        .filter_map(|node| node.frame)
-        .collect::<Vec<_>>();
+    let window_frames = distinct_elements(
+        nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.role == "AXWindow"),
+        is_same_element,
+    )
+    .iter()
+    .filter_map(|(_, node)| node.frame)
+    .collect::<Vec<_>>();
     let [window_frame] = window_frames.as_slice() else {
         return Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -717,9 +831,8 @@ fn exact_pixel_setup_checkbox(
             ),
         ));
     };
-    let omnibox_frames = nodes
-        .iter()
-        .filter(|node| {
+    let omnibox_frames = distinct_elements(
+        nodes.iter().enumerate().filter(|(_, node)| {
             node.role == "AXTextField"
                 && node.element_index.is_some()
                 && field_equals(node, "Address and search bar")
@@ -727,9 +840,12 @@ fn exact_pixel_setup_checkbox(
                     .value
                     .as_deref()
                     .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
-        })
-        .filter_map(|node| node.frame)
-        .collect::<Vec<_>>();
+        }),
+        is_same_element,
+    )
+    .iter()
+    .filter_map(|(_, node)| node.frame)
+    .collect::<Vec<_>>();
     let [omnibox_frame] = omnibox_frames.as_slice() else {
         return Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -892,7 +1008,8 @@ pub struct SetupUiHandle {
     close_button: Option<usize>,
     enable_attempted: bool,
     trusted_checkbox_fallback_attempted: bool,
-    pixel_checkbox_fallback_attempted: bool,
+    pixel_checkbox_attempts: u8,
+    last_pixel_checkbox_attempt: Option<Instant>,
     setup_navigation_committed: bool,
     remote_debugging_mutation_possible: bool,
     pixel_checkbox: Option<PixelCheckbox>,
@@ -1183,7 +1300,8 @@ fn set_remote_debugging(
             close_button: None,
             enable_attempted: false,
             trusted_checkbox_fallback_attempted: false,
-            pixel_checkbox_fallback_attempted: false,
+            pixel_checkbox_attempts: 0,
+            last_pixel_checkbox_attempt: None,
             setup_navigation_committed: false,
             remote_debugging_mutation_possible: false,
             pixel_checkbox: None,
@@ -1260,7 +1378,8 @@ fn set_remote_debugging(
                 close_button: Some(close_button),
                 enable_attempted: false,
                 trusted_checkbox_fallback_attempted: false,
-                pixel_checkbox_fallback_attempted: false,
+                pixel_checkbox_attempts: 0,
+                last_pixel_checkbox_attempt: None,
                 setup_navigation_committed: false,
                 remote_debugging_mutation_possible: false,
                 pixel_checkbox: None,
@@ -1429,16 +1548,23 @@ fn set_remote_debugging(
                                 crate::input::keyboard::press_key_global("a", &["cmd"])?;
                                 std::thread::sleep(Duration::from_millis(30));
                                 crate::input::keyboard::type_text(pid, descriptor.setup_url)?;
-                                std::thread::sleep(Duration::from_millis(100));
-                                let typed_exact_value = unsafe {
-                                    copy_string_attr(omnibox as AXUIElementRef, "AXValue")
-                                }
-                                .is_some_and(|value| {
-                                    value.trim().eq_ignore_ascii_case(descriptor.setup_url)
-                                });
-                                if !typed_exact_value {
+                                // The omnibox applies queued keystrokes
+                                // asynchronously; a single fixed-delay read
+                                // can observe a prefix of the URL. Poll the
+                                // exact value within a bound before refusing.
+                                let typed = await_exact_value(
+                                    || unsafe {
+                                        copy_string_attr(omnibox as AXUIElementRef, "AXValue")
+                                    },
+                                    descriptor.setup_url,
+                                    TYPED_URL_SETTLE_TIMEOUT,
+                                    Duration::from_millis(50),
+                                );
+                                if let Err(observed) = typed {
                                     anyhow::bail!(
-                                        "trusted setup typing did not retain the fixed URL"
+                                        "trusted setup typing did not retain the fixed URL (observed {} of {} characters)",
+                                        observed.map_or(0, |value| value.trim().chars().count()),
+                                        descriptor.setup_url.chars().count()
                                     );
                                 }
                                 crate::input::keyboard::press_key_global("return", &[])?;
@@ -1626,10 +1752,19 @@ fn set_remote_debugging(
                     release_actionable_nodes(&tree.nodes);
                     return Ok(handle);
                 }
-                Ok(Some(checkbox)) if !handle.pixel_checkbox_fallback_attempted => {
-                    handle.pixel_checkbox_fallback_attempted = true;
+                Ok(Some(checkbox))
+                    if pixel_checkbox_click_allowed(
+                        handle.pixel_checkbox_attempts,
+                        handle.last_pixel_checkbox_attempt,
+                        Instant::now(),
+                        handle.pixel_checkbox,
+                        checkbox,
+                    ) =>
+                {
+                    handle.pixel_checkbox_attempts += 1;
+                    handle.last_pixel_checkbox_attempt = Some(Instant::now());
                     handle.remote_debugging_mutation_possible = true;
-                    handle.pixel_checkbox = Some(checkbox);
+                    handle.pixel_checkbox.get_or_insert(checkbox);
                     handle.used_bounded_pixel_fallback = true;
                     release_actionable_nodes(&tree.nodes);
                     handle.injected_global_input = true;
@@ -1747,8 +1882,142 @@ mod tests {
             tree_markdown: String::new(),
             nodes,
             truncated: false,
+            walk: cua_driver_core::walk_budget::WalkBudget::nodes_only(0).outcome(),
             window_scope: Some(crate::ax::WindowScope::Matched),
         }
+    }
+
+    struct ApplicationElement(AXUIElementRef);
+
+    impl ApplicationElement {
+        fn new(pid: i32) -> Self {
+            Self(unsafe { crate::ax::bindings::AXUIElementCreateApplication(pid) })
+        }
+    }
+
+    impl Drop for ApplicationElement {
+        fn drop(&mut self) {
+            unsafe { CFRelease(self.0 as CFTypeRef) };
+        }
+    }
+
+    #[test]
+    fn new_tab_button_accepts_repeated_accessibility_identity() {
+        let elements = (0..4)
+            .map(|_| ApplicationElement::new(std::process::id() as i32))
+            .collect::<Vec<_>>();
+        let nodes = elements
+            .iter()
+            .map(|element| tree_node("AXButton", Some("New Tab"), element.0 as usize, 1))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            new_tab_button(&nodes, chrome()).unwrap(),
+            elements[0].0 as usize
+        );
+    }
+
+    #[test]
+    fn new_tab_button_refuses_distinct_identities_at_the_same_frame() {
+        let first = ApplicationElement::new(std::process::id() as i32);
+        let second = ApplicationElement::new(std::process::id() as i32 + 1);
+        let mut nodes = vec![
+            tree_node("AXButton", Some("New Tab"), first.0 as usize, 1),
+            tree_node("AXButton", Some("New Tab"), second.0 as usize, 1),
+        ];
+        for node in &mut nodes {
+            node.frame = Some([1628.0, 35.0, 28.0, 41.0]);
+        }
+        assert_eq!(nodes[0].frame, nodes[1].frame);
+        assert_eq!(
+            new_tab_button(&nodes, chrome()).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
+    fn unretained_nodes_are_never_collapsed() {
+        // Nodes without an element_index carry pointers the walker already
+        // released; they must not be compared, even at the same address.
+        let mut first = tree_node("AXButton", Some("New Tab"), 7, 1);
+        let mut second = tree_node("AXButton", Some("New Tab"), 7, 1);
+        first.element_index = None;
+        second.element_index = None;
+        let nodes = [first, second];
+        let distinct = distinct_elements(nodes.iter().enumerate(), |_, _| {
+            panic!("released pointers must not reach CFEqual")
+        });
+        assert_eq!(distinct.len(), 2);
+    }
+
+    #[test]
+    fn new_tab_button_requires_an_exact_actionable_match() {
+        let nodes = vec![
+            node("AXButton", Some("New Tab"), None, &[]),
+            node("AXRadioButton", Some("New Tab"), None, &["AXPress"]),
+            node("AXButton", Some("New Tab preview"), None, &["AXPress"]),
+        ];
+        assert_eq!(
+            new_tab_button(&nodes, chrome()).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
+    fn actionable_selectors_collapse_only_repeated_accessibility_identities() {
+        let first = ApplicationElement::new(std::process::id() as i32);
+        let repeated = ApplicationElement::new(std::process::id() as i32);
+        let distinct = ApplicationElement::new(std::process::id() as i32 + 1);
+        for (role, label) in [
+            ("AXCheckBox", chrome().checkbox_label),
+            ("AXTextField", "Address and search bar"),
+        ] {
+            let mut nodes = vec![
+                tree_node(role, Some(label), first.0 as usize, 1),
+                tree_node(role, Some(label), repeated.0 as usize, 1),
+            ];
+            assert_eq!(
+                unique_actionable(&nodes, role, label, "AXPress").unwrap(),
+                Some(first.0 as usize)
+            );
+            nodes.push(tree_node(role, Some(label), distinct.0 as usize, 1));
+            assert_eq!(
+                unique_actionable(&nodes, role, label, "AXPress")
+                    .unwrap_err()
+                    .code,
+                BrowserRefusalCode::BrowserWrongTargetRefused
+            );
+        }
+    }
+
+    #[test]
+    fn native_setup_proof_counts_identities_not_repeated_entries() {
+        let first = ApplicationElement::new(std::process::id() as i32);
+        let repeated = ApplicationElement::new(std::process::id() as i32);
+        let distinct = ApplicationElement::new(std::process::id() as i32 + 1);
+        let mut omnibox = tree_node(
+            "AXTextField",
+            Some("Address and search bar"),
+            first.0 as usize,
+            1,
+        );
+        omnibox.value = Some(chrome().setup_url.into());
+        let mut repeated_omnibox = omnibox.clone();
+        repeated_omnibox.element_ptr = repeated.0 as usize;
+        let mut tab = tree_node(
+            "AXRadioButton",
+            Some(chrome().page_titles[0]),
+            first.0 as usize,
+            1,
+        );
+        tab.selected = Some(true);
+        let mut repeated_tab = tab.clone();
+        repeated_tab.element_ptr = repeated.0 as usize;
+        let mut nodes = vec![omnibox, repeated_omnibox, tab.clone(), repeated_tab];
+        assert!(native_setup_page_proven(&nodes, chrome()));
+        tab.element_ptr = distinct.0 as usize;
+        nodes.push(tab);
+        assert!(!native_setup_page_proven(&nodes, chrome()));
     }
 
     #[test]
@@ -1784,7 +2053,9 @@ mod tests {
 
     #[test]
     fn checkbox_matcher_refuses_ambiguity() {
-        let nodes = vec![
+        let first = ApplicationElement::new(std::process::id() as i32);
+        let second = ApplicationElement::new(std::process::id() as i32 + 1);
+        let mut nodes = vec![
             node("AXWebArea", Some(chrome().page_titles[0]), None, &[]),
             node("AXHeading", Some(chrome().page_heading), None, &[]),
             node(
@@ -1806,12 +2077,80 @@ mod tests {
                 &["AXPress"],
             ),
         ];
+        nodes[3].element_ptr = first.0 as usize;
+        nodes[4].element_ptr = second.0 as usize;
         assert_eq!(
             exact_setup_checkbox(&tree(nodes), chrome())
                 .unwrap_err()
                 .code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
+    }
+
+    #[test]
+    fn typed_setup_url_is_confirmed_after_late_keystrokes_but_never_a_different_value() {
+        let url = "edge://inspect/#remote-debugging";
+        let mut reads = ["edge://ins", "edge://inspect/#remote", url].into_iter();
+        assert_eq!(
+            await_exact_value(
+                || reads.next().map(str::to_owned),
+                url,
+                Duration::from_secs(1),
+                Duration::from_millis(1),
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            await_exact_value(
+                || Some(format!("{url}x")),
+                url,
+                Duration::from_millis(20),
+                Duration::from_millis(1),
+            ),
+            Err(Some(format!("{url}x")))
+        );
+        assert!(TYPED_URL_SETTLE_TIMEOUT < EXISTING_PROFILE_SETUP_READY_TIMEOUT);
+    }
+
+    #[test]
+    fn setup_tab_proof_survives_chromium_status_suffixes_only() {
+        // Hosted macOS Chrome 153 renamed the selected setup tab a few seconds
+        // after load, while the local-network alert delayed confirmation
+        // (#4121). The exact-name proof then never matched again.
+        let omnibox = node(
+            "AXTextField",
+            Some("Address and search bar"),
+            Some(chrome().setup_url),
+            &["AXPress"],
+        );
+        let tab_named = |name: &str| {
+            let mut tab = node("AXRadioButton", None, Some("1"), &["AXPress"]);
+            tab.description = Some(name.to_owned());
+            tab.selected = Some(true);
+            tab
+        };
+        let title = chrome().page_titles[0];
+        for name in [
+            title.to_owned(),
+            format!("{title} - Memory usage - 38.3 MB"),
+            format!("{title} - Speicherverbrauch – 38,3 MB"),
+        ] {
+            assert!(
+                native_setup_page_proven(&[omnibox.clone(), tab_named(&name)], chrome()),
+                "{name:?} must still prove the selected setup tab"
+            );
+        }
+        for name in [
+            format!("{title}X"),
+            format!("{title}- Memory usage"),
+            format!("Other {title}"),
+            format!("x - {title}"),
+        ] {
+            assert!(
+                !native_setup_page_proven(&[omnibox.clone(), tab_named(&name)], chrome()),
+                "{name:?} must not prove the selected setup tab"
+            );
+        }
     }
 
     #[test]
@@ -1875,6 +2214,10 @@ mod tests {
             tree_markdown: String::new(),
             nodes: Vec::new(),
             truncated: true,
+            walk: cua_driver_core::walk_budget::WalkOutcome::timed_out(
+                1000,
+                std::time::Duration::from_millis(1000),
+            ),
             window_scope: Some(crate::ax::WindowScope::Matched),
         };
         assert!(
@@ -2234,6 +2577,63 @@ mod tests {
     }
 
     #[test]
+    fn pixel_checkbox_click_retries_only_the_same_control_after_it_settles() {
+        let original = PixelCheckbox {
+            screen_x: 106.0,
+            screen_y: 136.0,
+            window_local_x: 106.0,
+            window_local_y: 86.0,
+            window_frame: [0.0, 50.0, 400.0, 250.0],
+            state: CheckboxState::Off,
+        };
+        let moved = PixelCheckbox {
+            window_local_x: 130.0,
+            ..original
+        };
+        let start = Instant::now();
+        let settled = start + PIXEL_CHECKBOX_RETRY_SETTLE;
+
+        // The first click needs no prior identity or settle interval.
+        assert!(pixel_checkbox_click_allowed(0, None, start, None, original));
+        // A swallowed click is retried once the previous click had time to land.
+        assert!(!pixel_checkbox_click_allowed(
+            1,
+            Some(start),
+            start + Duration::from_millis(200),
+            Some(original),
+            original
+        ));
+        assert!(pixel_checkbox_click_allowed(
+            1,
+            Some(start),
+            settled,
+            Some(original),
+            original
+        ));
+        // A different control is never clicked as a retry.
+        assert!(!pixel_checkbox_click_allowed(
+            1,
+            Some(start),
+            settled,
+            Some(original),
+            moved
+        ));
+        // Retries stay bounded.
+        assert!(!pixel_checkbox_click_allowed(
+            PIXEL_CHECKBOX_MAX_ATTEMPTS,
+            Some(start),
+            settled,
+            Some(original),
+            original
+        ));
+        // Every allowed click, including the settle waits, fits the setup deadline.
+        assert!(
+            PIXEL_CHECKBOX_RETRY_SETTLE * u32::from(PIXEL_CHECKBOX_MAX_ATTEMPTS - 1)
+                < EXISTING_PROFILE_SETUP_READY_TIMEOUT
+        );
+    }
+
+    #[test]
     fn new_tab_cleanup_selects_only_the_new_tabs_close_control() {
         let before = vec![
             tree_node("AXRadioButton", Some("Original"), 10, 1),
@@ -2259,7 +2659,7 @@ mod tests {
             tree_node("AXRadioButton", Some("Original"), 10, 1),
             tree_node("AXRadioButton", Some("New Tab"), 20, 1),
             tree_node("AXButton", Some("Close"), 21, 2),
-            tree_node("AXRadioButton", Some("Another"), 30, 1),
+            tree_node("AXRadioButton", Some("New Tab"), 30, 1),
             tree_node("AXButton", Some("Close"), 31, 2),
         ];
         assert_eq!(
@@ -2268,6 +2668,45 @@ mod tests {
                 .code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
+    }
+
+    #[test]
+    fn new_tab_cleanup_collapses_repeated_tab_and_close_identities() {
+        let before = vec![tree_node("AXRadioButton", Some("Original"), 10, 1)];
+        let after = vec![
+            tree_node("AXRadioButton", Some("Original"), 110, 1),
+            tree_node("AXRadioButton", Some("New Tab"), 20, 1),
+            tree_node("AXButton", Some("Close"), 21, 2),
+            tree_node("AXButton", Some("Close"), 121, 2),
+            tree_node("AXRadioButton", Some("New Tab"), 120, 1),
+            tree_node("AXButton", Some("Close"), 221, 2),
+            tree_node("AXRadioButton", Some("New Tab"), 220, 1),
+            tree_node("AXButton", Some("Close"), 321, 2),
+            tree_node("AXRadioButton", Some("New Tab"), 320, 1),
+            tree_node("AXButton", Some("Close"), 421, 2),
+        ];
+        assert_eq!(
+            select_new_tab_close_button(
+                &before,
+                &after,
+                |left, right| left % 100 == right % 100,
+                chrome(),
+            )
+            .unwrap(),
+            Some(21)
+        );
+    }
+
+    #[test]
+    fn new_tab_cleanup_refuses_distinct_close_identities() {
+        let after = vec![
+            tree_node("AXRadioButton", Some("New Tab"), 20, 1),
+            tree_node("AXButton", Some("Close"), 21, 2),
+            tree_node("AXButton", Some("Close"), 22, 2),
+        ];
+        let error = select_new_tab_close_button(&[], &after, |l, r| l == r, chrome()).unwrap_err();
+        assert_eq!(error.code, BrowserRefusalCode::BrowserWrongTargetRefused);
+        assert!(error.message.contains("multiple Close buttons"));
     }
 
     #[test]
@@ -2326,6 +2765,8 @@ mod tests {
 
     #[test]
     fn setup_navigation_refuses_multiple_exact_suggestions() {
+        let first_element = ApplicationElement::new(std::process::id() as i32);
+        let second_element = ApplicationElement::new(std::process::id() as i32 + 1);
         let omnibox = node(
             "AXTextField",
             Some("Address and search bar"),
@@ -2335,14 +2776,67 @@ mod tests {
         let mut popup = node("AXWebArea", Some("Omnibox Popup"), None, &[]);
         popup.depth = 1;
         let mut first = node("AXMenuItem", Some(chrome().setup_url), None, &["AXPress"]);
+        first.element_ptr = first_element.0 as usize;
         first.depth = 2;
         let mut second = first.clone();
-        second.element_ptr = 8;
+        second.element_ptr = second_element.0 as usize;
 
         assert_eq!(
             exact_omnibox_suggestion(&[omnibox, popup, first, second], chrome())
                 .unwrap_err()
                 .code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
+    fn setup_navigation_collapses_only_repeated_accessibility_identities() {
+        let first = ApplicationElement::new(std::process::id() as i32);
+        let repeated = ApplicationElement::new(std::process::id() as i32);
+        let distinct = ApplicationElement::new(std::process::id() as i32 + 1);
+        let mut omnibox = tree_node(
+            "AXTextField",
+            Some("Address and search bar"),
+            first.0 as usize,
+            0,
+        );
+        omnibox.value = Some(chrome().setup_url.into());
+        let mut repeated_omnibox = omnibox.clone();
+        repeated_omnibox.element_ptr = repeated.0 as usize;
+        let mut nodes = vec![
+            omnibox,
+            repeated_omnibox,
+            tree_node("AXWebArea", Some("Omnibox Popup"), first.0 as usize, 1),
+            tree_node("AXMenuItem", Some(chrome().setup_url), first.0 as usize, 2),
+            tree_node(
+                "AXMenuItem",
+                Some(chrome().setup_url),
+                repeated.0 as usize,
+                2,
+            ),
+            tree_node("AXWebArea", Some("Omnibox Popup"), repeated.0 as usize, 1),
+            tree_node(
+                "AXMenuItem",
+                Some(chrome().setup_url),
+                repeated.0 as usize,
+                2,
+            ),
+        ];
+        assert_eq!(
+            exact_omnibox_suggestion(&nodes, chrome()).unwrap(),
+            Some(first.0 as usize)
+        );
+        nodes.insert(
+            5,
+            tree_node(
+                "AXMenuItem",
+                Some(chrome().setup_url),
+                distinct.0 as usize,
+                2,
+            ),
+        );
+        assert_eq!(
+            exact_omnibox_suggestion(&nodes, chrome()).unwrap_err().code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
     }

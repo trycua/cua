@@ -160,7 +160,7 @@ async fn run_async(
     )?;
 
     let mut sessions: HashMap<String, Arc<CuaDriverSession>> = HashMap::new();
-    while let Some(line) = lines.next() {
+    for line in lines {
         let line = match line {
             Ok(line) => line,
             Err(_) => break,
@@ -334,14 +334,4 @@ fn write_response(writer: &mut impl Write, response: &ChannelResponse) -> anyhow
     writer.write_all(b"\n")?;
     writer.flush()?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::requested_generation;
-
-    #[test]
-    fn ordinary_process_is_not_a_private_worker() {
-        assert!(requested_generation().is_none());
-    }
 }

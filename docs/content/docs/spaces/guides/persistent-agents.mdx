@@ -1,0 +1,123 @@
+---
+title: Persistent agents
+description: 'A named agent whose memory outlives its runs and its Space: a home in the Cua Volume, routines the daemon fires, notifications, pause and resume, and access to your computers by name.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A persistent agent is a harness with a name, a Space to work in, and a home in
+the [Cua Volume](/spaces/guides/cua-volume) at `agents/<name>/`. The harness keeps
+its memory in that home, so the agent remembers across runs, across a Space
+being deleted and created again, and across machines.
+
+```bash test="cli-shape" id="persistent-create"
+cua agent create ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY
+cua agent tell ada "Every morning, summarize what changed in the repo"
+```
+
+## How it works
+
+| Step | What happens |
+|------|--------------|
+| Start | The daemon takes the home's lease (one writer), restores `agents/<name>/` into `~/cua-volume/agents/<name>` in the Space, and starts the harness with its memory there. |
+| Each turn | When the turn ends the daemon saves the files that changed back to the drive and posts a notification with the agent's answer. |
+| Follow-ups | `cua agent tell` sends to the idle run, or starts a new run with the home restored. A turn in progress is never interrupted. |
+| Stop, pause | The home is saved and the lease released. |
+
+## Memory
+
+Only memory moves into the home; each harness's credentials stay where they
+were.
+
+| Harness | Memory in the home | Setting |
+|---------|--------------------|---------|
+| Claude Code | `claude-memory/` | `autoMemoryDirectory` in a per-run `CLAUDE_CONFIG_DIR` |
+| Codex | `codex/memories/` | `CODEX_HOME=<home>/codex`, `[features] memories = true` |
+| Hermes | `hermes/memories/` (`MEMORY.md`, `USER.md`) | `HERMES_HOME=<home>/hermes` |
+| OpenClaw | `workspace/` (`MEMORY.md`, `memory/`) | `OPENCLAW_WORKSPACE_DIR=<home>/workspace` |
+
+Other harnesses work in `<home>/work`. Never saved: `.env`, `auth.json`,
+`credentials/`, `vault/`, `sessions/`, logs and caches. A file that looks like
+it holds a secret (an API key, a token, a private key) is kept out of the drive
+and you get a notification; secrets belong in the [Keyvault](/spaces/guides/keyvault).
+
+## Routines
+
+The daemon fires routines whether or not an app is open. A routine is a turn of
+the agent (`[routine] <title>: <prompt>`); a busy or paused agent skips that
+slot.
+
+```bash test="cli-shape" id="persistent-routine"
+cua agent routine add ada --title "Morning" --prompt "Plan the day" --daily 08:00
+cua agent routine ls ada
+```
+
+## Notifications
+
+A turn's end, a `notify_user` call from the agent, an access request and a
+failure each post a notification. The Cua app shows them as system
+notifications; the feed persists while no app is open.
+
+```bash test="cli-shape" id="persistent-notifications"
+cua agent notifications --unread
+```
+
+## Pause and resume
+
+```bash test="cli-shape" id="persistent-pause"
+cua agent pause ada
+cua agent resume ada
+```
+
+| Space | Pause | Resume |
+|-------|-------|--------|
+| Local | Suspends the Space. | Resumes it. |
+| Your own machine or an added address | Only the agent pauses. | Only the agent resumes. |
+
+## What the agent gets
+
+Inside its Space the agent has the MCP server `cua`, answered by your daemon
+over the Space's own connection (no token enters the Space).
+
+| Tool | What |
+|------|------|
+| `notify_user` | A notification in the Cua app. |
+| `volume_ls`, `volume_read`, `volume_write` | The drive, as `agent:<name>`: its home, `public/` (read) and its Space's folder. |
+| `volume_request_access` | Asks you for more; you approve in the app. |
+| `computer_list`, `computer_list_tools`, `computer_call` | Your computers you allowed this agent to use. |
+| `request_site_login` | [Sign in to a site](/spaces/guides/site-login) with a password from your Keyvault, after you approve. The agent never sees it. |
+
+## Access to your computers
+
+`cua host setup` makes a machine a Space for your whole account. A persistent
+agent reaches it only if you allow that agent by name. Allowing asks for Touch
+ID or your passphrase; revoking takes effect on the agent's next call; every
+grant, use and refusal is audited.
+
+```bash test="cli-shape" id="persistent-computer"
+cua agent allow-computer ada relay:0123456789abcdef
+cua agent computer-access --audit 20
+cua agent revoke-computer ada
+```
+
+<Callout type="warn">
+  Agents that share one Space share its user account. Give an agent its own
+  Space when it must not see another agent's files.
+</Callout>
+
+## In the Cua app
+
+| Page | What it shows |
+|------|---------------|
+| Agents | Each persistent agent on one line with Pause or Resume; the selected agent's Memory (its home, each file's text and history, Restore), Routines (add, on or off, remove) and Access to this computer (allow, revoke, recent uses and refusals). |
+| Drive | The Cua Volume by folder, access requests from agents (Approve asks for Touch ID, Deny) and grants (Revoke). |
+| Notifications | The daemon's feed, newest first, with Mark all read. New entries are posted as system notifications once each, while the app runs. |
+
+## From an agent or the SDK
+
+`agent_start` with `home` runs a persistent agent (created on first use), and
+the `persistent_agent_*`, `agent_pause`, `agent_resume`, `routine_*`,
+`notifications_*` and `computer_access_*` tools cover the rest; see
+[Persistent agents](/spaces/reference/persistent-agents) in the Spaces
+reference and the SDK's [`Spaces`](/cua-sdk/reference/spaces/persistent-agents)
+methods.

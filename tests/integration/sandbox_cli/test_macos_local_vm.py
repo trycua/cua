@@ -2,7 +2,7 @@
 
     cua sb launch macos --local --json
     # parse name from JSON output, connect with SDK, run assertions
-    cua sb delete <name> --local
+    cua sb delete --force <name> --local
 
 Mirrors tests/integration/sandbox_sdk/test_macos_local_vm.py but exercises the CLI
 launch path and persistent state tracking instead of Sandbox.ephemeral().
@@ -60,7 +60,7 @@ async def test_macos_local_vm():
             screenshot = await sb.screenshot()
             assert screenshot[:4] == b"\x89PNG"
     finally:
-        _cua("sb", "delete", name, "--local")
+        _cua("sb", "delete", "--force", name, "--local")
         assert name not in _ls_names(), f"'{name}' still in `cua sb ls --all` after delete"
 
 
@@ -79,7 +79,7 @@ async def main():
             with open("/tmp/cli_macos_local_vm.png", "wb") as f:
                 f.write(screenshot)
     finally:
-        _cua("sb", "delete", name, "--local")
+        _cua("sb", "delete", "--force", name, "--local")
 
 
 if __name__ == "__main__":

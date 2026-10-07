@@ -1,0 +1,18 @@
+[package]
+name = "cua-spacesd-socks"
+description = "Reverse-SOCKS (hotspot) egress relayed over a message channel, for cua-spacesd"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+# The shared wire protocol and egress peer (libs/cua; the driver depends on
+# the SDK's shared crates, never the reverse).
+cua-hotspot = { path = "../../../cua/crates/cua-hotspot" }
+futures-util.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+

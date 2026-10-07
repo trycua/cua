@@ -82,6 +82,9 @@ impl Tool for GetConfigTool {
             "agent_cursor": {
                 "enabled": cursor_enabled,
             },
+            "cursor": {
+                "motion": cursor_overlay::motion_defaults::read_saved().config_json(),
+            },
             "experimental_pip": pip_enabled,
             "experimental_pip_geometry": pip_geometry,
         }))

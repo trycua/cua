@@ -1,7 +1,9 @@
 name: "CD: Cua Driver SDK packages"
 
 # Triggered after a Cua Driver release to publish version-locked Python wheels
-# and the TypeScript SDK plus its platform-native npm packages.
+# and the TypeScript SDK plus its platform-native npm packages. Only trycua/cua
+# publishes to PyPI and npm; any other repository (trycua/cua-staging) runs
+# `twine check` and `npm publish --dry-run` instead.
 
 on:
   workflow_dispatch:
@@ -20,6 +22,12 @@ permissions:
   actions: read
   contents: read
   id-token: write
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CANONICAL: ${{ github.repository == 'trycua/cua' }}
 
 jobs:
   # Extract version from the triggering workflow or input
@@ -51,10 +59,8 @@ jobs:
             fi
             TAG="cua-driver-rs-v$VERSION"
           else
-            # Publish dispatches run from main, so workflow_run.head_sha is the
-            # workflow revision rather than the immutable release tag. Resolve
-            # those runs from the exact metadata artifact produced by the
-            # successful release job.
+            # Resolve the version from the exact metadata artifact produced by
+            # the release job of the stable tag run that published the draft.
             if ! echo "$RUN_ID" | grep -qE '^[0-9]+$'; then
               echo "Invalid workflow run ID: $RUN_ID" >&2
               exit 1
@@ -78,9 +84,9 @@ jobs:
               VERSION="${RELEASE_VERSIONS[0]}"
               TAG="cua-driver-rs-v$VERSION"
             else
-              # Tag-triggered candidate builds do not run the release job and
-              # therefore have no release metadata artifact. Preserve the tag
-              # SHA fallback so those runs continue to skip until publication.
+              # Build-only runs skip the release job and therefore have no
+              # release metadata artifact. Fall back to the tag at the run's
+              # SHA; the published-release check below still gates publishing.
               if ! echo "$HEAD_SHA" | grep -qE '^[0-9a-f]{40}$'; then
                 echo "Invalid SHA format: $HEAD_SHA" >&2
                 exit 1
@@ -221,7 +227,12 @@ jobs:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
         run: |
-          python -m twine upload --skip-existing --verbose dist/*
+          python -m twine check --strict dist/*.whl
+          if [ "$CANONICAL" = true ]; then
+            python -m twine upload --skip-existing --verbose dist/*
+          else
+            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: wheels checked, not uploaded to PyPI (DRY RUN)"
+          fi
       - name: Attach Python wheels to the Cua Driver release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -345,7 +356,9 @@ jobs:
             fi
             NAME=$(tar -xOf "$package" package/package.json | node -e \
               "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).name))")
-            if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            if [ "$CANONICAL" != true ]; then
+              npm publish "./$package" --access public --dry-run
+            elif npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
               echo "$NAME@$VERSION already published; skipping"
             else
               npm publish "./$package" --access public --provenance
@@ -356,7 +369,10 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.get-version.outputs.version }}
         run: |
-          if npm view "@trycua/cua-driver@$VERSION" version >/dev/null 2>&1; then
+          if [ "$CANONICAL" != true ]; then
+            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: npm publish --dry-run"
+            npm publish "./dist/trycua-cua-driver-$VERSION.tgz" --access public --dry-run
+          elif npm view "@trycua/cua-driver@$VERSION" version >/dev/null 2>&1; then
             echo "@trycua/cua-driver@$VERSION already published; skipping"
           else
             npm publish "./dist/trycua-cua-driver-$VERSION.tgz" --access public --provenance

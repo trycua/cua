@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
@@ -7,102 +10,76 @@ const source = process.env.FIRST_CLOUD_FLEET_TS;
 if (!source) throw new Error('Set FIRST_CLOUD_FLEET_TS to the copied tutorial source');
 const { runTutorial } = await import(pathToFileURL(source));
 
-const SOURCE_TEXT = 'pear\napple\npear\nbanana\n';
-const POOL_NAME = 'first-fleet-0123456789abcdef';
 const IMAGE_REF = `registry.example/cua-image@sha256:${'1'.repeat(64)}`;
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer;
 
-function response(payload) {
-  return {
-    status: 200,
-    headers: [],
-    body: new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`).buffer,
-  };
-}
-
-function fakeClient({ failCommand, failDeleteClaim = false } = {}) {
+function fakeCua({ failShell = false, wrongDigest = false } = {}) {
   const calls = [];
   const files = new Map();
-  const namespaceListings = [
-    [{ name: POOL_NAME }, { name: `${POOL_NAME}-recovery` }],
-    [{ name: `${POOL_NAME}-recovery` }],
-  ];
-  const pool = { metadata: { namespace: POOL_NAME, name: POOL_NAME } };
-  const template = { metadata: { namespace: POOL_NAME, name: `${POOL_NAME}-template` } };
-  const claim = { metadata: { namespace: POOL_NAME, name: 'first-task' } };
-  const sandbox = { metadata: { namespace: POOL_NAME, name: 'guest' } };
-  const client = {
-    calls,
-    createPool: async (request) => (calls.push(['createPool', request]), pool),
-    createTemplate: async (request) => (calls.push(['createTemplate', request]), template),
-    createClaim: async (request) => (calls.push(['createClaim', request]), claim),
-    waitClaim: async (value) => (calls.push(['waitClaim', value]), sandbox),
-    deleteClaim: async (value) => {
-      calls.push(['deleteClaim', value]);
-      if (failDeleteClaim) throw new Error('synthetic claim cleanup failure');
+  const env = {
+    upload: async (path, data) => {
+      calls.push(['upload', path]);
+      files.set(path, new TextDecoder().decode(data));
+      return { size: BigInt(data.byteLength), sha256: '', resumes: 0 };
     },
-    deleteNamespace: async (value) => calls.push(['deleteNamespace', value]),
-    listNamespaces: async () => {
-      calls.push(['listNamespaces']);
-      return namespaceListings.shift() ?? namespaceListings.at(-1) ?? [];
+    sh: async (line) => {
+      calls.push(['sh', line]);
+      if (failShell) throw new Error('synthetic shell failure');
+      const text = files.get('/tmp/first-cloud-fleet.txt');
+      const digest = wrongDigest ? 'wrong' : createHash('sha256').update(text).digest('hex');
+      return {
+        exit: { success: true, timedOut: false },
+        stdout: new TextEncoder().encode(`${digest}  /tmp/first-cloud-fleet.txt\n`).buffer,
+        stderr: new ArrayBuffer(0),
+        pty: new ArrayBuffer(0),
+      };
     },
-    serviceRequest: async (_sandbox, service, path, request) => {
-      if (path === '/status') {
-        calls.push(['serviceRequest', service, path, 'status']);
-        return { status: 200, headers: [], body: new ArrayBuffer(0) };
-      }
-      const { command, params } = JSON.parse(new TextDecoder().decode(request.body));
-      calls.push(['serviceRequest', service, path, command, params]);
-      if (command === failCommand) throw new Error(`synthetic ${command} failure`);
-      if (command === 'write_text') files.set(params.path, params.content);
-      if (command === 'run_command') {
-        const digest = createHash('sha256')
-          .update(files.get('/tmp/first-cloud-fleet.txt'))
-          .digest('hex');
-        files.set('/tmp/first-cloud-fleet.sha256', `${digest}\n`);
-      }
-      if (command === 'read_text')
-        return response({ success: true, content: files.get(params.path) });
-      return response({ success: true });
-    },
+    screenshot: async () => (calls.push(['screenshot']), { image: PNG }),
   };
-  return client;
+  const sandbox = {
+    name: () => 'cua-auto-test-claim',
+    spacesd: async () => (calls.push(['spacesd']), env),
+    delete_: async () => calls.push(['delete']),
+  };
+  return {
+    calls,
+    sandboxes: () => ({
+      create: async (options) => (calls.push(['create', options]), sandbox),
+    }),
+  };
 }
 
-test('TypeScript example writes, transforms, independently verifies, and cleans up', async () => {
-  const client = fakeClient();
-  await runTutorial(client, IMAGE_REF, POOL_NAME);
+async function inTempDir(fn) {
+  const cwd = process.cwd();
+  process.chdir(await mkdtemp(join(tmpdir(), 'first-fleet-')));
+  try {
+    return await fn();
+  } finally {
+    process.chdir(cwd);
+  }
+}
 
-  const poolRequest = client.calls.find(([name]) => name === 'createPool')[1];
-  const templateRequest = client.calls.find(([name]) => name === 'createTemplate')[1];
-  assert.equal(poolRequest.spec.replicas, 1);
-  assert.deepEqual(templateRequest.spec.vmTemplate.services, [
-    { name: 'server', targetPort: 8000 },
-  ]);
+test('TypeScript example uploads, hashes in the guest, verifies locally, and releases', async () => {
+  const cua = fakeCua();
+  await inTempDir(() => runTutorial(cua, IMAGE_REF));
+  const [, options] = cua.calls.find(([name]) => name === 'create');
+  assert.equal(options.image, IMAGE_REF);
+  assert.equal(options.on, 'cloud');
+  assert.equal(options.name, undefined);
   assert.deepEqual(
-    client.calls.filter(([name]) => name === 'serviceRequest').map((call) => call[3]),
-    ['status', 'write_text', 'run_command', 'read_text']
-  );
-  assert.deepEqual(
-    client.calls.slice(-4).map(([name]) => name),
-    ['deleteClaim', 'deleteNamespace', 'listNamespaces', 'listNamespaces']
-  );
-  assert.equal(client.calls.find(([name]) => name === 'deleteNamespace')[1], POOL_NAME);
-});
-
-test('TypeScript example cleans up after a guest command fails', async () => {
-  const client = fakeClient({ failCommand: 'run_command' });
-  await assert.rejects(runTutorial(client, IMAGE_REF, POOL_NAME), /synthetic run_command failure/);
-  assert.deepEqual(
-    client.calls.slice(-4).map(([name]) => name),
-    ['deleteClaim', 'deleteNamespace', 'listNamespaces', 'listNamespaces']
+    cua.calls.map(([name]) => name),
+    ['create', 'spacesd', 'upload', 'sh', 'screenshot', 'delete']
   );
 });
 
-test('TypeScript example continues namespace cleanup after claim cleanup fails', async () => {
-  const client = fakeClient({ failDeleteClaim: true });
-  await assert.rejects(runTutorial(client, IMAGE_REF, POOL_NAME), /Cleanup failed/);
-  assert.deepEqual(
-    client.calls.slice(-4).map(([name]) => name),
-    ['deleteClaim', 'deleteNamespace', 'listNamespaces', 'listNamespaces']
-  );
+test('TypeScript example releases the claim when verification fails', async () => {
+  const cua = fakeCua({ wrongDigest: true });
+  await assert.rejects(inTempDir(() => runTutorial(cua, IMAGE_REF)), /Verification failed/);
+  assert.equal(cua.calls.at(-1)[0], 'delete');
+});
+
+test('TypeScript example releases the claim when a guest command fails', async () => {
+  const cua = fakeCua({ failShell: true });
+  await assert.rejects(inTempDir(() => runTutorial(cua, IMAGE_REF)), /synthetic shell failure/);
+  assert.equal(cua.calls.at(-1)[0], 'delete');
 });

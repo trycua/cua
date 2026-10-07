@@ -1,0 +1,85 @@
+---
+title: Authenticate
+description: 'Sign in with cua auth login, see which Fleet credential the CLI uses, create API keys, and authenticate in GitHub Actions.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+One sign-in covers the CLI, the SDK, `cua daemon` and the Cua Spaces app: they
+share one credential store. Local sandboxes need no sign-in.
+
+## Sign in
+
+```bash test="cli-shape" id="cua-auth-login"
+cua auth login              # browser (PKCE, loopback redirect)
+cua auth login --remote     # device code, for SSH sessions
+cua auth whoami             # the Fleet credential in use, checked against Fleet
+cua auth status             # session and expiry, no network
+cua auth logout             # revoke and remove the session
+```
+
+After an interactive login, `cua auth login` offers to set up your AI coding
+agents (skills plus the cua MCP server); `--agents claude,codex`, `--yes`,
+`--skills-only`, `--mcp-only` and `--no-onboarding` control it, and `never`
+is remembered in `~/.cua/config`. Tokens refresh automatically and are never
+printed.
+
+| Platform | Session stored in |
+|----------|-------------------|
+| macOS, builds signed by Cua | Keychain, service `run.cua.ai`, account `cua-cli` |
+| macOS, builds from source | `~/.cua/credentials.json`, mode 600 |
+| Windows | Credential Manager, same service and account |
+| Linux | `~/.cua/credentials.json`, mode 600 |
+
+`CUA_CREDENTIAL_STORE=file` or `keychain` picks the store. A build from source
+is a new app to the Keychain every time it is rebuilt, so it uses the file and
+never asks for Keychain access.
+
+## Which credential Fleet uses
+
+The first that is set wins:
+
+| Order | Source | For |
+|-------|--------|-----|
+| 1 | `FLEETS_TOKEN` | A workload token, for example from `cua wif-token github`. |
+| 2 | `CUA_CLIENT_ID` + `CUA_CLIENT_SECRET` | An API key, for scripts and servers (`CUA_TOKEN_URL` overrides the endpoint). |
+| 3 | The `cua auth login` session | Interactive use. |
+
+Legacy `key_...` keys belong to the retired VM API and do not work with Fleet.
+
+## API keys
+
+Create keys from a login session (an API key cannot manage keys: exit `6`):
+
+```bash test="cli-shape" id="cua-auth-keys"
+cua auth keys create ci-runner      # prints CUA_CLIENT_ID and CUA_CLIENT_SECRET once
+cua auth keys ls
+cua auth keys rm <id>
+```
+
+## GitHub Actions
+
+`cua wif-token github` exchanges the job's OIDC identity for a Fleet token. It
+needs `id-token: write` and a Fleet trust policy for the repository:
+
+```yaml test="config" id="yaml-config"
+permissions:
+  id-token: write
+  contents: read
+
+steps:
+  - name: Use a cloud sandbox
+    run: |
+      export FLEETS_TOKEN="$(cua wif-token github)"
+      cua sb create linux --on cloud --name "run-$GITHUB_RUN_ID"
+      cua sb exec "run-$GITHUB_RUN_ID" "uname -a"
+      cua sb rm "run-$GITHUB_RUN_ID" --force
+```
+
+<Callout type="warn">
+  The stored refresh token mints access tokens until revoked. On shared hosts,
+  run `cua auth logout` when done, or use an API key or workload token.
+</Callout>
+
+Other variables (`CUA_FLEET_BASE_URL`, `CUA_OIDC_ISSUER`, `CUA_AUTH_FLOW`,
+`CUA_NO_BROWSER`, ...) are listed in the [CLI reference](/cua-cli/reference/cli).

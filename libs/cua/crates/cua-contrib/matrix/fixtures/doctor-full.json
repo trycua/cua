@@ -1,0 +1,791 @@
+{
+ "schema_version": 1,
+ "producer": "cua-guestd",
+ "started_at": "2026-09-24T12:59:03.008951712+00:00",
+ "summary": {
+  "status": "fail",
+  "pass": 98,
+  "warn": 1,
+  "fail": 3,
+  "skip": 7,
+  "duration_ms": 77075,
+  "strict": false
+ },
+ "environment": {
+  "runtime": "gvisor",
+  "runtime_detail": "runsc",
+  "arch": "x86_64",
+  "init": "supervisord",
+  "display_server": "x11",
+  "os": "Ubuntu 24.04"
+ },
+ "checks": [
+  {
+   "id": "meta.guestd.reachable",
+   "group": "meta",
+   "status": "pass",
+   "severity": "required",
+   "message": "cua-guestd 0.1.0 (protocol 1.3) answers GetCapabilities over Native"
+  },
+  {
+   "id": "meta.protocol_revision",
+   "group": "meta",
+   "status": "pass",
+   "severity": "required",
+   "message": "server protocol 1.3, doctor built for 1.3"
+  },
+  {
+   "id": "meta.manifest",
+   "group": "meta",
+   "status": "pass",
+   "severity": "required",
+   "message": "linux (linux rootfs, amd64) from /etc/cua-image/manifest.json"
+  },
+  {
+   "id": "meta.guestd.pin",
+   "group": "meta",
+   "status": "pass",
+   "severity": "required",
+   "message": "cua-guestd 0.1.0 matches the image manifest"
+  },
+  {
+   "id": "meta.health",
+   "group": "meta",
+   "status": "pass",
+   "severity": "required",
+   "message": "3 components serving"
+  },
+  {
+   "id": "meta.print_config",
+   "group": "meta",
+   "status": "pass",
+   "severity": "required",
+   "message": "/usr/local/bin/cua-guestd --print-config: version 0.1.0, protocol revision 3, listen 0.0.0.0:3211"
+  },
+  {
+   "id": "capabilities.limitations",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "29 features reported; every unsupported one names its limitation"
+  },
+  {
+   "id": "capabilities.required.pty",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "pty supported"
+  },
+  {
+   "id": "capabilities.required.fs_watch",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "fs_watch supported"
+  },
+  {
+   "id": "capabilities.required.tunnel.forward",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "tunnel.forward supported"
+  },
+  {
+   "id": "capabilities.required.driver",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "driver supported"
+  },
+  {
+   "id": "capabilities.required.a11y",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "a11y supported"
+  },
+  {
+   "id": "capabilities.required.background_input",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "background_input supported"
+  },
+  {
+   "id": "capabilities.required.desktop_stream",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "desktop_stream supported"
+  },
+  {
+   "id": "capabilities.required.window_stream",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "window_stream supported"
+  },
+  {
+   "id": "capabilities.required.h264_sw",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "h264_sw supported"
+  },
+  {
+   "id": "capabilities.required.quic_media",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "quic_media supported"
+  },
+  {
+   "id": "capabilities.required.windows",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "windows supported"
+  },
+  {
+   "id": "capabilities.required.launch_app",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "launch_app supported"
+  },
+  {
+   "id": "capabilities.required.clipboard.text",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "clipboard.text supported"
+  },
+  {
+   "id": "capabilities.required.presence",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "presence supported"
+  },
+  {
+   "id": "capabilities.required.audio.desktop",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "audio.desktop supported"
+  },
+  {
+   "id": "capabilities.required.audio.uplink",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "audio.uplink supported"
+  },
+  {
+   "id": "capabilities.required.audio.opus",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "audio.opus supported"
+  },
+  {
+   "id": "capabilities.optional.hotspot",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "recommended",
+   "message": "hotspot supported"
+  },
+  {
+   "id": "capabilities.optional.h264_hw",
+   "group": "capabilities",
+   "status": "skip",
+   "severity": "recommended",
+   "message": "optional h264_hw unavailable: no hardware H.264 encoder was found (NVENC, VA-API, QSV, AMF)"
+  },
+  {
+   "id": "capabilities.optional.audio.per_app",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "recommended",
+   "message": "audio.per_app supported"
+  },
+  {
+   "id": "capabilities.optional.clipboard.files",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "recommended",
+   "message": "clipboard.files supported"
+  },
+  {
+   "id": "capabilities.unclaimed",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "info",
+   "message": "every supported feature is listed in the manifest"
+  },
+  {
+   "id": "capabilities.attributes",
+   "group": "capabilities",
+   "status": "pass",
+   "severity": "required",
+   "message": "feature attributes consistent (compiled encoders: nvenc, vaapi, qsv, amf, mediafoundation, openh264)"
+  },
+  {
+   "id": "driver.registry",
+   "group": "driver",
+   "status": "pass",
+   "severity": "required",
+   "message": "59 tools, contract version \"1\", every contract-required tool present"
+  },
+  {
+   "id": "driver.tools_sha256",
+   "group": "driver",
+   "status": "pass",
+   "severity": "required",
+   "message": "tool schemas match the image's pin"
+  },
+  {
+   "id": "driver.health_report",
+   "group": "driver",
+   "status": "pass",
+   "severity": "required",
+   "message": "health_report ok (cua-driver 0.28.2)"
+  },
+  {
+   "id": "driver.version",
+   "group": "driver",
+   "status": "pass",
+   "severity": "required",
+   "message": "linked cua-driver 0.28.2, image pins 0.28.2"
+  },
+  {
+   "id": "driver.standalone",
+   "group": "driver",
+   "status": "skip",
+   "severity": "info",
+   "message": "no standalone cua-driver binary (the registry is linked into cua-guestd)"
+  },
+  {
+   "id": "mcp.initialize",
+   "group": "mcp",
+   "status": "pass",
+   "severity": "required",
+   "message": "serverInfo cua-driver 0.28.2, protocol \"2025-06-18\""
+  },
+  {
+   "id": "mcp.tools_list",
+   "group": "mcp",
+   "status": "pass",
+   "severity": "required",
+   "message": "/mcp and DriverService list the same 59 tools"
+  },
+  {
+   "id": "process.run",
+   "group": "process",
+   "status": "pass",
+   "severity": "required",
+   "message": "exit Some(0), stdout \"1a0d37f7de40011\""
+  },
+  {
+   "id": "process.exit_code",
+   "group": "process",
+   "status": "pass",
+   "severity": "required",
+   "message": "`exit 7` reported Some(7)"
+  },
+  {
+   "id": "process.stdin",
+   "group": "process",
+   "status": "pass",
+   "severity": "required",
+   "message": "cat echoed \"doctor-stdin\\n\""
+  },
+  {
+   "id": "process.pty",
+   "group": "process",
+   "status": "pass",
+   "severity": "required",
+   "message": "stty size after resize to 132x43: \"43 132\""
+  },
+  {
+   "id": "process.signal",
+   "group": "process",
+   "status": "pass",
+   "severity": "required",
+   "message": "sleep ended with Some(Term) / exit None"
+  },
+  {
+   "id": "files.roundtrip",
+   "group": "files",
+   "status": "pass",
+   "severity": "required",
+   "message": "8 MiB in 1 MiB chunks: size 8388608, sha256 matches"
+  },
+  {
+   "id": "files.ops",
+   "group": "files",
+   "status": "pass",
+   "severity": "required",
+   "message": "move, list ([\"moved.bin\"]) and remove"
+  },
+  {
+   "id": "files.watch",
+   "group": "files",
+   "status": "pass",
+   "severity": "required",
+   "message": "Create event for watched.txt"
+  },
+  {
+   "id": "files.signed_url",
+   "group": "files",
+   "status": "pass",
+   "severity": "required",
+   "message": "unauthenticated GET of the signed URL: HTTP 200, 22 bytes"
+  },
+  {
+   "id": "files.chunk_limit",
+   "group": "files",
+   "status": "pass",
+   "severity": "required",
+   "message": "a 4194305 byte chunk was refused (InvalidArgument)"
+  },
+  {
+   "id": "teleport.manifest",
+   "group": "teleport",
+   "status": "pass",
+   "severity": "recommended",
+   "message": "8 provider(s), bundle v1; installed: firefox"
+  },
+  {
+   "id": "teleport.import.verify",
+   "group": "teleport",
+   "status": "pass",
+   "severity": "recommended",
+   "message": "unknown app FailedPrecondition, duplicate chunk acknowledged, offset mismatch FailedPrecondition, checksum mismatch FailedPrecondition, provider mismatch InvalidArgument (3072 byte probe bundle, app chrome)"
+  },
+  {
+   "id": "teleport.import.fixture",
+   "group": "teleport",
+   "status": "pass",
+   "severity": "recommended",
+   "message": "imported [\"firefox\"] into a throwaway home (0 faked host effect(s))"
+  },
+  {
+   "id": "teleport.receive_files",
+   "group": "teleport",
+   "status": "pass",
+   "severity": "recommended",
+   "message": "3 files received into /home/cua/Downloads/cua-doctor-1a0d37f7de40011 (skip.log ignored, resent chunk duplicate true), conflict renamed to a (1).txt, abort ok, cleanup ok"
+  },
+  {
+   "id": "network.dns",
+   "group": "network",
+   "status": "pass",
+   "severity": "info",
+   "message": "packages.mozilla.org resolves (203.0.113.10)"
+  },
+  {
+   "id": "network.tunnel.forward",
+   "group": "network",
+   "status": "pass",
+   "severity": "required",
+   "message": "echo through the /tunnel forward to guest port 29579"
+  },
+  {
+   "id": "tunnel.lifecycle",
+   "group": "tunnel",
+   "status": "pass",
+   "severity": "required",
+   "message": "forward fwd-lv8pa_clGhei listed on port 20099; foreign host refused; after close: listed false, second close NotFound, socket refused (transport)"
+  },
+  {
+   "id": "tunnel.tickets",
+   "group": "tunnel",
+   "status": "pass",
+   "severity": "required",
+   "message": "refused: forged /tunnel: Unauthenticated, forged /hotspot: Unauthenticated, tunnel ticket on /hotspot: Unauthenticated"
+  },
+  {
+   "id": "hotspot.status",
+   "group": "hotspot",
+   "status": "pass",
+   "severity": "recommended",
+   "message": "state stopped"
+  },
+  {
+   "id": "hotspot.egress",
+   "group": "hotspot",
+   "status": "pass",
+   "severity": "recommended",
+   "message": "SOCKS5 127.0.0.1:24229 -> peer -> echo round trip ok; refused destination got reply 0x05; counters out 23 in 23; after stop: stopped, listener closed"
+  },
+  {
+   "id": "auth.unauthenticated",
+   "group": "auth",
+   "status": "pass",
+   "severity": "required",
+   "message": "a call without the token is refused with UNAUTHENTICATED"
+  },
+  {
+   "id": "auth.bind_policy",
+   "group": "auth",
+   "status": "pass",
+   "severity": "required",
+   "message": "listens on 0.0.0.0:3211, token from await-file:/run/cua-env/env-token"
+  },
+  {
+   "id": "auth.mode",
+   "group": "auth",
+   "status": "pass",
+   "severity": "required",
+   "message": "token delivery mode pod-secret (claimed by the image)"
+  },
+  {
+   "id": "auth.token_file",
+   "group": "auth",
+   "status": "pass",
+   "severity": "required",
+   "message": "pod-secret contract holds (token from await-file:/run/cua-env/env-token)"
+  },
+  {
+   "id": "auth.token_leak",
+   "group": "auth",
+   "status": "pass",
+   "severity": "required",
+   "message": "the token is in no process argv or environment besides cua-guestd's (environments of other users unreadable)"
+  },
+  {
+   "id": "time.skew",
+   "group": "time",
+   "status": "warn",
+   "severity": "required",
+   "message": "guest clock is +113 ms from the caller's (warn > 100, fail > 500)"
+  },
+  {
+   "id": "time.tz",
+   "group": "time",
+   "status": "pass",
+   "severity": "required",
+   "message": "time zone Etc/UTC (image claims Etc/UTC)"
+  },
+  {
+   "id": "resources.memory",
+   "group": "resources",
+   "status": "pass",
+   "severity": "required",
+   "message": "63270 MiB total, 574 MiB used (floor 1024 MiB)"
+  },
+  {
+   "id": "resources.cpus",
+   "group": "resources",
+   "status": "pass",
+   "severity": "required",
+   "message": "16 logical CPUs, 0% busy, load 0.00"
+  },
+  {
+   "id": "resources.disk.root",
+   "group": "resources",
+   "status": "pass",
+   "severity": "required",
+   "message": "/: 8589934592.0 GiB free of 8589934592.0 GiB, 0 inodes free (floor 2.0 GiB)"
+  },
+  {
+   "id": "resources.disk.tmp",
+   "group": "resources",
+   "status": "pass",
+   "severity": "required",
+   "message": "/tmp: 30.9 GiB free of 30.9 GiB, 0 inodes free (floor 2.0 GiB)"
+  },
+  {
+   "id": "resources.disk.home_cua",
+   "group": "resources",
+   "status": "pass",
+   "severity": "required",
+   "message": "/home/cua: 8589934592.0 GiB free of 8589934592.0 GiB, 0 inodes free (floor 2.0 GiB)"
+  },
+  {
+   "id": "resources.shm",
+   "group": "resources",
+   "status": "pass",
+   "severity": "info",
+   "message": "/dev/shm 31635 MiB (floor 256 MiB)"
+  },
+  {
+   "id": "init.system",
+   "group": "init",
+   "status": "pass",
+   "severity": "required",
+   "message": "PID 1 is supervisord (the rootfs variant boots with supervisord)"
+  },
+  {
+   "id": "init.units",
+   "group": "init",
+   "status": "pass",
+   "severity": "required",
+   "message": "every program's process is running: dbus-system, desktop, audio, novnc, cua-env-token-sync, cua-guestd"
+  },
+  {
+   "id": "init.restart_policy",
+   "group": "init",
+   "status": "pass",
+   "severity": "required",
+   "message": "cua-guestd autorestart=true"
+  },
+  {
+   "id": "services.vnc",
+   "group": "services",
+   "status": "pass",
+   "severity": "required",
+   "message": ":5901 (rfb) RFB 003.008"
+  },
+  {
+   "id": "services.novnc",
+   "group": "services",
+   "status": "pass",
+   "severity": "required",
+   "message": ":6080 (http) GET /vnc.html: HTTP/1.1 200 OK"
+  },
+  {
+   "id": "compat.link.cua-env-driver",
+   "group": "compat",
+   "status": "pass",
+   "severity": "required",
+   "message": "/usr/local/bin/cua-env-driver -> /usr/local/bin/cua-guestd"
+  },
+  {
+   "id": "compat.link.start-env-driver.sh",
+   "group": "compat",
+   "status": "pass",
+   "severity": "required",
+   "message": "/opt/cua/bin/start-env-driver.sh -> /opt/cua/bin/start-guestd.sh"
+  },
+  {
+   "id": "compat.link.env-driver-source",
+   "group": "compat",
+   "status": "pass",
+   "severity": "required",
+   "message": "/etc/cua-image/env-driver-source -> /etc/cua-image/guestd-source"
+  },
+  {
+   "id": "compat.unit.cua-env-driver.service",
+   "group": "compat",
+   "status": "pass",
+   "severity": "required",
+   "message": "/usr/lib/systemd/system/cua-env-driver.service -> /usr/lib/systemd/system/cua-guestd.service (not booted with systemd here)"
+  },
+  {
+   "id": "compat.env",
+   "group": "compat",
+   "status": "pass",
+   "severity": "required",
+   "message": "CUA_GUESTD_PORT -> Some(4999), CUA_ENV_PORT -> Some(4998) (want 4999, 4998)"
+  },
+  {
+   "id": "annotations.os",
+   "group": "annotations",
+   "status": "pass",
+   "severity": "required",
+   "message": "ai.cua.image.os=\"linux\", manifest os \"linux\", guest linux"
+  },
+  {
+   "id": "annotations.guestd",
+   "group": "annotations",
+   "status": "pass",
+   "severity": "required",
+   "message": "ai.cua.guestd=\"true\", ai.cua.env-driver=\"true\"; cua-guestd is running"
+  },
+  {
+   "id": "annotations.variant",
+   "group": "annotations",
+   "status": "pass",
+   "severity": "required",
+   "message": "variant rootfs (label \"rootfs\") runs under gvisor (allowed: container, gvisor)"
+  },
+  {
+   "id": "stream.encode.nvenc",
+   "group": "stream",
+   "status": "skip",
+   "severity": "recommended",
+   "message": "nvenc is a hardware encoder; set CUA_CODEC_TEST_NVENC=1 on a GPU runner to test it"
+  },
+  {
+   "id": "stream.encode.vaapi",
+   "group": "stream",
+   "status": "skip",
+   "severity": "recommended",
+   "message": "vaapi is a hardware encoder; set CUA_CODEC_TEST_VAAPI=1 on a GPU runner to test it"
+  },
+  {
+   "id": "stream.encode.qsv",
+   "group": "stream",
+   "status": "skip",
+   "severity": "recommended",
+   "message": "qsv is a hardware encoder; set CUA_CODEC_TEST_QSV=1 on a GPU runner to test it"
+  },
+  {
+   "id": "stream.encode.amf",
+   "group": "stream",
+   "status": "skip",
+   "severity": "recommended",
+   "message": "amf is a hardware encoder; set CUA_CODEC_TEST_AMF=1 on a GPU runner to test it"
+  },
+  {
+   "id": "stream.encode.mediafoundation",
+   "group": "stream",
+   "status": "skip",
+   "severity": "recommended",
+   "message": "mediafoundation is a hardware encoder; set CUA_CODEC_TEST_MF=1 on a GPU runner to test it"
+  },
+  {
+   "id": "stream.encode.openh264",
+   "group": "stream",
+   "status": "pass",
+   "severity": "required",
+   "message": "openh264: 30 frames 640x360 -> 57717 bytes, 30 decoded, PSNR 47.5 dB (floor 30)"
+  },
+  {
+   "id": "stream.media.desktop",
+   "group": "stream",
+   "status": "pass",
+   "severity": "required",
+   "message": "/media delivered a 1280x800 H.264 keyframe in 6 ms (encoder openh264), luma spread 220"
+  },
+  {
+   "id": "stream.quic",
+   "group": "stream",
+   "status": "pass",
+   "severity": "required",
+   "message": "QUIC media listener bound on UDP 3212"
+  },
+  {
+   "id": "screenshot.display",
+   "group": "screenshot",
+   "status": "pass",
+   "severity": "required",
+   "message": "1280x800 PNG at scale 1, 117 distinct colours"
+  },
+  {
+   "id": "fixtures.grid",
+   "group": "fixtures",
+   "status": "pass",
+   "severity": "required",
+   "message": "grid fixture ready (pid 298, title \"CUA Doctor grid 1a0d37f7de40011\")"
+  },
+  {
+   "id": "fixtures.form",
+   "group": "fixtures",
+   "status": "pass",
+   "severity": "required",
+   "message": "form fixture ready (pid 299, title \"CUA Doctor form 1a0d37f7de40011\")"
+  },
+  {
+   "id": "windows.list",
+   "group": "windows",
+   "status": "pass",
+   "severity": "required",
+   "message": "fixture windows listed: grid true, form true (app pids [298, 299])"
+  },
+  {
+   "id": "windows.bounds",
+   "group": "windows",
+   "status": "pass",
+   "severity": "required",
+   "message": "moved grid from (5, 56) to (40, 60) (asked (40, 60)), focused=true"
+  },
+  {
+   "id": "screenshot.fixture_pixel",
+   "group": "screenshot",
+   "status": "pass",
+   "severity": "required",
+   "message": "grid found at (40, 60); cell (2,3) pixel [72, 153, 128], want [72, 153, 128]"
+  },
+  {
+   "id": "input.click",
+   "group": "input",
+   "status": "pass",
+   "severity": "required",
+   "message": "click at (240, 340) landed in grid cell [2,3]"
+  },
+  {
+   "id": "input.scroll",
+   "group": "input",
+   "status": "pass",
+   "severity": "required",
+   "message": "grid logged scroll \"down\" in cell [4,2]"
+  },
+  {
+   "id": "input.drag",
+   "group": "input",
+   "status": "pass",
+   "severity": "required",
+   "message": "press in [1,1], release in [4,2]"
+  },
+  {
+   "id": "input.type",
+   "group": "input",
+   "status": "pass",
+   "severity": "required",
+   "message": "typed \"doctor\", Backspace left \"docto\""
+  },
+  {
+   "id": "a11y.tree",
+   "group": "a11y",
+   "status": "fail",
+   "severity": "required",
+   "message": "GetTree: AT-SPI is unavailable for this window (is the accessibility bus running?)"
+  },
+  {
+   "id": "a11y.act",
+   "group": "a11y",
+   "status": "fail",
+   "severity": "required",
+   "message": "no Submit element to press"
+  },
+  {
+   "id": "windows.launch_app",
+   "group": "windows",
+   "status": "fail",
+   "severity": "required",
+   "message": "firefox (pid 306) mapped 1 window(s): [\"Firefox Crash Reporter\"]"
+  },
+  {
+   "id": "audio.backend",
+   "group": "audio",
+   "status": "pass",
+   "severity": "required",
+   "message": "PulseAudio (on PipeWire 1.0.5); default sink cua_desktop (want cua_desktop), source cua_mic (want cua_mic)"
+  },
+  {
+   "id": "audio.desktop_capture",
+   "group": "audio",
+   "status": "pass",
+   "severity": "required",
+   "message": "100 Opus packets, 2.0 s decoded, rms -10.7 dBFS, tone heard"
+  },
+  {
+   "id": "audio.uplink_route",
+   "group": "audio",
+   "status": "pass",
+   "severity": "required",
+   "message": "660 Hz into cua_mic_in heard on cua_mic (dominant fraction 1.00, rms -11.74)"
+  },
+  {
+   "id": "audio.avsync",
+   "group": "audio",
+   "status": "pass",
+   "severity": "required",
+   "message": "4 flash/beep pairs, skews [0.4, 0.3, 0.3, 0.4] ms (budget 80 ms on gvisor)"
+  },
+  {
+   "id": "presence.join",
+   "group": "presence",
+   "status": "pass",
+   "severity": "required",
+   "message": "joined as p-6e2414600016cf09b963f599 (roster 0), leave ok"
+  }
+ ],
+ "_recorded": {
+  "source": "matrix-final/fleet-doctor-gvisor.json",
+  "note": "recorded from a real run; trimmed to id, group, status, severity and message; redacted: the home path and the public egress IP"
+ }
+}

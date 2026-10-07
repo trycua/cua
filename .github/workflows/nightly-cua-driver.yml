@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: "Exact main SHA (defaults to the workflow revision)"
+        description: "Exact main SHA (defaults to, and for the macOS E2E gate must equal, the workflow revision)"
         required: false
         type: string
       force:
@@ -16,6 +16,10 @@ on:
         type: boolean
 
 permissions:
+  # actions: read lets the reusable builder run its desktop E2E gate jobs.
+  # Nightly builds run them against source_sha; a failed suite fails `build`,
+  # so `publish` never runs. Nightly runs never publish a stable release.
+  actions: read
   contents: write
   id-token: write
   issues: write
@@ -24,6 +28,11 @@ permissions:
 concurrency:
   group: nightly-cua-driver
   cancel-in-progress: false
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
 
 jobs:
   plan:

@@ -19,11 +19,20 @@ concurrency:
   group: ci-hyprland-plugin-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
 jobs:
   unit:
     name: Linux protocol, transport, and mocked plugin API
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      # The keyboard layout and foreground modifier tests compile real XKB
+      # keymaps. Fail instead of skipping them if xkbcommon goes missing.
+      CUA_HYPRLAND_REQUIRE_XKBCOMMON: "1"
     defaults:
       run:
         working-directory: libs/cua-driver/hyprland-plugin
@@ -34,13 +43,13 @@ jobs:
       - name: Install portable test toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang-18 ninja-build python3-venv
+          sudo apt-get install -y --no-install-recommends clang-18 ninja-build python3-venv libxkbcommon-dev xkb-data
           python3 -m venv "$RUNNER_TEMP/hyprland-plugin-tools"
           "$RUNNER_TEMP/hyprland-plugin-tools/bin/python" -m pip install cmake==3.31.6
           echo "$RUNNER_TEMP/hyprland-plugin-tools/bin" >> "$GITHUB_PATH"
       - name: Check helper syntax
         run: |
-          python3 -c 'import ast; from pathlib import Path; [ast.parse(p.read_text()) for p in Path("tests").glob("*.py")]'
+          python3 -c 'import ast; from pathlib import Path; [ast.parse(p.read_text()) for d in ("proofs", "tests") for p in Path(d).glob("*.py")]'
           bash -n packaging/arch/PKGBUILD
           bash -n packaging/release/PKGBUILD.in
       - name: Check lifecycle runner cleanup

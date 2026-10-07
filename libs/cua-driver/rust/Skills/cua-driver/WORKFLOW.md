@@ -1,0 +1,195 @@
+# Observe, act, verify
+
+## Choose the route
+
+Name the user's postcondition and any method constraint before acting.
+
+1. For a non-GUI outcome, use a caller-provided application API, filesystem operation, or CLI when permitted; independently read back its result. An MCP-only client must not assume it has a shell.
+2. For exact window geometry, prefer `set_window_frame` and verify with `list_windows`. For a known native menu path, use `invoke_menu` and verify the command's effect. It can temporarily activate the target, so apply the foreground authorization boundary.
+3. For supported browser page content, use [BROWSER.md](BROWSER.md) when page-aware automation is permitted. GUI-only or native-input proof stays on the native route.
+4. For native controls, prefer snapshot-bound accessibility actions. If semantics cannot reach the target, use a fresh, valid screenshot and the window pixel route.
+5. If the selected background route refuses or visibly fails, consider explicitly authorized foreground delivery for that action.
+6. If exact-window observation or delivery is unavailable, use the desktop route only when the task and authorization admit full-display capture and visible input.
+
+Skip a route whose prerequisite is demonstrably absent: no valid window image means no window-pixel attempt. Do not exhaust impossible actions just to reach a later rung. A refusal never grants broader authority.
+
+## Select the target
+
+Discover running applications and their windows before assuming a remembered PID still exists. Use `launch_app` when the user requests or implies launch. Select the intended window from its returned `windows` or `list_windows({pid})`; never blindly take the first item.
+
+A cold launch may return a process before a window appears. Retry bounded window discovery, not repeated launches. Empty discovery does not prove the process exited. For closure, absence from `list_windows` proves no listed windows, not process termination.
+
+Choose the target on each action:
+
+```json
+{ "target": { "kind": "window", "pid": 844, "window_id": 10725 } }
+```
+
+```json
+{ "target": { "kind": "desktop", "display_id": "primary" } }
+```
+
+These objects are argument fragments for tools advertising `target`, not standalone commands. Replace example IDs and coordinates with observed values. Do not combine `target` with flat `scope`, `pid`, or `window_id` input fields. Observation tools and semantic-only tools such as `get_window_state` and `set_value` retain their own `pid`/`window_id` schema.
+
+`list_windows.z_index` uses larger integers for windows nearer the front. A null value is unknown, not zero; array order is not stacking evidence. Titles, bounds, and application identity help select among returned candidates but never replace an exact identifier.
+
+## Observe
+
+`get_window_state({pid, window_id})` requests the accessibility tree and a grounding screenshot by default. Start with `query` (or `max_elements`) instead of a full read, and verify at checkpoints rather than after every action. Check what actually came back: permission, backing-store, or surface-identity failures can leave usable tree data without an image. `screenshot_error` and `screenshot_frame_valid:false` are not empty-tree signals.
+
+By default the tree comes back **once**, as compact `tree_markdown` (`tree_format:"markdown"`). A row `[N]` is addressed with `element_token` `<snapshot_id>:N`; the `snapshot_id` is in the response header and in `structuredContent`. Use `tree_format:"elements"` for the structured `elements` array when you need explicit tokens, frames, parents, or values, or `"both"` for the old double payload (about twice the size). `full_output:true` restores the previous full response, including the platform's walk limits. In `elements`, rows may contain `element_token`, role, label, value, actions, parent, depth, enabled/selected state, `frame` (screen coordinates, the space of `scope:"desktop"` actions), and `screenshot_frame` (pixels of the screenshot in the same response, the space of window-local pointer `x`/`y`). Missing fields are unknown.
+
+- Use `query` to project matching rows plus ancestors without renumbering their indices.
+- A read walks at most 250 nodes by default. When it stops there the response says `Tree truncated at max_elements=…` (`truncated:true`, `truncation_hint`). Pass a larger `max_elements`, or narrow with `query` / `max_depth`. Truncation does not prove absence.
+- After the first read, pass `since:"latest"` (or `since:<snapshot_id>`) to get only what changed. `latest` is this window's most recent read with the same `query`, `max_elements` and `max_depth`. You get: `+` added, `~` changed, `-` removed rows (removed ids are the old snapshot's), or `no change since …; focused element is …` (focus is reported on macOS only). The response carries a new `snapshot_id`: use it in tokens (`<new id>:N`). Rows not listed keep their `[N]` unless a `reindexed:` line says otherwise. An unknown, expired, other-window, or differently-scoped `since` returns a full read, and `since_status` says why. A diff reads the rendered tree rows only; it does not prove the screenshot is unchanged.
+- `_note`, `background_input`, and (Linux) `frame_note` are omitted unless `verbose:true`; a degraded snapshot keeps `background_input`.
+- `include_screenshot:false` returns the tree only. On macOS the window keeps the pixel frame of its last screenshot while its size is unchanged, so `x,y` read off that screenshot still work; elsewhere, and after a resize, take a new screenshot before a pixel action.
+- Where advertised, `include_accessibility_tree:false` requests capture without a tree walk. On macOS it keeps the current snapshot's rows and tokens valid. Use it when you only need to look; do not use `max_elements:1` or a `query` that matches nothing for that, because those replace the snapshot with an almost empty one.
+- Row numbers belong to one read. A narrower re-read (smaller `max_elements`, `max_depth`, another `query`) can stop before a row you saw earlier, and `<new snapshot_id>:N` for that row is then out of range. Use rows printed in the read whose `snapshot_id` you use.
+- `capture_mode` is deprecated and ignored. Do not change configuration to repair a sparse tree.
+- Use `screenshot_out_file` to save a PNG instead of inlining it, then actually read the image. Use an absolute, run-scoped output path.
+
+The accessibility model may lag or disagree with rendered state: Electron text shims can echo writes, Catalyst may expose placeholders, and virtualized rows may have unusable frames. Cross-check the relevant visible outcome. An empty tree can also mean an unavailable accessibility bridge; inspect `degraded_reason` and the platform guide. Retry once for lazy initialization, not indefinitely.
+
+## Act once
+
+Use the `element_token` `<snapshot_id>:N` for row `[N]` of the latest snapshot of the intended window, for example `"s0000002a:11"`. A bare `"11"` is accepted only together with `window_id` and then means row 11 of that window's current snapshot. Do not mix a row number from one read with the `snapshot_id` of another. A later snapshot can invalidate a pending action, including when another agent observes the same window.
+
+Example CLI window action, with IDs and token replaced from the preceding response:
+
+```bash
+cua-driver click '{"target":{"kind":"window","pid":844,"window_id":10725},"element_token":"s0000002a:14","session":"run-1"}'
+```
+
+| Intent                          | Arguments in addition to exact target/session                                  |
+| ------------------------------- | ------------------------------------------------------------------------------ |
+| Activate a control              | `click` with `element_token`                                                   |
+| Double/right click              | `double_click` / `right_click`; inspect the host schema and delivery result    |
+| Insert text                     | `type_text` with `element_token` and `text`                                    |
+| Focus a visible field and type  | `type_text` with `x,y,text`, when that form is advertised                      |
+| Replace an exposed native value | `set_value` with `pid,element_token,value` (its own schema, no `target`)       |
+| Send a key or combination       | `press_key` with `key`, or `hotkey` with `keys`                                |
+| Scroll / drag                   | `scroll` takes `direction` and `amount` (wheel notches); signed `dx`/`dy` is converted (positive `dy` is down; up to 50 is notches, more is pixels at 100 px per notch). Inspect `describe drag` |
+
+Text insertion and value replacement are different intents. Setting a field does not prove a form submission, navigation, or rename committed. Open a collapsed search/input control and reobserve before typing into it; one focus-click may not both open and focus it. Inspect the existing value/selection before replacing content.
+
+If a text action returns `unverifiable`, take a fresh snapshot before retrying. A deferred provider can publish after the call unwinds, so retrying immediately may duplicate text. If renderer focus is missing, the advertised `type_text` pixel form focuses then types in one call. For minimized windows, prefer an exposed semantic commit control; do not assume Return or a value write commits, and do not silently restore the window.
+
+Keep `delivery_mode:"background"` as the default for window input. The route may use accessibility hit-testing even when addressed by pixels: pixel coordinates do not promise physical pointer delivery. Read the returned `route` instead of inferring it from the tool name.
+
+## Batch known actions
+
+`run_actions` is the default way to act. When the next action or actions are decided, send them as one `run_actions` call with `observe:true` instead of one call per action followed by a read. Even a single step pays off: the action and the look at its result become one call. The batch runs the same tools in order, stops at the first failure, and returns per-step status plus at most one bounded observation. Typical fit: fill several fields, then press a button, then read the result. Do not batch across a point where the answer decides the next step, or when a step reshuffles the window and invalidates element tokens used by later steps (use pixel targets after it, or split the batch there).
+
+```bash
+cua-driver run_actions '{"session":"run-1","steps":[
+  {"tool":"set_value","args":{"pid":844,"element_token":"s0000002a:14","value":"Ada"}},
+  {"tool":"set_value","args":{"pid":844,"element_token":"s0000002a:15","value":"Lovelace"}},
+  {"tool":"click","args":{"target":{"kind":"window","pid":844,"window_id":10725},"element_token":"s0000002a:21"}},
+  {"tool":"press_key","args":{"pid":844,"key":"return"}}
+ ],"delay_ms":100,"observe":true}'
+```
+
+- `tool` is one of `click`, `double_click`, `right_click`, `set_value`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag` (`press` and `type` are accepted for `press_key` and `type_text`); `args` are exactly that tool's arguments. Observation tools cannot run inside a batch: use `observe`. A `get_window_state` as the last step, with no `observe`, is taken as the observation. Run `describe run_actions` and `describe <tool>` for schemas. Up to 32 steps.
+- Every step is validated before the first runs, so a malformed step changes nothing. Each step then passes the same session, permission, capability-manifest and approval checks as a direct call; a batch grants nothing a single call lacks, and a refused step ends the batch like any other failure.
+- A batch has one session. Set `session` on `run_actions`; a step may repeat it but not name another.
+- `observe` is optional and reads once, after the last executed step (also after a failure). Pass `true` or `get_window_state` arguments; `pid`/`window_id` come from the last step that names both. Defaults: `since:"latest"` (only what changed since your last read of that window with the same view; a full read if there is none), `include_screenshot:false`, `max_elements:250`. Pass `include_screenshot:true` to see the window, or `since:null` for a full read. Omit `observe` to read nothing.
+- Read `steps[].ok` and `failed_step`. Steps before a failure did run and are not rolled back; steps after it did not. Observe before repairing, as for a single `unverifiable` action.
+
+## Pixel coordinates
+
+Ground window actions on the PNG from that exact `get_window_state`; ground desktop actions on `get_desktop_state`. Origins are top-left, increasing downward. The driver handles its own window capture scaling; do not add window offsets to window-local input.
+
+The harness may downsample the displayed preview independently of the returned PNG. Use the returned dimensions and the original file. If measuring on a resized preview, account for its exact scale in both axes; do not assume the preview is native resolution. Do not guess from accessibility frames or another app's geometry.
+
+After movement, resize, navigation, or a competing desktop interaction, reobserve. `zoom` takes a region as corners, `x1,y1` (top-left) to `x2,y2` (bottom-right); `x,y,width,height` is converted. Preserve the `from_zoom` mapping on the supported follow-up action. A manually cropped image requires its crop offset; an untracked crop is not an action coordinate source.
+
+For tiny targets, inspect at full resolution or annotate a copy without changing its dimensions. Keep the raw evidence unmodified. `debug_image_out`, where advertised, captures an action diagnostic; it is not a pre-action approval step.
+
+## Desktop loop
+
+Use the full-display path when authorized and the narrower route cannot satisfy the task. It is global input to the visible desktop, not background targeting. Ensure the desired app/field is visible and focused before keyboard input; stop if the user or another controller changes it.
+
+```bash
+cua-driver get_desktop_state '{"session":"run-1","screenshot_out_file":"/absolute/run-dir/before.png"}'
+# Read before.png; replace x/y with the observed target.
+cua-driver click '{"target":{"kind":"desktop","display_id":"primary"},"x":600,"y":300,"session":"run-1"}'
+cua-driver get_desktop_state '{"session":"run-1","screenshot_out_file":"/absolute/run-dir/after.png"}'
+# Read after.png and verify the intended outcome.
+```
+
+Desktop calls use the portable `display_id:"primary"` target. Do not assume arbitrary display IDs work. A desktop action does not change the modality or authority of later calls; the next action can target a window again.
+
+## Verify and stop
+
+For an expressible exact-window postcondition, use `verify_state` with bounded predicates and stable samples. Its result is `satisfied`, `unsatisfied`, or `unknown`. The driver does not interpret its optional final image; the agent does. Read `unknown_reason`: ambiguous matches, unavailable observations, untrusted web state, or insufficient stable samples are not success.
+
+```bash
+cua-driver verify_state '{"pid":844,"window_id":10725,"expect":[{"element":{"selector":{"label_contains":"Saved"},"exists":true}}],"include_screenshot":true,"session":"run-1"}'
+```
+
+This example proves a matching trusted element exists, not that every application has a meaningful “Saved” indicator. `label_contains` matches an element's accessible name, which for label-less text is its value. On macOS a selector also reaches display-only text (static text, read-only values) when no addressable control matches it. Text inside web content stays `unknown` with `untrusted_source`; read it from a fresh snapshot instead. Choose predicates that establish this task. Use fresh `get_window_state` for outcomes the predicate language cannot express, and fresh `get_desktop_state` for desktop proof. `verify_state` remains an exact-window tool; a previous desktop action does not disable it.
+
+Action facts are not task outcomes:
+
+| Field                | Meaning for the next decision                                                                         |
+| -------------------- | ----------------------------------------------------------------------------------------------------- |
+| `effect:"confirmed"` | The action has publishable readback; still check the task postcondition                               |
+| `partial`            | Only the reported delivered portion landed; inspect before repair                                     |
+| `unverifiable`       | Delivery cannot prove effect; observe before retrying                                                 |
+| `suspected_noop`     | Available evidence suggests no useful change                                                          |
+| `refused`            | The route deliberately did not deliver                                                                |
+| `route`              | Public actuator class: `accessibility`, `synthetic_events`, `global_input`, `dom`, or `trusted_input` |
+| `escalation`         | Suggested next route/reason, never authorization or an automatic retry                                |
+
+Successful action escalation uses `target` (`pixel`, `foreground`, or `page`) and `reason` (`route_unavailable`, `delivery_failed`, `effect_unconfirmed`, `suspected_noop`, or `permission_required`). Error diagnostics may have a different shape; inspect their code and current schema. Missing action facts are not confirmation.
+
+When the postcondition is visibly satisfied, stop acting. For media, selection alone is not playback: check the title, playing/pause indicator, and elapsed progress after preroll/buffering. For closure, verify the requested window disappeared. State only what the evidence proves.
+
+Never replay canceled, partial, or unknown actions automatically. An interrupted transport may have delivered input before losing its response. Report the interruption accurately and obtain fresh state before any further action.
+
+## Filesystem outcomes and GUI fallbacks
+
+When the requested outcome is a filesystem change and the caller has a
+headless filesystem or command capability, use that semantic route. Enumerate the
+exact source set, decide the destination-conflict policy before changing
+anything, perform one batch-safe operation, then independently read back both
+source and destination manifests. Do not open a file manager merely to mimic a
+move, copy, or rename that the caller can execute and verify directly.
+
+If the caller has no such capability, use the file manager as a GUI fallback
+and keep each claim narrow:
+
+1. After entering an inline rename and setting its value, commit it with the
+   platform's confirmation key, then take a fresh snapshot. Value readback from
+   the inline editor proves only that the editor changed; it does not prove the
+   filesystem rename committed.
+2. For a multi-selection, use the platform modifier (`cmd` on macOS, `ctrl` on
+   Windows/Linux). With authorization for visible control on macOS and Windows, issue that modified click with
+   `delivery_mode:"foreground"` so the target observes physical modifier state;
+   a refused background attempt is an escalation signal, not a failed action to
+   trust or repeat. Re-snapshot before the next operation. Continue only when
+   every intended item is selected and the prior selection was preserved.
+3. After a cross-window drag or paste, verify the destination contains the
+   complete expected set and the source reflects copy-versus-move semantics.
+   A delivered drag, keypress, or menu action is not file-operation proof.
+4. If a destination conflict presents an unrecognized policy or ambiguous
+   partial result, stop that GUI path and surface the unresolved state instead
+   of retrying blindly.
+
+### Clipboard outcomes and GUI fallbacks
+
+When the requested postcondition is an exact value on the system clipboard,
+rather than the literal gesture of selecting and copying it, keep the operation
+semantic. Read the value from the narrowest typed source, call
+`clipboard_write`, then prove the real clipboard state with `clipboard_read`.
+For browser content, this means reading the page with `get_browser_state` and
+writing the exact observed text; a passive page-text ref does not need to be
+clicked first.
+
+Use visual selection followed by the platform copy hotkey only when the user
+explicitly asks for that gesture, the source cannot expose the value
+semantically, or direct clipboard tools are unavailable. Treat that as a GUI
+fallback: re-snapshot before acting, verify the selected range when the
+application exposes it, and escalate only the delivery step that cannot land
+in the background.

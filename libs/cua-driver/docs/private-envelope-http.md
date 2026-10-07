@@ -50,7 +50,7 @@ this carrier neither inherits the former nor exposes the latter. This is a
 carrier limitation, not a change to the SDK's per-session manifest contract.
 Managed and user policies remain binding.
 This option does not authorize public exposure, alter Fleet authorization,
-or change existing computer-server sessions.
+or change existing cua-spacesd sessions.
 
 `capabilities` contains `minimum_envelope_version`, `maximum_envelope_version`,
 and `supports_cancellation`. This carrier supports envelope version 1 and
@@ -71,7 +71,7 @@ returned canonical Driver root already owns one bound session.
 Close is idempotent and retains the closed request ledger until idle removal.
 Idle reaping skips active exchanges. Shutdown cancels the listener and its
 connection tasks and closes owned sessions. It does not shut down the shared
-Driver runtime or computer-server, release a Fleet claim, or delete a pool.
+Driver runtime or cua-spacesd, release a Fleet claim, or delete a pool.
 
 ## Verification boundary
 

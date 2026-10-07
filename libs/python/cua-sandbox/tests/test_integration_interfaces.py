@@ -3,9 +3,9 @@
 Run with:
     pytest tests/test_integration_interfaces.py -v
 
-By default only local transport is tested. Set env vars to enable remote:
-    CUA_TEST_WS_URL=ws://host:8000/ws
-    CUA_TEST_HTTP_URL=http://host:8000
+They skip unless a cua-spacesd is configured:
+    CUA_TEST_ENV_URL=http://host:3211
+    CUA_TEST_ENV_TOKEN=...
 """
 
 from __future__ import annotations
@@ -139,32 +139,3 @@ class TestEnvironment:
     async def test_get_environment(self, any_sandbox):
         env = await any_sandbox.get_environment()
         assert env in ("windows", "mac", "linux", "browser")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Localhost (separate from sandbox parametrization)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class TestLocalhost:
-    async def test_screenshot(self, localhost_instance):
-        data = await localhost_instance.screenshot()
-        assert data[:4] == b"\x89PNG"
-
-    async def test_mouse_click(self, localhost_instance):
-        await localhost_instance.mouse.click(50, 50)
-
-    async def test_keyboard_type(self, localhost_instance):
-        await localhost_instance.keyboard.type("x")
-
-    async def test_shell_run(self, localhost_instance):
-        result = await localhost_instance.shell.run("echo localhost-test")
-        assert result.success
-
-    async def test_environment(self, localhost_instance):
-        env = await localhost_instance.get_environment()
-        assert env in ("windows", "mac", "linux")
-
-    async def test_dimensions(self, localhost_instance):
-        w, h = await localhost_instance.get_dimensions()
-        assert w > 0 and h > 0

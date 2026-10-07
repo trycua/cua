@@ -220,6 +220,7 @@ AWS_PROFILE=cua-artifacts
 AWS_REGION=us-west-2
 AWS_S3_BUCKET=cua-agent-artifacts
 AWS_S3_REPORT_PREFIX=cua-driver-bench
+CDB_REPORT_BASE_URL=https://bench.trycua.com
 ```
 
 Publish an existing completed run without rerunning the benchmark:
@@ -233,18 +234,18 @@ Or publish automatically after a local comparison or Fleet run by passing
 `--publish` to the `compare` or `fleet` command.
 
 The publisher uploads only `report/`, `comparison.md`, and `comparison.json`.
-It keeps the local run unchanged and prints one machine-readable line:
+It keeps the local run unchanged and prints two machine-readable lines:
 
 ```text
-REPORT_URL=https://...
+S3_URI=s3://cua-agent-artifacts/cua-driver-bench/<run-id>/
+REPORT_URL=https://bench.trycua.com/<run-id>/index.html
 ```
 
-The S3 report prefix must already be publicly readable. The publisher checks
-the generated HTTP URL. If S3 returns `403` or `404`, the public URL check fails.
-The publisher does not change bucket policy, Block Public Access, ACLs, or
-CloudFront configuration.
-
-The manual workflow treats a successful upload with an HTTP `403` as a public-access failure. The GitHub artifact remains available as the fallback.
+After uploading, the publisher uses authenticated AWS access to verify that
+`index.html` exists in S3. It does not make an anonymous request to the raw S3
+object URL. `REPORT_URL` points to the Cloudflare Access-protected report site.
+The publisher does not change bucket policy, Block Public Access, ACLs,
+Cloudflare, or other infrastructure.
 
 ## Main Options
 

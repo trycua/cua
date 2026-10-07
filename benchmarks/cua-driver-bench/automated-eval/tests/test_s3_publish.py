@@ -7,7 +7,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-import urllib.error
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
@@ -26,17 +25,6 @@ assert CLI_SPEC is not None and CLI_SPEC.loader is not None
 cli = importlib.util.module_from_spec(CLI_SPEC)
 sys.modules[CLI_SPEC.name] = cli
 CLI_SPEC.loader.exec_module(cli)
-
-
-class _Response:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_arguments) -> None:
-        return None
-
-    def read(self, _size: int) -> bytes:
-        return b"<"
 
 
 class S3PublishTests(unittest.TestCase):
@@ -62,30 +50,35 @@ class S3PublishTests(unittest.TestCase):
                 patch.object(s3_publish.shutil, "which", return_value="/usr/bin/aws"),
                 patch.object(s3_publish, "_run_id", return_value="20260927T120000Z-a18f39c"),
                 patch.object(s3_publish.subprocess, "run", return_value=completed) as run,
-                patch.object(s3_publish.urllib.request, "urlopen", return_value=_Response()),
             ):
-                url = s3_publish.publish_report(
+                s3_uri, url = s3_publish.publish_report(
                     run_dir,
                     bucket="cua-agent-artifacts",
                     prefix="cua-driver-bench",
                     profile="cua-artifacts",
                     region="us-west-2",
+                    report_base_url="https://bench.trycua.com/",
                 )
             after = {path: path.read_bytes() for path in run_dir.rglob("*") if path.is_file()}
 
         self.assertEqual(before, after)
         self.assertEqual(
-            url,
-            "https://cua-agent-artifacts.s3.us-west-2.amazonaws.com/"
-            "cua-driver-bench/20260927T120000Z-a18f39c/index.html",
+            s3_uri,
+            "s3://cua-agent-artifacts/cua-driver-bench/20260927T120000Z-a18f39c/",
         )
-        self.assertEqual(run.call_count, 3)
+        self.assertEqual(
+            url,
+            "https://bench.trycua.com/20260927T120000Z-a18f39c/index.html",
+        )
+        self.assertEqual(run.call_count, 4)
         commands = [call.args[0] for call in run.call_args_list]
         self.assertEqual(commands[0][1:3], ["s3", "sync"])
         self.assertIn(str(run_dir / "report"), commands[0])
         self.assertIn("--no-follow-symlinks", commands[0])
         self.assertEqual(commands[1][1:3], ["s3", "cp"])
         self.assertEqual(commands[2][1:3], ["s3", "cp"])
+        self.assertEqual(commands[3][1:3], ["s3api", "head-object"])
+        self.assertIn("cua-driver-bench/20260927T120000Z-a18f39c/index.html", commands[3])
         self.assertNotIn(str(secret), " ".join(" ".join(command) for command in commands))
         for command in commands:
             self.assertEqual(
@@ -124,20 +117,24 @@ class S3PublishTests(unittest.TestCase):
                     region="us-west-2",
                 )
 
-    def test_public_access_failure_explains_multi_file_report(self) -> None:
+    def test_authenticated_index_verification_failure_includes_aws_error(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run_dir = Path(temporary)
             self._report_bundle(run_dir)
             completed = subprocess.CompletedProcess([], 0, "", "")
-            forbidden = urllib.error.HTTPError(
-                "https://example.invalid/index.html", 403, "Forbidden", {}, None
-            )
+            failed = subprocess.CompletedProcess([], 1, "", "NotFound")
             with (
                 patch.object(s3_publish.shutil, "which", return_value="/usr/bin/aws"),
                 patch.object(s3_publish, "_run_id", return_value="run"),
-                patch.object(s3_publish.subprocess, "run", return_value=completed),
-                patch.object(s3_publish.urllib.request, "urlopen", side_effect=forbidden),
-                self.assertRaisesRegex(RuntimeError, "single presigned index.html"),
+                patch.object(
+                    s3_publish.subprocess,
+                    "run",
+                    side_effect=[completed, completed, completed, failed],
+                ),
+                self.assertRaisesRegex(
+                    RuntimeError,
+                    r"s3://cua-agent-artifacts/cua-driver-bench/run/index.html.*NotFound",
+                ),
             ):
                 s3_publish.publish_report(
                     run_dir,
@@ -169,11 +166,15 @@ class S3PublishTests(unittest.TestCase):
                     region="us-west-2",
                 )
 
-    def test_url_encodes_each_object_key_component(self) -> None:
+    def test_report_url_uses_configured_base_and_encodes_run_id(self) -> None:
         self.assertEqual(
-            s3_publish._report_url("bucket", "us-west-2", "reports/run with spaces/index.html"),
-            "https://bucket.s3.us-west-2.amazonaws.com/reports/run%20with%20spaces/index.html",
+            s3_publish._report_url("https://bench.trycua.com/", "run with spaces"),
+            "https://bench.trycua.com/run%20with%20spaces/index.html",
         )
+
+    def test_report_base_url_rejects_non_origin_paths(self) -> None:
+        with self.assertRaisesRegex(ValueError, "HTTPS origin"):
+            s3_publish._report_url("https://bench.trycua.com/reports", "run")
 
     def test_cli_supports_explicit_and_legacy_compare_modes(self) -> None:
         self.assertEqual(cli._command_mode(["compare", "--dry-run"]), ("compare", ["--dry-run"]))
@@ -189,13 +190,26 @@ class S3PublishTests(unittest.TestCase):
             output = io.StringIO()
             with (
                 patch.object(cli, "_load_environment"),
-                patch.object(cli, "_publish_run", return_value="https://example.test/index.html"),
+                patch.object(
+                    cli,
+                    "_publish_run",
+                    return_value=(
+                        "s3://cua-agent-artifacts/cua-driver-bench/run/",
+                        "https://bench.trycua.com/run/index.html",
+                    ),
+                ),
                 redirect_stdout(output),
             ):
                 exit_code = cli.main(["publish", "--run-dir", temporary])
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(output.getvalue().strip(), "REPORT_URL=https://example.test/index.html")
+        self.assertEqual(
+            output.getvalue().strip().splitlines(),
+            [
+                "S3_URI=s3://cua-agent-artifacts/cua-driver-bench/run/",
+                "REPORT_URL=https://bench.trycua.com/run/index.html",
+            ],
+        )
 
     def test_publish_configuration_uses_safe_environment_values(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -204,20 +218,26 @@ class S3PublishTests(unittest.TestCase):
                 "AWS_REGION": "us-west-2",
                 "AWS_S3_BUCKET": "cua-agent-artifacts",
                 "AWS_S3_REPORT_PREFIX": "cua-driver-bench",
+                "CDB_REPORT_BASE_URL": "https://bench.trycua.com",
             }
             with (
                 patch.dict(os.environ, environment, clear=True),
-                patch.object(cli, "publish_report", return_value="https://example.test") as publish,
+                patch.object(
+                    cli,
+                    "publish_report",
+                    return_value=("s3://example.test/run/", "https://example.test/run/"),
+                ) as publish,
             ):
-                url = cli._publish_run(Path(temporary))
+                result = cli._publish_run(Path(temporary))
 
-        self.assertEqual(url, "https://example.test")
+        self.assertEqual(result, ("s3://example.test/run/", "https://example.test/run/"))
         publish.assert_called_once_with(
             Path(temporary),
             bucket="cua-agent-artifacts",
             prefix="cua-driver-bench",
             profile="cua-artifacts",
             region="us-west-2",
+            report_base_url="https://bench.trycua.com",
         )
 
 

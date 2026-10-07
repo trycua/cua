@@ -253,19 +253,21 @@ def _command_mode(argv: list[str] | None) -> tuple[str, list[str]]:
     return "compare", arguments
 
 
-def _publish_run(run_dir: Path) -> str:
+def _publish_run(run_dir: Path) -> tuple[str, str]:
     bucket = os.environ.get("AWS_S3_BUCKET", "").strip()
     if not bucket:
         raise ValueError("AWS_S3_BUCKET is required to publish a report")
     prefix = os.environ.get("AWS_S3_REPORT_PREFIX", "cua-driver-bench")
     profile = os.environ.get("AWS_PROFILE") or None
     region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or None
+    report_base_url = os.environ.get("CDB_REPORT_BASE_URL", "https://bench.trycua.com")
     return publish_report(
         run_dir,
         bucket=bucket,
         prefix=prefix,
         profile=profile,
         region=region,
+        report_base_url=report_base_url,
     )
 
 
@@ -283,9 +285,10 @@ def main(argv: list[str] | None = None) -> int:
         parser = build_publish_parser()
         try:
             arguments = parser.parse_args(arguments_list)
-            report_url = _publish_run(arguments.run_dir)
+            s3_uri, report_url = _publish_run(arguments.run_dir)
         except (OSError, RuntimeError, ValueError) as error:
             parser.error(str(error))
+        print(f"S3_URI={s3_uri}")
         print(f"REPORT_URL={report_url}")
         return 0
 
@@ -320,9 +323,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"HTML: {json_path.parent / 'report' / 'index.html'}")
     if arguments.publish:
         try:
-            report_url = _publish_run(json_path.parent)
+            s3_uri, report_url = _publish_run(json_path.parent)
         except (OSError, RuntimeError, ValueError) as error:
             parser.error(str(error))
+        print(f"S3_URI={s3_uri}")
         print(f"REPORT_URL={report_url}")
     return _result_exit_code(report, fleet=fleet_mode)
 

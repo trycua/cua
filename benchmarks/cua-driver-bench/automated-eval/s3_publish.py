@@ -6,11 +6,9 @@ import os
 import re
 import shutil
 import subprocess
-import urllib.error
 import urllib.parse
-import urllib.request
 from datetime import UTC, datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 _GIT_SHA = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
@@ -27,6 +25,16 @@ def _normalize_prefix(prefix: str) -> str:
     if not parts or any(part in {".", ".."} for part in parts):
         raise ValueError("AWS_S3_REPORT_PREFIX must contain a valid object-key prefix")
     return "/".join(parts)
+
+
+def _normalize_report_base_url(base_url: str) -> str:
+    value = base_url.strip().rstrip("/")
+    parsed = urllib.parse.urlsplit(value)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.path not in {"", "/"}:
+        raise ValueError("CDB_REPORT_BASE_URL must be an HTTPS origin without a path")
+    if parsed.query or parsed.fragment or parsed.username or parsed.password:
+        raise ValueError("CDB_REPORT_BASE_URL must be an HTTPS origin without credentials")
+    return value
 
 
 def _validate_report_bundle(run_dir: Path) -> tuple[Path, Path, Path]:
@@ -122,36 +130,9 @@ def _resolve_region(aws: str, region: str | None, profile: str | None) -> str:
     )
 
 
-def _report_url(bucket: str, region: str, object_key: str) -> str:
-    encoded_key = "/".join(
-        urllib.parse.quote(part, safe="") for part in PurePosixPath(object_key).parts
-    )
-    return f"https://{bucket}.s3.{region}.amazonaws.com/{encoded_key}"
-
-
-def _verify_public_url(url: str, s3_root: str) -> None:
-    request = urllib.request.Request(
-        url,
-        headers={"User-Agent": "cua-driver-bench-report-publisher"},
-        method="GET",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30.0) as response:
-            response.read(1)
-    except urllib.error.HTTPError as error:
-        if error.code == 403:
-            raise RuntimeError(
-                "Report uploaded successfully to:\n\n"
-                f"{s3_root}\n\n"
-                "but the HTTP object is not publicly readable.\n\n"
-                "A single presigned index.html URL is not sufficient because the report "
-                "contains linked HTML and image assets. Configure public read/static hosting "
-                "for this report prefix or add a private static-distribution layer such as "
-                "CloudFront later."
-            ) from error
-        raise RuntimeError(f"published report URL returned HTTP {error.code}: {url}") from error
-    except urllib.error.URLError as error:
-        raise RuntimeError(f"could not read published report URL {url}: {error.reason}") from error
+def _report_url(base_url: str, run_id: str) -> str:
+    encoded_run_id = urllib.parse.quote(run_id, safe="")
+    return f"{_normalize_report_base_url(base_url)}/{encoded_run_id}/index.html"
 
 
 def publish_report(
@@ -161,8 +142,9 @@ def publish_report(
     prefix: str,
     profile: str | None,
     region: str | None,
-) -> str:
-    """Upload one completed report bundle and return its public index URL."""
+    report_base_url: str = "https://bench.trycua.com",
+) -> tuple[str, str]:
+    """Upload one completed report bundle and return its S3 URI and report URL."""
     report_dir, markdown_path, json_path = _validate_report_bundle(run_dir)
     bucket_name = _validate_bucket(bucket)
     prefix_name = _normalize_prefix(prefix)
@@ -170,7 +152,8 @@ def publish_report(
     if aws is None:
         raise RuntimeError("AWS CLI is unavailable; install aws and ensure it is on PATH")
     resolved_region = _resolve_region(aws, region, profile)
-    object_root = f"{prefix_name}/{_run_id()}"
+    run_id = _run_id()
+    object_root = f"{prefix_name}/{run_id}"
     s3_root = f"s3://{bucket_name}/{object_root}/"
 
     print(f"[s3] uploading report to {s3_root}")
@@ -201,8 +184,15 @@ def publish_report(
         )
     print("[s3] uploaded report")
 
-    url = _report_url(bucket_name, resolved_region, f"{object_root}/index.html")
-    print("[s3] verifying public URL")
-    _verify_public_url(url, s3_root)
-    print("[s3] report available")
-    return url
+    index_key = f"{object_root}/index.html"
+    print("[s3] verifying uploaded index.html")
+    _run_aws(
+        aws,
+        ["s3api", "head-object", "--bucket", bucket_name, "--key", index_key],
+        operation="report verification",
+        destination=s3_root + "index.html",
+        profile=profile,
+        region=resolved_region,
+    )
+    print("[s3] report uploaded and verified")
+    return s3_root, _report_url(report_base_url, run_id)

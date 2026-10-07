@@ -37,6 +37,7 @@ struct SpaceDetailView: View {
 
     var body: some View {
         let detail = model.detail(space)
+        let wantsStream = model.cover(detail, requested: connectRequested, stream: .noSession).openStream
         ScrollViewReader { scroller in
             Form {
                 if let note = detail.desktopNote {
@@ -87,8 +88,9 @@ struct SpaceDetailView: View {
         .navigationTitle(detail.title)
         .toolbar { toolbar(detail) }
         // A delete stops the stream, its pop-outs and the polling at once
-        // (and a failed one starts them again).
-        .task(id: "\(live) \(connectRequested)") { await connect(detail) }
+        // (and a failed one starts them again). Approval also re-evaluates
+        // the core's eligibility without reopening this detail.
+        .task(id: "\(live) \(wantsStream)") { await connect(detail) }
         // The cover's preview: the shared store's image at once, then one
         // no older than the background interval.
         .task(id: live) {
@@ -313,6 +315,7 @@ struct SpaceDetailView: View {
               model.cover(detail, requested: connectRequested, stream: .noSession).openStream else { return }
         do {
             let provider = try await model.backend.streamProvider(id: space.id)
+            guard !Task.isCancelled else { return }
             self.provider = provider
             let session = LiveStreamSession(provider: provider)
             self.session = session
@@ -325,6 +328,7 @@ struct SpaceDetailView: View {
                 if let first = session.windows.first { pips.popOut(.window(first)) }
             }
         } catch {
+            guard !Task.isCancelled else { return }
             model.show(error: "Could not open \(space.name): \(LiveSpacesBackend.words(error))")
         }
     }

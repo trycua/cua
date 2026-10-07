@@ -437,6 +437,7 @@ impl Spaces {
         let id = self.resolve(space)?;
         let canonical = id.to_string();
         let Some(machine) = self.share_machine(&canonical, &id) else {
+            self.info(&id)?;
             return Ok(SpaceShares {
                 space: canonical,
                 ..Default::default()
@@ -641,10 +642,13 @@ impl Spaces {
         let canonical = id.to_string();
         match self.share_machine(&canonical, &id) {
             Some(machine) => self.shares_of(&canonical, &machine).await,
-            None => Ok(SpaceShares {
-                space: canonical,
-                ..Default::default()
-            }),
+            None => {
+                self.info(&id)?;
+                Ok(SpaceShares {
+                    space: canonical,
+                    ..Default::default()
+                })
+            }
         }
     }
 }

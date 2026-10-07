@@ -5837,15 +5837,20 @@ fn screen_answer_overrides_window(
     !native_origin_attested && screen_extents_trusted(raw, display)
 }
 
-/// True only when the Hyprland compositor identifies this exact client
-/// (nonzero address `xid` AND `pid`) as native Wayland, not XWayland. Missing,
-/// mismatched, or unreported clients fail closed, so `Screen` extents keep
-/// winning, which is correct for XWayland GTK and LibreOffice. Performs
-/// blocking compositor IPC: async callers must use `bounded_blocking`.
+/// True when compositor metadata proves this is a native Wayland target.
+/// The nested compositor requires a process-instance-bound listed window and an unambiguous
+/// process-family geometry query. Hyprland attests the exact address and pid.
+/// Missing or mismatched targets retain the Screen path used by XWayland.
+/// Performs blocking compositor IPC: async callers must use `bounded_blocking`.
 fn native_wayland_origin_attested(pid: u32, xid: u64) -> bool {
-    xid != 0
-        && crate::wayland::is_wayland()
-        && crate::wayland::hyprland::is_session()
+    if xid == 0 || !crate::wayland::is_wayland() {
+        return false;
+    }
+    if crate::wayland::is_inject_mode() {
+        return crate::wayland::window_was_listed_for_pid(pid, xid)
+            && crate::wayland::inject_accessibility_offset(pid).is_some();
+    }
+    crate::wayland::hyprland::is_session()
         && crate::wayland::hyprland::native_client_attested(xid, pid)
 }
 
@@ -6508,6 +6513,15 @@ mod screen_override_tests {
         let local = (12, 211, 917, 34);
         assert!(screen_answer_overrides_window(local, None, false));
         assert!(!screen_answer_overrides_window(local, None, true));
+        // The nested GTK3 fixture reports decoration-relative Screen bounds.
+        // Its compositor geometry removes the shadow/title inset; accepting
+        // the raw answer sends the wheel above the inner scroll viewport.
+        let nested = (38, 740, 536, 34);
+        assert!(!screen_answer_overrides_window(nested, None, true));
+        assert_eq!(
+            project_screen_extents(nested, (-26, -23), None),
+            Some((12, 717, 536, 34))
+        );
         // Window extents plus the attested nonzero origin give screen space.
         assert_eq!(
             project_screen_extents(local, (955, 349), None),

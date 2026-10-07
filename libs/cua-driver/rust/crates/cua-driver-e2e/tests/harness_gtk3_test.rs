@@ -125,24 +125,22 @@ fn element_rect(
         })
         .unwrap_or_else(|| panic!("GTK3 window {window_id} disappeared before PX targeting"));
 
-    let window_width = window["width"].as_f64().unwrap_or(0.0);
-    let window_height = window["height"].as_f64().unwrap_or(0.0);
     let screenshot_width = state.structured()["screenshot_width"]
         .as_f64()
         .expect("PX targeting requires screenshot_width");
     let screenshot_height = state.structured()["screenshot_height"]
         .as_f64()
         .expect("PX targeting requires screenshot_height");
-    assert!(
-        window_width > 0.0 && window_height > 0.0,
-        "GTK3 top-level frame has invalid geometry: {window:?}"
-    );
-    let scale_x = screenshot_width / window_width;
-    let scale_y = screenshot_height / window_height;
-    let x = (target["x"].as_f64().unwrap_or(0.0) - window["x"].as_f64().unwrap_or(0.0)) * scale_x;
-    let y = (target["y"].as_f64().unwrap_or(0.0) - window["y"].as_f64().unwrap_or(0.0)) * scale_y;
-    let width = target["w"].as_f64().unwrap_or(0.0) * scale_x;
-    let height = target["h"].as_f64().unwrap_or(0.0) * scale_y;
+    // Capture scaling comes from this snapshot. AT-SPI top-level extents
+    // include GTK decoration shadows, which are absent from the cropped PNG.
+    // Comparing those extents with the image invents a resize that never
+    // happened and can move the wheel above the intended scroll viewport.
+    let scale = state.structured()["frame_scale"].as_f64().unwrap_or(1.0);
+    assert!(scale.is_finite() && scale > 0.0, "invalid capture scale");
+    let x = (target["x"].as_f64().unwrap_or(0.0) - window["x"].as_f64().unwrap_or(0.0)) * scale;
+    let y = (target["y"].as_f64().unwrap_or(0.0) - window["y"].as_f64().unwrap_or(0.0)) * scale;
+    let width = target["w"].as_f64().unwrap_or(0.0) * scale;
+    let height = target["h"].as_f64().unwrap_or(0.0) * scale;
     assert!(
         width > 0.0
             && height > 0.0

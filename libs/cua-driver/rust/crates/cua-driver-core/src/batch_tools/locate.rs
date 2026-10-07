@@ -1103,24 +1103,29 @@ fn fields_hold(check: &Check, element: &Value) -> bool {
     true
 }
 
-/// An element's on/off state: `selected` when the platform reports it,
-/// else a checkbox-style value ("1"/"0", "true"/"false", "on"/"off"), as
-/// Chromium reports web checkboxes.
+/// An element's on/off state. For a toggle control (checkbox, radio,
+/// switch) its checked value ("1"/"0", "true"/"false", "on"/"off") wins:
+/// Chromium reports web checkboxes as value "1" with AXSelected false,
+/// because AXSelected means list selection, not checked. Otherwise the
+/// platform's `selected` flag, else that value.
 fn selected_state(element: &Value) -> Option<bool> {
-    if let Some(selected) = element.get("selected").and_then(Value::as_bool) {
-        return Some(selected);
-    }
-    match element
+    let checked = element
         .get("value")
-        .and_then(Value::as_str)?
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "1" | "true" | "on" | "checked" => Some(true),
-        "0" | "false" | "off" | "unchecked" => Some(false),
-        _ => None,
+        .and_then(Value::as_str)
+        .and_then(|value| match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "on" | "checked" => Some(true),
+            "0" | "false" | "off" | "unchecked" => Some(false),
+            _ => None,
+        });
+    let toggle = element
+        .get("role")
+        .and_then(Value::as_str)
+        .map(role_family)
+        .is_some_and(|family| matches!(family.as_str(), "checkbox" | "radiobutton" | "switch"));
+    if toggle && checked.is_some() {
+        return checked;
     }
+    element.get("selected").and_then(Value::as_bool).or(checked)
 }
 
 fn row_matches(row: &str, spec: &ElementSpec) -> bool {
@@ -1467,6 +1472,8 @@ mod tests {
     fn selected_falls_back_to_a_checkbox_value() {
         let mut checkbox = element(3, "AXCheckBox", "Accept terms");
         checkbox["value"] = json!("1");
+        // As Chromium reports it: checked, but not list-selected.
+        checkbox["selected"] = json!(false);
         let read = read(vec![checkbox], "");
         let check = Check::parse(
             &json!({"role": "checkbox", "name": "Accept terms", "selected": true}),

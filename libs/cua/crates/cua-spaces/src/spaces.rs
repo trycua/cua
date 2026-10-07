@@ -1439,11 +1439,13 @@ impl Spaces {
     /// cua-spacesd, retries until the driver answers or `budget` runs out
     /// (the driver may start a moment after the port is published; bounded:
     /// at most `budget / 2s` attempts). Otherwise one bounded handshake, and
-    /// a Space of declared services when no driver answers.
+    /// a Space of declared services when no driver answers. `name` is the
+    /// Space's name (without one, the guest's hostname).
     async fn connect_when_ready(
         &self,
         id: &SpaceId,
         credential: &Credential,
+        name: Option<&str>,
         budget: Duration,
         expect_spacesd: bool,
     ) -> Result<Space> {
@@ -1452,13 +1454,13 @@ impl Spaces {
                 .inner
                 .probe_timeout
                 .min(budget.max(Duration::from_secs(1)));
-            return self.connect_with(id, credential, None, probe).await;
+            return self.connect_with(id, credential, name, probe).await;
         }
         let deadline = tokio::time::Instant::now() + budget;
         let max_attempts = (budget.as_secs() / 2).max(1) + 1;
         let mut last = None;
         for _ in 0..max_attempts {
-            match self.connect(id, credential, None).await {
+            match self.connect(id, credential, name).await {
                 Ok(s) if s.has_spacesd() => return Ok(s),
                 Ok(_) => last = Some("cua-spacesd did not answer yet".to_string()),
                 Err(e @ Error::Env(cua_spacesd_client::Error::Unauthenticated(_))) => {
@@ -1664,7 +1666,7 @@ impl Spaces {
             cua_sandbox_core::progress::Phase::Connecting,
         ));
         let space = match self
-            .connect_when_ready(&id, &credential, Duration::from_secs(120), expect_env)
+            .connect_when_ready(&id, &credential, None, Duration::from_secs(120), expect_env)
             .await
         {
             Ok(s) => s,
@@ -2215,7 +2217,7 @@ impl Spaces {
             cua_sandbox_core::progress::Phase::Connecting,
         ));
         let space = match self
-            .connect_when_ready(&id, &credential, remaining, expect_env)
+            .connect_when_ready(&id, &credential, Some(&name), remaining, expect_env)
             .await
         {
             Ok(s) => s,
@@ -2294,7 +2296,7 @@ impl Spaces {
                     ..Default::default()
                 };
                 match self
-                    .connect_when_ready(&id, &credential, budget, j.spacesd)
+                    .connect_when_ready(&id, &credential, Some(&j.name), budget, j.spacesd)
                     .await
                 {
                     Ok(space) => match self.store(&space, credential) {

@@ -13,7 +13,7 @@ description: "One-shot computer actions (screenshot, click, type, windows) again
 | Command | Description |
 | --- | --- |
 | [`cua do`](#cua-do) | One-shot computer actions against the selected target. |
-| [`cua do switch`](#cua-do-switch) | Select the target: a sandbox name, `host`, `url <URL>`, or a legacy `<provider> <name>` pair. |
+| [`cua do switch`](#cua-do-switch) | Select the target: a sandbox name or ref, a relay Space (`relay:<id>`), `host`, `url <URL>`, or a legacy `<provider> <name>` pair. |
 | [`cua do status`](#cua-do-status) | Show the current target and zoom state. |
 | [`cua do ls`](#cua-do-ls) | List targets (optionally of one provider). |
 | [`cua do zoom`](#cua-do-zoom) | Crop screenshots to a window and map coordinates into it. |
@@ -72,11 +72,14 @@ cua do [OPTIONS] <COMMAND>
 # Act on a sandbox, then take a screenshot
 cua do switch dev
 cua do screenshot
+
+# A relay Space (`cua spaces ls`)
+cua do switch relay:0123abcd4567ef89
 ```
 
 ### `cua do switch`
 
-Select the target: a sandbox name, `host`, `url <URL>`, or a legacy `<provider> <name>` pair.
+Select the target: a sandbox name or ref, a relay Space (`relay:<id>`), `host`, `url <URL>`, or a legacy `<provider> <name>` pair.
 
 ```text output
 cua do switch [OPTIONS] <TARGET> [NAME]
@@ -84,7 +87,7 @@ cua do switch [OPTIONS] <TARGET> [NAME]
 
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
-| `<TARGET>` | string | required | Sandbox name or ref, `host`, `url`, or a legacy provider word. |
+| `<TARGET>` | string | required | Sandbox name or ref, `relay:<id>`, `host`, `url`, or a legacy provider word. |
 | `<NAME>` | string | optional | The URL after `url`, or the sandbox name after a provider word. |
 
 | Flag | Type | Default | Env var | Description |
@@ -97,6 +100,7 @@ cua do switch [OPTIONS] <TARGET> [NAME]
 ```bash test="cli-shape" id="ref-cua-do-switch"
 cua do switch dev
 cua do switch cloud:dev
+cua do switch relay:0123abcd4567ef89
 
 # This machine (after `cua do-host-consent`)
 cua do switch host

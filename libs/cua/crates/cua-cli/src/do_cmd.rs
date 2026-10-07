@@ -4,9 +4,10 @@
 //! `~/.cua/do_target.json`; coordinates are in screenshot-image space and
 //! are mapped to screen points with the last screenshot's scale and origin.
 //!
-//! Targets are SDK sandboxes (Fleet, local or direct). `host` is a direct
-//! sandbox pointing at a cua-spacesd on this machine (default
-//! `http://127.0.0.1:3211`), gated behind `cua do-host-consent`.
+//! Targets are SDK sandboxes (Fleet, local or direct) and relay Spaces
+//! (`relay:<machine-id>`). `host` is a direct sandbox pointing at a
+//! cua-spacesd on this machine (default `http://127.0.0.1:3211`), gated
+//! behind `cua do-host-consent`.
 
 use crate::{
     computer::{self, Computer, MAX_LENGTH, split_keys},
@@ -45,15 +46,16 @@ pub struct DoArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum DoAction {
-    /// Select the target: a sandbox name, `host`, `url <URL>`, or a legacy
-    /// `<provider> <name>` pair.
+    /// Select the target: a sandbox name or ref, a relay Space (`relay:<id>`),
+    /// `host`, `url <URL>`, or a legacy `<provider> <name>` pair.
     #[command(after_help = "Examples:
   cua do switch dev
   cua do switch cloud:dev
+  cua do switch relay:0123abcd4567ef89
   # This machine (after `cua do-host-consent`)
   cua do switch host")]
     Switch {
-        /// Sandbox name or ref, `host`, `url`, or a legacy provider word.
+        /// Sandbox name or ref, `relay:<id>`, `host`, `url`, or a legacy provider word.
         target: String,
         /// The URL after `url`, or the sandbox name after a provider word.
         name: Option<String>,
@@ -636,8 +638,16 @@ impl Run<'_> {
                 (p.to_string(), n)
             }
             _ => {
-                self.cua.sandboxes().get(target.clone()).await?;
-                ("sandbox".to_string(), target)
+                if let Some(id) = crate::sandbox::relay_space_id(&target) {
+                    // The same open later actions use. A missing or
+                    // unreachable relay Space fails here, as
+                    // `sandboxes().get` does for every other target.
+                    crate::sandbox::env_of(self.cua, &id).await?;
+                    ("relay".to_string(), id)
+                } else {
+                    self.cua.sandboxes().get(target.clone()).await?;
+                    ("sandbox".to_string(), target)
+                }
             }
         };
         self.state.provider = Some(provider.clone());

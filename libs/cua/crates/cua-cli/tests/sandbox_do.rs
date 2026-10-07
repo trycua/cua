@@ -1,11 +1,12 @@
 #![allow(deprecated)] // also exercises the deprecated `apply_pool` wrapper
 //! `cua sandbox` and `cua do` against the mock spacesd (direct
-//! sandboxes) and the fake Fleet API.
+//! sandboxes), relay Spaces, and the fake Fleet API.
 
 mod common;
 use common::*;
 use cua_daemon::fixtures;
 use cua_fleet::testing::FakeFleet;
+use cua_host::testing::FakeRelay;
 use serde_json::json;
 
 async fn direct(h: &Home, url: &str, name: &str) {
@@ -751,4 +752,154 @@ async fn default_ls_reads_a_keychain_session_only_with_the_marker() {
         .unwrap_or_else(|| panic!("{rows}"));
     assert_eq!(row["location"], "cloud");
     assert!(reads() > before);
+}
+
+/// `cua do` drives a relay Space: switch, screenshot, click, type and shell
+/// go through the same `env_of` path as a direct sandbox.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn do_drives_a_relay_space() {
+    const MACHINE: &str = "a30ad1ef1e4fea09";
+    let relay = FakeRelay::start().await;
+    relay.add_account("relay-token", "user-1", Some("ada@example.com"));
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "relay-token",
+            &cua_host::relay::RegisterRequest {
+                id: MACHINE.into(),
+                name: "Relay desk".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let env = fixtures::start_env(None, None).await;
+    relay.tunnel(MACHINE, &env.url);
+    relay.set_online(MACHINE, true, "0.0.0-mock");
+
+    let mut h = Home::new();
+    h.set("CUA_RELAY_URL", &relay.url);
+    let id = format!("relay:{MACHINE}");
+
+    // A bad machine id stays a ref error and is not stored as a target.
+    let o = h.run(&["--embedded", "do", "switch", "relay:short"]).await;
+    assert_eq!(o.code, 2, "{o:?}");
+    assert!(
+        o.stderr.contains(
+            "invalid argument: not a sandbox ref: \"relay:short\" (relay machine ids are [a-z0-9-]{8,64})"
+        ),
+        "{o:?}"
+    );
+
+    // Signed out, the directory refresh asks for the session. Previously
+    // every relay id was refused as unsupported before that.
+    let o = h.run(&["--embedded", "do", "switch", &id]).await;
+    assert_eq!(o.code, 6, "{o:?}");
+    assert!(
+        o.stderr.contains(
+            "unauthenticated: Relay authentication failed. Sign in again to refresh your machines."
+        ),
+        "{o:?}"
+    );
+    assert!(!o.stderr.contains("unsupported"), "{o:?}");
+
+    std::fs::create_dir_all(h.cua_home()).unwrap();
+    std::fs::write(
+        h.cua_home().join("credentials.json"),
+        json!({
+            "access_token": "relay-token",
+            "expires_at": "2999-01-01T00:00:00Z",
+            "token_type": "Bearer"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let o = h
+        .run(&["--embedded", "do", "switch", "relay:0123abcd4567ef89"])
+        .await;
+    assert_eq!(o.code, 3, "{o:?}");
+    assert!(
+        o.stderr.contains("not found: Space relay:0123abcd4567ef89"),
+        "{o:?}"
+    );
+
+    let o = h.run(&["--embedded", "do", "switch", &id]).await;
+    o.ok();
+    assert!(o.stdout.contains(&format!("✅ Switched to {id}")), "{o:?}");
+    let state = read_json(&h.cua_home().join("do_target.json"));
+    assert_eq!(state["provider"], "relay");
+    assert_eq!(state["name"], id);
+
+    // The legacy spelling stores the canonical id.
+    let legacy = format!("space://relay/{MACHINE}");
+    let o = h.run(&["--embedded", "do", "switch", &legacy]).await;
+    o.ok();
+    assert!(o.stdout.contains(&format!("✅ Switched to {id}")), "{o:?}");
+
+    let o = h.run(&["--embedded", "do", "status"]).await;
+    o.ok();
+    assert!(
+        o.stdout.contains(&format!("Current target: relay/{id}")),
+        "{o:?}"
+    );
+
+    let shot = h.dir.path().join("relay.png");
+    let o = h
+        .run(&[
+            "--embedded",
+            "do",
+            "screenshot",
+            "--save",
+            shot.to_str().unwrap(),
+        ])
+        .await;
+    o.ok();
+    assert!(o.stdout.contains("screenshot saved to"), "{o:?}");
+    assert!(o.stdout.contains(&format!("💻 {id}")), "{o:?}");
+    assert!(std::fs::read(&shot).unwrap().starts_with(b"\x89PNG"));
+    let state = read_json(&h.cua_home().join("do_target.json"));
+    assert!((state["zoom_scale"].as_f64().unwrap() - 1200.0 / 1280.0).abs() < 1e-9);
+
+    // Image (600, 300) → screen (640, 320), the same mapping as a direct sandbox.
+    let o = h.run(&["--embedded", "do", "click", "600", "300"]).await;
+    o.ok();
+    let ptr = env
+        .mock
+        .state
+        .observed
+        .pointer
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .unwrap();
+    assert!(ptr.contains("x: 640.0, y: 320.0"), "{ptr}");
+
+    h.run(&["--embedded", "do", "type", "relay-ok"]).await.ok();
+    let kb = env.mock.state.observed.keyboard.lock().unwrap().clone();
+    assert!(kb.iter().any(|k| k.contains("relay-ok")), "{kb:?}");
+
+    let o = h
+        .run(&["--embedded", "do", "shell", "echo", "relay-ok"])
+        .await;
+    o.ok();
+    assert!(o.stdout.starts_with("✅ relay-ok"), "{o:?}");
+
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .stop_sharing("relay-token", MACHINE)
+        .await
+        .unwrap();
+    let o = h.run(&["--embedded", "do", "switch", &id]).await;
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(
+        o.stderr.contains(
+            "env: Relay desk stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)"
+        ),
+        "{o:?}"
+    );
+    // A failed switch leaves the selected target in place.
+    let state = read_json(&h.cua_home().join("do_target.json"));
+    assert_eq!(state["name"], id);
 }

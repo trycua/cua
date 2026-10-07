@@ -129,7 +129,9 @@ enum Command {
     #[command(after_help = "Examples:
   # Act on a sandbox, then take a screenshot
   cua do switch dev
-  cua do screenshot")]
+  cua do screenshot
+  # A relay Space (`cua spaces ls`)
+  cua do switch relay:0123abcd4567ef89")]
     Do(do_cmd::DoArgs),
     /// Grant consent for `cua do switch host`.
     #[command(

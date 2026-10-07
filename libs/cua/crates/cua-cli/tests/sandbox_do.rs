@@ -1,11 +1,12 @@
 #![allow(deprecated)] // also exercises the deprecated `apply_pool` wrapper
 //! `cua sandbox` and `cua do` against the mock spacesd (direct
-//! sandboxes) and the fake Fleet API.
+//! sandboxes), relay Spaces, and the fake Fleet API.
 
 mod common;
 use common::*;
 use cua_daemon::fixtures;
 use cua_fleet::testing::FakeFleet;
+use cua_host::testing::FakeRelay;
 use serde_json::json;
 
 async fn direct(h: &Home, url: &str, name: &str) {
@@ -752,3 +753,61 @@ async fn default_ls_reads_a_keychain_session_only_with_the_marker() {
     assert_eq!(row["location"], "cloud");
     assert!(reads() > before);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn do_switch_accepts_relay_spaces() {
+    // Set up relay
+    let relay = FakeRelay::start().await;
+    relay.add_account("relay-token", "user-1", Some("test@example.com"));
+    
+    const RELAY_MACHINE: &str = "abc123def456";
+    let client = cua_host::RelayClient::new(&relay.url).unwrap();
+    client
+        .register(
+            "relay-token",
+            &cua_host::relay::RegisterRequest {
+                id: RELAY_MACHINE.into(),
+                name: "Test Machine".into(),
+                allow: vec![],
+                host: None,
+                meta: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    relay.set_online(RELAY_MACHINE, true, "0.2.2");
+    
+    let h = Home::new();
+    let temp_home = tempfile::tempdir().unwrap();
+    unsafe {
+        std::env::set_var("CUA_HOME", temp_home.path());
+        std::env::set_var("HOME", temp_home.path());
+        std::env::set_var("CUA_RELAY_URL", &relay.url);
+        std::env::set_var("CUA_CREDENTIAL_STORE", "file");
+    }
+    
+    // Store relay credentials
+    cua_auth::Store::from_env()
+        .save(&cua_auth::Credentials {
+            access_token: "relay-token".into(),
+            refresh_token: None,
+            expires_at: "2999-01-01T00:00:00Z".into(),
+            token_type: "Bearer".into(),
+            scope: None,
+            id_token: None,
+        })
+        .unwrap();
+    
+    // Before: `cua do switch relay:<id>` was unsupported
+    // After: it switches successfully
+    let relay_id = format!("relay:{RELAY_MACHINE}");
+    let o = h.run(&["--embedded", "do", "switch", &relay_id]).await;
+    o.ok();
+    assert!(o.stdout.contains(&format!("Switched to {relay_id}")), "{o:?}");
+    
+    // Status shows the relay target
+    let o = h.run(&["--embedded", "do", "status"]).await;
+    o.ok();
+    assert!(o.stdout.contains(&relay_id), "{o:?}");
+}
+

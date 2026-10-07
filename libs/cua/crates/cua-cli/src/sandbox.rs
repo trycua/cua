@@ -2063,10 +2063,25 @@ pub fn save_env_token(name: &str, token: Option<&str>) -> Result<(), CuaError> {
 }
 
 /// A spacesd client for a named sandbox. Direct sandboxes use the
-/// remembered token (or `CUA_ENV_TOKEN`).
+/// remembered token (or `CUA_ENV_TOKEN`). Relay Spaces use the Spaces API.
 pub async fn env_of(cua: &Cua, name: &str) -> Result<Arc<cua_sdk::SpacesdClient>, CuaError> {
+    // Try relay Space first if the name looks like one
+    if name.starts_with("relay:") {
+        let spaces = cua.spaces();
+        let space = spaces.space(name.to_string()).await?;
+        return space.spacesd();
+    }
+    
     let sbx = cua.sandboxes();
     let info = sbx.get(name.to_string()).await?;
+    
+    // Check if it's a relay Space by location
+    if info.location == "relay" {
+        let spaces = cua.spaces();
+        let space = spaces.space(info.id.clone()).await?;
+        return space.spacesd();
+    }
+    
     if info.location == "direct"
         && let Some(url) = info.endpoints.get("env")
     {

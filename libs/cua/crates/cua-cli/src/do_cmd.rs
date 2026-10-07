@@ -636,8 +636,15 @@ impl Run<'_> {
                 (p.to_string(), n)
             }
             _ => {
-                self.cua.sandboxes().get(target.clone()).await?;
-                ("sandbox".to_string(), target)
+                // Relay Spaces: accept the ID without validation
+                // (actual connection validated when action is performed)
+                if target.starts_with("relay:") {
+                    ("relay".to_string(), target)
+                } else {
+                    // Regular sandboxes: validate they exist
+                    self.cua.sandboxes().get(target.clone()).await?;
+                    ("sandbox".to_string(), target)
+                }
             }
         };
         self.state.provider = Some(provider.clone());

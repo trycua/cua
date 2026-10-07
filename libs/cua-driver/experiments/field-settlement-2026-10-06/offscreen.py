@@ -46,9 +46,21 @@ async def main():
    if not (x>=virtual['x'] and y>=virtual['y'] and x+width<=virtual['x']+virtual['width'] and y+height<=virtual['y']+virtual['height']):raise RuntimeError('Fixture is not wholly on owned display: '+json.dumps(dict(b)))
   l.__dict__.update(FRONT_WINDOW=front_w,verify_display=verify_display)
   exec(native_source,l.__dict__);native_trial=l.trial
+  if os.environ.get('OFFSCREEN_DISCONNECT_ONLY'):
+   import ast
+   tree=ast.parse(Path(__file__).with_name('disconnect.py').read_text())
+   definition=next(node for node in tree.body if isinstance(node,ast.ClassDef) and node.name=='Disconnect')
+   exec(compile(ast.Module(body=[definition],type_ignores=[]),'<disconnect-class>','exec'),globals())
+   clients['disconnect']=Disconnect(clients['owned'])
+   row=await native_trial(clients['disconnect'],'supervision','stable',-1,foreground);out['disconnect']=row
+   if not row['strict_pass'] or not row['foreground_preserved'] or row.get('competing_input_detected'):raise RuntimeError('Off-screen disconnect qualification failed')
+   txs=row['oracle']['transactions']
+   if len(txs)!=2 or any(a.get('status')!='committed' or a.get('record')!='Record A' for a in txs.values()):raise RuntimeError('Disconnected writes lack independent commitment')
+   print(json.dumps({'disconnect':row['fence'],'foreground_preserved':row['foreground_preserved']}),flush=True)
+   return
   external_source=native_source.replace("not m.evidence(b,f.pid,w)['record_a_visible']", "not any('Record A' in (e.get('name'),e.get('label'),e.get('value')) for e in b.get('elements',[]))")
   names=list(clients)
-  for rep in range(5):
+  for rep in range(0 if os.environ.get("OFFSCREEN_QUALIFICATION_ONLY") else 5):
    for name in (names if rep%2==0 else list(reversed(names))):
     l.preflight()
     if l.fresh_front()!=original:raise RuntimeError('User foreground changed; no restoration or further input')
@@ -58,11 +70,32 @@ async def main():
     if name in ('baseline','reference'):row['verified_ms']=row.get('decision_ms')
     out['rows'].append(row);print(json.dumps({k:row.get(k) for k in ('candidate','verified_ms','decision_ms','strict_pass','foreground_preserved','error')}),flush=True)
     if not row['strict_pass'] or not row['foreground_preserved'] or row.get('competing_input_detected'):raise RuntimeError('Off-screen qualification/interference failure')
+  import ast
+  receipt_nodes=ast.parse(Path(__file__).with_name('receipts.py').read_text()).body
+  snippets={node.targets[0].id:ast.literal_eval(node.value) for node in receipt_nodes if isinstance(node,ast.Assign) and isinstance(node.targets[0],ast.Name) and node.targets[0].id in ('checks','terminal')}
+  receipt_source=native_source.replace("   row['writes']+=1;txs.append((tx,field,value))", "   row['writes']+=1;txs.append((tx,field,value))\n"+snippets['checks'])
+  receipt_source=receipt_source.replace("  row['decision_ms']=", snippets['terminal']+"  row['decision_ms']=")
+  receipt_source=receipt_source.replace("  if mode in ('supervision','combined'):\n   try:c.fence()", "  if mode in ('supervision','combined') and not row.get('terminal_release_verified'):\n   try:c.fence()")
+  exec(receipt_source,l.__dict__)
+  clients['settled'].close();clients['settled']=l.Native('settled')
+  out['receipts']=await l.trial(clients['settled'],'combined','stable',-1,foreground)
+  if not out['receipts']['strict_pass'] or not out['receipts']['foreground_preserved'] or out['receipts'].get('competing_input_detected'):raise RuntimeError('Off-screen receipt qualification failed')
+  guard_source=native_source.replace("'activate':scenario=='activation'", "'activate':False,'wrong_tx':scenario=='wrong_tx','record_change':scenario=='record_change'")
+  guard_source=guard_source.replace("if scenario!='stable' and field=='email':break", "if False:break")
+  guard_source=guard_source.replace("scenario in ('reject','late_reject')", "scenario in ('reject','late_reject') or (scenario=='second_reject' and field=='email')")
+  exec(guard_source,l.__dict__);out['guards']=[]
+  for scenario in ('wrong_tx','record_change','reject','second_reject','late_reject','missing_ack'):
+   l.preflight()
+   if l.fresh_front()!=original:raise RuntimeError('User foreground changed; no further input')
+   clients['settled'].close();clients['settled']=l.Native('settled')
+   row=await l.trial(clients['settled'],'combined',scenario,-1,foreground);out['guards'].append(row)
+   print(json.dumps({k:row.get(k) for k in ('scenario','error','writes','foreground_preserved')}),flush=True)
+   if row['strict_pass'] or row['writes']!=(2 if scenario=='second_reject' else 1) or row.get('error') not in ('ack_binding','context_changed','rejected','ack_unavailable','field_settlement_refused') or not row['foreground_preserved'] or row.get('competing_input_detected'):raise RuntimeError('Off-screen transaction guard failed')
  finally:
   for c in clients.values():c.close()
   out['foreground_unchanged']=l.fresh_front()==original
   try:mover.stop();out['display_removed']=True
   except Exception as error:out['display_cleanup_error']=str(error);out['display_removed']=False
   out['final_displays']=mover.run('displays','--online')['displays'];out['topology_restored']=out['final_displays']==out['baseline_displays']
-  (l.OUT/'offscreen-results.json').write_text(json.dumps(out,indent=2))
+  (l.OUT/('offscreen-disconnect-results.json' if os.environ.get('OFFSCREEN_DISCONNECT_ONLY') else 'offscreen-guards-results.json' if os.environ.get('OFFSCREEN_QUALIFICATION_ONLY') else 'offscreen-results.json')).write_text(json.dumps(out,indent=2))
 asyncio.run(main())

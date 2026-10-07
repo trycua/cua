@@ -1404,6 +1404,8 @@ fn settle_native_field(
             let ptr = element.as_ptr() as AXUIElementRef;
             if crate::windows::window_info_by_id(window_id)
                 .is_some_and(|w| w.pid == pid && w.is_on_screen)
+                && crate::ax::bindings::ax_window_ids_of_pid(pid)
+                    .is_some_and(|ids| ids.contains(&window_id))
                 && crate::ax::exact_target::element_window_id(ptr) == Some(window_id)
                 && copy_string_attr(ptr, "AXRole").as_deref() == Some("AXTextField")
             {

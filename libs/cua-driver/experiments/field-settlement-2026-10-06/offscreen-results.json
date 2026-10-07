@@ -5,13 +5,13 @@
     "native_version": "0.34.0",
     "native_latest_version": "0.34.0",
     "native_release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
-    "reference_upstream_checked_at": "2026-10-07T03:33:59.834964+00:00",
-    "candidates_checked_at": "2026-10-07T03:33:58Z",
+    "reference_upstream_checked_at": "2026-10-07T03:52:05.876508+00:00",
+    "candidates_checked_at": "2026-10-07T03:52:04Z",
     "macos": "27.0.1",
     "python": "3.12.12"
   },
-  "source_commit": "b65f5b082c14ea29b781ceb0d8e73b43d9c38722",
-  "binary_sha256": "50294637377f7ff402232ac3662ff5177c92a3b2df966266aef78bf271a0d8d7",
+  "source_commit": "c31dd8cca867b92734ea3f786c9f134fa530f6f7",
+  "binary_sha256": "3ca7bece141fa54be77033cf6b0971b057735526f90558118f2d93fd21997a81",
   "rows": [
     {
       "candidate": "baseline",
@@ -27,7 +27,7 @@
         "registered": true
       },
       "dispatches": [],
-      "decision_ms": 2746.243625006173,
+      "decision_ms": 2550.4874579783063,
       "final_values": {
         "Full name": "Native Person",
         "Email": "native@example.invalid"
@@ -50,36 +50,36 @@
         "submitted_record": null,
         "submit_label": "Submit",
         "transactions": {
-          "5677e5db12994c2b9ce14188aa65c7ec": {
+          "31b7a070a1b5473eb5785e9671b2180f": {
             "status": "committed",
-            "tx": "5677e5db12994c2b9ce14188aa65c7ec",
+            "tx": "31b7a070a1b5473eb5785e9671b2180f",
             "field": "name",
             "value": "Native Person",
             "record": "Record A",
             "generation": 0,
-            "pid": 20051,
-            "window_id": 24895
+            "pid": 75208,
+            "window_id": 25201
           },
-          "56d3425f0646468bb82de453326b3754": {
+          "c0d6d5aeacdb4baca73a5f1293ff01ba": {
             "status": "committed",
-            "tx": "56d3425f0646468bb82de453326b3754",
+            "tx": "c0d6d5aeacdb4baca73a5f1293ff01ba",
             "field": "email",
             "value": "native@example.invalid",
             "record": "Record A",
             "generation": 0,
-            "pid": 20051,
-            "window_id": 24895
+            "pid": 75208,
+            "window_id": 25201
           }
         },
-        "pid": 20051,
-        "window_id": 24895,
+        "pid": 75208,
+        "window_id": 25201,
         "generation": 0,
         "activation_requests": 0,
         "window_visible": true
       },
       "foreground_preserved": true,
       "warmup": true,
-      "verified_ms": 2746.243625006173
+      "verified_ms": 2550.4874579783063
     },
     {
       "candidate": "owned",
@@ -94,7 +94,7 @@
         "native_front_matches": true,
         "registered": true
       },
-      "verified_ms": 411.88874997897074,
+      "verified_ms": 562.8539999888744,
       "dispatches": [
         {
           "activation_after_dispatch": false,
@@ -107,7 +107,7 @@
           "foreground_preserved_after_dispatch": true,
           "immediate_readback": true,
           "input_disposition": "attempted",
-          "receipt_id": "8e2705af-2f46-4cae-a754-c8dda48d8db8",
+          "receipt_id": "0298c1cf-5ca0-42d3-94f8-f02f9990d5f0",
           "replay_allowed": false,
           "settlement": null,
           "supervision": "pending_owned",
@@ -126,7 +126,7 @@
           "foreground_preserved_after_dispatch": true,
           "immediate_readback": true,
           "input_disposition": "attempted",
-          "receipt_id": "c02406ae-b6f4-4989-b717-e61f05063f17",
+          "receipt_id": "2bbd067b-0f8f-46b3-866d-3bd39af7c221",
           "replay_allowed": false,
           "settlement": null,
           "supervision": "pending_owned",
@@ -137,7 +137,7 @@
       ],
       "fence": {
         "receipts": {
-          "8e2705af-2f46-4cae-a754-c8dda48d8db8": {
+          "0298c1cf-5ca0-42d3-94f8-f02f9990d5f0": {
             "content": [
               {
                 "text": "Observation status only; independently verify application commitment.",
@@ -149,9 +149,9 @@
               "application_commit": "unverified",
               "foreground_guard": {
                 "foreground_preserved": true,
-                "physical_input_unchanged": false
+                "physical_input_unchanged": true
               },
-              "receipt_id": "8e2705af-2f46-4cae-a754-c8dda48d8db8",
+              "receipt_id": "0298c1cf-5ca0-42d3-94f8-f02f9990d5f0",
               "supervision": {
                 "observation": {
                   "foreground_changed": false,
@@ -162,7 +162,7 @@
               }
             }
           },
-          "c02406ae-b6f4-4989-b717-e61f05063f17": {
+          "2bbd067b-0f8f-46b3-866d-3bd39af7c221": {
             "content": [
               {
                 "text": "Observation status only; independently verify application commitment.",
@@ -174,9 +174,9 @@
               "application_commit": "unverified",
               "foreground_guard": {
                 "foreground_preserved": true,
-                "physical_input_unchanged": false
+                "physical_input_unchanged": true
               },
-              "receipt_id": "c02406ae-b6f4-4989-b717-e61f05063f17",
+              "receipt_id": "2bbd067b-0f8f-46b3-866d-3bd39af7c221",
               "supervision": {
                 "observation": {
                   "foreground_changed": false,
@@ -189,13 +189,13 @@
           }
         }
       },
-      "decision_ms": 1428.6130419932306,
+      "decision_ms": 1587.5157910049893,
       "final_values": {
         "Full name": "Native Person",
         "Email": "native@example.invalid"
       },
       "target_ever_active": false,
-      "competing_input_detected": true,
+      "competing_input_detected": false,
       "oracle": {
         "name": "Native Person",
         "email": "native@example.invalid",
@@ -212,35 +212,3141 @@
         "submitted_record": null,
         "submit_label": "Submit",
         "transactions": {
-          "f9511ae40a784f7a9700df8bf6ac1151": {
+          "e7edcb68793f477cb4e1c532ca5297a2": {
             "status": "committed",
-            "tx": "f9511ae40a784f7a9700df8bf6ac1151",
+            "tx": "e7edcb68793f477cb4e1c532ca5297a2",
             "field": "name",
             "value": "Native Person",
             "record": "Record A",
             "generation": 0,
-            "pid": 20267,
-            "window_id": 24905
+            "pid": 75340,
+            "window_id": 25211
           },
-          "e97b0325923b45d29f0ae5880e397e20": {
+          "79271bab249e4dd197018a2458fe32b6": {
             "status": "committed",
-            "tx": "e97b0325923b45d29f0ae5880e397e20",
+            "tx": "79271bab249e4dd197018a2458fe32b6",
             "field": "email",
             "value": "native@example.invalid",
             "record": "Record A",
             "generation": 0,
-            "pid": 20267,
-            "window_id": 24905
+            "pid": 75340,
+            "window_id": 25211
           }
         },
-        "pid": 20267,
-        "window_id": 24905,
+        "pid": 75340,
+        "window_id": 25211,
         "generation": 0,
         "activation_requests": 0,
         "window_visible": true
       },
       "foreground_preserved": true,
       "warmup": true
+    },
+    {
+      "candidate": "settled",
+      "mode": "combined",
+      "scenario": "stable",
+      "rep": 0,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "verified_ms": 1008.0107079993468,
+      "dispatches": [
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "52de0d91-a96d-4dd6-8c5d-c7601246507f",
+          "replay_allowed": false,
+          "settlement": {
+            "elapsed_ms": 208,
+            "reacted": true,
+            "status": "settled",
+            "value_matches": true
+          },
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        },
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "5c95aef0-6cc3-4a3c-a7e6-40220b37b53a",
+          "replay_allowed": false,
+          "settlement": {
+            "elapsed_ms": 209,
+            "reacted": true,
+            "status": "settled",
+            "value_matches": true
+          },
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        }
+      ],
+      "fence": {
+        "receipts": {
+          "52de0d91-a96d-4dd6-8c5d-c7601246507f": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "52de0d91-a96d-4dd6-8c5d-c7601246507f",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "5c95aef0-6cc3-4a3c-a7e6-40220b37b53a": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "5c95aef0-6cc3-4a3c-a7e6-40220b37b53a",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          }
+        }
+      },
+      "decision_ms": 1826.2315419851802,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "ffddad48519741c297793e32e2acdb63": {
+            "status": "committed",
+            "tx": "ffddad48519741c297793e32e2acdb63",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 75492,
+            "window_id": 25221
+          },
+          "c10d0c6dd7d24c868be8c42454114cd8": {
+            "status": "committed",
+            "tx": "c10d0c6dd7d24c868be8c42454114cd8",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 75492,
+            "window_id": 25221
+          }
+        },
+        "pid": 75492,
+        "window_id": 25221,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": true
+    },
+    {
+      "candidate": "reference",
+      "mode": "evidence",
+      "scenario": "stable",
+      "rep": 0,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "decision_ms": 1018.5663750162348,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "d784fa31596c4393a4079d08a5a7c439": {
+            "status": "committed",
+            "tx": "d784fa31596c4393a4079d08a5a7c439",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 75613,
+            "window_id": 25231
+          },
+          "8bd92a4025a04c028e4cbdda23e1e290": {
+            "status": "committed",
+            "tx": "8bd92a4025a04c028e4cbdda23e1e290",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 75613,
+            "window_id": 25231
+          }
+        },
+        "pid": 75613,
+        "window_id": 25231,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": true,
+      "verified_ms": 1018.5663750162348
+    },
+    {
+      "candidate": "reference",
+      "mode": "evidence",
+      "scenario": "stable",
+      "rep": 1,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "decision_ms": 487.1970000094734,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "804130eca1e649e687a92d0d7a4406a7": {
+            "status": "committed",
+            "tx": "804130eca1e649e687a92d0d7a4406a7",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 75708,
+            "window_id": 25237
+          },
+          "7b7034ae6eca43ccb53bfb40ca59a65f": {
+            "status": "committed",
+            "tx": "7b7034ae6eca43ccb53bfb40ca59a65f",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 75708,
+            "window_id": 25237
+          }
+        },
+        "pid": 75708,
+        "window_id": 25237,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false,
+      "verified_ms": 487.1970000094734
+    },
+    {
+      "candidate": "settled",
+      "mode": "combined",
+      "scenario": "stable",
+      "rep": 1,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "verified_ms": 1007.0542499888688,
+      "dispatches": [
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "7d7e884c-e47e-451b-9c61-98a8f32fa0f8",
+          "replay_allowed": false,
+          "settlement": {
+            "elapsed_ms": 203,
+            "reacted": true,
+            "status": "settled",
+            "value_matches": true
+          },
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        },
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "2deba5af-249a-4613-8d2f-e8b6da757ebf",
+          "replay_allowed": false,
+          "settlement": {
+            "elapsed_ms": 207,
+            "reacted": true,
+            "status": "settled",
+            "value_matches": true
+          },
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        }
+      ],
+      "fence": {
+        "receipts": {
+          "2deba5af-249a-4613-8d2f-e8b6da757ebf": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "2deba5af-249a-4613-8d2f-e8b6da757ebf",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "52de0d91-a96d-4dd6-8c5d-c7601246507f": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "52de0d91-a96d-4dd6-8c5d-c7601246507f",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "5c95aef0-6cc3-4a3c-a7e6-40220b37b53a": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "5c95aef0-6cc3-4a3c-a7e6-40220b37b53a",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "7d7e884c-e47e-451b-9c61-98a8f32fa0f8": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "7d7e884c-e47e-451b-9c61-98a8f32fa0f8",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          }
+        }
+      },
+      "decision_ms": 1781.0487080132589,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "9b8cd4b26391465a9320c55fc21e5f72": {
+            "status": "committed",
+            "tx": "9b8cd4b26391465a9320c55fc21e5f72",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 75818,
+            "window_id": 25243
+          },
+          "ff9ae64effe1453fa9a884c014b8ba3b": {
+            "status": "committed",
+            "tx": "ff9ae64effe1453fa9a884c014b8ba3b",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 75818,
+            "window_id": 25243
+          }
+        },
+        "pid": 75818,
+        "window_id": 25243,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false
+    },
+    {
+      "candidate": "owned",
+      "mode": "combined",
+      "scenario": "stable",
+      "rep": 1,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "verified_ms": 586.9162080052774,
+      "dispatches": [
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "6d326da7-10da-49a0-982b-403d31860335",
+          "replay_allowed": false,
+          "settlement": null,
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        },
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "22df8e67-b8f6-404c-ab3d-be729cb1e09c",
+          "replay_allowed": false,
+          "settlement": null,
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        }
+      ],
+      "fence": {
+        "receipts": {
+          "0298c1cf-5ca0-42d3-94f8-f02f9990d5f0": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "0298c1cf-5ca0-42d3-94f8-f02f9990d5f0",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "22df8e67-b8f6-404c-ab3d-be729cb1e09c": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "22df8e67-b8f6-404c-ab3d-be729cb1e09c",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "2bbd067b-0f8f-46b3-866d-3bd39af7c221": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "2bbd067b-0f8f-46b3-866d-3bd39af7c221",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "6d326da7-10da-49a0-982b-403d31860335": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "6d326da7-10da-49a0-982b-403d31860335",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          }
+        }
+      },
+      "decision_ms": 1590.168624999933,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "97001c7bf90141449cb1c020e6c1cfc8": {
+            "status": "committed",
+            "tx": "97001c7bf90141449cb1c020e6c1cfc8",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 75946,
+            "window_id": 25253
+          },
+          "ee7942dcd6d64313aa2fd4107cac0036": {
+            "status": "committed",
+            "tx": "ee7942dcd6d64313aa2fd4107cac0036",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 75946,
+            "window_id": 25253
+          }
+        },
+        "pid": 75946,
+        "window_id": 25253,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false
+    },
+    {
+      "candidate": "baseline",
+      "mode": "evidence",
+      "scenario": "stable",
+      "rep": 1,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "dispatches": [],
+      "decision_ms": 2593.545459007146,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "2477725c91b747cdba2bdcd659e05428": {
+            "status": "committed",
+            "tx": "2477725c91b747cdba2bdcd659e05428",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 76147,
+            "window_id": 25259
+          },
+          "52bf89a3d56c47bfa3fa57c7991793c5": {
+            "status": "committed",
+            "tx": "52bf89a3d56c47bfa3fa57c7991793c5",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 76147,
+            "window_id": 25259
+          }
+        },
+        "pid": 76147,
+        "window_id": 25259,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false,
+      "verified_ms": 2593.545459007146
+    },
+    {
+      "candidate": "baseline",
+      "mode": "evidence",
+      "scenario": "stable",
+      "rep": 2,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "dispatches": [],
+      "decision_ms": 2600.696000008611,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "3c2cfeb78f1e4adda0b73cf7380037b6": {
+            "status": "committed",
+            "tx": "3c2cfeb78f1e4adda0b73cf7380037b6",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 76368,
+            "window_id": 25269
+          },
+          "7355ed84ed2c4e75a7745a3e408b1296": {
+            "status": "committed",
+            "tx": "7355ed84ed2c4e75a7745a3e408b1296",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 76368,
+            "window_id": 25269
+          }
+        },
+        "pid": 76368,
+        "window_id": 25269,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false,
+      "verified_ms": 2600.696000008611
+    },
+    {
+      "candidate": "owned",
+      "mode": "combined",
+      "scenario": "stable",
+      "rep": 2,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "verified_ms": 605.9717079915572,
+      "dispatches": [
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "6cf9a245-766c-41d4-b5db-f8f0a27a7c35",
+          "replay_allowed": false,
+          "settlement": null,
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        },
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "679b0de2-858a-489c-8d6c-1513bc896807",
+          "replay_allowed": false,
+          "settlement": null,
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        }
+      ],
+      "fence": {
+        "receipts": {
+          "0298c1cf-5ca0-42d3-94f8-f02f9990d5f0": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "0298c1cf-5ca0-42d3-94f8-f02f9990d5f0",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "22df8e67-b8f6-404c-ab3d-be729cb1e09c": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "22df8e67-b8f6-404c-ab3d-be729cb1e09c",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "2bbd067b-0f8f-46b3-866d-3bd39af7c221": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "2bbd067b-0f8f-46b3-866d-3bd39af7c221",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "679b0de2-858a-489c-8d6c-1513bc896807": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "679b0de2-858a-489c-8d6c-1513bc896807",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "6cf9a245-766c-41d4-b5db-f8f0a27a7c35": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "6cf9a245-766c-41d4-b5db-f8f0a27a7c35",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "6d326da7-10da-49a0-982b-403d31860335": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "6d326da7-10da-49a0-982b-403d31860335",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          }
+        }
+      },
+      "decision_ms": 1606.2438329972792,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "9dddbe721af64690bc25022f58c65185": {
+            "status": "committed",
+            "tx": "9dddbe721af64690bc25022f58c65185",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 76514,
+            "window_id": 25279
+          },
+          "45782d02b3a4490284471f57f44ca6f7": {
+            "status": "committed",
+            "tx": "45782d02b3a4490284471f57f44ca6f7",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 76514,
+            "window_id": 25279
+          }
+        },
+        "pid": 76514,
+        "window_id": 25279,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false
+    },
+    {
+      "candidate": "settled",
+      "mode": "combined",
+      "scenario": "stable",
+      "rep": 2,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "verified_ms": 985.2949579944834,
+      "dispatches": [
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "6bbc5662-a283-4770-86af-efaeeb163ae0",
+          "replay_allowed": false,
+          "settlement": {
+            "elapsed_ms": 209,
+            "reacted": true,
+            "status": "settled",
+            "value_matches": true
+          },
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        },
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "d6ec2668-0e92-461e-a761-390c1f9c14c7",
+          "replay_allowed": false,
+          "settlement": {
+            "elapsed_ms": 196,
+            "reacted": true,
+            "status": "settled",
+            "value_matches": true
+          },
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        }
+      ],
+      "fence": {
+        "receipts": {
+          "2deba5af-249a-4613-8d2f-e8b6da757ebf": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "2deba5af-249a-4613-8d2f-e8b6da757ebf",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "52de0d91-a96d-4dd6-8c5d-c7601246507f": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "52de0d91-a96d-4dd6-8c5d-c7601246507f",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "5c95aef0-6cc3-4a3c-a7e6-40220b37b53a": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "5c95aef0-6cc3-4a3c-a7e6-40220b37b53a",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "6bbc5662-a283-4770-86af-efaeeb163ae0": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "6bbc5662-a283-4770-86af-efaeeb163ae0",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "7d7e884c-e47e-451b-9c61-98a8f32fa0f8": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "7d7e884c-e47e-451b-9c61-98a8f32fa0f8",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "d6ec2668-0e92-461e-a761-390c1f9c14c7": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "d6ec2668-0e92-461e-a761-390c1f9c14c7",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          }
+        }
+      },
+      "decision_ms": 1806.5042920061387,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "53c8ec568dd042f4b3bd194e6e685487": {
+            "status": "committed",
+            "tx": "53c8ec568dd042f4b3bd194e6e685487",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 76609,
+            "window_id": 25289
+          },
+          "46e6bebb44814132a27726c522023950": {
+            "status": "committed",
+            "tx": "46e6bebb44814132a27726c522023950",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 76609,
+            "window_id": 25289
+          }
+        },
+        "pid": 76609,
+        "window_id": 25289,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false
+    },
+    {
+      "candidate": "reference",
+      "mode": "evidence",
+      "scenario": "stable",
+      "rep": 2,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "decision_ms": 487.47920902678743,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "ec57d93a9e9f48d49b6585338a166086": {
+            "status": "committed",
+            "tx": "ec57d93a9e9f48d49b6585338a166086",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 76703,
+            "window_id": 25295
+          },
+          "58e4871295fd4847ad1bf6e21b179a2f": {
+            "status": "committed",
+            "tx": "58e4871295fd4847ad1bf6e21b179a2f",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 76703,
+            "window_id": 25295
+          }
+        },
+        "pid": 76703,
+        "window_id": 25295,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false,
+      "verified_ms": 487.47920902678743
+    },
+    {
+      "candidate": "reference",
+      "mode": "evidence",
+      "scenario": "stable",
+      "rep": 3,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "decision_ms": 474.58379101590253,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "7253ac4328634037bf464f890c202e94": {
+            "status": "committed",
+            "tx": "7253ac4328634037bf464f890c202e94",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 76766,
+            "window_id": 25301
+          },
+          "5903dbba43cc481ba4f6dd6b8dd8ae33": {
+            "status": "committed",
+            "tx": "5903dbba43cc481ba4f6dd6b8dd8ae33",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 76766,
+            "window_id": 25301
+          }
+        },
+        "pid": 76766,
+        "window_id": 25301,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false,
+      "verified_ms": 474.58379101590253
+    },
+    {
+      "candidate": "settled",
+      "mode": "combined",
+      "scenario": "stable",
+      "rep": 3,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "verified_ms": 993.705917004263,
+      "dispatches": [
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "09194ab9-5713-45e6-83d2-756f580b5091",
+          "replay_allowed": false,
+          "settlement": {
+            "elapsed_ms": 200,
+            "reacted": true,
+            "status": "settled",
+            "value_matches": true
+          },
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        },
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "fdd39173-7272-4821-9e0b-d82378e44ac3",
+          "replay_allowed": false,
+          "settlement": {
+            "elapsed_ms": 195,
+            "reacted": true,
+            "status": "settled",
+            "value_matches": true
+          },
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        }
+      ],
+      "fence": {
+        "receipts": {
+          "09194ab9-5713-45e6-83d2-756f580b5091": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "09194ab9-5713-45e6-83d2-756f580b5091",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "2deba5af-249a-4613-8d2f-e8b6da757ebf": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "2deba5af-249a-4613-8d2f-e8b6da757ebf",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "52de0d91-a96d-4dd6-8c5d-c7601246507f": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "52de0d91-a96d-4dd6-8c5d-c7601246507f",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "5c95aef0-6cc3-4a3c-a7e6-40220b37b53a": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "5c95aef0-6cc3-4a3c-a7e6-40220b37b53a",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "6bbc5662-a283-4770-86af-efaeeb163ae0": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "6bbc5662-a283-4770-86af-efaeeb163ae0",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "7d7e884c-e47e-451b-9c61-98a8f32fa0f8": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "7d7e884c-e47e-451b-9c61-98a8f32fa0f8",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "d6ec2668-0e92-461e-a761-390c1f9c14c7": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "d6ec2668-0e92-461e-a761-390c1f9c14c7",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "fdd39173-7272-4821-9e0b-d82378e44ac3": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "fdd39173-7272-4821-9e0b-d82378e44ac3",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          }
+        }
+      },
+      "decision_ms": 1817.3902079870459,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "bb3d4c01cbd945f1a0db037a117943f8": {
+            "status": "committed",
+            "tx": "bb3d4c01cbd945f1a0db037a117943f8",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 76874,
+            "window_id": 25307
+          },
+          "e352ba3813ee4a748749ac7030cbb7b1": {
+            "status": "committed",
+            "tx": "e352ba3813ee4a748749ac7030cbb7b1",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 76874,
+            "window_id": 25307
+          }
+        },
+        "pid": 76874,
+        "window_id": 25307,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false
+    },
+    {
+      "candidate": "owned",
+      "mode": "combined",
+      "scenario": "stable",
+      "rep": 3,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "verified_ms": 598.4597920032684,
+      "dispatches": [
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "05324a7b-a514-4390-8f81-de36099a4342",
+          "replay_allowed": false,
+          "settlement": null,
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        },
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "1a934e8c-389e-449b-923f-86cfdada2e67",
+          "replay_allowed": false,
+          "settlement": null,
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        }
+      ],
+      "fence": {
+        "receipts": {
+          "0298c1cf-5ca0-42d3-94f8-f02f9990d5f0": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "0298c1cf-5ca0-42d3-94f8-f02f9990d5f0",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "05324a7b-a514-4390-8f81-de36099a4342": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "05324a7b-a514-4390-8f81-de36099a4342",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "1a934e8c-389e-449b-923f-86cfdada2e67": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "1a934e8c-389e-449b-923f-86cfdada2e67",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "22df8e67-b8f6-404c-ab3d-be729cb1e09c": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "22df8e67-b8f6-404c-ab3d-be729cb1e09c",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "2bbd067b-0f8f-46b3-866d-3bd39af7c221": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "2bbd067b-0f8f-46b3-866d-3bd39af7c221",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "679b0de2-858a-489c-8d6c-1513bc896807": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "679b0de2-858a-489c-8d6c-1513bc896807",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "6cf9a245-766c-41d4-b5db-f8f0a27a7c35": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "6cf9a245-766c-41d4-b5db-f8f0a27a7c35",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "6d326da7-10da-49a0-982b-403d31860335": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "6d326da7-10da-49a0-982b-403d31860335",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          }
+        }
+      },
+      "decision_ms": 1617.1402920153923,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "e210aacd09af4712aafa38600e958740": {
+            "status": "committed",
+            "tx": "e210aacd09af4712aafa38600e958740",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 77007,
+            "window_id": 25317
+          },
+          "d6355d3b6a2b4ae19fb3577f443768dc": {
+            "status": "committed",
+            "tx": "d6355d3b6a2b4ae19fb3577f443768dc",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 77007,
+            "window_id": 25317
+          }
+        },
+        "pid": 77007,
+        "window_id": 25317,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false
+    },
+    {
+      "candidate": "baseline",
+      "mode": "evidence",
+      "scenario": "stable",
+      "rep": 3,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "dispatches": [],
+      "decision_ms": 2597.150707995752,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "b5848b87174e4ec69451c53fe0957e31": {
+            "status": "committed",
+            "tx": "b5848b87174e4ec69451c53fe0957e31",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 77129,
+            "window_id": 25327
+          },
+          "ca4dc750e40a4338bcea9edc9b2cc5c8": {
+            "status": "committed",
+            "tx": "ca4dc750e40a4338bcea9edc9b2cc5c8",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 77129,
+            "window_id": 25327
+          }
+        },
+        "pid": 77129,
+        "window_id": 25327,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false,
+      "verified_ms": 2597.150707995752
+    },
+    {
+      "candidate": "baseline",
+      "mode": "evidence",
+      "scenario": "stable",
+      "rep": 4,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "dispatches": [],
+      "decision_ms": 2652.8209169919137,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "06b3e2b3c1524715ace01b33c9ee8dd6": {
+            "status": "committed",
+            "tx": "06b3e2b3c1524715ace01b33c9ee8dd6",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 77229,
+            "window_id": 25333
+          },
+          "fb88323c1d894d1f8a91d1e69d8ec2b5": {
+            "status": "committed",
+            "tx": "fb88323c1d894d1f8a91d1e69d8ec2b5",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 77229,
+            "window_id": 25333
+          }
+        },
+        "pid": 77229,
+        "window_id": 25333,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false,
+      "verified_ms": 2652.8209169919137
+    },
+    {
+      "candidate": "owned",
+      "mode": "combined",
+      "scenario": "stable",
+      "rep": 4,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "verified_ms": 568.5032500186935,
+      "dispatches": [
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "a41b07c9-0616-4463-b819-0cfe20cd372d",
+          "replay_allowed": false,
+          "settlement": null,
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        },
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "88dbf8e1-0a7b-435f-98f7-696368b3a71a",
+          "replay_allowed": false,
+          "settlement": null,
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        }
+      ],
+      "fence": {
+        "receipts": {
+          "0298c1cf-5ca0-42d3-94f8-f02f9990d5f0": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "0298c1cf-5ca0-42d3-94f8-f02f9990d5f0",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "05324a7b-a514-4390-8f81-de36099a4342": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "05324a7b-a514-4390-8f81-de36099a4342",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "1a934e8c-389e-449b-923f-86cfdada2e67": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "1a934e8c-389e-449b-923f-86cfdada2e67",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "22df8e67-b8f6-404c-ab3d-be729cb1e09c": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "22df8e67-b8f6-404c-ab3d-be729cb1e09c",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "2bbd067b-0f8f-46b3-866d-3bd39af7c221": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "2bbd067b-0f8f-46b3-866d-3bd39af7c221",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "679b0de2-858a-489c-8d6c-1513bc896807": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "679b0de2-858a-489c-8d6c-1513bc896807",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "6cf9a245-766c-41d4-b5db-f8f0a27a7c35": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "6cf9a245-766c-41d4-b5db-f8f0a27a7c35",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "6d326da7-10da-49a0-982b-403d31860335": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "6d326da7-10da-49a0-982b-403d31860335",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "88dbf8e1-0a7b-435f-98f7-696368b3a71a": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "88dbf8e1-0a7b-435f-98f7-696368b3a71a",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "a41b07c9-0616-4463-b819-0cfe20cd372d": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "a41b07c9-0616-4463-b819-0cfe20cd372d",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          }
+        }
+      },
+      "decision_ms": 1581.8436669942457,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "a85a0b4d471c4960bf0c9f720abdea95": {
+            "status": "committed",
+            "tx": "a85a0b4d471c4960bf0c9f720abdea95",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 77366,
+            "window_id": 25343
+          },
+          "313183faf9cf4127b67b0c28da1801d1": {
+            "status": "committed",
+            "tx": "313183faf9cf4127b67b0c28da1801d1",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 77366,
+            "window_id": 25343
+          }
+        },
+        "pid": 77366,
+        "window_id": 25343,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false
+    },
+    {
+      "candidate": "settled",
+      "mode": "combined",
+      "scenario": "stable",
+      "rep": 4,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "verified_ms": 1053.4680830023717,
+      "dispatches": [
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "39555ae5-507a-4c64-ba44-bdd810a83f8e",
+          "replay_allowed": false,
+          "settlement": {
+            "elapsed_ms": 178,
+            "reacted": true,
+            "status": "settled",
+            "value_matches": true
+          },
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        },
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "4413ae6c-29b3-4ccc-a728-07cc7afbc080",
+          "replay_allowed": false,
+          "settlement": {
+            "elapsed_ms": 208,
+            "reacted": true,
+            "status": "settled",
+            "value_matches": true
+          },
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        }
+      ],
+      "fence": {
+        "receipts": {
+          "09194ab9-5713-45e6-83d2-756f580b5091": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "09194ab9-5713-45e6-83d2-756f580b5091",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "2deba5af-249a-4613-8d2f-e8b6da757ebf": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "2deba5af-249a-4613-8d2f-e8b6da757ebf",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "39555ae5-507a-4c64-ba44-bdd810a83f8e": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "39555ae5-507a-4c64-ba44-bdd810a83f8e",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "4413ae6c-29b3-4ccc-a728-07cc7afbc080": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "4413ae6c-29b3-4ccc-a728-07cc7afbc080",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "52de0d91-a96d-4dd6-8c5d-c7601246507f": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "52de0d91-a96d-4dd6-8c5d-c7601246507f",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "5c95aef0-6cc3-4a3c-a7e6-40220b37b53a": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "5c95aef0-6cc3-4a3c-a7e6-40220b37b53a",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "6bbc5662-a283-4770-86af-efaeeb163ae0": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "6bbc5662-a283-4770-86af-efaeeb163ae0",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "7d7e884c-e47e-451b-9c61-98a8f32fa0f8": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "7d7e884c-e47e-451b-9c61-98a8f32fa0f8",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "d6ec2668-0e92-461e-a761-390c1f9c14c7": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "d6ec2668-0e92-461e-a761-390c1f9c14c7",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          },
+          "fdd39173-7272-4821-9e0b-d82378e44ac3": {
+            "content": [
+              {
+                "text": "Observation status only; independently verify application commitment.",
+                "type": "text"
+              }
+            ],
+            "structuredContent": {
+              "activation_after_dispatch": false,
+              "application_commit": "unverified",
+              "foreground_guard": {
+                "foreground_preserved": true,
+                "physical_input_unchanged": true
+              },
+              "receipt_id": "fdd39173-7272-4821-9e0b-d82378e44ac3",
+              "supervision": {
+                "observation": {
+                  "foreground_changed": false,
+                  "new_window_count": 0,
+                  "polled": true
+                },
+                "state": "finished"
+              }
+            }
+          }
+        }
+      },
+      "decision_ms": 1874.9246670049615,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "0a737c24935f49b0bcc208569ce27992": {
+            "status": "committed",
+            "tx": "0a737c24935f49b0bcc208569ce27992",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 77457,
+            "window_id": 25353
+          },
+          "2299ee384c1a49109371e744ff6e754d": {
+            "status": "committed",
+            "tx": "2299ee384c1a49109371e744ff6e754d",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 77457,
+            "window_id": 25353
+          }
+        },
+        "pid": 77457,
+        "window_id": 25353,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false
+    },
+    {
+      "candidate": "reference",
+      "mode": "evidence",
+      "scenario": "stable",
+      "rep": 4,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "writes": 2,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "decision_ms": 495.69758301367983,
+      "final_values": {
+        "Full name": "Native Person",
+        "Email": "native@example.invalid"
+      },
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "native@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "2f6d6c056c664a6895d9f62831ff2042": {
+            "status": "committed",
+            "tx": "2f6d6c056c664a6895d9f62831ff2042",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 77664,
+            "window_id": 25359
+          },
+          "547123380b2244419542c43ad6c10841": {
+            "status": "committed",
+            "tx": "547123380b2244419542c43ad6c10841",
+            "field": "email",
+            "value": "native@example.invalid",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 77664,
+            "window_id": 25359
+          }
+        },
+        "pid": 77664,
+        "window_id": 25359,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "warmup": false,
+      "verified_ms": 495.69758301367983
     }
   ],
   "baseline_displays": [
@@ -259,7 +3365,7 @@
     }
   ],
   "original_pid": 94990,
-  "owned_display_id": 14,
+  "owned_display_id": 16,
   "display_inventory": [
     {
       "builtin": true,
@@ -277,10 +3383,10 @@
     {
       "builtin": false,
       "height": 1080,
-      "id": 14,
+      "id": 16,
       "main": false,
       "model": 49374,
-      "uuid": "45410688-FD87-4208-9866-B25E38486D79",
+      "uuid": "56C526CA-B144-4C37-A751-726598FC0B22",
       "vendor": 2577,
       "virtual": true,
       "width": 1920,
@@ -296,13 +3402,563 @@
     "embedded": true,
     "host_bundle_id": null,
     "mcp_protocol_version": "2025-06-18",
-    "pid": 19896,
+    "pid": 75073,
     "tools_list_schema_version": "1"
   },
   "reference_server": {
     "name": "reference-driver",
     "version": "0.1.1"
   },
+  "receipts": {
+    "candidate": "settled",
+    "mode": "combined",
+    "scenario": "stable",
+    "rep": -1,
+    "terminal": "verified_complete",
+    "strict_pass": true,
+    "writes": 2,
+    "foreground_binding": {
+      "cocoa_front_matches": true,
+      "native_front_matches": true,
+      "registered": true
+    },
+    "receipt_checks": [
+      {
+        "pending": true,
+        "timeout_retains_observer": true,
+        "pending_release_refused": true,
+        "foreign_scope_refused": true
+      },
+      {
+        "pending": true,
+        "timeout_retains_observer": true,
+        "pending_release_refused": true,
+        "foreign_scope_refused": true
+      }
+    ],
+    "verified_ms": 971.67550001177,
+    "dispatches": [
+      {
+        "activation_after_dispatch": false,
+        "application_commit": "unverified",
+        "error": null,
+        "foreground_guard": {
+          "foreground_preserved": true,
+          "physical_input_unchanged": true
+        },
+        "foreground_preserved_after_dispatch": true,
+        "immediate_readback": true,
+        "input_disposition": "attempted",
+        "receipt_id": "d1b75da2-8ca7-4576-9a3c-51f746fc4a03",
+        "replay_allowed": false,
+        "settlement": {
+          "elapsed_ms": 188,
+          "reacted": true,
+          "status": "settled",
+          "value_matches": true
+        },
+        "supervision": "pending_owned",
+        "supervision_status": {
+          "state": "pending"
+        }
+      },
+      {
+        "activation_after_dispatch": false,
+        "application_commit": "unverified",
+        "error": null,
+        "foreground_guard": {
+          "foreground_preserved": true,
+          "physical_input_unchanged": true
+        },
+        "foreground_preserved_after_dispatch": true,
+        "immediate_readback": true,
+        "input_disposition": "attempted",
+        "receipt_id": "9089372d-0c37-4cfe-82bd-c5fd57d0a350",
+        "replay_allowed": false,
+        "settlement": {
+          "elapsed_ms": 202,
+          "reacted": true,
+          "status": "settled",
+          "value_matches": true
+        },
+        "supervision": "pending_owned",
+        "supervision_status": {
+          "state": "pending"
+        }
+      }
+    ],
+    "fence": {
+      "receipts": {
+        "09194ab9-5713-45e6-83d2-756f580b5091": {
+          "content": [
+            {
+              "text": "Observation status only; independently verify application commitment.",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "activation_after_dispatch": false,
+            "application_commit": "unverified",
+            "foreground_guard": {
+              "foreground_preserved": true,
+              "physical_input_unchanged": true
+            },
+            "receipt_id": "09194ab9-5713-45e6-83d2-756f580b5091",
+            "supervision": {
+              "observation": {
+                "foreground_changed": false,
+                "new_window_count": 0,
+                "polled": true
+              },
+              "state": "finished"
+            }
+          }
+        },
+        "2deba5af-249a-4613-8d2f-e8b6da757ebf": {
+          "content": [
+            {
+              "text": "Observation status only; independently verify application commitment.",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "activation_after_dispatch": false,
+            "application_commit": "unverified",
+            "foreground_guard": {
+              "foreground_preserved": true,
+              "physical_input_unchanged": true
+            },
+            "receipt_id": "2deba5af-249a-4613-8d2f-e8b6da757ebf",
+            "supervision": {
+              "observation": {
+                "foreground_changed": false,
+                "new_window_count": 0,
+                "polled": true
+              },
+              "state": "finished"
+            }
+          }
+        },
+        "39555ae5-507a-4c64-ba44-bdd810a83f8e": {
+          "content": [
+            {
+              "text": "Observation status only; independently verify application commitment.",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "activation_after_dispatch": false,
+            "application_commit": "unverified",
+            "foreground_guard": {
+              "foreground_preserved": true,
+              "physical_input_unchanged": true
+            },
+            "receipt_id": "39555ae5-507a-4c64-ba44-bdd810a83f8e",
+            "supervision": {
+              "observation": {
+                "foreground_changed": false,
+                "new_window_count": 0,
+                "polled": true
+              },
+              "state": "finished"
+            }
+          }
+        },
+        "4413ae6c-29b3-4ccc-a728-07cc7afbc080": {
+          "content": [
+            {
+              "text": "Observation status only; independently verify application commitment.",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "activation_after_dispatch": false,
+            "application_commit": "unverified",
+            "foreground_guard": {
+              "foreground_preserved": true,
+              "physical_input_unchanged": true
+            },
+            "receipt_id": "4413ae6c-29b3-4ccc-a728-07cc7afbc080",
+            "supervision": {
+              "observation": {
+                "foreground_changed": false,
+                "new_window_count": 0,
+                "polled": true
+              },
+              "state": "finished"
+            }
+          }
+        },
+        "52de0d91-a96d-4dd6-8c5d-c7601246507f": {
+          "content": [
+            {
+              "text": "Observation status only; independently verify application commitment.",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "activation_after_dispatch": false,
+            "application_commit": "unverified",
+            "foreground_guard": {
+              "foreground_preserved": true,
+              "physical_input_unchanged": true
+            },
+            "receipt_id": "52de0d91-a96d-4dd6-8c5d-c7601246507f",
+            "supervision": {
+              "observation": {
+                "foreground_changed": false,
+                "new_window_count": 0,
+                "polled": true
+              },
+              "state": "finished"
+            }
+          }
+        },
+        "5c95aef0-6cc3-4a3c-a7e6-40220b37b53a": {
+          "content": [
+            {
+              "text": "Observation status only; independently verify application commitment.",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "activation_after_dispatch": false,
+            "application_commit": "unverified",
+            "foreground_guard": {
+              "foreground_preserved": true,
+              "physical_input_unchanged": true
+            },
+            "receipt_id": "5c95aef0-6cc3-4a3c-a7e6-40220b37b53a",
+            "supervision": {
+              "observation": {
+                "foreground_changed": false,
+                "new_window_count": 0,
+                "polled": true
+              },
+              "state": "finished"
+            }
+          }
+        },
+        "6bbc5662-a283-4770-86af-efaeeb163ae0": {
+          "content": [
+            {
+              "text": "Observation status only; independently verify application commitment.",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "activation_after_dispatch": false,
+            "application_commit": "unverified",
+            "foreground_guard": {
+              "foreground_preserved": true,
+              "physical_input_unchanged": true
+            },
+            "receipt_id": "6bbc5662-a283-4770-86af-efaeeb163ae0",
+            "supervision": {
+              "observation": {
+                "foreground_changed": false,
+                "new_window_count": 0,
+                "polled": true
+              },
+              "state": "finished"
+            }
+          }
+        },
+        "7d7e884c-e47e-451b-9c61-98a8f32fa0f8": {
+          "content": [
+            {
+              "text": "Observation status only; independently verify application commitment.",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "activation_after_dispatch": false,
+            "application_commit": "unverified",
+            "foreground_guard": {
+              "foreground_preserved": true,
+              "physical_input_unchanged": true
+            },
+            "receipt_id": "7d7e884c-e47e-451b-9c61-98a8f32fa0f8",
+            "supervision": {
+              "observation": {
+                "foreground_changed": false,
+                "new_window_count": 0,
+                "polled": true
+              },
+              "state": "finished"
+            }
+          }
+        },
+        "9089372d-0c37-4cfe-82bd-c5fd57d0a350": {
+          "content": [
+            {
+              "text": "Observation status only; independently verify application commitment.",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "activation_after_dispatch": false,
+            "application_commit": "unverified",
+            "foreground_guard": {
+              "foreground_preserved": true,
+              "physical_input_unchanged": true
+            },
+            "receipt_id": "9089372d-0c37-4cfe-82bd-c5fd57d0a350",
+            "supervision": {
+              "observation": {
+                "foreground_changed": false,
+                "new_window_count": 0,
+                "polled": true
+              },
+              "state": "finished"
+            }
+          }
+        },
+        "d1b75da2-8ca7-4576-9a3c-51f746fc4a03": {
+          "content": [
+            {
+              "text": "Observation status only; independently verify application commitment.",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "activation_after_dispatch": false,
+            "application_commit": "unverified",
+            "foreground_guard": {
+              "foreground_preserved": true,
+              "physical_input_unchanged": true
+            },
+            "receipt_id": "d1b75da2-8ca7-4576-9a3c-51f746fc4a03",
+            "supervision": {
+              "observation": {
+                "foreground_changed": false,
+                "new_window_count": 0,
+                "polled": true
+              },
+              "state": "finished"
+            }
+          }
+        },
+        "d6ec2668-0e92-461e-a761-390c1f9c14c7": {
+          "content": [
+            {
+              "text": "Observation status only; independently verify application commitment.",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "activation_after_dispatch": false,
+            "application_commit": "unverified",
+            "foreground_guard": {
+              "foreground_preserved": true,
+              "physical_input_unchanged": true
+            },
+            "receipt_id": "d6ec2668-0e92-461e-a761-390c1f9c14c7",
+            "supervision": {
+              "observation": {
+                "foreground_changed": false,
+                "new_window_count": 0,
+                "polled": true
+              },
+              "state": "finished"
+            }
+          }
+        },
+        "fdd39173-7272-4821-9e0b-d82378e44ac3": {
+          "content": [
+            {
+              "text": "Observation status only; independently verify application commitment.",
+              "type": "text"
+            }
+          ],
+          "structuredContent": {
+            "activation_after_dispatch": false,
+            "application_commit": "unverified",
+            "foreground_guard": {
+              "foreground_preserved": true,
+              "physical_input_unchanged": true
+            },
+            "receipt_id": "fdd39173-7272-4821-9e0b-d82378e44ac3",
+            "supervision": {
+              "observation": {
+                "foreground_changed": false,
+                "new_window_count": 0,
+                "polled": true
+              },
+              "state": "finished"
+            }
+          }
+        }
+      }
+    },
+    "terminal_release_verified": true,
+    "decision_ms": 1781.2610420223791,
+    "final_values": {
+      "Full name": "Native Person",
+      "Email": "native@example.invalid"
+    },
+    "target_ever_active": false,
+    "competing_input_detected": false,
+    "oracle": {
+      "name": "Native Person",
+      "email": "native@example.invalid",
+      "subscribe": false,
+      "plan": "Basic",
+      "submitted": 0,
+      "counter": 0,
+      "dialog": false,
+      "active": false,
+      "minimized": false,
+      "hidden": false,
+      "applied": 0,
+      "record": "Record A",
+      "submitted_record": null,
+      "submit_label": "Submit",
+      "transactions": {
+        "7ea239f6a89e4b809199a51955781285": {
+          "status": "committed",
+          "tx": "7ea239f6a89e4b809199a51955781285",
+          "field": "name",
+          "value": "Native Person",
+          "record": "Record A",
+          "generation": 0,
+          "pid": 77692,
+          "window_id": 25365
+        },
+        "4e99a40d7a354155a13070b5b047ced3": {
+          "status": "committed",
+          "tx": "4e99a40d7a354155a13070b5b047ced3",
+          "field": "email",
+          "value": "native@example.invalid",
+          "record": "Record A",
+          "generation": 0,
+          "pid": 77692,
+          "window_id": 25365
+        }
+      },
+      "pid": 77692,
+      "window_id": 25365,
+      "generation": 0,
+      "activation_requests": 0,
+      "window_visible": true
+    },
+    "foreground_preserved": true
+  },
+  "guards": [
+    {
+      "candidate": "settled",
+      "mode": "combined",
+      "scenario": "wrong_tx",
+      "rep": -1,
+      "terminal": "handoff",
+      "strict_pass": false,
+      "writes": 1,
+      "foreground_binding": {
+        "cocoa_front_matches": true,
+        "native_front_matches": true,
+        "registered": true
+      },
+      "error": "ack_binding",
+      "dispatches": [
+        {
+          "activation_after_dispatch": false,
+          "application_commit": "unverified",
+          "error": null,
+          "foreground_guard": {
+            "foreground_preserved": true,
+            "physical_input_unchanged": true
+          },
+          "foreground_preserved_after_dispatch": true,
+          "immediate_readback": true,
+          "input_disposition": "attempted",
+          "receipt_id": "e1f2087f-514e-43cb-a935-1ed9a21423f8",
+          "replay_allowed": false,
+          "settlement": {
+            "elapsed_ms": 206,
+            "reacted": true,
+            "status": "settled",
+            "value_matches": true
+          },
+          "supervision": "pending_owned",
+          "supervision_status": {
+            "state": "pending"
+          }
+        }
+      ],
+      "drain_error": "MCP stream ended",
+      "target_ever_active": false,
+      "competing_input_detected": false,
+      "oracle": {
+        "name": "Native Person",
+        "email": "",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "bd3d05e427c642d6b615738378023fa6": {
+            "status": "committed",
+            "tx": "another-transaction",
+            "field": "name",
+            "value": "Native Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 77870,
+            "window_id": 25371
+          }
+        },
+        "pid": 77870,
+        "window_id": 25371,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true
+    },
+    {
+      "candidate": "settled",
+      "mode": "combined",
+      "scenario": "record_change",
+      "rep": -1,
+      "terminal": "handoff",
+      "strict_pass": false,
+      "writes": 0,
+      "error": "[Errno 32] Broken pipe",
+      "dispatches": [],
+      "drain_error": "[Errno 32] Broken pipe",
+      "oracle": {
+        "name": "",
+        "email": "",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {},
+        "pid": 77938,
+        "window_id": 25381,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true
+    }
+  ],
   "foreground_unchanged": true,
   "display_removed": true,
   "final_displays": [

@@ -10,7 +10,7 @@ def preflight():
  import Quartz
  if (Quartz.CGSessionCopyCurrentDictionary() or {}).get('CGSSessionScreenIsLocked'):raise RuntimeError('Locked desktop')
  latest=subprocess.check_output(['git','-C',str(ROOT),'ls-remote','origin','refs/heads/main'],text=True).split()[0]
- if latest!='69ebe4bfbac69778c1c03cdae1178f09f8144936':raise RuntimeError('Upstream advanced; rebuild before comparison')
+ if latest!='a7524cfd1d3e959963b43954d43f27c4bd260f08':raise RuntimeError('Upstream advanced; rebuild before comparison')
  return m.h.candidate_versions()
 class Native(m.WireMCP):
  def __init__(self,mode):

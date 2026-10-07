@@ -5,8 +5,8 @@
     "native_version": "0.34.0",
     "native_latest_version": "0.34.0",
     "native_release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
-    "reference_upstream_checked_at": "2026-10-07T03:34:32.013818+00:00",
-    "candidates_checked_at": "2026-10-07T03:34:31Z",
+    "reference_upstream_checked_at": "2026-10-07T03:54:51.006699+00:00",
+    "candidates_checked_at": "2026-10-07T03:54:50Z",
     "macos": "27.0.1",
     "python": "3.12.12"
   },
@@ -19,24 +19,24 @@
         "Y": 652.0,
         "Width": 420.0
       },
-      "call_ms": 197.40425000782125,
+      "call_ms": 265.6745830026921,
       "result": {
         "activation_after_dispatch": false,
         "application_commit": "unverified",
         "error": null,
         "foreground_guard": {
           "foreground_preserved": true,
-          "physical_input_unchanged": false
+          "physical_input_unchanged": true
         },
         "foreground_preserved_after_dispatch": true,
         "immediate_readback": true,
         "input_disposition": "attempted",
-        "receipt_id": "4415b656-328d-4900-9a32-560f07e9bae6",
+        "receipt_id": "cf37fbb4-99fe-4e9e-a64e-1fd7f4de48ca",
         "replay_allowed": false,
         "settlement": {
-          "elapsed_ms": 115,
+          "elapsed_ms": 181,
           "reacted": false,
-          "status": "interrupted",
+          "status": "settled",
           "value_matches": true
         },
         "supervision": "pending_owned",
@@ -44,7 +44,413 @@
           "state": "pending"
         }
       },
+      "is_error": false,
+      "receipt_after_return": {
+        "activation_after_dispatch": false,
+        "application_commit": "unverified",
+        "foreground_guard": {
+          "foreground_preserved": true,
+          "physical_input_unchanged": true
+        },
+        "receipt_id": "cf37fbb4-99fe-4e9e-a64e-1fd7f4de48ca",
+        "supervision": {
+          "state": "pending"
+        }
+      },
+      "fence": {
+        "activation_after_dispatch": false,
+        "application_commit": "unverified",
+        "foreground_guard": {
+          "foreground_preserved": true,
+          "physical_input_unchanged": true
+        },
+        "receipt_id": "cf37fbb4-99fe-4e9e-a64e-1fd7f4de48ca",
+        "supervision": {
+          "observation": {
+            "foreground_changed": false,
+            "new_window_count": 0,
+            "polled": true
+          },
+          "state": "finished"
+        }
+      },
+      "oracle": {
+        "name": "",
+        "email": "",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "4acbed82d2ac47f7b77ac0953fa4411e": {
+            "status": "committed",
+            "tx": "4acbed82d2ac47f7b77ac0953fa4411e",
+            "field": "name",
+            "value": "",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 80142,
+            "window_id": 25556
+          }
+        },
+        "pid": 80142,
+        "window_id": 25556,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "passed": true
+    },
+    {
+      "scenario": "early_reject",
+      "verified_bounds": {
+        "X": -1880.0,
+        "Height": 328.0,
+        "Y": 652.0,
+        "Width": 420.0
+      },
+      "call_ms": 290.3569169866387,
+      "result": {
+        "activation_after_dispatch": false,
+        "application_commit": "unverified",
+        "error": null,
+        "foreground_guard": {
+          "foreground_preserved": true,
+          "physical_input_unchanged": true
+        },
+        "foreground_preserved_after_dispatch": true,
+        "immediate_readback": true,
+        "input_disposition": "attempted",
+        "receipt_id": "f8597e0f-ee4d-46e5-b876-414129b56c86",
+        "replay_allowed": false,
+        "settlement": {
+          "elapsed_ms": 217,
+          "reacted": true,
+          "status": "value_mismatch",
+          "value_matches": false
+        },
+        "supervision": "pending_owned",
+        "supervision_status": {
+          "state": "pending"
+        }
+      },
       "is_error": true,
+      "receipt_after_return": {
+        "activation_after_dispatch": false,
+        "application_commit": "unverified",
+        "foreground_guard": {
+          "foreground_preserved": true,
+          "physical_input_unchanged": true
+        },
+        "receipt_id": "f8597e0f-ee4d-46e5-b876-414129b56c86",
+        "supervision": {
+          "state": "pending"
+        }
+      },
+      "fence": {
+        "activation_after_dispatch": false,
+        "application_commit": "unverified",
+        "foreground_guard": {
+          "foreground_preserved": true,
+          "physical_input_unchanged": true
+        },
+        "receipt_id": "f8597e0f-ee4d-46e5-b876-414129b56c86",
+        "supervision": {
+          "observation": {
+            "foreground_changed": false,
+            "new_window_count": 0,
+            "polled": true
+          },
+          "state": "finished"
+        }
+      },
+      "oracle": {
+        "name": "REJECTED",
+        "email": "",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "3f9745c07c4b4bb58bd8d907d6d50025": {
+            "status": "rejected",
+            "tx": "3f9745c07c4b4bb58bd8d907d6d50025",
+            "field": "name",
+            "value": "REJECTED",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 80284,
+            "window_id": 25566
+          }
+        },
+        "pid": 80284,
+        "window_id": 25566,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "passed": true
+    },
+    {
+      "scenario": "no_reaction",
+      "verified_bounds": {
+        "X": -1880.0,
+        "Height": 328.0,
+        "Y": 652.0,
+        "Width": 420.0
+      },
+      "call_ms": 681.9682500208728,
+      "result": {
+        "activation_after_dispatch": false,
+        "application_commit": "unverified",
+        "error": null,
+        "foreground_guard": {
+          "foreground_preserved": true,
+          "physical_input_unchanged": true
+        },
+        "foreground_preserved_after_dispatch": true,
+        "immediate_readback": false,
+        "input_disposition": "attempted",
+        "receipt_id": "bd553dcc-c0bc-424e-80b3-38271bf64fda",
+        "replay_allowed": false,
+        "settlement": {
+          "elapsed_ms": 606,
+          "reacted": false,
+          "status": "no_reaction",
+          "value_matches": false
+        },
+        "supervision": "pending_owned",
+        "supervision_status": {
+          "state": "pending"
+        }
+      },
+      "is_error": true,
+      "receipt_after_return": {
+        "activation_after_dispatch": false,
+        "application_commit": "unverified",
+        "foreground_guard": {
+          "foreground_preserved": true,
+          "physical_input_unchanged": true
+        },
+        "receipt_id": "bd553dcc-c0bc-424e-80b3-38271bf64fda",
+        "supervision": {
+          "state": "pending"
+        }
+      },
+      "fence": {
+        "activation_after_dispatch": false,
+        "application_commit": "unverified",
+        "foreground_guard": {
+          "foreground_preserved": true,
+          "physical_input_unchanged": true
+        },
+        "receipt_id": "bd553dcc-c0bc-424e-80b3-38271bf64fda",
+        "supervision": {
+          "observation": {
+            "foreground_changed": false,
+            "new_window_count": 0,
+            "polled": true
+          },
+          "state": "finished"
+        }
+      },
+      "oracle": {
+        "name": "",
+        "email": "",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "74de05997ac04cfea157c6811f23446b": {
+            "status": "committed",
+            "tx": "74de05997ac04cfea157c6811f23446b",
+            "field": "name",
+            "value": "",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 80332,
+            "window_id": 25572
+          }
+        },
+        "pid": 80332,
+        "window_id": 25572,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "passed": true
+    },
+    {
+      "scenario": "noisy",
+      "verified_bounds": {
+        "X": -1880.0,
+        "Height": 328.0,
+        "Y": 652.0,
+        "Width": 420.0
+      },
+      "call_ms": 2089.3651669903193,
+      "result": {
+        "activation_after_dispatch": false,
+        "application_commit": "unverified",
+        "error": null,
+        "foreground_guard": {
+          "foreground_preserved": true,
+          "physical_input_unchanged": true
+        },
+        "foreground_preserved_after_dispatch": true,
+        "immediate_readback": true,
+        "input_disposition": "attempted",
+        "receipt_id": "479021f3-a1d0-4890-9032-93d207a63b62",
+        "replay_allowed": false,
+        "settlement": {
+          "elapsed_ms": 2015,
+          "reacted": true,
+          "status": "timed_out",
+          "value_matches": true
+        },
+        "supervision": "finished",
+        "supervision_status": {
+          "observation": {
+            "foreground_changed": false,
+            "new_window_count": 0,
+            "polled": true
+          },
+          "state": "finished"
+        }
+      },
+      "is_error": true,
+      "receipt_after_return": {
+        "activation_after_dispatch": false,
+        "application_commit": "unverified",
+        "foreground_guard": {
+          "foreground_preserved": true,
+          "physical_input_unchanged": true
+        },
+        "receipt_id": "479021f3-a1d0-4890-9032-93d207a63b62",
+        "supervision": {
+          "observation": {
+            "foreground_changed": false,
+            "new_window_count": 0,
+            "polled": true
+          },
+          "state": "finished"
+        }
+      },
+      "fence": {
+        "activation_after_dispatch": false,
+        "application_commit": "unverified",
+        "foreground_guard": {
+          "foreground_preserved": true,
+          "physical_input_unchanged": true
+        },
+        "receipt_id": "479021f3-a1d0-4890-9032-93d207a63b62",
+        "supervision": {
+          "observation": {
+            "foreground_changed": false,
+            "new_window_count": 0,
+            "polled": true
+          },
+          "state": "finished"
+        }
+      },
+      "oracle": {
+        "name": "Settled Person",
+        "email": "",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit",
+        "transactions": {
+          "017e75a8f09d42fd929dfe9dcff2195b": {
+            "status": "committed",
+            "tx": "017e75a8f09d42fd929dfe9dcff2195b",
+            "field": "name",
+            "value": "Settled Person",
+            "record": "Record A",
+            "generation": 0,
+            "pid": 80422,
+            "window_id": 25582
+          }
+        },
+        "pid": 80422,
+        "window_id": 25582,
+        "generation": 0,
+        "activation_requests": 0,
+        "window_visible": true
+      },
+      "foreground_preserved": true,
+      "passed": true
+    },
+    {
+      "scenario": "closed_window",
+      "verified_bounds": {
+        "X": -1880.0,
+        "Height": 328.0,
+        "Y": 652.0,
+        "Width": 420.0
+      },
+      "call_ms": 273.680707992753,
+      "result": {
+        "activation_after_dispatch": false,
+        "application_commit": "unverified",
+        "error": null,
+        "foreground_guard": {
+          "foreground_preserved": true,
+          "physical_input_unchanged": true
+        },
+        "foreground_preserved_after_dispatch": true,
+        "immediate_readback": true,
+        "input_disposition": "attempted",
+        "receipt_id": "3c464f54-296e-470e-acc2-ae59ff509bfc",
+        "replay_allowed": false,
+        "settlement": {
+          "elapsed_ms": 195,
+          "reacted": true,
+          "status": "settled",
+          "value_matches": true
+        },
+        "supervision": "pending_owned",
+        "supervision_status": {
+          "state": "pending"
+        }
+      },
+      "is_error": false,
       "error": "Wrong settlement/refusal contract"
     }
   ],
@@ -63,14 +469,14 @@
       "y": 0
     }
   ],
-  "owned_display_id": 15,
+  "owned_display_id": 18,
   "owned_display": {
     "builtin": false,
     "height": 1080,
-    "id": 15,
+    "id": 18,
     "main": false,
     "model": 49374,
-    "uuid": "5DA9C95D-C673-4E5D-9999-04A752146F96",
+    "uuid": "DA96F60D-92E7-4288-AC1C-056F48F7184B",
     "vendor": 2577,
     "virtual": true,
     "width": 1920,

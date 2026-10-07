@@ -37,6 +37,17 @@ pub const BATCHABLE_TOOLS: &[&str] = &[
     "drag",
 ];
 
+/// Read-only tools models put in a batch; refused with a pointer to `observe`.
+const OBSERVATION_TOOLS: &[&str] = &[
+    OBSERVE_TOOL,
+    "get_desktop_state",
+    "get_accessibility_tree",
+    "get_browser_state",
+    "list_windows",
+    "verify_state",
+    "zoom",
+];
+
 /// Most steps one call may carry. Keeps a batch inside client call timeouts.
 pub const MAX_STEPS: usize = 32;
 /// Longest pause between two steps.
@@ -233,14 +244,40 @@ impl Plan {
             .and_then(Value::as_str)
             .map(str::to_owned);
 
+        // A trailing get_window_state step is what `observe` is for: take it as
+        // the observation when the batch has none.
+        let mut raw_steps = raw_steps.as_slice();
+        let mut trailing_observe = None;
+        if let [actions @ .., last] = raw_steps {
+            let observe_given = !matches!(
+                object.get("observe"),
+                None | Some(Value::Null) | Some(Value::Bool(false))
+            );
+            if !actions.is_empty()
+                && !observe_given
+                && last.get("tool").and_then(Value::as_str) == Some(OBSERVE_TOOL)
+            {
+                trailing_observe = Some(
+                    last.get("args")
+                        .cloned()
+                        .filter(Value::is_object)
+                        .unwrap_or_else(|| Value::Object(Map::new())),
+                );
+                raw_steps = actions;
+            }
+        }
+
         let mut steps = Vec::with_capacity(raw_steps.len());
         for (index, raw) in raw_steps.iter().enumerate() {
             steps.push(parse_step(registry, index, raw, session.as_deref())?);
         }
 
-        let observe = match object.get("observe") {
-            None | Some(Value::Null) | Some(Value::Bool(false)) => None,
-            Some(value) => Some(parse_observe(registry, value, &steps, session.as_deref())?),
+        let observe = match (trailing_observe.as_ref(), object.get("observe")) {
+            (Some(value), _) => Some(parse_observe(registry, value, &steps, session.as_deref())?),
+            (None, None | Some(Value::Null) | Some(Value::Bool(false))) => None,
+            (None, Some(value)) => {
+                Some(parse_observe(registry, value, &steps, session.as_deref())?)
+            }
         };
         Ok(Self {
             steps,
@@ -378,13 +415,21 @@ fn parse_step(
         .copied()
         .find(|candidate| *candidate == name)
         .ok_or_else(|| {
-            PlanError::step(
-                index,
+            let message = if OBSERVATION_TOOLS.contains(&name) {
+                format!(
+                    "`{name}` reads state and a batch only acts. Put get_window_state arguments \
+                     in `observe` (one read after the last step; a get_window_state as the \
+                     last step is taken as `observe`), or split the batch where you need to look. \
+                     Batchable tools: {}",
+                    BATCHABLE_TOOLS.join(", ")
+                )
+            } else {
                 format!(
                     "`{name}` cannot run in a batch; allowed tools: {}",
                     BATCHABLE_TOOLS.join(", ")
-                ),
-            )
+                )
+            };
+            PlanError::step(index, message)
         })?;
     let mut args = match object.get("args") {
         None | Some(Value::Null) => Value::Object(Map::new()),
@@ -392,6 +437,8 @@ fn parse_step(
         Some(_) => return Err(PlanError::step(index, "`args` must be an object")),
     };
     prepare_args(&mut args, session).map_err(|message| PlanError::step(index, message))?;
+    crate::tool::normalize_argument_aliases(tool, &mut args)
+        .map_err(|message| PlanError::step(index, format!("{tool}: {message}")))?;
     validate_against_schema(registry, tool, &args)
         .map_err(|message| PlanError::step(index, format!("{tool}: {message}")))?;
     Ok(Step { tool, args })

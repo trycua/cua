@@ -235,6 +235,79 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
     ))
 }
 
+/// Rewrite argument spellings models guess into the advertised ones, before
+/// the closed schema is checked. Shared by dispatch and `run_actions` step
+/// validation, so a batch step accepts what a direct call accepts. `Err` is a
+/// refusal detail for an alias that cannot be translated.
+pub(crate) fn normalize_argument_aliases(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    normalize_zoom_args(tool_name, args);
+    normalize_scroll_args(tool_name, args)
+}
+
+/// A larger `dx`/`dy` magnitude than this many notches is read as pixels.
+const SCROLL_MAX_NOTCHES: f64 = 50.0;
+/// Pixels per wheel notch when `dx`/`dy` is given in pixels (a Chromium
+/// wheel notch scrolls about 100 px).
+const SCROLL_PIXELS_PER_NOTCH: f64 = 100.0;
+
+/// `scroll` takes `direction` plus `amount` (wheel notches) on every platform.
+/// Models reach for signed `dx`/`dy` deltas (sometimes as strings), so
+/// translate them: positive `dy` scrolls down and positive `dx` right, as in
+/// DOM `scrollBy` and wheel `deltaY`. A magnitude up to 50 counts notches; a
+/// larger one is pixels at 100 px per notch, clamped to 50 notches. An
+/// explicit `direction` (and `amount`) wins over `dx`/`dy`.
+fn normalize_scroll_args(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    if tool_name != "scroll" {
+        return Ok(());
+    }
+    let Some(arguments) = args.as_object_mut() else {
+        return Ok(());
+    };
+    let read = |value: Option<Value>| -> Result<f64, String> {
+        match value {
+            None | Some(Value::Null) => Ok(0.0),
+            Some(value) => value
+                .as_f64()
+                .or_else(|| value.as_str().and_then(|text| text.trim().parse().ok()))
+                .filter(|number: &f64| number.is_finite())
+                .ok_or_else(|| format!("dx/dy must be numbers, got {value}")),
+        }
+    };
+    if !arguments.contains_key("dx") && !arguments.contains_key("dy") {
+        return Ok(());
+    }
+    let dx = read(arguments.remove("dx"))?;
+    let dy = read(arguments.remove("dy"))?;
+    if arguments.contains_key("direction") {
+        return Ok(());
+    }
+    let (direction, delta) = match (dx != 0.0, dy != 0.0) {
+        (true, true) => {
+            return Err(format!(
+                "scroll moves along one axis per call, got dx={dx} and dy={dy}. Pass only dx or                  dy (or direction and amount), or use two scroll steps in run_actions."
+            ))
+        }
+        (false, false) => {
+            return Err("dx and dy are both 0, so there is nothing to scroll. Pass direction                  (up, down, left or right) and amount (wheel notches)."
+                .to_owned())
+        }
+        (false, true) => (if dy > 0.0 { "down" } else { "up" }, dy),
+        (true, false) => (if dx > 0.0 { "right" } else { "left" }, dx),
+    };
+    let magnitude = delta.abs();
+    let notches = if magnitude <= SCROLL_MAX_NOTCHES {
+        magnitude
+    } else {
+        magnitude / SCROLL_PIXELS_PER_NOTCH
+    };
+    let notches = notches.round().clamp(1.0, SCROLL_MAX_NOTCHES) as u64;
+    arguments.insert("direction".to_owned(), Value::String(direction.to_owned()));
+    arguments
+        .entry("amount")
+        .or_insert_with(|| serde_json::json!(notches));
+    Ok(())
+}
+
 /// `zoom` takes a region as two corners (`x1,y1`-`x2,y2`). Models reach for
 /// `x, y, width, height` (and pass numbers as strings), so rewrite that shape
 /// into corners before the closed schema is checked. Explicit corners win.
@@ -1358,7 +1431,15 @@ impl ToolRegistry {
         // Normalize deprecated public argument spellings before any policy,
         // consent, recording, or implementation layer interprets the call.
         normalize_delivery_mode_args(tool.def(), &mut args);
-        normalize_zoom_args(resolved_name, &mut args);
+        if let Err(detail) = normalize_argument_aliases(resolved_name, &mut args) {
+            return ToolResult::error(format!("{resolved_name}: {detail}")).with_structured(
+                serde_json::json!({
+                    "code": "invalid_arguments",
+                    "tool": resolved_name,
+                    "detail": detail,
+                }),
+            );
+        }
         let unknown_argument = unknown_argument(tool.def(), &args);
         if let Err(result) = crate::action_target::normalize_action_target(resolved_name, &mut args)
         {
@@ -6541,7 +6622,7 @@ mod capability_tests {
 
 #[cfg(test)]
 mod argument_shape_tests {
-    use super::{normalize_zoom_args, unknown_argument, ToolDef};
+    use super::{normalize_argument_aliases, normalize_zoom_args, unknown_argument, ToolDef};
     use serde_json::json;
 
     fn zoom_def() -> ToolDef {
@@ -6592,6 +6673,64 @@ mod argument_shape_tests {
         let mut other_tool = json!({"x": 1, "width": 2});
         normalize_zoom_args("click", &mut other_tool);
         assert_eq!(other_tool, json!({"x": 1, "width": 2}));
+    }
+
+    fn scroll(args: serde_json::Value) -> Result<serde_json::Value, String> {
+        let mut args = args;
+        normalize_argument_aliases("scroll", &mut args).map(|()| args)
+    }
+
+    #[test]
+    fn scroll_translates_signed_deltas_into_direction_and_notches() {
+        // Shapes models sent in the v035 bench and the live check of #4812.
+        let base = json!({"pid": 1, "window_id": 2, "x": 450, "y": 500});
+        let with = |extra: serde_json::Value| {
+            let mut args = base.clone();
+            args.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            args
+        };
+        for (delta, direction, amount) in [
+            (json!({"dy": "10"}), "down", 10),
+            (json!({"dy": 20}), "down", 20),
+            (json!({"dy": -3}), "up", 3),
+            (json!({"dy": 500}), "down", 5),
+            (json!({"dy": "1500"}), "down", 15),
+            (json!({"dy": "2000"}), "down", 20),
+            (json!({"dy": 99999}), "down", 50),
+            (json!({"dy": 0.2}), "down", 1),
+            (json!({"dx": 5, "dy": 0}), "right", 5),
+            (json!({"dx": "-120"}), "left", 1),
+        ] {
+            let out = scroll(with(delta.clone())).unwrap();
+            assert_eq!(out["direction"], direction, "{delta}");
+            assert_eq!(out["amount"], amount, "{delta}");
+            assert!(
+                out.get("dx").is_none() && out.get("dy").is_none(),
+                "{delta}"
+            );
+            assert_eq!(out["x"], 450);
+        }
+    }
+
+    #[test]
+    fn scroll_keeps_explicit_direction_and_amount_and_refuses_what_it_cannot_translate() {
+        let out = scroll(json!({"direction": "up", "amount": 2, "dy": 900})).unwrap();
+        assert_eq!(out, json!({"direction": "up", "amount": 2}));
+        let out = scroll(json!({"dy": 400, "amount": 7})).unwrap();
+        assert_eq!(out, json!({"direction": "down", "amount": 7}));
+        let both = scroll(json!({"dx": 3, "dy": 4})).unwrap_err();
+        assert!(both.contains("one axis per call"), "{both}");
+        let zero = scroll(json!({"dx": 0, "dy": "0"})).unwrap_err();
+        assert!(zero.contains("nothing to scroll"), "{zero}");
+        let junk = scroll(json!({"dy": "lots"})).unwrap_err();
+        assert!(junk.contains("must be numbers"), "{junk}");
+        let untouched = json!({"direction": "down", "amount": 3});
+        assert_eq!(scroll(untouched.clone()).unwrap(), untouched);
+        let mut click = json!({"dy": 4});
+        normalize_argument_aliases("click", &mut click).unwrap();
+        assert_eq!(click, json!({"dy": 4}));
     }
 
     #[test]

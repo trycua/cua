@@ -481,7 +481,7 @@ def token_without_pid_check(smoke):
 
 
 def lean_read_ergonomics_check(smoke):
-    check = "since:latest, bare row token, run_actions observe:true, zoom x/y/width/height"
+    check = "since:latest, bare row token, run_actions observe:true, zoom x/y/width/height, scroll dy"
     problems = []
     smoke.read()
     latest = smoke.read(since="latest")
@@ -517,11 +517,16 @@ def lean_read_ergonomics_check(smoke):
                                "x": "0", "y": "0", "width": "120", "height": "60"})
     if zoom.is_error and "unknown argument" in zoom.text:
         problems.append(f"zoom x/y/width/height -> {zoom.first_line()}")
+    scrolled = smoke.call("scroll", {"pid": smoke.pid, "window_id": smoke.window_id,
+                                     "x": 40, "y": 40, "dy": "3"})
+    if scrolled.is_error and ("unknown argument" in scrolled.text or "dx/dy" in scrolled.text):
+        problems.append(f"scroll dy -> {scrolled.first_line()}")
     smoke.record(
         check,
         "fail" if problems else "pass",
         "; ".join(problems)
-        or f"since=latest -> {latest.structured.get('since_status')}; click element_token "
+        or f"scroll dy:'3' -> {'ok' if not scrolled.is_error else scrolled.first_line()}; "
+        f"since=latest -> {latest.structured.get('since_status')}; click element_token "
         f"{str(increment)!r} + window_id -> Count moved; observe:true -> "
         f"{observed.get('since_status')}; zoom x/y/width/height -> "
         f"{'ok' if not zoom.is_error else zoom.first_line()}",

@@ -1,7 +1,7 @@
 # Third-party notices
 
-Parts of the Cua Driver Rust workspace are derived from these MIT-licensed
-projects. Each project's copyright notice is below, followed by the MIT
+Parts of the Cua Driver Rust workspace are derived from, or embed, these
+MIT-licensed projects. Each project's copyright notice is below, followed by the MIT
 License text they share.
 
 trope-cua's cursor motion is itself a port of Cua Driver's Swift cursor

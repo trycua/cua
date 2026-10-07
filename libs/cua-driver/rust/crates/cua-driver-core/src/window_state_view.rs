@@ -135,7 +135,13 @@ impl ViewOptions {
         };
         let since = match args.get("since") {
             None | Some(Value::Null) => None,
-            Some(Value::String(s)) if !s.trim().is_empty() => Some(s.trim().to_owned()),
+            // Models sometimes spell "no baseline" as the string "null".
+            Some(Value::String(s))
+                if matches!(s.trim().to_ascii_lowercase().as_str(), "" | "null" | "none") =>
+            {
+                None
+            }
+            Some(Value::String(s)) => Some(s.trim().to_owned()),
             Some(_) => {
                 return Err(ToolResult::error(
                     "since must be a snapshot_id string from an earlier get_window_state.",
@@ -280,6 +286,16 @@ pub fn apply(
             retain_elements(structured, opts.tree_format, Some(&keep));
             if let Some(obj) = structured.as_object_mut() {
                 obj.remove("tree_markdown");
+            }
+            if structured.get("truncated").and_then(Value::as_bool) == Some(true) {
+                if let (Some(sid), Some(last)) = (
+                    &snapshot_id,
+                    parse_rows(&md).iter().filter_map(|row| row.index).max(),
+                ) {
+                    header_extra.push_str(&format!(
+                        "\nthis read stops at row [{last}]: rows past it from a larger read are not in {sid}"
+                    ));
+                }
             }
             body = text;
         }
@@ -1010,6 +1026,28 @@ mod tests {
         assert!(text_of(&content).contains(&format!(
             "this read stops at row [{last}], so rows past it from a larger read are not in s000000f4"
         )));
+    }
+
+    #[test]
+    fn since_null_strings_mean_no_baseline_and_truncated_diffs_say_where_they_stop() {
+        for spelled in ["null", "None", " "] {
+            assert_eq!(opts(json!({ "since": spelled })).since, None, "{spelled:?}");
+        }
+        let window = 7103;
+        let (mut c1, mut s1) = payload("s000000f5", OLD);
+        apply(&opts(json!({})), &ctx(window), &mut c1, &mut s1);
+        let (mut c2, mut s2) = payload("s000000f6", OLD);
+        s2["truncated"] = json!(true);
+        apply(
+            &opts(json!({"since": "latest"})),
+            &ctx(window),
+            &mut c2,
+            &mut s2,
+        );
+        assert_eq!(s2["since_status"], "no_change");
+        assert!(text_of(&c2).contains(
+            "this read stops at row [3]: rows past it from a larger read are not in s000000f6"
+        ));
     }
 
     #[test]

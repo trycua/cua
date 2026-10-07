@@ -28,8 +28,8 @@ pub(crate) enum FocusedDocumentTypeOutcome {
 }
 
 /// Try the focused Document route on the bounded, single-flight UIA worker.
-/// A busy worker proves this call did not start, so the caller may preserve
-/// its prior route. A timeout or worker loss is conservatively unknown.
+/// A busy worker may still be finishing a timed-out input attempt, so it is
+/// unknown too. Only a completed pre-write probe preserves the prior route.
 pub(crate) fn try_type_focused_document_append(
     target_hwnd: u64,
     expected_pid: Option<u32>,
@@ -56,8 +56,7 @@ fn try_type_focused_document_append_unbounded(
 ) -> FocusedDocumentTypeOutcome {
     use windows::core::BSTR;
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-        COINIT_MULTITHREADED,
+        CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
     };
     use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::Accessibility::{
@@ -398,7 +397,9 @@ fn focused_document_appended_value(current_value: &str, input: &str) -> String {
 
 fn focused_document_worker_error(error: UiaDeadlineError) -> FocusedDocumentTypeOutcome {
     match error {
-        UiaDeadlineError::Busy => FocusedDocumentTypeOutcome::NotApplicable,
+        UiaDeadlineError::Busy => FocusedDocumentTypeOutcome::Unknown(
+            "focused UIA worker is busy; an earlier write may still be in flight",
+        ),
         UiaDeadlineError::Timeout => {
             FocusedDocumentTypeOutcome::Unknown("focused UIA call timed out")
         }
@@ -460,11 +461,11 @@ mod tests {
     }
 
     #[test]
-    fn timed_out_or_lost_workers_never_enable_a_second_input_route() {
-        assert_eq!(
+    fn busy_timed_out_or_lost_workers_never_enable_a_second_input_route() {
+        assert!(matches!(
             focused_document_worker_error(UiaDeadlineError::Busy),
-            FocusedDocumentTypeOutcome::NotApplicable
-        );
+            FocusedDocumentTypeOutcome::Unknown(_)
+        ));
         assert!(matches!(
             focused_document_worker_error(UiaDeadlineError::Timeout),
             FocusedDocumentTypeOutcome::Unknown(_)

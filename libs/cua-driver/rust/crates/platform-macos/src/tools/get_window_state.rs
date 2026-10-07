@@ -35,7 +35,7 @@ fn def() -> &'static ToolDef {
             \n\
             A new snapshot of the same (pid, window_id) replaces the previous one and stales its tokens (`invalidated_snapshot_ids`). `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look). The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\
             \n\
-            Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.".into(),
+            Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. An attached sheet (a Save or Open panel) never resolves: when `escalation.parent_window_id` is present, its controls are in that window's tree, so read and act through it. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.".into(),
         input_schema: cua_driver_core::window_state_view::extend_input_schema(serde_json::json!({
             "type": "object",
             "required": ["pid", "window_id"],
@@ -694,6 +694,30 @@ impl Tool for GetWindowStateTool {
                                reach a same-process sibling window. Re-snapshot after the \
                                app settles, or act with delivery_mode:\"foreground\"."
                 });
+                // A sheet's own CGWindowID never resolves: no AXWindow reports
+                // it. Name the window it is attached to, whose tree holds its
+                // controls. What is actionable here does not change.
+                let host = tokio::task::spawn_blocking(move || {
+                    crate::ax::exact_target::attached_sheet_host(pid, window_id)
+                })
+                .await
+                .ok()
+                .flatten();
+                if let Some(host) = host {
+                    structured["degraded_reason"] = serde_json::json!(format!(
+                        "ax_window_unresolved: window_id {window_id} is a sheet attached to \
+                         window_id {host} of pid {pid}. No AXWindow reports a sheet's own \
+                         CGWindowID; its controls are in window {host}'s accessibility tree, \
+                         so the tree for this id is returned EMPTY."
+                    ));
+                    structured["escalation"]["parent_window_id"] = serde_json::json!(host);
+                    structured["escalation"]["reason"] = serde_json::json!(format!(
+                        "call get_window_state with window_id {host} and act on the sheet's \
+                         elements with window_id {host}. Background input aimed at this id \
+                         stays refused; delivery_mode:\"foreground\" keys aimed at window \
+                         {host} reach its focused sheet."
+                    ));
+                }
             }
         }
         // Additive read-only `background_input` capability section (macOS

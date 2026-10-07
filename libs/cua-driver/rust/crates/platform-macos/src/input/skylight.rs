@@ -862,8 +862,9 @@ const ACTIVATION_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_m
 /// app pays roughly one tick, long enough not to spin on the WindowServer.
 const ACTIVATION_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
 
-/// Block until `target_wid` is the application's focused AX window, or the
-/// timeout expires. Returns whether that state was observed.
+/// Block until `target_wid` is the application's focused AX window, or a sheet
+/// attached to it is (keys for the window go to its sheet), or the timeout
+/// expires. Returns whether that state was observed.
 ///
 /// The predicate is deliberately `AXFocusedWindow` and not
 /// `NSWorkspace.frontmostApplication`. The latter does not observe a
@@ -880,7 +881,7 @@ const ACTIVATION_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_
 fn await_window_focused(pid: libc::pid_t, window_id: u32) -> bool {
     let deadline = std::time::Instant::now() + ACTIVATION_WAIT_TIMEOUT;
     loop {
-        if crate::ax::bindings::focused_window_id_of_pid(pid) == Some(window_id) {
+        if crate::ax::bindings::focused_window_id_for_target(pid, window_id) == Some(window_id) {
             return true;
         }
         if std::time::Instant::now() >= deadline {
@@ -959,7 +960,8 @@ pub fn with_foreground_hid_activation(
         anyhow::bail!("could not resolve target window for foreground HID delivery");
     }
 
-    let focused_window_id = crate::ax::bindings::focused_window_id_of_pid(target_pid);
+    let focused_window_id =
+        crate::ax::bindings::focused_window_id_for_target(target_pid, target_wid);
     if preserves_exact_existing_focus(prev_ok, prev_psn, target_psn, focused_window_id, target_wid)
     {
         // Re-activating an already key exact window can clear Chromium's

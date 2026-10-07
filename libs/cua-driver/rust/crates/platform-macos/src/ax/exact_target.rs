@@ -13,8 +13,9 @@ use cua_driver_core::background_input::{
 };
 
 use super::bindings::{
-    ax_get_window_id, copy_ax_windows_including, copy_bool_attr, copy_element_attr,
-    copy_string_attr, focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
+    ax_get_window_id, copy_ax_windows, copy_ax_windows_including, copy_bool_attr, copy_children,
+    copy_element_attr, copy_string_attr, focused_element_of_pid, AXUIElementCreateApplication,
+    AXUIElementRef, AXUIElementSetMessagingTimeout,
 };
 use super::snapshot::RetainedElement;
 use crate::windows::{all_windows, resolve_window_owner, WindowOwner};
@@ -84,7 +85,7 @@ pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
 /// # Safety
 ///
 /// `window` must be a valid `AXUIElementRef` for the duration of the call.
-unsafe fn owning_window_id(window: AXUIElementRef) -> Option<u32> {
+pub(crate) unsafe fn owning_window_id(window: AXUIElementRef) -> Option<u32> {
     resolve_owning_window(
         RetainedElement::retain(window as usize),
         MAX_SHEET_NESTING,
@@ -128,6 +129,63 @@ fn resolve_owning_window<E>(
         };
     }
     own_id
+}
+
+/// Per-request and total bounds for [`attached_sheet_host`]: it explains a read
+/// that already degraded, so a slow app must not stall that read further.
+const SHEET_LOOKUP_REQUEST_TIMEOUT_SECONDS: f32 = 0.25;
+const SHEET_LOOKUP_BUDGET: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// The window `sheet_window_id` is attached to, when it is the CGWindowID of
+/// an `AXSheet` in one of `pid`'s `AXWindows` (sheets on sheets included).
+/// Best effort: stops looking once the budget runs out (a request already in
+/// flight can still finish, bounded by the per-request timeout), then `None`.
+///
+/// Blocking: bounded AX reads of each window's direct children.
+pub fn attached_sheet_host(pid: i32, sheet_window_id: u32) -> Option<u32> {
+    let deadline = std::time::Instant::now() + SHEET_LOOKUP_BUDGET;
+    // SAFETY: every element copied here is released here.
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        AXUIElementSetMessagingTimeout(app, SHEET_LOOKUP_REQUEST_TIMEOUT_SECONDS);
+        let mut host = None;
+        for window in copy_ax_windows(app) {
+            if host.is_none() && holds_sheet(window, sheet_window_id, MAX_SHEET_NESTING, deadline) {
+                host = ax_get_window_id(window);
+            }
+            CFRelease(window as CFTypeRef);
+        }
+        CFRelease(app as CFTypeRef);
+        host
+    }
+}
+
+/// Whether one of `element`'s children is an `AXSheet` mapped to
+/// `sheet_window_id`, or holds one, `depth` sheet levels down.
+unsafe fn holds_sheet(
+    element: AXUIElementRef,
+    sheet_window_id: u32,
+    depth: usize,
+    deadline: std::time::Instant,
+) -> bool {
+    if depth == 0 || std::time::Instant::now() >= deadline {
+        return false;
+    }
+    AXUIElementSetMessagingTimeout(element, SHEET_LOOKUP_REQUEST_TIMEOUT_SECONDS);
+    let mut found = false;
+    for child in copy_children(element) {
+        if !found && std::time::Instant::now() < deadline {
+            AXUIElementSetMessagingTimeout(child, SHEET_LOOKUP_REQUEST_TIMEOUT_SECONDS);
+            found = copy_string_attr(child, "AXRole").as_deref() == Some("AXSheet")
+                && (ax_get_window_id(child) == Some(sheet_window_id)
+                    || holds_sheet(child, sheet_window_id, depth - 1, deadline));
+        }
+        CFRelease(child as CFTypeRef);
+    }
+    found
 }
 
 /// The process's focused AX element, but only when it provably belongs to the

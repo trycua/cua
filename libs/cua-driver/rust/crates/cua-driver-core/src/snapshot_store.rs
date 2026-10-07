@@ -296,8 +296,7 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             window_id,
             payload,
             session,
-            screenshot_scale,
-            None,
+            (screenshot_scale, None),
             true,
         )
     }
@@ -327,8 +326,7 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             window_id,
             payload,
             session,
-            screenshot_scale,
-            window_size,
+            (screenshot_scale, window_size),
             true,
         )
     }
@@ -378,8 +376,7 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             window_id,
             payload,
             session,
-            screenshot_scale,
-            None,
+            (screenshot_scale, None),
             false,
         )
     }
@@ -390,9 +387,9 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         window_id: u64,
         payload: S,
         session: Option<&str>,
-        screenshot_scale: Option<f64>,
-        // The window size in points at this read.
-        window_size: Option<(f64, f64)>,
+        // The new screenshot's scale, if any, and the window size in points
+        // at this read.
+        (screenshot_scale, window_size): (Option<f64>, Option<(f64, f64)>),
         semantic: bool,
     ) -> Option<(u32, Vec<u32>)> {
         let (id, retired) = {

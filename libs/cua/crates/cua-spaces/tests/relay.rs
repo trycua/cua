@@ -287,6 +287,49 @@ async fn relay_spaces_carry_the_enrolled_device_session() {
         .build();
     let machines = spaces.relay_machines().await.unwrap();
     assert_eq!(machines.len(), 1);
+    let session_before = device.session().await.unwrap();
+    let device_before = device.device_id().unwrap();
+    relay.forget_sessions();
+    let recovered = spaces
+        .list_all()
+        .await
+        .expect("roster recovers after relay restart");
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].id, format!("relay:{MACHINE}"));
+    assert_eq!(device.device_id().unwrap(), device_before);
+    let recovered_session = device.session().await.unwrap();
+    assert_ne!(recovered_session, session_before);
+    // The directory's authority can differ from the device-session authority.
+    // Only this token works at the other directory, whose roster is empty.
+    let directory = FakeRelay::start().await;
+    directory.add_account("directory-token", "user-1", None);
+    let other = Spaces::builder()
+        .home(home.path())
+        .relay(
+            RelayAccount::new(
+                &directory.url,
+                Arc::new(StaticToken("directory-token".into())),
+            )
+            .with_device(device.clone()),
+        )
+        .build();
+    assert!(other.relay_machines().await.unwrap().is_empty());
+    let wrong = Spaces::builder()
+        .home(home.path())
+        .relay(
+            RelayAccount::new(&relay.url, Arc::new(StaticToken("invalid-token".into())))
+                .with_device(device.clone()),
+        )
+        .build();
+    assert_eq!(wrong.list_all().await.unwrap_err().tag(), "unauthenticated");
+    assert_eq!(device.session().await.unwrap(), recovered_session);
+    // Neither retry may silently fall back to the device's own directory.
+    directory.require_devices(true);
+    assert_eq!(
+        other.list_all().await.unwrap_err().tag(),
+        "permission_denied"
+    );
+    assert_ne!(device.session().await.unwrap(), recovered_session);
     // The fake relay does not tunnel; it records what reached /m/<id>.
     assert!(spaces.space(&format!("relay:{MACHINE}")).await.is_err());
     let session = device.session().await.unwrap();
@@ -299,6 +342,24 @@ async fn relay_spaces_carry_the_enrolled_device_session() {
                 && s.as_deref() == Some(session.as_str())),
         "{proxied:?}"
     );
+    // Revocation cannot be healed by renewing a session. The directory must
+    // still refuse the request, including subsequent calls without a session.
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .with_device_session(Some(session))
+        .revoke_device("owner-token", device_before.as_deref().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        spaces.list_all().await.unwrap_err().tag(),
+        "permission_denied"
+    );
+    assert!(device.try_session().await.is_none());
+    assert_eq!(
+        spaces.list_all().await.unwrap_err().tag(),
+        "permission_denied"
+    );
+    assert_eq!(device.device_id().unwrap(), device_before);
 }
 
 /// A failed refresh leaves the explicit cached route available, while a

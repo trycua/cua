@@ -627,22 +627,21 @@ impl DeviceAuth {
     /// never when there was none to begin with.
     async fn with_optional_session_retry<T, Fut>(
         &self,
+        relay: &RelayClient,
+        token: &str,
         call: impl Fn(RelayClient, String) -> Fut,
     ) -> Result<T>
     where
         Fut: std::future::Future<Output = Result<T>>,
     {
-        let token = self.tokens.access_token().await?;
+        let token = token.to_owned();
         let session = self.try_session().await;
         let had_session = session.is_some();
-        let relay = self.relay.clone().with_device_session(session);
-        match call(relay, token.clone()).await {
+        let client = relay.clone().with_device_session(session);
+        match call(client, token.clone()).await {
             Err(e) if had_session && is_session_rejection(&e) => {
                 self.reset_session().await;
-                let relay = self
-                    .relay
-                    .clone()
-                    .with_device_session(self.try_session().await);
+                let relay = relay.clone().with_device_session(self.try_session().await);
                 call(relay, token).await
             }
             other => other,
@@ -674,8 +673,22 @@ impl DeviceAuth {
     /// The account's devices (this one marked `current`) and the end of the
     /// relay's grace period.
     pub async fn listing(&self) -> Result<DeviceListing> {
-        self.with_optional_session_retry(|relay, token| async move {
+        let token = self.tokens.access_token().await?;
+        self.with_optional_session_retry(&self.relay, &token, |relay, token| async move {
             relay.device_listing(&token).await
+        })
+        .await
+    }
+
+    /// Lists machines for the caller's relay and account, carrying this device's
+    /// session and renewing it once if the relay no longer recognizes it.
+    pub async fn machines_for(
+        &self,
+        relay: &RelayClient,
+        token: &str,
+    ) -> Result<Vec<crate::Machine>> {
+        self.with_optional_session_retry(relay, token, |relay, token| async move {
+            relay.machines(&token).await
         })
         .await
     }
@@ -712,7 +725,8 @@ impl DeviceAuth {
 
     /// The account's audit log, newest last.
     pub async fn audit(&self, limit: usize) -> Result<Vec<AuditEvent>> {
-        self.with_optional_session_retry(move |relay, token| async move {
+        let token = self.tokens.access_token().await?;
+        self.with_optional_session_retry(&self.relay, &token, move |relay, token| async move {
             relay.audit(&token, limit).await
         })
         .await

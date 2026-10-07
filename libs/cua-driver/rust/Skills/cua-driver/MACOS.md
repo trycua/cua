@@ -353,6 +353,34 @@ _Cross-platform parameter contract_):
   window coordinates. Legacy flat `scope`, `pid`, and `window_id` fields remain
   compatibility inputs, but do not combine them with `target`.
 
+### Refusal detail fields (macOS only)
+
+A refusal's `code` and its `escalation: {target, reason}` (existing contract
+values only) are the portable part. The fields below ride on the same
+structured error, are emitted on macOS only, and are not part of the typed
+`ActionResult` contract.
+
+- **`element_disabled`** (`click` with an `element_token`): the element read
+  `AXEnabled=false` at dispatch and nothing was sent (`effect: "refused"`).
+  It carries `action`, `role`, `label`, `pid`, `window_id` and:
+  - `front_in_process`: the window is its process's front window on its
+    display.
+  - `obscured_by: {window_id, title}`: the process's own window drawn in front
+    of the target on that display. Dismiss it, or address that window.
+  - `key_window: {is_key, app_frontmost, focused_window_id}`: AppKit disables
+    some controls (a toolbar search field) until their window is key. When
+    that is the cause, the refusal carries
+    `escalation: {target: "foreground", reason: "route_unavailable"}`: retry
+    with `delivery_mode:"foreground"`. With no escalation, neither delivery
+    mode nor activation enables the control.
+- **`press_key` focus holder** (`code: "delivery_failed"`, foreground): when
+  the exact window never became focused, `target_window_id`,
+  `focused_window_id` (the window holding keyboard focus) and
+  `focused_window_relation: "sheet"` when that window is a sheet. A sheet's
+  controls are in the target window's snapshot (`target_window_id`): act on
+  the sheet there first. Any other focus holder: snapshot `focused_window_id`
+  and act there.
+
 ### Canvases, viewports, games (Blender, Unity, GHOST, Qt, wxWidgets)
 
 Apps whose main surface is an OpenGL / Metal / Qt / wxWidgets

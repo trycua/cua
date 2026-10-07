@@ -536,7 +536,13 @@ pub unsafe fn focused_element_of_pid(pid: i32) -> Option<AXUIElementRef> {
 /// This is a narrow read-only proof used before global keyboard delivery: an
 /// already focused exact window must not be re-activated, because doing so can
 /// make a focus-proxy renderer drop its current key target.
-pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusedWindow {
+    pub window_id: Option<u32>,
+    pub role: Option<String>,
+}
+
+pub fn focused_window_of_pid(pid: i32) -> Option<FocusedWindow> {
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
@@ -545,9 +551,30 @@ pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
         let window = copy_element_attr(app, "AXFocusedWindow");
         CFRelease(app as CFTypeRef);
         let window = window?;
-        let window_id = ax_get_window_id(window);
+        let focused = FocusedWindow {
+            window_id: ax_get_window_id(window),
+            role: copy_string_attr(window, "AXRole"),
+        };
         CFRelease(window as CFTypeRef);
-        window_id
+        Some(focused)
+    }
+}
+
+pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
+    focused_window_of_pid(pid).and_then(|focused| focused.window_id)
+}
+
+/// The application's own `AXFrontmost`: true once it has processed its
+/// activation, which a WindowServer front-process change precedes.
+pub fn application_reports_frontmost(pid: i32) -> Option<bool> {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        let frontmost = copy_bool_attr(app, "AXFrontmost");
+        CFRelease(app as CFTypeRef);
+        frontmost
     }
 }
 

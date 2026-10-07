@@ -836,7 +836,12 @@ impl Tool for ClickTool {
                     }
                     ToolResult::text(msg).with_structured(structured)
                 }
-                Ok(Err(e)) => ToolResult::error(format!("AX action failed: {e}")),
+                Ok(Err(e)) => match e.downcast_ref::<ElementDisabled>() {
+                    Some(disabled) => {
+                        ToolResult::error(disabled.reason()).with_structured(disabled.payload())
+                    }
+                    None => ToolResult::error(format!("AX action failed: {e}")),
+                },
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
         } else if let (Some(mut cx), Some(mut cy)) = (x, y) {
@@ -1334,6 +1339,212 @@ impl Tool for ClickTool {
 
 // ── AX click implementation (blocking) ───────────────────────────────────────
 
+/// A window of the target's own process drawn in front of it on its display.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ObscuringWindow {
+    window_id: u32,
+    title: String,
+}
+
+impl ObscuringWindow {
+    fn describe(&self) -> String {
+        if self.title.trim().is_empty() {
+            "titleless".to_owned()
+        } else {
+            format!("titled {:?}", self.title)
+        }
+    }
+}
+
+/// The process's key-window state beside a disabled control. A window is key
+/// only while its process is the frontmost application and publishes that
+/// window as its focused one; AppKit disables some controls (a toolbar search
+/// field) until their window is key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct KeyWindowState {
+    app_frontmost: bool,
+    focused_window_id: Option<u32>,
+}
+
+impl KeyWindowState {
+    fn observe(pid: i32) -> Self {
+        Self {
+            app_frontmost: apps::frontmost_pid() == Some(pid),
+            focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid),
+        }
+    }
+
+    fn holds(self, window_id: u32) -> bool {
+        self.app_frontmost && self.focused_window_id == Some(window_id)
+    }
+
+    /// Which observation denies `window_id` key status; `None` when it is key.
+    fn denial(self, pid: i32, window_id: u32) -> Option<String> {
+        if self.holds(window_id) {
+            return None;
+        }
+        if !self.app_frontmost {
+            return Some(format!("pid {pid} is not the frontmost application"));
+        }
+        Some(match self.focused_window_id {
+            Some(focused) => format!("window {focused} holds pid {pid}'s keyboard focus"),
+            None => format!("pid {pid} reports no focused window"),
+        })
+    }
+}
+
+/// Bound on the foreground rung's wait for the application to report
+/// `window_id` key before a disabled control is re-read.
+const FOREGROUND_KEY_WINDOW_WAIT: std::time::Duration = std::time::Duration::from_millis(400);
+const FOREGROUND_KEY_WINDOW_POLL: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// Wait until the application itself reports it is frontmost with
+/// `window_id` focused, so AppKit has run its key-window updates; returns
+/// whether that state was observed within the bound.
+fn await_application_key_window(pid: i32, window_id: u32) -> bool {
+    let deadline = std::time::Instant::now() + FOREGROUND_KEY_WINDOW_WAIT;
+    loop {
+        if crate::ax::bindings::application_reports_frontmost(pid) == Some(true)
+            && crate::ax::bindings::focused_window_id_of_pid(pid) == Some(window_id)
+        {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(FOREGROUND_KEY_WINDOW_POLL);
+    }
+}
+
+/// The application reports the addressed control disabled, with the window
+/// order and key-window state that decide which route, if any, is open.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ElementDisabled {
+    action: String,
+    role: String,
+    label: String,
+    window_id: u32,
+    pid: i32,
+    foreground: bool,
+    front_in_process: bool,
+    obscuring_window: Option<ObscuringWindow>,
+    key_window: KeyWindowState,
+}
+
+/// The one state that explains a disabled control; prose and payload both
+/// branch on it, so a reply cannot name a route its escalation withholds.
+#[derive(Debug, PartialEq, Eq)]
+enum DisabledCause<'a> {
+    MenuItem,
+    OwnedWindowInFront(&'a ObscuringWindow),
+    WindowNotKey(String),
+    ApplicationState,
+}
+
+impl ElementDisabled {
+    fn cause(&self) -> DisabledCause<'_> {
+        if self.role == "AXMenuItem" {
+            return DisabledCause::MenuItem;
+        }
+        if let Some(obscuring) = &self.obscuring_window {
+            return DisabledCause::OwnedWindowInFront(obscuring);
+        }
+        match self
+            .key_window
+            .denial(self.pid, self.window_id)
+            .filter(|_| !self.foreground)
+        {
+            Some(denial) => DisabledCause::WindowNotKey(denial),
+            None => DisabledCause::ApplicationState,
+        }
+    }
+
+    fn reason(&self) -> String {
+        let Self {
+            action,
+            role,
+            label,
+            window_id,
+            pid,
+            ..
+        } = self;
+        let order = if self.front_in_process {
+            format!("Window {window_id} is already pid {pid}'s front window")
+        } else {
+            format!("No window of pid {pid} is drawn in front of window {window_id}")
+        };
+        match self.cause() {
+            DisabledCause::MenuItem => format!(
+                "{action} was not dispatched: the {role} \"{label}\" of an open menu reports \
+                 AXEnabled=false. A menu item's enabled state tracks the application's own \
+                 applicability, not focus or delivery mode: it is disabled in pid {pid}'s \
+                 current state."
+            ),
+            DisabledCause::OwnedWindowInFront(obscuring) => {
+                let blocker = obscuring.window_id;
+                format!(
+                    "{action} was not dispatched: {role} \"{label}\" of window {window_id} \
+                     reports AXEnabled=false, and window {blocker} — pid {pid}'s own front \
+                     window on that display, {} — is drawn in front of it. Dismiss that window, \
+                     or address window {blocker} and act on it there.",
+                    obscuring.describe()
+                )
+            }
+            DisabledCause::WindowNotKey(denial) => format!(
+                "{action} was not dispatched: {role} \"{label}\" of window {window_id} reports \
+                 AXEnabled=false. {order}, but window {window_id} is not pid {pid}'s key window \
+                 — {denial} — and a control whose enabled state tracks key-window focus reads \
+                 disabled until its window is key. A foreground dispatch makes it key first."
+            ),
+            DisabledCause::ApplicationState => format!(
+                "{action} was not dispatched: {role} \"{label}\" of window {window_id} reports \
+                 AXEnabled=false. {order} — the application disabled this control, and neither \
+                 delivery mode nor activation changes that. Satisfy its precondition or choose \
+                 another control."
+            ),
+        }
+    }
+
+    fn payload(&self) -> Value {
+        let mut payload = serde_json::json!({
+            "code": "element_disabled",
+            "effect": "refused",
+            "action": self.action,
+            "role": self.role,
+            "label": self.label,
+            "pid": self.pid,
+            "window_id": self.window_id,
+            "front_in_process": self.front_in_process,
+            "key_window": {
+                "is_key": self.key_window.holds(self.window_id),
+                "app_frontmost": self.key_window.app_frontmost,
+                "focused_window_id": self.key_window.focused_window_id,
+            },
+        });
+        if let Some(obscuring) = &self.obscuring_window {
+            payload["obscured_by"] = serde_json::json!({
+                "window_id": obscuring.window_id,
+                "title": obscuring.title,
+            });
+        }
+        if matches!(self.cause(), DisabledCause::WindowNotKey(_)) {
+            payload["escalation"] = serde_json::json!({
+                "target": "foreground",
+                "reason": "route_unavailable",
+            });
+        }
+        payload
+    }
+}
+
+impl std::fmt::Display for ElementDisabled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.reason())
+    }
+}
+
+impl std::error::Error for ElementDisabled {}
+
 /// Returns `(summary_text, needs_webkit_delay, suspected_noop,
 /// selection_verified, selection_via_pixel)`.
 ///
@@ -1363,7 +1574,31 @@ fn perform_ax_click(
     // enable menu items that were disabled in the cached snapshot, while a
     // background transition can disable them after that snapshot. macOS may
     // otherwise return success for a disabled action that did nothing.
-    crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, ax_action)?;
+    let mut enabled = crate::input::ax_actions::ax_element_enabled(element_ptr);
+    if foreground && enabled == Some(false) && await_application_key_window(pid, window_id) {
+        enabled = crate::input::ax_actions::ax_element_enabled(element_ptr);
+    }
+    if enabled == Some(false) {
+        let front = super::bring_to_front::process_front_window_on_display(pid, window_id);
+        return Err(anyhow::Error::new(ElementDisabled {
+            action: ax_action.to_owned(),
+            role: unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default(),
+            label: unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default(),
+            window_id,
+            pid,
+            foreground,
+            front_in_process: front
+                .as_ref()
+                .is_some_and(|window| window.window_id == window_id),
+            obscuring_window: front
+                .filter(|window| window.window_id != window_id)
+                .map(|window| ObscuringWindow {
+                    window_id: window.window_id,
+                    title: window.title,
+                }),
+            key_window: KeyWindowState::observe(pid),
+        }));
+    }
 
     // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
     // (AX returns success even when the element doesn't advertise the action).
@@ -1734,6 +1969,100 @@ mod tests {
         assert_eq!(settled(vec![Some("1"), None]), None, "second read failed");
         assert_eq!(settled(vec![Some("0")]), None, "never moved");
         assert_eq!(settled(vec![None]), None, "unreadable");
+    }
+
+    fn disabled(key_window: KeyWindowState) -> ElementDisabled {
+        ElementDisabled {
+            action: "AXPress".to_owned(),
+            role: "AXButton".to_owned(),
+            label: "Back".to_owned(),
+            window_id: 19080,
+            pid: 84264,
+            foreground: false,
+            front_in_process: true,
+            obscuring_window: None,
+            key_window,
+        }
+    }
+
+    const KEY: KeyWindowState = KeyWindowState {
+        app_frontmost: true,
+        focused_window_id: Some(19080),
+    };
+
+    const NOT_FRONTMOST: KeyWindowState = KeyWindowState {
+        app_frontmost: false,
+        focused_window_id: Some(19080),
+    };
+
+    #[test]
+    fn a_disabled_control_in_a_key_window_names_no_route() {
+        let state = disabled(KEY);
+        assert_eq!(state.cause(), DisabledCause::ApplicationState);
+        let payload = state.payload();
+        assert_eq!(payload["code"], "element_disabled");
+        assert_eq!(payload["effect"], "refused");
+        assert_eq!(payload["key_window"]["is_key"], true);
+        assert!(payload.get("escalation").is_none(), "{payload}");
+        let reason = state.reason();
+        for taken in ["foreground", "bring_to_front"] {
+            assert!(!reason.contains(taken), "named {taken}: {reason}");
+        }
+    }
+
+    #[test]
+    fn another_window_holding_the_apps_focus_names_the_foreground_rung() {
+        let state = disabled(KeyWindowState {
+            app_frontmost: true,
+            focused_window_id: Some(19077),
+        });
+        assert_eq!(
+            state.cause(),
+            DisabledCause::WindowNotKey("window 19077 holds pid 84264's keyboard focus".into())
+        );
+        let payload = state.payload();
+        assert_eq!(
+            payload["escalation"],
+            serde_json::json!({"target": "foreground", "reason": "route_unavailable"})
+        );
+        assert_eq!(payload["key_window"]["is_key"], false);
+        assert_eq!(payload["key_window"]["focused_window_id"], 19077);
+    }
+
+    #[test]
+    fn the_apps_own_window_in_front_outranks_the_key_window_fact() {
+        let mut state = disabled(NOT_FRONTMOST);
+        state.front_in_process = false;
+        state.obscuring_window = Some(ObscuringWindow {
+            window_id: 19091,
+            title: "Print".to_owned(),
+        });
+        assert!(matches!(
+            state.cause(),
+            DisabledCause::OwnedWindowInFront(window) if window.window_id == 19091
+        ));
+        let payload = state.payload();
+        assert_eq!(
+            payload["obscured_by"],
+            serde_json::json!({"window_id": 19091, "title": "Print"})
+        );
+        assert!(payload.get("escalation").is_none(), "{payload}");
+    }
+
+    #[test]
+    fn a_disabled_menu_item_names_no_route() {
+        let mut state = disabled(NOT_FRONTMOST);
+        state.role = "AXMenuItem".to_owned();
+        assert_eq!(state.cause(), DisabledCause::MenuItem);
+        assert!(state.payload().get("escalation").is_none());
+    }
+
+    #[test]
+    fn the_foreground_rung_is_not_offered_once_it_is_in_force() {
+        let mut state = disabled(NOT_FRONTMOST);
+        state.foreground = true;
+        assert_eq!(state.cause(), DisabledCause::ApplicationState);
+        assert!(state.payload().get("escalation").is_none());
     }
 
     /// Surface 5: schema must advertise the new `button` field with the three

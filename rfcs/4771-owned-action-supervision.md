@@ -156,4 +156,4 @@ Existing OS permissions and target/session authorization remain authoritative. O
 
 ## Decision record
 
-Awaiting maintainer decision in #4771. Draft implementation #4776 prepares the first owner/snapshot-transfer increment under the default-off experimental feature. It does not enable asynchronous setters or claim acceptance.
+Awaiting maintainer decision in #4771. Draft implementation #4776 includes exact-bound native text dispatch, scoped receipt tools, fresh foreground/input guards and runtime drain under the default-off experimental feature. Its native fixture qualification is recorded in that PR. The RFC decision, canonical desktop matrix and broader application qualification remain open; existing synchronous setters retain their behavior.

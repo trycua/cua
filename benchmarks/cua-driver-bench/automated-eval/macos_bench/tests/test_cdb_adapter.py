@@ -83,6 +83,55 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual(task.sub("${workspace_uri}"), task.workspace.as_uri())
         self.assertTrue(task.sub("${workspace_uri}").startswith("file:///"))
 
+    def test_electron_apps_get_their_own_name_and_bundle_id(self) -> None:
+        import plistlib
+        from unittest import mock
+
+        app_dir = Path(self.tmp.name) / "desk"
+        source = app_dir / "node_modules/electron/dist/Electron.app"
+        (source / "Contents/MacOS").mkdir(parents=True)
+        (source / "Contents/MacOS/Electron").write_text("bin")
+        helper = source / "Contents/Frameworks/Electron Helper (Renderer).app/Contents"
+        helper.mkdir(parents=True)
+        (source / "Contents/Info.plist").write_bytes(
+            plistlib.dumps({"CFBundleIdentifier": "com.github.Electron", "CFBundleName": "Electron",
+                            "CFBundleExecutable": "Electron"})
+        )
+        (helper / "Info.plist").write_bytes(
+            plistlib.dumps({"CFBundleIdentifier": "com.github.Electron.helper.Renderer"})
+        )
+        root = Path(self.tmp.name) / "named"
+        with mock.patch.dict(os.environ, {"CDB_ELECTRON_APPS": str(root)}), mock.patch.object(
+            cdb_adapter, "_sign"
+        ) as sign, mock.patch.object(cdb_adapter, "LSREGISTER", Path("/nonexistent")):
+            argv = cdb_adapter.electron_argv(
+                ["env", "-u", "ELECTRON_RUN_AS_NODE", "npx", "electron", ".", "--surface=mail"],
+                str(app_dir),
+                "Copperfield Mail",
+            )
+            again = cdb_adapter.electron_argv(["npx", "electron", "."], str(app_dir), "Copperfield Mail")
+        bundle = root / "copperfield-mail" / "Copperfield Mail.app"
+        self.assertEqual(
+            argv, ["env", "-u", "ELECTRON_RUN_AS_NODE", str(bundle / "Contents/MacOS/Electron"), ".", "--surface=mail"]
+        )
+        self.assertEqual(again[0], str(bundle / "Contents/MacOS/Electron"))
+        self.assertEqual(sign.call_count, 1)  # made once, then reused
+        info = plistlib.loads((bundle / "Contents/Info.plist").read_bytes())
+        self.assertEqual(info["CFBundleIdentifier"], "com.trycua.cdbbench.copperfield-mail")
+        self.assertEqual(info["CFBundleName"], "Copperfield Mail")
+        self.assertEqual(info["CFBundleExecutable"], "Electron")
+        hinfo = plistlib.loads(
+            (bundle / "Contents/Frameworks/Electron Helper (Renderer).app/Contents/Info.plist").read_bytes()
+        )
+        self.assertEqual(hinfo["CFBundleIdentifier"], "com.trycua.cdbbench.copperfield-mail.helper.Renderer")
+        # the pack's own Electron.app is untouched
+        self.assertEqual(
+            plistlib.loads((source / "Contents/Info.plist").read_bytes())["CFBundleIdentifier"],
+            "com.github.Electron",
+        )
+        self.assertEqual(cdb_adapter.electron_argv(["node", "server.js"], str(app_dir), "x"), ["node", "server.js"])
+        self.assertEqual(cdb_adapter.app_display_name(DESCRIPTOR["apps"][1]), "Synthetic Desk")
+
     def test_kill_only_in_disposable_vm(self) -> None:
         os.environ.pop("CDB_BENCH_DISPOSABLE", None)
         cdb_adapter.clear_leftovers(self.spec)  # must be a no-op, never a pkill on a real desktop

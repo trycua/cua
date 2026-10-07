@@ -4,7 +4,7 @@ Status: frozen when this file is committed, before any trial that enters the ana
 Date: 2026-10-05 (UTC evening). Scope: head-to-head, macOS host, one Mac. Owner: Cua Driver Bench maintainers.
 Supersedes the pilot pre-registration (private trycua/cua-driver-bench PR #59: Codex CLI with gpt-6-astra, Cua Driver arm only).
 
-**Amended on 6 Oct 2026, before any analysed trial: see Amendment 1 immediately below (Amendment 2, the GUI-only variant, after it, and Amendment 3, the 7 Oct before/after check of the Cua Driver 0.35.0 changes). Where sections 0 to 12 differ from them, the amendments win.**
+**Amended on 6 Oct 2026, before any analysed trial: see Amendment 1 immediately below (Amendment 2, the GUI-only variant, after it, Amendment 3, the 7 Oct before/after check of the Cua Driver 0.35.0 changes, and Amendment 4, named Electron bundles and a skill-in-prompt arm). Where sections 0 to 12 differ from them, the amendments win.**
 
 ## Amendment 1 (6 Oct 2026, before any analysed trial)
 
@@ -198,6 +198,57 @@ Reading the phase 1 results at 23:50 UTC on 6 Oct (before any phase 2 probe tria
 Decision, made before any phase 2 probe trial: from phase 2 on, the runner moves the real pointer to an empty point of the menu bar (1000, 12) through the recorder daemon before every trial and records the read-back in the row (`pointer_parked`, flag `--park-pointer`). Nothing else changes. In the report, the phase 1 MB-10 trials are shown but marked as confounded and are not used for success comparisons; H1 to H3 are reported as registered (all eight tasks, all complete runs) and, labelled post-hoc, without MB-10. MB-11 (tooltip) is less exposed (the tooltip needs a fresh hover), but its phase 1 and phase 2 results are also shown separately.
 
 The restart to load this change exposed a harness gap: a resumed run had no block timings, so the registered "phase 2 block must fit before the cutoff" check (unknown estimate means do not start) stopped it at once (`STOPPED_TIME`, 23:51 UTC, no trial lost). The runner now seeds the block timings of a resumed run from the summed trial wall times of finished blocks. The rule itself is unchanged.
+
+## Amendment 4 (7 Oct 2026, before any trial it covers): named Electron bundles and a skill-in-prompt arm
+
+Written and committed before the first trial run under it. It changes nothing about the trials, analyses or reports of Amendments 1 to 3. It applies to every run started after this commit (the first is a smoke run, A4.4; the validation run of the Cua Driver 0.36 fixes will get its own amendment with its builds, order and hypotheses before it starts).
+
+### A4.1 Why
+
+* **Electron addressing (CUA-1224).** The pack's launch descriptors start every Electron app with `npx electron .`. All of them were therefore processes of one `Electron.app`, bundle id `com.github.Electron`, process and app name "Electron". Codex computer use addresses apps by name or bundle id; in the 6 Oct GUI-only run it failed with `Ambiguous app identifier 'com.github.Electron'` 13 times and `Invalid app: Signal Quay Chat` 5 times, in CDB-G02 (three Electron windows of one app directory) and CDB-G03. Arm B's G02 and G03 results of 6 Oct and of run `v035` are therefore not a clean reading of its tool layer. Cua Driver addresses apps by pid and window id, so the shared bundle id did not block it in the same way.
+* **Skill delivery (CUA-1226).** Arm A's skill reached the model only as a Claude Code project-skill listing. On 6 Oct it was opened in 1 of 35 main-run arm A trials (7 of 15 GUI-only). "Arm A with the skill" was mostly arm A without it, so the effect of the skill is unmeasured.
+
+### A4.2 Electron apps as named bundles (all arms)
+
+For every app of kind `electron` in a task's launch descriptor, the runner (`cdb_adapter.py`) replaces `npx electron` with the `Electron` executable of a copy of the pack's own `node_modules/electron/dist/Electron.app` (Electron 43.4.0, from the pack's lockfile). The copy:
+
+* is named after the app's window title in the descriptor (for example `Copperfield Mail.app`; role, then id, if there is no title);
+* has `CFBundleName` and `CFBundleDisplayName` set to that name and `CFBundleIdentifier` `com.trycua.cdbbench.<slug of the name>`; its helper apps get the same id with their original suffix (`.helper`), as electron-packager does;
+* keeps `CFBundleExecutable` `Electron`, so the helpers resolve as before and the runner's leftover cleanup (`pkill -x Electron`) is unchanged;
+* is ad-hoc re-signed (`codesign --force --deep --sign -`) and registered with LaunchServices; it is made once per name under `$CDB_BENCH_WORK/electron-apps` and reused.
+
+The binary, the app code, the arguments, the working directory, the environment, the window frames, the brief and the evaluator are unchanged, and so is the pack: still revision `16a1937a79ff2ee2e48f5b5d9bb5e6f944119b5a` with the tree digests in `pins.json`. No pack change was needed because the bundle identity is set by the runner at launch. Every row records `electron_named_bundles`. `CDB_ELECTRON_SHARED=1` restores the old shared launch, for reproducing earlier runs only.
+
+Check before any trial (no model call): in the VM, start the apps of CDB-G02 and CDB-G03 through the adapter and confirm that each Electron app appears as its own app, with its own name and bundle id, in Cua Driver's `list_apps` and in Codex computer use's `cua.listApps()`, and that `cua.getApp(<name>)` resolves each one. The result is recorded in A4.6.
+
+### A4.3 A skill-in-prompt arm
+
+| Label | Runner arm | Tool layer | Skill delivery |
+|---|---|---|---|
+| AS | `cc-cua-driver-main-skill` | the same build, private app, daemon and MCP config as `cc-cua-driver-main` | the build's `SKILL.md`, verbatim, appended to the system prompt; the project skill also stays in `.claude/skills/cua-driver` |
+
+The system prompt of arm AS is the shared system prompt, then this fixed text, then the full `SKILL.md` of the build's skill tree:
+
+> The instructions of the Cua Driver skill follow. They apply to the `cua` MCP server. The skill's other files, which these instructions refer to, are in .claude/skills/cua-driver/ and can be read with the Read tool.
+
+Nothing else differs from `cc-cua-driver-main`: model, tools, ToolSearch, limits, environment, daemon, MCP server. The other arms keep the shared system prompt. Each row records `system_prompt_sha256` and `skill_in_prompt`; the manifest records the prompt hash of every arm. The arm is not in the runner's default arm set (`--arms` must name it), so a run without `--arms` is unchanged. Comparing AS with A on the same build and seeds measures the effect of putting the skill in front of the model; that comparison is descriptive until a run registers a hypothesis for it.
+
+### A4.4 Smoke run
+
+One smoke run, `RUN_ID=v036-smoke`, rows marked `smoke` and never analysed: CDB-G02 and CDB-G03, one run each, all four arms (A `cc-cua-driver-main`, A0 `cc-cua-driver`, AS `cc-cua-driver-main-skill`, B `cc-codex-cu`), first arm rotating as in A3.3 over that list. Purpose: check A4.2 and A4.3 end to end (each arm starts, arm B can address each Electron app, AS's init event shows the longer prompt). Its numbers are not a result.
+
+### A4.5 Credentials, stop rule, arm B
+
+* Credentials as in A3.6: the access token only, without its refresh token, of one seat chosen from the owner's account switcher by its latest readings, in a 0600 file handed to `claude` by file descriptor, deleted afterwards. No new trial once that seat's five-hour or seven-day utilization is 0.95 or higher, or on `rejected`.
+* Arm B's numbers stay internal until the OpenAI terms review (CUA-1225). No arm B number from a run under this amendment is committed to this repository.
+
+### A4.6 Verification record
+
+To be filled in from the VM before the smoke run, and not changed afterwards.
+
+### A4.7 Harness changes for this amendment
+
+`cdb_adapter.py`: `named_electron_app`, `electron_argv`, `app_display_name`; `start_apps` uses them for `electron` apps. `claude_arms.py`: `CuaBuild.skill_in_prompt`, arm `cc-cua-driver-main-skill`, `system_prompt_for`. `arms.py`: the arm added to `CLAUDE_ARMS`, `DEFAULT_CLAUDE_ARMS` keeps the three arms of Amendment 3. `run_bench.py`: the per-arm system prompt in the trial, init check, manifest and dry run; row fields `system_prompt_sha256`, `skill_in_prompt`, `electron_named_bundles`; the main-build pin check runs for any arm on the main build. `tools/tasks_amendment.md` and `TASKS.md`: adaptation 8. Tests: `tests/test_cdb_adapter.py` (named bundle, argv rewrite), `tests/test_bench.py` (skill arm differs only in the system prompt).
 
 ## 0. Decisions made before the first trial, and why
 

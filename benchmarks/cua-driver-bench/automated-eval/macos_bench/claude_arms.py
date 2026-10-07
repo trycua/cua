@@ -6,6 +6,9 @@ skill) differs.
   Code's own project-skill mechanism (``<cwd>/.claude/skills/cua-driver``).
 * ``cc-cua-driver-main``: the same, with Cua Driver built from a pinned main commit (Amendment 3,
   7 Oct 2026) and the skill of that commit. Its own private app, daemon, socket and state.
+* ``cc-cua-driver-main-skill``: the main build of ``cc-cua-driver-main`` with the text of its ``SKILL.md``
+  appended to the system prompt (Amendment 4, CUA-1226). The project skill stays in place, so the skill's other
+  files can still be read; only the system prompt differs from ``cc-cua-driver-main``.
 * ``cc-codex-cu``: OpenAI's Codex computer-use ``cua_repl`` launcher as MCP server ``codex-cu``
   (configuration supplied by the codex-access worker, used unmodified). No skill.
 
@@ -85,6 +88,7 @@ class CuaBuild:
     socket: str
     state: Path
     skills: Path
+    skill_in_prompt: bool = False  # Amendment 4: SKILL.md appended to the system prompt
 
     @property
     def bin(self) -> Path:
@@ -105,6 +109,16 @@ CUA_BUILDS = {
         CUA_MAIN_DIR / "daemon-state",
         CUA_MAIN_DIR / "skills" / "cua-driver",
     ),
+    # Amendment 4 (CUA-1226): the same build, daemon and skill as cc-cua-driver-main; SKILL.md in the system prompt.
+    "cc-cua-driver-main-skill": CuaBuild(
+        "cc-cua-driver-main-skill",
+        "main",
+        CUA_MAIN_APP,
+        MAIN_SOCKET,
+        CUA_MAIN_DIR / "daemon-state",
+        CUA_MAIN_DIR / "skills" / "cua-driver",
+        skill_in_prompt=True,
+    ),
 }
 CUA_ARMS = tuple(CUA_BUILDS)
 
@@ -117,8 +131,23 @@ CWD_ROOT = Path("/tmp/cdb-bench-cwd/work")  # outside every git checkout, same p
 ARM_DESCRIPTIONS = {
     "cc-cua-driver": "Claude Code + Cua Driver 0.34.0 MCP + Cua Driver skill (0.34.0 release)",
     "cc-cua-driver-main": "Claude Code + Cua Driver built from main (pinned commit) MCP + the skill of that commit",
+    "cc-cua-driver-main-skill": "The same as cc-cua-driver-main, with the skill's SKILL.md appended to the system prompt",
     "cc-codex-cu": "Claude Code + Codex computer-use cua_repl MCP (server codex-cu), no skill",
 }
+
+SKILL_PROMPT_HEADER = (
+    "\n\nThe instructions of the Cua Driver skill follow. They apply to the `cua` MCP server. The skill's other "
+    "files, which these instructions refer to, are in .claude/skills/cua-driver/ and can be read with the Read tool."
+    "\n\n"
+)
+
+
+def system_prompt_for(arm: str) -> str:
+    """The shared SYSTEM_PROMPT; for a skill-in-prompt arm, followed by its build's SKILL.md, verbatim."""
+    build = CUA_BUILDS.get(arm)
+    if build is None or not build.skill_in_prompt:
+        return SYSTEM_PROMPT
+    return SYSTEM_PROMPT + SKILL_PROMPT_HEADER + (build.skills / "SKILL.md").read_text("utf-8").strip() + "\n"
 
 
 def sha256_file(path: Path) -> str:

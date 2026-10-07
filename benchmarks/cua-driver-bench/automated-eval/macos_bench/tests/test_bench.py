@@ -4,6 +4,7 @@ No GUI and no model calls."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import sys
@@ -14,6 +15,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
+import arms  # noqa: E402
 import bench_core as core  # noqa: E402
 import claude_arms as ca  # noqa: E402
 import claude_driver  # noqa: E402
@@ -678,6 +680,27 @@ class ArmsAndHostTest(unittest.TestCase):
             self.assertEqual(entry["args"], ["--socket", ca.MAIN_SOCKET, "mcp"])
             self.assertNotEqual(ca.MAIN_SOCKET, ca.AGENT_SOCKET)
             self.assertEqual(entry["env"]["DO_NOT_TRACK"], "1")
+
+    def test_skill_arm_differs_from_main_only_in_the_system_prompt(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            skills = Path(tmp) / "cua-driver"
+            skills.mkdir()
+            (skills / "SKILL.md").write_text("---\nname: cua-driver\n---\n# Cua Driver\nObserve, act once, verify.\n")
+            builds = dict(ca.CUA_BUILDS)
+            builds["cc-cua-driver-main-skill"] = dataclasses.replace(builds["cc-cua-driver-main-skill"], skills=skills)
+            with mock.patch.object(ca, "CUA_BUILDS", builds):
+                prompt = ca.system_prompt_for("cc-cua-driver-main-skill")
+                self.assertTrue(prompt.startswith(ca.SYSTEM_PROMPT))
+                self.assertIn("Observe, act once, verify.", prompt)
+                self.assertEqual(ca.system_prompt_for("cc-cua-driver-main"), ca.SYSTEM_PROMPT)
+                self.assertEqual(ca.system_prompt_for("cc-codex-cu"), ca.SYSTEM_PROMPT)
+                a, server_a = ca.mcp_config_for("cc-cua-driver-main", Path(tmp) / "a")
+                b, server_b = ca.mcp_config_for("cc-cua-driver-main-skill", Path(tmp) / "b")
+                self.assertEqual(json.loads(a.read_text()), json.loads(b.read_text()))
+        self.assertIn("cc-cua-driver-main-skill", arms.CLAUDE_ARMS)
+        self.assertNotIn("cc-cua-driver-main-skill", arms.DEFAULT_CLAUDE_ARMS)
 
     def test_three_arms_rotate_the_first_arm(self) -> None:
         arms3 = ["cc-cua-driver-main", "cc-cua-driver", "cc-codex-cu"]

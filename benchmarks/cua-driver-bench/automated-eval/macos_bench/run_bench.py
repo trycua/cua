@@ -624,6 +624,10 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         "macos": ctx.versions.get("macos"),
         "bench_repo_commit": ctx.versions.get("bench_repo_commit"),
         "bench_src_sha256": ctx.versions.get("bench_src_sha256"),
+        "system_prompt_sha256": hashlib.sha256(ca.system_prompt_for(arm).encode()).hexdigest(),
+        "skill_in_prompt": bool(getattr(ca.CUA_BUILDS.get(arm), "skill_in_prompt", False)),
+        "electron_named_bundles": spec.get("kind") == "cdb"
+        and os.environ.get("CDB_ELECTRON_SHARED") != "1",
         "quota_five_hour_before": (ctx.quota or {}).get("five_hour"),
         "quota_seven_day_before": (ctx.quota or {}).get("seven_day"),
     }
@@ -693,6 +697,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             tool_search=args.tool_search == "default",
             effort=args.effort,
             coding_tools=bool(spec.get("coding_tools")),
+            system_prompt=ca.system_prompt_for(arm),
         )
         prompt = brief.strip() + "\n"
         if args.tell_budget:
@@ -1368,6 +1373,7 @@ def init_check(ctx: Ctx, arm: str) -> tuple[str, str]:
         tool_search=ctx.args.tool_search == "default",
         effort=None,
         debug_file=debug,
+        system_prompt=ca.system_prompt_for(arm),
     )
     stream = ctx.run_dir / f"preflight-init-{arm}.tsv"
     result = claude_driver.run_claude(
@@ -1491,7 +1497,7 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     for name, status, detail in check_pins(pins, ctx.arm_names):
         add(name, status, detail)
     offline = bool(getattr(args, "offline", False))
-    if "cc-cua-driver-main" in ctx.arm_names:
+    if any(ca.CUA_BUILDS[a].app == ca.CUA_MAIN_APP for a in ctx.arm_names if a in ca.CUA_BUILDS):
         main = pins.get("cua_main", {})
         spec = ca.CUA_BUILDS["cc-cua-driver-main"]
         got_bin = ca.sha256_file(spec.bin) if spec.bin.is_file() else None
@@ -1660,7 +1666,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--runs-dir", type=Path, default=DEFAULT_RUNS)
     p.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
     p.add_argument("--ledger-who", default="runner")
-    p.add_argument("--arms", nargs="+", default=list(arms.CLAUDE_ARMS), choices=list(arms.ALL_ARMS))
+    p.add_argument(
+        "--arms", nargs="+", default=list(arms.DEFAULT_CLAUDE_ARMS), choices=list(arms.ALL_ARMS)
+    )
     p.add_argument("--only-arm", default=None)
     p.add_argument(
         "--tasks",
@@ -1928,6 +1936,9 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
         "seven_day_stop": args.seven_day_stop,
         "tool_search": args.tool_search,
         "system_prompt": ca.SYSTEM_PROMPT,
+        "system_prompt_sha256_by_arm": {
+            a: hashlib.sha256(ca.system_prompt_for(a).encode()).hexdigest() for a in ctx.arm_names
+        },
         "builtin_tools": ca.builtin_tools(args.tool_search == "default"),
         "claude_env_allowlist": list(ca.CLAUDE_ENV_ALLOW),
         "claude_env_fixed": ca.CLAUDE_ENV_FIXED,
@@ -1945,6 +1956,7 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
                 max_budget_usd=args.max_budget_usd,
                 tool_search=args.tool_search == "default",
                 effort=args.effort,
+                system_prompt=ca.system_prompt_for(a),
             )
             for a in ctx.arm_names
             if a in ctx.mcp
@@ -2181,6 +2193,7 @@ def cmd_dry_run(args: argparse.Namespace) -> int:
                     max_budget_usd=args.max_budget_usd,
                     tool_search=args.tool_search == "default",
                     effort=args.effort,
+                    system_prompt=ca.system_prompt_for(arm),
                 )
                 print(f"\n{arm}:\n  " + " ".join(json.dumps(a) if " " in a else a for a in argv))
             except (FileNotFoundError, ValueError) as error:

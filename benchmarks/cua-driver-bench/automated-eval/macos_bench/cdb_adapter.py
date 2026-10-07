@@ -11,6 +11,11 @@ Mechanical adaptations, all recorded in TASKS.md:
 * `terminal` and `editor` apps of the descriptor are not started: both arms get the same Bash, Edit and Write tools.
 * The brief is the pack's `brief.md` with the MCP server name made neutral (`cua` -> computer-use) plus one
   line giving the workspace path, because the runner's working directory is not the workspace.
+* `electron` apps (Amendment 4): the descriptor starts them with `npx electron .`, so every app is a process of
+  the one `Electron.app` (bundle id `com.github.Electron`, name "Electron") and Codex computer use cannot tell
+  them apart. Each app instead runs from its own copy of the pack's own `Electron.app`, with the app's window
+  title as its name and its own bundle id (`com.trycua.cdbbench.<name>`). Same Electron binary, same app code,
+  same arguments; only the bundle's name and id differ.
 """
 
 from __future__ import annotations
@@ -86,6 +91,107 @@ def allowed_app_names(spec: dict[str, Any]) -> set[str]:
         if any("gnucash" in part.lower() for part in app["command"]):
             names.add("gnucash")
     return names
+
+
+ELECTRON_ID_PREFIX = "com.trycua.cdbbench."
+ELECTRON_BASE_ID = "com.github.Electron"
+LSREGISTER = Path(
+    "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework"
+    "/Support/lsregister"
+)
+
+
+def electron_apps_root() -> Path:
+    return Path(os.environ.get("CDB_ELECTRON_APPS") or (ca.WORK / "electron-apps"))
+
+
+def app_display_name(app: dict[str, Any]) -> str:
+    """The name an Electron app gets as its own bundle: its window title, else its role, else its id."""
+    win = app.get("window") or {}
+    return str(win.get("title") or app.get("role") or app["id"]).strip()
+
+
+def slug(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def electron_bundle_id(name: str) -> str:
+    return ELECTRON_ID_PREFIX + slug(name)
+
+
+def _sign(bundle: Path) -> None:
+    """Ad-hoc re-sign after the Info.plist edits (the copy's seal no longer matches)."""
+    done = subprocess.run(
+        ["codesign", "--force", "--deep", "--sign", "-", str(bundle)], capture_output=True, text=True
+    )
+    if done.returncode != 0:
+        raise RuntimeError(f"codesign {bundle.name} failed: {done.stderr[-300:]}")
+
+
+def named_electron_app(source: Path, name: str, root: Path | None = None) -> Path:
+    """A copy of ``source`` (an Electron.app) named ``name`` with its own bundle id, made once and reused.
+
+    The main bundle gets CFBundleName/CFBundleDisplayName ``name`` and CFBundleIdentifier
+    ``com.trycua.cdbbench.<slug>``; its helper apps get the same id plus their original suffix
+    (``.helper``, ``.helper.Renderer`` ...), as electron-packager does. CFBundleExecutable stays ``Electron``,
+    so the helpers are found as before and the runner's ``pkill -x Electron`` still clears leftovers."""
+    import plistlib
+
+    bundle_id = electron_bundle_id(name)
+    target = (root or electron_apps_root()) / slug(name) / f"{name}.app"
+    stamp = target.parent / "source.json"
+    source_plist = source / "Contents/Info.plist"
+    want = {
+        "source": str(source.resolve()),
+        "source_info_sha256": hashlib.sha256(source_plist.read_bytes()).hexdigest(),
+        "name": name,
+        "bundle_id": bundle_id,
+    }
+    if target.is_dir() and stamp.is_file():
+        try:
+            if json.loads(stamp.read_text("utf-8")) == want:
+                return target
+        except ValueError:
+            pass
+    shutil.rmtree(target.parent, ignore_errors=True)
+    target.parent.mkdir(parents=True)
+    done = subprocess.run(["cp", "-Rc", str(source), str(target)], capture_output=True, text=True)
+    if done.returncode != 0:  # no APFS clone (other filesystem): plain copy
+        shutil.copytree(source, target, symlinks=True)
+    plists = [target / "Contents/Info.plist"] + sorted(
+        (target / "Contents/Frameworks").glob("*.app/Contents/Info.plist")
+    )
+    for path in plists:
+        data = plistlib.loads(path.read_bytes())
+        old = str(data.get("CFBundleIdentifier", ""))
+        suffix = old[len(ELECTRON_BASE_ID) :] if old.startswith(ELECTRON_BASE_ID) else ""
+        data["CFBundleIdentifier"] = bundle_id + suffix
+        if path.parent.parent == target:
+            data["CFBundleName"] = name
+            data["CFBundleDisplayName"] = name
+        path.write_bytes(plistlib.dumps(data))
+    _sign(target)
+    if LSREGISTER.exists():
+        subprocess.run([str(LSREGISTER), "-f", str(target)], capture_output=True, timeout=60)
+    stamp.write_text(json.dumps(want, indent=2) + "\n", "utf-8")
+    return target
+
+
+def electron_argv(argv: list[str], cwd: str, name: str) -> list[str]:
+    """Rewrite ``[... npx electron <args>]`` to ``[... <Name>.app/Contents/MacOS/Electron <args>]``.
+
+    ``npx electron`` resolves ``node_modules/electron`` of ``cwd`` and execs its ``dist/Electron.app`` with the
+    remaining arguments; this does the same with a named copy of that bundle. Anything before ``npx`` (such as
+    ``env -u ELECTRON_RUN_AS_NODE``) is kept."""
+    try:
+        at = next(i for i in range(len(argv) - 1) if argv[i] == "npx" and argv[i + 1] == "electron")
+    except StopIteration:
+        return argv
+    source = Path(cwd) / "node_modules/electron/dist/Electron.app"
+    if not source.is_dir():
+        raise RuntimeError(f"Electron.app missing for {name}: {source}")
+    bundle = named_electron_app(source, name)
+    return argv[:at] + [str(bundle / "Contents/MacOS/Electron")] + argv[at + 2 :]
 
 
 def kill_policy(spec: dict[str, Any]) -> tuple[list[str], list[int]]:
@@ -184,7 +290,10 @@ class CdbTask:
             env.update({k: self.sub(v) for k, v in (app.get("env") or {}).items()})
             cwd = self.sub(app["cwd"]) if app.get("cwd") else str(self.bundle)
             argv = [self.sub(p) for p in app["command"]]
-            out = (self.artifacts / f"app-{app['id']}.log").open("ab")
+            if app.get("kind") == "electron" and os.environ.get("CDB_ELECTRON_SHARED") != "1":
+                argv = electron_argv(argv, cwd, app_display_name(app))
+                self.log.append(f"electron {app['id']} as {electron_bundle_id(app_display_name(app))}")
+            out =(self.artifacts / f"app-{app['id']}.log").open("ab")
             proc = subprocess.Popen(
                 argv,
                 cwd=cwd,

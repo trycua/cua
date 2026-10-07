@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Exercise the actual session route and cancellation owner, with reachable
 //! origin listeners that detect any unintended direct fallback.
 use cua_relay::client::JoinConfig;

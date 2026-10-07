@@ -1163,6 +1163,57 @@ fn selected_state(element: &Value) -> Option<bool> {
     element.get("selected").and_then(Value::as_bool).or(checked)
 }
 
+/// Display-only rows (static text and other rows without an element index)
+/// that match `spec`, parsed into {role, label, value, text}. Scripts read
+/// values such as "Ticket: 4F2K" from these; they cannot be acted on.
+pub(crate) fn display_rows(read: &Read, spec: &ElementSpec) -> Vec<Value> {
+    if spec.role.is_none() && spec.name.is_none() && spec.text.is_none() {
+        return Vec::new();
+    }
+    read.markdown
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix("- "))
+        .filter(|rest| !rest.starts_with('['))
+        .filter_map(|rest| {
+            let role = rest.split_whitespace().next()?.to_owned();
+            let after = rest[role.len()..].trim_start();
+            let quoted = |text: &str| -> Option<String> {
+                let inner = text.strip_prefix('"')?;
+                inner.find('"').map(|end| inner[..end].to_owned())
+            };
+            let label = quoted(after).or_else(|| {
+                let open = after.rfind('(')?;
+                after[open + 1..].strip_suffix(')').map(str::to_owned)
+            });
+            let value = after.find("= ").and_then(|at| quoted(&after[at + 2..]));
+            let folded = fold(rest);
+            if let Some(role_wanted) = &spec.role {
+                if !role_matches(role_wanted, &role) {
+                    return None;
+                }
+            }
+            if let Some(name) = &spec.name {
+                if !has_word_start(&folded, &fold(name)) {
+                    return None;
+                }
+            }
+            if let Some(text) = &spec.text {
+                if !folded.contains(&fold(text)) {
+                    return None;
+                }
+            }
+            Some(json!({
+                "role": role,
+                "label": label,
+                "value": value,
+                "text": rest,
+                "display_only": true,
+            }))
+        })
+        .collect()
+}
+
 fn row_matches(row: &str, spec: &ElementSpec) -> bool {
     if !row.starts_with("- ") {
         return false;

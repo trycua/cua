@@ -459,3 +459,17 @@ fn an_unflagged_registry_does_not_offer_the_tool() {
         .get_def(crate::batch_tools::RUN_ACTIONS_TOOL)
         .is_some());
 }
+
+#[tokio::test]
+async fn query_returns_static_text_rows_with_their_value() {
+    let harness = Harness::new();
+    let result = harness
+        .run("const app = await cua.getApp('Notes');\nconst rows = await app.query({role: 'statictext', name: 'Saved'});\nconst both = await app.query({name: 'Save'});\nreturn {rows, kinds: both.map(r => r.display_only ? 'text' : r.role)};")
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let value = &structured(&result)["value"];
+    assert_eq!(value["rows"][0]["role"], "AXStaticText");
+    assert_eq!(value["rows"][0]["label"], "Saved");
+    assert_eq!(value["rows"][0]["window"]["window_id"], 7);
+    assert_eq!(value["kinds"], json!(["AXButton", "text"]));
+}

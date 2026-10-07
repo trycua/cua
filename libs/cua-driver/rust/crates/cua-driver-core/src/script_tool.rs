@@ -139,8 +139,10 @@ impl Tool for RunScriptTool {
                 - app.getState(opts?) → get_window_state result (`tree_markdown` or \
                 `tree_diff`, `snapshot_id`; pass get_window_state options such as \
                 {since:\"latest\"})\n\
-                - app.query({role?, name?, nth?}) → matching elements {element_token, role, \
-                label, value, enabled, selected, frame}\n\
+                - app.query({role?, name?, text?}) → matching elements across the app's \
+                windows {element_token, role, label, value, enabled, selected, frame}, then \
+                matching static-text rows {role, label, value, text, display_only} (read text \
+                such as a status line from their `value`)\n\
                 - app.waitFor({role?, name?, text?, gone?, value?, timeout_ms?}) and \
                 app.verify(predicate | predicates) (verify_state)\n\
                 - app.click(t), doubleClick(t), rightClick(t), typeText(text, t?), \
@@ -532,44 +534,62 @@ impl<'a> Api<'a> {
         }
     }
 
+    /// Elements matching {role, name, text} across the app's windows
+    /// (topmost first): addressable ones with their element_token, then
+    /// matching display-only text rows, whose `value` holds the text.
     async fn find(&mut self, mut args: Map<String, Value>) -> Result<Value, HostError> {
+        let text = args
+            .remove("text")
+            .and_then(|value| value.as_str().map(str::to_owned));
         let (window, element) = locate::take_selector(&mut args)
             .map_err(|message| HostError::new(message, "invalid_args"))?;
-        let resolved = self
-            .locator
-            .window(&window)
-            .await
-            .map_err(|miss| HostError::new(miss.message, miss.code))?;
-        let read = self
-            .locator
-            .read(&resolved)
-            .await
-            .map_err(|miss| HostError::new(miss.message, miss.code))?;
         let spec = ElementSpec {
             nth: None,
+            text,
             ..element
         };
-        let found: Vec<Value> = locate::matches(&read, &spec)
-            .into_iter()
-            .take(50)
-            .map(|element| {
-                let mut out = Map::new();
-                for key in [
-                    "element_token",
-                    "role",
-                    "label",
-                    "value",
-                    "enabled",
-                    "selected",
-                    "frame",
-                ] {
-                    if let Some(value) = element.get(key) {
-                        out.insert(key.to_owned(), value.clone());
+        let windows = self
+            .locator
+            .search_windows(&window)
+            .await
+            .map_err(|miss| HostError::new(miss.message, miss.code))?;
+        let mut found: Vec<Value> = Vec::new();
+        for resolved in &windows {
+            let read = self
+                .locator
+                .read(resolved)
+                .await
+                .map_err(|miss| HostError::new(miss.message, miss.code))?;
+            let window_json = json!({"window_id": resolved.window_id, "title": resolved.title});
+            if spec.text.is_none() {
+                for element in locate::matches(&read, &spec) {
+                    let mut out = Map::new();
+                    for key in [
+                        "element_token",
+                        "role",
+                        "label",
+                        "value",
+                        "enabled",
+                        "selected",
+                        "frame",
+                    ] {
+                        if let Some(value) = element.get(key) {
+                            out.insert(key.to_owned(), value.clone());
+                        }
                     }
+                    out.insert("window".into(), window_json.clone());
+                    found.push(Value::Object(out));
                 }
-                Value::Object(out)
-            })
-            .collect();
+            }
+            for mut row in locate::display_rows(&read, &spec) {
+                row["window"] = window_json.clone();
+                found.push(row);
+            }
+            if found.len() >= 50 {
+                break;
+            }
+        }
+        found.truncate(50);
         Ok(Value::Array(found))
     }
 

@@ -685,11 +685,22 @@ impl Snapshot {
     pub fn supervise_owned(
         self,
         mut reservation: cua_driver_core::owned_supervision::Reservation,
+        foreground_preserved_after_dispatch: bool,
     ) -> cua_driver_core::owned_supervision::ReceiptId {
         let activation = self
             ._lease
             .as_ref()
             .and_then(|lease| lease.activation_signal());
+        // Separate handled dispatch-time reflexes from later activation.
+        // Reset only after the caller proves the original foreground window
+        // is restored. The full observation retains the earlier evidence.
+        let during_dispatch = activation.as_ref().is_some_and(|signal| {
+            if foreground_preserved_after_dispatch {
+                signal.swap(false, std::sync::atomic::Ordering::AcqRel)
+            } else {
+                signal.load(std::sync::atomic::Ordering::Acquire)
+            }
+        });
         if let Some(signal) = &activation {
             reservation.bind_activation_signal(signal.clone());
         }
@@ -698,6 +709,7 @@ impl Snapshot {
             cua_driver_core::owned_supervision::Observation {
                 polled: changes.polled,
                 foreground_changed: changes.foreground_changed
+                    || during_dispatch
                     || activation
                         .is_some_and(|signal| signal.load(std::sync::atomic::Ordering::Acquire)),
                 new_window_count: changes.new_windows.len(),

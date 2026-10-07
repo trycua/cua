@@ -76,7 +76,7 @@ impl Tool for ReceiptTool {
             self.state.supervision.read(scope, &id)
         };
         match outcome {
-            Ok(status) => ToolResult::text("Observation status only; independently verify application commitment.").with_structured(serde_json::json!({"receipt_id":id,"supervision":status,"activation_observed":self.state.supervision.activation_observed(scope,&id).ok().flatten(),"application_commit":"unverified"})),
+            Ok(status) => ToolResult::text("Observation status only; independently verify application commitment.").with_structured(serde_json::json!({"receipt_id":id,"supervision":status,"activation_after_dispatch":self.state.supervision.activation_observed(scope,&id).ok().flatten(),"application_commit":"unverified"})),
             Err(e) => ToolResult::error(format!("supervision receipt: {e:?}; input must not be replayed without fresh observation.")),
         }
     }

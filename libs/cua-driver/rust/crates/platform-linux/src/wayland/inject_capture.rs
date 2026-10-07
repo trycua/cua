@@ -98,7 +98,9 @@ pub(super) fn screenshot(window_id: u64, pid: u32) -> Result<Vec<u8>> {
     let title = fresh_title(pid, window_id)?;
     let before = query(pid)?;
     before.binds(pid, &title)?;
-    let pixels = super::screenshot_display_dispatch()?;
+    // Stay on the nested Wayland connection: portal/X11 fallbacks may capture
+    // another desktop and cannot be bound by this compositor attestation.
+    let pixels = super::screenshot_bytes()?;
     let after = query(pid)?;
     after.binds(pid, &fresh_title(pid, window_id)?)?;
     verify_stable(&before, &after)?;

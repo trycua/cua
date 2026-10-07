@@ -58,9 +58,10 @@ jobs:
     name: hermetic + container (${{ github.event_name == 'workflow_dispatch' && inputs.lanes || 'hermetic,container' }})
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
-    # A cold build of the SDK, fixtures, bindings, images and runtimes alone
-    # took 86 minutes; the suite then ran into the old 120-minute limit.
-    timeout-minutes: 180
+    # Run 37562962482 exhausted 180 minutes during cold browser compilation,
+    # before image preparation or the suite. Allow the hosted runner's full
+    # six-hour budget for the unchanged build and strict test matrix.
+    timeout-minutes: 360
     env:
       # Optional: an authenticated Docker Hub keeps anonymous manifest-read
       # rate limits from failing the docs blocks' runtime inspection.

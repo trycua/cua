@@ -17,7 +17,7 @@ The rejected shortcut is a shorter global detector timeout: that also shortens p
 
 The weakest assumption is that quiet AX field values are sufficient for callers' needs. They are sufficient only for a field-settlement report. Applications may reject later or expose AX echoes; generic transaction commitment remains unsupported. Adding this flag to a model does not itself establish an agent-performance gain. The matched comparison must measure actual successful task time and keep the full fence separate.
 
-Review status: experimental draft. Final off-screen timing, field controls, transaction guards, receipt lifecycle and disconnect checks pass. Deliberate delayed activation and concurrent-input restoration, canonical desktop matrix and RFC decision remain outstanding. The virtual display is sufficient for ordinary field qualification but is not a separate input/focus session.
+Review status: experimental draft. Final off-screen timing, field controls, transaction guards, receipt lifecycle and disconnect checks pass. Deliberate delayed activation and concurrent-input restoration and canonical desktop matrix remain outstanding. The virtual display is sufficient for ordinary field qualification but is not a separate input/focus session.
 
 ## Off-screen results and limitations
 

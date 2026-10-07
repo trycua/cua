@@ -31,7 +31,7 @@ Local gates on latest upstream passed: 880 core, 102 SDK and 473 macOS tests; si
 
 ## Remaining qualification
 
-The session-wide physical-input guard still interrupts off-screen work when the user types elsewhere. Deliberate activation and concurrent-input focus-restoration tests require a separate desktop because a virtual display shares macOS focus. No guest was provisioned. Those final-candidate tests, the canonical desktop matrix and the RFC decision remain outstanding; this PR remains an experimental draft.
+The session-wide physical-input guard still interrupts off-screen work when the user types elsewhere. Deliberate activation and concurrent-input focus-restoration tests require a separate desktop because a virtual display shares macOS focus. No guest was provisioned. Those final-candidate tests and the canonical desktop matrix remain outstanding; this PR remains an experimental draft.
 
 ## Reproduce in an isolated macOS guest
 

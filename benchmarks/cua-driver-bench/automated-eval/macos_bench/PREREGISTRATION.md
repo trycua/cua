@@ -4,7 +4,7 @@ Status: frozen when this file is committed, before any trial that enters the ana
 Date: 2026-10-05 (UTC evening). Scope: head-to-head, macOS host, one Mac. Owner: Cua Driver Bench maintainers.
 Supersedes the pilot pre-registration (private trycua/cua-driver-bench PR #59: Codex CLI with gpt-6-astra, Cua Driver arm only).
 
-**Amended on 6 Oct 2026, before any analysed trial: see Amendment 1 immediately below (Amendment 2, the GUI-only variant, after it, Amendment 3, the 7 Oct before/after check of the Cua Driver 0.35.0 changes, and Amendment 4, named Electron bundles and a skill-in-prompt arm). Where sections 0 to 12 differ from them, the amendments win.**
+**Amended on 6 Oct 2026, before any analysed trial: see Amendment 1 immediately below (Amendment 2, the GUI-only variant, after it, Amendment 3, the 7 Oct before/after check of the Cua Driver 0.35.0 changes, Amendment 4, named Electron bundles and a skill-in-prompt arm, and Amendment 5, the v036 validation run of the 0.36 fixes). Where sections 0 to 12 differ from them, the amendments win.**
 
 ## Amendment 1 (6 Oct 2026, before any analysed trial)
 
@@ -260,6 +260,62 @@ CUA-1219 found that MB-10 (hover toolbar) fails for both Cua Driver builds whene
 ### A4.7 Harness changes for this amendment
 
 `cdb_adapter.py`: `named_electron_app`, `electron_argv`, `app_display_name`; `start_apps` uses them for `electron` apps. `claude_arms.py`: `CuaBuild.skill_in_prompt`, arm `cc-cua-driver-main-skill`, `system_prompt_for`. `arms.py`: the arm added to `CLAUDE_ARMS`, `DEFAULT_CLAUDE_ARMS` keeps the three arms of Amendment 3. `run_bench.py`: the per-arm system prompt in the trial, init check, manifest and dry run; row fields `system_prompt_sha256`, `skill_in_prompt`, `electron_named_bundles`; the main-build pin check runs for any arm on the main build. `tools/tasks_amendment.md` and `TASKS.md`: adaptation 8. `run_bench.py` (A4.8): `lab_occluders`, `ensure_lab_unoccluded`, `--check-occlusion`, row fields `lab_occlusion`, `lab_unoccluded`. Tests: `tests/test_cdb_adapter.py` (named bundle, argv rewrite, occluders), `tests/test_bench.py` (skill arm differs only in the system prompt).
+
+## Amendment 5 (7 Oct 2026, before the first trial of run v036): validation of the Cua Driver 0.36 fixes, and the skill-in-prompt arm
+
+Written and committed before the first trial of run `v036`. It adds a new, separate run on the same VM. It changes nothing about the trials, analyses or reports of Amendments 1 to 4. The harness is the one of Amendment 4: named Electron bundles (A4.2), the skill-in-prompt arm (A4.3) and the BenchLab occlusion check (A4.8).
+
+### A5.1 Why
+
+Run v035 (Amendment 3) found that the main build cut tokens per turn but not turns, and did not support H1 (tokens) or H2 (turns). The fixes made since then for those findings are now on main: #4812 (lean-read failure modes, batching guidance), #4821 (hidden helper windows, serialized foreground), #4831 (scroll dx/dy, `get_window_state` inside `run_actions`), #4835 (browser activation and field focus before foreground typing), #4760 (docs) and #4820 (`run_actions` steps that find, wait for and check by name). This run asks again whether main is more efficient than 0.34.0 without losing success, and whether putting the skill in the system prompt changes success or turns.
+
+### A5.2 Arms
+
+| Label | Runner arm | Tool layer | Skill |
+|---|---|---|---|
+| A | `cc-cua-driver-main` | Cua Driver built from trycua/cua main at `ccaacd8fda023f55a299689beefcc76389a617b1` (the merge of #4820, which contains #4812, #4821, #4831, #4835 and #4760) | `libs/cua-driver/rust/Skills/cua-driver` at that commit, as a project skill |
+| A0 | `cc-cua-driver` | Cua Driver 0.34.0, the same pinned private copy as on 6 and 7 Oct | the 0.34.0 skill, as a project skill |
+| AS | `cc-cua-driver-main-skill` | the same build, app and daemon as A | the same skill, with its `SKILL.md` also in the system prompt (A4.3) |
+| B | `cc-codex-cu` | OpenAI's `cua_repl` launcher, unchanged | none |
+
+The main build is made as in A3.2 (the scripts are in `tools/vm_main_build/`): built inside the VM from a `git archive` of that commit (`libs/cua-driver`, `libs/cua` and the few files outside them that the workspace includes) with `cargo build --locked --release -p cua-driver -p cursor-theme-cli` (rustc 1.97.1), `CUA_DRIVER_GIT_SHA` set to the commit; wrapped in the same private app `CuaDriverBenchMain.app` (bundle id `com.trycua.driver.benchmain`), ad-hoc signed with the hardened runtime and the same entitlements; the TCC rows re-bound to the new code. The source still says version 0.34.0, so the daemon reports `0.34.0`; the build is identified by commit and hash. `pins.json` `cua_main` now holds this build: binary sha256 `bffa727c840c85128d53e5fca0dab2fdd27014f23b69c3603896f3762d8dce77`, skill tree sha256 `668c0235269abd40553a98840eb800f30627a838c1df1d56ff3418d95fd60a0a`. The v035 values remain in Amendment 3 and in the history of `pins.json`. The preflight fails if either hash differs or the daemon reports another commit.
+
+Everything else is as in Amendments 1 to 4: `claude -p --model claude-sonnet-5-5` (Claude Code 2.1.289), the shared system prompt (AS adds the skill), ToolSearch on, `--setting-sources project`, the scrubbed environment, 360 s and 45 turns, the VM `cdb-h2h` (macOS 26.5.2, 1920x1080), reset, recorder, sentinel, evaluator isolation, side-door flagging, evaluator-path scan, pointer parking before every trial (`--park-pointer`), named Electron bundles, and the BenchLab occlusion check.
+
+### A5.3 Tasks, order and runs
+
+`RUN_ID=v036`. The ten tasks and order of A3.3: CDB-S01, CDB-S04, CDB-G02, CDB-G03, CDB-G04, MB-09, MB-10, MB-11, CDB-S02, CDB-S03; the first eight are the GUI-heavy set. Four arms interleaved inside every task block, arm list (A, A0, AS, B); the first arm of a run is `(task position + run index) mod 4` over that list. All arms share the run's seed. Phase 1 is runs 1 to 3 of every task; phase 2 is runs 4 and 5, only when phase 1 is complete and the stop rule and cutoff allow it. Only complete task blocks are analysed; three runs per arm is the guaranteed minimum, five the target. `CUTOFF_UTC` for new trials: 2026-10-08T09:00:00Z.
+
+### A5.4 Hypotheses (registered before any trial)
+
+Primary set: the eight GUI-heavy tasks. Pairing: trials of the same task and run (same seed). Tests in `tools/analyze_v036.py`, written before the first trial, with the bootstrap of A3.4 (10 000 resamples of runs within task, seed 20261007).
+
+A against A0, kept from A3.4 with the same metrics and rules:
+
+* **H1 (tokens).** A processes fewer tokens per trial than A0: geometric mean over tasks of the ratio of means A/A0; supported when the upper bound of the 95% interval is below 1.0.
+* **H2 (turns).** A uses fewer turns per trial than A0: same test on `turns`.
+* **H3 (success not worse).** Task-macro success A minus A0; supported when the lower bound of the 95% interval is at or above -0.15.
+
+AS against A (new, two-sided, because no direction is predicted):
+
+* **H4 (skill, success).** Task-macro success AS minus A with its 95% interval. Read as "AS better" when the interval is above 0, "AS worse" when below 0, otherwise no resolvable difference.
+* **H5 (skill, turns).** Geometric mean of the per-task ratio of mean turns AS/A with its 95% interval. Read as "AS fewer turns" when the interval is below 1, "AS more turns" when above 1, otherwise no resolvable difference. Tokens AS/A are reported with the same interval, not tested.
+
+All five are reported whatever the outcome, for the primary set, and also for all ten tasks (reported, not tested). Arm B is descriptive only, as before.
+
+### A5.5 Secondary measures
+
+Per task and arm: success with Wilson intervals, score, wall time, turns, computer-use calls, failed calls by tool, tokens (total and by kind), equivalent cost, pointer moved, focus stolen, flags, peeks, and BenchLab covered at start (A4.8). Use of `run_actions` and the lean-read options for A, AS and A0. A descriptive comparison of each arm with the same arm in run v035 (different runs, so not paired and not tested): task-macro success, turns, tokens and cost.
+
+### A5.6 Credentials and stop rule
+
+* Seats chosen from the owner's account switcher (`cswap`) by the headroom in its latest poll, preferring seats other than the owner's active one. Only the access token is copied, never the refresh token, into a 0600 file in the VM read by file descriptor (A1.4). A watchdog on the host reads each reading the runner records and moves to the next seat with headroom when the current one reaches 0.90 on either window or is rejected, or when its access token is near expiry, so the runner does not pause; every switch is logged in `runs/v036/account-switch.txt`. The registered stop is unchanged: no new trial once the seat in use is at 0.95 or more on its seven-day window, or on a seven-day `rejected`. A five-hour rejection still waits for its reset if it happens.
+* The token file is deleted at the end, before the VM is shut down gracefully.
+* Arm B's numbers stay internal until the OpenAI terms review (CUA-1225). No arm B number from this run is committed to this repository; the public-facing summaries use `analyze_v036.py --no-arm-b`.
+
+### A5.7 Harness changes for this amendment
+
+`tools/analyze_v036.py` (the analysis of A5.4 and A5.5); `tools/vm_main_build/` (the build, assembly and TCC scripts used for A3 and A5, kept for the record); `pins.json` `cua_main` (the new build).
 
 ## 0. Decisions made before the first trial, and why
 

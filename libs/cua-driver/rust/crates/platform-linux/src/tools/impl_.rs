@@ -9179,11 +9179,19 @@ impl Tool for SetValueTool {
                 return set_value_result(idx, &value, "ax", readback, None);
             }
             Ok(Err(error)) if crate::atspi::native::is_no_value_route(&error) => error,
+            Ok(Err(error)) if crate::atspi::native::is_no_such_option(&error) => {
+                return no_such_option_result(idx, &error)
+            }
             Ok(Err(error)) => return input_error_result(error),
             Err(error) => return ToolResult::error(format!("Task error: {error}")),
         };
-        // 2. No accessibility write route: type it like a user would. Click
-        //    the field (real pointer), select all, type, commit with Tab.
+        // 2. No accessibility write route. A combo box is opened with a click
+        //    and the option picked from its popup (whose items only exist and
+        //    act while it is open), then the popup is closed. Anything else is
+        //    typed like a user would: click the field (real pointer), select
+        //    all, type, commit with Tab.
+        let is_combo = crate::atspi::cached_role_in(pid, xid_opt, idx)
+            .is_some_and(|role| role.eq_ignore_ascii_case("combo box"));
         let wayland = crate::wayland::wayland_input_enabled();
         let background_route = !delivery.is_foreground()
             && !wayland
@@ -9220,6 +9228,17 @@ impl Tool for SetValueTool {
             foreground_budget(value.len()),
             move || -> anyhow::Result<Option<crate::input::FocusGuardReport>> {
                 let (win, lx, ly) = resolve_element_local_coords(pid, idx, xid_opt)?;
+                if is_combo {
+                    return pick_from_popup(
+                        &cursor_id,
+                        pid,
+                        xid_opt,
+                        idx,
+                        (win, lx, ly),
+                        &value_for_keys,
+                        foreground_route,
+                    );
+                }
                 if foreground_route {
                     let (sx, sy) = window_local_to_screen(win, lx, ly)?;
                     crate::input::with_x11_foreground_opts(
@@ -9265,19 +9284,109 @@ impl Tool for SetValueTool {
                 set_value_result(
                     idx,
                     &value,
-                    if foreground_route {
-                        "click_type_fg"
-                    } else {
-                        "click_type_mpx"
+                    match (is_combo, foreground_route) {
+                        (true, true) => "click_select_fg",
+                        (true, false) => "click_select_mpx",
+                        (false, true) => "click_type_fg",
+                        (false, false) => "click_type_mpx",
                     },
                     readback,
                     guard.as_ref(),
                 )
             }
+            Ok(Err(error)) if crate::atspi::native::is_no_such_option(&error) => {
+                no_such_option_result(idx, &error)
+            }
             Ok(Err(error)) => input_error_result(error),
             Err(error) => ToolResult::error(format!("Task error: {error}")),
         }
     }
+}
+
+/// `set_value` named an option the combo box or list does not have.
+fn no_such_option_result(idx: usize, error: &anyhow::Error) -> ToolResult {
+    let detail = error.to_string();
+    let detail = detail
+        .strip_prefix(crate::atspi::native::NO_SUCH_OPTION)
+        .map(|rest| rest.trim_start_matches(':').trim())
+        .unwrap_or(&detail)
+        .to_owned();
+    ToolResult::error(format!(
+        "set_value: element [{idx}] has {detail}; nothing was changed."
+    ))
+    .with_structured(json!({ "code": "option_not_found", "detail": detail, "effect": "none" }))
+}
+
+/// How long `set_value` waits for an opened combo box popup to list its
+/// options.
+const POPUP_OPTIONS_WAIT: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Keyboard-fallback `set_value` on a combo box whose options cannot be
+/// selected while it is closed: click it open (the real pointer: XTest in
+/// the foreground, the session's MPX pointer in the background), activate
+/// the option `value` names from the popup, and press Escape if the popup
+/// is still open afterwards (an unknown option, or a toolkit that keeps it
+/// open), so no popup is left behind.
+fn pick_from_popup(
+    cursor_id: &str,
+    pid: u32,
+    xid: Option<u64>,
+    idx: usize,
+    (win, lx, ly): (u64, f64, f64),
+    value: &str,
+    foreground: bool,
+) -> anyhow::Result<Option<crate::input::FocusGuardReport>> {
+    let close_popup = || -> anyhow::Result<()> {
+        if !crate::atspi::options_showing_in(pid, xid, idx) {
+            return Ok(());
+        }
+        if foreground {
+            crate::input::with_x11_foreground_opts(
+                win,
+                crate::input::ForegroundOptions::keyboard(),
+                || crate::input::send_key_xtest("Escape", &[]),
+            )
+            .map(|_| ())
+        } else {
+            background_virtual_key(cursor_id, pid, win, "Escape", &[]).map(|_| ())
+        }
+    };
+    let pick = || -> anyhow::Result<String> {
+        let deadline = std::time::Instant::now() + POPUP_OPTIONS_WAIT;
+        loop {
+            match crate::atspi::activate_option_in(pid, xid, idx, value) {
+                Ok(Some(name)) => return Ok(name),
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Ok(None) => anyhow::bail!("the combo box popup listed no options"),
+                Err(error) => return Err(error),
+            }
+        }
+    };
+    let open_and_pick = || -> anyhow::Result<()> {
+        let picked = pick();
+        // Let the toolkit close the popup on activation before checking.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let closed = close_popup();
+        picked?;
+        closed
+    };
+    if foreground {
+        let (sx, sy) = window_local_to_screen(win, lx, ly)?;
+        crate::input::with_x11_foreground_opts(
+            win,
+            crate::input::ForegroundOptions::pointer(),
+            || crate::input::send_click_xtest_desktop(sx.round() as i32, sy.round() as i32, 1, 1),
+        )?;
+        open_and_pick()?;
+        return Ok(None);
+    }
+    let (_, guard) = crate::input::focus_guard::guarded(Some(pid), || {
+        x11_pixel_click_no_focus_steal(cursor_id, win, lx as i32, ly as i32, 1, 1)?;
+        open_and_pick()
+    })?;
+    Ok(guard)
 }
 
 /// Numeric-aware equality for the `set_value` read-back ("40" == "40.0").

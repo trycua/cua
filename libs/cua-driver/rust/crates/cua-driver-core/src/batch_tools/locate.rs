@@ -52,6 +52,8 @@ pub(crate) const DEFAULT_EXPECT_TIMEOUT_MS: u64 = 2_000;
 pub(crate) const MAX_CHECK_TIMEOUT_MS: u64 = 10_000;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const CANDIDATES_SHOWN: usize = 5;
+/// Most windows of one app a lookup reads per poll.
+const MAX_WINDOWS_SEARCHED: usize = 4;
 
 /// Which window a step or check addresses.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -338,6 +340,7 @@ pub(crate) struct Window {
     pub window_id: u64,
     pub app: Option<String>,
     pub title: Option<String>,
+    pub on_screen: bool,
 }
 
 impl Window {
@@ -475,8 +478,22 @@ impl<'a> Locator<'a> {
                 window_id,
                 app: None,
                 title: None,
+                on_screen: true,
             });
         }
+        self.listed_window(spec).await
+    }
+
+    /// Like [`Self::window`], but always confirms the window through
+    /// `list_windows`, so the result carries its app name and title.
+    pub async fn listed_window(&self, spec: &WindowSpec) -> Result<Window, Miss> {
+        let mut windows = self.listed_windows(spec).await?;
+        Ok(windows.remove(0))
+    }
+
+    /// Every window matching `spec`, best first: on-screen before
+    /// off-screen, then topmost (largest z_index) first. Never empty.
+    pub async fn listed_windows(&self, spec: &WindowSpec) -> Result<Vec<Window>, Miss> {
         if spec.is_empty() {
             return Err(Miss::new(
                 "no_window",
@@ -574,32 +591,56 @@ impl<'a> Locator<'a> {
             ));
         }
         // On-screen windows first, then the topmost (largest z_index).
-        let best = candidates
-            .iter()
-            .copied()
-            .enumerate()
-            .max_by_key(|(order, window)| {
-                let on_screen = window.get("is_on_screen").and_then(Value::as_bool) != Some(false);
-                let z = window
-                    .get("z_index")
+        let mut ranked: Vec<(usize, &Value)> = candidates.into_iter().enumerate().collect();
+        ranked.sort_by_key(|(order, window)| {
+            let on_screen = window.get("is_on_screen").and_then(Value::as_bool) != Some(false);
+            let z = window
+                .get("z_index")
+                .and_then(Value::as_i64)
+                .unwrap_or(i64::MIN);
+            std::cmp::Reverse((on_screen, z, std::cmp::Reverse(*order)))
+        });
+        Ok(ranked
+            .into_iter()
+            .map(|(_, window)| Window {
+                pid: window
+                    .get("pid")
                     .and_then(Value::as_i64)
-                    .unwrap_or(i64::MIN);
-                (on_screen, z, std::cmp::Reverse(*order))
+                    .unwrap_or_default(),
+                window_id: window
+                    .get("window_id")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default(),
+                app: window
+                    .get("app_name")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                title: window
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                on_screen: window.get("is_on_screen").and_then(Value::as_bool) != Some(false),
             })
-            .map(|(_, window)| window)
-            .expect("non-empty");
-        Ok(Window {
-            pid: best.get("pid").and_then(Value::as_i64).unwrap_or_default(),
-            window_id: best
-                .get("window_id")
-                .and_then(Value::as_u64)
-                .unwrap_or_default(),
-            app: best
-                .get("app_name")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-            title: best.get("title").and_then(Value::as_str).map(str::to_owned),
-        })
+            .collect())
+    }
+
+    /// The windows a lookup searches, best first. An exact pid/window_id is
+    /// the only one; otherwise the app's on-screen windows in stacking
+    /// order, so an element in a dialog on top is found first and one in
+    /// the main window is still found when a transient popup is on top.
+    pub async fn search_windows(&self, spec: &WindowSpec) -> Result<Vec<Window>, Miss> {
+        if spec.exact().is_some() {
+            return Ok(vec![self.window(spec).await?]);
+        }
+        let windows = self.listed_windows(spec).await?;
+        let on_screen: Vec<Window> = windows.iter().filter(|w| w.on_screen).cloned().collect();
+        let mut pool = if on_screen.is_empty() {
+            windows
+        } else {
+            on_screen
+        };
+        pool.truncate(MAX_WINDOWS_SEARCHED);
+        Ok(pool)
     }
 
     /// Pids of running apps whose name or bundle id matches.
@@ -668,12 +709,7 @@ impl<'a> Locator<'a> {
         let started = Instant::now();
         let deadline = (started + timeout).min(self.deadline);
         loop {
-            let attempt = async {
-                let resolved = self.window(window).await?;
-                let read = self.read(&resolved).await?;
-                pick(&read, element).map_err(|miss| miss.in_window(&resolved))
-            }
-            .await;
+            let attempt = self.find_once(window, element).await;
             match attempt {
                 Ok(found) => return Ok(found),
                 Err(miss) if !miss.worth_waiting() => return Err(miss),
@@ -692,6 +728,105 @@ impl<'a> Locator<'a> {
         }
     }
 
+    /// One pass over the windows `spec` names: the first window holding a
+    /// unique match wins. When none does, the miss comes from the window
+    /// with the most elements, whose nearest matches are the useful ones.
+    async fn find_once(&self, spec: &WindowSpec, element: &ElementSpec) -> Result<Found, Miss> {
+        let windows = self.search_windows(spec).await?;
+        let mut best_miss: Option<(usize, Miss)> = None;
+        for window in &windows {
+            let read = self.read(window).await?;
+            match pick(&read, element) {
+                Ok(found) => return Ok(found),
+                Err(miss) if miss.code == "ambiguous" || miss.code == "not_addressable" => {
+                    return Err(miss.in_window(window))
+                }
+                Err(miss) => {
+                    let size = read.elements.len();
+                    if best_miss.as_ref().is_none_or(|(best, _)| size > *best) {
+                        best_miss = Some((size, miss.in_window(window)));
+                    }
+                }
+            }
+        }
+        let (_, mut miss) = best_miss.expect("search_windows is never empty");
+        if windows.len() > 1 {
+            miss.message = format!(
+                "{} (searched {} windows of the app)",
+                miss.message,
+                windows.len()
+            );
+        }
+        Err(miss)
+    }
+
+    /// One pass of a check over the windows it names. A presence check
+    /// holds when any window satisfies it; `gone` holds when none shows it.
+    async fn check_once(
+        &self,
+        check: &Check,
+        spec: &WindowSpec,
+        started: Instant,
+    ) -> Result<Checked, Miss> {
+        let windows = match self.search_windows(spec).await {
+            Ok(windows) => windows,
+            Err(miss)
+                if check.gone && matches!(miss.code, "window_not_found" | "app_not_found") =>
+            {
+                return Ok(Checked {
+                    window: None,
+                    observed: Some(format!("{} is closed", spec.describe())),
+                    waited: started.elapsed(),
+                })
+            }
+            Err(miss) => return Err(miss),
+        };
+        let mut best_miss: Option<(usize, Miss)> = None;
+        for window in &windows {
+            let read = match self.read(window).await {
+                Ok(read) => read,
+                // A window that closed between the lookup and the read has
+                // no elements left.
+                Err(_) if check.gone => continue,
+                Err(miss) => return Err(miss),
+            };
+            match evaluate(check, &read) {
+                Ok(observed) if !check.gone => {
+                    return Ok(Checked {
+                        window: Some(window.clone()),
+                        observed,
+                        waited: started.elapsed(),
+                    })
+                }
+                Ok(_) => {}
+                Err(miss) if check.gone => return Err(miss),
+                Err(miss) => {
+                    let size = read.elements.len();
+                    if best_miss.as_ref().is_none_or(|(best, _)| size > *best) {
+                        best_miss = Some((size, miss));
+                    }
+                }
+            }
+        }
+        match best_miss {
+            None => Ok(Checked {
+                window: windows.first().cloned(),
+                observed: None,
+                waited: started.elapsed(),
+            }),
+            Some((_, mut miss)) => {
+                if windows.len() > 1 {
+                    miss.message = format!(
+                        "{} (searched {} windows of the app)",
+                        miss.message,
+                        windows.len()
+                    );
+                }
+                Err(miss)
+            }
+        }
+    }
+
     /// Poll until the check holds or its timeout passes.
     pub async fn check(&self, check: &Check, fallback: &WindowSpec) -> Result<Checked, Miss> {
         let window_spec = if check.window.is_empty() {
@@ -702,33 +837,7 @@ impl<'a> Locator<'a> {
         let started = Instant::now();
         let deadline = (started + check.timeout).min(self.deadline);
         loop {
-            let outcome = match self.window(&window_spec).await {
-                Ok(window) => match self.read(&window).await {
-                    Ok(read) => evaluate(check, &read).map(|observed| Checked {
-                        window: Some(window.clone()),
-                        observed,
-                        waited: started.elapsed(),
-                    }),
-                    // A window that closed between the lookup and the read
-                    // has no elements left.
-                    Err(_) if check.gone => Ok(Checked {
-                        window: Some(window.clone()),
-                        observed: Some("window no longer readable".to_owned()),
-                        waited: started.elapsed(),
-                    }),
-                    Err(miss) => Err(miss),
-                },
-                Err(miss)
-                    if check.gone && matches!(miss.code, "window_not_found" | "app_not_found") =>
-                {
-                    Ok(Checked {
-                        window: None,
-                        observed: Some(format!("{} is closed", window_spec.describe())),
-                        waited: started.elapsed(),
-                    })
-                }
-                Err(miss) => Err(miss),
-            };
+            let outcome = self.check_once(check, &window_spec, started).await;
             match outcome {
                 Ok(checked) => return Ok(checked),
                 Err(miss) if !miss.worth_waiting() => return Err(miss),
@@ -779,7 +888,7 @@ pub(crate) fn matches<'r>(read: &'r Read, spec: &ElementSpec) -> Vec<&'r Value> 
                 by_role
                     .into_iter()
                     .filter(|element| {
-                        label_of(element).is_some_and(|label| fold(label).contains(&needle))
+                        label_of(element).is_some_and(|label| has_word_start(&fold(label), &needle))
                     })
                     .collect()
             } else {
@@ -1010,7 +1119,7 @@ fn row_matches(row: &str, spec: &ElementSpec) -> bool {
         }
     }
     if let Some(name) = &spec.name {
-        if !folded.contains(&fold(name)) {
+        if !has_word_start(&folded, &fold(name)) {
             return false;
         }
     }
@@ -1119,6 +1228,20 @@ fn text_matches(value: Option<&Value>, needle: &str) -> bool {
         .is_some_and(|text| fold(text).contains(&fold(needle)))
 }
 
+/// Whether `needle` occurs in `haystack` starting at a word boundary, so
+/// "ok" matches "OK" and "Ok, continue" but not "Bookmark".
+fn has_word_start(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    haystack.match_indices(needle).any(|(at, _)| {
+        haystack[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !before.is_alphanumeric())
+    })
+}
+
 fn fold(text: &str) -> String {
     text.trim().to_lowercase()
 }
@@ -1192,6 +1315,7 @@ mod tests {
                 window_id: 2,
                 app: Some("Demo".into()),
                 title: Some("Doc".into()),
+                on_screen: true,
             },
             elements,
             markdown: markdown.to_owned(),
@@ -1233,6 +1357,25 @@ mod tests {
         assert_eq!(pick(&read, &field).unwrap().element["element_index"], 3);
         assert_eq!(role_family("Push Button"), "button");
         assert_eq!(role_family("Hyperlink"), "link");
+    }
+
+    #[test]
+    fn a_short_name_matches_whole_words_only() {
+        let read = read(
+            vec![
+                element(1, "AXButton", "Bookmark this tab"),
+                element(2, "AXButton", "Ok, continue"),
+            ],
+            "",
+        );
+        let spec = ElementSpec {
+            role: Some("button".into()),
+            name: Some("ok".into()),
+            ..Default::default()
+        };
+        assert_eq!(pick(&read, &spec).unwrap().element["element_index"], 2);
+        assert!(has_word_start("save as…", "as"));
+        assert!(!has_word_start("bookmark", "ok"));
     }
 
     #[test]

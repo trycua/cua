@@ -18,6 +18,8 @@ struct Ui {
     screen: u8,
     email: String,
     dialog_open: bool,
+    /// A transient popup (no useful controls) stacked on top.
+    bubble_open: bool,
     /// Reads left before the "Finish" button appears on screen 2.
     finish_delay_reads: u32,
     snapshot: u32,
@@ -28,6 +30,9 @@ struct Ui {
 
 impl Ui {
     fn elements(&mut self, window_id: u64) -> Vec<(&'static str, String, Option<String>)> {
+        if window_id == 9 {
+            return vec![("AXButton", "Done".into(), None)];
+        }
         if window_id == 8 {
             return vec![
                 ("AXButton", "Discard".into(), None),
@@ -81,6 +86,13 @@ impl Tool for Fake {
                         "pid": 42, "window_id": 8, "app_name": "Demo", "title": "Unsaved changes",
                         "z_index": 2, "is_on_screen": true,
                         "bounds": {"x": 100.0, "y": 100.0, "width": 300.0, "height": 200.0}
+                    }));
+                }
+                if ui.bubble_open {
+                    windows.push(json!({
+                        "pid": 42, "window_id": 9, "app_name": "Demo", "title": "Bookmark added",
+                        "z_index": 3, "is_on_screen": true,
+                        "bounds": {"x": 500.0, "y": 0.0, "width": 200.0, "height": 100.0}
                     }));
                 }
                 ToolResult::text("windows").with_structured(json!({ "windows": windows }))
@@ -432,4 +444,34 @@ async fn later_steps_inherit_the_window() {
     let pressed = &harness.calls("press_key")[0];
     assert_eq!(pressed["pid"], 42);
     assert_eq!(pressed["window_id"], 7);
+}
+
+#[tokio::test]
+async fn a_popup_on_top_does_not_hide_the_main_window() {
+    let harness = Harness::new();
+    harness.ui.lock().unwrap().bubble_open = true;
+    let result = harness
+        .run(json!({"steps": [
+            {"click": {"app": "Demo", "role": "button", "name": "Next"}, "expect": {"text": "Step 2"}}
+        ], "observe": true}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let structured = result.structured_content.clone().unwrap();
+    assert_eq!(structured["steps"][0]["target"]["window"]["window_id"], 7);
+    // The observation follows the window the batch acted in, not the popup.
+    assert_eq!(
+        harness.calls("get_window_state").last().unwrap()["window_id"],
+        7
+    );
+
+    // A miss names the window with the most elements, and says how many
+    // windows were searched.
+    let result = harness
+        .run(json!({"steps": [
+            {"click": {"app": "Demo", "role": "button", "name": "Publish"}, "timeout_ms": 0}
+        ]}))
+        .await;
+    let message = text(&result);
+    assert!(message.contains("searched 2 windows"), "{message}");
+    assert!(message.contains("window 7"), "{message}");
 }

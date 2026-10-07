@@ -574,6 +574,9 @@ async fn run_step(
                 ));
             }
             Err(miss) => {
+                if let Some(window) = &miss.window {
+                    *last_window = Some(window.clone());
+                }
                 return failure(
                     index,
                     label,
@@ -581,7 +584,7 @@ async fn run_step(
                     miss.code,
                     format!("{} did not hold: {}", check.describe(), miss.message),
                     report,
-                )
+                );
             }
         }
     }
@@ -656,6 +659,7 @@ async fn run_step(
                 window_id,
                 app: None,
                 title: None,
+                on_screen: true,
             });
         }
 
@@ -705,6 +709,9 @@ async fn run_step(
                 }));
             }
             Err(miss) => {
+                if let Some(window) = &miss.window {
+                    *last_window = Some(window.clone());
+                }
                 report["expect"] = Value::Array(checked);
                 let which = if step.expect.len() > 1 {
                     format!("expect {} of {}: ", nth + 1, step.expect.len())

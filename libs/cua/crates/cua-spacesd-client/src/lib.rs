@@ -39,6 +39,7 @@ mod fs;
 mod http;
 pub mod manifest;
 mod process;
+mod tls;
 pub mod transport;
 pub mod tunnel;
 

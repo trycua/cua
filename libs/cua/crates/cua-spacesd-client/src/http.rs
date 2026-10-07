@@ -77,8 +77,7 @@ pub(crate) fn build_client(connect_timeout: Duration) -> Result<HttpClient> {
     ensure_crypto_provider();
     let http = ProxyConnector::new(connect_timeout, None);
     let https = hyper_rustls::HttpsConnectorBuilder::new()
-        .with_provider_and_webpki_roots(rustls::crypto::ring::default_provider())
-        .map_err(|e| Error::Transport(e.to_string()))?
+        .with_tls_config(crate::tls::client_config()?)
         .https_or_http()
         .enable_http1()
         .wrap_connector(http);

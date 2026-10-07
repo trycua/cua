@@ -233,7 +233,7 @@ fn native_channel(cfg: &ChannelConfig) -> Result<RawChannel> {
         ep = ep
             .tls_config(
                 ClientTlsConfig::new()
-                    .with_webpki_roots()
+                    .trust_anchors(crate::tls::root_store()?.roots)
                     .domain_name(cfg.endpoint.host().to_string()),
             )
             .map_err(|e| Error::Transport(e.to_string()))?;
@@ -257,8 +257,7 @@ fn grpc_web_channel(cfg: &ChannelConfig) -> Result<RawChannel> {
     // (e.g. reqwest via oci-client) may enable a second rustls backend, and
     // rustls then refuses to pick a process default on its own.
     let https = hyper_rustls::HttpsConnectorBuilder::new()
-        .with_provider_and_webpki_roots(rustls::crypto::ring::default_provider())
-        .map_err(|e| Error::Transport(e.to_string()))?
+        .with_tls_config(crate::tls::client_config()?)
         .https_or_http()
         .enable_http1()
         .wrap_connector(http);

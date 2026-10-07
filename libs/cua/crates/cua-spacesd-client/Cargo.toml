@@ -27,6 +27,8 @@ http-body-util.workspace = true
 hyper.workspace = true
 hyper-util = { workspace = true, features = ["client-proxy"] }
 hyper-rustls.workspace = true
+rustls-native-certs = "0.8"
+webpki-roots = "1"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 tower.workspace = true
 tokio = { workspace = true }

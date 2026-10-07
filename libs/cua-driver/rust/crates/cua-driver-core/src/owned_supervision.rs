@@ -61,6 +61,7 @@ pub enum Refusal {
     InvalidScope,
 }
 struct Entry {
+    activation_signal: Option<Arc<std::sync::atomic::AtomicBool>>,
     scope: String,
     state: watch::Sender<ReceiptState>,
 }
@@ -112,6 +113,7 @@ impl Owner {
         inner.entries.insert(
             id.0,
             Entry {
+                activation_signal: None,
                 scope: trusted_scope.into(),
                 state,
             },
@@ -138,6 +140,24 @@ impl Owner {
     }
     pub fn read(&self, trusted_scope: &str, id: &ReceiptId) -> Result<ReceiptState, Refusal> {
         Ok(self.subscribe(trusted_scope, id)?.borrow().clone())
+    }
+    /// A native callback signal can be read while full observation remains
+    /// pending. Absence is explicit; false is never application commitment.
+    pub fn activation_observed(
+        &self,
+        trusted_scope: &str,
+        id: &ReceiptId,
+    ) -> Result<Option<bool>, Refusal> {
+        let inner = self.inner.lock().unwrap();
+        let entry = inner
+            .entries
+            .get(&id.0)
+            .filter(|e| e.scope == trusted_scope)
+            .ok_or(Refusal::Unavailable)?;
+        Ok(entry
+            .activation_signal
+            .as_ref()
+            .map(|signal| signal.load(std::sync::atomic::Ordering::Acquire)))
     }
     /// A timeout or cancellation drops only this receiver, never the observer.
     pub async fn fence(
@@ -220,6 +240,18 @@ impl Drop for FinishGuard {
     }
 }
 impl Reservation {
+    /// Bind driver-owned callback evidence before ownership transfer. This is
+    /// not a public tool argument and carries no application outcome claim.
+    pub fn bind_activation_signal(&mut self, signal: Arc<std::sync::atomic::AtomicBool>) {
+        self.owner
+            .inner
+            .lock()
+            .unwrap()
+            .entries
+            .get_mut(&self.id.0)
+            .unwrap()
+            .activation_signal = Some(signal);
+    }
     /// No await occurs between transfer and task launch. The task owns the
     /// observer/protection future, not the caller's request or fence future.
     pub fn supervise<F>(mut self, observer: F) -> ReceiptId
@@ -272,6 +304,38 @@ mod tests {
             new_window_count: 0,
         }
     }
+    #[tokio::test]
+    async fn activation_signal_is_live_scoped_and_retained_while_pending() {
+        let owner = Owner::new(1).unwrap();
+        let signal = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut reservation = owner.reserve("owner").unwrap();
+        reservation.bind_activation_signal(signal.clone());
+        let (send, receive) = tokio::sync::oneshot::channel();
+        let id = reservation.supervise(async move {
+            receive.await.unwrap();
+            observation()
+        });
+        assert_eq!(owner.activation_observed("owner", &id), Ok(Some(false)));
+        signal.store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(owner.activation_observed("owner", &id), Ok(Some(true)));
+        assert_eq!(
+            owner.activation_observed("other", &id),
+            Err(Refusal::Unavailable)
+        );
+        assert_eq!(owner.read("owner", &id), Ok(ReceiptState::Pending));
+        send.send(()).unwrap();
+        owner
+            .fence("owner", &id, Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(owner.activation_observed("owner", &id), Ok(Some(true)));
+        owner.release("owner", &id).unwrap();
+        assert_eq!(
+            owner.activation_observed("owner", &id),
+            Err(Refusal::Unavailable)
+        );
+    }
+
     #[tokio::test]
     async fn cancelled_waiter_does_not_cancel_observer_or_its_lease() {
         let owner = Owner::new(1).unwrap();

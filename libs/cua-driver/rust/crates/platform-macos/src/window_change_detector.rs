@@ -684,13 +684,22 @@ mod tests {
 impl Snapshot {
     pub fn supervise_owned(
         self,
-        reservation: cua_driver_core::owned_supervision::Reservation,
+        mut reservation: cua_driver_core::owned_supervision::Reservation,
     ) -> cua_driver_core::owned_supervision::ReceiptId {
+        let activation = self
+            ._lease
+            .as_ref()
+            .and_then(|lease| lease.activation_signal());
+        if let Some(signal) = &activation {
+            reservation.bind_activation_signal(signal.clone());
+        }
         reservation.supervise(async move {
             let changes = self.detect_async().await;
             cua_driver_core::owned_supervision::Observation {
                 polled: changes.polled,
-                foreground_changed: changes.foreground_changed,
+                foreground_changed: changes.foreground_changed
+                    || activation
+                        .is_some_and(|signal| signal.load(std::sync::atomic::Ordering::Acquire)),
                 new_window_count: changes.new_windows.len(),
             }
         })

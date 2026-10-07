@@ -289,7 +289,7 @@ impl Tool for SetValueTool {
             // Even an uncertain mutation retains its receipt. Do not instruct
             // the client to replay it or project readback as committed effect.
             return ToolResult::text("Native input attempted; supervision is owned and pending. Application commitment requires independent evidence.")
-                .with_structured(serde_json::json!({"receipt_id": receipt, "supervision": "pending_owned", "input_disposition": disposition, "immediate_readback": immediate_readback, "application_commit": "unverified", "error": error}));
+                .with_structured(serde_json::json!({"receipt_id": receipt, "supervision": "pending_owned", "activation_observed": self.state.supervision.activation_observed(args["_session_id"].as_str().unwrap(), &receipt).ok().flatten(), "input_disposition": disposition, "immediate_readback": immediate_readback, "application_commit": "unverified", "error": error}));
         }
 
         match result {

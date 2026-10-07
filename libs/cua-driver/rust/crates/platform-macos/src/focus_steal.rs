@@ -84,6 +84,8 @@ pub struct SuppressionHandle(Uuid);
 #[derive(Debug)]
 struct Entry {
     #[cfg(feature = "experimental-owned-supervision")]
+    activation_observed: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(feature = "experimental-owned-supervision")]
     restore_window: Option<u32>,
     #[cfg(feature = "experimental-owned-supervision")]
     hid_at_admission: Option<[u32; 3]>,
@@ -219,6 +221,15 @@ pub struct SuppressionLease {
 }
 
 impl SuppressionLease {
+    #[cfg(feature = "experimental-owned-supervision")]
+    pub(crate) fn activation_signal(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        self.dispatcher
+            .entries
+            .lock()
+            .unwrap()
+            .get(&self.handle.0)
+            .map(|e| e.activation_observed.clone())
+    }
     /// Explicit release. Useful if the caller wants to drop the lease
     /// before its scope ends without taking the `Drop` path.
     pub fn release(mut self) {
@@ -298,6 +309,8 @@ impl Dispatcher {
         let id = Uuid::new_v4();
         let entry = Entry {
             #[cfg(feature = "experimental-owned-supervision")]
+            activation_observed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(feature = "experimental-owned-supervision")]
             restore_window: qualified_restore_window(restore_to),
             #[cfg(feature = "experimental-owned-supervision")]
             hid_at_admission: hid_counters(),
@@ -344,20 +357,22 @@ impl Dispatcher {
         guard
             .values()
             .filter(|e| {
+                let matches = e.allowed_pid != Some(activated_pid)
+                    && match e.target_pid {
+                        Some(p) => p == activated_pid,
+                        None => activated_pid != e.restore_to,
+                    };
                 #[cfg(feature = "experimental-owned-supervision")]
-                if e.hid_at_admission != hid_counters() {
-                    return false;
+                {
+                    if matches {
+                        e.activation_observed
+                            .store(true, std::sync::atomic::Ordering::Release);
+                    }
+                    if e.hid_at_admission != hid_counters() {
+                        return false;
+                    }
                 }
-                if e.allowed_pid == Some(activated_pid) {
-                    return false;
-                }
-                match e.target_pid {
-                    Some(p) => p == activated_pid,
-                    // Wildcard: match any activation except the restore_to
-                    // pid (don't fight ourselves when we re-activate the
-                    // prior frontmost).
-                    None => activated_pid != e.restore_to,
-                }
+                matches
             })
             .map(|e| e.restore_to)
             .collect()
@@ -580,6 +595,8 @@ fn hid_counters() -> Option<[u32; 3]> {
     unsafe extern "C" {
         fn CGEventSourceCounterForEventType(state: i32, event: u32) -> u32;
     }
+    // Keyboard and mouse-button activity express focus intent. Pointer
+    // motion alone must not disable delayed-activation protection.
     Some(unsafe {
         [
             CGEventSourceCounterForEventType(1, 10),
@@ -662,6 +679,36 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "experimental-owned-supervision")]
+    #[test]
+    fn changed_input_counters_refuse_stale_foreground_restoration() {
+        let d = Arc::new(Dispatcher::new());
+        let handle = d.add(Some(42), 7, "test.interference");
+        // Test HID reads return None. A differing admission sample models
+        // keyboard/click activity between admission and activation callback.
+        d.entries
+            .lock()
+            .unwrap()
+            .get_mut(&handle.0)
+            .unwrap()
+            .hid_at_admission = Some([1, 2, 3]);
+        assert!(d.snapshot_matches(42).is_empty());
+        assert!(d
+            .entries
+            .lock()
+            .unwrap()
+            .get(&handle.0)
+            .unwrap()
+            .activation_observed
+            .load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(d.restore_window(7), None);
+        assert_eq!(
+            d.len(),
+            1,
+            "interference must not cancel the protection owner"
+        );
+    }
+
     /// Lease Drop is the standard remove path.
     #[test]
     fn lease_drop_removes_entry() {
@@ -704,6 +751,8 @@ mod tests {
             guard.insert(
                 id,
                 Entry {
+                    #[cfg(feature = "experimental-owned-supervision")]
+                    activation_observed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     #[cfg(feature = "experimental-owned-supervision")]
                     restore_window: None,
                     #[cfg(feature = "experimental-owned-supervision")]

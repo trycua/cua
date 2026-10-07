@@ -18,7 +18,7 @@ http.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
-hyper-util.workspace = true
+hyper-util = { workspace = true, features = ["client-proxy"] }
 # Account mode: OIDC access-token validation (JWKS) and relay-signed
 # EdDSA principal assertions. ring is already the workspace's TLS crypto.
 jsonwebtoken = "9"
@@ -39,4 +39,6 @@ uuid.workspace = true
 yamux.workspace = true
 
 [dev-dependencies]
+native-tls.workspace = true
+tokio-native-tls.workspace = true
 tempfile.workspace = true

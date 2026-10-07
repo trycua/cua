@@ -471,7 +471,7 @@ impl ServerContext {
         if let Some(p) = previous {
             p.stop.cancel();
         }
-        tracing::info!(relay = %relay_url, machine = %machine_id, "attached to relay");
+        tracing::info!(machine = %machine_id, "attached to relay");
         tokio::spawn(cua_relay::client::run(join, stop));
         Ok(())
     }

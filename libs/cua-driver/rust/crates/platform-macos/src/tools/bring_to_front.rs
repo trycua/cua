@@ -235,6 +235,39 @@ fn wait_for_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     }
 }
 
+/// Activate `pid` and make `window_id` its key window exactly as
+/// `bring_to_front` does (SkyLight process front, exact make-key, Cocoa
+/// activation, AX raise), then wait for the exact postcondition. Blocking.
+///
+/// Used by the foreground `type_text` rung: a SkyLight front alone does not
+/// make the app active for AppKit, so a window the typing opens (Chrome's
+/// omnibox suggestions) hands the front back to the previous app mid-string.
+pub(crate) fn activate_exact_window_blocking(pid: i32, window_id: u32) -> bool {
+    let Some(app) = (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
+    else {
+        return false;
+    };
+    crate::input::skylight::set_front_process_persistently(pid, window_id);
+    crate::input::skylight::make_exact_window_key(pid, window_id);
+    unsafe {
+        app.activateWithOptions(NSApplicationActivationOptions::NSApplicationActivateAllWindows)
+    };
+    raise_exact_ax_window(pid, window_id);
+    wait_for_exact_window(pid, window_id).exact_postcondition(pid, window_id)
+}
+
+/// Ask `pid` to take activation back through Cocoa after a foreground action
+/// that activated another app with [`activate_exact_window_blocking`]. Only
+/// the app's own key window comes forward. Best effort: macOS may refuse an
+/// activation requested by a background process.
+pub(crate) fn reactivate_application(pid: i32) -> bool {
+    let Some(app) = (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
+    else {
+        return false;
+    };
+    unsafe { app.activateWithOptions(NSApplicationActivationOptions::empty()) }
+}
+
 /// Best-effort completion of the one exact-window request. This addresses only
 /// the requested AX window; it never orders every window owned by the process.
 fn raise_exact_ax_window(pid: i32, window_id: u32) -> bool {

@@ -1253,22 +1253,56 @@ fn near_misses(read: &Read, spec: &ElementSpec) -> String {
     };
     let pool: Vec<&Value> = if spec.role.is_some() {
         matches(read, &relaxed)
-    } else if let Some(name) = &spec.name {
-        let first_word = fold(name.split_whitespace().next().unwrap_or(name));
+    } else if spec.name.is_some() {
+        // Any role: only elements sharing a word with the name (below).
         read.elements
             .iter()
-            .filter(|element| {
-                label_of(element).is_some_and(|label| fold(label).contains(&first_word))
-            })
+            .filter(|element| element.get("display_only").and_then(Value::as_bool) != Some(true))
             .collect()
     } else {
         Vec::new()
     };
-    let named: Vec<String> = pool
+    // Rank by the words a label shares with the wanted name, so "Update
+    // event" is offered for "Create event" ahead of unrelated buttons, and
+    // look across roles too: the element may be a link, not a button.
+    let shared = |element: &Value| -> usize {
+        let Some(name) = &spec.name else {
+            return 0;
+        };
+        let Some(label) = label_of(element) else {
+            return 0;
+        };
+        let label_words = words(label);
+        words(name)
+            .iter()
+            .filter(|word| label_words.contains(word))
+            .count()
+    };
+    let mut ranked: Vec<(usize, &Value)> = pool
         .iter()
+        .copied()
         .filter(|element| label_of(element).is_some())
+        .map(|element| (shared(element), element))
+        .collect();
+    if spec.role.is_some() && spec.name.is_some() {
+        for element in &read.elements {
+            let score = shared(element);
+            if score > 0
+                && element.get("display_only").and_then(Value::as_bool) != Some(true)
+                && !ranked.iter().any(|(_, seen)| std::ptr::eq(*seen, element))
+            {
+                ranked.push((score, element));
+            }
+        }
+    }
+    if spec.role.is_none() {
+        ranked.retain(|(score, _)| *score > 0);
+    }
+    ranked.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+    let named: Vec<String> = ranked
+        .iter()
         .take(CANDIDATES_SHOWN)
-        .map(|element| describe_element(element))
+        .map(|(_, element)| describe_element(element))
         .collect();
     if named.is_empty() {
         if read.elements.is_empty() {
@@ -1305,6 +1339,15 @@ pub(crate) fn describe_element(element: &Value) -> String {
         out.push_str(" selected");
     }
     out
+}
+
+/// Lowercase words of two or more characters.
+fn words(text: &str) -> Vec<String> {
+    fold(text)
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| word.chars().count() >= 2)
+        .map(str::to_owned)
+        .collect()
 }
 
 fn label_of(element: &Value) -> Option<&str> {
@@ -1507,6 +1550,46 @@ mod tests {
             ..spec
         };
         assert_eq!(pick(&read, &second).unwrap().element["element_index"], 9);
+    }
+
+    #[test]
+    fn a_miss_lists_labels_sharing_a_word_first_across_roles() {
+        // v036: "Create event" had become "Update event"; the miss listed
+        // the first five buttons instead.
+        let mut elements: Vec<Value> = [
+            "Aster kickoff",
+            "Boreal review",
+            "Cinder decision",
+            "Dune handoff",
+            "Lighthouse lunch",
+            "Update event",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(at, label)| element(at as u64 + 1, "AXButton", label))
+        .collect();
+        elements.push(element(9, "AXLink", "Event history"));
+        let read = read(elements, "");
+        let spec = ElementSpec {
+            role: Some("button".into()),
+            name: Some("Create event".into()),
+            ..Default::default()
+        };
+        let miss = pick(&read, &spec).unwrap_err();
+        let nearest = miss.message.split("nearest: ").nth(1).unwrap();
+        assert!(
+            nearest.starts_with("[6] AXButton \"Update event\"; [9] AXLink \"Event history\""),
+            "{nearest}"
+        );
+
+        // With no role, only labels sharing a word are offered.
+        let any_role = ElementSpec {
+            name: Some("event log".into()),
+            ..Default::default()
+        };
+        let miss = pick(&read, &any_role).unwrap_err();
+        assert!(!miss.message.contains("Aster"), "{}", miss.message);
+        assert!(miss.message.contains("Update event"), "{}", miss.message);
     }
 
     #[test]

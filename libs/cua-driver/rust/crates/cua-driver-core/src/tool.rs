@@ -241,7 +241,172 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
 /// refusal detail for an alias that cannot be translated.
 pub(crate) fn normalize_argument_aliases(tool_name: &str, args: &mut Value) -> Result<(), String> {
     normalize_zoom_args(tool_name, args);
+    normalize_key_args(tool_name, args);
     normalize_scroll_args(tool_name, args)
+}
+
+/// The JSON types a property schema admits, from `type` (a string or a list)
+/// and the `type` of each `anyOf`/`oneOf` branch. Empty when the schema
+/// declares none.
+fn declared_types(schema: &Value) -> Vec<&str> {
+    fn add<'v>(types: &mut Vec<&'v str>, value: Option<&'v Value>) {
+        match value {
+            Some(Value::String(name)) => types.push(name.as_str()),
+            Some(Value::Array(names)) => types.extend(names.iter().filter_map(Value::as_str)),
+            _ => {}
+        }
+    }
+    let mut types = Vec::new();
+    add(&mut types, schema.get("type"));
+    for key in ["anyOf", "oneOf"] {
+        if let Some(branches) = schema.get(key).and_then(Value::as_array) {
+            for branch in branches {
+                add(&mut types, branch.get("type"));
+            }
+        }
+    }
+    types
+}
+
+/// Models sometimes send scalars as strings (`"include_screenshot": "false"`,
+/// `"observe": "true"`, `"pid": "4211"`). A tool reading `as_bool()` would
+/// silently take `"false"` as absent and use the default, which is the
+/// opposite of what was asked. Rewrite a top-level string argument into the
+/// boolean, integer or number its schema declares, but only when the schema
+/// does not also admit a string, so no string-valued field is reinterpreted.
+pub(crate) fn coerce_string_scalars(schema: &Value, args: &mut Value) {
+    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+        return;
+    };
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+    for (name, value) in arguments.iter_mut() {
+        let Value::String(text) = value else {
+            continue;
+        };
+        let Some(property) = properties.get(name) else {
+            continue;
+        };
+        let types = declared_types(property);
+        if types.is_empty() || types.contains(&"string") {
+            continue;
+        }
+        let text = text.trim();
+        let coerced = if types.contains(&"boolean") && text.eq_ignore_ascii_case("true") {
+            Some(Value::Bool(true))
+        } else if types.contains(&"boolean") && text.eq_ignore_ascii_case("false") {
+            Some(Value::Bool(false))
+        } else if types.contains(&"integer") {
+            text.parse::<i64>()
+                .map(Value::from)
+                .or_else(|_| text.parse::<u64>().map(Value::from))
+                .ok()
+        } else if types.contains(&"number") {
+            text.parse::<f64>()
+                .ok()
+                .filter(|number| number.is_finite())
+                .and_then(|number| serde_json::Number::from_f64(number).map(Value::Number))
+        } else {
+            None
+        };
+        if let Some(coerced) = coerced {
+            *value = coerced;
+        }
+    }
+}
+
+/// Key spellings models reach for that every platform's key table spells
+/// differently. Only unambiguous renames: `delete` itself means backspace on
+/// macOS and forward delete elsewhere, so it is left alone.
+fn canonical_key_name(key: &str) -> Option<&'static str> {
+    let folded: String = key
+        .chars()
+        .filter(|c| !matches!(c, '_' | '-' | ' '))
+        .flat_map(char::to_lowercase)
+        .collect();
+    Some(match folded.as_str() {
+        "pagedown" | "pgdn" | "pgdown" | "pagedn" => "pagedown",
+        "pageup" | "pgup" => "pageup",
+        "arrowleft" | "leftarrow" => "left",
+        "arrowright" | "rightarrow" => "right",
+        "arrowup" | "uparrow" => "up",
+        "arrowdown" | "downarrow" => "down",
+        "forwarddelete" | "fwddelete" | "deleteforward" => {
+            if cfg!(target_os = "macos") {
+                "forward_delete"
+            } else {
+                "delete"
+            }
+        }
+        _ => return None,
+    })
+}
+
+/// `press_key` takes one key plus `modifiers`, `hotkey` a list of keys.
+/// Rewrite the shapes models send instead: a combination in `key`
+/// ("shift+Right" becomes key "Right" with modifiers ["shift"]), `hotkey`
+/// keys as one "cmd+s" string, and spellings such as "Page_Down".
+fn normalize_key_args(tool_name: &str, args: &mut Value) {
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+    match tool_name {
+        "press_key" => {
+            let Some(key) = arguments
+                .get("key")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+            else {
+                return;
+            };
+            let mut key = key.trim().to_owned();
+            if key.chars().count() > 1 && key.contains('+') && !key.ends_with('+') {
+                let parts: Vec<String> =
+                    key.split('+').map(|part| part.trim().to_owned()).collect();
+                if parts.iter().all(|part| !part.is_empty()) {
+                    let (modifiers, last) = parts.split_at(parts.len() - 1);
+                    let existing = arguments
+                        .get("modifiers")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    let mut merged: Vec<Value> = existing;
+                    for modifier in modifiers {
+                        let modifier = Value::String(modifier.to_lowercase());
+                        if !merged.contains(&modifier) {
+                            merged.push(modifier);
+                        }
+                    }
+                    arguments.insert("modifiers".to_owned(), Value::Array(merged));
+                    key = last[0].clone();
+                }
+            }
+            if let Some(canonical) = canonical_key_name(&key) {
+                key = canonical.to_owned();
+            }
+            arguments.insert("key".to_owned(), Value::String(key));
+        }
+        "hotkey" => {
+            if let Some(Value::String(combo)) = arguments.get("keys") {
+                let keys: Vec<Value> = combo
+                    .split('+')
+                    .map(str::trim)
+                    .filter(|part| !part.is_empty())
+                    .map(|part| Value::String(part.to_owned()))
+                    .collect();
+                arguments.insert("keys".to_owned(), Value::Array(keys));
+            }
+            if let Some(Value::Array(keys)) = arguments.get_mut("keys") {
+                for key in keys.iter_mut() {
+                    if let Some(canonical) = key.as_str().and_then(canonical_key_name) {
+                        *key = Value::String(canonical.to_owned());
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// A larger `dx`/`dy` magnitude than this many notches is read as pixels.
@@ -284,12 +449,17 @@ fn normalize_scroll_args(tool_name: &str, args: &mut Value) -> Result<(), String
     let (direction, delta) = match (dx != 0.0, dy != 0.0) {
         (true, true) => {
             return Err(format!(
-                "scroll moves along one axis per call, got dx={dx} and dy={dy}. Pass only dx or                  dy (or direction and amount), or use two scroll steps in run_actions."
+                "scroll moves along one axis per call, got dx={dx} and dy={dy}. Pass only dx or \
+                 dy (or direction and amount), or use two scroll steps in run_actions."
             ))
         }
         (false, false) => {
-            return Err("dx and dy are both 0, so there is nothing to scroll. Pass direction                  (up, down, left or right) and amount (wheel notches)."
-                .to_owned())
+            return Err(
+                "dx and dy are both 0, so there is nothing to scroll. Pass direction \
+                 (up, down, left or right) and amount (wheel notches). To hover without \
+                 scrolling, use move_cursor."
+                    .to_owned(),
+            )
         }
         (false, true) => (if dy > 0.0 { "down" } else { "up" }, dy),
         (true, false) => (if dx > 0.0 { "right" } else { "left" }, dx),
@@ -1445,6 +1615,7 @@ impl ToolRegistry {
 
         // Normalize deprecated public argument spellings before any policy,
         // consent, recording, or implementation layer interprets the call.
+        coerce_string_scalars(&tool.def().input_schema, &mut args);
         normalize_delivery_mode_args(tool.def(), &mut args);
         if let Err(detail) = normalize_argument_aliases(resolved_name, &mut args) {
             return ToolResult::error(format!("{resolved_name}: {detail}")).with_structured(
@@ -6638,8 +6809,88 @@ mod capability_tests {
 
 #[cfg(test)]
 mod argument_shape_tests {
-    use super::{normalize_argument_aliases, normalize_zoom_args, unknown_argument, ToolDef};
+    use super::{
+        coerce_string_scalars, normalize_argument_aliases, normalize_zoom_args, unknown_argument,
+        ToolDef,
+    };
     use serde_json::json;
+
+    #[test]
+    fn string_scalars_follow_the_declared_type() {
+        // v036: "include_screenshot": "false" was read as absent, so the
+        // screenshot the model declined was sent anyway.
+        let schema = json!({"type": "object", "properties": {
+            "include_screenshot": {"type": "boolean"},
+            "observe": {"type": ["object", "boolean"]},
+            "pid": {"type": "integer"},
+            "x": {"type": "number"},
+            "text": {"type": "string"},
+            "value": {"anyOf": [{"type": "string"}, {"type": "boolean"}]},
+            "since": {"type": ["string", "null"]},
+            "untyped": {}
+        }});
+        let mut args = json!({
+            "include_screenshot": "False", "observe": " true", "pid": "4211", "x": "12.5",
+            "text": "true", "value": "false", "since": "1", "untyped": "true", "extra": "true"
+        });
+        coerce_string_scalars(&schema, &mut args);
+        assert_eq!(
+            args,
+            json!({
+                "include_screenshot": false, "observe": true, "pid": 4211, "x": 12.5,
+                "text": "true", "value": "false", "since": "1", "untyped": "true", "extra": "true"
+            })
+        );
+        // Not a number or boolean: left for the schema check to name.
+        let mut junk = json!({"pid": "forty-two", "include_screenshot": "yes", "x": "NaN"});
+        coerce_string_scalars(&schema, &mut junk);
+        assert_eq!(
+            junk,
+            json!({"pid": "forty-two", "include_screenshot": "yes", "x": "NaN"})
+        );
+    }
+
+    #[test]
+    fn key_combinations_and_spellings_are_normalized() {
+        let press = |args: serde_json::Value| {
+            let mut args = args;
+            normalize_argument_aliases("press_key", &mut args).unwrap();
+            args
+        };
+        assert_eq!(
+            press(json!({"key": "shift+Right"})),
+            json!({"key": "Right", "modifiers": ["shift"]})
+        );
+        assert_eq!(
+            press(json!({"key": "cmd+shift+z", "modifiers": ["shift"]})),
+            json!({"key": "z", "modifiers": ["shift", "cmd"]})
+        );
+        assert_eq!(
+            press(json!({"key": "Page_Down"})),
+            json!({"key": "pagedown"})
+        );
+        assert_eq!(press(json!({"key": "ArrowLeft"})), json!({"key": "left"}));
+        let forward = if cfg!(target_os = "macos") {
+            "forward_delete"
+        } else {
+            "delete"
+        };
+        assert_eq!(
+            press(json!({"key": "forwarddelete"})),
+            json!({"key": forward})
+        );
+        // A bare "+" and plain names stay as sent.
+        assert_eq!(press(json!({"key": "+"})), json!({"key": "+"}));
+        assert_eq!(press(json!({"key": "Return"})), json!({"key": "Return"}));
+        assert_eq!(press(json!({"key": "delete"})), json!({"key": "delete"}));
+
+        let mut hotkey = json!({"keys": ["ctrl", "Page_Down"]});
+        normalize_argument_aliases("hotkey", &mut hotkey).unwrap();
+        assert_eq!(hotkey, json!({"keys": ["ctrl", "pagedown"]}));
+        let mut combo = json!({"keys": "cmd+s"});
+        normalize_argument_aliases("hotkey", &mut combo).unwrap();
+        assert_eq!(combo, json!({"keys": ["cmd", "s"]}));
+    }
 
     fn zoom_def() -> ToolDef {
         ToolDef {

@@ -39,6 +39,7 @@ pub const BATCHABLE_TOOLS: &[&str] = &[
     "hotkey",
     "scroll",
     "drag",
+    "move_cursor",
 ];
 
 /// Most steps one call may carry. Keeps a batch inside client call timeouts.
@@ -55,7 +56,67 @@ const TOOL_ALIASES: &[(&str, &str)] = &[
     ("keypress", "press_key"),
     ("type", "type_text"),
     ("set", "set_value"),
+    ("hover", "move_cursor"),
+    ("mouse_move", "move_cursor"),
 ];
+/// Key names models write as a step's tool (`{"tool": "down"}`); such a step
+/// is a press_key of that key.
+const KEY_TOOL_NAMES: &[&str] = &[
+    "return",
+    "enter",
+    "tab",
+    "escape",
+    "esc",
+    "space",
+    "backspace",
+    "up",
+    "down",
+    "left",
+    "right",
+    "home",
+    "end",
+    "pageup",
+    "pagedown",
+];
+/// Names of printable symbols models send to press_key. They are text, not
+/// keys (most need shift), so the step types them.
+const SYMBOL_KEY_NAMES: &[(&str, &str)] = &[
+    ("asterisk", "*"),
+    ("star", "*"),
+    ("plus", "+"),
+    ("at", "@"),
+    ("hash", "#"),
+    ("numbersign", "#"),
+    ("pound", "#"),
+    ("dollar", "$"),
+    ("percent", "%"),
+    ("caret", "^"),
+    ("ampersand", "&"),
+    ("exclamation", "!"),
+    ("exclam", "!"),
+    ("question", "?"),
+    ("questionmark", "?"),
+    ("underscore", "_"),
+    ("tilde", "~"),
+    ("colon", ":"),
+    ("pipe", "|"),
+    ("bar", "|"),
+    ("less", "<"),
+    ("lessthan", "<"),
+    ("greater", ">"),
+    ("greaterthan", ">"),
+    ("parenleft", "("),
+    ("leftparen", "("),
+    ("parenright", ")"),
+    ("rightparen", ")"),
+    ("braceleft", "{"),
+    ("braceright", "}"),
+    ("quotedbl", "\""),
+    ("doublequote", "\""),
+];
+/// Printable characters that are not a plain key on a US layout (they need
+/// shift), so press_key cannot send them but type_text can.
+const SHIFTED_SYMBOLS: &str = "*+@#$%^&!?_~:|<>(){}\"";
 const MESSAGE_LIMIT: usize = 300;
 /// Read-only tools models put in a batch; refused with a pointer to `observe`.
 const OBSERVATION_TOOLS: &[&str] = &[
@@ -75,6 +136,10 @@ pub const MAX_BATCH_MS: u64 = 60_000;
 /// Fields a step object may carry besides one action.
 const STEP_KEYS: &[&str] = &["tool", "args", "wait_for", "expect", "timeout_ms"];
 const OBSERVE_TOOL: &str = "get_window_state";
+/// Batch-level fields that name the window every step inherits.
+const BATCH_WINDOW_KEYS: &[&str] = &["pid", "window_id", "app", "window"];
+/// How long a stale element target may take to be found again by its label.
+const REFIND_TIMEOUT: Duration = Duration::from_millis(1_500);
 
 pub struct RunActionsTool {
     registry: ReplayRegistrySlot,
@@ -100,16 +165,24 @@ impl Tool for RunActionsTool {
                 one call instead of five. Even a single step plus `observe:true` replaces an \
                 action call followed by a get_window_state call. \
                 Each step is `{tool, args}` where `tool` is one of click, double_click, \
-                right_click, set_value, type_text, press_key, hotkey, scroll, drag and `args` \
-                are exactly that tool's arguments. Every step goes through the same session, \
-                permission and approval checks as a direct call; a batch grants nothing extra. \
+                right_click, set_value, type_text, press_key, hotkey, scroll, drag, move_cursor \
+                and `args` are exactly that tool's arguments. `pid` and `window_id` (or `app`/\
+                `window`) on run_actions itself are the default window of every step that names \
+                none. Reads (get_window_state, zoom) do not run between steps: one there is \
+                skipped; a get_window_state last is the `observe`, a zoom last runs after it. \
+                Every step goes through the same session, permission and approval checks as a \
+                direct call; a batch grants nothing extra. \
                 All steps are validated before the first one runs, so a malformed step 4 \
                 changes nothing. Element tokens and element_index values come from a \
                 get_window_state read before the batch; a step that changes the UI can \
                 invalidate later element targets, so put element-targeted actions before the \
-                actions that reshuffle the window, or use pixel targets after them.\n\n\
+                actions that reshuffle the window, or target later steps by role/name. A token \
+                that went stale is retried once on the element with the same role and label, if \
+                exactly one matches.\n\n\
                 Returns per-step status (`ok` or the error message) and, when `observe` is \
-                given, ONE bounded get_window_state read after the last executed step. That \
+                given, ONE bounded get_window_state read after the last executed step (after a \
+                failure caused by a dialog holding focus, that dialog is read, even without \
+                `observe`). That \
                 read is a `since:\"latest\"` diff by default: only the rows that changed \
                 since your last read of the window, plus a new snapshot_id. Without \
                 `observe` nothing is read. The batch uses one session: steps may \
@@ -186,8 +259,23 @@ impl Tool for RunActionsTool {
                         "maximum": MAX_DELAY_MS,
                         "description": "Pause between steps in milliseconds (not after the last). Default 0."
                     },
+                    "pid": {
+                        "type": "integer",
+                        "description": "Default pid for steps that name no window (a step's own pid/window_id/app/window wins)."
+                    },
+                    "window_id": {
+                        "type": "integer",
+                        "description": "Default window_id for steps that name no window, with `pid`."
+                    },
+                    "app": {
+                        "type": "string",
+                        "description": "Default app (name or bundle id) for steps that name no window."
+                    },
+                    "window": {
+                        "type": "string",
+                        "description": "Default window title substring for steps that name no window."
+                    },
                     "observe": {
-                        "type": "object",
                         "type": ["object", "boolean"],
                         "description": "Optional end-of-batch observation: `true`, or arguments for ONE get_window_state call. `pid` and `window_id` default to those of the last step that names both. Defaults to since=\"latest\" (only what changed since your last read of that window with the same query/max_elements/max_depth; a full read when there is none), include_screenshot=false and max_elements=250; pass include_screenshot=true to see the window, or since=null for a full read. Omit to read nothing."
                     }
@@ -235,14 +323,18 @@ struct Step {
     action: Option<Action>,
     wait_for: Option<Check>,
     expect: Vec<Check>,
+    /// A read-only tool placed between actions. It cannot change what later
+    /// steps do, so it is skipped (with a note) instead of failing the batch.
+    skipped_read: Option<&'static str>,
 }
 
 impl Step {
     fn label(&self) -> &'static str {
-        match &self.action {
-            Some(action) => action.tool,
-            None if self.wait_for.is_some() => "wait_for",
-            None => "expect",
+        match (&self.action, self.skipped_read) {
+            (Some(action), _) => action.tool,
+            (None, Some(read)) => read,
+            (None, None) if self.wait_for.is_some() => "wait_for",
+            (None, None) => "expect",
         }
     }
 }
@@ -251,6 +343,10 @@ struct Plan {
     steps: Vec<Step>,
     delay: Duration,
     observe: Option<Value>,
+    /// Read-only calls (zoom) the batch ended with, run after `observe`.
+    tail_reads: Vec<(&'static str, Value)>,
+    /// The window steps inherit when they name none.
+    default_window: WindowSpec,
     session: Option<String>,
 }
 
@@ -353,28 +449,78 @@ impl Plan {
             .and_then(Value::as_str)
             .map(str::to_owned);
 
-        // A trailing get_window_state step is what `observe` is for: take it as
-        // the observation when the batch has none.
+        let default_window = batch_window(object)?;
+
+        // Reads the batch ends with are what `observe` is for: a trailing
+        // get_window_state (or screenshot) becomes the observation, merged
+        // with an explicit `observe`, and a trailing zoom runs after it.
         let mut raw_steps = raw_steps.as_slice();
-        let mut trailing_observe = None;
-        if let [actions @ .., last] = raw_steps {
-            let observe_given = !matches!(
-                object.get("observe"),
-                None | Some(Value::Null) | Some(Value::Bool(false))
-            );
-            if !actions.is_empty() && !observe_given {
-                if let Some(args) = observation_step_args(last) {
-                    trailing_observe = Some(args);
-                    raw_steps = actions;
-                }
+        let mut observe_value = match object.get("observe") {
+            None | Some(Value::Null) | Some(Value::Bool(false)) => None,
+            Some(value) => Some(value.clone()),
+        };
+        let mut trailing_observe: Option<Value> = None;
+        let mut tail_reads = Vec::new();
+        while let [rest @ .., last] = raw_steps {
+            if !rest.iter().any(|step| read_step(step).is_none()) {
+                break;
             }
+            let Some((tool, args)) = read_step(last) else {
+                break;
+            };
+            match tool {
+                OBSERVE_TOOL | "screenshot" => {
+                    // The latest trailing read wins; earlier ones are dropped.
+                    if trailing_observe.is_none() {
+                        let mut args = args;
+                        if tool == "screenshot" {
+                            args = json!({ "include_screenshot": true });
+                        }
+                        trailing_observe = Some(args);
+                    }
+                }
+                "zoom" => tail_reads.insert(0, ("zoom", args)),
+                // Other reads at the end (list_windows, verify_state, ...)
+                // add nothing a final observation does not show.
+                _ => {}
+            }
+            raw_steps = rest;
+        }
+        if let Some(step_args) = trailing_observe {
+            observe_value = Some(match observe_value {
+                Some(Value::Object(explicit)) => {
+                    let mut merged = step_args.as_object().cloned().unwrap_or_default();
+                    merged.extend(explicit);
+                    Value::Object(merged)
+                }
+                _ => step_args,
+            });
         }
 
         let mut steps = Vec::with_capacity(raw_steps.len());
-        // Whether some earlier step names a window a later step can inherit.
-        let mut has_window = false;
+        // Whether some earlier step (or the batch itself) names a window a
+        // later step can inherit.
+        let mut has_window = !default_window.is_empty();
+        // A batch of reads only is refused by parse_step, pointing at the
+        // direct call; reads between actions are skipped.
+        let acts = raw_steps.iter().any(|step| read_step(step).is_none());
+        // The last skipped get_window_state: with no `observe`, it says the
+        // caller wants to look, so it becomes the end read.
+        let mut skipped_observe = None;
         for (index, raw) in raw_steps.iter().enumerate() {
-            let step = parse_step(registry, index, raw, session.as_deref())?;
+            if let Some((tool, args)) = read_step(raw).filter(|_| acts) {
+                if tool == OBSERVE_TOOL {
+                    skipped_observe = Some(args);
+                }
+                steps.push(Step {
+                    action: None,
+                    wait_for: None,
+                    expect: Vec::new(),
+                    skipped_read: Some(tool),
+                });
+                continue;
+            }
+            let step = parse_step(registry, index, raw, session.as_deref(), has_window)?;
             let names_window = step
                 .action
                 .as_ref()
@@ -403,25 +549,43 @@ impl Plan {
             steps.push(step);
         }
 
-        let observe = match (trailing_observe.as_ref(), object.get("observe")) {
-            (Some(value), _) => Some(parse_observe(
-                registry,
-                value,
-                has_window,
-                session.as_deref(),
-            )?),
-            (None, None | Some(Value::Null) | Some(Value::Bool(false))) => None,
-            (None, Some(value)) => Some(parse_observe(
+        if observe_value.is_none() && has_window {
+            observe_value = skipped_observe;
+        }
+        // zoom crops the window's latest screenshot, so the end read before
+        // it must take one.
+        if !tail_reads.is_empty() && has_window {
+            let mut with_screenshot = match observe_value.take() {
+                Some(Value::Object(object)) => object,
+                _ => Map::new(),
+            };
+            with_screenshot.insert("include_screenshot".into(), Value::Bool(true));
+            observe_value = Some(Value::Object(with_screenshot));
+        }
+        let observe = match observe_value.as_ref() {
+            None => None,
+            Some(value) => Some(parse_observe(
                 registry,
                 value,
                 has_window,
                 session.as_deref(),
             )?),
         };
+        for (tool, args) in &mut tail_reads {
+            if let Some(def) = registry.get_def(tool) {
+                crate::tool::coerce_string_scalars(&def.input_schema, args);
+            }
+            prepare_args(args, session.as_deref())
+                .map_err(|message| PlanError::batch(format!("{tool}: {message}")))?;
+            crate::tool::normalize_argument_aliases(tool, args)
+                .map_err(|message| PlanError::batch(format!("{tool}: {message}")))?;
+        }
         Ok(Self {
             steps,
             delay: Duration::from_millis(delay_ms),
             observe,
+            tail_reads,
+            default_window,
             session,
         })
     }
@@ -452,8 +616,21 @@ impl Plan {
         let mut lines = Vec::with_capacity(total + 2);
         let mut failed_step = None;
         // The window later steps inherit, and the last concrete window used.
-        let mut context = WindowSpec::default();
-        let mut last_window: Option<Window> = None;
+        let mut context = self.default_window.clone();
+        let mut last_window: Option<Window> = match (context.pid, context.window_id) {
+            (Some(pid), Some(window_id)) => Some(Window {
+                pid,
+                window_id,
+                app: None,
+                title: None,
+                on_screen: true,
+            }),
+            _ => None,
+        };
+        // A failure that names the window to look at next (a dialog holding
+        // focus, a window never captured) gets that window read at the end
+        // even without `observe`, so the caller can act without another read.
+        let mut recovery: Option<Recovery> = None;
 
         for (index, step) in self.steps.into_iter().enumerate() {
             if index > 0 && !self.delay.is_zero() {
@@ -482,6 +659,12 @@ impl Plan {
                 )
                 .await
             };
+            if !outcome.ok {
+                recovery = Recovery::after(&outcome.report, last_window.as_ref());
+                if let Some(Recovery { window, .. }) = &recovery {
+                    last_window = Some(window.clone());
+                }
+            }
             lines.push(outcome.line);
             reports.push(outcome.report);
             if !outcome.ok {
@@ -512,7 +695,37 @@ impl Plan {
         // One observation at the end, also after a failure so the caller can
         // see where the app was left.
         let mut observation_content = Vec::new();
-        if let Some(mut args) = self.observe {
+        let observe = match (self.observe, recovery) {
+            (Some(mut args), Some(recovery)) => {
+                // The window to recover in replaces the step's own window.
+                lines.push(format!("recovery read: {}", recovery.why));
+                if let Some(object) = args.as_object_mut() {
+                    object.insert("pid".into(), json!(recovery.window.pid));
+                    object.insert("window_id".into(), json!(recovery.window.window_id));
+                    if recovery.screenshot {
+                        object.insert("include_screenshot".into(), json!(true));
+                    }
+                }
+                Some(args)
+            }
+            (Some(args), None) => Some(args),
+            (None, Some(recovery)) => {
+                let mut args = json!({
+                    "pid": recovery.window.pid,
+                    "window_id": recovery.window.window_id,
+                    "include_screenshot": recovery.screenshot,
+                    "max_elements": DEFAULT_OBSERVE_MAX_ELEMENTS,
+                    "since": crate::window_state_view::SINCE_LATEST,
+                });
+                if let Some(session) = &self.session {
+                    args["session"] = json!(session);
+                }
+                lines.push(format!("recovery read: {}", recovery.why));
+                Some(args)
+            }
+            (None, None) => None,
+        };
+        if let Some(mut args) = observe {
             let filled = fill_observed_window(&mut args, last_window.as_ref());
             let result = if filled {
                 registry.invoke(OBSERVE_TOOL, args).await
@@ -547,8 +760,28 @@ impl Plan {
             structured["observation"] = report;
         }
 
+        let mut tail_content = Vec::new();
+        let mut tail_reports = Vec::new();
+        for (tool, mut args) in self.tail_reads {
+            fill_observed_window(&mut args, last_window.as_ref());
+            let result = registry.invoke(tool, args).await;
+            let ok = result.is_error != Some(true);
+            let message = bounded_message(&result);
+            if ok {
+                lines.push(format!("{tool}: ok (below)"));
+                tail_content.extend(result.content);
+            } else {
+                lines.push(format!("{tool}: ERROR: {message}"));
+            }
+            tail_reports.push(json!({ "tool": tool, "ok": ok, "message": message }));
+        }
+        if !tail_reports.is_empty() {
+            structured["reads"] = Value::Array(tail_reports);
+        }
+
         let mut content = vec![Content::text(lines.join("\n"))];
         content.append(&mut observation_content);
+        content.append(&mut tail_content);
         ToolResult {
             content,
             is_error: failed_step.map(|_| true),
@@ -570,6 +803,20 @@ async fn run_step(
     let step_has_no_action = step.action.is_none();
     let mut report = json!({ "index": index, "tool": label });
     let mut notes: Vec<String> = Vec::new();
+
+    if step.skipped_read.is_some() {
+        let note = "skipped: a read between actions cannot change the later steps; the \
+                    end read shows the result (use wait_for/expect to check a state \
+                    mid-batch)";
+        report["ok"] = json!(true);
+        report["skipped"] = json!(true);
+        report["message"] = json!(note);
+        return StepOutcome {
+            line: format!("{}. {label} {note}", index + 1),
+            report,
+            ok: true,
+        };
+    }
 
     if let Some(check) = &step.wait_for {
         match locator.check(check, context).await {
@@ -680,9 +927,23 @@ async fn run_step(
             });
         }
 
-        let result = registry.invoke(tool, args).await;
+        let mut result = registry.invoke(tool, args.clone()).await;
+        let mut refound_note = None;
+        if result.is_error == Some(true) {
+            if let Some((retry, note)) = refind_stale_target(locator, &args, &result).await {
+                report["refound"] = json!(note);
+                result = registry.invoke(tool, retry).await;
+                refound_note = Some(note);
+            }
+        }
         let ok = result.is_error != Some(true);
-        let message = bounded_message(&result);
+        let mut message = bounded_message(&result);
+        if let (false, Some(note)) = (ok, &refound_note) {
+            message = format!("{note}, but: {message}");
+        }
+        if let (true, Some(note)) = (ok, refound_note) {
+            notes.push(note);
+        }
         report["ok"] = json!(ok);
         report["message"] = json!(message);
         if !ok {
@@ -859,21 +1120,226 @@ fn observation_summary(state: &Value) -> String {
     }
 }
 
-/// The arguments of a get_window_state step, in either step form.
-fn observation_step_args(step: &Value) -> Option<Value> {
+/// A step that only reads (get_window_state, zoom, a "screenshot", ...), in
+/// either step form, as (read tool, its arguments). A read with its own
+/// wait_for/expect is left to `parse_step`.
+fn read_step(step: &Value) -> Option<(&'static str, Value)> {
     let object = step.as_object()?;
-    let args = if object.get("tool").and_then(Value::as_str) == Some(OBSERVE_TOOL) {
-        object.get("args")
-    } else if object.len() == 1 && object.contains_key(OBSERVE_TOOL) {
-        object.get(OBSERVE_TOOL)
-    } else {
+    if object.contains_key("wait_for") || object.contains_key("expect") {
         return None;
+    }
+    let (name, args) = match object.get("tool") {
+        Some(tool) => (tool.as_str()?, object.get("args")),
+        None => {
+            let mut keys = object
+                .keys()
+                .filter(|key| !STEP_KEYS.contains(&key.as_str()));
+            let key = keys.next()?;
+            if keys.next().is_some() {
+                return None;
+            }
+            (key.as_str(), object.get(key.as_str()))
+        }
     };
-    Some(
-        args.cloned()
-            .filter(Value::is_object)
-            .unwrap_or_else(|| Value::Object(Map::new())),
-    )
+    let tool = match OBSERVATION_TOOLS.iter().find(|tool| **tool == name) {
+        Some(tool) => *tool,
+        None if name.to_ascii_lowercase().contains("screenshot") => "screenshot",
+        None => return None,
+    };
+    let args = args
+        .cloned()
+        .filter(Value::is_object)
+        .unwrap_or_else(|| Value::Object(Map::new()));
+    Some((tool, args))
+}
+
+/// The batch-level `pid`/`window_id`/`app`/`window` steps inherit.
+fn batch_window(object: &Map<String, Value>) -> Result<WindowSpec, PlanError> {
+    let mut picked = Map::new();
+    for key in BATCH_WINDOW_KEYS {
+        if let Some(value) = object.get(*key) {
+            picked.insert((*key).to_owned(), value.clone());
+        }
+    }
+    let (window, _) = locate::take_selector(&mut picked).map_err(PlanError::batch)?;
+    // take_selector reads pid/window_id from what it leaves behind.
+    Ok(WindowSpec {
+        pid: object.get("pid").and_then(Value::as_i64),
+        window_id: object.get("window_id").and_then(Value::as_u64),
+        ..window
+    })
+}
+
+/// What to read after a failed step, and why.
+struct Recovery {
+    window: Window,
+    screenshot: bool,
+    why: String,
+}
+
+impl Recovery {
+    /// A failure that names where to look next: another window of the app
+    /// holds focus (read that dialog), or a pixel target in a window with no
+    /// screenshot yet (capture it, so the next pixel step has a frame).
+    fn after(report: &Value, last: Option<&Window>) -> Option<Self> {
+        let message = report.get("message").and_then(Value::as_str)?;
+        let last = last?;
+        if let Some(holder) = focus_holder(message).filter(|id| *id != last.window_id) {
+            return Some(Self {
+                window: Window {
+                    pid: last.pid,
+                    window_id: holder,
+                    app: None,
+                    title: None,
+                    on_screen: true,
+                },
+                screenshot: false,
+                why: format!(
+                    "window {holder} of the same app holds focus; its state follows, act on window_id {holder}"
+                ),
+            });
+        }
+        let code = report.get("code").and_then(Value::as_str);
+        if code == Some("screenshot_context_missing") || message.starts_with("No screenshot") {
+            return Some(Self {
+                window: last.clone(),
+                screenshot: true,
+                why: format!(
+                    "window {} had no screenshot; one follows, take x,y from it",
+                    last.window_id
+                ),
+            });
+        }
+        None
+    }
+}
+
+/// The window id in "window_id N \"…\" of the same app holds focus".
+fn focus_holder(message: &str) -> Option<u64> {
+    let end = message.find("of the same app holds focus")?;
+    let start = message[..end].rfind("window_id ")? + "window_id ".len();
+    let digits: String = message[start..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok()
+}
+
+/// Whether an action failed because its element target died: the element
+/// was re-rendered or its snapshot was replaced.
+fn stale_element(result: &ToolResult) -> bool {
+    let code = result.structured_content.as_ref().and_then(|value| {
+        value
+            .get("code")
+            .or_else(|| value.pointer("/refusal/code"))
+            .and_then(Value::as_str)
+    });
+    if matches!(
+        code,
+        Some("element_outside_target_window" | "stale_element_token")
+    ) {
+        return true;
+    }
+    let message = bounded_message(result);
+    [
+        "element_outside_target_window",
+        "element_token is stale",
+        "-25202",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
+}
+
+/// Act again on a target whose element token went stale: find the element
+/// with the same role and label (exact, and unique) in the same window, and
+/// return the arguments with its fresh token plus a note saying so.
+async fn refind_stale_target(
+    locator: &Locator<'_>,
+    args: &Value,
+    result: &ToolResult,
+) -> Option<(Value, String)> {
+    if !stale_element(result) {
+        return None;
+    }
+    let token = args.get("element_token").and_then(Value::as_str)?;
+    let (snapshot_id, row) = token.split_once(':')?;
+    let row: u64 = row.parse().ok()?;
+    let stored = crate::window_state_view::snapshot_row(snapshot_id, row)?;
+    let (role, label) = row_role_and_label(&stored.line)?;
+    let window = WindowSpec {
+        pid: Some(
+            args.get("pid")
+                .and_then(Value::as_i64)
+                .unwrap_or(stored.pid),
+        ),
+        window_id: Some(
+            args.get("window_id")
+                .and_then(Value::as_u64)
+                .unwrap_or(stored.window_id),
+        ),
+        ..Default::default()
+    };
+    let element = ElementSpec {
+        role: Some(role.clone()),
+        name: Some(label.clone()),
+        text: None,
+        nth: None,
+    };
+    let found = locator.find(&window, &element, REFIND_TIMEOUT).await.ok()?;
+    let same_label = found
+        .element
+        .get("label")
+        .and_then(Value::as_str)
+        .is_some_and(|found| found.trim().to_lowercase() == label.trim().to_lowercase());
+    if !same_label {
+        return None;
+    }
+    let fresh = found.token()?.to_owned();
+    let mut retry = args.clone();
+    let object = retry.as_object_mut()?;
+    object.insert("element_token".into(), json!(fresh));
+    object.remove("element_index");
+    Some((
+        retry,
+        format!(
+            "element {token} went stale (the window changed); acted on the same {role} \"{label}\", found again as {}",
+            found.describe()
+        ),
+    ))
+}
+
+/// Role and label of one tree row: `[14] AXButton "Save"` or
+/// `[17] AXButton (Delete draft)`. None for a row without a label.
+fn row_role_and_label(line: &str) -> Option<(String, String)> {
+    let rest = line.trim().strip_prefix("- ")?.trim_start();
+    let rest = rest.strip_prefix('[')?;
+    let (_, rest) = rest.split_once(']')?;
+    let rest = rest.trim_start();
+    let role_end = rest.find(char::is_whitespace)?;
+    let role = rest[..role_end].to_owned();
+    let rest = rest[role_end..].trim_start();
+    let label = if let Some(quoted) = rest.strip_prefix('"') {
+        quoted[..quoted.find('"')?].to_owned()
+    } else {
+        let inner = rest.strip_prefix('(')?;
+        let mut depth = 1usize;
+        let mut end = None;
+        for (at, c) in inner.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(at);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        inner[..end?].to_owned()
+    };
+    (!label.trim().is_empty()).then_some((role, label))
 }
 
 fn parse_step(
@@ -881,6 +1347,7 @@ fn parse_step(
     index: usize,
     raw: &Value,
     session: Option<&str>,
+    inherits_window: bool,
 ) -> Result<Step, PlanError> {
     let object = raw.as_object().ok_or_else(|| {
         PlanError::step(index, "must be an object: {tool, args} or {<tool>: args}")
@@ -993,12 +1460,14 @@ fn parse_step(
             raw_args,
             find_timeout,
             session,
+            inherits_window,
         )?),
     };
     Ok(Step {
         action,
         wait_for,
         expect,
+        skipped_read: None,
     })
 }
 
@@ -1009,11 +1478,18 @@ fn parse_action(
     raw_args: Option<&Value>,
     find_timeout: u64,
     session: Option<&str>,
+    inherits_window: bool,
 ) -> Result<Action, PlanError> {
+    let mut args = match raw_args {
+        None | Some(Value::Null) => Value::Object(Map::new()),
+        Some(value @ Value::Object(_)) => value.clone(),
+        Some(_) => return Err(PlanError::step(index, "`args` must be an object")),
+    };
     let name = TOOL_ALIASES
         .iter()
         .find(|(alias, _)| *alias == name)
         .map_or(name, |(_, tool)| *tool);
+    let name = rewrite_step(name, &mut args);
     let tool = BATCHABLE_TOOLS
         .iter()
         .copied()
@@ -1035,11 +1511,9 @@ fn parse_action(
             };
             PlanError::step(index, message)
         })?;
-    let mut args = match raw_args {
-        None | Some(Value::Null) => Value::Object(Map::new()),
-        Some(value @ Value::Object(_)) => value.clone(),
-        Some(_) => return Err(PlanError::step(index, "`args` must be an object")),
-    };
+    if let Some(schema) = registry.get_def(tool).map(|def| def.input_schema.clone()) {
+        crate::tool::coerce_string_scalars(&schema, &mut args);
+    }
     prepare_args(&mut args, session).map_err(|message| PlanError::step(index, message))?;
     let (window, element) = locate::take_selector(args.as_object_mut().expect("object"))
         .map_err(|message| PlanError::step(index, format!("{tool}: {message}")))?;
@@ -1066,7 +1540,10 @@ fn parse_action(
     let mut probe = args.clone();
     if let Some(object) = probe.as_object_mut() {
         let needs_window = !element.is_empty() || window.app.is_some() || window.title.is_some();
-        if needs_window {
+        // A step that names no window takes the one an earlier step (or the
+        // batch) named; the run fills it in.
+        let inherits = inherits_window && window.is_empty() && accepts(registry, tool, "pid");
+        if needs_window || inherits {
             object.entry("pid").or_insert(json!(1));
             if accepts(registry, tool, "window_id") {
                 object.entry("window_id").or_insert(json!(1));
@@ -1102,6 +1579,9 @@ fn parse_observe(
             ))
         }
     };
+    if let Some(def) = registry.get_def(OBSERVE_TOOL) {
+        crate::tool::coerce_string_scalars(&def.input_schema, &mut args);
+    }
     prepare_args(&mut args, session)
         .map_err(|message| PlanError::batch(format!("observe: {message}")))?;
     let object = args.as_object_mut().expect("object");
@@ -1142,6 +1622,67 @@ fn parse_observe(
     validate_against_schema(registry, OBSERVE_TOOL, &probe)
         .map_err(|message| PlanError::batch(format!("observe: {message}")))?;
     Ok(args)
+}
+
+/// Rewrite step shapes models send into the batchable tool they mean:
+/// `triple_click` is a click with count 3, a key name used as the tool
+/// (`{"tool": "down"}`) is a press_key of it, a one-key hotkey is a
+/// press_key, and a press_key of a printable symbol ("asterisk", "*") types
+/// it, since most symbols need shift and are text rather than keys.
+fn rewrite_step<'a>(name: &'a str, args: &mut Value) -> &'a str {
+    let Some(object) = args.as_object_mut() else {
+        return name;
+    };
+    let lower = name.to_ascii_lowercase();
+    if lower == "triple_click" {
+        object.entry("count").or_insert(json!(3));
+        return "click";
+    }
+    if let Some(key) = KEY_TOOL_NAMES.iter().find(|key| **key == lower) {
+        object.entry("key").or_insert(json!(key));
+        return "press_key";
+    }
+    let mut name = name;
+    if name == "hotkey" {
+        let single = match object.get("keys") {
+            Some(Value::Array(keys)) if keys.len() == 1 => keys[0].as_str().map(str::to_owned),
+            Some(Value::String(key)) if !key.contains('+') => Some(key.clone()),
+            _ => None,
+        };
+        if let Some(key) = single {
+            object.remove("keys");
+            object.insert("key".into(), json!(key));
+            name = "press_key";
+        }
+    }
+    if name == "press_key" {
+        let no_modifiers = object
+            .get("modifiers")
+            .and_then(Value::as_array)
+            .is_none_or(|modifiers| modifiers.is_empty());
+        let text = object.get("key").and_then(Value::as_str).and_then(|key| {
+            let key = key.trim();
+            let folded = key.to_ascii_lowercase().replace(['_', '-', ' '], "");
+            SYMBOL_KEY_NAMES
+                .iter()
+                .find(|(symbol, _)| *symbol == folded)
+                .map(|(_, text)| (*text).to_owned())
+                .or_else(|| {
+                    let mut chars = key.chars();
+                    match (chars.next(), chars.next()) {
+                        (Some(c), None) if SHIFTED_SYMBOLS.contains(c) => Some(c.to_string()),
+                        _ => None,
+                    }
+                })
+        });
+        if let (true, Some(text)) = (no_modifiers, text) {
+            object.remove("key");
+            object.remove("modifiers");
+            object.insert("text".into(), json!(text));
+            return "type_text";
+        }
+    }
+    name
 }
 
 /// Reject runtime-private fields and pin the step to the batch's session.

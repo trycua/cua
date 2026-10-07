@@ -540,6 +540,57 @@ fn remember(snapshot_id: &str, ctx: &ViewContext<'_>, md: &str) {
     }
 }
 
+/// One row of an earlier read, as that read rendered it.
+pub(crate) struct StoredRow {
+    pub pid: i64,
+    pub window_id: u64,
+    /// The markdown row, e.g. `- [14] AXButton "Save" [actions=[press]]`.
+    pub line: String,
+}
+
+/// Row `[index]` of the read that produced `snapshot_id`, while that read is
+/// still remembered. Lets a caller holding a stale element token find the
+/// same element again by what it was.
+pub(crate) fn snapshot_row(snapshot_id: &str, index: u64) -> Option<StoredRow> {
+    let snapshot = {
+        let mut guard = store().lock().unwrap_or_else(|e| e.into_inner());
+        guard.retain(|s| s.at.elapsed() <= STORE_TTL);
+        guard.iter().find(|s| s.snapshot_id == snapshot_id).cloned()
+    }?;
+    let marker = format!("[{index}] ");
+    let line = snapshot
+        .markdown
+        .lines()
+        .map(str::trim)
+        .find(|line| {
+            line.strip_prefix("- ")
+                .is_some_and(|rest| rest.starts_with(&marker))
+        })?
+        .to_owned();
+    Some(StoredRow {
+        pid: snapshot.pid,
+        window_id: snapshot.window_id,
+        line,
+    })
+}
+
+/// Remember a read's markdown as `apply` does, for tests elsewhere in the
+/// crate that drive a fake get_window_state.
+#[cfg(test)]
+pub(crate) fn remember_for_test(snapshot_id: &str, pid: i64, window_id: u64, markdown: &str) {
+    let ctx = ViewContext {
+        pid,
+        window_id,
+        key: ViewKey {
+            query: None,
+            max_elements: DEFAULT_MAX_ELEMENTS,
+            max_depth: None,
+        },
+        focus_probe: None,
+    };
+    remember(snapshot_id, &ctx, markdown);
+}
+
 fn resolve_since(
     since: &str,
     current_id: Option<&str>,

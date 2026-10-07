@@ -14,6 +14,7 @@ import objc
 class EvalForm(fixture_form.Form):
     def build(self):
         objc.super(EvalForm, self).build()
+        self.window.setTitle_("Reference Bench Form")
         scroll = AppKit.NSScrollView.alloc().initWithFrame_(Foundation.NSMakeRect(330, 15, 180, 250))
         scroll.setHasVerticalScroller_(True)
         doc = AppKit.NSView.alloc().initWithFrame_(Foundation.NSMakeRect(0, 0, 160, 4800))

@@ -70,6 +70,17 @@ pub enum DoAction {
     #[command(after_help = "Examples:
   cua do status")]
     Status,
+    /// Warn about unreachable direct targets, including Tailscale.
+    #[command(after_help = "Examples:
+  # Warn only; nothing is deleted
+  cua do check
+  # Drop dead direct targets. Relay Spaces stay
+  cua do check --clean")]
+    Check {
+        /// Drop unreachable direct targets. Relay Spaces are kept.
+        #[arg(long)]
+        clean: bool,
+    },
     /// List targets (optionally of one provider).
     #[command(after_help = "Examples:
   cua do ls")]
@@ -445,6 +456,21 @@ fn one() -> f64 {
     1.0
 }
 
+/// Name of the selected `cua do` target (`do_target.json`), or empty.
+pub(crate) fn current_target_name() -> String {
+    State::load().name
+}
+
+/// Forgets the selected target so the next `cua do` does not keep using it.
+pub(crate) fn clear_current_target() -> Result<(), CuaError> {
+    let mut state = State::load();
+    state.provider = None;
+    state.name.clear();
+    state.reset_zoom();
+    state.trajectory_session = None;
+    state.save()
+}
+
 fn state_path() -> PathBuf {
     util::cua_home().join("do_target.json")
 }
@@ -534,6 +560,7 @@ pub async fn run(cua: &Arc<Cua>, args: DoArgs, out: &mut dyn Write) -> Result<i3
             token,
             alias,
         } => r.switch(target, name, token, alias, out).await,
+        DoAction::Check { clean } => crate::direct_cache::check(r.cua, clean, out).await,
         DoAction::Status => {
             let Some(p) = r.state.provider.clone() else {
                 return fail("No target selected. Run: cua do switch <sandbox>");
@@ -1074,7 +1101,11 @@ impl Run<'_> {
                 util::json_line(out, &v);
                 return Ok(None);
             }
-            DoAction::Switch { .. } | DoAction::Status | DoAction::Ls { .. } | DoAction::Unzoom => {
+            DoAction::Switch { .. }
+            | DoAction::Status
+            | DoAction::Check { .. }
+            | DoAction::Ls { .. }
+            | DoAction::Unzoom => {
                 unreachable!("handled by run")
             }
         }))

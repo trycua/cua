@@ -13,6 +13,7 @@ Usage: cua do [OPTIONS] <COMMAND>
 Commands:
   switch      Select the target: a sandbox name or ref, a relay Space (`relay:<id>`), `host`, `url <URL>`, or a legacy `<provider> <name>` pair
   status      Show the current target and zoom state
+  check       Warn about unreachable direct targets, including Tailscale
   ls          List targets (optionally of one provider)
   zoom        Crop screenshots to a window and map coordinates into it
   unzoom      Return to full-screen screenshots
@@ -62,6 +63,17 @@ Show the current target and zoom state
 Usage: cua do status [OPTIONS]
 
 Options:
+```
+
+## cua do check
+
+```text
+Warn about unreachable direct targets, including Tailscale
+
+Usage: cua do check [OPTIONS]
+
+Options:
+      --clean                        Drop unreachable direct targets. Relay Spaces are kept
 ```
 
 ## cua do ls

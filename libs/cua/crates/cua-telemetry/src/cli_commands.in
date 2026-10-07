@@ -61,6 +61,7 @@
     "devices.status",
     "do-host-consent",
     "do.a11y",
+    "do.check",
     "do.click",
     "do.clipboard",
     "do.cursor",

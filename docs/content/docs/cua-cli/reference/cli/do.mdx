@@ -15,6 +15,7 @@ description: "One-shot computer actions (screenshot, click, type, windows) again
 | [`cua do`](#cua-do) | One-shot computer actions against the selected target. |
 | [`cua do switch`](#cua-do-switch) | Select the target: a sandbox name or ref, a relay Space (`relay:<id>`), `host`, `url <URL>`, or a legacy `<provider> <name>` pair. |
 | [`cua do status`](#cua-do-status) | Show the current target and zoom state. |
+| [`cua do check`](#cua-do-check) | Warn about unreachable direct targets, including Tailscale. |
 | [`cua do ls`](#cua-do-ls) | List targets (optionally of one provider). |
 | [`cua do zoom`](#cua-do-zoom) | Crop screenshots to a window and map coordinates into it. |
 | [`cua do unzoom`](#cua-do-unzoom) | Return to full-screen screenshots. |
@@ -118,6 +119,28 @@ cua do status [OPTIONS]
 
 ```bash test="cli-shape" id="ref-cua-do-status"
 cua do status
+```
+
+### `cua do check`
+
+Warn about unreachable direct targets, including Tailscale.
+
+```text output
+cua do check [OPTIONS]
+```
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-do-check--clean"></span>`--clean` | boolean | `false` | Drop unreachable direct targets. Relay Spaces are kept. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-do-check"
+# Warn only; nothing is deleted
+cua do check
+
+# Drop dead direct targets. Relay Spaces stay
+cua do check --clean
 ```
 
 ### `cua do ls`

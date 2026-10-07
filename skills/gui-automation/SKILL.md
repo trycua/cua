@@ -157,6 +157,8 @@ Tell the user where the trajectory is (`cua trajectory ls` prints the path).
 | a spacesd URL | `cua do switch url http://host:3211 --as x`  |
 | this machine      | `cua do switch host`                         |
 
+A Tailscale or other direct target that no longer answers stays selected until it is dropped. `cua do check` warns; `cua do check --clean` removes the dead entries and leaves any `relay:` Space in place.
+
 Legacy `<provider> <name>` pairs (`cloud`, `docker`, `lume`, ...) still work.
 
 See [references/command-reference.md](references/command-reference.md) for full argument syntax.

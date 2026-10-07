@@ -4984,6 +4984,32 @@
      "usage": "cua do status [OPTIONS]"
     },
     {
+     "abstract": "Warn about unreachable direct targets, including Tailscale",
+     "after_help": "Examples:\n  # Warn only; nothing is deleted\n  cua do check\n  # Drop dead direct targets. Relay Spaces stay\n  cua do check --clean",
+     "aliases": [],
+     "arguments": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Drop unreachable direct targets. Relay Spaces are kept",
+       "hidden": false,
+       "name": "clean",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "check",
+     "options": [],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua do check [OPTIONS]"
+    },
+    {
      "abstract": "List targets (optionally of one provider)",
      "after_help": "Examples:\n  cua do ls",
      "aliases": [],

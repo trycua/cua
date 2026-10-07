@@ -32,6 +32,7 @@ mod cloud_cmd;
 mod computer;
 mod config_cmd;
 mod devices_cmd;
+mod direct_cache;
 mod do_cmd;
 mod doctor;
 pub mod drive_cmd;

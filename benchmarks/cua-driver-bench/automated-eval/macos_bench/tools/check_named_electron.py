@@ -28,16 +28,16 @@ import run_bench  # noqa: E402
 
 
 def lsappinfo(pid: int) -> dict[str, str]:
-    out = subprocess.run(
-        ["lsappinfo", "info", "-only", "bundleid", "-only", "name", "-app", f"pid={pid}"],
-        capture_output=True,
-        text=True,
-    ).stdout
-    info = {}
-    for line in out.splitlines():
-        if "=" in line:
-            key, value = line.split("=", 1)
-            info[key.strip().strip('"').lower()] = value.strip().strip('"')
+    """Name, bundle id and bundle path that LaunchServices holds for a running pid."""
+    out = subprocess.run(["lsappinfo", "info", "-app", str(pid)], capture_output=True, text=True).stdout
+    info: dict[str, str] = {}
+    first = out.splitlines()[0] if out.strip() else ""
+    if first.startswith('"'):
+        info["name"] = first.split('"')[1]
+    for key in ("bundleID", "bundle path"):
+        for line in out.splitlines():
+            if line.strip().startswith(key + "="):
+                info[key] = line.split("=", 1)[1].strip().strip('"')
     return info
 
 
@@ -105,11 +105,16 @@ def codex_get_apps(names: list[str], allowed: set[str], timeout: float = 60.0) -
         reply = wait_for(2, timeout)
         if reply is None:
             return {"error": "js call timed out", "approvals": approvals}
-        text = " ".join(c.get("text", "") for c in (reply.get("result") or {}).get("content", []))
-        try:
-            data = json.loads(text[text.index("{"):])
-        except ValueError:
-            data = {"raw": text[:2000]}
+        texts = [c.get("text", "") for c in (reply.get("result") or {}).get("content", [])]
+        data = {"raw": [t[:300] for t in texts]}
+        for text in texts:  # the reply also carries the API reference; find the object this code wrote
+            at = text.find('{"getApp"')
+            if at >= 0:
+                try:
+                    data = json.JSONDecoder().raw_decode(text[at:])[0]
+                except ValueError:
+                    continue
+                break
         data["approvals"] = approvals
         return data
     finally:

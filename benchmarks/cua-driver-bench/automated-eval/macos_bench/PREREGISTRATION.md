@@ -205,14 +205,14 @@ Written and committed before the first trial run under it. It changes nothing ab
 
 ### A4.1 Why
 
-* **Electron addressing (CUA-1224).** The pack's launch descriptors start every Electron app with `npx electron .`. All of them were therefore processes of one `Electron.app`, bundle id `com.github.Electron`, process and app name "Electron". Codex computer use addresses apps by name or bundle id; in the 6 Oct GUI-only run it failed with `Ambiguous app identifier 'com.github.Electron'` 13 times and `Invalid app: Signal Quay Chat` 5 times, in CDB-G02 (three Electron windows of one app directory) and CDB-G03. Arm B's G02 and G03 results of 6 Oct and of run `v035` are therefore not a clean reading of its tool layer. Cua Driver addresses apps by pid and window id, so the shared bundle id did not block it in the same way.
+* **Electron addressing (CUA-1224).** The pack's launch descriptors start every Electron app with `npx electron .`. All of them were therefore processes of one `Electron.app`, bundle id `com.github.Electron`, process and app name "Electron". Codex computer use addresses apps by name or bundle id; in the 6 Oct GUI-only run it failed with `Ambiguous app identifier 'com.github.Electron'` 13 times and `Invalid app: <the app's window title>` 5 times, in CDB-G02 (three Electron windows of one app directory) and CDB-G03. Arm B's G02 and G03 results of 6 Oct and of run `v035` are therefore not a clean reading of its tool layer. Cua Driver addresses apps by pid and window id, so the shared bundle id did not block it in the same way.
 * **Skill delivery (CUA-1226).** Arm A's skill reached the model only as a Claude Code project-skill listing. On 6 Oct it was opened in 1 of 35 main-run arm A trials (7 of 15 GUI-only). "Arm A with the skill" was mostly arm A without it, so the effect of the skill is unmeasured.
 
 ### A4.2 Electron apps as named bundles (all arms)
 
 For every app of kind `electron` in a task's launch descriptor, the runner (`cdb_adapter.py`) replaces `npx electron` with the `Electron` executable of a copy of the pack's own `node_modules/electron/dist/Electron.app` (Electron 43.4.0, from the pack's lockfile). The copy:
 
-* is named after the app's window title in the descriptor (for example `Copperfield Mail.app`; role, then id, if there is no title);
+* is named after the app's window title in the descriptor (`<title>.app`; role, then id, if there is no title);
 * has `CFBundleName` and `CFBundleDisplayName` set to that name and `CFBundleIdentifier` `com.trycua.cdbbench.<slug of the name>`; its helper apps get the same id with their original suffix (`.helper`), as electron-packager does;
 * keeps `CFBundleExecutable` `Electron`, so the helpers resolve as before and the runner's leftover cleanup (`pkill -x Electron`) is unchanged;
 * is ad-hoc re-signed (`codesign --force --deep --sign -`) and registered with LaunchServices; it is made once per name under `$CDB_BENCH_WORK/electron-apps` and reused.
@@ -244,7 +244,14 @@ One smoke run, `RUN_ID=v036-smoke`, rows marked `smoke` and never analysed: CDB-
 
 ### A4.6 Verification record
 
-To be filled in from the VM before the smoke run, and not changed afterwards.
+Done in the VM `cdb-h2h` on 7 Oct 2026 between 09:30 and 09:45 UTC, before the smoke run, with `tools/check_named_electron.py` (no model call). The output names the pack's apps, so it is kept with the private run data, not in this repository.
+
+| Task | Electron apps | LaunchServices | Cua Driver `list_apps` | Codex computer use |
+|---|---|---|---|---|
+| CDB-G02 | 3 | 3 processes, 3 distinct names and bundle ids `com.trycua.cdbbench.*`, each from its own bundle | all 3 listed by name; no entry named "Electron" | `cua.getApp(<title>)` resolved all 3; one approval request per app, by name, accepted from the task's allowlist; `cua.listApps()` lists the 3 as running, with their own ids |
+| CDB-G03 | 1 | 1, own name and id | listed by name | `cua.getApp(<title>)` resolved it; approval by name |
+
+`cua.listApps()` also still lists two `com.github.Electron` entries as recently used and not running (LaunchServices history from earlier runs). They cannot be confused with the running task apps, which have their own names and ids.
 
 ### A4.7 Harness changes for this amendment
 

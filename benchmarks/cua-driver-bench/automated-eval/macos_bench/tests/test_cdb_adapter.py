@@ -107,23 +107,23 @@ class AdapterTest(unittest.TestCase):
             argv = cdb_adapter.electron_argv(
                 ["env", "-u", "ELECTRON_RUN_AS_NODE", "npx", "electron", ".", "--surface=mail"],
                 str(app_dir),
-                "Copperfield Mail",
+                "Synthetic Mail",
             )
-            again = cdb_adapter.electron_argv(["npx", "electron", "."], str(app_dir), "Copperfield Mail")
-        bundle = root / "copperfield-mail" / "Copperfield Mail.app"
+            again = cdb_adapter.electron_argv(["npx", "electron", "."], str(app_dir), "Synthetic Mail")
+        bundle = root / "synthetic-mail" / "Synthetic Mail.app"
         self.assertEqual(
             argv, ["env", "-u", "ELECTRON_RUN_AS_NODE", str(bundle / "Contents/MacOS/Electron"), ".", "--surface=mail"]
         )
         self.assertEqual(again[0], str(bundle / "Contents/MacOS/Electron"))
         self.assertEqual(sign.call_count, 1)  # made once, then reused
         info = plistlib.loads((bundle / "Contents/Info.plist").read_bytes())
-        self.assertEqual(info["CFBundleIdentifier"], "com.trycua.cdbbench.copperfield-mail")
-        self.assertEqual(info["CFBundleName"], "Copperfield Mail")
+        self.assertEqual(info["CFBundleIdentifier"], "com.trycua.cdbbench.synthetic-mail")
+        self.assertEqual(info["CFBundleName"], "Synthetic Mail")
         self.assertEqual(info["CFBundleExecutable"], "Electron")
         hinfo = plistlib.loads(
             (bundle / "Contents/Frameworks/Electron Helper (Renderer).app/Contents/Info.plist").read_bytes()
         )
-        self.assertEqual(hinfo["CFBundleIdentifier"], "com.trycua.cdbbench.copperfield-mail.helper.Renderer")
+        self.assertEqual(hinfo["CFBundleIdentifier"], "com.trycua.cdbbench.synthetic-mail.helper.Renderer")
         # the pack's own Electron.app is untouched
         self.assertEqual(
             plistlib.loads((source / "Contents/Info.plist").read_bytes())["CFBundleIdentifier"],

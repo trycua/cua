@@ -107,6 +107,10 @@ pub struct ContainerReport {
     pub gvisor: bool,
     /// How runsc would be installed, or why it cannot be.
     pub gvisor_provisioning: Option<String>,
+    /// Whether runsc is registered with `--allow-suid` (setuid, so `sudo`
+    /// and `fusermount3`, work for the Space user); `None` when unknown.
+    #[serde(default)]
+    pub gvisor_allow_suid: Option<bool>,
 }
 
 /// Structured `cua runtime doctor` output.
@@ -286,6 +290,13 @@ pub async fn doctor() -> DoctorReport {
                     container.reachable = true;
                     container.runtimes = rt.runtimes().await.unwrap_or_default();
                     container.gvisor = container.runtimes.iter().any(|r| r == "runsc");
+                    if container.gvisor {
+                        container.gvisor_allow_suid =
+                            rt.runtime_args("runsc").await.ok().flatten().map(|a| {
+                                a.iter()
+                                    .any(|x| x == "--allow-suid" || x == "--allow-suid=true")
+                            });
+                    }
                     container_status.ready = true;
                     container_status.detail = if container.gvisor {
                         format!("{} with gVisor (runsc)", ep.uri)

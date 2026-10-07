@@ -42,11 +42,28 @@ if ! command -v runsc >/dev/null 2>&1; then
 fi
 "#;
 
+/// The flags `runsc` is registered with. `--allow-suid`: gVisor ignores
+/// setuid bits by default, so the Space user could not `sudo` or mount FUSE
+/// through `fusermount3`. The elevation stays inside the sandbox's kernel.
+pub const RUNSC_ARGS: &[&str] = &["--allow-suid"];
+
 /// Native Linux: install, register in /etc/docker/daemon.json, restart dockerd.
 pub fn linux_script() -> String {
     format!(
-        "{INSTALL_BINARY_SCRIPT}runsc install\n(systemctl restart docker || service docker restart)\n"
+        "{INSTALL_BINARY_SCRIPT}runsc install -- {}\n(systemctl restart docker || service docker restart)\n",
+        RUNSC_ARGS.join(" ")
     )
+}
+
+/// The `runsc:` entry of a Docker `runtimes` map in YAML (Colima's
+/// `docker:` config), at `indent`.
+pub fn runsc_yaml_entry(indent: usize, runsc_path: &str) -> String {
+    let p = " ".repeat(indent);
+    let mut s = format!("{p}runsc:\n{p}  path: {runsc_path}\n{p}  runtimeArgs:");
+    for a in RUNSC_ARGS {
+        s.push_str(&format!("\n{p}    - {a}"));
+    }
+    s
 }
 
 /// One provisioning step.
@@ -129,10 +146,7 @@ pub fn install_plan(kind: &EngineKind) -> Result<InstallPlan, String> {
 /// a `docker:` block with other keys, and an existing `runtimes:` map.
 pub fn colima_yaml_with_runsc(yaml: &str, runsc_path: &str) -> Option<String> {
     let lines: Vec<&str> = yaml.lines().collect();
-    let entry = |indent: usize| {
-        let p = " ".repeat(indent);
-        format!("{p}runsc:\n{p}  path: {runsc_path}")
-    };
+    let entry = |indent: usize| runsc_yaml_entry(indent, runsc_path);
     let docker = lines.iter().position(|l| {
         l.trim_end() == "docker: {}" || l.trim_end() == "docker:" || l.starts_with("docker: ")
     });
@@ -266,7 +280,23 @@ mod tests {
         assert!(argv.contains(&"-n".to_string()) && argv.last().unwrap().contains("runsc install"));
     }
 
-    const RUNSC: &str = "  runtimes:\n    runsc:\n      path: /usr/bin/runsc";
+    const RUNSC: &str = "  runtimes:\n    runsc:\n      path: /usr/bin/runsc\n      runtimeArgs:\n        - --allow-suid";
+
+    /// gVisor ignores setuid bits unless runsc runs with `--allow-suid`, so
+    /// without it the Space user cannot `sudo` or `fusermount3` (#4667).
+    #[test]
+    fn runsc_is_registered_with_setuid_allowed() {
+        assert!(
+            linux_script().contains("runsc install -- --allow-suid\n"),
+            "{}",
+            linux_script()
+        );
+        let out = colima_yaml_with_runsc("docker: {}\n", RUNSC_PATH).unwrap();
+        assert!(
+            out.contains("      runtimeArgs:\n        - --allow-suid\n"),
+            "{out}"
+        );
+    }
 
     #[test]
     fn colima_yaml_default_empty_docker_map() {
@@ -295,7 +325,7 @@ mod tests {
         let out = colima_yaml_with_runsc(y, RUNSC_PATH).unwrap();
         assert_eq!(
             out,
-            "docker:\n  runtimes:\n    runsc:\n      path: /usr/bin/runsc\n    crun:\n      path: /usr/bin/crun\nvmType: vz\n"
+            "docker:\n  runtimes:\n    runsc:\n      path: /usr/bin/runsc\n      runtimeArgs:\n        - --allow-suid\n    crun:\n      path: /usr/bin/crun\nvmType: vz\n"
         );
 
         let y = "docker:\n  runtimes: {}\n";

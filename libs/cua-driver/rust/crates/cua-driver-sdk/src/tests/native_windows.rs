@@ -285,7 +285,26 @@ async fn typed_snapshot_request_preserves_target_and_session() {
     assert_eq!(request["name"], "get_window_state");
     assert_eq!(
         request["args"],
-        json!({"pid":42,"window_id":73,"session":"run-1","include_screenshot":true,"max_elements":10})
+        // The typed SDK keeps the full response unless the caller picks a
+        // leaner shape.
+        json!({"pid":42,"window_id":73,"session":"run-1","include_screenshot":true,"max_elements":10,"full_output":true})
+    );
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn typed_snapshot_request_forwards_an_explicit_tree_shape() {
+    let (_directory, socket, server) = serve_once(json!({"ok":true,"result":snapshot_envelope()}));
+    let driver = CuaDriver::connect(Some(socket)).unwrap();
+    let input: GetWindowStateInput = serde_json::from_value(json!({
+        "pid":42,"window_id":73,"tree_format":"markdown","since":"s0000002a"
+    }))
+    .unwrap();
+    driver.get_window_state(input).await.unwrap();
+    let request = server.join().unwrap();
+    assert_eq!(
+        request["args"],
+        json!({"pid":42,"window_id":73,"tree_format":"markdown","since":"s0000002a"})
     );
 }
 

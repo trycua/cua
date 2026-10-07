@@ -7,6 +7,7 @@ Usage:
 Output:
     scripts/tasks/calibration_results.json
 """
+
 import argparse
 import json
 import os
@@ -39,10 +40,25 @@ def load_env() -> None:
 def start_run(task_path: Path, model_id: str, max_steps: int) -> str:
     """Start one cb run dataset for a single task, return its run ID."""
     result = subprocess.run(
-        [CB, "run", "dataset", str(task_path.parent),
-         "--agent", "cua-agent", "--model", model_id, "--max-steps", str(max_steps),
-         "--max-parallel", "5", "--task-filter", task_path.name],
-        capture_output=True, text=True, cwd=str(SCRIPT_DIR.parent),
+        [
+            CB,
+            "run",
+            "dataset",
+            str(task_path.parent),
+            "--agent",
+            "cua-agent",
+            "--model",
+            model_id,
+            "--max-steps",
+            str(max_steps),
+            "--max-parallel",
+            "5",
+            "--task-filter",
+            task_path.name,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(SCRIPT_DIR.parent),
     )
     clean = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
     for line in clean.splitlines():
@@ -51,18 +67,26 @@ def start_run(task_path: Path, model_id: str, max_steps: int) -> str:
     raise RuntimeError(f"No run ID in output:\n{result.stdout}\n{result.stderr}")
 
 
-def kill_containers() -> None:
-    """Stop and remove any lingering cua-* Docker containers."""
+def _cua_container_ids() -> set[str]:
     result = subprocess.run(
-        ["docker", "ps", "-q", "--filter", "name=cua-"],
-        capture_output=True, text=True,
+        ["docker", "ps", "-a", "-q", "--no-trunc", "--filter", "name=cua-"],
+        capture_output=True,
+        text=True,
     )
-    ids = result.stdout.strip().split() if result.stdout.strip() else []
+    return set(result.stdout.split())
+
+
+# cua-* containers that existed before this script started. They belong to
+# someone else (the user, another run, another tool) and are never removed.
+_PREEXISTING_CONTAINERS: set[str] = set()
+
+
+def kill_containers() -> None:
+    """Stop and remove lingering cua-* containers this calibration run started."""
+    ids = sorted(_cua_container_ids() - _PREEXISTING_CONTAINERS)
     if ids:
-        subprocess.run(["docker", "stop", "--time", "10"] + ids,
-                       capture_output=True)
-        subprocess.run(["docker", "rm", "-f"] + ids,
-                       capture_output=True)
+        subprocess.run(["docker", "stop", "--time", "10"] + ids, capture_output=True)
+        subprocess.run(["docker", "rm", "-f"] + ids, capture_output=True)
 
 
 def wait_for_runs(run_ids: list[str]) -> None:
@@ -71,7 +95,10 @@ def wait_for_runs(run_ids: list[str]) -> None:
     print(f"    Waiting for {len(pending)} runs...", end="", flush=True)
     while pending:
         result = subprocess.run(
-            [CB, "run", "list"], capture_output=True, text=True, cwd=str(SCRIPT_DIR.parent),
+            [CB, "run", "list"],
+            capture_output=True,
+            text=True,
+            cwd=str(SCRIPT_DIR.parent),
         )
         for run_id in list(pending):
             for line in result.stdout.splitlines():
@@ -116,7 +143,11 @@ def print_summary(results: dict, task_ids: list[str], output: Path) -> None:
         rates = {}
         for model_name, _ in MODELS:
             scores = row.get(model_name, [])
-            rates[model_name] = sum(1 for s in scores if s > 0) / len(scores) if scores is not None and len(scores) > 0 else None
+            rates[model_name] = (
+                sum(1 for s in scores if s > 0) / len(scores)
+                if scores is not None and len(scores) > 0
+                else None
+            )
         claude = f"{rates['claude']:.0%}" if rates["claude"] is not None else "pending"
         openai = f"{rates['openai']:.0%}" if rates["openai"] is not None else "pending"
         print(f"{task_id:<12} {claude:>10} {openai:>10}")
@@ -133,6 +164,7 @@ def main() -> None:
     args = parser.parse_args()
 
     load_env()
+    _PREEXISTING_CONTAINERS.update(_cua_container_ids())
 
     task_ids = [t.strip() for t in args.tasks.split(",")]
     print(f"Tasks: {task_ids}")
@@ -193,7 +225,9 @@ def main() -> None:
                 print(f"    [{model_name}] {run_id}: {score}")
             results[task_id][model_name] = scores
             pass_rate = sum(1 for s in scores if s > 0) / len(scores) if scores else 0.0
-            print(f"  [{model_name}] pass rate: {pass_rate:.0%} ({sum(1 for s in scores if s > 0)}/{len(scores)})")
+            print(
+                f"  [{model_name}] pass rate: {pass_rate:.0%} ({sum(1 for s in scores if s > 0)}/{len(scores)})"
+            )
 
         print_summary(results, task_ids, args.output)
 

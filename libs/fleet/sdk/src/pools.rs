@@ -229,12 +229,27 @@ fn json_request(method: &str, url: Url, body: Option<Vec<u8>>) -> HttpRequest {
     }
 }
 
+/// A merge patch keeps every key it leaves out, so an optional field the
+/// desired spec drops has to be written as an explicit null to be cleared
+/// (Terraform removing `idle_ttl_seconds`, say). `get_pool` returns every
+/// field, so get-modify-update callers keep what they did not touch.
 fn pool_merge_patch_json(pool: &Pool) -> Result<Vec<u8>, SdkError> {
     let mut value = serde_json::to_value(pool).map_err(|error| SdkError::Body {
         reason: error.to_string(),
     })?;
-    if pool.spec.autoscaling.is_none() {
-        value["spec"]["autoscaling"] = serde_json::Value::Null;
+    let spec = &pool.spec;
+    for (key, absent) in [
+        ("autoscaling", spec.autoscaling.is_none()),
+        (
+            "ttlSecondsAfterCreated",
+            spec.ttl_seconds_after_created.is_none(),
+        ),
+        ("idleTtlSeconds", spec.idle_ttl_seconds.is_none()),
+        ("ttlPolicy", spec.ttl_policy.is_none()),
+    ] {
+        if absent {
+            value["spec"][key] = serde_json::Value::Null;
+        }
     }
     to_json(&value)
 }

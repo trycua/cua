@@ -7,7 +7,7 @@ on:
     branches: [main]
     paths:
       - "libs/python/cua-sandbox/**"
-      - "libs/python/cua-fleet/**"
+      - "libs/fleet/**"
       - ".github/workflows/periodic-cua-sandbox-live.yml"
       - ".github/scripts/tests/test_periodic_cua_sandbox_live.py"
   workflow_dispatch:

@@ -86,6 +86,13 @@ unsafe fn semantic_children(parent: AXUIElementRef) -> Vec<AXUIElementRef> {
     out
 }
 
+/// A menu title as paths compare it: trimmed, with three periods read as
+/// the ellipsis character macOS menu titles use ("Save As..." finds
+/// "Save As…").
+fn menu_title_key(title: &str) -> String {
+    title.trim().replace("...", "\u{2026}")
+}
+
 unsafe fn resolve_exact_prefix(
     menu_bar: AXUIElementRef,
     prefix: &[String],
@@ -99,10 +106,11 @@ unsafe fn resolve_exact_prefix(
             CFRelease(current as CFTypeRef);
         }
 
+        let wanted = menu_title_key(segment);
         let mut matches = Vec::new();
         for child in children {
             let title = copy_string_attr(child, "AXTitle").unwrap_or_default();
-            if title.trim() == segment {
+            if menu_title_key(&title) == wanted {
                 matches.push(child);
             } else {
                 CFRelease(child as CFTypeRef);
@@ -131,6 +139,54 @@ unsafe fn resolve_exact_prefix(
     }
 }
 
+/// Close the menu a failed path opened from the menu bar item `top` with
+/// AXCancel on that item's menu (which also ends its submenus), and read the
+/// result back from WindowServer's window list. Menu windows in
+/// `menus_before` were on screen before this call and do not count.
+unsafe fn close_opened_menu(
+    app: AXUIElementRef,
+    pid: i32,
+    top: &str,
+    menus_before: &[u32],
+) -> Option<bool> {
+    // An action that reported an error can still open its menu a moment
+    // later; give it the same settle time as a hop before looking.
+    std::thread::sleep(Duration::from_millis(80));
+    if crate::windows::new_menu_windows(pid, menus_before)? == 0 {
+        return Some(true);
+    }
+    let item = copy_element_attr(app, "AXMenuBar").and_then(|bar| {
+        set_messaging_timeout(bar);
+        let item = resolve_exact_prefix(bar, std::slice::from_ref(&top.to_owned())).ok();
+        CFRelease(bar as CFTypeRef);
+        item
+    });
+    let Some(item) = item else {
+        return Some(false);
+    };
+    set_messaging_timeout(item);
+    for child in copy_children(item) {
+        set_messaging_timeout(child);
+        if copy_string_attr(child, "AXRole").as_deref() == Some("AXMenu") {
+            let _ = perform_action(child, "AXCancel");
+        }
+        CFRelease(child as CFTypeRef);
+    }
+    CFRelease(item as CFTypeRef);
+    crate::windows::wait_for_new_menus_closed(pid, menus_before)
+}
+
+/// The refusal for a path that failed after pressing a menu item, saying
+/// whether the menu it opened was seen to close.
+fn failure_after_press(error: String, top: &str, closed: Option<bool>) -> String {
+    match closed {
+        Some(true) => format!("{error}. No menu window this call opened is still on screen."),
+        Some(false) | None => format!(
+            "{error}. The {top} menu this call opened may still be open: press escape on the window before other input."
+        ),
+    }
+}
+
 fn choose_action(actions: &[String], final_segment: bool) -> Option<&'static str> {
     let supports = |name: &str| actions.iter().any(|action| action == name);
     let order: &[&str] = if final_segment {
@@ -148,6 +204,12 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
     }
     set_messaging_timeout(app);
 
+    // Whether this call pressed a menu item (a press that reports an error
+    // can still open its menu), so a failure must close what it opened.
+    let mut pressed = false;
+    // Unreadable now counts every menu window later as this call's, which can
+    // only make the closed claim more cautious.
+    let menus_before = crate::windows::menu_window_ids(pid).unwrap_or_default();
     let result = (|| {
         for depth in 0..path.len() {
             // Resolve from the live app root for every hop. Opening a menu can
@@ -175,6 +237,7 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
                     return Err(error);
                 }
             };
+            pressed = true;
             let error = perform_action(target, action);
             CFRelease(target as CFTypeRef);
             if error != kAXErrorSuccess {
@@ -189,8 +252,49 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
         Ok(())
     })();
 
+    // A failure after a hop opened a menu: close it, so the app is not left
+    // tracking a menu (where the next menu command reports success and does
+    // nothing).
+    let result = result.map_err(|error| {
+        if !pressed {
+            return error;
+        }
+        let closed = close_opened_menu(app, pid, &path[0], &menus_before);
+        failure_after_press(error, &path[0], closed)
+    });
+
     CFRelease(app as CFTypeRef);
     result
+}
+
+fn select_frontmost_pid(
+    front_process_matches: Option<bool>,
+    workspace_fallback: impl FnOnce() -> Option<i32>,
+    pid: i32,
+) -> Option<i32> {
+    match front_process_matches {
+        Some(true) => Some(pid),
+        Some(false) => None,
+        None => workspace_fallback(),
+    }
+}
+
+fn live_frontmost_pid(pid: i32, window_id: u32) -> Option<i32> {
+    select_frontmost_pid(
+        crate::input::skylight::front_process_matches(pid, window_id),
+        crate::apps::frontmost_pid,
+        pid,
+    )
+}
+
+fn live_frontmost_app() -> Option<i32> {
+    crate::windows::visible_windows()
+        .into_iter()
+        .find(|window| {
+            crate::input::skylight::front_process_matches(window.pid, window.window_id)
+                == Some(true)
+        })
+        .map(|window| window.pid)
 }
 
 /// Make one exact application window key before resolving focus-sensitive
@@ -307,7 +411,7 @@ fn focus_ax_window_with_thread_affinity(pid: i32, window_id: u32) -> Result<(), 
 fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
     let native_key_requested = crate::input::skylight::make_exact_window_key(pid, window_id);
     if !native_key_requested
-        && crate::apps::frontmost_pid() != Some(pid)
+        && live_frontmost_pid(pid, window_id) != Some(pid)
         && !crate::apps::activate_pid(pid)
     {
         return Err("invoke_menu: target application could not be activated".into());
@@ -327,7 +431,7 @@ fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
     loop {
         let now = std::time::Instant::now();
         if exact_window_is_ready(
-            crate::apps::frontmost_pid(),
+            live_frontmost_pid(pid, window_id),
             pid,
             crate::ax::bindings::focused_window_id_of_pid(pid),
             window_id,
@@ -396,7 +500,7 @@ impl Tool for InvokeMenuTool {
         }
 
         let outcome = tokio::task::spawn_blocking(move || {
-            let prior_frontmost = crate::apps::frontmost_pid();
+            let prior_frontmost = live_frontmost_app().or_else(crate::apps::frontmost_pid);
             let prior_frontmost_window =
                 prior_frontmost.and_then(crate::ax::bindings::focused_window_id_of_pid);
             let needs_activation = prior_frontmost != Some(pid);
@@ -469,10 +573,55 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_path_says_whether_its_menu_was_closed() {
+        let error = || "invoke_menu: path segment 1 was not found".to_owned();
+        assert_eq!(
+            failure_after_press(error(), "File", Some(true)),
+            "invoke_menu: path segment 1 was not found. No menu window this call opened is still on screen."
+        );
+        for unconfirmed in [Some(false), None] {
+            assert!(failure_after_press(error(), "File", unconfirmed)
+                .ends_with("The File menu this call opened may still be open: press escape on the window before other input."));
+        }
+    }
+
+    #[test]
+    fn three_periods_match_the_ellipsis_in_menu_titles() {
+        assert_eq!(
+            menu_title_key(" Save As... "),
+            menu_title_key("Save As\u{2026}")
+        );
+        assert_eq!(menu_title_key("Save As..."), menu_title_key("Save As..."));
+        assert_ne!(menu_title_key("Save As"), menu_title_key("Save As\u{2026}"));
+        assert_ne!(
+            menu_title_key("save as..."),
+            menu_title_key("Save As\u{2026}")
+        );
+    }
+
+    #[test]
     fn menu_focus_requires_the_exact_frontmost_app_and_window() {
         assert!(exact_window_is_ready(Some(7), 7, Some(42), 42));
         assert!(!exact_window_is_ready(Some(8), 7, Some(42), 42));
         assert!(!exact_window_is_ready(Some(7), 7, Some(41), 42));
         assert!(!exact_window_is_ready(Some(7), 7, None, 42));
+    }
+
+    fn workspace_frontmost_must_not_be_read() -> Option<i32> {
+        panic!("stale workspace state must not be consulted");
+    }
+
+    #[test]
+    fn windowserver_mismatch_never_falls_back_to_stale_workspace_state() {
+        assert_eq!(
+            select_frontmost_pid(Some(true), workspace_frontmost_must_not_be_read, 7),
+            Some(7)
+        );
+        assert_eq!(
+            select_frontmost_pid(Some(false), workspace_frontmost_must_not_be_read, 7),
+            None
+        );
+        assert_eq!(select_frontmost_pid(None, || Some(8), 7), Some(8));
+        assert_eq!(select_frontmost_pid(None, || None, 7), None);
     }
 }

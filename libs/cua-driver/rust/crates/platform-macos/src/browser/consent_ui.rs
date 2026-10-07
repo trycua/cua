@@ -9,7 +9,7 @@ use cua_driver_core::browser::{
 };
 
 use crate::ax::bindings::{kAXErrorSuccess, perform_action, AXUIElementRef};
-use crate::ax::tree::{walk_tree_bounded, AXNode, DEFAULT_MAX_DEPTH};
+use crate::ax::tree::{walk_tree_bounded, AXNode, TreeWalkResult, DEFAULT_MAX_DEPTH};
 
 // Large Chromium pages can put the browser-owned consent sheet after the
 // ordinary 2,000-node snapshot cap. Keep this privileged scan bounded while
@@ -70,111 +70,159 @@ fn consent_surface_ids(
         .collect()
 }
 
-fn remote_debugging_sheet_present(nodes: &[AXNode]) -> bool {
-    nodes.iter().enumerate().any(|(sheet_index, sheet)| {
-        if sheet.role != "AXSheet" {
-            return false;
-        }
-        let end = nodes
+pub(super) const CHINESE_PROMPT: &str = "要允许远程调试吗？";
+const CHINESE_WARNING: &str = "为进行调试，一款外部应用请求完全控制此 Chrome 会话，包括访问您保存的数据、Cookie 和网站数据，以及前往任意网址。";
+
+fn has_text(node: &AXNode, expected: &str) -> bool {
+    [
+        node.title.as_deref(),
+        node.value.as_deref(),
+        node.description.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|text| text.trim() == expected)
+}
+
+fn sheet_subtree(nodes: &[AXNode], sheet_index: usize) -> &[AXNode] {
+    let end = nodes
+        .iter()
+        .enumerate()
+        .skip(sheet_index + 1)
+        .find(|(_, node)| node.depth <= nodes[sheet_index].depth)
+        .map_or(nodes.len(), |(index, _)| index);
+    &nodes[sheet_index..end]
+}
+
+fn chinese_sheet(sheet: &[AXNode]) -> bool {
+    has_text(&sheet[0], CHINESE_PROMPT)
+        && sheet[1..]
             .iter()
-            .enumerate()
-            .skip(sheet_index + 1)
-            .find(|(_, node)| node.depth <= sheet.depth)
-            .map_or(nodes.len(), |(index, _)| index);
-        nodes[sheet_index..end].iter().any(|node| {
-            let text = normalized_text(node);
-            text.contains("remote debugging") || text.contains("remote-debugging")
+            .any(|node| has_text(node, CHINESE_WARNING))
+}
+
+fn consent_sheets(nodes: &[AXNode]) -> impl Iterator<Item = &[AXNode]> {
+    nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.role == "AXSheet")
+        .map(|(index, _)| sheet_subtree(nodes, index))
+        .filter(|sheet| !sheet.iter().any(|node| node.in_web_content))
+        .filter(|sheet| {
+            chinese_sheet(sheet)
+                || sheet.iter().any(|node| {
+                    let text = normalized_text(node);
+                    text.contains("remote debugging") || text.contains("remote-debugging")
+                })
         })
-    })
+}
+
+fn remote_debugging_sheet_present(nodes: &[AXNode]) -> bool {
+    consent_sheets(nodes).next().is_some()
+}
+
+fn exact_button(nodes: &[AXNode], allow: bool) -> Result<Option<usize>, BrowserRefusal> {
+    let mut matches = Vec::new();
+    for sheet in consent_sheets(nodes) {
+        let chinese = chinese_sheet(sheet);
+        let mut allows = Vec::new();
+        let mut cancels = Vec::new();
+        for node in sheet.iter().filter(|node| {
+            node.role == "AXButton" && node.actions.iter().any(|action| action == "AXPress")
+        }) {
+            let (is_allow, is_cancel) = if chinese {
+                (has_text(node, "允许"), has_text(node, "取消"))
+            } else {
+                let text = normalized_text(node);
+                let id = node
+                    .identifier
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                (
+                    matches!(text.as_str(), "allow" | "allow remote debugging")
+                        || (id.contains("allow")
+                            && (id.contains("debug") || id.contains("confirm"))),
+                    text == "cancel",
+                )
+            };
+            if (is_allow && is_cancel)
+                || (chinese && (is_allow || is_cancel) && has_text(node, "在“设置”中关闭"))
+            {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserWrongTargetRefused,
+                    "a browser consent button matched conflicting decisions",
+                ));
+            }
+            if is_allow {
+                allows.push(node.element_ptr);
+            }
+            if is_cancel {
+                cancels.push(node.element_ptr);
+            }
+        }
+        if chinese && (allows.len() != 1 || cancels.len() != 1) {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "localized browser consent requires unique positive allow and cancel actions",
+            ));
+        }
+        matches.extend(if allow { allows } else { cancels });
+    }
+    match matches.as_slice() {
+        [] => Ok(None),
+        [element] => Ok(Some(*element)),
+        _ => Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "multiple browser consent actions matched the requested decision",
+        )),
+    }
 }
 
 fn exact_allow_button(nodes: &[AXNode]) -> Result<Option<usize>, BrowserRefusal> {
-    let mut matches = Vec::new();
-    for (sheet_index, sheet) in nodes
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| node.role == "AXSheet")
-    {
-        let end = nodes
-            .iter()
-            .enumerate()
-            .skip(sheet_index + 1)
-            .find(|(_, node)| node.depth <= sheet.depth)
-            .map_or(nodes.len(), |(index, _)| index);
-        let sheet_nodes = &nodes[sheet_index..end];
-        let prompt_is_remote_debugging = sheet_nodes.iter().any(|node| {
-            let text = normalized_text(node);
-            text.contains("remote debugging") || text.contains("remote-debugging")
-        });
-        if !prompt_is_remote_debugging {
-            continue;
-        }
-        for node in sheet_nodes {
-            if node.role != "AXButton" || !node.actions.iter().any(|action| action == "AXPress") {
-                continue;
-            }
-            let label = normalized_text(node);
-            let identifier = node
-                .identifier
-                .as_deref()
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            let semantic_allow = matches!(label.as_str(), "allow" | "allow remote debugging")
-                || (identifier.contains("allow")
-                    && (identifier.contains("debug") || identifier.contains("confirm")));
-            if semantic_allow {
-                matches.push(node.element_ptr);
-            }
-        }
-    }
-    match matches.as_slice() {
-        [] => Ok(None),
-        [element] => Ok(Some(*element)),
-        _ => Err(refusal(
-            BrowserRefusalCode::BrowserWrongTargetRefused,
-            "multiple semantic allow actions matched the browser consent sheet",
-        )),
-    }
+    exact_button(nodes, true)
 }
 
 fn exact_cancel_button(nodes: &[AXNode]) -> Result<Option<usize>, BrowserRefusal> {
-    let mut matches = Vec::new();
-    for (sheet_index, sheet) in nodes
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| node.role == "AXSheet")
-    {
-        let end = nodes
-            .iter()
-            .enumerate()
-            .skip(sheet_index + 1)
-            .find(|(_, node)| node.depth <= sheet.depth)
-            .map_or(nodes.len(), |(index, _)| index);
-        let sheet_nodes = &nodes[sheet_index..end];
-        let prompt_is_remote_debugging = sheet_nodes.iter().any(|node| {
-            let text = normalized_text(node);
-            text.contains("remote debugging") || text.contains("remote-debugging")
-        });
-        if !prompt_is_remote_debugging {
-            continue;
+    exact_button(nodes, false)
+}
+
+struct ConsentTrees(Vec<Vec<AXNode>>);
+
+impl ConsentTrees {
+    fn push(&mut self, tree: TreeWalkResult) -> Result<(), BrowserRefusal> {
+        let incomplete = tree.truncated || tree.walk.truncated();
+        self.0.push(tree.nodes);
+        if incomplete {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "browser consent observation was truncated",
+            ));
         }
-        for node in sheet_nodes {
-            if node.role == "AXButton"
-                && node.actions.iter().any(|action| action == "AXPress")
-                && normalized_text(node) == "cancel"
-            {
-                matches.push(node.element_ptr);
-            }
+        Ok(())
+    }
+}
+
+impl Drop for ConsentTrees {
+    fn drop(&mut self) {
+        for nodes in &self.0 {
+            release_actionable_nodes(nodes);
         }
     }
-    match matches.as_slice() {
-        [] => Ok(None),
-        [element] => Ok(Some(*element)),
-        _ => Err(refusal(
-            BrowserRefusalCode::BrowserWrongTargetRefused,
-            "multiple semantic cancel actions matched the browser consent sheet",
-        )),
+}
+
+fn read_consent_trees(pid: i32, window_id: u32) -> Result<ConsentTrees, BrowserRefusal> {
+    let mut trees = ConsentTrees(Vec::new());
+    for candidate in consent_surface_ids(crate::windows::all_windows(), pid, window_id) {
+        trees.push(walk_tree_bounded(
+            pid,
+            Some(candidate),
+            None,
+            CONSENT_MAX_ELEMENTS,
+            DEFAULT_MAX_DEPTH,
+        ))?;
     }
+    Ok(trees)
 }
 
 /// Dismiss any exact Chrome-owned remote-debugging sheet before teardown.
@@ -184,79 +232,45 @@ pub fn dismiss(pid: i32, approved_window_id: u32) -> Result<bool, BrowserRefusal
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut dismissed = false;
     loop {
-        let trees = consent_surface_ids(crate::windows::all_windows(), pid, approved_window_id)
-            .into_iter()
-            .map(|candidate_window_id| {
-                walk_tree_bounded(
-                    pid,
-                    Some(candidate_window_id),
-                    None,
-                    CONSENT_MAX_ELEMENTS,
-                    DEFAULT_MAX_DEPTH,
-                )
-                .nodes
-            })
-            .collect::<Vec<_>>();
+        let trees = read_consent_trees(pid, approved_window_id)?;
         let prompt_present = trees
+            .0
             .iter()
             .any(|nodes| remote_debugging_sheet_present(nodes));
         if !prompt_present {
-            for nodes in &trees {
-                release_actionable_nodes(nodes);
-            }
             return Ok(dismissed);
         }
 
         let mut candidates = Vec::new();
-        let mut matcher_error = None;
-        for nodes in &trees {
-            match exact_cancel_button(nodes) {
-                Ok(Some(element)) => candidates.push(element),
-                Ok(None) => {}
-                Err(error) => {
-                    matcher_error = Some(error);
-                    break;
-                }
+        for nodes in &trees.0 {
+            if let Some(element) = exact_cancel_button(nodes)? {
+                candidates.push(element);
             }
         }
         candidates.sort_unstable();
         candidates.dedup();
-        if let Some(error) = matcher_error {
-            for nodes in &trees {
-                release_actionable_nodes(nodes);
-            }
-            return Err(error);
-        }
         let pressed = match candidates.as_slice() {
             [element] => unsafe { perform_action(*element as AXUIElementRef, "AXPress") },
             [] => {
-                for nodes in &trees {
-                    release_actionable_nodes(nodes);
-                }
                 return Err(refusal(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
                     "the exact remote-debugging consent sheet exposed no semantic cancel action",
                 ));
             }
             _ => {
-                for nodes in &trees {
-                    release_actionable_nodes(nodes);
-                }
                 return Err(refusal(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
                     "multiple Chrome-owned remote-debugging consent sheets exposed semantic cancel actions",
                 ));
             }
         };
-        for nodes in &trees {
-            release_actionable_nodes(nodes);
-        }
         if pressed != kAXErrorSuccess {
             return Err(refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the exact browser consent cancel action became stale before AXPress",
             ));
         }
+        drop(trees);
         dismissed = true;
         if Instant::now() >= deadline {
             return Err(refusal(
@@ -287,57 +301,41 @@ pub async fn handle(
     let mut saw_prompt = false;
     let mut accepted_prompt = false;
     loop {
-        let trees = tokio::task::spawn_blocking(move || {
-            consent_surface_ids(crate::windows::all_windows(), pid, window_id)
-                .into_iter()
-                .map(|candidate_window_id| {
-                    walk_tree_bounded(
-                        pid,
-                        Some(candidate_window_id),
-                        None,
-                        CONSENT_MAX_ELEMENTS,
-                        DEFAULT_MAX_DEPTH,
-                    )
-                    .nodes
-                })
-                .collect::<Vec<_>>()
-        })
-        .await
-        .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect the browser consent UI: {error}"),
-            )
-        })?;
+        let trees = tokio::task::spawn_blocking(move || read_consent_trees(pid, window_id))
+            .await
+            .map_err(|error| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not inspect the browser consent UI: {error}"),
+                )
+            })??;
+        if Instant::now() >= deadline {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!(
+                    "Chrome remote-debugging consent did not settle for reconnect attempt {}",
+                    request.attempt
+                ),
+            ));
+        }
         let prompt_present = trees
+            .0
             .iter()
             .any(|nodes| remote_debugging_sheet_present(nodes));
         saw_prompt |= prompt_present;
         let mut candidates = Vec::new();
-        let mut matcher_error = None;
-        for nodes in &trees {
-            match exact_allow_button(nodes) {
-                Ok(Some(element)) => candidates.push(element),
-                Ok(None) => {}
-                Err(error) => {
-                    matcher_error = Some(error);
-                    break;
-                }
+        for nodes in &trees.0 {
+            if let Some(element) = exact_allow_button(nodes)? {
+                candidates.push(element);
             }
         }
         candidates.sort_unstable();
         candidates.dedup();
-        if let Some(error) = matcher_error {
-            for nodes in &trees {
-                release_actionable_nodes(nodes);
-            }
-            return Err(error);
-        }
         if let [element] = candidates.as_slice() {
-            let pressed = unsafe { perform_action(*element as AXUIElementRef, "AXPress") };
-            for nodes in &trees {
-                release_actionable_nodes(nodes);
-            }
+            let pressed = request
+                .action
+                .perform(|| unsafe { perform_action(*element as AXUIElementRef, "AXPress") });
+            drop(trees);
             if pressed != kAXErrorSuccess {
                 return Err(refusal(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -353,9 +351,7 @@ pub async fn handle(
             tokio::time::sleep(Duration::from_millis(100)).await;
             continue;
         }
-        for nodes in &trees {
-            release_actionable_nodes(nodes);
-        }
+        drop(trees);
         if candidates.len() > 1 {
             return Err(refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -369,15 +365,6 @@ pub async fn handle(
             return Err(refusal(
                 BrowserRefusalCode::BrowserConsentRevoked,
                 "the person dismissed the browser consent sheet",
-            ));
-        }
-        if Instant::now() >= deadline {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserWrongTargetRefused,
-                format!(
-                    "no exact Chrome remote-debugging consent sheet appeared for reconnect attempt {}",
-                    request.attempt
-                ),
             ));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -410,6 +397,43 @@ mod tests {
             selected: None,
             in_web_content: false,
         }
+    }
+
+    #[tokio::test]
+    async fn cancelled_scan_releases_late_blocking_result() {
+        use core_foundation::base::{CFGetRetainCount, CFRetain, TCFType};
+        use core_foundation::string::CFString;
+
+        struct Finished(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for Finished {
+            fn drop(&mut self) {
+                let _ = self.0.take().unwrap().send(());
+            }
+        }
+        let value = CFString::new("consent-cancelled-scan-owned-reference");
+        let ptr = value.as_concrete_TypeRef() as usize;
+        let base = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
+        let scan = tokio::task::spawn_blocking(move || {
+            let mut element = node("AXButton", 0, Some("Allow"), &["AXPress"]);
+            element.element_ptr = unsafe { CFRetain(ptr as CFTypeRef) } as usize;
+            let owned = ConsentTrees(vec![vec![element]]);
+            ready_tx.send(()).unwrap();
+            finish_rx.recv().unwrap();
+            // Tuple fields drop in order: release the native reference before signalling.
+            (owned, Finished(Some(dropped_tx)))
+        });
+        ready_rx.await.unwrap();
+        assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base + 1);
+        drop(scan);
+        finish_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), dropped_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base);
     }
 
     #[test]
@@ -488,5 +512,118 @@ mod tests {
             ),
             vec![7, 8]
         );
+    }
+
+    fn captured_chinese_sheet() -> Vec<AXNode> {
+        let mut nodes = vec![node("AXSheet", 1, Some("要允许远程调试吗？"), &[])];
+        let mut warning = node("AXStaticText", 2, None, &[]);
+        warning.value = Some("为进行调试，一款外部应用请求完全控制此 Chrome 会话，包括访问您保存的数据、Cookie 和网站数据，以及前往任意网址。".to_owned());
+        nodes.push(warning);
+        for (ptr, label) in [(25, "在“设置”中关闭"), (26, "取消"), (27, "允许")] {
+            let mut button = node("AXButton", 2, None, &["AXPress"]);
+            button.description = Some(label.to_owned());
+            button.element_ptr = ptr;
+            button.enabled = Some(true);
+            nodes.push(button);
+        }
+        nodes
+    }
+
+    #[test]
+    fn captured_fields_select_positive_decisions_only_inside_sheet() {
+        let mut nodes = captured_chinese_sheet();
+        nodes.insert(0, node("AXButton", 1, Some("允许"), &["AXPress"]));
+        assert!(remote_debugging_sheet_present(&nodes));
+        assert_eq!(exact_allow_button(&nodes).unwrap(), Some(27));
+        assert_eq!(exact_cancel_button(&nodes).unwrap(), Some(26));
+        nodes[3].identifier = Some("cancel".to_owned());
+        assert_eq!(exact_cancel_button(&nodes).unwrap(), Some(26));
+    }
+
+    #[test]
+    fn localized_purpose_cannot_come_from_identifier_or_title_alone() {
+        for title in ["Save changes?", CHINESE_PROMPT] {
+            let mut nodes = captured_chinese_sheet();
+            nodes[0].title = Some(title.to_owned());
+            nodes[1].value = None;
+            nodes[4].identifier = Some("remote-debugging-allow".to_owned());
+            assert!(!remote_debugging_sheet_present(&nodes));
+            assert_eq!(exact_allow_button(&nodes).unwrap(), None);
+            assert_eq!(exact_cancel_button(&nodes).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn localized_cancel_is_not_the_other_button() {
+        let mut nodes = captured_chinese_sheet();
+        nodes.remove(3);
+        assert_eq!(
+            exact_cancel_button(&nodes).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+    }
+
+    #[test]
+    fn localized_decision_ambiguity_conflicts_and_web_content_refuse() {
+        for case in 0..4 {
+            let mut nodes = captured_chinese_sheet();
+            match case {
+                0 => nodes.push(nodes[4].clone()),
+                1 => nodes.push(nodes[3].clone()),
+                2 => nodes[4].title = Some("取消".to_owned()),
+                _ => nodes[3].title = Some("在“设置”中关闭".to_owned()),
+            }
+            for result in [exact_allow_button(&nodes), exact_cancel_button(&nodes)] {
+                assert_eq!(
+                    result.unwrap_err().code,
+                    BrowserRefusalCode::BrowserWrongTargetRefused
+                );
+            }
+        }
+        let mut nodes = captured_chinese_sheet();
+        nodes[4].in_web_content = true;
+        assert!(!remote_debugging_sheet_present(&nodes));
+        assert_eq!(exact_allow_button(&nodes).unwrap(), None);
+        assert_eq!(exact_cancel_button(&nodes).unwrap(), None);
+    }
+
+    #[test]
+    fn reported_truncation_releases_all_owned_references_on_early_return() {
+        use core_foundation::{
+            array::CFArray,
+            base::{CFGetRetainCount, CFRetain, TCFType},
+            string::CFString,
+        };
+        use cua_driver_core::walk_budget::WalkBudget;
+        let value = CFArray::from_CFTypes(&[CFString::new("owned")]);
+        let ptr = value.as_CFTypeRef();
+        let baseline = unsafe { CFGetRetainCount(ptr) };
+        let result = (|| {
+            let mut trees = ConsentTrees(Vec::new());
+            for truncated in [false, true] {
+                unsafe {
+                    CFRetain(ptr);
+                }
+                let mut button = node("AXButton", 1, Some("Allow"), &["AXPress"]);
+                button.element_ptr = ptr as usize;
+                let mut budget = WalkBudget::nodes_only(1);
+                if truncated {
+                    budget.stop_for_timeout();
+                }
+                trees.push(TreeWalkResult {
+                    nodes: vec![button],
+                    tree_markdown: String::new(),
+                    truncated: false,
+                    walk: budget.outcome(),
+                    window_scope: None,
+                })?;
+            }
+            Ok::<_, BrowserRefusal>(())
+        })();
+        assert_eq!(
+            result.unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+        assert_eq!(unsafe { CFGetRetainCount(ptr) }, baseline);
     }
 }

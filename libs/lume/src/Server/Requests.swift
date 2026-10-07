@@ -104,6 +104,10 @@ struct PullRequest: Codable {
     }
 }
 
+struct PullCancelRequest: Codable {
+    let name: String
+}
+
 struct CreateVMRequest: Codable {
     let name: String
     let os: String

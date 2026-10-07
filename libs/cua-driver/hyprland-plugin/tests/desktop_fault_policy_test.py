@@ -35,10 +35,12 @@ def fixture(source):
     ):
         block = source.split(start, 1)[1].split(end, 1)[0]
         refusals = [line.strip() for line in block.splitlines()
-                    if 'if (' in line and ('!available()' in line or '!layout_qualified()' in line)]
+                    if 'if (' in line and ('!available()' in line or '!input_layout_qualified(' in line)]
         if len(refusals) != 2:
             raise AssertionError(f'production refusal branches not found: {label}')
-        methods += '\nvoid ' + label + '(Client& c) {\n' + '\n'.join(refusals) + '\n}'
+        setup = ('const auto requested_cap = capabilities; const auto route = c.route;\n'
+                 if label == 'target_refusal' else 'const auto cap = capabilities;\n')
+        methods += '\nvoid ' + label + '(Client& c) {\n' + setup + '\n'.join(refusals) + '\n}'
     return (ROOT / 'tests/desktop_fault_policy_fixture.cpp').read_text().replace(
         '// PRODUCTION_METHODS', methods)
 

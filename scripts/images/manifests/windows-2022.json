@@ -1,0 +1,87 @@
+{
+  "_doc": "Claims of ghcr.io/trycua/windows:2022 / 2022-disk, built by libs/images/windows-2022/build-image.sh (the published Windows workspace plus cua-spacesd). The build bakes these, plus its cua-spacesd build-info, into C:\\ProgramData\\cua-image\\manifest.json; `cua-spacesd doctor` in the guest checks them (scripts/images/image-doctor-windows.sh). Keep in step with the image.",
+  "schema_version": 1,
+  "name": "windows-2022",
+  "os": "windows",
+  "variant": "containerdisk",
+  "init": "scm",
+  "arch": "amd64",
+  "annotations": {
+    "ai.cua.image.os": "windows",
+    "ai.cua.spacesd": "true",
+    "ai.cua.env-driver": "true",
+    "ai.cua.image.variant": "containerdisk"
+  },
+  "spacesd": {
+    "present": true,
+    "source": "build",
+    "path": "C:\\Program Files\\Cua\\spacesd\\cua-spacesd.exe"
+  },
+  "features_required": [
+    "pty",
+    "fs_watch",
+    "tunnel.forward",
+    "driver",
+    "a11y",
+    "background_input",
+    "desktop_stream",
+    "window_stream",
+    "h264_sw",
+    "quic_media",
+    "windows",
+    "launch_app",
+    "presence",
+    "presence.cursor_shape"
+  ],
+  "features_optional": [
+    "hotspot",
+    "relay_attach",
+    "teleport.*",
+    "audio.desktop",
+    "audio.opus",
+    "volume.mount"
+  ],
+  "feature_attributes": {
+    "presence.cursor_shape": {
+      "hit_test": "uia",
+      "system": "getcursorinfo",
+      "probe": "setcursorpos"
+    }
+  },
+  "codecs_required": [
+    "openh264"
+  ],
+  "services": [
+    {
+      "name": "env",
+      "port": 3211,
+      "protocol": "grpc",
+      "component": "cua-spacesd",
+      "readiness": "tcp"
+    },
+    {
+      "name": "env-media",
+      "port": 3212,
+      "protocol": "udp",
+      "component": "cua-spacesd"
+    }
+  ],
+  "display": {
+    "resolution": "1280x800",
+    "user": "Docker"
+  },
+  "fixtures": {
+    "root": "C:\\ProgramData\\cua-image\\fixtures",
+    "apps": [
+      "grid",
+      "form"
+    ]
+  },
+  "resources": {
+    "min_disk_gib": 5,
+    "min_shm_mib": 0,
+    "min_memory_mib": 2048
+  },
+  "tz": "",
+  "locale": ""
+}

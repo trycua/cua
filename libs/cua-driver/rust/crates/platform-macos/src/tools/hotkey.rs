@@ -76,9 +76,7 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "description": "Target window. Required for delivery_mode:\"foreground\" (the NSMenu activation needs a window). Does NOT itself raise the window — raising is gated on delivery_mode."
                 },
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "Use desktop with no pid/window_id to send the chord to the frontmost application." },
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
@@ -95,7 +93,17 @@ fn def() -> &'static ToolDef {
 fn is_modifier(k: &str) -> bool {
     matches!(
         k.to_lowercase().as_str(),
-        "cmd" | "command" | "shift" | "option" | "alt" | "ctrl" | "control" | "fn"
+        "cmd"
+            | "command"
+            | "super"
+            | "meta"
+            | "win"
+            | "shift"
+            | "option"
+            | "alt"
+            | "ctrl"
+            | "control"
+            | "fn"
     )
 }
 
@@ -228,17 +236,8 @@ impl Tool for HotkeyTool {
         // Use the last non-modifier key; if there are multiple, treat earlier ones as extra keys.
         let key = non_modifiers.last().unwrap().clone();
         let key_display = raw_keys.join("+");
-        let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "hotkey",
-        ) {
+        let resolved = match self.state.snapshots.resolve(pid, &args) {
             Ok(resolved) => resolved,
             Err(error) => return error,
         };
@@ -257,7 +256,7 @@ impl Tool for HotkeyTool {
         let py = args.get("y").and_then(|value| value.as_f64());
         if px.is_some() && py.is_some() && element_index.is_some() {
             return ToolResult::error(
-                "Pass either element_index (ax) or x,y (px) to hotkey, not both.",
+                "Pass either element_token (ax) or x,y (px) to hotkey, not both.",
             );
         }
 
@@ -378,6 +377,30 @@ impl Tool for HotkeyTool {
             }
         };
 
+        // A focus click already moved the cursor. Otherwise place a named
+        // session's cursor on the element, its remembered position, or the
+        // window centre, so a keyboard-first session stays visible.
+        if !coordinate_focus {
+            let element_center = match element_guard.clone() {
+                Some(guard) => tokio::task::spawn_blocking(move || unsafe {
+                    crate::ax::bindings::element_screen_center(
+                        guard.as_ptr() as crate::ax::bindings::AXUIElementRef
+                    )
+                })
+                .await
+                .ok()
+                .flatten(),
+                None => None,
+            };
+            super::cursor_tools::position_keyboard_cursor(
+                &self.state,
+                &args,
+                window_id,
+                element_center,
+            )
+            .await;
+        }
+
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // Hotkeys like Cmd+N, Cmd+W, Cmd+T explicitly open/close
         // windows. The NSMenu path also briefly activates the target via
@@ -467,7 +490,7 @@ impl Tool for HotkeyTool {
         )
         .await;
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
+        let changes = super::finish_window_observation(snapshot).await;
 
         match result {
             Ok(Ok(())) => {
@@ -514,9 +537,7 @@ mod tests {
         let properties = def().input_schema["properties"]
             .as_object()
             .expect("hotkey properties");
-        for field in ["element_index", "element_token", "snapshot_id"] {
-            assert!(properties.contains_key(field), "missing {field} schema");
-        }
+        assert!(properties.contains_key("element_token"));
     }
 
     #[test]

@@ -1,0 +1,119 @@
+name: "Docs: nightly host lanes"
+
+# Docs code blocks that need a real host of their kind run here, nightly and
+# alert-only (a failure opens or updates one issue). The pull-request lanes
+# (lint, cli-shape, config, docs, container) run in ci-check-docs-links.yml and
+# e2e-cua-sdk.yml; the live Fleet and QEMU lanes, docs blocks included, run
+# in e2e-cua-sdk.yml's nightly job.
+#
+#   windows   PowerShell blocks tagged test="windows" on windows-latest
+#   lume      bash blocks tagged test="lume" on macos-latest (installer and
+#             read-only commands; no VM is booted)
+#   lume-vm   the e2e lume lane (boots the arm64 reference disk) on a
+#             self-hosted Mac with nested virtualization, when
+#             vars.CUA_E2E_LUME_RUNNER names its runner label
+#
+# These lanes install software. They run only on disposable CI machines
+# (shell_lane.py refuses to run outside CI).
+
+on:
+  schedule:
+    - cron: "41 8 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/docs-nightly.yml"
+      - "tests/e2e/cua-sdk/docs/shell_lane.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  windows:
+    name: windows (PowerShell blocks)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Run the windows lane
+        shell: pwsh
+        env:
+          CUA_E2E_RESULTS: ${{ runner.temp }}/docs-windows
+        run: python tests/e2e/cua-sdk/docs/shell_lane.py --lane windows --first cua-driver/guides/operate.mdx
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: docs-windows
+          path: ${{ runner.temp }}/docs-windows
+
+  lume:
+    name: lume (macOS shell blocks)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Run the lume lane
+        env:
+          CUA_E2E_RESULTS: ${{ runner.temp }}/docs-lume
+        run: python3 tests/e2e/cua-sdk/docs/shell_lane.py --lane lume --first lume/quickstart.mdx
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: docs-lume
+          path: ${{ runner.temp }}/docs-lume
+
+  lume-vm:
+    name: lume VM lane (self-hosted)
+    if: vars.CUA_E2E_LUME_RUNNER != '' && github.event_name != 'pull_request'
+    runs-on: ["self-hosted", "macOS", "${{ vars.CUA_E2E_LUME_RUNNER }}"]
+    timeout-minutes: 120
+    env:
+      CUA_E2E_RUN: gh${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Build the SDK and fixtures
+        run: tests/e2e/cua-sdk/ci-setup.sh
+      - name: Run the e2e lume lane
+        run: python3 tests/e2e/cua-sdk/run.py --lanes lume --langs rust --strict --out "$RUNNER_TEMP/cua-e2e-lume"
+      - name: Matrix summary
+        if: always()
+        run: cat "$RUNNER_TEMP/cua-e2e-lume/matrix.md" >>"$GITHUB_STEP_SUMMARY" || true
+
+  report:
+    name: open or update the nightly issue
+    needs: [windows, lume, lume-vm]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title='Docs nightly host lanes are failing'
+          body="A docs block failed in the nightly host lanes: $RUN_URL"
+          issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "$title in:title" --json number --jq '.[0].number // empty')
+          if [[ -n "$issue" ]]; then
+            gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi

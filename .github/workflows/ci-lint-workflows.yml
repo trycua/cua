@@ -1,0 +1,44 @@
+name: "CI: Lint workflows"
+
+# A workflow that references a context it is not allowed to reference does not
+# fail loudly at the offending step -- GitHub rejects the whole file at parse
+# time, before any job exists. The run shows up as a zero-second failure with no
+# jobs, no log, and no annotation reachable from the API. `cd-macos-golden.yml`
+# sat in that state through fifteen pushes because of a single
+# `if: ${{ secrets.APPLE_ID != '' }}` in a step (`secrets` is legal in a job
+# `if:` expression's cousins but not there). actionlint reports it in
+# milliseconds. Run it on every change to the workflow directory so the next one
+# is caught in review instead of in a dead run.
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - ".github/actionlint.yaml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - ".github/actionlint.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        run: |
+          set -euo pipefail
+          VERSION=1.7.12
+          curl -fsSL -o actionlint.tgz \
+            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
+          tar xzf actionlint.tgz actionlint
+          # shellcheck findings inside `run:` blocks are advisory here; the
+          # expression/context errors that kill a workflow outright are not.
+          ./actionlint -shellcheck= -pyflakes=

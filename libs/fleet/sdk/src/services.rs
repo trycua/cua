@@ -1,9 +1,11 @@
 use crate::{
-    HttpHeader, HttpRequest, HttpResponse, Sandbox, SdkError,
+    HttpHeader, HttpRequest, HttpResponse, Sandbox, SdkError, ServiceStreamTarget,
     client::CyclopsClient,
-    routes::{service_url, validate_dns_label_for},
+    routes::{service_url, service_websocket_url, validate_dns_label_for},
 };
 use std::{collections::HashSet, sync::Arc};
+
+const AUTH_HEADER_NAME: &str = "authorization";
 
 #[uniffi::export]
 impl CyclopsClient {
@@ -19,13 +21,50 @@ impl CyclopsClient {
         let request = HttpRequest {
             method: request.method,
             url: url.to_string(),
-            headers: filtered_headers(request.headers),
+            headers: fleet_headers(filtered_headers(request.headers), &sandbox.claim),
             body: request.body,
             timeout_secs: request.timeout_secs,
             max_response_bytes: request.max_response_bytes,
         };
         self.execute_authenticated_service(request).await
     }
+
+    /// Where a native client opens its own WebSocket to a sandbox service:
+    /// the gateway's `/api/svc` proxy forwards the HTTP upgrade, so the
+    /// returned `ws(s)://` URL plus the returned bearer header are all a
+    /// Rust or Swift caller needs to dial the socket directly.
+    /// `service_request` stays the path for unary requests.
+    pub async fn service_websocket_url(
+        self: Arc<Self>,
+        sandbox: Sandbox,
+        service: String,
+        path: String,
+    ) -> Result<ServiceStreamTarget, SdkError> {
+        let service_name = resolve_service_name(&sandbox, &service)?;
+        let url = service_websocket_url(self.base_url(), &sandbox.namespace, &service_name, &path)?;
+        let token = self.bearer_token(false).await?;
+        Ok(ServiceStreamTarget {
+            url: url.into(),
+            auth_header_name: AUTH_HEADER_NAME.into(),
+            auth_header_value: format!("Bearer {token}"),
+        })
+    }
+}
+
+fn fleet_headers(mut headers: Vec<HttpHeader>, claim: &str) -> Vec<HttpHeader> {
+    // Correlation is the exact claim returned in Sandbox; it is never inferred.
+    if !claim.is_empty()
+        && claim.len() <= 128
+        && claim
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._~-".contains(&b))
+    {
+        headers.push(HttpHeader {
+            name: "X-Cua-Fleet-Claim".into(),
+            value: claim.into(),
+        });
+    }
+    headers
 }
 
 pub(crate) fn resolve_service_name(sandbox: &Sandbox, service: &str) -> Result<String, SdkError> {
@@ -86,7 +125,91 @@ fn filtered_headers(headers: Vec<HttpHeader>) -> Vec<HttpHeader> {
 #[cfg(test)]
 mod tests {
     use super::filtered_headers;
-    use crate::HttpHeader;
+    use crate::{
+        CyclopsClient, CyclopsTokenProviderConfiguration, HttpClient, HttpError, HttpHeader,
+        HttpRequest, HttpResponse, Sandbox, SdkError,
+    };
+    use std::sync::Arc;
+
+    struct NoNetworkHttpClient;
+
+    #[async_trait::async_trait]
+    impl HttpClient for NoNetworkHttpClient {
+        async fn execute(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
+            Err(HttpError::Transport {
+                reason: format!("unexpected network request to {}", request.url),
+            })
+        }
+    }
+
+    fn client() -> Arc<CyclopsClient> {
+        CyclopsClient::connect_with_access_token(
+            CyclopsTokenProviderConfiguration {
+                base_url: "https://cyclops.example".into(),
+                pool_poll_interval_ms: 1,
+                pool_poll_limit: 1,
+                claim_poll_interval_ms: 1,
+                claim_poll_limit: 1,
+            },
+            "test-token".into(),
+            Arc::new(NoNetworkHttpClient),
+        )
+        .unwrap()
+    }
+
+    fn sandbox() -> Sandbox {
+        Sandbox {
+            namespace: "example-pool".into(),
+            claim: "claim-example".into(),
+            name: "sandbox-1".into(),
+            services: vec!["vnc".into(), "rcdp".into()],
+        }
+    }
+
+    #[tokio::test]
+    async fn websocket_target_carries_wss_url_and_bearer_header() {
+        let target = client()
+            .service_websocket_url(sandbox(), "vnc".into(), "/websockify".into())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            target.url,
+            "wss://cyclops.example/api/svc/example-pool/sandbox-1-vnc/websockify"
+        );
+        assert_eq!(target.auth_header_name, "authorization");
+        assert_eq!(target.auth_header_value, "Bearer test-token");
+    }
+
+    #[tokio::test]
+    async fn websocket_target_rejects_unknown_services() {
+        let error = client()
+            .service_websocket_url(sandbox(), "missing".into(), "/".into())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            SdkError::UnknownService { requested, available }
+                if requested == "missing" && available == ["rcdp", "vnc"]
+        ));
+    }
+
+    #[tokio::test]
+    async fn websocket_target_rejects_traversal_paths() {
+        let error = client()
+            .service_websocket_url(sandbox(), "vnc".into(), "/../admin".into())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, SdkError::InvalidServicePath { .. }));
+    }
+
+    #[tokio::test]
+    async fn access_token_returns_static_bearer_even_when_forced() {
+        assert_eq!(client().access_token(false).await.unwrap(), "test-token");
+        assert_eq!(client().access_token(true).await.unwrap(), "test-token");
+    }
 
     #[test]
     fn removes_connection_nominated_headers_case_insensitively() {

@@ -5,6 +5,7 @@
 //! - Lines are sorted alphabetically by tool name (matches Swift's sort).
 //! - All expected core tools are present.
 
+#[cfg(target_os = "windows")]
 use std::process::Command;
 
 #[cfg(target_os = "windows")]

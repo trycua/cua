@@ -1,0 +1,92 @@
+[package]
+name = "cua-cli"
+description = "The `cua` command: auth, sandboxes, one-shot computer actions, MCP, skills, trajectories, spacesd debugging, the cua daemon, local runtimes and images; the extension point for the Cua Spaces commands."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "cua"
+path = "src/main.rs"
+
+[features]
+default = []
+# Contrib sandbox providers (`--on e2b`, `--on daytona`, `--on modal`),
+# off by default: `contrib` for every one, `contrib-<name>` for one.
+contrib = ["cua-sdk/contrib", "cua-daemon/contrib"]
+contrib-e2b = ["cua-sdk/contrib-e2b", "cua-daemon/contrib-e2b"]
+contrib-daytona = ["cua-sdk/contrib-daytona", "cua-daemon/contrib-daytona"]
+contrib-modal = ["cua-sdk/contrib-modal", "cua-daemon/contrib-modal"]
+
+[dependencies]
+cua-home.workspace = true
+cua-sdk = { workspace = true, features = ["local", "spaces", "media", "byoc"] }
+# `cua auth provider ...`: the contrib catalog and credential store (no
+# provider is compiled in unless a `contrib` feature is on).
+cua-contrib.workspace = true
+cua-daemon = { workspace = true, features = ["server", "client", "byoc"] }
+cua-spacesd-client.workspace = true
+# `cua doctor`: resolve the image under test (registry facts).
+cua-image.workspace = true
+# `cua cache`: disk accounting, cleanup and the orphan reaper.
+cua-disk.workspace = true
+cua-vmm = { path = "../cua-vmm" }
+cua-sandbox-core.workspace = true
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+pbjson-types.workspace = true
+cua-fleet.workspace = true
+humantime.workspace = true
+# `cua host …` (unattended access) and `cua spaces ls` (registry + relay machines).
+cua-host.workspace = true
+# Anonymous usage telemetry (`cua telemetry`, the first-run notice).
+cua-telemetry.workspace = true
+async-trait.workspace = true
+cua-proto = { workspace = true, features = ["client", "serde"] }
+cua-spaces = { path = "../cua-spaces", default-features = false, features = ["mcp"] }
+clap.workspace = true
+tokio = { workspace = true }
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+rand.workspace = true
+sha2.workspace = true
+# Sign-in and the credential store shared with the SDK, daemon and apps.
+cua-auth.workspace = true
+# `cua agents ...` and the onboarding after `cua auth login`.
+cua-agent-setup.workspace = true
+url.workspace = true
+axum.workspace = true
+tracing-subscriber.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+flate2 = "1"
+crc32fast = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+
+[dev-dependencies]
+# `stream-probe` input batches checked against the protocol's own type.
+# Fake computer-server / OSWorld endpoints for the doctor shim tests.
+axum.workspace = true
+cua-host = { workspace = true, features = ["testing"] }
+cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+cua-fleet = { workspace = true, features = ["testing"] }
+cua-sandbox-core = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+# Drives the interactive onboarding prompts through a real PTY.
+portable-pty = "0.9"

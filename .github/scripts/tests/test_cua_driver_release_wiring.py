@@ -261,7 +261,7 @@ fi
         self.assertIn("missing from Screen & System Audio Recording", cli)
         self.assertIn("add {app_path}", cli)
 
-        limits = self.read("docs/content/docs/reference/cua-driver/limits.mdx")
+        limits = self.read("docs/content/docs/cua-driver/guides/troubleshoot.mdx")
         self.assertIn("without this grant it returns the tree only (no PNG)", limits)
 
     def test_release_please_owns_driver_and_lume(self) -> None:
@@ -276,6 +276,12 @@ fi
         self.assertIn("validate_release_please_tags.py --target HEAD", workflow)
         self.assertIn('-p cua-driver --precise "$DRIVER_VERSION"', workflow)
         self.assertIn(
+            '--head "release-please--branches--main--components--$component"',
+            workflow,
+        )
+        self.assertIn("jq -r '.packages[].component' release-please-config.json", workflow)
+        self.assertNotIn('--search "head:release-please--branches--"', workflow)
+        self.assertNotIn(
             "gh pr list --state open --base main --limit 100 --json number",
             workflow,
         )
@@ -296,6 +302,11 @@ fi
         )
         self.assertIn("sync_lume_release_docs.py", workflow)
         self.assertIn("chore(lume): synchronize release documentation", workflow)
+        self.assertIn(
+            "npx --yes pnpm@9.0.4 --dir docs install --frozen-lockfile --ignore-scripts",
+            workflow,
+        )
+        self.assertIn("runner.ts --library sandbox", workflow)
         self.assertNotIn("if: steps.release.outputs.prs_created == 'true'", workflow)
         self.assertNotIn("RELEASE_PRS: ${{ steps.release.outputs.prs }}", workflow)
 
@@ -332,12 +343,32 @@ fi
         self.assertIn("labeled, unlabeled", workflow)
 
     def test_agent_and_human_guidance_explain_the_release_title_contract(self) -> None:
-        for path in ("AGENTS.md", "CONTRIBUTING.md"):
-            guide = self.read(path)
-            self.assertIn("fix(cua-driver):", guide, path)
-            self.assertIn("feat(lume):", guide, path)
-            self.assertIn("no-release", guide, path)
-            self.assertIn("squash", guide, path)
+        """The release-title contract must be documented, and reachable from AGENTS.md.
+
+        CONTRIBUTING.md is the canonical copy. This used to require both files to
+        restate the literals, which made #3927 ("deduplicate repository agent
+        guidance") turn every subsequent pull request red: that commit removed the
+        restatement from AGENTS.md on purpose and replaced it with a link, so the
+        assertion failed on `main` itself and, because CI tests the merge result,
+        on every branch merged into it.
+
+        Restoring the literals to AGENTS.md would undo the deduplication and bring
+        back the two-copies-that-drift problem it was written to fix. So assert what
+        actually matters: the contract exists in the canonical document, and an
+        agent reading AGENTS.md is pointed at it.
+        """
+        contributing = self.read("CONTRIBUTING.md")
+        for token in ("fix(cua-driver):", "feat(lume):", "no-release", "squash"):
+            self.assertIn(token, contributing, "CONTRIBUTING.md")
+
+        # Either AGENTS.md carries the contract itself or it links to the file
+        # that does -- both satisfy "an agent can find the rules from here".
+        agents = self.read("AGENTS.md")
+        self.assertIn(
+            "CONTRIBUTING.md",
+            agents,
+            "AGENTS.md must reach the release-title contract, by link or restatement",
+        )
 
     def test_legacy_release_routes_exclude_driver_and_lume(self) -> None:
         workflow = self.read(".github/workflows/release-bump-version.yml")
@@ -414,12 +445,56 @@ fi
         self.assertIn('"path": "python/pyproject.toml"', config)
         self.assertIn('"path": "python/src/cua_driver/__init__.py"', config)
         self.assertIn('"path": "typescript/package.json"', config)
+        driver_files = json.loads(config)["packages"]["libs/cua-driver"]["extra-files"]
         self.assertEqual(
-            config.count('"path": "typescript/package-lock.json"'), 2
+            [entry["path"] for entry in driver_files].count("typescript/package-lock.json"), 2
         )
         self.assertNotIn('"path": "scripts/_install-rust.sh"', config)
         self.assertNotIn('"path": "scripts/install.ps1"', config)
         self.assertIn('"path": "rust/Skills/cua-driver/SKILL.md"', config)
+
+    def test_release_please_bumps_the_spacesd_lockfiles(self) -> None:
+        """cua-spacesd and its e2e workspaces lock the driver and spacesd
+        crates by path: each release PR must bump them there too, or every
+        --locked build of those workspaces fails until they are re-locked."""
+        import tomllib
+
+        packages = json.loads(self.read("release-please-config.json"))["packages"]
+        workspaces = {
+            "libs/cua-driver": REPO_ROOT / "libs/cua-driver/rust",
+            "libs/cua-spacesd": REPO_ROOT / "libs/cua-spacesd/crates",
+        }
+        lockfiles = [
+            "libs/cua-spacesd/Cargo.lock",
+            "libs/cua-spacesd/tests/spaces-e2e/Cargo.lock",
+            "libs/cua-spacesd/tests/teleport-e2e/Cargo.lock",
+        ]
+        for package, root in workspaces.items():
+            crates = set()
+            for manifest in root.rglob("Cargo.toml"):
+                if "target" in manifest.parts:
+                    continue
+                crate = tomllib.loads(manifest.read_text()).get("package", {})
+                if crate.get("version") == {"workspace": True}:
+                    crates.add(crate["name"])
+            entries = {
+                (entry["path"], entry.get("jsonpath"))
+                for entry in packages[package]["extra-files"]
+                if isinstance(entry, dict)
+            }
+            for lockfile in lockfiles:
+                locked = tomllib.loads(self.read(lockfile))["package"]
+                for crate in locked:
+                    if "source" in crate or crate["name"] not in crates:
+                        continue
+                    with self.subTest(package=package, lockfile=lockfile, crate=crate["name"]):
+                        self.assertIn(
+                            (
+                                f"/{lockfile}",
+                                f"$.package[?(@.name.value=='{crate['name']}')].version",
+                            ),
+                            entries,
+                        )
 
     def test_driver_installer_version_advances_only_after_publication(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
@@ -445,8 +520,9 @@ fi
         verify_public = workflow.index(
             "- name: Verify the release and every staged asset are public", publish
         )
+        bake_job = workflow.index("  advance-installer-version:", verify_public)
         app_token = workflow.index(
-            "- name: Generate post-publication GitHub App token", verify_public
+            "- name: Generate post-publication GitHub App token", bake_job
         )
         advance = workflow.index(
             "- name: Advance public installer version on main", app_token
@@ -458,7 +534,8 @@ fi
         self.assertLess(staged_shell, staged_powershell)
         self.assertLess(staged_powershell, publish)
         self.assertLess(publish, verify_public)
-        self.assertLess(verify_public, app_token)
+        self.assertLess(verify_public, bake_job)
+        self.assertLess(bake_job, app_token)
         self.assertLess(app_token, advance)
         self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
         self.assertIn("path: release-control", workflow)
@@ -665,14 +742,14 @@ fi
         self.assertIn("https://cua.ai/driver/install.ps1", windows_skill)
         self.assertNotIn("/releases/latest/download/install.ps1", windows_skill)
 
-    def test_driver_cd_can_recover_an_existing_tag_with_cross_targets(self) -> None:
+    def test_driver_cd_builds_the_exact_tag_with_cross_targets(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
 
-        immutable_ref = (
-            "github.event_name == 'workflow_dispatch' && inputs.publish && "
-            "format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref"
-        )
-        self.assertEqual(workflow.count(immutable_ref), 7)
+        # Every candidate build checks out the tag (or the nightly source ref);
+        # there is no dispatch path that retargets an older tag for publication.
+        self.assertEqual(workflow.count("ref: ${{ inputs.source_ref || github.ref }}"), 6)
+        self.assertNotIn("inputs.publish", workflow)
+        self.assertNotIn("format('refs/tags/cua-driver-rs-v{0}', inputs.version)", workflow)
         self.assertIn(
             "name: Ensure Rust target is installed\n"
             "        working-directory: libs/cua-driver/rust",
@@ -684,7 +761,6 @@ fi
             "            aarch64-apple-darwin x86_64-apple-darwin",
             workflow,
         )
-        self.assertIn("inputs.publish == true", workflow)
         self.assertIn('--tag "${{ steps.version.outputs.tag }}"', workflow)
         self.assertIn('--sha "${{ steps.version.outputs.sha }}"', workflow)
 
@@ -718,10 +794,18 @@ fi
         ):
             self.assertIn("needs: release-attribution-preflight", block)
 
-        # Keep the publication-time guard as defense in depth.
+        # Keep the publication-time guard as defense in depth, and run it with
+        # the same release-control tooling as the preflight so both agree.
         self.assertEqual(
-            workflow.count("python3 .github/scripts/release_attribution.py collect"),
-            1,
+            workflow.count(
+                "python3 release-control/.github/scripts/release_attribution.py collect"
+            ),
+            2,
+        )
+        self.assertNotIn("python3 .github/scripts/release_attribution.py", workflow)
+        self.assertEqual(
+            workflow.count("--release-metadata-path libs/cua-driver/rust/CHANGELOG.md"),
+            2,
         )
 
     def test_driver_windows_release_signs_every_pe_binary_before_packaging(self) -> None:
@@ -772,16 +856,71 @@ fi
         self.assertIn("  id-token: write\n", workflow)
         self.assertIn("uses: ./.github/workflows/cd-rust-cua-driver.yml", workflow)
 
-    def test_driver_tag_build_cannot_publish_before_manual_e2e_gate(self) -> None:
+    def test_driver_tag_push_publishes_only_after_automatic_e2e_gate(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
-        self.assertIn(
-            "if: github.event_name == 'workflow_dispatch' && inputs.publish == true",
-            workflow,
+        tag_push = (
+            "github.event_name == 'push' && "
+            "startsWith(github.ref, 'refs/tags/cua-driver-rs-v')"
         )
-        self.assertNotIn(
-            "if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.publish == true",
-            workflow,
-        )
+
+        # No manual publish input or dispatch path exists.
+        dispatch = workflow.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertNotIn("publish:", dispatch)
+        self.assertNotIn("inputs.publish", workflow)
+        self.assertNotIn("publish recovery", workflow.lower())
+
+        # The Release Please tag push calls every canonical hosted E2E suite
+        # against the exact tag SHA, after the attribution preflight. Nightly
+        # builds call the same suites against their exact source_ref.
+        gate_sha = "${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}"
+        gates = {
+            "e2e-linux": ("e2e-rust-linux.yml", f"ref: {gate_sha}"),
+            "e2e-windows": ("e2e-rust-windows.yml", f"ref: {gate_sha}"),
+            "e2e-macos": ("e2e-rust-macos.yml", f"source_sha: {gate_sha}"),
+            "e2e-standalone-browsers": (
+                "e2e-rust-standalone-browsers.yml",
+                f"ref: {gate_sha}",
+            ),
+        }
+        for job, (called, sha_input) in gates.items():
+            block = workflow.split(f"\n  {job}:\n", 1)[1].split("\n\n", 1)[0]
+            self.assertIn("    needs: release-attribution-preflight\n", block)
+            self.assertIn(f"    if: ({tag_push}) || inputs.channel == 'nightly'\n", block)
+            self.assertIn(f"    uses: ./.github/workflows/{called}\n", block)
+            self.assertIn(sha_input, block)
+            self.assertIn("      actions: read\n", block)
+            self.assertNotIn("secrets", block)
+            called_workflow = self.read(f".github/workflows/{called}")
+            trigger = called_workflow.split("\npermissions:", 1)[0]
+            self.assertIn("  workflow_call:\n", trigger)
+            self.assertIn("  workflow_dispatch:\n", trigger)
+
+        # The release job runs on that same tag push only after every build,
+        # release check, and E2E gate succeeds (no always() bypass).
+        release = workflow.split("\n  release:\n", 1)[1]
+        needs, steps = release.split("    steps:\n", 1)
+        for job in (
+            "build-linux",
+            "build-windows",
+            "build-macos-universal",
+            "verify-windows-node-runtime",
+            "verify-release-artifacts",
+            "verify-mcp-client-discovery",
+            "build-hyprland-plugin-source",
+            *gates,
+        ):
+            self.assertIn(f"      - {job}\n", needs)
+        self.assertIn(f"    if: {tag_push}\n", needs)
+        self.assertNotIn("always()", needs)
+        self.assertIn("ref: ${{ github.ref }}", steps)
+        self.assertIn('if [[ "$SHA" != "$GITHUB_SHA" ]]; then', steps)
+
+        # E2E evidence shares the run, so release-bound downloads are scoped.
+        self.assertIn('pattern: "{cua-driver-rs-*,cua-hyprland-plugin-source}"', steps)
+        verify = workflow.split("\n  verify-release-artifacts:\n", 1)[1].split(
+            "\n  verify-mcp-client-discovery:\n", 1
+        )[0]
+        self.assertIn("pattern: cua-driver-rs-*", verify)
 
         linux = self.read(".github/workflows/e2e-rust-linux.yml")
         self.assertIn('name: "Linux / install-local.sh smoke"', linux)
@@ -790,6 +929,7 @@ fi
 
         windows = self.read(".github/workflows/e2e-rust-windows.yml")
         self.assertIn('name: "Windows / installer and update smoke"', windows)
+        self.assertIn("update-apply-windows-e2e.ps1", windows)
         self.assertIn("install-local.ps1 -NoAutoStart -NoPathUpdate", windows)
         self.assertIn('CUA_DRIVER_LOCAL_HOME = Join-Path $env:RUNNER_TEMP', windows)
 
@@ -811,11 +951,46 @@ fi
         self.assertIn("verify_cua_driver_release_archives.py", workflow)
         self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
         self.assertIn(
-            "[build-linux, build-windows, build-macos-universal, "
-            "verify-windows-node-runtime, "
-            "verify-release-artifacts, verify-mcp-client-discovery, build-hyprland-plugin-source]",
+            "    needs:\n"
+            "      - build-linux\n"
+            "      - build-windows\n"
+            "      - build-macos-universal\n"
+            "      - verify-windows-node-runtime\n"
+            "      - verify-release-artifacts\n"
+            "      - verify-mcp-client-discovery\n"
+            "      - build-hyprland-plugin-source\n"
+            "      - verify-macos-release-signatures\n"
+            "      - verify-windows-release-signatures\n"
+            "      - e2e-linux\n",
             workflow,
         )
+
+    def test_full_archive_packaging_requires_repository_license(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+        self.assertTrue((REPO_ROOT / "LICENSE.md").is_file())
+
+        job_boundaries = (
+            ("build-linux", "build-windows"),
+            ("build-windows", "verify-windows-node-runtime"),
+            ("build-macos-universal", "build-hyprland-plugin-source"),
+        )
+        expected_copies = (
+            'cp ../../../LICENSE.md "release/${STAGE}/LICENSE"',
+            'Copy-Item "../../../LICENSE.md" "release/$stage/LICENSE" -ErrorAction Stop',
+            'cp ../../../LICENSE.md "release/${STAGE}/LICENSE"',
+        )
+        for (job, next_job), expected_copy in zip(job_boundaries, expected_copies):
+            with self.subTest(job=job):
+                job_block = workflow.split(f"  {job}:\n", 1)[1].split(
+                    f"\n  {next_job}:\n", 1
+                )[0]
+                package_block = job_block.split("      - name: Package\n", 1)[1].split(
+                    "\n      - uses: actions/upload-artifact", 1
+                )[0]
+                self.assertIn(expected_copy, package_block)
+                self.assertNotIn("2>/dev/null", package_block)
+                self.assertNotIn("|| true", package_block)
+                self.assertNotIn("Test-Path", package_block)
 
     def test_driver_release_blocks_on_packaged_mcp_client_discovery(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
@@ -867,10 +1042,10 @@ fi
         self.assertEqual(
             len(expected["baseTools"]), len(set(expected["baseTools"]))
         )
-        self.assertEqual(len(expected["baseTools"]), 56)
+        self.assertEqual(len(expected["baseTools"]), 59)
         self.assertEqual(
             expected["outputSchemaCountByPlatform"],
-            {"darwin": 34, "linux": 38, "win32": 34},
+            {"darwin": 35, "linux": 39, "win32": 35},
         )
         self.assertEqual(
             expected["platformTools"],
@@ -895,7 +1070,9 @@ fi
         self.assertIn("workflow_call:\n", workflow)
         self.assertIn("Installer compatibility summary", workflow)
         self.assertIn("ubuntu-latest, macos-26, windows-latest", workflow)
-        self.assertIn("repos/$GITHUB_REPOSITORY/releases?per_page=100", workflow)
+        # Versions come from the repository the installers download from.
+        self.assertIn("RELEASE_REPOSITORY: trycua/cua", workflow)
+        self.assertIn("repos/$RELEASE_REPOSITORY/releases?per_page=100", workflow)
         self.assertIn("libs/cua-driver/scripts/install.sh", workflow)
         self.assertIn("libs/cua-driver/scripts/install.ps1", workflow)
         self.assertIn("-NoAutoStart", workflow)
@@ -920,6 +1097,19 @@ fi
             'if [[ "$INSTALLER_CERTIFICATION_RESULT" != "success" ]]',
             release_metadata,
         )
+
+    def test_installer_compatibility_never_cancels_a_superseded_caller(
+        self,
+    ) -> None:
+        # A cancelled call fails the caller's required `validate` check, and
+        # a failed duplicate on the same head commit blocks the merge.
+        for path in (
+            ".github/workflows/ci-cua-driver-installer-compat.yml",
+            ".github/workflows/ci-release-metadata.yml",
+        ):
+            workflow = self.read(path)
+            self.assertNotIn("\nconcurrency:", workflow, path)
+            self.assertNotIn("cancel-in-progress: true", workflow, path)
 
     def test_lume_uses_the_same_draft_finalizer(self) -> None:
         workflow = self.read(".github/workflows/cd-swift-lume.yml")

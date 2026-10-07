@@ -41,6 +41,17 @@ fn channel_cli_persists_and_reports_the_selected_channel() {
     );
     let status: serde_json::Value = serde_json::from_slice(&status.stdout).expect("status json");
     assert_eq!(status["selected_channel"], "nightly");
+
+    let restored = run(home.path(), &["channel", "set", "stable", "--json"]);
+    assert!(
+        restored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&restored.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.path().join("release-channel")).expect("saved preference"),
+        "stable\n"
+    );
 }
 
 #[test]
@@ -214,9 +225,21 @@ mod pacman {
         );
         let state: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(state["selected_channel"], "stable");
+        // A young cache written by this exact build is honoured; the cache is
+        // bound to the build that wrote it, so seed it as such.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         std::fs::write(
             root.path().join(".cua-driver/version_check.json"),
-            r#"{"latest_version":"999.0.0","channel":"stable","last_checked_unix":9999999999}"#,
+            serde_json::json!({
+                "latest_version": "999.0.0",
+                "channel": "stable",
+                "last_checked_unix": now,
+                "checked_by_version": env!("CARGO_PKG_VERSION"),
+            })
+            .to_string(),
         )
         .unwrap();
         let output = command(&executable, root.path(), &["check-update", "--json"]);

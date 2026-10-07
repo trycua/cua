@@ -137,8 +137,18 @@ case "${1:-help}" in
   export-docs)
     export_docs
     ;;
+  motion-lab)
+    # Pure JS, no renderer assets needed.
+    require python3
+    echo "cursor-gallery: motion lab at http://127.0.0.1:$PORT/motion-lab/"
+    exec python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$GALLERY_DIR"
+    ;;
+  motion-test)
+    require node
+    exec node --test "$GALLERY_DIR/motion-lab/test/"
+    ;;
   *)
-    echo "usage: $0 {assets|serve|export-docs}" >&2
+    echo "usage: $0 {assets|serve|export-docs|motion-lab|motion-test}" >&2
     exit 2
     ;;
 esac

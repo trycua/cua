@@ -1,15 +1,48 @@
 //! Pure `tools/list` schema-shape assertions.
 //!
-//! These never invoke a tool — they only inspect the advertised inputSchemas:
-//! that every tool keeps its top-level schema provider-compatible, that
-//! `type_text_chars` is hidden, the `list_windows.on_screen_only` knob, the
-//! `set_agent_cursor_motion` Bezier knobs, delivery and scope enums, and the
-//! `set_config.capture_mode` enum and the per-session capture-scope contract.
+//! These never invoke a tool — they only inspect the advertised schemas: that
+//! every tool keeps its top-level schema provider-compatible, that every
+//! advertised `enum` is string-only, that `type_text_chars` is hidden, the
+//! `list_windows.on_screen_only` knob, the `set_agent_cursor_motion` Bezier
+//! knobs, delivery and scope enums, and the `set_config.capture_mode` enum and
+//! the per-session capture-scope contract. Every advertised top-level parameter
+//! must carry a non-empty description: the generated Cua Driver MCP reference
+//! renders it verbatim.
 
 #![cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 
 use cua_driver_testkit::{Driver, McpDriver, RawDriver};
 use std::collections::BTreeSet;
+
+/// Gemini function calling accepts `enum` only on string schemas and rejects
+/// the whole request otherwise, so one boolean or numeric enum in any
+/// advertised schema breaks every call from that client (#4220).
+fn assert_string_enums(value: &serde_json::Value, path: &str) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(values) = map.get("enum") {
+                let values = values
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{path}.enum must be an array: {values}"));
+                for (index, item) in values.iter().enumerate() {
+                    assert!(
+                        item.is_string(),
+                        "{path}.enum[{index}] must be a string for Gemini-compatible clients: {item}"
+                    );
+                }
+            }
+            for (key, child) in map {
+                assert_string_enums(child, &format!("{path}.{key}"));
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                assert_string_enums(item, &format!("{path}[{index}]"));
+            }
+        }
+        _ => {}
+    }
+}
 
 #[test]
 fn tools_list_schema_shape() {
@@ -36,6 +69,7 @@ fn tools_list_schema_shape() {
             .unwrap_or_else(|| panic!("{name} not found in tools/list"))["inputSchema"]
             ["properties"]
     };
+    let mut undocumented = Vec::new();
     for tool in tools {
         let name = tool["name"].as_str().expect("tool name");
         let schema = &tool["inputSchema"];
@@ -43,13 +77,31 @@ fn tools_list_schema_shape() {
             schema["type"], "object",
             "{name} must advertise a plain object input schema"
         );
+        if let Some(params) = schema["properties"].as_object() {
+            for (param, param_schema) in params {
+                let described = param_schema["description"]
+                    .as_str()
+                    .is_some_and(|text| !text.trim().is_empty());
+                if !described {
+                    undocumented.push(format!("{name}.{param}"));
+                }
+            }
+        }
         for unsupported in ["anyOf", "oneOf", "allOf"] {
             assert!(
                 schema.get(unsupported).is_none(),
                 "{name} top-level {unsupported} is rejected by Bedrock: {schema}"
             );
         }
+        for field in ["inputSchema", "outputSchema"] {
+            assert_string_enums(&tool[field], &format!("{name}.{field}"));
+        }
     }
+    assert!(
+        undocumented.is_empty(),
+        "advertised parameters without a description (add one at the tool's schema source): {}",
+        undocumented.join(", ")
+    );
     let enum_contains = |schema: &serde_json::Value, expected: &str| {
         schema["enum"]
             .as_array()
@@ -134,6 +186,13 @@ fn tools_list_schema_shape() {
         "hotkey",
         "scroll",
         "browser_dialog",
+        // Trusted browser input may activate the browser window (Linux
+        // Chromium); foreground accepts that.
+        "browser_click",
+        "browser_pointer",
+        // macOS set_value has no delivery ladder.
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        "set_value",
     ];
     for tool in DELIVERY_MODE_TOOLS {
         let delivery = &properties(tool)["delivery_mode"];
@@ -147,29 +206,12 @@ fn tools_list_schema_shape() {
         .filter(|tool| tool["inputSchema"]["properties"]["delivery_mode"].is_object())
         .filter_map(|tool| tool["name"].as_str())
         .collect();
-    let capability_tools: BTreeSet<&str> = tools
-        .iter()
-        .filter(|tool| {
-            tool["capabilities"].as_array().is_some_and(|capabilities| {
-                capabilities
-                    .iter()
-                    .any(|capability| capability == "input.delivery_mode")
-            })
-        })
-        .filter_map(|tool| tool["name"].as_str())
-        .collect();
     let expected_tools: BTreeSet<&str> = DELIVERY_MODE_TOOLS.iter().copied().collect();
+    // The matching `input.delivery_mode` capability claim is owned by
+    // `schema_consistency_test::registered_tool_contracts_match_on_active_backend`.
     assert_eq!(
         schema_tools, expected_tools,
         "unexpected delivery_mode schema set"
-    );
-    assert_eq!(
-        capability_tools, expected_tools,
-        "input.delivery_mode must match the exact runtime schema support set"
-    );
-    assert_eq!(
-        list_resp["result"]["capability_version"], "1",
-        "adding one capability token is additive and must not bump the vocabulary version"
     );
     // Session capture scope remains advertised only for compatibility. New
     // clients choose one typed window or desktop target on each action.
@@ -311,9 +353,19 @@ fn legacy_page_mutation_requires_unrestricted_launch_and_operator_opt_in() {
 }
 
 #[test]
-#[cfg(target_os = "linux")]
-fn linux_cursor_motion_knobs_are_applied() {
-    let mut driver = RawDriver::spawn().expect("spawn source-built Linux driver");
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "host desktop: macOS serves the knobs only with the overlay window on the real display; Linux runs it unignored"
+)]
+fn cursor_motion_knobs_are_applied() {
+    // macOS serves cursor-overlay controls only when the daemon hosts the
+    // overlay; Linux applies the knobs without one.
+    #[cfg(target_os = "macos")]
+    let driver = RawDriver::spawn_with_overlay();
+    #[cfg(not(target_os = "macos"))]
+    let driver = RawDriver::spawn();
+    let mut driver = driver.expect("spawn source-built driver");
     driver.send(&serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -329,7 +381,7 @@ fn linux_cursor_motion_knobs_are_applied() {
         "params": {
             "name": "set_agent_cursor_motion",
             "arguments": {
-                "session": "schema-linux",
+                "session": "schema-motion",
                 "arc_size": 0.4,
                 "spring": 0.85,
                 "glide_duration_ms": 500,
@@ -341,10 +393,10 @@ fn linux_cursor_motion_knobs_are_applied() {
     let response = driver.recv();
     assert!(
         !response["result"]["isError"].as_bool().unwrap_or(false),
-        "Linux cursor motion update failed: {response:?}"
+        "cursor motion update failed: {response:?}"
     );
     let structured = &response["result"]["structuredContent"];
-    assert_eq!(structured["session"].as_str(), Some("schema-linux"));
+    assert_eq!(structured["session"].as_str(), Some("schema-motion"));
     assert_eq!(structured["motion"]["arc_size"].as_f64(), Some(0.4));
     assert_eq!(
         structured["motion"]["glide_duration_ms"].as_f64(),

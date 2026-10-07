@@ -72,9 +72,12 @@ struct ActivePointer {
     /// evdev codes of buttons currently held down. When this set becomes
     /// empty the vptr is destroyed and the entry dropped from the map.
     held: HashSet<u32>,
-    /// Output extent at session open time — needed for motion_absolute.
+    /// Pointer-space extent and layout origin at session open time — needed
+    /// for motion_absolute.
     out_w: u32,
     out_h: u32,
+    origin_x: i32,
+    origin_y: i32,
 }
 
 /// Process-global command channel into the owner thread. Lazily started on
@@ -149,8 +152,7 @@ fn handle_press(
     // as long as the Connection is alive).
     let mut sess = open_vptr_session(Some(window_id))?;
     let (w, h) = (sess.output_w, sess.output_h);
-    let px = x.clamp(0, w as i32 - 1) as u32;
-    let py = y.clamp(0, h as i32 - 1) as u32;
+    let (px, py) = sess.abs(x, y);
     let btn = evdev_pointer_button(button);
 
     sess.vptr.motion_absolute(0, px, py, w, h);
@@ -178,6 +180,8 @@ fn handle_press(
             held,
             out_w: w,
             out_h: h,
+            origin_x: sess.origin_x,
+            origin_y: sess.origin_y,
         },
     );
     Ok(())
@@ -194,8 +198,14 @@ fn handle_move(
             "no held mouse button for cursor '{cursor_id}'; call mouse_button_down first"
         )
     })?;
-    let px = x.clamp(0, entry.out_w as i32 - 1) as u32;
-    let py = y.clamp(0, entry.out_h as i32 - 1) as u32;
+    let (px, py) = super::pointer_abs(
+        entry.origin_x,
+        entry.origin_y,
+        entry.out_w,
+        entry.out_h,
+        x,
+        y,
+    );
     entry
         .vptr
         .motion_absolute(0, px, py, entry.out_w, entry.out_h);

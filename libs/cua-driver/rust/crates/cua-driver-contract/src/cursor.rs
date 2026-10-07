@@ -166,6 +166,161 @@ pub struct CursorThemeSelection {
     pub reduced_motion: CursorReducedMotion,
 }
 
+// Trajectory style of the agent cursor. The motion-lab candidate ids are
+// accepted as aliases on input; outputs always use the snake_case names.
+// Variants carry no doc comments so the schema stays a plain string enum.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    PartialEq,
+    Eq,
+    Hash,
+    uniffi::Enum,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorMotionStyle {
+    #[default]
+    #[serde(alias = "dc-signature-arc")]
+    SignatureArc,
+    #[serde(alias = "dc-spring-settle")]
+    SpringSettle,
+    #[serde(alias = "dc-magnetic")]
+    Magnetic,
+    #[serde(alias = "dc-comet-swoop")]
+    CometSwoop,
+    #[serde(alias = "adaptive-auto")]
+    Adaptive,
+    #[serde(alias = "dubins-glide", alias = "dubins")]
+    Classic,
+}
+
+impl CursorMotionStyle {
+    pub const ALL: [Self; 6] = [
+        Self::SignatureArc,
+        Self::SpringSettle,
+        Self::Magnetic,
+        Self::CometSwoop,
+        Self::Adaptive,
+        Self::Classic,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SignatureArc => "signature_arc",
+            Self::SpringSettle => "spring_settle",
+            Self::Magnetic => "magnetic",
+            Self::CometSwoop => "comet_swoop",
+            Self::Adaptive => "adaptive",
+            Self::Classic => "classic",
+        }
+    }
+
+    /// Parse a public name or one of its accepted aliases.
+    pub fn parse(value: &str) -> Option<Self> {
+        let aliased = match value {
+            "dc-signature-arc" => Self::SignatureArc,
+            "dc-spring-settle" => Self::SpringSettle,
+            "dc-magnetic" => Self::Magnetic,
+            "dc-comet-swoop" => Self::CometSwoop,
+            "adaptive-auto" => Self::Adaptive,
+            "dubins-glide" | "dubins" => Self::Classic,
+            _ => return Self::ALL.into_iter().find(|style| style.as_str() == value),
+        };
+        Some(aliased)
+    }
+}
+
+// How long each agent cursor move takes.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    PartialEq,
+    Eq,
+    Hash,
+    uniffi::Enum,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorMotionTiming {
+    #[default]
+    Native,
+    Fitts,
+    Fixed,
+}
+
+impl CursorMotionTiming {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Native => "native",
+            Self::Fitts => "fitts",
+            Self::Fixed => "fixed",
+        }
+    }
+}
+
+/// Per-effect overrides for the agent cursor. Unset fields are omitted on the wire, so they
+/// keep their current setting.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    PartialEq,
+    Eq,
+    uniffi::Record,
+)]
+#[serde(deny_unknown_fields)]
+pub struct CursorMotionEffects {
+    /// Short fading trail behind the cursor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trail: Option<bool>,
+    /// Soft glow around the cursor that grows with speed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glow: Option<bool>,
+    /// Target glow when the `magnetic` style locks on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub magnet: Option<bool>,
+    /// Ring that expands from the hotspot on click.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ripple: Option<bool>,
+    /// Brief scale-down of the cursor on click.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub squish: Option<bool>,
+}
+
+/// Effects in use after applying overrides to the style's defaults.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    PartialEq,
+    Eq,
+    uniffi::Record,
+)]
+pub struct CursorMotionEffectsOutput {
+    pub trail: bool,
+    pub glow: bool,
+    pub magnet: bool,
+    pub ripple: bool,
+    pub squish: bool,
+}
+
 impl CursorTarget {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -246,7 +401,9 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
         "start_session" | "escalate_session" | "get_session_state" | "end_session"
         | "check_permissions" | "get_config" | "set_config" | "health_report"
         | "browser_prepare" | "browser_close" | "browser_release" | "browser_activate"
-        | "install_ffmpeg" | "check_update" | "update" => CursorAction::System,
+        | "install_ffmpeg" | "install_extension" | "check_update" | "update" => {
+            CursorAction::System
+        }
 
         "set_agent_cursor_enabled"
         | "set_agent_cursor_motion"
@@ -260,8 +417,7 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
     } else if matches!(name, "set_window_frame" | "invoke_menu") {
         Some(CursorTarget::Desktop)
     } else if args
-        .get("element_index")
-        .or_else(|| args.get("element_token"))
+        .get("element_token")
         .is_some_and(|value| !value.is_null())
     {
         Some(CursorTarget::Ax)
@@ -318,7 +474,7 @@ mod tests {
         assert_eq!(
             classify_cursor_semantics(
                 "click",
-                &json!({"element_index":"ax:1","delivery_mode":"background"})
+                &json!({"element_token":"s00000001:1","delivery_mode":"background"})
             ),
             Some(CursorSemantics {
                 action: CursorAction::Click,

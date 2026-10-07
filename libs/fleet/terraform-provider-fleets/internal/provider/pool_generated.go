@@ -17,23 +17,28 @@ import (
 )
 
 type poolResourceModel struct {
-	ID                 types.String         `tfsdk:"id"`
-	Name               types.String         `tfsdk:"name"`
-	Namespace          types.String         `tfsdk:"namespace"`
-	Replicas           types.Int64          `tfsdk:"replicas"`
-	CPUCores           types.Int64          `tfsdk:"cpu_cores"`
-	Memory             types.String         `tfsdk:"memory"`
-	ContainerDiskImage types.String         `tfsdk:"container_disk_image"`
-	ImagePullSecret    types.String         `tfsdk:"image_pull_secret"`
-	Runtime            types.String         `tfsdk:"runtime"`
-	Firmware           types.String         `tfsdk:"firmware"`
-	ReadinessProbeJSON jsontypes.Normalized `tfsdk:"readiness_probe_json"`
-	LivenessProbeJSON  jsontypes.Normalized `tfsdk:"liveness_probe_json"`
-	TemplateName       types.String         `tfsdk:"template_name"`
-	CurrentReplicas    types.Int64          `tfsdk:"current_replicas"`
-	ReadyReplicas      types.Int64          `tfsdk:"ready_replicas"`
-	Services           types.Set            `tfsdk:"service"`
-	Autoscaling        types.Object         `tfsdk:"autoscaling"`
+	ID                     types.String         `tfsdk:"id"`
+	Name                   types.String         `tfsdk:"name"`
+	Namespace              types.String         `tfsdk:"namespace"`
+	Replicas               types.Int64          `tfsdk:"replicas"`
+	CPUCores               types.Int64          `tfsdk:"cpu_cores"`
+	Memory                 types.String         `tfsdk:"memory"`
+	ContainerDiskImage     types.String         `tfsdk:"container_disk_image"`
+	ImagePullSecret        types.String         `tfsdk:"image_pull_secret"`
+	Runtime                types.String         `tfsdk:"runtime"`
+	Firmware               types.String         `tfsdk:"firmware"`
+	ReadinessProbeJSON     jsontypes.Normalized `tfsdk:"readiness_probe_json"`
+	LivenessProbeJSON      jsontypes.Normalized `tfsdk:"liveness_probe_json"`
+	Command                types.List           `tfsdk:"command"`
+	ClaimSecrets           types.Bool           `tfsdk:"claim_secrets"`
+	TTLSecondsAfterCreated types.Int64          `tfsdk:"ttl_seconds_after_created"`
+	IdleTTLSeconds         types.Int64          `tfsdk:"idle_ttl_seconds"`
+	TTLPolicy              types.String         `tfsdk:"ttl_policy"`
+	TemplateName           types.String         `tfsdk:"template_name"`
+	CurrentReplicas        types.Int64          `tfsdk:"current_replicas"`
+	ReadyReplicas          types.Int64          `tfsdk:"ready_replicas"`
+	Services               types.Set            `tfsdk:"service"`
+	Autoscaling            types.Object         `tfsdk:"autoscaling"`
 }
 
 type serviceModel struct {
@@ -51,21 +56,26 @@ type autoscalingModel struct {
 func poolResourceSchema() schema.Schema {
 	return schema.Schema{Description: "A Cua Fleet computer-use pool: an OSGymSandboxWarmPool and its OSGymSandboxTemplate. The pool name also owns its same-named namespace.",
 		Attributes: map[string]schema.Attribute{
-			"id":                   schema.StringAttribute{Computed: true},
-			"name":                 schema.StringAttribute{Required: true, Description: "DNS label used for both pool and namespace.", Validators: []validator.String{stringvalidator.LengthBetween(1, 63), stringvalidator.RegexMatches(dnsLabelRegex, "must be a lowercase DNS label")}, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
-			"namespace":            schema.StringAttribute{Computed: true},
-			"replicas":             schema.Int64Attribute{Optional: true, Computed: true, Description: "Desired number of pre-warmed OSGymSandboxes.", Validators: []validator.Int64{int64validator.AtLeast(0)}},
-			"cpu_cores":            schema.Int64Attribute{Required: true, Validators: []validator.Int64{int64validator.AtLeast(1)}},
-			"memory":               schema.StringAttribute{Required: true},
-			"container_disk_image": schema.StringAttribute{Required: true, Description: "KubeVirt containerDisk OCI image (runtime=kubevirt) or the sandbox pod image ref (runtime=macos/gvisor)."},
-			"image_pull_secret":    schema.StringAttribute{Optional: true, Description: "Kubernetes image pull secret. Omit this argument for anonymous public-image pulls."},
-			"runtime":              schema.StringAttribute{Optional: true, Computed: true, Description: "Pool backend runtime. \"kubevirt\" (default) reconciles each sandbox into a KubeVirt VM. \"macos\" reconciles it into a macOS sandbox (an agent-sandbox Sandbox on a macOS node); \"gvisor\" into a gVisor (runsc) pod on the gVisor K3s workers (also an agent-sandbox Sandbox). For the pod runtimes containerDiskImage is the pod image ref and firmware/cpuCores/memory are advisory.", Validators: []validator.String{stringvalidator.OneOf("gvisor", "kubevirt", "macos")}},
-			"firmware":             schema.StringAttribute{Optional: true, Computed: true, Description: "VM firmware. Use \"efi\" for GPT/UEFI-only guest images (e.g. the dockur-built Windows desktop-workspace); \"bios\" is KubeVirt's default and what the Linux workspace images boot with.", Validators: []validator.String{stringvalidator.OneOf("bios", "efi")}},
-			"readiness_probe_json": schema.StringAttribute{Optional: true, CustomType: jsontypes.NormalizedType{}, Description: "JSON object for the VMI readinessProbe."},
-			"liveness_probe_json":  schema.StringAttribute{Optional: true, CustomType: jsontypes.NormalizedType{}, Description: "JSON object for the VMI livenessProbe."},
-			"template_name":        schema.StringAttribute{Computed: true, Description: "Name of the OSGymSandboxTemplate backing this pool."},
-			"current_replicas":     schema.Int64Attribute{Computed: true, Description: "Sandboxes the warm pool currently owns."},
-			"ready_replicas":       schema.Int64Attribute{Computed: true, Description: "Sandboxes that are ready to be claimed."},
+			"id":                        schema.StringAttribute{Computed: true},
+			"name":                      schema.StringAttribute{Required: true, Description: "DNS label used for both pool and namespace.", Validators: []validator.String{stringvalidator.LengthBetween(1, 63), stringvalidator.RegexMatches(dnsLabelRegex, "must be a lowercase DNS label")}, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
+			"namespace":                 schema.StringAttribute{Computed: true},
+			"replicas":                  schema.Int64Attribute{Optional: true, Computed: true, Description: "Desired number of pre-warmed OSGymSandboxes.", Validators: []validator.Int64{int64validator.AtLeast(0)}},
+			"cpu_cores":                 schema.Int64Attribute{Required: true, Validators: []validator.Int64{int64validator.AtLeast(1)}},
+			"memory":                    schema.StringAttribute{Required: true},
+			"container_disk_image":      schema.StringAttribute{Required: true, Description: "KubeVirt containerDisk OCI image (runtime=kubevirt) or the sandbox pod image ref (runtime=macos/gvisor)."},
+			"image_pull_secret":         schema.StringAttribute{Optional: true, Description: "Kubernetes image pull secret. Omit this argument for anonymous public-image pulls."},
+			"runtime":                   schema.StringAttribute{Optional: true, Computed: true, Description: "Pool backend runtime. \"kubevirt\" (default) reconciles each sandbox into a KubeVirt VM. \"macos\" reconciles it into a macOS sandbox (an agent-sandbox Sandbox on a macOS node); \"gvisor\" into a gVisor (runsc) pod on the gVisor K3s workers (also an agent-sandbox Sandbox). For the pod runtimes containerDiskImage is the pod image ref and firmware/cpuCores/memory are advisory.", Validators: []validator.String{stringvalidator.OneOf("gvisor", "kubevirt", "macos")}},
+			"firmware":                  schema.StringAttribute{Optional: true, Computed: true, Description: "VM firmware. Use \"efi\" for GPT/UEFI-only guest images (e.g. the dockur-built Windows desktop-workspace); \"bios\" is KubeVirt's default and what the Linux workspace images boot with.", Validators: []validator.String{stringvalidator.OneOf("bios", "efi")}},
+			"readiness_probe_json":      schema.StringAttribute{Optional: true, CustomType: jsontypes.NormalizedType{}, Description: "JSON object for the VMI readinessProbe."},
+			"liveness_probe_json":       schema.StringAttribute{Optional: true, CustomType: jsontypes.NormalizedType{}, Description: "JSON object for the VMI livenessProbe."},
+			"command":                   schema.ListAttribute{Optional: true, ElementType: types.StringType, Description: "Pod runtimes (macos/gvisor) only. Entrypoint command for the sandbox container (overrides the image default)."},
+			"claim_secrets":             schema.BoolAttribute{Optional: true, Description: "Opt in to claim-scoped secret delivery (OSGymSandboxClaim spec.secretRef). The pool-operator gives every sandbox an operator-owned Secret, empty while the sandbox is warm, fills it when a claim binds and wipes it on release, so a warm sandbox receives its claimant's secrets without a restart. Pod runtimes mount it read-only as a directory (never subPath) at /run/cua, root-owned, mode 0600; the image keeps its default root user, and its root token-sync helper hands the token to a non-root driver. KubeVirt shares it over virtiofs as tag cua-claim-secrets (needs the KubeVirt EnableVirtioFsConfigVolumes feature gate); the guest image mounts that tag read-only at /run/cua. cua-env-driver images enable their await-token mode only when /run/cua is a mount point, so the key env-token becomes /run/cua/env-token. Claims with a secretRef fail on templates without this flag."},
+			"ttl_seconds_after_created": schema.Int64Attribute{Optional: true, Description: "Creation-age TTL in seconds. When absent, the resource is not automatically reaped based on age.", Validators: []validator.Int64{int64validator.Between(0, 4294967295)}},
+			"idle_ttl_seconds":          schema.Int64Attribute{Optional: true, Description: "Idle TTL in seconds. The pool-operator deletes the pool once it has had no Pending or Bound claims for this long, measured from status.lastActivityTime (or creation when no claim was ever made), when OSGYM_POOL_LIFECYCLE_MODE is enforce. When absent, the pool is never reaped for being idle.", Validators: []validator.Int64{int64validator.Between(0, 4294967295)}},
+			"ttl_policy":                schema.StringAttribute{Optional: true, Description: "What expiry of ttlSecondsAfterCreated or idleTtlSeconds deletes. Retain (the behaviour when absent) deletes only the pool. Cascade also deletes the pool's dead unbound claims (TTL passed and older than max(900s, bindDeadline)); it never deletes Bound claims, the namespace or volumes.", Validators: []validator.String{stringvalidator.OneOf("Cascade", "Retain")}},
+			"template_name":             schema.StringAttribute{Computed: true, Description: "Name of the OSGymSandboxTemplate backing this pool."},
+			"current_replicas":          schema.Int64Attribute{Computed: true, Description: "Sandboxes the warm pool currently owns."},
+			"ready_replicas":            schema.Int64Attribute{Computed: true, Description: "Sandboxes that are ready to be claimed."},
 		},
 		Blocks: map[string]schema.Block{
 			"service": schema.SetNestedBlock{NestedObject: schema.NestedBlockObject{Attributes: map[string]schema.Attribute{

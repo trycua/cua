@@ -1,0 +1,142 @@
+---
+title: Quickstart
+description: Your first sandbox. Run a web server in a sandbox on your machine and call it.
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Run a web server in a sandbox on your machine and call it. Sandboxes run
+locally by default, so the code passes no location.
+
+## Prerequisites
+
+- Python 3.11 or newer:
+
+```bash skip="host-install"
+pip install cua-sandbox
+```
+
+- A container engine (Docker, Podman or Colima). Check the host and
+  install what is missing:
+
+```bash test="cli-shape" id="cua-runtime-doctor"
+cua runtime doctor
+cua runtime setup
+```
+
+## Run
+
+<Tabs groupId="quickstart-run" persist items={['Python', 'CLI', 'TypeScript']}>
+  <Tab value="Python">
+
+```python title="quickstart.py" test="container" id="local-server" session="local"
+import asyncio
+
+from cua_sandbox import Image, Sandbox, http
+
+
+async def main():
+    async with Sandbox.ephemeral(
+        Image.from_registry("python:3.12-slim"),
+        command=["python", "-m", "http.server", "8000"],
+        services={"web": 8000},
+        wait_for=http("web", "/"),
+    ) as sb:
+        print((await sb.service("web").request("GET", "/")).status_code)
+        print(await sb.service("web").url())
+
+
+asyncio.run(main())
+```
+
+  </Tab>
+  <Tab value="CLI">
+
+```bash test="cli-shape" id="cua-sb-create"
+cua sb create python:3.12-slim --name web \
+  --service web=8000 --wait http:web/ \
+  -- python -m http.server 8000
+cua sb url web web
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts test="container" id="typescript"
+import { embedded, http, SandboxCreateOptions } from '@trycua/cua';
+
+const sb = await embedded().sandboxes().create(
+  SandboxCreateOptions.create({
+    image: 'python:3.12-slim',
+    command: ['python', '-m', 'http.server', '8000'],
+    services: new Map([['web', 8000]]),
+    waitFor: [http('web', '/')],
+  })
+);
+console.log(await sb.service('web').url());
+await sb.delete_();
+```
+
+  </Tab>
+</Tabs>
+
+## Result
+
+```text output
+200
+http://127.0.0.1:53817
+```
+
+The first start of an image pulls it, which can take a few minutes.
+
+## Clean up
+
+`Sandbox.ephemeral` deletes the sandbox when the block exits. A CLI sandbox
+stays until you remove it: `cua sb rm web -f`. `cua cache du` shows what images and sandboxes
+take on disk ([Disk usage](/cua-sdk/guides/disk-usage)).
+
+## Images
+
+Pass any registry reference. Each official tag resolves to the variant the
+backend runs. Linux images run as user `cua` with passwordless `sudo`; open the desktop in
+the browser with `cua sb view NAME` ([Browser view](/cua-sdk/guides/desktop#browser-view)). Full list:
+[image catalog details](/cua-sdk/reference/os-image-catalog).
+
+{/* GENERATED:catalog-cua-images:start */}
+| Image | Name | Local | Cloud | cua-spacesd |
+| --- | --- | --- | --- | --- |
+| `ghcr.io/trycua/linux:24.04` | Ubuntu 24.04 | Container (gVisor when installed) | gVisor container | Yes |
+| `ghcr.io/trycua/linux:24.04-disk` | Ubuntu 24.04 VM | QEMU VM | KubeVirt VM | Yes |
+| `ghcr.io/trycua/linux:24.04-slim` | Ubuntu 24.04 slim | Container (gVisor when installed) | gVisor container | Yes |
+| `ghcr.io/trycua/linux:24.04-slim-disk` | Ubuntu 24.04 slim VM | QEMU VM | KubeVirt VM | Yes |
+| `ghcr.io/trycua/windows:2022` | Windows Server 2022 | QEMU VM | KubeVirt VM | Yes |
+| `ghcr.io/trycua/macos:26` | macOS Tahoe 26 | Lume VM (Apple silicon) | Not available yet | Yes |
+| `ghcr.io/trycua/macos:26-slim` | macOS Tahoe 26 slim | Lume VM (Apple silicon) | Not available yet | Yes |
+| `ghcr.io/trycua/macos:15` | macOS Sequoia 15 | Lume VM (Apple silicon) | Not available yet | No |
+| `ghcr.io/trycua/omarchy:edge` | Omarchy | QEMU VM | KubeVirt VM | Yes |
+| `ghcr.io/trycua/omarchy:edge-disk` | Omarchy disk | QEMU VM | KubeVirt VM | Yes |
+{/* GENERATED:catalog-cua-images:end */}
+
+`Image.linux()` is the Linux container and `Image.linux(kind="vm")` the same desktop as a VM.
+`Image.windows()` is a Windows Server 2022 VM, amd64, no license included. `Image.macos()` is
+Tahoe and `Image.macos("15")` Sequoia, both local only on Apple silicon.
+
+## Adapter benchmark images
+
+Each has a container tag and a `-disk` VM tag, and runs locally with `cb run`.
+
+{/* GENERATED:catalog-benchmarks:start */}
+| Benchmark | What | Tasks | Image |
+| --- | --- | --- | --- |
+| [MiniWoB++](/cua-bench/guides/adapter-benchmarks#miniwob) | Synthetic web widgets | 130 | `ghcr.io/trycua/bench-web:1.0` |
+| [WebVoyager](/cua-bench/guides/adapter-benchmarks#webvoyager) | Live websites, LLM-judged | 643 | `ghcr.io/trycua/bench-web:1.0` |
+| [Online-Mind2Web](/cua-bench/guides/adapter-benchmarks#online-mind2web) | Live websites, WebJudge-judged | 300 | `ghcr.io/trycua/bench-web:1.0` |
+| [WebGym](/cua-bench/guides/adapter-benchmarks#webgym) | Live web test split | 1,167 | `ghcr.io/trycua/bench-web:1.0` |
+| [OSWorld-Verified](/cua-bench/guides/adapter-benchmarks#osworld-verified) | Ubuntu desktop apps | 369 | `ghcr.io/trycua/bench-osworld:verified` |
+{/* GENERATED:catalog-benchmarks:end */}
+
+## Next
+
+- [Control the desktop](/cua-sdk/guides/desktop)
+- [Run a service](/cua-sdk/guides/services)
+- [Reach another machine](/cua-sdk#reach-another-machine)

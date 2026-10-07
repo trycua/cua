@@ -16,9 +16,10 @@ use crate::tool::{Tool, ToolDef};
 use crate::tool_args::parse_typed_input;
 use async_trait::async_trait;
 use cua_driver_contract::{
-    CaptureScope, EndSessionInput, EscalateSessionInput, EscalationReason, GetSessionInput,
-    GetSessionStateInput, ListSessionsInput, ListSessionsOutput, SessionClientKindOutput,
-    SessionLifecycleState, SessionOutput, SessionTransportOutput, StartSessionInput,
+    CaptureScope, CursorMotionStyle, EndSessionInput, EscalateSessionInput, EscalationReason,
+    GetSessionInput, GetSessionStateInput, ListSessionsInput, ListSessionsOutput,
+    SessionClientKindOutput, SessionLifecycleState, SessionOutput, SessionTransportOutput,
+    StartSessionInput,
 };
 use serde_json::{json, Value};
 use std::sync::OnceLock;
@@ -107,6 +108,42 @@ fn lifecycle_output(snapshot: crate::session::LifecycleSessionSnapshot) -> Sessi
     }
 }
 
+/// Reject an invalid `cursor_motion` with a message that lists the allowed
+/// values, before any session state changes.
+fn invalid_cursor_motion(args: &Value) -> Option<ToolResult> {
+    let motion = args.get("cursor_motion").filter(|value| !value.is_null())?;
+    let reject = |message: String| {
+        Some(ToolResult::error(message).with_structured(json!({ "code": "invalid_cursor_motion" })))
+    };
+    let Some(motion) = motion.as_object() else {
+        return reject("start_session.cursor_motion must be an object.".into());
+    };
+    if let Some(style) = motion.get("style").filter(|value| !value.is_null()) {
+        let valid = style
+            .as_str()
+            .is_some_and(|name| CursorMotionStyle::parse(name).is_some());
+        if !valid {
+            return reject(format!(
+                "invalid cursor_motion.style {style}; expected one of {}",
+                CursorMotionStyle::ALL
+                    .map(CursorMotionStyle::as_str)
+                    .join(", ")
+            ));
+        }
+    }
+    if let Some(timing) = motion.get("timing").filter(|value| !value.is_null()) {
+        let valid = timing
+            .as_str()
+            .is_some_and(|name| matches!(name, "native" | "fitts" | "fixed"));
+        if !valid {
+            return reject(format!(
+                "invalid cursor_motion.timing {timing}; expected native, fitts or fixed"
+            ));
+        }
+    }
+    None
+}
+
 // ── start_session ─────────────────────────────────────────────────────────────
 
 pub struct StartSessionTool;
@@ -139,6 +176,9 @@ impl Tool for StartSessionTool {
                     "capture_scope": raw,
                 }));
             }
+        }
+        if let Some(error) = invalid_cursor_motion(&args) {
+            return error;
         }
         let input = match parse_typed_input::<StartSessionInput>("start_session", args.clone()) {
             Ok(input) => input,
@@ -218,6 +258,7 @@ impl Tool for StartSessionTool {
             state: scope.output(&response_session_label(&args, &id)),
             active: true,
             revived,
+            cursor_motion: input.cursor_motion.clone(),
         })
         .expect("start_session output serializes");
         ToolResult::text(format!(
@@ -544,6 +585,58 @@ mod tests {
         assert_eq!(session_id_of(&json!({})), None);
         assert_eq!(session_id_of(&json!({ "session": "" })), None);
         assert_eq!(session_id_of(&json!({ "session": "default" })), None);
+    }
+
+    #[tokio::test]
+    async fn start_session_echoes_cursor_motion() {
+        let id = format!("session-tool-motion-{}", std::process::id());
+        let result = StartSessionTool
+            .invoke(json!({
+                "session": id,
+                "cursor_motion": {"style": "magnetic", "timing": "fitts", "effects": {"trail": true}}
+            }))
+            .await;
+        assert_ne!(result.is_error, Some(true));
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["cursor_motion"]["style"], "magnetic");
+        assert_eq!(structured["cursor_motion"]["timing"], "fitts");
+        assert_eq!(structured["cursor_motion"]["effects"]["trail"], true);
+        EndSessionTool.invoke(json!({"session": id})).await;
+
+        // Optional: absent unless the call set it.
+        let plain_id = format!("session-tool-no-motion-{}", std::process::id());
+        let plain = StartSessionTool.invoke(json!({"session": plain_id})).await;
+        assert!(plain
+            .structured_content
+            .as_ref()
+            .unwrap()
+            .get("cursor_motion")
+            .is_none());
+        EndSessionTool.invoke(json!({"session": plain_id})).await;
+    }
+
+    #[tokio::test]
+    async fn start_session_rejects_unknown_cursor_motion_with_allowed_values() {
+        let id = format!("session-tool-bad-motion-{}", std::process::id());
+        let bad_style = StartSessionTool
+            .invoke(json!({"session": id, "cursor_motion": {"style": "wobble"}}))
+            .await;
+        assert_eq!(bad_style.is_error, Some(true));
+        assert_eq!(result_code(&bad_style), Some("invalid_cursor_motion"));
+        let message = format!("{:?}", bad_style.content);
+        for style in CursorMotionStyle::ALL {
+            assert!(message.contains(style.as_str()), "{message}");
+        }
+        let bad_timing = StartSessionTool
+            .invoke(json!({"session": id, "cursor_motion": {"timing": "slow"}}))
+            .await;
+        assert_eq!(result_code(&bad_timing), Some("invalid_cursor_motion"));
+        let bad_effect = StartSessionTool
+            .invoke(json!({"session": id, "cursor_motion": {"effects": {"sparkle": true}}}))
+            .await;
+        assert_eq!(bad_effect.is_error, Some(true));
+        // Nothing was started by a rejected call.
+        assert!(get_session(&id).is_none());
     }
 
     #[tokio::test]

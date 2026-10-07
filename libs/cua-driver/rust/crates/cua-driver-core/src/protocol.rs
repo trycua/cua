@@ -379,21 +379,20 @@ fn agent_instructions() -> String {
     };
 
     format!(
-        r#"cua-driver: cross-platform background computer-use automation.
+        r#"cua-driver: background GUI automation. No shell: for non-GUI outcomes use an app API/SDK, CLI or filesystem and read the result back there.
 
-For non-GUI outcomes, prefer a client-provided app API/SDK, headless/background interface, CLI, or filesystem operation and read the result back in that semantic domain. This server has no shell.
+Efficient loop:
+1. `list_windows` or `launch_app` for `pid` and `window_id`.
+2. Read narrowly: `get_window_state` with `query:"Save"` (or `max_elements`). Re-read with `since:"latest"` for only what changed. For just a picture, `include_accessibility_tree:false` (tokens stay valid).
+3. Act by `element_token` ({tree_kind}): row `[N]` is `<snapshot_id>:N`. Pixel `x,y` only for surfaces missing from the tree.
+4. Act through `run_actions({{steps:[{{tool,args}}],observe:true}})`, even for one step: it stops at the first failure and returns what changed, so no separate re-read.
+5. Verify at checkpoints, not after every action: `verify_state(pid, window_id, expect)`. `unknown` and `effect:"unverifiable"` are not success.
 
-On continuation/recent-work, when available, call `history_status`; if ready, make one bounded initial `history_query` before broad discovery; otherwise continue.
+Use the narrowest semantic route first: `set_window_frame` plus `list_windows` for geometry, typed browser tools for pages, clipboard tools for the clipboard. Stay in the background; `delivery_mode:"foreground"` only if refused or unverifiable.
 
-For app/window outcomes, use the narrowest semantic Cua route first: `set_window_frame` plus `list_windows` readback for geometry, typed browser tools for supported page content, and clipboard tools for clipboard state. Then climb through background `element_index` ({tree_kind}), background pixels, foreground delivery, and desktop fallback. Never advance on transport success alone.
+`start_session` is optional; repeat a short `session` label on every call that accepts it. On continuation/recent-work, call `history_status`; if ready, make one bounded initial `history_query` before broad discovery.
 
-Workflow per turn:
-0. `start_session` is optional. For multi-call work, prefer a short `session` label and repeat it on every call that accepts it. Unnamed calls use the transport's implicit session. Only `start_session` revives an ended name; `end_session` explicitly cleans up.
-1. `launch_app`, then `get_window_state(pid, window_id)` to refresh element indices.
-2. Act with the fresh index.
-3. `verify_state(pid, window_id, expect)` checks bounded postconditions. `unknown` is not success; `include_screenshot:true` lets the multimodal agent judge visual evidence.
-
-Read `skill://cua-driver/SKILL.md` via `skills/get` or `resources/read`. Hosts control activation/consent. When activated, follow SKILL.md and {platform_skill_pointer}."#
+Details: `skill://cua-driver/SKILL.md` and {platform_skill_pointer}."#
     )
 }
 
@@ -485,19 +484,21 @@ mod agent_instruction_tests {
     fn instructions_route_structured_and_visual_verification_to_the_right_owner() {
         let instructions = agent_instructions();
         assert!(instructions.contains("verify_state"));
-        assert!(instructions.contains("`unknown` is not success"));
-        assert!(instructions.contains("multimodal agent"));
-        assert!(instructions.contains("client-provided app API/SDK"));
-        assert!(instructions.contains("headless/background interface"));
-        assert!(instructions.contains("read the result back in that semantic domain"));
-        assert!(instructions.contains("narrowest semantic Cua route first"));
-        assert!(instructions.contains("`set_window_frame` plus `list_windows` readback"));
-        assert!(instructions.contains("typed browser tools for supported page content"));
-        assert!(instructions.contains("has no shell"));
+        assert!(instructions.contains("`unknown` and `effect:\"unverifiable\"` are not success"));
+        assert!(instructions.contains("app API/SDK"));
+        assert!(instructions.contains("read the result back there"));
+        assert!(instructions.contains("narrowest semantic route first"));
+        assert!(instructions.contains("`set_window_frame` plus `list_windows`"));
+        assert!(instructions.contains("typed browser tools"));
+        assert!(instructions.contains("No shell"));
+        // The efficient workflow must be front-loaded: targeted read, act by
+        // token, verify at checkpoints.
+        assert!(instructions.contains("`query:\"Save\"`"));
+        assert!(instructions.contains("Act by `element_token`"));
+        assert!(instructions.contains("Verify at checkpoints, not after every action"));
         assert!(
-            instructions.find("client-provided app API/SDK")
-                < instructions.find("background `element_index`"),
-            "semantic/headless operations must precede native UI dispatch"
+            instructions.find("Read narrowly") < instructions.find("Act by `element_token`"),
+            "the targeted read must precede acting"
         );
         assert!(
             instructions.split_whitespace().count() <= 200,
@@ -513,11 +514,9 @@ mod agent_instruction_tests {
             .expect("initialize result should carry agent instructions");
 
         assert!(instructions.contains("`start_session` is optional"));
-        assert!(instructions.contains("prefer a short `session` label"));
-        assert!(instructions.contains("repeat it on every call that accepts it"));
-        assert!(instructions.contains("transport's implicit session"));
-        assert!(instructions.contains("Only `start_session` revives an ended name"));
-        assert!(instructions.contains("`end_session` explicitly cleans up"));
+        assert!(
+            instructions.contains("repeat a short `session` label on every call that accepts it")
+        );
         assert!(
             !instructions.contains("`start_session(session)` once"),
             "initialize instructions must not require explicit session setup"
@@ -540,7 +539,6 @@ mod agent_instruction_tests {
         assert!(status < bounded_query);
         assert!(bounded_query < discovery);
         assert!(instructions.contains("if ready"));
-        assert!(instructions.contains("otherwise continue"));
         assert!(instructions.split_whitespace().count() <= 200);
     }
 }

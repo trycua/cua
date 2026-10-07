@@ -1,0 +1,1 @@
+The Python high-level API raises its own exceptions (`SpacesdNotAvailable`, `PoolSpecMismatch`, ...), listed on [Python: configuration and errors](/cua-sdk/reference/python/configuration#errors). cua-spacesd answers RPCs with a `google.rpc.Status` carrying [`ErrorInfo`](/cua-sdk/reference/protocol/env-common#errorinfo); the SDK maps it to the variants below.

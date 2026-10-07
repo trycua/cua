@@ -162,6 +162,7 @@ fn exact_omnibox<'a>(
 }
 
 /// Whether the omnibox currently holds exactly the fixed setup URL.
+#[cfg(test)]
 fn omnibox_holds_setup_url(node: &AtspiNode, descriptor: &BrowserSetupDescriptor) -> bool {
     node.value
         .as_deref()
@@ -608,7 +609,11 @@ fn set_remote_debugging(
                             .checked_add(i32::try_from(height / 2)?)
                             .ok_or_else(|| anyhow::anyhow!("checkbox center y overflowed"))?;
                         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-                            crate::wayland::click_desktop(center_x, center_y, 1, 1)?;
+                            // AT-SPI screen bounds are layout coordinates, as in
+                            // browser_consent_ui's click_focused path, not
+                            // desktop-frame points, so no frame conversion applies.
+                            let space = crate::wayland::DesktopInputSpace::default();
+                            crate::wayland::click_desktop(&space, center_x, center_y, 1, 1)?;
                         } else {
                             crate::input::send_click_xtest_desktop(center_x, center_y, 1, 1)?;
                         }
@@ -685,9 +690,11 @@ mod tests {
             description: None,
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
             element_key: 0,
+            identity: None,
             depth: 0,
             parent_element_index: None,
             in_web_content: false,
+            object_ref: None,
         }
     }
 

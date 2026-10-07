@@ -18,10 +18,6 @@ repository = "https://github.com/trycua/cua"
 dev = [
     "cua-core",
     "cua-agent",
-    "cua-computer",
-    "cua-computer-server",
-    "cua-som",
-    "cua-mcp-server",
     "black>=23.0.0",
     "ipykernel>=6.29.5",
     "jedi>=0.19.2",
@@ -69,21 +65,24 @@ constraint-dependencies = [
 members = [
     "libs/python/agent",
     "libs/python/core",
-    "libs/python/computer",
-    "libs/python/computer-server",
     "libs/python/som",
-    "libs/python/mcp-server",
     "libs/python/bench-ui",
 ]
 
 [tool.uv.sources]
 cua-agent = { workspace = true }
 cua-core = { workspace = true }
-cua-computer = { workspace = true }
-cua-computer-server = { workspace = true }
 cua-som = { workspace = true }
-cua-mcp-server = { workspace = true }
 cua-bench-ui = { workspace = true }
+# cua-sandbox is not a workspace member (it pulls the native cua-fleet wheel
+# from the cua-wheels index); consumers resolve it from the in-repo path.
+cua-sandbox = { path = "libs/python/cua-sandbox", editable = true }
+# cua-sandbox depends on the cua SDK (UniFFI binding), built from the repo.
+cua = { path = "libs/cua/python", editable = true }
+
+[[tool.uv.index]]
+name = "cua-wheels"
+url = "https://wheels.cua.ai/simple"
 
 [tool.black]
 line-length = 100
@@ -99,8 +98,13 @@ select = ["E", "F", "B", "I"]
 ignore = [
     "E501", "E402", "I001", "I002", "B007", "B023", "B024", "B027", "B028",
     "B904", "B905", "E711", "E712", "E722", "E731", "F401", "F403", "F405",
-    "F811", "F821", "F841"
+    "F811", "F841"
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"libs/cua-driver/hyprland-plugin/proofs/production_primary_conflict_proof.py" = ["F821"]
+# Docs snippets reference placeholders (URL, TOKEN) defined by the page around them.
+"scripts/docs-generators/examples/**" = ["F821"]
 
 [tool.ruff.format]
 docstring-code-format = true

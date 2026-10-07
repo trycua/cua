@@ -20,6 +20,13 @@ impl SetConfigTool {
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+fn with_cursor_motion_properties(mut schema: Value) -> Value {
+    if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        properties.extend(cursor_overlay::motion_defaults::config_schema_properties());
+    }
+    schema
+}
+
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "set_config".into(),
@@ -30,8 +37,13 @@ fn def() -> &'static ToolDef {
             initialised once at startup).\n\nNote: capture_mode is a per-call \
             param (on get_window_state / click), not a stored setting. Capture \
             modality is selected by each action's target; the old \
-            capture_scope config key is retired.".into(),
-        input_schema: serde_json::json!({
+            capture_scope config key is retired.\n\nCursor motion defaults: \
+            cursor.motion.style, cursor.motion.timing and \
+            cursor.motion.effects.<trail|glow|magnet|ripple|squish> are saved to \
+            ~/.cua-driver/config.json and seed sessions started afterwards. \
+            start_session cursor_motion and set_agent_cursor_motion override them; \
+            reduced motion always wins.".into(),
+        input_schema: with_cursor_motion_properties(serde_json::json!({
             "type": "object",
             "properties": {
                 "key": {
@@ -59,7 +71,7 @@ fn def() -> &'static ToolDef {
                 }
             },
             "additionalProperties": false
-        }),
+        })),
         read_only: false,
         destructive: false,
         idempotent: true,
@@ -94,6 +106,13 @@ impl Tool for SetConfigTool {
         // touching the global config or the on-disk default, so two concurrent
         // sessions don't clobber each other or the persisted default.
         let session_id = args.opt_str("_session_id");
+
+        // Cursor motion defaults are a driver-wide saved setting, so they are
+        // validated and persisted like the other config.json keys.
+        let motion_keys = match cursor_overlay::motion_defaults::apply_config_args(&args) {
+            Ok(keys) => keys,
+            Err(message) => return ToolResult::error(message),
+        };
 
         // Accept BOTH the direct field and {key,value} shapes.
         let kv: Option<(String, Value)> = args
@@ -176,6 +195,12 @@ impl Tool for SetConfigTool {
                     " — restart cua-driver for experimental_pip_geometry={geom} to take effect"
                 );
             }
+        }
+        if !motion_keys.is_empty() {
+            pip_note.push_str(&format!(
+                " — saved {} (applies to sessions started from now on)",
+                motion_keys.join(", ")
+            ));
         }
         let scope_note = if session_id.is_some() {
             " (session-scoped; persisted default unchanged)"

@@ -23,6 +23,8 @@ use std::sync::{mpsc, Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
 
+use cua_driver_core::single_flight::SingleFlight;
+
 use anyhow::{bail, Context};
 use windows::core::{Interface, BSTR};
 use windows::Win32::Foundation::{HWND, RECT};
@@ -71,91 +73,68 @@ enum UiaDeadlineError {
 /// Windows offers no safe way to cancel a COM provider call in another thread.
 /// The gate therefore remains owned by a timed-out worker until that worker
 /// actually returns. Retries fail fast instead of stranding more threads, then
-/// resume as soon as the provider call returns.
-struct UiaSingleFlight {
-    in_flight: AtomicBool,
+/// resume as soon as the provider call returns (no cooldown).
+fn uia_single_flight() -> &'static Arc<SingleFlight> {
+    static GATE: OnceLock<Arc<SingleFlight>> = OnceLock::new();
+    GATE.get_or_init(|| Arc::new(SingleFlight::new(Duration::ZERO)))
 }
 
-impl UiaSingleFlight {
-    const fn new() -> Self {
-        Self {
-            in_flight: AtomicBool::new(false),
-        }
+/// Run `f` on a dedicated thread under `gate`. `f` receives the flag that is
+/// set when the caller's deadline fires, so it can skip side effects the
+/// caller will no longer observe.
+fn run_uia_single_flight<T, F>(
+    gate: &Arc<SingleFlight>,
+    stage: &'static str,
+    timeout: Duration,
+    fallback: &'static str,
+    f: F,
+) -> Result<T, UiaDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+{
+    let Some(permit) = gate.try_acquire() else {
+        tracing::debug!(
+            target: "uia_windows_enum",
+            "UIA {stage} skipped while another provider call is in flight"
+        );
+        return Err(UiaDeadlineError::Busy);
+    };
+
+    let (tx, rx) = mpsc::channel();
+    let cancelled = permit.timeout_flag();
+    let worker_cancelled = permit.timeout_flag();
+    let spawn = thread::Builder::new()
+        .name(format!("cua-uia-{stage}"))
+        .spawn(move || {
+            let _permit = permit;
+            let result = f(worker_cancelled);
+            let _ = tx.send(result);
+        });
+
+    if let Err(e) = spawn {
+        // The unspawned closure, and with it the permit, is already dropped,
+        // which reopened the gate.
+        tracing::warn!(target: "uia_windows_enum", "failed to spawn UIA {stage} thread: {e}");
+        return Err(UiaDeadlineError::Unavailable);
     }
 
-    fn run<T, F>(
-        self: &Arc<Self>,
-        stage: &'static str,
-        timeout: Duration,
-        fallback: &'static str,
-        f: F,
-    ) -> Result<T, UiaDeadlineError>
-    where
-        T: Send + 'static,
-        F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
-    {
-        if self
-            .in_flight
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            tracing::debug!(
+    match rx.recv_timeout(timeout) {
+        Ok(result) => Ok(result),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            cancelled.store(true, Ordering::Release);
+            tracing::warn!(
                 target: "uia_windows_enum",
-                "UIA {stage} skipped while another provider call is in flight"
+                "UIA {stage} exceeded {}ms; falling back to {fallback}; no other UIA worker will start until this provider call returns",
+                timeout.as_millis()
             );
-            return Err(UiaDeadlineError::Busy);
+            Err(UiaDeadlineError::Timeout)
         }
-
-        let (tx, rx) = mpsc::channel();
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let worker_cancelled = Arc::clone(&cancelled);
-        let worker_gate = Arc::clone(self);
-        let spawn = thread::Builder::new()
-            .name(format!("cua-uia-{stage}"))
-            .spawn(move || {
-                let _guard = InFlightGuard { gate: worker_gate };
-                let result = f(worker_cancelled);
-                let _ = tx.send(result);
-            });
-
-        if let Err(e) = spawn {
-            self.in_flight.store(false, Ordering::Release);
-            tracing::warn!(target: "uia_windows_enum", "failed to spawn UIA {stage} thread: {e}");
-            return Err(UiaDeadlineError::Unavailable);
-        }
-
-        match rx.recv_timeout(timeout) {
-            Ok(result) => Ok(result),
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                cancelled.store(true, Ordering::Release);
-                tracing::warn!(
-                    target: "uia_windows_enum",
-                    "UIA {stage} exceeded {}ms; falling back to {fallback}; no other UIA worker will start until this provider call returns",
-                    timeout.as_millis()
-                );
-                Err(UiaDeadlineError::Timeout)
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                tracing::warn!(target: "uia_windows_enum", "UIA {stage} thread exited without a result");
-                Err(UiaDeadlineError::Unavailable)
-            }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            tracing::warn!(target: "uia_windows_enum", "UIA {stage} thread exited without a result");
+            Err(UiaDeadlineError::Unavailable)
         }
     }
-}
-
-struct InFlightGuard {
-    gate: Arc<UiaSingleFlight>,
-}
-
-impl Drop for InFlightGuard {
-    fn drop(&mut self) {
-        self.gate.in_flight.store(false, Ordering::Release);
-    }
-}
-
-fn uia_single_flight() -> &'static Arc<UiaSingleFlight> {
-    static GATE: OnceLock<Arc<UiaSingleFlight>> = OnceLock::new();
-    GATE.get_or_init(|| Arc::new(UiaSingleFlight::new()))
 }
 
 fn run_uia_with_deadline<T, F>(
@@ -181,7 +160,7 @@ where
     T: Send + 'static,
     F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
 {
-    uia_single_flight().run(stage, timeout, fallback, f)
+    run_uia_single_flight(uia_single_flight(), stage, timeout, fallback, f)
 }
 
 struct ComInit {
@@ -1170,7 +1149,7 @@ mod tests {
 
     #[test]
     fn wedged_provider_has_bounded_worker_growth_and_recovers_immediately() {
-        let gate = Arc::new(UiaSingleFlight::new());
+        let gate = Arc::new(SingleFlight::new(Duration::ZERO));
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let starts = Arc::new(AtomicUsize::new(0));
@@ -1179,23 +1158,24 @@ mod tests {
         let side_effects = Arc::new(AtomicUsize::new(0));
 
         let first_start = Instant::now();
-        let result = gate.run("test wedge", Duration::from_millis(20), "test", {
-            let starts = Arc::clone(&starts);
-            let active = Arc::clone(&active);
-            let max_active = Arc::clone(&max_active);
-            let side_effects = Arc::clone(&side_effects);
-            move |cancelled| {
-                starts.fetch_add(1, Ordering::AcqRel);
-                let current = active.fetch_add(1, Ordering::AcqRel) + 1;
-                max_active.fetch_max(current, Ordering::AcqRel);
-                started_tx.send(()).unwrap();
-                release_rx.recv().unwrap();
-                if !cancelled.load(Ordering::Acquire) {
-                    side_effects.fetch_add(1, Ordering::AcqRel);
+        let result =
+            run_uia_single_flight(&gate, "test wedge", Duration::from_millis(20), "test", {
+                let starts = Arc::clone(&starts);
+                let active = Arc::clone(&active);
+                let max_active = Arc::clone(&max_active);
+                let side_effects = Arc::clone(&side_effects);
+                move |cancelled| {
+                    starts.fetch_add(1, Ordering::AcqRel);
+                    let current = active.fetch_add(1, Ordering::AcqRel) + 1;
+                    max_active.fetch_max(current, Ordering::AcqRel);
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    if !cancelled.load(Ordering::Acquire) {
+                        side_effects.fetch_add(1, Ordering::AcqRel);
+                    }
+                    active.fetch_sub(1, Ordering::AcqRel);
                 }
-                active.fetch_sub(1, Ordering::AcqRel);
-            }
-        });
+            });
         assert!(matches!(result, Err(UiaDeadlineError::Timeout)));
         assert_eq!(
             PointInvokeOutcome::from_worker(result.map(|()| PointInvokeOutcome::Miss)),
@@ -1207,9 +1187,15 @@ mod tests {
         let retries_start = Instant::now();
         for _ in 0..100 {
             let starts = Arc::clone(&starts);
-            let retry = gate.run("test retry", Duration::from_secs(1), "test", move |_| {
-                starts.fetch_add(1, Ordering::AcqRel);
-            });
+            let retry = run_uia_single_flight(
+                &gate,
+                "test retry",
+                Duration::from_secs(1),
+                "test",
+                move |_| {
+                    starts.fetch_add(1, Ordering::AcqRel);
+                },
+            );
             assert!(matches!(retry, Err(UiaDeadlineError::Busy)));
             assert_eq!(
                 PointInvokeOutcome::from_worker(retry.map(|()| PointInvokeOutcome::Miss)),
@@ -1222,26 +1208,129 @@ mod tests {
 
         release_tx.send(()).unwrap();
         let recovery_deadline = Instant::now() + Duration::from_secs(1);
-        while gate.in_flight.load(Ordering::Acquire) && Instant::now() < recovery_deadline {
+        while gate.is_in_flight() && Instant::now() < recovery_deadline {
             thread::yield_now();
         }
-        assert!(!gate.in_flight.load(Ordering::Acquire));
+        assert!(!gate.is_in_flight());
         assert_eq!(side_effects.load(Ordering::Acquire), 0);
 
-        let recovered = gate.run("test recovery", Duration::from_secs(1), "test", {
-            let starts = Arc::clone(&starts);
-            let active = Arc::clone(&active);
-            let max_active = Arc::clone(&max_active);
-            move |_| {
-                starts.fetch_add(1, Ordering::AcqRel);
-                let current = active.fetch_add(1, Ordering::AcqRel) + 1;
-                max_active.fetch_max(current, Ordering::AcqRel);
-                active.fetch_sub(1, Ordering::AcqRel);
-                42
-            }
-        });
+        let recovered =
+            run_uia_single_flight(&gate, "test recovery", Duration::from_secs(1), "test", {
+                let starts = Arc::clone(&starts);
+                let active = Arc::clone(&active);
+                let max_active = Arc::clone(&max_active);
+                move |_| {
+                    starts.fetch_add(1, Ordering::AcqRel);
+                    let current = active.fetch_add(1, Ordering::AcqRel) + 1;
+                    max_active.fetch_max(current, Ordering::AcqRel);
+                    active.fetch_sub(1, Ordering::AcqRel);
+                    42
+                }
+            });
         assert!(matches!(recovered, Ok(42)));
         assert_eq!(starts.load(Ordering::Acquire), 2);
         assert_eq!(max_active.load(Ordering::Acquire), 1);
+    }
+}
+
+/// Hit chain (nearest first), each node's bounds `[x, y, w, h]`, and whether
+/// the hit is inside a `Document`.
+pub(crate) type PointShapeChain = (
+    Vec<crate::pointer_shape_map::UiaHitNode>,
+    Vec<Option<[f64; 4]>>,
+    bool,
+);
+
+/// Budget for the presence hit-test's UIA work. Short: a hover cursor that
+/// misses its deadline just falls back to the arrow.
+const POINT_SHAPE_TIMEOUT: Duration = Duration::from_millis(150);
+/// How far up to look for an enclosing `Document` from page text.
+const POINT_SHAPE_DOCUMENT_DEPTH: usize = 16;
+
+/// The element under screen point `(sx, sy)` and up to three generic
+/// ancestors, as [`crate::pointer_shape_map::UiaHitNode`]s, plus whether the
+/// hit sits inside a `Document` and each node's bounding rectangle
+/// (`[x, y, w, h]`).
+///
+/// Uses desktop-wide `ElementFromPoint`, which is the right question here
+/// ("what is under the pointer", whatever window it belongs to). Where it
+/// stops at an outer host pane (UWP frames, see
+/// [`try_invoke_in_window_at_point`]), the answer degrades to the arrow.
+/// `None` when UIA is unavailable, busy with another call, or over budget.
+pub(crate) fn point_shape_chain(sx: i32, sy: i32) -> Option<PointShapeChain> {
+    run_uia_with_deadline(
+        "pointer shape hit-test",
+        POINT_SHAPE_TIMEOUT,
+        "the arrow",
+        move || point_shape_chain_unbounded(sx, sy),
+    )
+    .ok()
+    .flatten()
+}
+
+fn point_shape_chain_unbounded(sx: i32, sy: i32) -> Option<PointShapeChain> {
+    use crate::pointer_shape_map::{control_type, is_generic_control, UiaHitNode};
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationValuePattern, UIA_TextPatternId, UIA_ValuePatternId,
+    };
+
+    // Keep this first so COM interfaces drop before CoUninitialize.
+    let _com = ComInit::new();
+    let uia = get_uia()?;
+    unsafe {
+        let hit = uia.ElementFromPoint(POINT { x: sx, y: sy }).ok()?;
+        let walker = uia.ControlViewWalker().ok()?;
+        let node_of = |e: &IUIAutomationElement| -> UiaHitNode {
+            let control_type = e.CurrentControlType().map(|c| c.0).unwrap_or(0);
+            let value_read_only = e
+                .GetCurrentPattern(UIA_ValuePatternId)
+                .and_then(|p| p.cast::<IUIAutomationValuePattern>())
+                .and_then(|p| p.CurrentIsReadOnly())
+                .ok()
+                .map(|b| b.as_bool());
+            let text_pattern = matches!(control_type, control_type::DOCUMENT | control_type::EDIT)
+                && e.GetCurrentPattern(UIA_TextPatternId).is_ok();
+            UiaHitNode {
+                control_type,
+                enabled: e.CurrentIsEnabled().ok().map(|b| b.as_bool()),
+                value_read_only,
+                text_pattern,
+            }
+        };
+        let rect_of = |e: &IUIAutomationElement| -> Option<[f64; 4]> {
+            let r = e.CurrentBoundingRectangle().ok()?;
+            let (w, h) = (r.right - r.left, r.bottom - r.top);
+            (w > 0 && h > 0).then_some([r.left as f64, r.top as f64, w as f64, h as f64])
+        };
+
+        let mut elements = vec![hit];
+        let mut chain = vec![node_of(&elements[0])];
+        while elements.len() < 4 && is_generic_control(chain[chain.len() - 1].control_type) {
+            let Ok(parent) = walker.GetParentElement(&elements[elements.len() - 1]) else {
+                break;
+            };
+            chain.push(node_of(&parent));
+            elements.push(parent);
+        }
+        let in_document = chain[0].control_type == control_type::TEXT && {
+            let mut found = chain
+                .iter()
+                .any(|n| n.control_type == control_type::DOCUMENT);
+            let mut current = elements[elements.len() - 1].clone();
+            let mut depth = elements.len();
+            while !found && depth < POINT_SHAPE_DOCUMENT_DEPTH {
+                let Ok(parent) = walker.GetParentElement(&current) else {
+                    break;
+                };
+                found =
+                    parent.CurrentControlType().map(|c| c.0).unwrap_or(0) == control_type::DOCUMENT;
+                current = parent;
+                depth += 1;
+            }
+            found
+        };
+        let rects = elements.iter().map(rect_of).collect();
+        Some((chain, rects, in_document))
     }
 }

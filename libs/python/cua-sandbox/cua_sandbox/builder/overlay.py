@@ -1,7 +1,7 @@
 """QEMU qcow2 overlay (backing file) management.
 
 Provides the 3-layer chain:
-  Layer 0 (base):    windows-11-base.qcow2     — unattend + computer-server
+  Layer 0 (base):    windows-11-base.qcow2     — unattend + cua-spacesd
   Layer 1 (user):    {hash}.qcow2              — user's .winget_install()/.run() etc
   Layer 2 (session): session-{uuid}.qcow2       — ephemeral sandbox runtime
 """
@@ -14,9 +14,11 @@ import logging
 import subprocess
 from pathlib import Path
 
+from cua_sandbox._paths import cua_home
+
 logger = logging.getLogger(__name__)
 
-IMAGES_DIR = Path.home() / ".cua" / "cua-sandbox" / "images"
+IMAGES_DIR = cua_home() / "cua-sandbox" / "images"
 
 
 def _qemu_img() -> str:
@@ -77,7 +79,7 @@ def layers_hash(layers: list[dict]) -> str:
 
 
 def base_image_path(os_type: str, version: str) -> Path:
-    """Path to the cached base image (OS + computer-server installed)."""
+    """Path to the cached base image (OS + cua-spacesd installed)."""
     return IMAGES_DIR / f"{os_type}-{version}-base" / "disk.qcow2"
 
 

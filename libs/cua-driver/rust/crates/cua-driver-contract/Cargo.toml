@@ -14,3 +14,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = "1.2.1"
 uniffi.workspace = true
+
+[dev-dependencies]
+# Mirrors the run_actions step validator so schema tests exercise the same engine.
+jsonschema = { version = "0.46", default-features = false }

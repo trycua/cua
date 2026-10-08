@@ -988,4 +988,50 @@ mod tests {
             assert_eq!(field["nullable"], true, "{tool}{pointer}: {field}");
         }
     }
+
+    /// run_actions checks each step against the advertised schema with a JSON
+    /// Schema engine, which ignores OpenAPI `nullable`. The validation form
+    /// must turn the flag back into a `null` type so explicit null still
+    /// passes the step check (#4798).
+    #[test]
+    fn run_actions_validation_form_accepts_explicit_null() {
+        use serde_json::json;
+
+        let validator_for = |tool: &str| {
+            let schema = tool_contract(tool)
+                .unwrap_or_else(|| panic!("{tool} contract"))
+                .input_schema;
+            jsonschema::validator_for(&json_schema_validation_form(&schema))
+                .unwrap_or_else(|error| panic!("{tool}: {error}"))
+        };
+
+        let motion = validator_for("set_agent_cursor_motion");
+        for args in [
+            json!({"session": "s", "effects": {"glow": null}}),
+            json!({"session": "s", "effects": {"glow": true}}),
+            json!({"session": "s", "effects": null}),
+            json!({"session": "s", "arc_flow": null}),
+        ] {
+            assert!(motion.is_valid(&args), "{args}");
+        }
+        for args in [
+            json!({"session": "s", "effects": {"glow": "on"}}),
+            json!({"session": "s", "arc_flow": "1"}),
+        ] {
+            assert!(!motion.is_valid(&args), "{args}");
+        }
+
+        let parse = validator_for("parse_visual_regions");
+        assert!(parse.is_valid(&json!({"capture_id": "c", "options": {"kinds": null}})));
+        assert!(parse.is_valid(&json!({"capture_id": "c", "options": {"kinds": ["text"]}})));
+        assert!(!parse.is_valid(&json!({"capture_id": "c", "options": {"kinds": ["logo"]}})));
+
+        // A nullable enum admits null alongside its listed values.
+        let fixture = json!({"type": "string", "enum": ["a"], "nullable": true});
+        let enum_validator = jsonschema::validator_for(&json_schema_validation_form(&fixture))
+            .expect("fixture compiles");
+        assert!(enum_validator.is_valid(&json!("a")));
+        assert!(enum_validator.is_valid(&Value::Null));
+        assert!(!enum_validator.is_valid(&json!("b")));
+    }
 }

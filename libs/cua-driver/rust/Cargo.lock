@@ -1266,6 +1266,7 @@ dependencies = [
 name = "cua-driver-contract"
 version = "0.34.0"
 dependencies = [
+ "jsonschema",
  "schemars",
  "serde",
  "serde_json",

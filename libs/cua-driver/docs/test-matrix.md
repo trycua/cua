@@ -21,7 +21,7 @@ Every harness E2E result should identify these dimensions:
 | --- | --- |
 | OS | `windows`, `macos`, `linux` |
 | Window system | Win32/UIA, AppKit/AX, X11/AT-SPI, Wayland/AT-SPI, WebView/CDP |
-| Harness | Electron, Tauri, WPF, WinUI3, WebView2, AppKit, SwiftUI, WKWebView, GTK3 |
+| Harness | Electron, Tauri, WPF, WinForms, WinUI3, WebView2, AppKit, SwiftUI, WKWebView, GTK3 |
 | Action targeting | `ax`, `px`, `page`, `not_applicable` |
 | Delivery | `background`, `foreground`, `N/A` |
 | Scope | `window`, `desktop`, `N/A` |
@@ -169,10 +169,16 @@ Windows native harnesses are repo-local applications built from source:
 | Harness | Source test | Coverage |
 | --- | --- | --- |
 | WPF | `harness_wpf_test.rs` | UIA controls, text, keys, pointer actions, scroll, drag, popups, menus, modal windows; foreground single-line and multiline text integrity |
+| WinForms | `harness_wpf_test.rs` (WPF binary's `--winforms-keyboard` mode) | Exact native-control background keys without activation; windowless-link pre-effect refusal; explicit foreground keys to the exact control |
 | WinUI3 | `harness_winui3_test.rs` | XAML controls, text, checkbox/radio, slider, combo, popup; foreground single-line and multiline text integrity |
 | WebView2 | `harness_web_test.rs` | Window discovery, CDP page access, JavaScript, DOM click path |
 | Desktop target | `desktop_scope_windows_test.rs` | Per-call window/desktop modality, full-display capture, screen-absolute click/scroll, and strict rejection |
 | Desktop invariants | Testkit `DesktopObserver` plus typed launch/capture/cursor owners | Cross-cutting focus, z-order, minimized-launch, screenshot, cursor, and desktop checks |
+
+The WinForms keyboard rows observe native `KeyDown`/`KeyUp` receipts, a decoy
+control, and passive `Activated` events across the complete call. Background
+rows also use the existing foreground sentinel and desktop-side-effect
+oracles, so a transient activation cannot be hidden by restoring foreground.
 
 Native controls use AX/UIA state as their oracle. The foreground typing rows
 also compare each fixture's real `TextBox.Text` values from an isolated,

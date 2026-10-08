@@ -341,6 +341,20 @@ pub fn post_key(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
     // the renderer; mirror the WM_CHAR path and retarget to that child when
     // the target thread exposes one.
     let target = focused_descendant(hwnd_win).unwrap_or(hwnd_win);
+    post_key_messages(target, key, modifiers)
+}
+
+/// Post to an already admitted native control, without retargeting to a
+/// focused descendant. Element-addressed background keys must not fall back
+/// to the frame's previously focused (possibly different) control.
+pub fn post_key_to_hwnd(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<()> {
+    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
+        anyhow::bail!(msg);
+    }
+    post_key_messages(HWND(hwnd as *mut _), key, modifiers)
+}
+
+fn post_key_messages(target: HWND, key: &str, modifiers: &[&str]) -> Result<()> {
     let vk = key_name_to_vk(key)?;
     let has_alt = modifiers.iter().any(|m| *m == "alt" || *m == "menu");
 

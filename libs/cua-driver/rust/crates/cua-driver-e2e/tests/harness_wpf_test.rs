@@ -1193,6 +1193,201 @@ fn harness_wpf_double_click() {
     );
 }
 
+fn keyboard_fixture_state(path: &std::path::Path) -> serde_json::Value {
+    let body = std::fs::read(path).expect("native keyboard fixture state");
+    serde_json::from_slice(&body).expect("native keyboard fixture JSON")
+}
+
+fn run_native_keyboard_case(
+    case: CaseSpec,
+    test: impl FnOnce(u32, u64, &std::path::Path, &mut McpDriver) -> Observation,
+) {
+    let label = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let state_dir = tempfile::tempdir().expect("keyboard fixture state directory");
+        let state_path = state_dir.path().join("keyboard.json");
+        let mut driver = McpDriver::spawn_named(&label).expect("source-built driver");
+        let mut command = Command::new(harness_exe());
+        command
+            .arg("--winforms-keyboard")
+            .env("CUA_E2E_FIXTURE_STATE_PATH", &state_path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let app = spawn_in_job(&mut command).expect("native keyboard fixture");
+        let pid = app.id();
+        driver.reaper().push(app);
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness WinForms Keyboard")
+            .expect("native keyboard window");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Ok(body) = std::fs::read(&state_path) {
+                if let Ok(state) = serde_json::from_slice::<serde_json::Value>(&body) {
+                    if state["decoy_focused"] == true {
+                        break;
+                    }
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "native keyboard fixture must start on the decoy"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        *evidence = recording_evidence(driver.recording_dir());
+        test(pid, wid, &state_path, &mut driver)
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_winforms_background_element_key_preserves_focus() {
+    let case = native_background_case(
+        "winforms",
+        "press_key",
+        Targeting::Ax,
+        DriverRoute::PostMessage,
+    );
+    run_native_keyboard_case(case, |pid, wid, state_path, driver| {
+        let before = keyboard_fixture_state(state_path);
+        let snap = snapshot(driver, pid, wid);
+        let token = element_token_by_id(&snap, "key-target");
+        let (response, passed) = observe_background(driver, pid, wid, |driver| {
+            let response = driver.call(
+                "press_key",
+                serde_json::json!({
+                    "pid": pid, "window_id": wid, "element_token": token,
+                    "key": "a", "delivery_mode": "background"
+                }),
+            );
+            assert!(
+                !response.is_error(),
+                "native background key: {}",
+                response.text()
+            );
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let state = keyboard_fixture_state(&state_path);
+                if state["target_up"] == 1 {
+                    println!("native background key before={before} after={state}");
+                    assert_eq!(state["target_down"], 1);
+                    assert_eq!(state["decoy_down"], 0, "key reached the wrong control");
+                    assert_eq!(state["last_key"], "A");
+                    assert_eq!(state["last_modifiers"], "None");
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "key did not reach exact native control: {state}"
+                );
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            response
+        });
+        assert_eq!(response.structured()["route"], "synthetic_events");
+        let after = keyboard_fixture_state(&state_path);
+        assert_eq!(
+            after["activations"], before["activations"],
+            "target activated during background key"
+        );
+        delivered_with_fixture_state(passed)
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_winforms_background_windowless_key_refuses_without_focus() {
+    let mut case = native_background_case(
+        "winforms",
+        "press_key",
+        Targeting::Ax,
+        DriverRoute::PostMessage,
+    )
+    .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
+    case.cell_id = "windows-winforms-windowless-press-key-ax-background".into();
+    run_native_keyboard_case(case, |pid, wid, state_path, driver| {
+        let before = keyboard_fixture_state(state_path);
+        let snap = snapshot(driver, pid, wid);
+        let index = ax::element_index_containing(snap.text(), "\"Key link\"")
+            .unwrap_or_else(|| panic!("windowless link not in snapshot: {}", snap.text()));
+        let (response, mut passed) = observe_background(driver, pid, wid, |driver| {
+            driver.call(
+                "press_key",
+                serde_json::json!({
+                    "pid": pid, "window_id": wid, "element_token": snap.element_token(index),
+                    "key": "space", "delivery_mode": "background"
+                }),
+            )
+        });
+        assert!(
+            response.is_error(),
+            "windowless key unexpectedly succeeded: {}",
+            response.text()
+        );
+        assert_eq!(response.structured()["code"], "background_unavailable");
+        let after = keyboard_fixture_state(state_path);
+        assert_eq!(after, before, "refusal changed keyboard fixture state");
+        passed.push(OracleKind::FixtureState);
+        Observation::refused(
+            RefusalCode::BackgroundUnavailable,
+            passed,
+            response.text(),
+            Evidence::default(),
+        )
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_winforms_foreground_element_key_reaches_exact_control() {
+    let case = native_foreground_case(
+        "winforms",
+        "press_key",
+        Targeting::Ax,
+        DriverRoute::WindowsSendInput,
+    );
+    run_native_keyboard_case(case, |pid, wid, state_path, driver| {
+        let snap = snapshot(driver, pid, wid);
+        let token = element_token_by_id(&snap, "key-target");
+        let sentinel = ForegroundSentinel::launch(driver);
+        sentinel
+            .assert_background_posture(TargetWindow {
+                pid,
+                native_id: wid,
+            })
+            .expect("foreground key fixture must start behind sentinel");
+        driver.start_behavior_recording();
+        // A character key can become VK_PROCESSKEY under an active IME.
+        // Verify native routing with F6 without changing host input-method state.
+        let response = driver.call(
+            "press_key",
+            serde_json::json!({
+                "pid": pid, "window_id": wid, "element_token": token,
+                "key": "f6", "delivery_mode": "foreground"
+            }),
+        );
+        assert!(
+            !response.is_error(),
+            "foreground native key: {}",
+            response.text()
+        );
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let state = keyboard_fixture_state(state_path);
+            if state["target_up"] == 1 {
+                assert_eq!(state["target_down"], 1);
+                assert_eq!(state["decoy_down"], 0, "foreground key reached decoy");
+                assert_eq!(state["last_key"], "F6");
+                assert_eq!(state["last_modifiers"], "None");
+                break;
+            }
+            assert!(Instant::now() < deadline, "foreground key missing: {state}");
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        delivered_with_fixture_state(Vec::new())
+    });
+}
+
 #[test]
 #[ignore]
 fn harness_wpf_press_key_accelerator() {

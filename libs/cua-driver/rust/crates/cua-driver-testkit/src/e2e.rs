@@ -1978,6 +1978,126 @@ mod tests {
         })
     }
 
+    fn action_with_truth(effect: &str, evidence: serde_json::Value) -> Value {
+        serde_json::json!({
+            "tool": "click",
+            "result_error": false,
+            "arguments": {"pid": 1, "window_id": 2},
+            "action_truth": {
+                "effect": effect,
+                "transport": "windows_uia_invoke",
+                "route": "accessibility",
+                "requested_delivery": "background",
+                "actual_delivery": "background",
+                "delivered_count": 1,
+                "attempts": [],
+                "fallbacks": [],
+                "evidence": evidence,
+                "escalation": null
+            }
+        })
+    }
+
+    fn truthfulness_errors(action: &Value, observed: ObservedBehavior) -> Vec<String> {
+        let mut errors = Vec::new();
+        validate_action_truthfulness(action, observed, "cell", "turn-00001", &mut errors);
+        errors
+    }
+
+    #[test]
+    fn action_truthfulness_allows_conservative_unverifiable_delivery() {
+        let action = action_with_truth("unverifiable", serde_json::json!([]));
+        assert!(truthfulness_errors(&action, ObservedBehavior::Delivered).is_empty());
+    }
+
+    #[test]
+    fn action_truthfulness_accepts_confirmed_delivery_with_evidence() {
+        let action = action_with_truth(
+            "confirmed",
+            serde_json::json!([{"kind":"value_readback","detail":"fixture changed"}]),
+        );
+        assert!(truthfulness_errors(&action, ObservedBehavior::Delivered).is_empty());
+    }
+
+    #[test]
+    fn action_truthfulness_rejects_confirmed_without_evidence() {
+        let action = action_with_truth("confirmed", serde_json::json!([]));
+        let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
+        assert!(errors.iter().any(|error| error.contains("confirmed action truth has no evidence")));
+    }
+
+    #[test]
+    fn action_truthfulness_rejects_claims_stronger_than_no_effect_oracle() {
+        for effect in ["confirmed", "partial"] {
+            let action = action_with_truth(
+                effect,
+                serde_json::json!([{"kind":"value_readback","detail":"claimed"}]),
+            );
+            let errors = truthfulness_errors(&action, ObservedBehavior::NoEffect);
+            assert!(
+                errors.iter().any(|error| error.contains("action-truth contradiction")),
+                "{effect}: {errors:?}"
+            );
+        }
+
+        for effect in ["unverifiable", "suspected_noop", "refused"] {
+            let action = action_with_truth(effect, serde_json::json!([]));
+            assert!(
+                truthfulness_errors(&action, ObservedBehavior::NoEffect).is_empty(),
+                "{effect}"
+            );
+        }
+    }
+
+    #[test]
+    fn action_truthfulness_rejects_refusal_mismatch() {
+        let refused = action_with_truth("refused", serde_json::json!([]));
+        assert!(truthfulness_errors(&refused, ObservedBehavior::Refused).is_empty());
+
+        for effect in ["confirmed", "partial", "unverifiable", "suspected_noop"] {
+            let evidence = if effect == "confirmed" {
+                serde_json::json!([{"kind":"value_readback","detail":"claimed"}])
+            } else {
+                serde_json::json!([])
+            };
+            let action = action_with_truth(effect, evidence);
+            let errors = truthfulness_errors(&action, ObservedBehavior::Refused);
+            assert!(
+                errors.iter().any(|error| error.contains("action-truth contradiction")),
+                "{effect}: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn action_truthfulness_rejects_delivered_but_refused_or_noop_claim() {
+        for effect in ["refused", "suspected_noop"] {
+            let action = action_with_truth(effect, serde_json::json!([]));
+            let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
+            assert!(
+                errors.iter().any(|error| error.contains("action-truth contradiction")),
+                "{effect}: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn action_truthfulness_is_backward_compatible_without_internal_truth() {
+        let action = serde_json::json!({"tool":"click","result_error":false,"arguments":{}});
+        assert!(truthfulness_errors(&action, ObservedBehavior::Delivered).is_empty());
+    }
+
+    #[test]
+    fn action_truthfulness_rejects_unknown_or_missing_effect() {
+        let mut action = action_with_truth("future-effect", serde_json::json!([]));
+        let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
+        assert!(errors.iter().any(|error| error.contains("unknown effect")));
+
+        action["action_truth"].as_object_mut().unwrap().remove("effect");
+        let errors = truthfulness_errors(&action, ObservedBehavior::Delivered);
+        assert!(errors.iter().any(|error| error.contains("has no effect")));
+    }
+
     #[test]
     fn semantic_click_without_point_requires_exact_action_truth() {
         let original = semantic_click_fixture();

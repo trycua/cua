@@ -111,6 +111,10 @@ async fn invoke(
         ("MoveCursor" | "ClickPulse", [x, y]) => {
             send!((parse_i32(x)?, parse_i32(y)?))
         }
+        ("CaptureWindow", [id, pid]) => send!((parse_u32(id)?, parse_u32(pid)?)),
+        ("CaptureWindowPreview", [id, pid, max]) => {
+            send!((parse_u32(id)?, parse_u32(pid)?, parse_u32(max)?))
+        }
         ("SetCursorState", [action, delivery, target, active]) => send!((
             action.as_str(),
             delivery.as_str(),
@@ -122,7 +126,7 @@ async fn invoke(
     let body = reply.body();
     let decoded = match member {
         "GetRects" => body.deserialize::<String>().ok(),
-        "GetNameOwner" | "Capture" => body
+        "GetNameOwner" | "Capture" | "CaptureWindow" => body
             .deserialize::<String>()
             .ok()
             .map(|value| format!("('{value}',)")),
@@ -130,6 +134,10 @@ async fn invoke(
             .deserialize::<u32>()
             .ok()
             .map(|value| format!("(uint32 {value},)")),
+        "CaptureWindowPreview" => body
+            .deserialize::<(String, u32, u32)>()
+            .ok()
+            .map(|(png, width, height)| format!("('{png}', uint32 {width}, uint32 {height})")),
         "Activate" => body
             .deserialize::<bool>()
             .ok()
@@ -161,13 +169,32 @@ mod tests {
     #[zbus::interface(name = "org.cua.WinRects")]
     impl Helper {
         fn get_version(&self) -> u32 {
-            8
+            10
         }
         fn get_rects(&self) -> String {
             RECTS.into()
         }
         fn capture(&self) -> String {
             "cG5n".into()
+        }
+        fn capture_window(&self, id: u32, pid: u32) -> zbus::fdo::Result<String> {
+            if id != 7 || pid != 42 {
+                return Err(zbus::fdo::Error::Failed(
+                    "Target window is unavailable".into(),
+                ));
+            }
+            Ok("cG5n".into())
+        }
+        fn capture_window_preview(
+            &self,
+            id: u32,
+            pid: u32,
+            max: u32,
+        ) -> zbus::fdo::Result<(String, u32, u32)> {
+            if id != 7 || pid != 42 || max != 800 {
+                return Err(zbus::fdo::Error::InvalidArgs("wrong target".into()));
+            }
+            Ok(("cG5n".into(), 1600, 900))
         }
         fn activate(&self, id: u32) -> bool {
             id == 7
@@ -252,7 +279,7 @@ mod tests {
         for _ in 0..3 {
             assert_eq!(
                 call("GetVersion", vec![]).await.as_deref(),
-                Ok("(uint32 8,)")
+                Ok("(uint32 10,)")
             );
             // GetRects is the raw JSON, so punctuation in one title no longer
             // hides every window from the parsers.
@@ -269,6 +296,26 @@ mod tests {
             assert_eq!(raw, "('cG5n',)");
             assert_eq!(super::super::decode_capture(&raw), Some(b"png".to_vec()));
         }
+        assert_eq!(
+            call("CaptureWindow", vec!["7".into(), "42".into()])
+                .await
+                .as_deref(),
+            Ok("('cG5n',)")
+        );
+        assert_eq!(
+            call(
+                "CaptureWindowPreview",
+                vec!["7".into(), "42".into(), "800".into()]
+            )
+            .await
+            .as_deref(),
+            Ok("('cG5n', uint32 1600, uint32 900)")
+        );
+        // The helper refusing another process's window is an error reply.
+        assert_eq!(
+            call("CaptureWindow", vec!["7".into(), "43".into()]).await,
+            Err(Failure::Reply)
+        );
         assert_eq!(
             call("Activate", vec!["7".into()]).await.as_deref(),
             Ok("(true,)")
@@ -303,7 +350,7 @@ mod tests {
         assert_eq!(call("NoSuchMethod", vec![]).await, Err(Failure::Reply));
         assert_eq!(
             call("GetVersion", vec![]).await.as_deref(),
-            Ok("(uint32 8,)")
+            Ok("(uint32 10,)")
         );
         drop(service);
     }

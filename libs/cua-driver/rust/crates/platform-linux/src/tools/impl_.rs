@@ -1337,7 +1337,17 @@ impl Tool for GetWindowStateTool {
                 window_overlays(pid, xid)
             };
             let screenshot = if should_capture {
-                let captured = if overlays.covers_window {
+                // A screenshot-only read with a size cap (a live preview) asks
+                // a GNOME helper with API 10 to downscale in the compositor,
+                // and keeps the window's full size for frame_scale.
+                let preview = if !want_tree && max_dim > 0 && crate::wayland::is_wayland() {
+                    crate::wayland::shell_helper::screenshot_window_preview(xid, pid, max_dim)
+                } else {
+                    None
+                };
+                let captured = if let Some((png, width, height)) = preview {
+                    Ok((png, Some((width, height))))
+                } else if overlays.covers_window {
                     overlays
                         .window_rect
                         .ok_or_else(|| anyhow::anyhow!("window geometry unavailable"))
@@ -1345,12 +1355,16 @@ impl Tool for GetWindowStateTool {
                             crate::capture::screenshot_root_region_png(x, y, w, h)
                         })
                         .or_else(|_| crate::wayland::screenshot_dispatch_with_pid(xid, pid))
+                        .map(|png| (png, None))
                 } else {
-                    crate::wayland::screenshot_dispatch_with_pid(xid, pid)
+                    crate::wayland::screenshot_dispatch_with_pid(xid, pid).map(|png| (png, None))
                 };
                 match captured {
-                    Ok(raw) => {
-                        let (orig_w, orig_h) = crate::capture::png_dimensions_pub(&raw)?;
+                    Ok((raw, original_size)) => {
+                        let (orig_w, orig_h) = match original_size {
+                            Some(size) => size,
+                            None => crate::capture::png_dimensions_pub(&raw)?,
+                        };
                         let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;
                         let (w, h) = crate::capture::png_dimensions_pub(&png)?;
                         // An explicit per-call max_image_dimension (0 = native)

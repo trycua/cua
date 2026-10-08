@@ -121,9 +121,10 @@ def test_explicit_local_signing_identity_never_falls_back(tmp_path: Path) -> Non
     assert result.stdout == "-"
 
 
+@pytest.mark.parametrize("installed_helper_version", [4, 12], ids=["older-helper", "newer-helper"])
 @pytest.mark.parametrize("relative_target", [False, True], ids=["absolute", "relative"])
 def test_installer_stages_binary_from_custom_cargo_target(
-    tmp_path: Path, relative_target: bool
+    tmp_path: Path, relative_target: bool, installed_helper_version: int
 ) -> None:
     fixture_root = tmp_path / "cua-driver"
     scripts_dir = fixture_root / "scripts"
@@ -177,7 +178,9 @@ esac
     user_home = tmp_path / "home"
     installed_helper = user_home / ".local/share/gnome-shell/extensions/winrects@cua"
     installed_helper.mkdir(parents=True)
-    (installed_helper / "metadata.json").write_text('{"version":4}\n', encoding="utf-8")
+    (installed_helper / "metadata.json").write_text(
+        f'{{"version":{installed_helper_version}}}\n', encoding="utf-8"
+    )
     (installed_helper / "extension.js").write_text("// legacy cursor\n", encoding="utf-8")
     install_bin = tmp_path / "install-bin"
     env = os.environ.copy()
@@ -217,8 +220,17 @@ esac
     assert (
         local_home / "packages/current/wayland-helper/winrects@cua/metadata.json"
     ).read_text() == '{"version":5}\n'
-    assert (installed_helper / "metadata.json").read_text() == '{"version":5}\n'
-    assert (installed_helper / "extension.js").read_text() == "// semantic cursor v5\n"
+    if installed_helper_version < 5:
+        assert (installed_helper / "metadata.json").read_text() == '{"version":5}\n'
+        assert (installed_helper / "extension.js").read_text() == "// semantic cursor v5\n"
+    else:
+        # Another app installed a newer helper with the same UUID; its API is a
+        # superset, so the installer must not downgrade it.
+        assert (
+            installed_helper / "metadata.json"
+        ).read_text() == f'{{"version":{installed_helper_version}}}\n'
+        assert (installed_helper / "extension.js").read_text() == "// legacy cursor\n"
+        assert f"kept installed GNOME helper v{installed_helper_version}" in output
 
     # No published CLI exists here, so the installer explains the migration
     # after the shared hints instead of aliasing the local build to it.

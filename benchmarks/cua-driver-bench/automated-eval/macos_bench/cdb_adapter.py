@@ -194,6 +194,25 @@ def electron_argv(argv: list[str], cwd: str, name: str) -> list[str]:
     return argv[:at] + [str(bundle / "Contents/MacOS/Electron")] + argv[at + 2 :]
 
 
+CHROME_EXE = "/Contents/MacOS/Google Chrome"
+
+
+def with_force_accessibility(argv: list[str], kind: str, flag: str = ca.FORCE_ACCESSIBILITY_FLAG) -> list[str]:
+    """Amendment 9 (arc arm only): start Chromium with its renderer accessibility switched on. Chrome gets the
+    switch right after its executable, before the start URL. An Electron app gets it at the end, after the app's
+    own arguments (Chromium reads switches anywhere on the line; the pack's apps find theirs by prefix). Other
+    apps are unchanged, and so is an argv that already carries the switch."""
+    if flag in argv:
+        return argv
+    if kind == "electron":
+        return [*argv, flag]
+    if kind == "browser":
+        for i, part in enumerate(argv):
+            if part.endswith(CHROME_EXE):
+                return [*argv[: i + 1], flag, *argv[i + 1 :]]
+    return argv
+
+
 def kill_policy(spec: dict[str, Any]) -> tuple[list[str], list[int]]:
     """Process names and listening ports to clear before and after a trial (VM only)."""
     text = json.dumps(_descriptor(spec))
@@ -284,7 +303,7 @@ class CdbTask:
     def apps(self) -> list[dict[str, Any]]:
         return [a for a in self.descriptor["apps"] if a["kind"] not in SKIP_KINDS]
 
-    def start_apps(self, windows: Any = None) -> None:
+    def start_apps(self, windows: Any = None, force_accessibility: bool = False) -> None:
         for app in self.apps():
             env = {"HOME": str(Path.home()), "PATH": APP_PATH, "LANG": "en_US.UTF-8"}
             env.update({k: self.sub(v) for k, v in (app.get("env") or {}).items()})
@@ -293,6 +312,11 @@ class CdbTask:
             if app.get("kind") == "electron" and os.environ.get("CDB_ELECTRON_SHARED") != "1":
                 argv = electron_argv(argv, cwd, app_display_name(app))
                 self.log.append(f"electron {app['id']} as {electron_bundle_id(app_display_name(app))}")
+            if force_accessibility:
+                flagged = with_force_accessibility(argv, app.get("kind", ""))
+                if flagged != argv:
+                    self.log.append(f"{app['id']}: {ca.FORCE_ACCESSIBILITY_FLAG}")
+                argv = flagged
             out =(self.artifacts / f"app-{app['id']}.log").open("ab")
             proc = subprocess.Popen(
                 argv,

@@ -196,3 +196,13 @@ The trials run in a Lume macOS VM on a separate Mac Studio, not on the owner's d
 | CDB task pack | Agent-visible subset (apps with `node_modules`, fixture, reset scripts, launch descriptor, brief) in `$CDB_TASKPACK` (`~/cdb-runtime`); the full pack in the home of OS user `cdbeval` (0700); `/usr/local/libexec/cdb-eval-run` runs the evaluator as that user (`sudoers`: `lume ALL=(cdbeval) NOPASSWD: /usr/local/libexec/cdb-eval-run`). `CDB_EVAL_SUDO=1` selects this path. |
 
 `launch.env` for the VM sets `CDB_BENCH_WORK`, `CDB_BENCH_DISPOSABLE=1` (the runner may kill Electron, Chrome, LibreOffice and GnuCash by name), `CDB_TASKPACK`, `CDB_EVAL_SUDO=1`, `CDB_CLAUDE_TOKEN_FILE`, `RUN_ID` and `CUTOFF_UTC`. The runner is started with `open -a Terminal ~/bench-work/launch_bench.command` inside the VM, like on a Mac. Results are copied out through the shared directory after the run. When the study ends: stop and delete the VM, delete `~/.cdb-secrets`, and revoke the setup token.
+
+## arc-driver arm (Amendment 9, CUA-1241)
+
+`cc-arc-driver` runs arc-driver, the MCP server of the third-party package arc-cua 0.1.1 (MIT), as MCP server `arc`. It has no skill, and it starts Chrome and Electron with `--force-renderer-accessibility`. It is only ever installed in a VM clone made for it (`cdb-arc`), never on a Mac anyone uses:
+
+1. Clone the stopped `cdb-h2h`, start the clone, and delete any `~/.cdb-secrets/claude-token` it carries.
+2. Run `zsh tools/arc_driver/install_arc_driver.sh` in the VM. It creates a hash-pinned Python 3.12 venv, builds and ad-hoc signs `ArcDriverBench.app` (`com.trycua.bench.arcdriver`), and grants that bundle id Accessibility and Screen Recording.
+3. Copy the printed values into `pins.json` `arc_driver`.
+4. Run with `--arms cc-arc-driver`. The preflight starts the server through the launcher, checks its 16 tools, and checks that its `status` tool reports accessibility, screen recording and background input.
+5. Analyse with `tools/analyze_arc.py <arc run> <v038 run> [--no-arm-b]`.

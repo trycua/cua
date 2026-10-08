@@ -93,10 +93,47 @@ def strip_mcp(name: str) -> tuple[str | None, str]:
     return None, name
 
 
+# Amendment 9: arc-driver (server "arc") tool names -> action class. ``act`` is classed by its ``action``.
+ARC_CLASSES = {
+    "status": "observe",
+    "apps": "observe",
+    "windows": "observe",
+    "observe": "observe",
+    "screenshot": "observe",
+    "commands": "observe",
+    "settle": "observe",
+    "wait": "other",
+    "release": "other",
+    "run_command": "other",
+    "click_at": "click",
+    "drag": "drag",
+    "scroll_at": "scroll",
+    "press": "key",
+    "type_text": "type",
+}
+ARC_ACT_CLASSES = {
+    "CLICK": "click",
+    "DOUBLE_CLICK": "click",
+    "RIGHT_CLICK": "click",
+    "SET_VALUE": "set_value",
+    "TYPE_TEXT": "type",
+    "PRESS_KEY": "key",
+    "HOTKEY": "key",
+    "SCROLL": "scroll",
+    "DRAG_TO": "drag",
+    "DRAG_BY": "drag",
+    "WAIT": "other",
+}
+
+
 def tool_class(name: str, tool_input: dict[str, Any] | None = None) -> str:
     server, tool = strip_mcp(name)
     if server is None:
         return "builtin"
+    if server == "arc":
+        if tool == "act":
+            return ARC_ACT_CLASSES.get(str((tool_input or {}).get("action") or "").upper(), "other")
+        return ARC_CLASSES.get(tool, "other")
     if tool in CUA_CLASSES:
         return CUA_CLASSES[tool]
     if tool == "js":

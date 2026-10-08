@@ -156,6 +156,61 @@ CUA_BUILDS = {
 }
 CUA_ARMS = tuple(CUA_BUILDS)
 
+# Amendment 9 (CUA-1241): arc-driver, the MCP server of the third-party package arc-cua (github.com/shhivv/arc-cua,
+# MIT), pinned to release 0.1.1 and installed in the VM only (tools/arc_driver/install_arc_driver.sh). It is a Python
+# stdio server with no daemon. It is started through ArcDriverBench.app, a small ad-hoc signed launcher with its own
+# bundle id, so that the launcher, not Terminal, is the process TCC holds responsible (Accessibility and Screen
+# Recording are granted to that bundle id only).
+ARC_DIR = WORK / "arc-cua"
+ARC_APP = ARC_DIR / "ArcDriverBench.app"
+ARC_LAUNCHER = ARC_APP / "Contents/MacOS/arc-launch"
+ARC_BUNDLE_ID = "com.trycua.bench.arcdriver"
+ARC_VENV = ARC_DIR / "venv"
+ARC_PYTHON = ARC_VENV / "bin/python"
+ARC_HOME = ARC_DIR / "home"
+ARC_SERVER = "arc"
+# -I: no user site, no PYTHON* variables, no script or working directory on sys.path; -B: no .pyc files, so the
+# installed tree keeps the hash pinned in pins.json.
+ARC_ARGS = ("-I", "-B", "-m", "arc_cua", "mcp")
+# The Chromium switch arc-driver asks for (its FORCE_ACCESSIBILITY constant, driver.py:55 at 0.1.1). The pack's
+# Electron apps already append it themselves (app.commandLine.appendSwitch), so for them it changes nothing.
+FORCE_ACCESSIBILITY_FLAG = "--force-renderer-accessibility"
+ARC_STATUS_REQUIRED = ("accessibility", "screen_recording", "background_input")
+ARC_TOOLS = (
+    "status", "apps", "windows", "observe", "act", "settle", "wait", "commands", "run_command", "release",
+    "screenshot", "click_at", "drag", "scroll_at", "press", "type_text",
+)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class ArcBuild:
+    """The arc-driver arm: pinned package in its own venv, started through the launcher app."""
+
+    arm: str
+    launcher: Path
+    python: Path
+    home: Path
+    force_accessibility: bool = True  # A9.3: Chrome and Electron start with FORCE_ACCESSIBILITY_FLAG in this arm
+
+    @property
+    def argv(self) -> list[str]:
+        return [str(self.launcher), str(self.python), *ARC_ARGS]
+
+
+ARC_BUILDS = {"cc-arc-driver": ArcBuild("cc-arc-driver", ARC_LAUNCHER, ARC_PYTHON, ARC_HOME)}
+ARC_ARMS = tuple(ARC_BUILDS)
+
+
+def arc_env(home: Path) -> dict[str, str]:
+    """Environment of the arc-driver server: its own empty HOME, a closed PATH. Its MCP path reads no variables and
+    makes no network calls (review in the scoping notes); the two variables below are belt and braces."""
+    return {"HOME": str(home), "PATH": "/usr/bin:/bin", "PYTHONNOUSERSITE": "1", "DO_NOT_TRACK": "1"}
+
+
+def force_accessibility(arm: str) -> bool:
+    build = ARC_BUILDS.get(arm)
+    return bool(build and build.force_accessibility)
+
 CODEX_CU_MCP_CANDIDATES = (
     WORK / "codex-access" / "mcp.json",
     WORK / "codex-access" / "mcp_cua_repl_computer.json",
@@ -168,6 +223,8 @@ ARM_DESCRIPTIONS = {
     "cc-cua-driver-main-skill": "The same as cc-cua-driver-main, with the skill's SKILL.md appended to the system prompt",
     "cc-cua-driver-script": "The main build in its own app with CUA_DRIVER_EXPERIMENTAL_SCRIPT=1 (run_script on) and the run_script addendum in the system prompt",
     "cc-codex-cu": "Claude Code + Codex computer-use cua_repl MCP (server codex-cu), no skill",
+    "cc-arc-driver": "Claude Code + arc-driver (arc-cua 0.1.1) MCP (server arc) through its own launcher app, no skill; "
+    "Chrome and Electron started with --force-renderer-accessibility",
 }
 
 SKILL_PROMPT_HEADER = (
@@ -215,6 +272,62 @@ def sha256_tree(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_tree_nocache(path: Path) -> str:
+    """sha256_tree without __pycache__ folders (the arc venv: the server runs with -B, this is a second guard)."""
+    digest = hashlib.sha256()
+    for item in sorted(p for p in path.rglob("*") if p.is_file() and "__pycache__" not in p.parts):
+        digest.update(str(item.relative_to(path)).encode())
+        digest.update(sha256_file(item).encode())
+    return digest.hexdigest()
+
+
+def arc_site_packages(venv: Path = ARC_VENV) -> Path | None:
+    found = sorted(venv.glob("lib/python3.*/site-packages"))
+    return found[0] if found else None
+
+
+def arc_dist_version(site: Path | None) -> str | None:
+    """The installed arc-cua version from its dist-info METADATA (what the status tool reports)."""
+    for meta in sorted((site or Path("/nonexistent")).glob("arc_cua-*.dist-info/METADATA")):
+        for line in meta.read_text("utf-8", "replace").splitlines():
+            if line.startswith("Version:"):
+                return line.split(":", 1)[1].strip()
+    return None
+
+
+def arc_observed(build: ArcBuild | None = None) -> dict[str, Any]:
+    """What is installed for the arc arm right now, keyed like pins.json ``arc_driver``."""
+    build = build or ARC_BUILDS["cc-arc-driver"]
+    site = arc_site_packages(build.python.parent.parent)
+    return {
+        "version": arc_dist_version(site),
+        "package_tree_sha256": sha256_tree_nocache(site / "arc_cua") if site and (site / "arc_cua").is_dir() else None,
+        "site_packages_tree_sha256": sha256_tree_nocache(site) if site else None,
+        "launcher_sha256": sha256_file(build.launcher) if build.launcher.is_file() else None,
+        "python_version": _run([str(build.python), "-I", "-c", "import sys; print(sys.version.split()[0])"]).stdout.strip()
+        if build.python.exists()
+        else None,
+    }
+
+
+def check_arc_pins(pins: dict[str, Any], observed: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """Every pinned arc value must equal the observed one; a missing pin or a missing install fails."""
+    want = pins.get("arc_driver", {})
+    out = []
+    for key in ("version", "package_tree_sha256", "site_packages_tree_sha256", "launcher_sha256", "python_version"):
+        ok = bool(want.get(key)) and observed.get(key) == want.get(key)
+        out.append((f"pin arc_driver.{key}", "pass" if ok else "fail", str(observed.get(key))
+                    if ok else f"observed {observed.get(key)!r}, pinned {want.get(key)!r}"))
+    return out
+
+
+def arc_status_problems(status: dict[str, Any]) -> list[str]:
+    """Preflight rule of A9.4: the status tool must report accessibility, screen recording and background input."""
+    perms = status.get("permissions") or {}
+    flat = {**perms, "background_input": status.get("background_input")}
+    return [key for key in ARC_STATUS_REQUIRED if flat.get(key) is not True]
+
+
 def load_pins() -> dict[str, Any]:
     return json.loads(PINS_FILE.read_text("utf-8"))
 
@@ -258,6 +371,17 @@ def mcp_config_for(
         path = run_dir / f"mcp-{arm}.json"
         path.write_text(json.dumps(config, indent=2) + "\n", "utf-8")
         return path, "cua"
+    if arm in ARC_BUILDS:
+        build = ARC_BUILDS[arm]
+        command, *args = build.argv  # absolute paths: nothing is resolved through PATH or fetched at trial time
+        config = {
+            "mcpServers": {
+                ARC_SERVER: {"type": "stdio", "command": command, "args": args, "env": arc_env(build.home)}
+            }
+        }
+        path = run_dir / f"mcp-{arm}.json"
+        path.write_text(json.dumps(config, indent=2) + "\n", "utf-8")
+        return path, ARC_SERVER
     if arm == "cc-codex-cu":
         source = resolve_codex_cu_config(codex_cu_config)
         if source is None:

@@ -518,6 +518,63 @@ def mcp_list_tools(command: str, args: list[str], env: dict[str, str]) -> list[s
         client.close()
 
 
+def arc_live_checks(ctx: "Ctx", arm: str) -> list[tuple[str, str, str]]:
+    """Amendment 9 preflight: start the arc server exactly as the trial's MCP config does (through the launcher
+    app), list its tools and call ``status``. Fails unless all 16 tools are listed and accessibility, screen
+    recording and background input are all true; ``virtual_display`` is recorded."""
+    path, _server = ctx.mcp[arm]
+    command, cargs, env = mcp_entry(path)
+    out: list[tuple[str, str, str]] = []
+    try:
+        client = rec.McpStdioClient([command, *cargs], env)
+    except Exception as error:  # noqa: BLE001
+        return [(f"{arm} MCP server starts", "fail", f"{type(error).__name__}: {error}")]
+    try:
+        reply = client.request("tools/list", {}, timeout=60)
+        tools = sorted(t["name"] for t in reply.get("result", {}).get("tools", []))
+        ok = tools == sorted(ca.ARC_TOOLS)
+        out.append((f"{arm} MCP server lists the 16 arc-driver tools", "pass" if ok else "fail", f"{tools}"))
+        status = client.call_tool("status", {}, timeout=60)
+        missing = ca.arc_status_problems(status)
+        ctx.versions.setdefault("arc_driver", {})["status"] = status
+        out.append(
+            (
+                f"{arm} status: accessibility, screen recording, background input",
+                "pass" if not missing else "fail",
+                json.dumps(status)[:400] + (f" missing {missing}" if missing else ""),
+            )
+        )
+        want = (ca.load_pins().get("arc_driver") or {}).get("version")
+        out.append(
+            (
+                f"{arm} status reports the pinned version",
+                "pass" if want and status.get("version") == want else "fail",
+                str(status.get("version")),
+            )
+        )
+        out.append((f"{arm} virtual display (recorded, not required)", "pass" if status.get("virtual_display") else "warn",
+                    str(status.get("virtual_display"))))
+    except Exception as error:  # noqa: BLE001
+        out.append((f"{arm} MCP server", "fail", f"{type(error).__name__}: {error}"))
+    finally:
+        client.close()  # stdin EOF: the server restores any parked window and exits (A9.5)
+    return out
+
+
+def arc_row_identity(ctx: "Ctx") -> dict[str, Any]:
+    """Pinned commit and observed install of the arc arm, repeated in every arc row."""
+    pin = ca.load_pins().get("arc_driver", {})
+    seen = ctx.versions.get("arc_driver") or {}
+    return {
+        "git_sha": pin.get("git_sha"),
+        "version": seen.get("version"),
+        "wheel_sha256": pin.get("wheel_sha256"),
+        "package_tree_sha256": seen.get("package_tree_sha256"),
+        "launcher_sha256": seen.get("launcher_sha256"),
+        "virtual_display": (seen.get("status") or {}).get("virtual_display"),
+    }
+
+
 def mcp_entry(config_path: Path) -> tuple[str, list[str], dict[str, str]]:
     data = json.loads(config_path.read_text("utf-8"))
     ((name, entry),) = data["mcpServers"].items()
@@ -632,6 +689,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         and os.environ.get("CDB_ELECTRON_SHARED") != "1",
         "quota_five_hour_before": (ctx.quota or {}).get("five_hour"),
         "quota_seven_day_before": (ctx.quota or {}).get("seven_day"),
+        # Amendment 9: the arc arm's identity, and whether Chrome/Electron got the force-accessibility switch
+        "force_accessibility": ca.force_accessibility(arm),
+        "arc_driver": arc_row_identity(ctx) if arm in ca.ARC_ARMS else None,
     }
     sentinel = pilot.Sentinel(
         Path(args.build_dir) / "BenchSentinel.app"
@@ -681,7 +741,14 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             cdb.reset()
             brief, paths = cdb.brief(), {}
             sentinel.start()
-            cdb.start_apps(windows=lambda win: place_window(ctx, win))
+            cdb.start_apps(
+                windows=lambda win: place_window(ctx, win),
+                force_accessibility=ca.force_accessibility(arm),
+            )
+            if ca.force_accessibility(arm):
+                row["force_accessibility_apps"] = [
+                    line.split(":", 1)[0] for line in cdb.log if line.endswith(ca.FORCE_ACCESSIBILITY_FLAG)
+                ]
         else:
             brief, paths = pilot.prepare_probe(task, seed, trial_dir, lab_app)
             sentinel.start()
@@ -781,6 +848,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         if cdb is not None:
             cdb.stop_apps()
         pilot.sweep_processes(str(trial_dir))
+        if arm in ca.ARC_ARMS:
+            # the server ends with claude's process group; a survivor would keep input rights into the next trial
+            row["arc_leftover_killed"] = pilot.sweep_processes(str(ca.ARC_BUILDS[arm].python))
         kill_bench_apps()
         reset_needs_apps(needs)
         saved = strip_stream_file(stream_path)
@@ -1640,7 +1710,16 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             )
         except Exception as error:  # noqa: BLE001
             add("arm B MCP server", "fail", f"{type(error).__name__}: {error}")
-    cdb_ids = [t for t in ctx.task_ids if task_spec(ctx.tasks[t]).get("kind") == "cdb"]
+    for arc_arm in [a for a in ca.ARC_ARMS if a in ctx.arm_names]:
+        observed = ca.arc_observed(ca.ARC_BUILDS[arc_arm])
+        ctx.versions["arc_driver"] = observed
+        for name, status, detail in ca.check_arc_pins(pins, observed):
+            add(name, status, detail)
+        if offline:
+            continue
+        for name, status, detail in arc_live_checks(ctx, arc_arm):
+            add(name, status, detail)
+    cdb_ids =[t for t in ctx.task_ids if task_spec(ctx.tasks[t]).get("kind") == "cdb"]
     if cdb_ids:
         want = ca.load_pins().get("cdb_pack", {}).get("tree_sha256", {})
         for tid in cdb_ids:

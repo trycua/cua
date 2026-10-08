@@ -36,5 +36,20 @@
     "skills_tree_sha256": "0d60e4f271c98028fc0f05cb0c2265a26097c95160c07423706b1347217fcf07",
     "skills_source": "libs/cua-driver/rust/Skills/cua-driver at git_sha",
     "script_binary_sha256": "5d958f585b6868b1571cd80ae53e27906705274392de7b4407456d9ae60aaec0"
+  },
+  "arc_driver": {
+    "note": "Amendment 9 (CUA-1241): arc-cua 0.1.1, the PyPI wheel, checked identical to tag v0.1.1. Installed in the VM with tools/arc_driver/install_arc_driver.sh. site_packages_tree_sha256, launcher_sha256 and python_version are filled from that install before the first arc trial (A9.2).",
+    "repo": "https://github.com/shhivv/arc-cua",
+    "tag": "v0.1.1",
+    "git_sha": "cd9b5a3bbdeb4682160ad998675723f71dab0804",
+    "reviewed_head_sha": "6b353039111c08c2c64c5229083606941e364eaf",
+    "version": "0.1.1",
+    "wheel": "arc_cua-0.1.1-py3-none-any.whl",
+    "wheel_sha256": "5c74f4fc7a11ac9335f86d4be48d847230b5d8757d510dd9563caaf65723670b",
+    "package_tree_sha256": "846bdc5ad784e6fcec95756e2bcc446d5482272b1eaa256163bc66499eba9143",
+    "site_packages_tree_sha256": null,
+    "launcher_sha256": null,
+    "python_version": null,
+    "bundle_id": "com.trycua.bench.arcdriver"
   }
 }

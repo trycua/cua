@@ -21,7 +21,7 @@ after you save it.
 The same works from the `cua` CLI. The key is read from stdin, so it never
 lands in your shell history:
 
-```bash
+```bash test="cli-shape" id="agent-keys-cli"
 cua agent keys
 pbpaste | cua agent keys set anthropic
 cua agent keys set other --env GEMINI_API_KEY < gemini.key

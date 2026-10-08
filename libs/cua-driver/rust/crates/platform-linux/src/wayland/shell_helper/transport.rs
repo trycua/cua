@@ -153,6 +153,10 @@ mod tests {
         }
     }
 
+    // Titles gdbus's GVariant text would escape: an apostrophe, quotes, a
+    // backslash, a newline and non-ASCII. A typed reply carries them intact.
+    const RECTS: &str = r#"[{"id":3,"pid":41,"title":"Tomorrow's \"plan\" C:\\ 1\n2 飞书","x":0,"y":0,"w":10,"h":10},{"id":7,"pid":42,"title":"Target","x":14,"y":12,"w":800,"h":600}]"#;
+
     struct Helper;
     #[zbus::interface(name = "org.cua.WinRects")]
     impl Helper {
@@ -160,7 +164,7 @@ mod tests {
             8
         }
         fn get_rects(&self) -> String {
-            r#"[{"title":"Joe's window","pid":42}]"#.into()
+            RECTS.into()
         }
         fn capture(&self) -> String {
             "cG5n".into()
@@ -233,10 +237,16 @@ mod tests {
                 call("GetVersion", vec![]).await.as_deref(),
                 Ok("(uint32 8,)")
             );
-            // GetRects is the raw JSON; an apostrophe in a title survives.
+            // GetRects is the raw JSON, so punctuation in one title no longer
+            // hides every window from the parsers.
+            let rects = call("GetRects", vec![]).await.unwrap();
+            assert_eq!(rects, RECTS);
+            let windows = super::super::parse_windows(&rects, None).unwrap();
+            assert_eq!(windows.len(), 2);
+            assert_eq!(windows[0].title, "Tomorrow's \"plan\" C:\\ 1\n2 飞书");
             assert_eq!(
-                call("GetRects", vec![]).await.as_deref(),
-                Ok(r#"[{"title":"Joe's window","pid":42}]"#)
+                super::super::parse_window_origin(&rects, 42),
+                Some((14, 12))
             );
             let raw = call("Capture", vec![]).await.unwrap();
             assert_eq!(raw, "('cG5n',)");

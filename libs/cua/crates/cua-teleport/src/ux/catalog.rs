@@ -736,8 +736,8 @@ mod tests {
             Platform::MacOS,
             &TargetHint::default(),
         );
-        assert_eq!(e.capability, Capability::Unsupported);
-        assert!(e.provider_id.is_none());
+        assert_eq!(e.capability, Capability::Full);
+        assert_eq!(e.provider_id.as_deref(), Some("claude-desktop"));
     }
 
     #[test]

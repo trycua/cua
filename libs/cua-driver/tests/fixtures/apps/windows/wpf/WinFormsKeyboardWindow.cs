@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Windows.Forms;
@@ -20,6 +21,9 @@ public sealed class WinFormsKeyboardWindow : Form
     private int _targetDown;
     private int _targetUp;
     private int _decoyDown;
+    private readonly Dictionary<string, int> _targetDownByKey = new();
+    private readonly Dictionary<string, int> _targetUpByKey = new();
+    private readonly Dictionary<string, int> _decoyDownByKey = new();
     private string _lastKey = "";
     private string _lastModifiers = "";
 
@@ -36,12 +40,19 @@ public sealed class WinFormsKeyboardWindow : Form
         _target.KeyDown += (_, e) =>
         {
             _targetDown++;
+            Count(_targetDownByKey, e.KeyCode);
             _lastKey = e.KeyCode.ToString();
             _lastModifiers = e.Modifiers.ToString();
             Publish();
         };
-        _target.KeyUp += (_, _) => { _targetUp++; Publish(); };
-        _decoy.KeyDown += (_, _) => { _decoyDown++; Publish(); };
+        _target.KeyUp += (_, e) => { _targetUp++; Count(_targetUpByKey, e.KeyCode); Publish(); };
+        _decoy.KeyDown += (_, e) => { _decoyDown++; Count(_decoyDownByKey, e.KeyCode); Publish(); };
+    }
+
+    private static void Count(Dictionary<string, int> receipts, Keys key)
+    {
+        var name = key.ToString();
+        receipts[name] = receipts.TryGetValue(name, out var count) ? count + 1 : 1;
     }
 
     private void Publish()
@@ -52,6 +63,9 @@ public sealed class WinFormsKeyboardWindow : Form
             target_down = _targetDown,
             target_up = _targetUp,
             decoy_down = _decoyDown,
+            target_down_by_key = _targetDownByKey,
+            target_up_by_key = _targetUpByKey,
+            decoy_down_by_key = _decoyDownByKey,
             link_clicks = _linkClicks,
             last_key = _lastKey,
             last_modifiers = _lastModifiers,

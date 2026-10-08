@@ -1249,10 +1249,12 @@ fn harness_winforms_background_element_key_preserves_focus() {
         DriverRoute::PostMessage,
     );
     run_native_keyboard_case(case, |pid, wid, state_path, driver| {
-        let before = keyboard_fixture_state(state_path);
         let snap = snapshot(driver, pid, wid);
         let token = element_token_by_id(&snap, "key-target");
         let (response, passed) = observe_background(driver, pid, wid, |driver| {
+            // Measure the complete call while the sentinel is alive, not its
+            // teardown (closing the foreground sentinel can activate the target).
+            let before = keyboard_fixture_state(state_path);
             let response = driver.call(
                 "press_key",
                 serde_json::json!({
@@ -1274,6 +1276,10 @@ fn harness_winforms_background_element_key_preserves_focus() {
                     assert_eq!(state["decoy_down"], 0, "key reached the wrong control");
                     assert_eq!(state["last_key"], "A");
                     assert_eq!(state["last_modifiers"], "None");
+                    assert_eq!(
+                        state["activations"], before["activations"],
+                        "target activated during background key"
+                    );
                     break;
                 }
                 assert!(
@@ -1285,11 +1291,6 @@ fn harness_winforms_background_element_key_preserves_focus() {
             response
         });
         assert_eq!(response.structured()["route"], "synthetic_events");
-        let after = keyboard_fixture_state(state_path);
-        assert_eq!(
-            after["activations"], before["activations"],
-            "target activated during background key"
-        );
         delivered_with_fixture_state(passed)
     });
 }
@@ -1306,27 +1307,28 @@ fn harness_winforms_background_windowless_key_refuses_without_focus() {
     .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
     case.cell_id = "windows-winforms-windowless-press-key-ax-background".into();
     run_native_keyboard_case(case, |pid, wid, state_path, driver| {
-        let before = keyboard_fixture_state(state_path);
         let snap = snapshot(driver, pid, wid);
         let index = ax::element_index_containing(snap.text(), "\"Key link\"")
             .unwrap_or_else(|| panic!("windowless link not in snapshot: {}", snap.text()));
         let (response, mut passed) = observe_background(driver, pid, wid, |driver| {
-            driver.call(
+            let before = keyboard_fixture_state(state_path);
+            let response = driver.call(
                 "press_key",
                 serde_json::json!({
                     "pid": pid, "window_id": wid, "element_token": snap.element_token(index),
                     "key": "space", "delivery_mode": "background"
                 }),
-            )
+            );
+            assert!(
+                response.is_error(),
+                "windowless key unexpectedly succeeded: {}",
+                response.text()
+            );
+            assert_eq!(response.structured()["code"], "background_unavailable");
+            let after = keyboard_fixture_state(state_path);
+            assert_eq!(after, before, "refusal changed keyboard fixture state");
+            response
         });
-        assert!(
-            response.is_error(),
-            "windowless key unexpectedly succeeded: {}",
-            response.text()
-        );
-        assert_eq!(response.structured()["code"], "background_unavailable");
-        let after = keyboard_fixture_state(state_path);
-        assert_eq!(after, before, "refusal changed keyboard fixture state");
         passed.push(OracleKind::FixtureState);
         Observation::refused(
             RefusalCode::BackgroundUnavailable,
@@ -1374,9 +1376,15 @@ fn harness_winforms_foreground_element_key_reaches_exact_control() {
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
             let state = keyboard_fixture_state(state_path);
-            if state["target_up"] == 1 {
-                assert_eq!(state["target_down"], 1);
-                assert_eq!(state["decoy_down"], 0, "foreground key reached decoy");
+            if state["target_up_by_key"]["F6"] == 1 {
+                // Foreground activation may emit VK_NONAME. Retain all receipts
+                // in the fixture, but verify exactly the requested key here.
+                assert_eq!(state["target_down_by_key"]["F6"], 1);
+                assert_eq!(
+                    state["decoy_down_by_key"]["F6"].as_u64().unwrap_or(0),
+                    0,
+                    "foreground key reached decoy"
+                );
                 assert_eq!(state["last_key"], "F6");
                 assert_eq!(state["last_modifiers"], "None");
                 break;

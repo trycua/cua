@@ -92,7 +92,7 @@ numbers will grow once the real web UI replaces the placeholder.
 | `src/viewer.ts`, `src/viewer-layout.ts` | "Open in window": a Space's viewer window (the web UI's `/viewer`: its desktop under the source picker, size and Pop out), one per Space, shaped to the stream, where the last one was left |
 | `src/video-bench.ts`, `src/video-report.ts`, `scripts/video-bench.mjs` | The video bench, the same hooks as the SwiftUI app's ([docs/video.md](docs/video.md)) |
 | `src/icon.ts` | The window icon on Linux |
-| `src/menu.ts` | Native application menu built from roles |
+| `src/menu.ts` | The application menu, as the SwiftUI app's: Settings… (⌘,), New Space (⌘N), full screen, Cua Spaces Help; on Windows and Linux the same items in File and Help |
 | `src/tray.ts` | The menu bar item on macOS and the tray icon on Windows and Linux: the core's menu (on Windows and Linux with each Space) |
 | `src/system.ts`, `src/login-item.ts` | The bridge's system services: links and settings panes, Show in Finder / Explorer, notifications, the owner check before approving a device, launch at login on each system |
 | `src/migrate-swift.ts` | macOS: takes over the Swift app's settings once (files, defaults domain) |

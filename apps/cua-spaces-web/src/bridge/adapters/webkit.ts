@@ -57,6 +57,8 @@ import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
 import type { SpaceRow } from "../contracts/spaces";
 import {
   isWebkitResponse,
+  WEBKIT_EVENT,
+  WEBKIT_OPEN_SETTINGS_EVENT,
   type HostMethod,
   type WebkitEventDetail,
   type WebkitRequest,
@@ -577,6 +579,13 @@ export function createWebkitAdapter(
     if (detail?.event === "spaces.newRequested") {
       const on = (detail.payload as { on?: unknown } | null)?.on;
       requestNewSpace(typeof on === "string" && on ? on : null);
+      return;
+    }
+    // The Electron menu's Settings… (⌘,): the same window event the SwiftUI
+    // host sends, which the page's key bindings answer (the SwiftUI host's
+    // already arrives as one).
+    if (detail?.event === WEBKIT_OPEN_SETTINGS_EVENT) {
+      if (electron) (win as unknown as Partial<Window>).dispatchEvent?.(new CustomEvent(WEBKIT_EVENT, { detail }));
       return;
     }
     if (detail?.event === "startup.changed") {

@@ -12,7 +12,7 @@ import { readNewSpaceSession, resetNewSpaceSession } from "../new-space";
 import type { HostWindow } from "../detect";
 import { ELECTRON_BRIDGE_CHANNEL, ELECTRON_EVENT_CHANNEL } from "../electron-channels";
 import { OPERATIONS, type HostEvent } from "../protocol";
-import { WEBKIT_METHODS, type WebkitRequest } from "../webkit-protocol";
+import { WEBKIT_EVENT, WEBKIT_METHODS, WEBKIT_OPEN_SETTINGS_EVENT, type WebkitRequest } from "../webkit-protocol";
 import { tick } from "./testCore";
 
 /* ---- Tauri ---------------------------------------------------------------- */
@@ -320,6 +320,22 @@ describe("electron adapter", () => {
     expect(got).toEqual([{ type: "keyvault.changed" }, { type: "spaces.changed" }, { type: "machines.changed" }]);
     a.dispose?.();
     expect(subs.size).toBe(0);
+  });
+});
+
+describe("electron adapter: the menus", () => {
+  it("turns the menu's Settings… into the window event the page's key bindings answer, as the SwiftUI host sends it", () => {
+    const subs = new Map<string, (p: unknown) => void>();
+    const target = new EventTarget();
+    const win = Object.assign(target, {
+      cuaDesktop: { invoke: vi.fn(), on: (channel: string, listener: (p: unknown) => void) => (subs.set(channel, listener), () => subs.delete(channel)) },
+    }) as unknown as HostWindow;
+    const seen: unknown[] = [];
+    target.addEventListener(WEBKIT_EVENT, (e) => seen.push((e as CustomEvent).detail));
+    const a = createElectronAdapter(win);
+    subs.get(ELECTRON_EVENT_CHANNEL)?.({ event: WEBKIT_OPEN_SETTINGS_EVENT, payload: null });
+    expect(seen).toEqual([{ event: WEBKIT_OPEN_SETTINGS_EVENT, payload: null }]);
+    a.dispose?.();
   });
 });
 

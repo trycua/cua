@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import * as path from "node:path";
 import { app, BrowserWindow, dialog, nativeTheme, Notification, screen, shell } from "electron";
 import { createBridge } from "./bridge";
+import { ELECTRON_EVENT_CHANNEL } from "./channels";
 import { applyVideoDecodeSwitches } from "./gpu";
 import { menuItems, realSpaces, startHost } from "./bridge/host-start";
 import { installBridgeIpc } from "./bridge/ipc";
@@ -211,12 +212,26 @@ if (!app.requestSingleInstanceLock()) {
     void win.loadURL(`${APP_ORIGIN}${route}`);
   };
 
+  /** A host event to the main window's page once it is loaded (New Space, Settings… from the menus). */
+  const tellMain = (event: string, payload: unknown = null) => {
+    const fresh = !mainWindow || mainWindow.isDestroyed();
+    const win = showMain();
+    const send = () => {
+      if (!win.isDestroyed()) win.webContents.send(ELECTRON_EVENT_CHANNEL, { event, payload });
+    };
+    if (fresh || win.webContents.isLoading()) win.webContents.once("did-finish-load", () => setTimeout(send, 500));
+    else send();
+  };
+  // The page's New Space wizard; Settings (the page's own route, without reloading it).
+  const newSpace = () => tellMain("spaces.newRequested", { on: null });
+  const openSettings = () => tellMain("settings.openRequested");
+
   app.on("second-instance", showMain);
 
   app.whenReady().then(async () => {
     migrateSwiftApp();
     initTheme();
-    installMenu();
+    installMenu({ newSpace, settings: openSettings });
     handleViewerKeyboard();
     if (process.platform !== "darwin") handleOverlayDim();
     const { webRoot } = handleAppProtocol();
@@ -270,13 +285,7 @@ if (!app.requestSingleInstanceLock()) {
         open: () => void showMain(),
         route: showRoute,
         // The page's New Space wizard, once the page listens.
-        newSpace: () => {
-          const fresh = !mainWindow || mainWindow.isDestroyed();
-          const win = showMain();
-          const ask = () => host?.bridge.events.emit("spaces.newRequested", { on: null });
-          if (fresh || win.webContents.isLoading()) win.webContents.once("did-finish-load", () => setTimeout(ask, 500));
-          else ask();
-        },
+        newSpace,
       },
       items: () => (host ? menuItems(host.bridge.context) : null),
       spaces: () => realSpaces(host?.env.model.spaces ?? []),

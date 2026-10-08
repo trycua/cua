@@ -120,6 +120,38 @@ async fn an_empty_extra_step_field_is_ignored() {
     );
 }
 
+#[tokio::test]
+async fn a_step_refused_for_background_delivery_says_how_or_falls_back() {
+    let harness = Harness::new();
+    // v037b: LibreOffice ignores background pixel clicks.
+    let refused = "Background pixel click is not available for pid 2261: its libreoffice-vcl toolkit ignores background (PID-routed) mouse events. Retry this action with delivery_mode:\"foreground\"; Cua Driver will activate the window.";
+    let result = harness
+        .run(json!({"pid": 2261, "window_id": 181, "steps": [
+            {"tool": "click", "args": {"x": 217, "y": 779, "fail_message": refused}}
+        ]}))
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        text(&result).contains("\"foreground_fallback\":true"),
+        "{}",
+        text(&result)
+    );
+    assert!(text(&result).contains("from step 1"), "{}", text(&result));
+
+    // With foreground_fallback the step is retried once in the foreground.
+    // (The probe fails on fail_message either way, so check the retry.)
+    let before = harness.hits("click");
+    let _ = harness
+        .run(
+            json!({"pid": 2261, "window_id": 181, "foreground_fallback": true, "steps": [
+                {"tool": "click", "args": {"x": 217, "y": 779, "fail_message": refused}}
+            ]}),
+        )
+        .await;
+    assert_eq!(harness.hits("click"), before + 2);
+    assert_eq!(harness.last("click")["delivery_mode"], "foreground");
+}
+
 // ── read steps ───────────────────────────────────────────────────────────
 
 #[tokio::test]

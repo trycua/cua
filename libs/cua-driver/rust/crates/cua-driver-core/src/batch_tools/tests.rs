@@ -75,6 +75,7 @@ impl Harness {
                             "modifiers": {"type": "array", "items": {"type": "string"}},
                             "count": {"type": "integer", "minimum": 1},
                             "query": {"type": "string"},
+                            "delivery_mode": {"type": "string"},
                             "path": {"type": "array", "items": {"type": "string"}},
                             "x1": {"type": "number"}, "y1": {"type": "number"},
                             "x2": {"type": "number"}, "y2": {"type": "number"},

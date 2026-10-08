@@ -182,7 +182,9 @@ impl Tool for RunActionsTool {
                 Returns per-step status (`ok` or the error message) and, when `observe` is \
                 given, ONE bounded get_window_state read after the last executed step (after a \
                 failure caused by a dialog holding focus, that dialog is read, even without \
-                `observe`). That \
+                `observe`). A step refused because its app ignores background input says \
+                how to re-send it; `foreground_fallback:true` retries such steps in the \
+                foreground once (the window is activated). That \
                 read is a `since:\"latest\"` diff by default: only the rows that changed \
                 since your last read of the window, plus a new snapshot_id. Without \
                 `observe` nothing is read. The batch uses one session: steps may \
@@ -275,6 +277,10 @@ impl Tool for RunActionsTool {
                         "type": "string",
                         "description": "Default window title substring for steps that name no window."
                     },
+                    "foreground_fallback": {
+                        "type": "boolean",
+                        "description": "When a step is refused because its target ignores background input (Electron, LibreOffice and other toolkits), retry it once with delivery_mode:\"foreground\": the window is activated and the pointer may move. Default false."
+                    },
                     "observe": {
                         "type": ["object", "boolean"],
                         "description": "Optional end-of-batch observation: `true`, or arguments for ONE get_window_state call. `pid` and `window_id` default to those of the last step that names both. Defaults to since=\"latest\" (only what changed since your last read of that window with the same query/max_elements/max_depth; a full read when there is none), include_screenshot=false and max_elements=250; pass include_screenshot=true to see the window, or since=null for a full read. Omit to read nothing."
@@ -347,6 +353,8 @@ struct Plan {
     tail_reads: Vec<(&'static str, Value)>,
     /// The window steps inherit when they name none.
     default_window: WindowSpec,
+    /// Retry a step refused for background delivery once in the foreground.
+    foreground_fallback: bool,
     session: Option<String>,
 }
 
@@ -450,6 +458,15 @@ impl Plan {
             .map(str::to_owned);
 
         let default_window = batch_window(object)?;
+        let foreground_fallback = match object.get("foreground_fallback") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(flag)) => *flag,
+            Some(_) => {
+                return Err(PlanError::batch(
+                    "`foreground_fallback` must be true or false",
+                ))
+            }
+        };
 
         // Reads the batch ends with are what `observe` is for: a trailing
         // get_window_state (or screenshot) becomes the observation, merged
@@ -586,6 +603,7 @@ impl Plan {
             observe,
             tail_reads,
             default_window,
+            foreground_fallback,
             session,
         })
     }
@@ -656,6 +674,7 @@ impl Plan {
                     step,
                     &mut context,
                     &mut last_window,
+                    self.foreground_fallback,
                 )
                 .await
             };
@@ -798,6 +817,7 @@ async fn run_step(
     step: Step,
     context: &mut WindowSpec,
     last_window: &mut Option<Window>,
+    foreground_fallback: bool,
 ) -> StepOutcome {
     let label = step.label();
     let step_has_no_action = step.action.is_none();
@@ -947,8 +967,30 @@ async fn run_step(
                 refound_note = Some(note);
             }
         }
+        let wants_foreground = result.is_error == Some(true)
+            && wants_foreground(&result)
+            && args.get("delivery_mode").is_none()
+            && accepts(registry, tool, "delivery_mode");
+        let mut foreground_hint = None;
+        if wants_foreground && foreground_fallback {
+            let mut retry = args.clone();
+            retry["delivery_mode"] = json!("foreground");
+            result = registry.invoke(tool, retry).await;
+            notes.push("background delivery was refused, so it ran in the foreground".to_owned());
+            report["delivery_fallback"] = json!("foreground");
+        } else if wants_foreground {
+            foreground_hint = Some(format!(
+                " To run it, send the batch again from step {} with \"delivery_mode\":\"foreground\" \
+                 on this step, or set \"foreground_fallback\":true on run_actions (the window is \
+                 activated and the pointer may move).",
+                index + 1
+            ));
+        }
         let ok = result.is_error != Some(true);
         let mut message = bounded_message(&result);
+        if let (false, Some(hint)) = (ok, &foreground_hint) {
+            message.push_str(hint);
+        }
         if let (false, Some(note)) = (ok, &refound_note) {
             message = format!("{note}, but: {message}");
         }
@@ -1234,6 +1276,32 @@ fn focus_holder(message: &str) -> Option<u64> {
         .take_while(char::is_ascii_digit)
         .collect();
     digits.parse().ok()
+}
+
+/// Whether a refusal names foreground delivery as the route that works:
+/// the target ignores background input (Electron, LibreOffice VCL, ...).
+fn wants_foreground(result: &ToolResult) -> bool {
+    let structured = result.structured_content.as_ref();
+    let recommended = structured
+        .and_then(|value| {
+            value
+                .pointer("/escalation/recommended")
+                .or_else(|| value.pointer("/refusal/escalation/recommended"))
+        })
+        .and_then(Value::as_str);
+    if recommended == Some("foreground") {
+        return true;
+    }
+    let text = result
+        .content
+        .iter()
+        .find_map(|content| match content {
+            Content::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .unwrap_or("");
+    text.contains("Retry this action with delivery_mode:\"foreground\"")
+        || text.contains("Retry with delivery_mode:\"foreground\"")
 }
 
 /// Whether an action failed because its element target died: the element

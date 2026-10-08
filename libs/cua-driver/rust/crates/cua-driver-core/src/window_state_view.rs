@@ -279,6 +279,7 @@ pub fn apply(
         .and_then(Value::as_str)
         .map(str::to_owned)
     else {
+        drop_walk_diagnostics(opts, structured);
         return;
     };
     let snapshot_id = structured
@@ -412,6 +413,26 @@ pub fn apply(
     }
 
     rewrite_tree_block(content, &md, &header_extra, &body);
+    drop_walk_diagnostics(opts, structured);
+}
+
+/// Walk diagnostics cost every read context and no caller acts on them:
+/// `truncated` and the truncation hint (built from them above) already say
+/// when a walk stopped early. `verbose:true` keeps them.
+fn drop_walk_diagnostics(opts: &ViewOptions, structured: &mut Value) {
+    if opts.verbose {
+        return;
+    }
+    if let Some(obj) = structured.as_object_mut() {
+        for key in [
+            "nodes_pending",
+            "nodes_visited",
+            "walk_elapsed_ms",
+            "screenshot_refreshed_snapshot",
+        ] {
+            obj.remove(key);
+        }
+    }
 }
 
 /// `since` value that names the window's most recent read of the same view.
@@ -514,6 +535,7 @@ fn trim_metadata(opts: &ViewOptions, structured: &mut Value) {
         // Linux restates the pixel-coordinate convention on every read; the
         // tool description already carries it.
         obj.remove("frame_note");
+
         if !degraded {
             obj.remove("background_input");
         }
@@ -1479,6 +1501,25 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("larger max_elements"));
+    }
+
+    #[test]
+    fn walk_diagnostics_are_dropped_unless_verbose() {
+        let (mut content, mut s) = payload("s000000d2", OLD);
+        s["nodes_visited"] = json!(261);
+        s["walk_elapsed_ms"] = json!(149);
+        apply(&opts(json!({})), &ctx(7016), &mut content, &mut s);
+        assert!(s.get("nodes_visited").is_none());
+        assert!(s.get("walk_elapsed_ms").is_none());
+        let (mut content, mut s) = payload("s000000d3", OLD);
+        s["nodes_visited"] = json!(261);
+        apply(
+            &opts(json!({"verbose": true})),
+            &ctx(7017),
+            &mut content,
+            &mut s,
+        );
+        assert_eq!(s["nodes_visited"], 261);
     }
 
     #[test]

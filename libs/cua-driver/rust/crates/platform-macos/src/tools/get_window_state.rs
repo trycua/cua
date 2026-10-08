@@ -253,6 +253,11 @@ impl Tool for GetWindowStateTool {
             .unwrap_or(crate::ax::tree::DEFAULT_MAX_DEPTH);
         let timeout_ms = cua_driver_core::tool_schema::resolve_timeout_ms(args.get("timeout_ms"));
 
+        // A model-facing read lists the menu bar's top-level titles only; a
+        // query or full_output walks every menu as before.
+        let collapse_menus = query.as_deref().is_none_or(|q| q.trim().is_empty())
+            && !view.full_output
+            && !observation_only;
         let (tree_result, prepared_snapshot) = if want_tree {
             let q = query.clone();
             // `timeout_ms` bounds the walk itself: it returns the partial tree
@@ -260,13 +265,15 @@ impl Tool for GetWindowStateTool {
             // for an AX call that ignores the per-element messaging timeout
             // (dropping a spawn_blocking JoinHandle cannot cancel it).
             let walk_future = tokio::task::spawn_blocking(move || {
-                let tree = crate::ax::tree::walk_tree_budgeted(
-                    pid,
-                    Some(window_id),
-                    q.as_deref(),
-                    max_depth,
-                    cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements),
-                );
+                let tree = crate::ax::tree::with_menus_collapsed(collapse_menus, || {
+                    crate::ax::tree::walk_tree_budgeted(
+                        pid,
+                        Some(window_id),
+                        q.as_deref(),
+                        max_depth,
+                        cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements),
+                    )
+                });
                 let payload = crate::ax::snapshot::AxSnapshot::from_nodes(&tree.nodes);
                 (tree, payload)
             });

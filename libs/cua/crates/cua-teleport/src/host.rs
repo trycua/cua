@@ -364,6 +364,20 @@ impl HostEffects for FakeHost {
     }
 }
 
+/// Runs `command` for its exit code alone, with no input or output: the
+/// system prompt [`crate::biometric`] raises on Linux (polkit's `pkcheck`),
+/// which answers in its exit code. `None` when a signal ended it. Past
+/// `command.timeout` the child is killed and the call fails with
+/// [`io::ErrorKind::TimedOut`]. Refused under a test sandbox, like
+/// [`RealHost`].
+#[cfg(target_os = "linux")]
+pub(crate) fn run_for_exit_code(command: &HostCommand) -> io::Result<Option<i32>> {
+    if host_effects_forbidden() {
+        return Err(refused(command.kind));
+    }
+    real::run_for_exit_code(command)
+}
+
 /// The only code in this crate that spawns processes, opens sockets or
 /// probes the host's installed apps.
 mod real {
@@ -436,6 +450,34 @@ mod real {
             stdout: out.join().unwrap_or_default(),
             stderr: err.join().unwrap_or_default(),
         })
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn run_for_exit_code(spec: &HostCommand) -> io::Result<Option<i32>> {
+        let mut child = command(spec)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let start = Instant::now();
+        loop {
+            if let Some(status) = child.try_wait()? {
+                return Ok(status.code());
+            }
+            if spec.timeout.is_some_and(|budget| start.elapsed() >= budget) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "{} did not finish within {} ms",
+                        spec.program,
+                        spec.timeout.unwrap_or_default().as_millis()
+                    ),
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 
     pub(super) fn is_installed(probe: &super::InstallProbe) -> bool {

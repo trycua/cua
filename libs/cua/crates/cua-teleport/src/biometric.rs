@@ -428,11 +428,14 @@ mod hello {
 #[cfg(target_os = "linux")]
 mod polkit {
     //! polkit through `pkcheck`, which asks the session's authentication agent.
+    //! The process itself is spawned by [`crate::host`], the one place this
+    //! crate touches the host.
 
-    use std::process::{Command, Stdio};
-    use std::time::{Duration, Instant};
+    use std::io::ErrorKind;
+    use std::time::Duration;
 
     use super::{AuthError, detail_text, pkcheck_result, proc_start_time};
+    use crate::host::{EffectKind, HostCommand, run_for_exit_code};
 
     /// How long the user has to answer before the prompt counts as dismissed.
     const REPLY_TIMEOUT: Duration = Duration::from_secs(120);
@@ -443,7 +446,7 @@ mod polkit {
             .ok()
             .and_then(|stat| proc_start_time(&stat))
             .ok_or(AuthError::Unavailable)?;
-        let mut child = Command::new("pkcheck")
+        let check = HostCommand::new(EffectKind::UserAuthorization, "pkcheck")
             .args([
                 "--action-id",
                 action,
@@ -453,30 +456,15 @@ mod polkit {
             .arg(format!("{},{start}", std::process::id()))
             .args(["--detail", "reason"])
             .arg(detail_text(reason))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    AuthError::Unavailable
-                } else {
-                    AuthError::Denied
-                }
-            })?;
-        let deadline = Instant::now() + REPLY_TIMEOUT;
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => return pkcheck_result(status.code()),
-                Ok(None) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(100))
-                }
-                _ => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(AuthError::Cancelled);
-                }
+            .timeout(REPLY_TIMEOUT);
+        match run_for_exit_code(&check) {
+            Ok(code) => pkcheck_result(code),
+            // No pkcheck, or a test sandbox that refuses host effects.
+            Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::PermissionDenied) => {
+                Err(AuthError::Unavailable)
             }
+            Err(e) if e.kind() == ErrorKind::TimedOut => Err(AuthError::Cancelled),
+            Err(_) => Err(AuthError::Denied),
         }
     }
 }

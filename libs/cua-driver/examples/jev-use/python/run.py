@@ -93,12 +93,20 @@ class Driver:
         # All refusal envelopes must preserve the same recovery metadata.
         failed = bool(result.isError) or data.get("effect") == "refused"
         if failed or data.get("status") == "refused" or data.get("refusal"):
-            code = data.get("code")
+            error = data.get("error")
+            code = error.get("code") if isinstance(error, dict) else None
+            if not isinstance(code, str) or not code:
+                code = data.get("code")
             refusal = data.get("refusal")
             if (not isinstance(code, str) or not code) and isinstance(refusal, dict):
                 code = refusal.get("code")
             escalation = data.get("escalation")
-            recommended = escalation.get("recommended") if isinstance(escalation, dict) else None
+            # A present canonical target wins, including malformed values: do
+            # not turn an invalid/session target into a legacy foreground hint.
+            recommended = (
+                escalation.get("target", escalation.get("recommended"))
+                if isinstance(escalation, dict) else None
+            )
             message = (
                 f"{name} failed: {getattr(result, 'content', None)}"
                 if failed
@@ -130,7 +138,8 @@ def background_refusal_code(candidate: Candidate, error: BaseException) -> str |
     """Return Driver's code when it refused a background visual click.
 
     Only a structured refusal counts: a ``background_*`` error code or an explicit
-    ``escalation.recommended == "foreground"``. Anything else stays a failure.
+    foreground target (``escalation.target`` or legacy ``recommended``).
+    Anything else stays a failure.
     """
     if candidate.tool != "click" or candidate.arguments.get("delivery_mode") != "background":
         return None

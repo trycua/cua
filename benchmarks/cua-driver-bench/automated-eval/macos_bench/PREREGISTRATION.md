@@ -372,6 +372,7 @@ Fixes are general driver or guidance changes. Nothing is tuned to a task's evalu
 |---|---|---|---|---|---|---|
 | v037a | `45469a59c931` (#4822 merged: run_script, off by default) | `170dc2a748cb` | `c2e8a11eb1cb` | `668c0235269a` | A, AX, B | 2026-10-07T23:42Z |
 | v037b | `4c2403fc5574` (#4861, #4864, #4865, #4881, #4886 since v037-full) | `a23ed88fad78` | `eecef73963aa` | `310811c091a1` | A, AX, B. AX addendum adds one sentence: pass `"timeout_ms": 120000` on every run_script call (the tool's maximum; its default is 30 s). The binary is unchanged | 2026-10-08T15:44Z |
+| v037c | `0188a554de27` (#4891 and the GNOME-only #4879/#4880 since v037b) | `2b5f0e6a5fcd` | `87d2a0cddf67` | `4d2a45055b0a` | A, AX, B; AX addendum as in v037b (timeout_ms 120000) | 2026-10-08T19:29Z |
 
 ### A6.6 Harness changes for this amendment
 

@@ -18,12 +18,11 @@
 //!
 //! Everything here is **best-effort**: if the extension isn't installed/enabled
 //! the calls return `None` / no-op and callers keep the prior behaviour (no
-//! screen coords, no Wayland cursor). Uses a short-lived `gdbus` subprocess so
-//! there's no zbus blocking-feature or async-context coupling — the calls are
-//! infrequent (once per `get_window_state`, a few per click).
+//! screen coords, no Wayland cursor). Reuses one session-bus connection on a
+//! dedicated runtime; preview frames do not spawn subprocesses or poll for exit.
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::process::Command;
+mod transport;
 use std::time::Duration;
 
 use crate::x11::WindowInfo;
@@ -85,30 +84,7 @@ fn gdbus_call_to(
     args: &[String],
     timeout: Duration,
 ) -> Option<String> {
-    let mut cmd = Command::new("gdbus");
-    cmd.arg("call")
-        .arg("--session")
-        .arg("--dest")
-        .arg(destination)
-        .arg("--object-path")
-        .arg(object_path)
-        .arg("--method")
-        .arg(method);
-    for a in args {
-        cmd.arg(a);
-    }
-    // gdbus is local IPC; cap it so a wedged shell can't stall the caller.
-    let child = cmd
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .ok()?;
-    let out = wait_timeout(child, timeout)?;
-    if !out.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    transport::call(destination, object_path, method, args, timeout)
 }
 
 /// Resolve the helper's immutable unique bus name and prove that it is hosted
@@ -245,53 +221,6 @@ fn decode_capture(raw: &str) -> Option<Vec<u8>> {
         return None;
     }
     B64.decode(&raw[start..end]).ok()
-}
-
-/// `Child::wait` with a deadline (no extra crates). Kills + reaps on timeout.
-fn wait_timeout(mut child: std::process::Child, dur: Duration) -> Option<std::process::Output> {
-    use std::io::Read;
-
-    // Drain stdout while the child is running. Capture() returns a base64 PNG
-    // that readily exceeds a pipe's ~64 KiB capacity; waiting for exit before
-    // reading deadlocks the child on a full pipe and turns a healthy Shell
-    // response into a false timeout.
-    let stdout = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
-        let mut stdout = stdout;
-        let mut bytes = Vec::new();
-        stdout.read_to_end(&mut bytes).ok()?;
-        Some(bytes)
-    });
-    let deadline = std::time::Instant::now() + dur;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let status = child.wait().ok()?;
-                    let _ = reader.join();
-                    if !status.success() {
-                        return None;
-                    }
-                    return None;
-                }
-                std::thread::sleep(Duration::from_millis(15));
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = reader.join();
-                return None;
-            }
-        }
-    };
-    let stdout = reader.join().ok().flatten()?;
-    Some(std::process::Output {
-        status,
-        stdout,
-        stderr: Vec::new(),
-    })
 }
 
 /// Screen origin of the compositor frame backing `pid`.

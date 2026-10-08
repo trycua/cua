@@ -208,6 +208,9 @@ function osOf(req: CreateSpaceRequest): SpaceOs {
   return "linux";
 }
 
+/** A new create row's id (`pending:<random>`). */
+export const newPendingId = () => `pending:${Math.random().toString(36).slice(2, 10)}`;
+
 export class BridgeStore {
   readonly adapter: DataAdapter;
   readonly core: CoreClient;
@@ -486,8 +489,9 @@ export class BridgeStore {
     }
   }
 
-  async createSpace(req: CreateSpaceRequest = {}): Promise<Space> {
-    return this.beginCreate(req).done;
+  /** `pendingId` (`newPendingId()`): the row's id, when the caller follows it (New Space's "Open when ready"). */
+  async createSpace(req: CreateSpaceRequest = {}, pendingId?: string): Promise<Space> {
+    return this.beginCreate(req, pendingId).done;
   }
 
   /** What each create asked for (by pending id), for Try again. */
@@ -509,12 +513,12 @@ export class BridgeStore {
     return next;
   }
 
-  private beginCreate(req: CreateSpaceRequest): { pendingId: string; done: Promise<Space> } {
+  private beginCreate(req: CreateSpaceRequest, id?: string): { pendingId: string; done: Promise<Space> } {
     if (req.image) {
       const problem = validateImageRef(this.core, req.image);
       if (problem) return { pendingId: "", done: Promise.reject(new Error(problem)) };
     }
-    const pendingId = `pending:${Math.random().toString(36).slice(2, 10)}`;
+    const pendingId = id ?? newPendingId();
     this.createRequests.set(pendingId, req);
     return { pendingId, done: this.runCreate(req, pendingId) };
   }

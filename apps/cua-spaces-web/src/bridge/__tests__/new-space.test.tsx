@@ -108,15 +108,17 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
     expect(v.step).toBe(3);
     expect(v.plan).toMatchObject({ placement: "local", cpus: 6, name: "release-mac", gpu: "paravirtual" });
 
-    let created: Promise<unknown> | null = null;
+    let created: ReturnType<NewSpaceWizardHook["create"]> = null;
     act(() => {
       created = hooks.wizard.create();
     });
     expect(hooks.wizard.open).toBe(false);
-    // The tile shows at once, creating.
-    await waitFor(() => expect(hooks.spaces.data!.find((s) => s.id.startsWith("pending:"))).toMatchObject({ name: "release-mac", status: "provisioning" }));
+    // The tile shows at once, creating, under the id the create answered.
+    const pendingId = created!.pendingId;
+    expect(pendingId).toMatch(/^pending:/);
+    await waitFor(() => expect(hooks.spaces.data!.find((s) => s.id === pendingId)).toMatchObject({ name: "release-mac", status: "provisioning" }));
     await act(async () => {
-      await created;
+      await created!.done;
     });
     expect(hooks.spaces.data!.find((s) => s.id === "local:release-mac")?.status).toBe("running");
   });

@@ -10,6 +10,7 @@ import type { CoreClient } from "./core";
 import type { CloudConnectAction, CloudConnectView, RuntimeSwitch, WizardAction, WizardEnv, WizardView } from "./contracts/new-space";
 import type { Space, SpaceOs } from "./contracts/spaces";
 import { useMachines, useSession, useSettings, useSpaces } from "./hooks";
+import { newPendingId } from "./store";
 import {
   CLOSED_NEW_SPACE,
   cloudConnectInitial,
@@ -72,9 +73,10 @@ export interface NewSpaceWizardHook {
   show(on?: string | null, os?: SpaceOs): void;
   close(): void;
   send(action: WizardAction): void;
-  /** Starts the plan's create through the bridge's creates flow and closes.
-   * Settles when the Space is ready. */
-  create(): Promise<Space> | null;
+  /** Starts the plan's create through the bridge's creates flow and closes:
+   * its row's id (it lists at once, creating) and the create, which
+   * settles when the Space is ready. */
+  create(): { pendingId: string; done: Promise<Space> } | null;
   /** "Connect by address": the handshake; its error shows inline. */
   submitAddress(): Promise<void>;
   /** "Use built-in Lume" / "Use built-in runtime" (`view.runtimeSwitch`):
@@ -118,7 +120,8 @@ export function useNewSpaceWizard(): NewSpaceWizardHook {
       const plan = view.plan;
       const args = wizardCreateArgs(core, plan);
       update((x) => ({ ...x, open: false, state: null, pinnedEnv: null }));
-      return createSpace({ ...args, os: plan.image.os });
+      const pendingId = newPendingId();
+      return { pendingId, done: createSpace({ ...args, os: plan.image.os }, pendingId) };
     },
     async submitAddress() {
       const call = view?.address.submit;

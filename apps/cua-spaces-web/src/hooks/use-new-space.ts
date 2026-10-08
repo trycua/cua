@@ -23,25 +23,25 @@ export function useNewSpace(): () => void {
 }
 
 /**
- * Create Space: the wizard closes, the Spaces page shows the new tile with
- * its progress (the bridge's creates flow), and a toast says when it is
- * ready or why it failed. "Open when ready" opens its desktop.
+ * Create Space: the wizard closes and a toast says when the Space is ready
+ * or why it failed. With "Open when ready" (`plan.openDesktop`) the new
+ * Space's own page opens at once, as the SwiftUI app selects its row: its
+ * progress, then (the page follows the row to the Space it became) its
+ * desktop, live. Otherwise the Spaces page shows the new tile with its
+ * progress.
  */
 export function useCreateFromWizard(): () => void {
   const wizard = useNewSpaceWizard();
   const { core } = useBridge();
-  const { openSpace } = useSpaces();
   const navigate = useNavigate();
   return () => {
     const openDesktop = wizard.view?.plan.openDesktop ?? false;
     const created = wizard.create();
     if (!created) return;
-    void navigate({ to: "/spaces" });
-    created
-      .then((s) => {
-        toast(`${s.name} is ready`, { type: "success" });
-        if (openDesktop) void openSpace(s.id).catch(() => {});
-      })
+    if (openDesktop) void navigate({ to: "/spaces/$spaceId", params: { spaceId: created.pendingId } });
+    else void navigate({ to: "/spaces" });
+    created.done
+      .then((s) => toast(`${s.name} is ready`, { type: "success" }))
       .catch((e: unknown) => {
         const message = e instanceof Error ? e.message : String(e);
         // A cancelled create just goes away.

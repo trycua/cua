@@ -88,8 +88,9 @@ export interface SpacesHook extends Resource<Space[]> {
   refresh(): Promise<void>;
   /** Starts a create; its row shows at once (status `provisioning` with
    * `progress`) and the promise settles when the Space is ready. The image
-   * reference is checked by the app core first. */
-  createSpace(request?: CreateSpaceRequest): Promise<Space>;
+   * reference is checked by the app core first. `pendingId`
+   * (`newPendingId()`): the row's id, for a caller that follows it. */
+  createSpace(request?: CreateSpaceRequest, pendingId?: string): Promise<Space>;
   /** Cancels the create whose pending row id (`pending:...`) is given. */
   cancelCreate(pendingId: string): Promise<void>;
   /** Clears a failed create's row. */
@@ -118,7 +119,7 @@ export function useSpaces(): SpacesHook {
   const run = useAction();
   return {
     ...r,
-    createSpace: (req) => run((s) => s.createSpace(req)),
+    createSpace: (req, pendingId) => run((s) => s.createSpace(req, pendingId)),
     cancelCreate: (id) => run((s) => s.cancelCreate(id)),
     dismissCreate: (id) => run((s) => s.dismissCreate(id)),
     retryCreate: (id) => (ctx.store?.canRetryCreate(id) ? ctx.store.retryCreate(id) : undefined),

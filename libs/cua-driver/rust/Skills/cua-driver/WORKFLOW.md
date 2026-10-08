@@ -90,11 +90,13 @@ cua-driver run_actions '{"session":"run-1","steps":[
  ],"delay_ms":100,"observe":true}'
 ```
 
-- `tool` is one of `click`, `double_click`, `right_click`, `set_value`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag` (`press` and `type` are accepted for `press_key` and `type_text`); `args` are exactly that tool's arguments. Observation tools cannot run inside a batch: use `observe`. A `get_window_state` as the last step, with no `observe`, is taken as the observation. Run `describe run_actions` and `describe <tool>` for schemas. Up to 32 steps.
+- `tool` is one of `click`, `double_click`, `right_click`, `set_value`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag`, `move_cursor` (`press` and `type` are accepted for `press_key` and `type_text`, `triple_click` is a click with `count:3`, and a key name such as `down` as the tool is a `press_key`); `args` are exactly that tool's arguments. Observation tools do not run inside a batch: a read between actions is skipped (it could not change the later steps), a `get_window_state` as the last step is the observation (merged with `observe`), and a trailing `zoom` runs after it. Run `describe run_actions` and `describe <tool>` for schemas. Up to 32 steps.
+- Name the window once: `pid` and `window_id` (or `app`/`window`) on `run_actions` itself are the default for every step that names none.
+- A step whose `element_token` went stale because an earlier step re-rendered the window is retried once on the element with the same role and label in a fresh read, when exactly one matches; the step's line says so.
 - Every step is validated before the first runs, so a malformed step changes nothing. Each step then passes the same session, permission, capability-manifest and approval checks as a direct call; a batch grants nothing a single call lacks, and a refused step ends the batch like any other failure.
 - A batch has one session. Set `session` on `run_actions`; a step may repeat it but not name another.
 - `observe` is optional and reads once, after the last executed step (also after a failure). Pass `true` or `get_window_state` arguments; `pid`/`window_id` come from the last step that names both. Defaults: `since:"latest"` (only what changed since your last read of that window with the same view; a full read if there is none), `include_screenshot:false`, `max_elements:250`. Pass `include_screenshot:true` to see the window, or `since:null` for a full read. Omit `observe` to read nothing.
-- Read `steps[].ok` and `failed_step`. Steps before a failure did run and are not rolled back; steps after it did not. Observe before repairing, as for a single `unverifiable` action.
+- Read `steps[].ok` and `failed_step`. Steps before a failure did run and are not rolled back; steps after it did not. Observe before repairing, as for a single `unverifiable` action. When a step fails because another window of the app holds focus (a dialog opened mid-batch), the end read is of that window, even without `observe`; when a pixel step names a window with no screenshot yet, the end read includes its screenshot.
 
 ## Pixel coordinates
 

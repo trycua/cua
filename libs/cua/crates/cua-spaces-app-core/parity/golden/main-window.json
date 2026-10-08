@@ -581,7 +581,7 @@
         "account: Not signed in",
         "signIn: Sign in",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / New Space",
+        "empty: No Spaces yet / Create a Linux Space (about 1 minute) / The first Linux Space uses about 3.2 GB to 7.1 GB of disk, including the Linux runtime. / Create a macOS Space (about 22 GB download)",
         "volume: Volume"
       ]
     },
@@ -594,7 +594,7 @@
         "account: API key",
         "signIn: -",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / New Space",
+        "empty: No Spaces yet / Create a Linux Space (about 1 minute) / The first Linux Space uses about 3.2 GB to 7.1 GB of disk, including the Linux runtime. / Create a macOS Space (about 22 GB download)",
         "volume: Volume"
       ]
     },
@@ -607,7 +607,7 @@
         "account: ada@example.com",
         "signIn: -",
         "settings: Settings ⌘,",
-        "empty: No Spaces yet / New Space",
+        "empty: No Spaces yet / Create a Linux Space (about 1 minute) / The first Linux Space uses about 3.2 GB to 7.1 GB of disk, including the Linux runtime. / Create a macOS Space (about 22 GB download)",
         "volume: Volume"
       ]
     },

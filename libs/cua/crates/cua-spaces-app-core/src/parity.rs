@@ -671,9 +671,11 @@ pub mod frame {
                 str_of(&v["settingsShortcut"])
             ),
             format!(
-                "empty: {} / {}",
+                "empty: {} / {} / {} / {}",
                 str_of(&v["emptyTitle"]),
-                str_of(&v["emptyAction"])
+                str_of(&v["emptyAction"]),
+                str_of(&v["emptyDetail"]),
+                str_of(&v["emptyMacosAction"])
             ),
             format!("volume: {}", opt_str(&v["volumeLabel"])),
         ])

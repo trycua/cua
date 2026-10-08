@@ -259,6 +259,8 @@ export interface MainChrome {
   settingsShortcut: string;
   emptyTitle: string;
   emptyAction: string;
+  emptyDetail: string;
+  emptyMacosAction: string;
   /** The sidebar's Volume page entry; null while Cua Volume is off. */
   volumeLabel?: string | null;
 }

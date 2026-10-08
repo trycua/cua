@@ -51,8 +51,12 @@ pub struct MainChrome {
     pub settings_shortcut: String,
     /// With no Spaces: the heading.
     pub empty_title: String,
-    /// With no Spaces: the button.
+    /// With no Spaces: creates the default Linux Space.
     pub empty_action: String,
+    /// With no Spaces: how much disk the first Linux Space uses.
+    pub empty_detail: String,
+    /// With no Spaces: creates the default macOS Space.
+    pub empty_macos_action: String,
     /// The sidebar's Volume page entry ("Volume"); none while the Cua Volume
     /// experiment is off (the page and its route are hidden; a mounted
     /// volume stays mounted).
@@ -80,9 +84,30 @@ pub fn chrome(input: &ChromeInput) -> MainChrome {
         settings_label: "Settings".into(),
         settings_shortcut: "\u{2318},".into(),
         empty_title: "No Spaces yet".into(),
-        empty_action: "New Space".into(),
+        empty_action: "Create a Linux Space (about 1 minute)".into(),
+        // Measured (#4817); catalog sizes omit the runtime and what a Space writes.
+        empty_detail:
+            "The first Linux Space uses about 3.2 GB to 7.1 GB of disk, including the Linux runtime."
+                .into(),
+        empty_macos_action: empty_macos_action(),
         volume_label: volume_shown(input.experiments.as_ref()).then(|| "Volume".into()),
     }
+}
+
+/// First macOS image download for this host's arch, else that image's first platform.
+fn empty_macos_action() -> String {
+    let images = crate::wizard::picker_images();
+    let found = images.iter().find(|i| i.os == crate::SpaceOs::Macos);
+    let image = found.expect("a macOS image");
+    let sizes = image.sizes.as_ref().expect("a macOS download size");
+    let cpu = crate::this_host_arch();
+    let host = crate::run_arch(&image.arch, true, Some(cpu));
+    let rows = &sizes.platforms;
+    let arch = host.as_deref();
+    let hit = arch.and_then(|a| rows.iter().find(|p| p.arch == a));
+    let platform = hit.or(rows.first()).expect("a macOS download size");
+    let size = crate::wizard::size_text(platform.download);
+    format!("Create a macOS Space (about {size} download)")
 }
 
 /// Whether Cua Volume shows (its page, the menu's sync line): with its
@@ -252,6 +277,31 @@ pub fn menu(input: &MenuInput) -> Vec<MenuItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The macOS button's size is the catalog download, not a fixed number.
+    #[test]
+    fn the_empty_home_names_the_macos_download() {
+        let chrome = chrome(&ChromeInput::default());
+        let image = crate::wizard::picker_images()
+            .into_iter()
+            .find(|i| i.os == crate::SpaceOs::Macos)
+            .unwrap();
+        let sizes = image.sizes.as_ref().unwrap();
+        let host = crate::run_arch(&image.arch, true, Some(crate::this_host_arch()));
+        let bytes = host
+            .as_deref()
+            .and_then(|a| sizes.platforms.iter().find(|p| p.arch == a))
+            .or(sizes.platforms.first())
+            .unwrap()
+            .download;
+        assert_eq!(
+            chrome.empty_macos_action,
+            format!(
+                "Create a macOS Space (about {} download)",
+                crate::wizard::size_text(bytes)
+            )
+        );
+    }
 
     #[test]
     fn the_account_line_prefers_the_identity() {

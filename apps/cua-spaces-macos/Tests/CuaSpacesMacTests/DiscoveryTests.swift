@@ -105,6 +105,8 @@ struct DiscoveryTests {
         let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         #expect(text.contains("Could not load Spaces. Try refreshing again."))
         #expect(text.contains("Spaces could not be loaded"))
+        #expect(text.contains("New Space"))
+        #expect(!text.contains("The first Linux Space"))
         // Export the exact bitmap OCR checked, not a separate render.
         if let directory = ProcessInfo.processInfo.environment["SNAPSHOT_EXPORT_DIR"] {
             let url = URL(fileURLWithPath: directory).appendingPathComponent("discovery-cold-content.png")

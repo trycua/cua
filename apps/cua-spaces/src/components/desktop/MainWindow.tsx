@@ -234,7 +234,8 @@ export function MainWindow({
     startView === 'this-machine' || startView === 'host-setup' ? THIS_MACHINE_ID : null
   );
   const [query, setQuery] = useState('');
-  const [wizard, setWizard] = useState(
+  // Closed, the full wizard, or one click for that system.
+  const [wizard, setWizard] = useState<boolean | 'linux' | 'macos'>(
     startView === 'new-space' || startView === 'new-space-resources'
   );
   useEffect(() => {
@@ -881,13 +882,14 @@ export function MainWindow({
                     <Sym name="square.grid.2x2" />
                   </span>
                   <h2>{sync.rosterError ? "Spaces could not be loaded" : chrome.emptyTitle}</h2>
-                  <button
-                    type="button"
-                    className="dw-btn dw-btn-primary dw-btn-lg"
-                    onClick={() => setWizard(true)}
-                  >
-                    {chrome.emptyAction}
-                  </button>
+                  {!sync.rosterError && (
+                    <>
+                      <p>{chrome.emptyDetail}</p>
+                      <button type="button" className="dw-btn dw-btn-primary dw-btn-lg" onClick={() => setWizard('linux')}>{chrome.emptyAction}</button>
+                      <button type="button" className="dw-btn" onClick={() => setWizard('macos')}>{chrome.emptyMacosAction}</button>
+                    </>
+                  )}
+                  <button type="button" className="dw-btn" onClick={() => setWizard(true)}>{chrome.newSpaceLabel}</button>
                 </div>
               ) : isHost ? (
                 <div className="dw-content-inner">
@@ -950,6 +952,7 @@ export function MainWindow({
             gpus={live ? gpus : null}
             onOpenExternal={(url) => void fleet.openExternal(url).catch(() => {})}
             startActions={startActions}
+            quick={typeof wizard === 'string' ? wizard : undefined}
             onCreate={startCreate}
             onAddByAddress={async (url, token, name) => {
               const id = await sync.addSpace(url, token, name);

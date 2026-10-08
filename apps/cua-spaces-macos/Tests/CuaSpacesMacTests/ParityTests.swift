@@ -1140,7 +1140,7 @@ struct ParityTests {
             "account: \(c.account)",
             "signIn: \(dash(c.signInLabel))",
             "settings: \(c.settingsLabel) \(c.settingsShortcut)",
-            "empty: \(c.emptyTitle) / \(c.emptyAction)",
+            "empty: \(c.emptyTitle) / \(c.emptyAction) / \(c.emptyDetail) / \(c.emptyMacosAction)",
             "volume: \(dash(c.volumeLabel))",
         ]
     }

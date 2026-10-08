@@ -17396,9 +17396,17 @@ public struct AppMainChrome: Equatable, Hashable {
      */
     public var emptyTitle: String
     /**
-     * With no Spaces: the button.
+     * With no Spaces: creates the default Linux Space.
      */
     public var emptyAction: String
+    /**
+     * With no Spaces: how much disk the first Linux Space uses.
+     */
+    public var emptyDetail: String
+    /**
+     * With no Spaces: creates the default macOS Space.
+     */
+    public var emptyMacosAction: String
     /**
      * The sidebar's Volume page entry ("Volume"); none while the Cua Volume
      * experiment is off (the page and its route are hidden; a mounted
@@ -17440,8 +17448,14 @@ public struct AppMainChrome: Equatable, Hashable {
          * With no Spaces: the heading.
          */emptyTitle: String,
         /**
-         * With no Spaces: the button.
+         * With no Spaces: creates the default Linux Space.
          */emptyAction: String,
+        /**
+         * With no Spaces: how much disk the first Linux Space uses.
+         */emptyDetail: String,
+        /**
+         * With no Spaces: creates the default macOS Space.
+         */emptyMacosAction: String,
         /**
          * The sidebar's Volume page entry ("Volume"); none while the Cua Volume
          * experiment is off (the page and its route are hidden; a mounted
@@ -17458,6 +17472,8 @@ public struct AppMainChrome: Equatable, Hashable {
         self.settingsShortcut = settingsShortcut
         self.emptyTitle = emptyTitle
         self.emptyAction = emptyAction
+        self.emptyDetail = emptyDetail
+        self.emptyMacosAction = emptyMacosAction
         self.volumeLabel = volumeLabel
     }
 
@@ -17488,6 +17504,8 @@ public struct FfiConverterTypeAppMainChrome: FfiConverterRustBuffer {
                 settingsShortcut: FfiConverterString.read(from: &buf),
                 emptyTitle: FfiConverterString.read(from: &buf),
                 emptyAction: FfiConverterString.read(from: &buf),
+                emptyDetail: FfiConverterString.read(from: &buf),
+                emptyMacosAction: FfiConverterString.read(from: &buf),
                 volumeLabel: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -17504,6 +17522,8 @@ public struct FfiConverterTypeAppMainChrome: FfiConverterRustBuffer {
         FfiConverterString.write(value.settingsShortcut, into: &buf)
         FfiConverterString.write(value.emptyTitle, into: &buf)
         FfiConverterString.write(value.emptyAction, into: &buf)
+        FfiConverterString.write(value.emptyDetail, into: &buf)
+        FfiConverterString.write(value.emptyMacosAction, into: &buf)
         FfiConverterOptionString.write(value.volumeLabel, into: &buf)
     }
 }

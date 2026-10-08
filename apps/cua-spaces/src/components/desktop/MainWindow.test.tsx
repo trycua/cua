@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { SpaceRow } from "../../model/spaces";
@@ -24,6 +25,7 @@ function setup(
   overrides: Parameters<typeof fakeFleetBridge>[0] = {},
   onboarded = true,
   cloud: CloudBridge = createFakeCloudBridge(),
+  strict = false,
 ) {
   const createSpace = vi.fn(async (config?: SpaceCreateConfig) => (config?.on === "cloud" ? ROWS[0]! : ROWS[1]!));
   const setDefaultLocation = vi.fn(async (on: "local" | "cloud") => ({ value: on, source: "config" as const, path: "/tmp/cua/config.toml" }));
@@ -39,7 +41,8 @@ function setup(
   });
   const host = createFakeHostBridge({ onboarding: { completed: onboarded, mode: onboarded ? "client" : null } });
   const installer = createFakeInstallerBridge({ plan: { installed: true, upToDate: true, onPath: true } });
-  render(<MainWindow fleet={fleet} host={host} installer={installer} cloud={cloud} now={() => 1_000} />);
+  const tree = <MainWindow fleet={fleet} host={host} installer={installer} cloud={cloud} now={() => 1_000} />;
+  render(strict ? <StrictMode>{tree}</StrictMode> : tree);
   return { fleet, host, installer, createSpace, setDefaultLocation };
 }
 
@@ -550,6 +553,50 @@ describe("MainWindow launch at login", () => {
     await waitFor(() => expect(statusRead).toHaveBeenCalled());
     await act(async () => {});
     expect(loginItem.calls).toEqual([]);
+  });
+});
+
+describe("empty home", () => {
+  it("shows when the roster is only This machine", async () => {
+    setup({ listSpaces: async () => [] });
+    expect(await screen.findByRole("heading", { name: "No Spaces yet" })).toBeInTheDocument();
+    expect(screen.getByText(/first Linux Space uses about 3\.2 GB to 7\.1 GB/)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "This machine" })).toBeNull();
+    expect(screen.getByRole("button", { name: /Create a Linux Space/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Create a macOS Space \(about .+ download\)/ })).toBeInTheDocument();
+  });
+
+  it("creates the default Linux Space once under StrictMode and shows no dialog", async () => {
+    const { createSpace } = setup({ listSpaces: async () => [] }, true, createFakeCloudBridge(), true);
+    await screen.findByRole("heading", { name: "No Spaces yet" });
+    fireEvent.click(screen.getByRole("button", { name: /Create a Linux Space/ }));
+    await waitFor(() => expect(createSpace).toHaveBeenCalledTimes(1));
+    expect(createSpace).toHaveBeenCalledWith(
+      expect.objectContaining({ image: "ghcr.io/trycua/linux:24.04", on: "local" }),
+      expect.stringMatching(/^pending:/),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("opens the wizard on the macOS refusal when Lume is not ready", async () => {
+    const { createSpace } = setup({ listSpaces: async () => [] });
+    await screen.findByRole("heading", { name: "No Spaces yet" });
+    fireEvent.click(screen.getByRole("button", { name: /Create a macOS Space/ }));
+    expect(await screen.findByRole("dialog", { name: "New Space" })).toHaveTextContent(
+      "This Mac cannot run Lume Spaces.",
+    );
+    expect(createSpace).not.toHaveBeenCalled();
+  });
+
+  it("New Space opens the full wizard", async () => {
+    setup({ listSpaces: async () => [] });
+    await screen.findByRole("heading", { name: "No Spaces yet" });
+    const empty = screen.getByRole("heading", { name: "No Spaces yet" }).closest(".dw-empty");
+    fireEvent.click(within(empty as HTMLElement).getByRole("button", { name: "New Space" }));
+    const dialog = await screen.findByRole("dialog", { name: "New Space" });
+    expect(within(dialog).getByRole("combobox", { name: "Image" })).toHaveValue(
+      "ghcr.io/trycua/linux:24.04",
+    );
   });
 });
 

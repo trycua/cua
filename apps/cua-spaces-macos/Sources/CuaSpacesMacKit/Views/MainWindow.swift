@@ -390,9 +390,15 @@ struct EmptySpaces: View {
         let chrome = model.chrome
         ContentUnavailableView {
             Text(model.rosterError == nil ? chrome.emptyTitle : "Spaces could not be loaded")
+        } description: {
+            if model.rosterError == nil { Text(chrome.emptyDetail) }
         } actions: {
-            Button(chrome.emptyAction) { Task { await model.openNewSpace() } }
-                .buttonStyle(.glassProminent)
+            if model.rosterError == nil {
+                Button(chrome.emptyAction) { Task { await model.openNewSpace(quick: .linux) } }
+                    .buttonStyle(.glassProminent)
+                Button(chrome.emptyMacosAction) { Task { await model.openNewSpace(quick: .macos) } }
+            }
+            Button(chrome.newSpaceLabel) { Task { await model.openNewSpace() } }
         }
     }
 }

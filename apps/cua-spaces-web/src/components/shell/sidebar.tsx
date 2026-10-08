@@ -15,6 +15,7 @@ import { realSpaces } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 import { SIDEBAR_DEFAULT, useUiStore } from "@/stores/ui";
 import { Shortcut } from "@/components/ui/kbd";
+import { SignInLink } from "@/components/sign-in-link";
 import { useNavItems } from "./nav";
 
 export function Sidebar() {
@@ -112,11 +113,12 @@ export function AccountFooter() {
         // As in the first run: the code to confirm, the page to open again
         // if the tab was closed, and a way out (it also times out).
         <div data-signin="waiting">
-          <p className="text-xs text-muted-foreground" role="status">
+          <p className="text-xs text-muted-foreground select-text" role="status">
             {phase === "waiting" && session.signIn.kind === "waiting"
               ? signInCodeText(core, session.signIn.userCode)
               : "Waiting for the browser…"}
           </p>
+          {session.signInUrl ? <SignInLink url={session.signInUrl} compact /> : null}
           <div className="mt-1.5 flex items-center gap-3 text-2xs">
             {session.signInUrl ? (
               <button

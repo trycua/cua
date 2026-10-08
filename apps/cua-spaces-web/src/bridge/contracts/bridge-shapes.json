@@ -1660,6 +1660,30 @@
           "required": [
             "connected"
           ]
+        },
+        "hostSignIn": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "userCode": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "userCode",
+            "url"
+          ]
         }
       },
       "required": [
@@ -3048,6 +3072,12 @@
                 "type"
               ]
             }
+          ]
+        },
+        "signInUrl": {
+          "type": [
+            "string",
+            "null"
           ]
         }
       },

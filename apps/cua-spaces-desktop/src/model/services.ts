@@ -39,9 +39,10 @@ const display = (i: AuthIdentity | undefined) => i?.display ?? i?.email ?? i?.us
 
 /** The cua SDK's auth: the same session as `cua auth login`. */
 export class LiveAccount implements AccountRunning {
+  /** `openUrl` opens a page in this machine's browser: false when there is none (or it would not start). */
   constructor(
     private readonly auth: AuthLike,
-    private readonly openUrl: (url: string) => void,
+    private readonly openUrl: (url: string) => Promise<boolean>,
   ) {}
 
   private status() {
@@ -62,10 +63,15 @@ export class LiveAccount implements AccountRunning {
     return i ? { name: i.name, email: i.email, username: i.username, subject: i.subject } : null;
   }
 
+  /** The browser on this machine finishes the sign-in. Without one (a Linux
+   * box with no browser), the device flow instead, as `cua auth login
+   * --remote` does: its page opens on any device, with the code the page
+   * shows. */
   async beginSignIn(): Promise<SignInAttempt> {
-    const attempt = await this.auth.beginLogin(undefined);
+    let attempt = await this.auth.beginLogin(undefined);
+    const opened = attempt.url() ? await this.openUrl(attempt.url()) : false;
+    if (!opened && attempt.method() === "browser") attempt = await this.auth.beginLogin("device");
     const url = attempt.url();
-    if (url) this.openUrl(url);
     return {
       userCode: attempt.userCode() ?? null,
       url: url || null,

@@ -369,6 +369,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "signedIn": model.identity != nil,
             "cloudConfigured": model.cloudConfigured,
             "signIn": BridgeValue.encode(model.signIn),
+            // The page a waiting sign-in finishes on, to show and copy.
+            "signInUrl": model.signInURL?.absoluteString ?? NSNull(),
             "chrome": BridgeValue.encode(model.chrome),
         ]
     }

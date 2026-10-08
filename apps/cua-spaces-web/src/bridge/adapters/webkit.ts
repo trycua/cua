@@ -244,6 +244,8 @@ export function toSessionSnapshot(s: WkSession, onboarding: WkOnboarding | null 
     // The SwiftUI app's first run is its own window; Electron's is the page's.
     onboarding: onboarding ? { completed: onboarding.completed, mode: onboarding.mode } : { completed: true, mode: "client" },
     daemon: null,
+    // The host runs the sign-in: while it waits, its code and page.
+    hostSignIn: typeof s.signIn === "object" && s.signIn.type === "waiting" ? { userCode: opt(s.signIn.userCode) ?? null, url: opt(s.signInUrl) ?? null } : null,
   };
 }
 
@@ -528,7 +530,7 @@ export function createWebkitAdapter(
     "session.signIn": async () => {
       const s = await request<WkSession>("session.signIn");
       const userCode = typeof s.signIn === "object" ? opt(s.signIn.userCode) : undefined;
-      return { method: userCode ? "device" : "browser", userCode, verificationUri: "" };
+      return { method: userCode ? "device" : "browser", userCode, verificationUri: opt(s.signInUrl) ?? "" };
     },
     "session.signOut": async () => {
       await request("session.signOut");

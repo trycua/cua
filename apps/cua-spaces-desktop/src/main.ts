@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import * as path from "node:path";
 import { app, BrowserWindow, dialog, nativeTheme, Notification, screen, shell } from "electron";
 import { createBridge } from "./bridge";
+import { hasBrowser } from "./browser";
 import { appBuild } from "./bundle-version";
 import { ELECTRON_EVENT_CHANNEL } from "./channels";
 import { applyVideoDecodeSwitches } from "./gpu";
@@ -95,8 +96,13 @@ async function startNativeHost(showRoute: (route: string) => void) {
     override: process.env.CUA_SPACES_NATIVE_DIR,
   });
   const native = await loadNative(dir);
-  const openUrl = (url: string) => {
-    if (/^https:\/\//.test(url)) void shell.openExternal(url);
+  // False without a browser here: the sign-in then uses the device flow.
+  const openUrl = async (url: string) => {
+    if (!/^https:\/\//.test(url) || !hasBrowser()) return false;
+    return shell.openExternal(url).then(
+      () => true,
+      () => false,
+    );
   };
   // Before the model loads the settings: a launch after an update refreshes the coding agents' skills.
   const core = appCoreStatePaths(app.getPath("userData"));

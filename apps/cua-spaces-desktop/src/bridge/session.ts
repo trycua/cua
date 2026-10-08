@@ -14,6 +14,8 @@ export function sessionState(model: AppModel) {
     signedIn: model.identity !== null,
     cloudConfigured: model.cloudConfigured,
     signIn: encode(model.signIn),
+    // The page a waiting sign-in finishes on, to show and copy.
+    signInUrl: model.signInUrl,
     chrome: encode(model.chrome),
   };
 }

@@ -60,7 +60,7 @@ import type { AgentKeysReport } from "../ops/agent-keys";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
-import type { HostSettings, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
+import type { HostSettings, HostSignIn, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues } from "../protocol";
 import type { WebkitMethod, WkHostState, WkMachines, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
@@ -194,6 +194,7 @@ const SessionShape = ref(
     daemon: nullable(
       obj<DaemonStatus>()({ connected: bool, version: opt(str), socketPath: opt(str), loopbackUrl: opt(str), error: opt(str) }),
     ),
+    hostSignIn: optNull(obj<HostSignIn>()({ userCode: nullable(str), url: nullable(str) })),
   }),
 );
 
@@ -799,6 +800,7 @@ const WkSessionShape = ref(
     signedIn: bool,
     cloudConfigured: bool,
     signIn: union(oneOf("idle", "starting"), object({ type: str, userCode: optNull(str), message: opt(str) })),
+    signInUrl: optNull(str),
   }),
 );
 

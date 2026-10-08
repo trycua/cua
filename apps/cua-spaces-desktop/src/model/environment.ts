@@ -47,8 +47,8 @@ export interface EnvironmentOptions {
   /** The app's user data folder. */
   userData: string;
   version: string;
-  /** Opens an https page in the user's browser (the sign-in). */
-  openUrl: (url: string) => void;
+  /** Opens an https page in this machine's browser (the sign-in); false when there is none. */
+  openUrl: (url: string) => Promise<boolean>;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
 }
@@ -143,7 +143,7 @@ export function makeModel(o: EnvironmentOptions): Environment {
 }
 
 /** Makes the live services: this app's daemon, then the SDK on it. */
-export async function makeLiveServices(native: Native, supervisor: DaemonSupervisor | null, openUrl: (url: string) => void, cuaBinary: string | null = null): Promise<LiveServices> {
+export async function makeLiveServices(native: Native, supervisor: DaemonSupervisor | null, openUrl: (url: string) => Promise<boolean>, cuaBinary: string | null = null): Promise<LiveServices> {
   const daemonError = await startDaemon(supervisor);
   try {
     const cua = await makeCua(native, supervisor);

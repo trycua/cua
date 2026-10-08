@@ -267,6 +267,8 @@ export interface WkSession {
   cloudConfigured: boolean;
   /** `idle`, `starting`, `{type: "waiting", userCode}`, `{type: "failed", message}`. */
   signIn: string | { type: string; userCode?: string | null; message?: string };
+  /** The page a waiting sign-in finishes on (null otherwise), to show and copy. */
+  signInUrl?: string | null;
 }
 
 export interface WkSettingsRow {

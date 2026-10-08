@@ -11,6 +11,7 @@ import { OsIcon } from "@/components/os-icon";
 import { ModeCard } from "@/components/onboarding-mode";
 import { pressPrimaryOnReturn } from "@/components/onboarding-keys";
 import { SetUpLater } from "@/components/onboarding-skip";
+import { SignInLink } from "@/components/sign-in-link";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
@@ -229,9 +230,10 @@ function SignInCard({ flow }: { flow: OnboardingHook }) {
     const url = session?.signInUrl;
     return (
       <Card data-signin="waiting">
-        <p className="text-[13px] text-muted-foreground" role="status">
+        <p className="text-[13px] text-muted-foreground select-text" role="status">
           {phase === "starting" ? flow.copy.signInWaiting : flow.signInText}
         </p>
+        {url ? <SignInLink url={url} /> : null}
         <div className="mt-3 flex items-center gap-3 text-xs">
           {url ? (
             <button

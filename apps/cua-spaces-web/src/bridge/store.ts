@@ -39,7 +39,7 @@ import {
   type KeyvaultViews,
   type Machine,
 } from "./derive";
-import type { HostEvent, SessionSnapshot, SettingKey, SettingsSnapshot, SettingsValues } from "./protocol";
+import type { HostEvent, HostSignIn, SessionSnapshot, SettingKey, SettingsSnapshot, SettingsValues } from "./protocol";
 import { createSettingsFeature, type SettingsFeature } from "./settings-feature";
 import { SpaceDetailStore } from "./space-detail";
 import {
@@ -403,6 +403,7 @@ export class BridgeStore {
         }
         case "session": {
           this.sessionSnap = await this.adapter.call("session.get", {});
+          this.followHostSignIn(this.sessionSnap.hostSignIn);
           this.publishSession();
           if (this.settingsSnap) this.publishSettings();
           break;
@@ -803,6 +804,16 @@ export class BridgeStore {
       signInUrl: this.signInPhase.kind === "waiting" ? this.signInUrl : null,
     };
     this.set("session", { data, isLoading: false, error: null });
+  }
+
+  /** A native host runs the sign-in and says when it waits (with the code
+   * and the page) only after `session.signIn` answered: take them in, so
+   * the page shows them. */
+  private followHostSignIn(waiting: HostSignIn | null | undefined): void {
+    if (!waiting || (this.signInPhase.kind !== "starting" && this.signInPhase.kind !== "waiting")) return;
+    if (waiting.url) this.signInUrl = waiting.url;
+    if (this.signInPhase.kind === "waiting" && (this.signInPhase.userCode ?? null) === waiting.userCode) return;
+    this.signInPhase = { kind: "waiting", userCode: waiting.userCode };
   }
 
   private setSignIn(phase: SignInPhase): void {

@@ -132,6 +132,15 @@ export interface SessionSnapshot {
   fleet: FleetStatus;
   onboarding: OnboardingState;
   daemon: DaemonStatus | null;
+  /** A native host's sign-in waiting for the browser (it runs the flow
+   * itself): the code to confirm and the page it finishes on. */
+  hostSignIn?: HostSignIn | null;
+}
+
+/** A sign-in the host waits on (`SessionSnapshot.hostSignIn`). */
+export interface HostSignIn {
+  userCode: string | null;
+  url: string | null;
 }
 
 /* ---- Operations ---------------------------------------------------------- */

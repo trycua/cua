@@ -6,6 +6,28 @@
 
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.
 
+## [0.34.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.34.0...cua-driver-rs-v0.34.1) (2026-10-08)
+
+A patch release on the 0.34 line for apps that embed the driver. The typed contract and the UniFFI surface are unchanged, so 0.34.0 language bindings keep working with the 0.34.1 native library.
+
+### Features
+
+* **cua-driver:** add `display_only` to `get_window_state` for live previews on macOS, Windows and Linux: a preview read registers no action capture and leaves the agent's snapshot and element tokens alone ([#4881](https://github.com/trycua/cua/issues/4881)) ([4cbd096](https://github.com/trycua/cua/commit/4cbd0966c5054753c22c2800157709ad4d3ca3ce))
+* **cua-driver:** capture GNOME windows from their own actor with the WinRects v10 helper, so a covered window no longer shows the app on top; installers never downgrade a newer helper ([#4882](https://github.com/trycua/cua/issues/4882)) ([78212ad](https://github.com/trycua/cua/commit/78212adace9539bca87e67fd2307c86c374ce79f))
+
+### Bug Fixes
+
+* **cua-driver:** pass `CUA_DRIVER_RS_ENABLE_WAYLAND` through to embedded hosts ([#4877](https://github.com/trycua/cua/issues/4877)) ([07cbc6c](https://github.com/trycua/cua/commit/07cbc6cd45abafaf12a554ab46bee09a1c0dc63b))
+* **cua-driver:** wait for EIS to acknowledge libei input before replying ([#4880](https://github.com/trycua/cua/issues/4880)) ([9487b0f](https://github.com/trycua/cua/commit/9487b0f895a278aa679153e667c5bc6231f792d6))
+
+### Performance Improvements
+
+* **cua-driver:** reuse one session-bus connection for the GNOME helper ([#4879](https://github.com/trycua/cua/issues/4879)) ([48cc491](https://github.com/trycua/cua/commit/48cc491463491c55287f86a552989e8c19e72583))
+
+### Credits
+
+The Linux fixes and the `display_only` contract are ported from T3 Code's patch to Cua Driver 0.34.0 ([pingdotgg/t3code#16975](https://github.com/pingdotgg/t3code/pull/16975)). T3 Code is MIT-licensed, Copyright (c) 2026 T3 Tools Inc.; see `THIRD_PARTY_NOTICES.md`.
+
 ## [0.34.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.33.4...cua-driver-rs-v0.34.0) (2026-10-05)
 
 

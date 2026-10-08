@@ -287,15 +287,36 @@ unsafe fn reveal_in(
         })
     } else if let Some(pick) = pick_clamped(viewport, direction, distance, &nodes) {
         // A clamped sliver: it scrolled when it now shows at a real size
-        // inside the viewport. Its old position is estimated from the row
-        // count, so the distance is approximate.
+        // inside the viewport and a visible element moved (or left). Its old
+        // position is estimated from the row count, so the distance is
+        // approximate.
+        let reference = nodes
+            .iter()
+            .position(|(rect, leaf)| *leaf && real_size(*rect) && contains(viewport, *rect));
+        let reference_before = reference.map(|at| nodes[at].0);
         perform_action(elements[pick.index], "AXScrollToVisible");
         std::thread::sleep(std::time::Duration::from_millis(150));
         let after = element_screen_rect(elements[pick.index]);
-        let shown = after.is_some_and(|rect| {
-            rect[2] > 1.5 && rect[3] > 1.5 && intersect(rect, viewport).is_some()
-        });
-        after.filter(|_| shown).map(|after| {
+        let reference_after = reference.and_then(|at| element_screen_rect(elements[at]));
+        let shown =
+            after.is_some_and(|rect| real_size(rect) && intersect(rect, viewport).is_some());
+        match content_moved(reference_before, reference_after) {
+            // Nothing visible moved: the container is at its end that way.
+            Some(false) => {
+                return finish(
+                    elements,
+                    Some(RevealOutcome {
+                        container_role: role.to_owned(),
+                        moved: 0.0,
+                        at_end: true,
+                    }),
+                )
+            }
+            Some(true) => {}
+            None if shown => {}
+            None => return finish(elements, None),
+        }
+        after.filter(|rect| real_size(*rect)).map(|after| {
             let past = (pick.rows as f64 - 1.0) * pick.pitch;
             let [vx, vy, vw, vh] = viewport;
             let moved = match direction {
@@ -317,10 +338,41 @@ unsafe fn reveal_in(
             at_end: true,
         })
     };
+    finish(elements, outcome)
+}
+
+/// Release the visited elements and return `outcome`.
+unsafe fn finish(
+    elements: Vec<AXUIElementRef>,
+    outcome: Option<RevealOutcome>,
+) -> Option<RevealOutcome> {
     for element in elements {
         CFRelease(element as CFTypeRef);
     }
     outcome
+}
+
+fn real_size(rect: Rect) -> bool {
+    rect[2] > 1.5 && rect[3] > 1.5
+}
+
+fn contains(outer: Rect, inner: Rect) -> bool {
+    inner[0] >= outer[0]
+        && inner[1] >= outer[1]
+        && inner[0] + inner[2] <= outer[0] + outer[2]
+        && inner[1] + inner[3] <= outer[1] + outer[3]
+}
+
+/// Whether a reveal moved the content, judged on an element that was fully
+/// visible before: it moved, or it left (now a clamped sliver or gone).
+/// `None` without such an element.
+pub fn content_moved(before: Option<Rect>, after: Option<Rect>) -> Option<bool> {
+    let before = before?;
+    Some(match after {
+        None => true,
+        Some(after) if !real_size(after) => true,
+        Some(after) => (after[0] - before[0]).abs() > 0.5 || (after[1] - before[1]).abs() > 0.5,
+    })
 }
 
 #[cfg(test)]
@@ -413,6 +465,24 @@ mod tests {
             pick_clamped(viewport, "up", 480.0, &above).unwrap().index,
             0
         );
+    }
+
+    #[test]
+    fn a_reveal_that_moves_nothing_visible_is_the_end() {
+        let row = [518.0, 301.0, 600.0, 41.0];
+        // Seen live at the top of the page: the reveal changed nothing.
+        assert_eq!(content_moved(Some(row), Some(row)), Some(false));
+        assert_eq!(
+            content_moved(Some(row), Some([518.0, 260.0, 600.0, 41.0])),
+            Some(true)
+        );
+        // Scrolled out of view: clamped to a sliver, or gone.
+        assert_eq!(
+            content_moved(Some(row), Some([518.0, 222.0, 600.0, 1.0])),
+            Some(true)
+        );
+        assert_eq!(content_moved(Some(row), None), Some(true));
+        assert_eq!(content_moved(None, Some(row)), None);
     }
 
     #[test]

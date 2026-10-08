@@ -495,6 +495,81 @@ async fn host_target_needs_consent() {
     h.run(&["--embedded", "do", "key", "tab"]).await.ok();
 }
 
+fn closed_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    port
+}
+
+async fn select_closed(h: &Home) -> String {
+    let url = format!("127.0.0.1:{}", closed_port());
+    h.run(&[
+        "--embedded",
+        "do",
+        "switch",
+        "url",
+        &url,
+        "--token",
+        "t",
+        "--as",
+        "gone",
+    ])
+    .await
+    .ok();
+    url
+}
+
+/// A direct target that stops answering is unselected; its registration stays.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn do_unselects_a_direct_target_that_stops_answering() {
+    let h = Home::new();
+    let url = select_closed(&h).await;
+    let o = h.run(&["--embedded", "do", "screenshot"]).await;
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(o.stderr.contains(&format!("gone (http://{url})")), "{o:?}");
+    assert!(o.stderr.contains("cua do switch gone"), "{o:?}");
+    assert!(o.stderr.contains("cua sandbox rm gone"), "{o:?}");
+    assert!(o.stderr.contains("List Spaces: cua spaces ls"), "{o:?}");
+    assert!(!o.stderr.contains("retry in a few seconds"), "{o:?}");
+    assert!(!o.stdout.contains('💻'), "{o:?}");
+    let o = h.run(&["--embedded", "do", "status"]).await;
+    assert_eq!(o.code, 1);
+    assert!(o.stderr.contains("No target selected"), "{o:?}");
+    let listed = h.run(&["--embedded", "do", "ls", "direct"]).await;
+    listed.ok();
+    assert!(
+        listed.stdout.contains("  gone  [") && listed.stdout.contains("direct"),
+        "{listed:?}"
+    );
+    assert_eq!(
+        read_json(&h.cua_home().join("env-tokens.json"))["gone"],
+        "t"
+    );
+    h.run(&["--embedded", "do", "switch", "gone"]).await.ok();
+}
+
+/// The stale-target message names a registered relay Space, never a direct row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn do_names_a_registered_relay_space_without_touching_the_registry() {
+    let h = Home::new();
+    std::fs::create_dir_all(h.cua_home()).unwrap();
+    let spaces = h.cua_home().join("spaces.json");
+    let body = r#"[{"id":"direct:10.9.8.7:3211","name":"other","features":[]},{"id":"relay:a30ad1ef1e4fea09","name":"desk","features":[]}]"#;
+    std::fs::write(&spaces, body).unwrap();
+    select_closed(&h).await;
+    let before = std::fs::read(&spaces).unwrap();
+    let o = h.run(&["--embedded", "do", "screenshot"]).await;
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(
+        o.stderr.contains("cua do switch relay:a30ad1ef1e4fea09"),
+        "{o:?}"
+    );
+    assert!(!o.stderr.contains("direct:10.9.8.7:3211"), "{o:?}");
+    assert!(!o.stderr.contains("List Spaces:"), "{o:?}");
+    assert_eq!(std::fs::read(&spaces).unwrap(), before);
+}
+
 /// cua-spacesd's `/mcp` requires the Space token: `sb mcp` against a
 /// direct sandbox sends the one registered with `--token` (it used to send
 /// none and got 401).
@@ -885,6 +960,21 @@ async fn do_drives_a_relay_space() {
         .await;
     o.ok();
     assert!(o.stdout.starts_with("✅ relay-ok"), "{o:?}");
+
+    let target = std::fs::read(h.cua_home().join("do_target.json")).unwrap();
+    relay.tunnel(MACHINE, &format!("http://127.0.0.1:{}", closed_port()));
+    let o = h.run(&["--embedded", "do", "screenshot"]).await;
+    assert_eq!(o.code, 1, "{o:?}");
+    assert!(
+        o.stderr.contains("has no cua-spacesd") && o.stderr.contains("502 Bad Gateway"),
+        "{o:?}"
+    );
+    assert!(!o.stderr.contains("Unselected"), "{o:?}");
+    assert!(o.stdout.contains("💻 relay:"), "{o:?}");
+    assert_eq!(
+        std::fs::read(h.cua_home().join("do_target.json")).unwrap(),
+        target
+    );
 
     cua_host::RelayClient::new(&relay.url)
         .unwrap()

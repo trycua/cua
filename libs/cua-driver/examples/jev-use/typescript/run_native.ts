@@ -19,6 +19,7 @@ import { parseVisualRegions, validateChoice, VisualObservationError, type Candid
 import { driverEnvironment } from './driver_env.js';
 import { chooseBoundedWithTypeSafe, chooseMockForTask } from './jev_adapter.js';
 import { parseWindowState, type NativeObservation } from './native.js';
+import { NoProgressGuard } from './no_progress.js';
 import type { Platform } from './native_roles.js';
 import {
   NATIVE_TASK_IDS,
@@ -242,6 +243,7 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
   if (args.log) await writeFile(args.log, '', 'utf8');
   const history: HistoryEntry[] = [];
   const foregroundIds = new Set<string>();
+  const noProgress = new NoProgressGuard(task.id);
   const transport = new StdioClientTransport({
     command: process.env.CUA_DRIVER_BIN ?? 'cua-driver',
     args: ['mcp'],
@@ -261,10 +263,23 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
       platform, pid: args.pid, window_id: windowId,
     });
     for (let step = 1; step <= task.maxSteps; step += 1) {
-      const current = task.classify(await task.readOracle(), step - 1);
+      const oracleState = await task.readOracle();
+      const current = task.classify(oracleState, step - 1);
       if (current === 'verified' || current === 'refuted') {
         await writeEvent(args.log, { event: 'outcome', outcome: current, step: step - 1 });
         return current;
+      }
+      const stop = noProgress.beforeStep(oracleState);
+      if (stop) {
+        await writeEvent(args.log, {
+          event: 'outcome',
+          outcome: 'abstained',
+          reason: 'no_progress',
+          pattern: stop.pattern,
+          streak: stop.streak,
+          step: step - 1,
+        });
+        return 'abstained';
       }
       const observed = await observeStep(driver, task, args.pid, windowId, platform, new Set(foregroundIds));
       const visual = await maybeVisual(driver, task, observed.sources, availableTools, captureBoundClick);
@@ -322,6 +337,7 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
 
       if (candidate.id === 'reobserve') {
         history.push(task.historyEntry(step, candidate.id));
+        noProgress.note('reobserve', candidate.id);
         await writeEvent(args.log, { ...baseEvent, tool: null, act_ms: 0 });
         continue;
       }
@@ -336,6 +352,7 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
         const actMs = Math.round((performance.now() - actStarted) * 100) / 100;
         if (isStaleTokenError(error)) {
           history.push(task.historyEntry(step, candidate.id, undefined, { stale: true }));
+          noProgress.note('stale', candidate.id);
           await writeEvent(args.log, { ...baseEvent, tool: candidate.tool, act_ms: actMs, action_error: 'stale_element_token' });
           continue;
         }
@@ -343,6 +360,7 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
         if (refusal) {
           foregroundIds.add(candidate.id);
           history.push(task.historyEntry(step, candidate.id, refusal));
+          noProgress.note('refused', candidate.id);
           await writeEvent(args.log, {
             ...baseEvent, tool: candidate.tool, act_ms: actMs, action_error: refusal,
             escalation: { from: 'background', to: 'foreground', allowed: task.allowForeground },
@@ -357,6 +375,7 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
       }
       const actMs = Math.round((performance.now() - actStarted) * 100) / 100;
       history.push(task.historyEntry(step, candidate.id, undefined, { outcome: plan.outcomes[candidate.id] }));
+      noProgress.note('performed', candidate.id);
       await writeEvent(args.log, {
         ...baseEvent, tool: candidate.tool, act_ms: actMs,
         delivery_mode: candidate.arguments.delivery_mode ?? null,

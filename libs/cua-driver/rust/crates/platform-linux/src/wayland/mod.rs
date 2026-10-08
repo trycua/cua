@@ -15,6 +15,7 @@ pub mod hyprland;
 pub mod hyprland_capture;
 mod hyprland_compatibility;
 pub mod hyprland_input;
+mod inject_capture;
 pub mod kwin_helper;
 pub mod overlay;
 pub mod persistent_vptr;
@@ -769,7 +770,10 @@ fn capture_via_grim() -> anyhow::Result<Vec<u8>> {
 /// request a copy, wait for Ready, swap channels, encode PNG. Returns an error
 /// if any global is missing or the compositor flags the capture as failed.
 fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
-    let conn = Connection::connect_to_env()?;
+    capture_via_screencopy_on_connection(Connection::connect_to_env()?)
+}
+
+fn capture_via_screencopy_on_connection(conn: Connection) -> anyhow::Result<Vec<u8>> {
     let mut queue = conn.new_event_queue::<State>();
     let qh = queue.handle();
     conn.display().get_registry(&qh, ());
@@ -1097,6 +1101,13 @@ pub fn screenshot_dispatch_with_pid(xid: u64, pid: u32) -> anyhow::Result<Vec<u8
 }
 
 fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
+    if is_wayland() && is_inject_mode() {
+        return inject_capture::screenshot(xid, pid).map_err(|error| {
+            tracing::debug!("Nested compositor target capture refused: {error:#}");
+            surface_identity_unproven(xid, "nested target identity, foreground visibility or capture epoch could not be verified")
+        });
+    }
+
     if is_wayland() && hyprland::is_session() {
         return hyprland::capture(xid, pid).map_err(|error| {
             tracing::debug!("Hyprland target capture refused: {error:#}");

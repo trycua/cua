@@ -48,6 +48,13 @@ stdenv.mkDerivation {
     runHook postBuild
   '';
 
+  doCheck = true;
+  checkPhase = ''
+    runHook preCheck
+    python3 -m unittest discover -s tests
+    runHook postCheck
+  '';
+
   installPhase = ''
     runHook preInstall
     install -Dm755 cua-compositor $out/bin/cua-compositor

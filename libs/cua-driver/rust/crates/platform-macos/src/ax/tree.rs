@@ -618,9 +618,23 @@ unsafe fn walk_element(
     // indexed rows are addressable in click(element_index=N)).
     let next_parent = node.element_index.or(parent_index);
 
-    let line = format_node_line(&node);
+    // A closed menu of the menu bar stays collapsed when the caller asked for
+    // it: its items are reachable through invoke_menu or a query, and walking
+    // them cost most of a read (94% of a Chrome window read in a VM check)
+    // and ate the node budget before the window content.
+    let collapse_here = role == "AXMenuBarItem"
+        && MENUS_COLLAPSED.with(std::cell::Cell::get)
+        && copy_bool_attr(element, "AXSelected") != Some(true);
+    let line = if role == "AXMenuBar" && MENUS_COLLAPSED.with(std::cell::Cell::get) {
+        format!("{} {COLLAPSED_MENU_NOTE}", format_node_line(&node))
+    } else {
+        format_node_line(&node)
+    };
     lines.push((depth, line));
     nodes.push(node);
+    if collapse_here {
+        return;
+    }
 
     let children = copy_children(element);
     for child in children {
@@ -682,8 +696,13 @@ fn format_node_line(node: &AXNode) -> String {
         parts.push_str(&format!(" = \"{}\"", v));
     }
     // AXDescription → (description) — critical for Calculator digit buttons
-    // where AXTitle="" but AXDescription="2".
-    if let Some(d) = &node.description {
+    // where AXTitle="" but AXDescription="2". A description that only repeats
+    // the title (Chrome's `"Back" (Back)`) is not shown twice.
+    if let Some(d) = node
+        .description
+        .as_ref()
+        .filter(|d| node.title.as_ref() != Some(*d))
+    {
         parts.push_str(&format!(" ({})", d));
     }
 
@@ -717,6 +736,24 @@ fn format_node_line(node: &AXNode) -> String {
     }
 
     parts
+}
+
+thread_local! {
+    static MENUS_COLLAPSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Shown on the menu bar row of a read whose menus were not walked.
+pub(crate) const COLLAPSED_MENU_NOTE: &str =
+    "(menus collapsed: run an item with invoke_menu path, or pass query to search menu items)";
+
+/// Run `walk` with the menu bar's closed menus collapsed (or not) on this
+/// thread. Only `get_window_state` collapses; every other walker keeps the
+/// full menu tree.
+pub fn with_menus_collapsed<T>(collapse: bool, walk: impl FnOnce() -> T) -> T {
+    let previous = MENUS_COLLAPSED.with(|flag| flag.replace(collapse));
+    let result = walk();
+    MENUS_COLLAPSED.with(|flag| flag.set(previous));
+    result
 }
 
 /// Actions every web-content element advertises. Listing them on each row
@@ -928,6 +965,18 @@ mod lean_row_tests {
                 "- [12] AXStaticText = \"Inbox\"",
             ]
         );
+    }
+
+    #[test]
+    fn menu_collapsing_is_scoped_to_the_wrapped_walk() {
+        use super::{with_menus_collapsed, MENUS_COLLAPSED};
+        assert!(!MENUS_COLLAPSED.with(std::cell::Cell::get));
+        let inside = with_menus_collapsed(true, || {
+            let nested = with_menus_collapsed(false, || MENUS_COLLAPSED.with(std::cell::Cell::get));
+            (MENUS_COLLAPSED.with(std::cell::Cell::get), nested)
+        });
+        assert_eq!(inside, (true, false));
+        assert!(!MENUS_COLLAPSED.with(std::cell::Cell::get));
     }
 
     #[test]

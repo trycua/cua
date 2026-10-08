@@ -40,8 +40,21 @@ class MacLoginItem implements LoginItemControlling {
   }
 }
 
-class WindowsLoginItem implements LoginItemControlling {
-  private readonly options = { path: process.execPath, args: [HIDDEN_ARG] };
+/** The Run entry's name: the AppUserModelID (main.ts), the name Electron reads `openAtLogin` under whatever `name` it is given. */
+export const WINDOWS_RUN_NAME = "ai.cua.spaces.desktop";
+
+/**
+ * What both `setLoginItemSettings` and `getLoginItemSettings` are given on
+ * Windows. The path is quoted: Electron finds the app's Run entry by parsing
+ * `path` as a command line, so an unquoted `...\Cua Spaces.exe` reads as
+ * `...\Cua`, matches nothing, and an entry that works looks turned off.
+ */
+export function windowsLoginOptions(execPath: string): { name: string; path: string; args: string[] } {
+  return { name: WINDOWS_RUN_NAME, path: `"${execPath}"`, args: [HIDDEN_ARG] };
+}
+
+export class WindowsLoginItem implements LoginItemControlling {
+  constructor(private readonly options = windowsLoginOptions(process.execPath)) {}
   status(): LoginItemStatus {
     const s = app.getLoginItemSettings(this.options);
     if (!s.openAtLogin) return "notRegistered";

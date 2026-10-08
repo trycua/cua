@@ -359,7 +359,12 @@ chose, whether the keychain prompt is still on screen). Per system:
   which can wait for approval in System Settings), Windows' startup apps
   (turned off in Task Manager reads as waiting for approval), an XDG
   autostart entry on Linux. A login launch (`--hidden` on Windows and Linux)
-  starts without the window once the first run is done.
+  starts without the window once the first run is done. On Windows the Run
+  entry is `ai.cua.spaces.desktop` (the AppUserModelID, which Electron reads
+  it under) and the app gives Electron its path quoted: Electron finds the
+  entry by parsing that path as a command line, and an unquoted
+  `...\Cua Spaces.exe` matches nothing, so a working entry read as waiting
+  for approval.
 - **Updates**: electron-updater, opt-in and beta only (`src/updater.ts`);
   About says so, and Check Now on Stable says Stable updates come later.
   Sparkle's relaunch prompt for a copy replaced on disk has no Electron

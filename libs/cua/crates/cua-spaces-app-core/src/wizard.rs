@@ -130,7 +130,7 @@ pub struct SandboxImage {
     /// How big it is per platform, when measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sizes: Option<ImageSizes>,
-    /// `false`: its guest cannot use GPU acceleration (not offered).
+    /// `false`: its guest cannot use GPU acceleration.
     #[serde(default = "offered")]
     pub gpu: bool,
 }

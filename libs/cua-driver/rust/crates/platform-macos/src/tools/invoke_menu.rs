@@ -548,6 +548,10 @@ impl Tool for InvokeMenuTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        // The menu bar belongs to the app: with only a pid, use its focused
+        // window.
+        let mut args = args;
+        super::default_window_for_pid(&mut args);
         let input: InvokeMenuInput =
             match cua_driver_core::tool_args::parse_typed_input("invoke_menu", args) {
                 Ok(input) => input,

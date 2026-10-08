@@ -79,18 +79,31 @@ pub fn pick_reveal_target(
     best.map(|(index, _)| index)
 }
 
+/// A clamped row chosen for a reveal.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClampedPick {
+    /// Index into the nodes.
+    pub index: usize,
+    /// How many rows past the edge it is (1 = the first).
+    pub rows: usize,
+    /// Row pitch measured on the visible leaves.
+    pub pitch: f64,
+}
+
 /// Chromium reports an element scrolled out of view as a 1 pt sliver
-/// clamped to the viewport edge, not at its real position. So when nothing
-/// lies geometrically beyond the edge, the off-screen content is the leaves
-/// clamped to that edge, in document order. Reveal the one about `distance`
-/// away, counting rows at the pitch of the visible leaves. `nodes` are
+/// clamped to the viewport edge, not at its real position, and its
+/// AXScrollToVisible centers the element. So when nothing lies geometrically
+/// beyond the edge, the off-screen content is the leaves clamped to that
+/// edge, in document order, and revealing the k-th of them moves the content
+/// by about half the viewport plus (k - 0.5) rows. Pick k for `distance`,
+/// counting rows at the pitch of the visible leaves. `nodes` are
 /// (frame, is_leaf) in document order. `None` when nothing is clamped there.
 pub fn pick_clamped(
     viewport: Rect,
     direction: &str,
     distance: f64,
     nodes: &[(Rect, bool)],
-) -> Option<usize> {
+) -> Option<ClampedPick> {
     let [vx, vy, vw, vh] = viewport;
     let vertical = matches!(direction, "up" | "down");
     let sliver = |r: &Rect| if vertical { r[3] <= 1.5 } else { r[2] <= 1.5 };
@@ -131,8 +144,14 @@ pub fn pick_clamped(
     let mut gaps: Vec<f64> = starts.windows(2).map(|pair| pair[1] - pair[0]).collect();
     gaps.sort_by(f64::total_cmp);
     let pitch = gaps.get(gaps.len() / 2).copied().unwrap_or(40.0).max(8.0);
-    let steps = ((distance / pitch).round() as usize).clamp(1, clamped.len());
-    Some(clamped[steps - 1])
+    let half = if vertical { vh } else { vw } / 2.0;
+    let rows = ((distance - half) / pitch + 0.5).round().max(1.0) as usize;
+    let rows = rows.min(clamped.len());
+    Some(ClampedPick {
+        index: clamped[rows - 1],
+        rows,
+        pitch,
+    })
 }
 
 /// Scroll the container under screen point `point` by about `distance`
@@ -249,41 +268,54 @@ unsafe fn reveal_in(
             }
         })
         .collect();
-    let target = pick_reveal_target(viewport, direction, distance, &real)
-        .or_else(|| pick_clamped(viewport, direction, distance, &nodes));
-    // A visible element to measure the movement on.
-    let reference = nodes.iter().position(|(rect, _)| {
-        rect[2] > 1.5
-            && rect[3] > 1.5
-            && rect[1] >= viewport[1]
-            && rect[1] + rect[3] <= viewport[1] + viewport[3]
-    });
-    let outcome = match target {
-        None => Some(RevealOutcome {
+    let outcome = if let Some(index) = pick_reveal_target(viewport, direction, distance, &real) {
+        // A real frame: measure the move on the element itself.
+        let before = nodes[index].0;
+        perform_action(elements[index], "AXScrollToVisible");
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let after = element_screen_rect(elements[index]).unwrap_or(before);
+        let moved = match direction {
+            "down" => before[1] - after[1],
+            "up" => after[1] - before[1],
+            "right" => before[0] - after[0],
+            _ => after[0] - before[0],
+        };
+        (moved > 0.5).then(|| RevealOutcome {
+            container_role: role.to_owned(),
+            moved,
+            at_end: false,
+        })
+    } else if let Some(pick) = pick_clamped(viewport, direction, distance, &nodes) {
+        // A clamped sliver: it scrolled when it now shows at a real size
+        // inside the viewport. Its old position is estimated from the row
+        // count, so the distance is approximate.
+        perform_action(elements[pick.index], "AXScrollToVisible");
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let after = element_screen_rect(elements[pick.index]);
+        let shown = after.is_some_and(|rect| {
+            rect[2] > 1.5 && rect[3] > 1.5 && intersect(rect, viewport).is_some()
+        });
+        after.filter(|_| shown).map(|after| {
+            let past = (pick.rows as f64 - 1.0) * pick.pitch;
+            let [vx, vy, vw, vh] = viewport;
+            let moved = match direction {
+                "down" => vy + vh + past - after[1],
+                "up" => after[1] + after[3] - (vy - past),
+                "right" => vx + vw + past - after[0],
+                _ => after[0] + after[2] - (vx - past),
+            };
+            RevealOutcome {
+                container_role: role.to_owned(),
+                moved: moved.max(1.0),
+                at_end: false,
+            }
+        })
+    } else {
+        Some(RevealOutcome {
             container_role: role.to_owned(),
             moved: 0.0,
             at_end: true,
-        }),
-        Some(index) => {
-            let (watch, before) = match reference {
-                Some(at) => (elements[at], nodes[at].0),
-                None => (elements[index], nodes[index].0),
-            };
-            perform_action(elements[index], "AXScrollToVisible");
-            std::thread::sleep(std::time::Duration::from_millis(150));
-            let after = element_screen_rect(watch).unwrap_or(before);
-            let moved = match direction {
-                "down" => before[1] - after[1],
-                "up" => after[1] - before[1],
-                "right" => before[0] - after[0],
-                _ => after[0] - before[0],
-            };
-            (moved > 0.5).then(|| RevealOutcome {
-                container_role: role.to_owned(),
-                moved,
-                at_end: false,
-            })
-        }
+        })
     };
     for element in elements {
         CFRelease(element as CFTypeRef);
@@ -354,23 +386,33 @@ mod tests {
             nodes.push(([518.0, 889.0, 600.0, 1.0], true));
         }
         let viewport = [500.0, 290.0, 800.0, 600.0];
-        // 360 pt at a 45 pt pitch is 8 rows on.
+        // Revealing centers the row: 360 pt is half the 600 pt viewport plus
+        // about 1.5 rows of 45 pt, so the 2nd row past the edge.
+        let pick = pick_clamped(viewport, "down", 360.0, &nodes).unwrap();
         assert_eq!(
-            pick_clamped(viewport, "down", 360.0, &nodes),
-            Some(first_clamped + 7)
+            (pick.index, pick.rows, pick.pitch),
+            (first_clamped + 1, 2, 45.0)
+        );
+        // A page down (600 pt) is about 7 rows on.
+        assert_eq!(
+            pick_clamped(viewport, "down", 600.0, &nodes).unwrap().rows,
+            7
         );
         // A distance past the content picks the last row.
-        assert_eq!(
-            pick_clamped(viewport, "down", 100_000.0, &nodes),
-            Some(first_clamped + 99)
-        );
+        let far = pick_clamped(viewport, "down", 100_000.0, &nodes).unwrap();
+        assert_eq!(far.index, first_clamped + 99);
         // Nothing clamped at the top edge: at the start already.
         assert_eq!(pick_clamped(viewport, "up", 360.0, &nodes), None);
-        // Up counts from the nearest sliver above, the last in document order.
+        // Up counts from the nearest sliver above, the last in document order;
+        // a short distance still reveals at least the nearest row.
         let mut above: Vec<(Rect, bool)> =
             (0..5).map(|_| ([518.0, 290.0, 600.0, 1.0], true)).collect();
         above.extend((0..13).map(|i| ([518.0, 301.0 + 45.0 * i as f64, 600.0, 41.0], true)));
-        assert_eq!(pick_clamped(viewport, "up", 90.0, &above), Some(3));
+        assert_eq!(pick_clamped(viewport, "up", 90.0, &above).unwrap().index, 4);
+        assert_eq!(
+            pick_clamped(viewport, "up", 480.0, &above).unwrap().index,
+            0
+        );
     }
 
     #[test]

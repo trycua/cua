@@ -349,6 +349,10 @@ chose, whether the keychain prompt is still on screen). Per system:
   Touch ID, an Apple Watch or the login password on macOS (as the Swift app
   asks), Windows Hello on Windows, polkit's `ai.cua.spaces.devices`
   (`packaging/ai.cua.spaces.policy`, installed by the `.deb`) on Linux.
+  polkit shows each action's own message: it takes details only from root,
+  so `pkcheck` gets none. Its exit status is read as pkcheck(1) gives it (1
+  not authorized, 2 no agent to ask, 3 dismissed); an error (127) is shown as
+  an error, never as the user's refusal.
   Where Windows Hello is not set up or polkit cannot ask, a dialog of the
   app's own says so and asks instead.
 - **Launch at login**: macOS's SMAppService (Electron's `mainAppService`,

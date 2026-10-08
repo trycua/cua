@@ -30,6 +30,9 @@ importers:
       electron-builder:
         specifier: 26.15.3
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)(supports-color@7.2.0)
+      sax:
+        specifier: 1.6.1
+        version: 1.6.1
       tsdown:
         specifier: 0.23.0
         version: 0.23.0(typescript@5.9.3)

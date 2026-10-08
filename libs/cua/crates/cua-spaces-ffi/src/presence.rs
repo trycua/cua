@@ -48,6 +48,10 @@ fn presence_error(e: AuthError) -> CuaError {
         AuthError::Unavailable => {
             CuaError::Unsupported("this system has no owner check for Cua Spaces".into())
         }
+        // The prompt could not run (polkit answered an error): nobody was asked.
+        AuthError::Failed(detail) => {
+            CuaError::Internal(format!("The owner check could not run: {detail}"))
+        }
     }
 }
 
@@ -63,6 +67,10 @@ mod tests {
         };
         assert_eq!(words(AuthError::Cancelled), "Approval was cancelled");
         assert_eq!(words(AuthError::Denied), "Approval was not confirmed");
+        assert!(matches!(
+            presence_error(AuthError::Failed("pkcheck exited with status 127".into())),
+            CuaError::Internal(m) if m.ends_with("pkcheck exited with status 127")
+        ));
         let unavailable = presence_error(AuthError::Unavailable);
         if cfg!(target_os = "macos") {
             assert!(matches!(unavailable, CuaError::PermissionDenied(_)));

@@ -75,6 +75,9 @@ pub enum AuthError {
     Unavailable,
     /// The user actively dismissed the prompt, or the OS cancelled it.
     Cancelled,
+    /// The system's prompt could not run (polkit answered with an error), so
+    /// nobody was asked: an error to report, not a refusal.
+    Failed(String),
 }
 
 impl std::fmt::Display for AuthError {
@@ -86,6 +89,7 @@ impl std::fmt::Display for AuthError {
                 "user confirmation is unavailable: {UNAVAILABLE_HELP} (set {ALLOW_UNVERIFIED_ENV}=1 to proceed without it)"
             ),
             Self::Cancelled => write!(f, "biometric authorization was cancelled"),
+            Self::Failed(detail) => write!(f, "the confirmation prompt failed: {detail}"),
         }
     }
 }
@@ -341,14 +345,26 @@ fn hello_result(value: i32) -> Result<(), AuthError> {
     }
 }
 
-/// `pkcheck`'s exit status: 0 authorized, 1 not authorized, 2 needs a
-/// challenge it was not allowed to make, 3 the user dismissed the dialog.
+/// `pkcheck`'s exit status (pkcheck(1)): 0 authorized, 1 not authorized,
+/// 2 no authentication agent to ask (the challenge could not be made),
+/// 3 the user dismissed the dialog, 127 an error, said on stderr. An error
+/// (or a signal) is reported as one, never as the user's refusal.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn pkcheck_result(code: Option<i32>) -> Result<(), AuthError> {
+fn pkcheck_result(code: Option<i32>, stderr: &str) -> Result<(), AuthError> {
+    let detail = || {
+        let line = stderr.lines().map(str::trim).find(|l| !l.is_empty());
+        match (line, code) {
+            (Some(line), _) => line.chars().take(300).collect(),
+            (None, Some(code)) => format!("pkcheck exited with status {code}"),
+            (None, None) => "pkcheck was stopped".to_string(),
+        }
+    };
     match code {
         Some(0) => Ok(()),
+        Some(1) => Err(AuthError::Denied),
+        Some(2) => Err(AuthError::Unavailable),
         Some(3) => Err(AuthError::Cancelled),
-        _ => Err(AuthError::Denied),
+        _ => Err(AuthError::Failed(detail())),
     }
 }
 
@@ -361,16 +377,6 @@ fn proc_start_time(stat: &str) -> Option<u64> {
     let after_name = &stat[stat.rfind(')')? + 1..];
     // The fields after the name begin with the state (field 3).
     after_name.split_whitespace().nth(19)?.parse().ok()
-}
-
-/// The reason as a polkit detail: one line, no control characters, bounded.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn detail_text(reason: &str) -> String {
-    reason
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .take(200)
-        .collect()
 }
 
 #[cfg(target_os = "windows")]
@@ -430,17 +436,21 @@ mod polkit {
     //! polkit through `pkcheck`, which asks the session's authentication agent.
     //! The process itself is spawned by [`crate::host`], the one place this
     //! crate touches the host.
+    //!
+    //! The prompt shows the action's own message
+    //! (apps/cua-spaces-desktop/packaging/ai.cua.spaces.policy): polkit
+    //! takes `--detail` only from root, and refuses the whole check otherwise.
 
     use std::io::ErrorKind;
     use std::time::Duration;
 
-    use super::{AuthError, detail_text, pkcheck_result, proc_start_time};
-    use crate::host::{EffectKind, HostCommand, run_for_exit_code};
+    use super::{AuthError, pkcheck_result, proc_start_time};
+    use crate::host::{EffectKind, HostCommand, run_for_status};
 
     /// How long the user has to answer before the prompt counts as dismissed.
     const REPLY_TIMEOUT: Duration = Duration::from_secs(120);
 
-    pub(super) fn authorize(action: &str, reason: &str) -> Result<(), AuthError> {
+    pub(super) fn authorize(action: &str, _reason: &str) -> Result<(), AuthError> {
         // This process, named the way polkit wants: id and start time.
         let start = std::fs::read_to_string("/proc/self/stat")
             .ok()
@@ -454,17 +464,16 @@ mod polkit {
                 "--process",
             ])
             .arg(format!("{},{start}", std::process::id()))
-            .args(["--detail", "reason"])
-            .arg(detail_text(reason))
             .timeout(REPLY_TIMEOUT);
-        match run_for_exit_code(&check) {
-            Ok(code) => pkcheck_result(code),
+        match run_for_status(&check) {
+            // One diagnostic line at most on stderr.
+            Ok((code, stderr)) => pkcheck_result(code, &stderr),
             // No pkcheck, or a test sandbox that refuses host effects.
             Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::PermissionDenied) => {
                 Err(AuthError::Unavailable)
             }
             Err(e) if e.kind() == ErrorKind::TimedOut => Err(AuthError::Cancelled),
-            Err(_) => Err(AuthError::Denied),
+            Err(e) => Err(AuthError::Failed(format!("cannot run pkcheck: {e}"))),
         }
     }
 }
@@ -582,11 +591,41 @@ mod tests {
 
     #[test]
     fn pkcheck_exit_statuses_map_to_the_gate() {
-        assert_eq!(pkcheck_result(Some(0)), Ok(()));
-        assert_eq!(pkcheck_result(Some(3)), Err(AuthError::Cancelled));
-        for denied in [Some(1), Some(2), Some(127), None] {
-            assert_eq!(pkcheck_result(denied), Err(AuthError::Denied), "{denied:?}");
-        }
+        assert_eq!(pkcheck_result(Some(0), ""), Ok(()));
+        assert_eq!(pkcheck_result(Some(1), ""), Err(AuthError::Denied));
+        // No authentication agent in the session: nobody could be asked.
+        assert_eq!(pkcheck_result(Some(2), ""), Err(AuthError::Unavailable));
+        assert_eq!(pkcheck_result(Some(3), ""), Err(AuthError::Cancelled));
+    }
+
+    #[test]
+    fn a_pkcheck_error_is_an_error_not_a_refusal() {
+        // What polkit answers a non-root caller that passes --detail.
+        let refused = "Error checking for authorization ai.cua.spaces.keyvault: GDBus.Error:org.freedesktop.PolicyKit1.Error.NotAuthorized: Only trusted callers (e.g. uid 0 or an action owner) can use CheckAuthorization() and pass details\n";
+        let Err(AuthError::Failed(detail)) = pkcheck_result(Some(127), refused) else {
+            panic!("127 is an error");
+        };
+        assert!(
+            detail.starts_with("Error checking for authorization"),
+            "{detail}"
+        );
+        assert!(!detail.contains('\n'));
+        assert_eq!(
+            pkcheck_result(Some(127), ""),
+            Err(AuthError::Failed("pkcheck exited with status 127".into()))
+        );
+        assert_eq!(
+            pkcheck_result(None, ""),
+            Err(AuthError::Failed("pkcheck was stopped".into()))
+        );
+        assert!(matches!(
+            pkcheck_result(Some(42), ""),
+            Err(AuthError::Failed(_))
+        ));
+        assert_ne!(
+            AuthError::Failed("x".into()).to_string(),
+            AuthError::Denied.to_string()
+        );
     }
 
     #[test]
@@ -595,15 +634,6 @@ mod tests {
         assert_eq!(proc_start_time(stat), Some(987654));
         assert_eq!(proc_start_time("no name here"), None);
         assert_eq!(proc_start_time("1 (x) S 1"), None);
-    }
-
-    #[test]
-    fn the_reason_reaches_polkit_as_one_bounded_line() {
-        assert_eq!(
-            detail_text("Unlock the Keyvault\nfor Cua: a\tb"),
-            "Unlock the Keyvault for Cua: a b"
-        );
-        assert_eq!(detail_text(&"x".repeat(500)).chars().count(), 200);
     }
 
     /// The policy file the `.deb` installs names the action the gate asks for.
@@ -621,6 +651,11 @@ mod tests {
         assert!(
             policy.contains("<allow_any>no</allow_any>")
                 && policy.contains("<allow_inactive>no</allow_inactive>")
+        );
+        // Only root may pass polkit details, so the messages carry no `$(...)`.
+        assert!(
+            !policy.contains("$("),
+            "the prompt shows the message as written"
         );
     }
 }

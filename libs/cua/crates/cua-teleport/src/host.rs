@@ -364,18 +364,18 @@ impl HostEffects for FakeHost {
     }
 }
 
-/// Runs `command` for its exit code alone, with no input or output: the
-/// system prompt [`crate::biometric`] raises on Linux (polkit's `pkcheck`),
-/// which answers in its exit code. `None` when a signal ended it. Past
-/// `command.timeout` the child is killed and the call fails with
-/// [`io::ErrorKind::TimedOut`]. Refused under a test sandbox, like
-/// [`RealHost`].
+/// Runs `command` for its exit code and its (short) stderr, with no input:
+/// the system prompt [`crate::biometric`] raises on Linux (polkit's
+/// `pkcheck`), which answers in its exit code and says why on stderr. The
+/// code is `None` when a signal ended it. Past `command.timeout` the child is
+/// killed and the call fails with [`io::ErrorKind::TimedOut`]. Refused under
+/// a test sandbox, like [`RealHost`].
 #[cfg(target_os = "linux")]
-pub(crate) fn run_for_exit_code(command: &HostCommand) -> io::Result<Option<i32>> {
+pub(crate) fn run_for_status(command: &HostCommand) -> io::Result<(Option<i32>, String)> {
     if host_effects_forbidden() {
         return Err(refused(command.kind));
     }
-    real::run_for_exit_code(command)
+    real::run_for_status(command)
 }
 
 /// The only code in this crate that spawns processes, opens sockets or
@@ -453,16 +453,21 @@ mod real {
     }
 
     #[cfg(target_os = "linux")]
-    pub(super) fn run_for_exit_code(spec: &HostCommand) -> io::Result<Option<i32>> {
+    pub(super) fn run_for_status(spec: &HostCommand) -> io::Result<(Option<i32>, String)> {
         let mut child = command(spec)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()?;
         let start = Instant::now();
         loop {
             if let Some(status) = child.try_wait()? {
-                return Ok(status.code());
+                // A line at most, long written by now.
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.stderr.take() {
+                    let _ = pipe.read_to_string(&mut stderr);
+                }
+                return Ok((status.code(), stderr));
             }
             if spec.timeout.is_some_and(|budget| start.elapsed() >= budget) {
                 let _ = child.kill();

@@ -2,7 +2,7 @@
 <!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
   "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
 <!--
-  The prompts Cua asks the desktop for (`pkcheck --action-id ...`,
+  The prompts Cua asks the desktop for (pkcheck with the action id,
   crates/cua-teleport/src/biometric.rs): the Keyvault's before it lets a
   secret move or widens access (ai.cua.spaces.keyvault, asked by the cua
   daemon), and the Cua Spaces app's before it approves another device for
@@ -12,13 +12,17 @@
   auth_self: the user proves it is them, with their own password or
   fingerprint, in the session they are at, every time (the answer is not kept).
   Nothing here gives anyone root or any other right.
+
+  The messages are shown as written: polkit fills a message's placeholders
+  only from details, which it takes from root alone; nothing that asks is root.
+  A comment here must not hold two hyphens in a row (XML).
 -->
 <policyconfig>
   <vendor>Cua AI, Inc.</vendor>
   <vendor_url>https://cua.ai</vendor_url>
   <action id="ai.cua.spaces.keyvault">
     <description>Confirm access to the Cua Keyvault</description>
-    <message>Confirm access to the Cua Keyvault: $(reason)</message>
+    <message>Confirm it is you to use the Cua Keyvault</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
@@ -27,7 +31,7 @@
   </action>
   <action id="ai.cua.spaces.devices">
     <description>Approve a device for your Cua account</description>
-    <message>Confirm it is you to $(reason)</message>
+    <message>Confirm it is you to approve a device for your Cua account</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>

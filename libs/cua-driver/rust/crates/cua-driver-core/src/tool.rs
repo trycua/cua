@@ -273,9 +273,9 @@ fn normalize_set_config_args(tool_name: &str, args: &mut Value) -> Result<(), St
             object.insert(key, value);
             Ok(())
         }
-        (Some(Value::String(key)), Some(_)) => Err(format!("set_config key '{key}' is reserved")),
-        (Some(_), _) => Err("set_config key requires an exact value".into()),
-        (None, Some(_)) => Err("set_config value requires an exact key".into()),
+        (Some(Value::String(key)), Some(_)) => Err(format!("key '{key}' is reserved")),
+        (Some(_), _) => Err("key requires an exact value".into()),
+        (None, Some(_)) => Err("value requires an exact key".into()),
     }
 }
 
@@ -1862,7 +1862,14 @@ impl ToolRegistry {
         }
 
         if resolved_name == "set_config" && args.get("capture_scope").is_some() {
-            return ToolResult::error("config key 'capture_scope' is retired; select a window or desktop target on each action").with_structured(serde_json::json!({"code": "config_key_retired", "key": "capture_scope", "replacement": "action.target"}));
+            return ToolResult::error(
+                "config key 'capture_scope' is retired; select a window or desktop target on each action",
+            )
+            .with_structured(serde_json::json!({
+                "code": "config_key_retired",
+                "key": "capture_scope",
+                "replacement": "action.target",
+            }));
         }
 
         if let Some(detail) = unknown_argument {
@@ -7151,7 +7158,7 @@ mod argument_shape_tests {
         ] {
             let mut args = json!({"key": key, "value": "forged", "max_image_dimension": 1});
             let error = normalize_argument_aliases("set_config", &mut args).unwrap_err();
-            assert_eq!(error, format!("set_config key '{key}' is reserved"));
+            assert_eq!(error, format!("key '{key}' is reserved"));
             let object = args.as_object().unwrap();
             assert!(object.keys().all(|name| !name.starts_with('_')), "{args}");
             assert!(object.get(key).is_none(), "{key} was written: {args}");

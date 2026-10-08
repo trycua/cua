@@ -267,6 +267,7 @@ impl CursorMotionTiming {
     }
 }
 
+/// One cursor effect: `on`, `off`, or `default` (the style's own setting).
 #[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema, PartialEq, Eq, uniffi::Enum)]
 #[serde(rename_all = "lowercase")]
 pub enum CursorEffectSetting {
@@ -276,7 +277,8 @@ pub enum CursorEffectSetting {
 }
 
 impl CursorEffectSetting {
-    /// On/off/default, plus bool and null. Null is `Default`; a typed `Option` still treats JSON null as absent.
+    /// Advertised spellings, plus unadvertised bool / `"true"` / `"false"` / null.
+    /// Null is `Default` here; a typed `Option` still treats JSON null as absent.
     pub fn from_json(value: &Value) -> Option<Self> {
         Some(match value {
             Value::Null => Self::Default,

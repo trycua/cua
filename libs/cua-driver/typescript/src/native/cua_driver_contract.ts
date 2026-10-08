@@ -1316,6 +1316,9 @@ const FfiConverterTypeClipboardWriteOutput = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * One cursor effect: `on`, `off`, or `default` (the style's own setting).
+ */
 export enum CursorEffectSetting {
     On,
     Off,

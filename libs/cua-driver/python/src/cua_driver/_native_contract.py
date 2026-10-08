@@ -2435,6 +2435,9 @@ class _UniffiFfiConverterTypeClipboardWriteOutput(_UniffiConverterRustBuffer):
 
 
 class CursorEffectSetting(enum.Enum):
+    """
+    One cursor effect: `on`, `off`, or `default` (the style's own setting).
+"""
 
     ON = 0
 

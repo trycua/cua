@@ -878,17 +878,27 @@ export function MainWindow({
               ) : !selected ? (
                 <div className="dw-empty">
                   <span className="dw-empty-art">
-                    <Sym name="square.grid.2x2" />
+                    <Sym name="desktopcomputer" />
                   </span>
                   <h2>{sync.rosterError ? "Spaces could not be loaded" : chrome.emptyTitle}</h2>
                   {!sync.rosterError && (
                     <>
                       <p>{chrome.emptyDetail}</p>
-                      <button type="button" className="dw-btn dw-btn-primary dw-btn-lg" onClick={() => setWizard('linux')}>{chrome.emptyAction}</button>
-                      <button type="button" className="dw-btn" onClick={() => setWizard('macos')}>{chrome.emptyMacosAction}</button>
+                      <div className="dw-empty-tiles">
+                        {([
+                          ['linux', chrome.emptyAction, chrome.emptyLinuxDetail],
+                          ['macos', chrome.emptyMacosAction, chrome.emptyMacosDetail],
+                        ] as const).map(([os, name, detail]) => (
+                          <button key={os} type="button" className="wz-tile" aria-label={`${name}, ${detail}`} onClick={() => setWizard(os)}>
+                            <span className="wz-tile-icon"><OsIconMark id={`os-${os}`} size={24} /></span>
+                            <span className="wz-tile-title">{name}</span>
+                            <span className="wz-tile-desc">{detail}</span>
+                          </button>
+                        ))}
+                      </div>
                     </>
                   )}
-                  <button type="button" className="dw-btn" onClick={() => setWizard(true)}>{chrome.newSpaceLabel}</button>
+                  <button type="button" className="dw-btn dw-btn-quiet" onClick={() => setWizard(true)}>{chrome.newSpaceLabel}</button>
                 </div>
               ) : isHost ? (
                 <div className="dw-content-inner">

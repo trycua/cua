@@ -757,6 +757,33 @@
   width: 28px;
   height: 28px;
 }
+.dw-empty-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, 288px);
+  gap: 12px;
+  margin: 14px 0 4px;
+}
+.dw-empty-tiles .wz-tile {
+  grid-template-columns: auto 1fr;
+  align-content: center;
+  gap: 2px 12px;
+  height: 80px;
+}
+.dw-empty-tiles .wz-tile-icon {
+  grid-row: span 2;
+  width: 44px;
+  height: 44px;
+}
+.dw-empty-tiles .wz-tile-icon .sf-icon {
+  width: 24px;
+  height: 24px;
+}
+.dw-empty-tiles .wz-tile-title {
+  align-self: end;
+}
+.dw-empty-tiles .wz-tile-desc {
+  align-self: start;
+}
 
 /* ---------- Sheet (the New Space wizard) ---------- */
 

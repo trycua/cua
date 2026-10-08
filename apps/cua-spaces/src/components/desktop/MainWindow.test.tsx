@@ -560,16 +560,16 @@ describe("empty home", () => {
   it("shows when the roster is only This machine", async () => {
     setup({ listSpaces: async () => [] });
     expect(await screen.findByRole("heading", { name: "No Spaces yet" })).toBeInTheDocument();
-    expect(screen.getByText(/first Linux Space uses about 3\.2 GB to 7\.1 GB/)).toBeInTheDocument();
+    expect(screen.getByText("Choose a system for your first Space.")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "This machine" })).toBeNull();
-    expect(screen.getByRole("button", { name: /Create a Linux Space/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Create a macOS Space \(about .+ download\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Linux, About 1 minute · 3.2–7.1 GB of disk" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^macOS, About .+ download$/ })).toBeInTheDocument();
   });
 
   it("creates the default Linux Space once under StrictMode and shows no dialog", async () => {
     const { createSpace } = setup({ listSpaces: async () => [] }, true, createFakeCloudBridge(), true);
     await screen.findByRole("heading", { name: "No Spaces yet" });
-    fireEvent.click(screen.getByRole("button", { name: /Create a Linux Space/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Linux,/ }));
     await waitFor(() => expect(createSpace).toHaveBeenCalledTimes(1));
     expect(createSpace).toHaveBeenCalledWith(
       expect.objectContaining({ image: "ghcr.io/trycua/linux:24.04", on: "local" }),
@@ -581,7 +581,7 @@ describe("empty home", () => {
   it("opens the wizard on the macOS refusal when Lume is not ready", async () => {
     const { createSpace } = setup({ listSpaces: async () => [] });
     await screen.findByRole("heading", { name: "No Spaces yet" });
-    fireEvent.click(screen.getByRole("button", { name: /Create a macOS Space/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^macOS,/ }));
     expect(await screen.findByRole("dialog", { name: "New Space" })).toHaveTextContent(
       "This Mac cannot run Lume Spaces.",
     );

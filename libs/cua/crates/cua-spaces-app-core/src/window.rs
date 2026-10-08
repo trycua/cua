@@ -51,12 +51,16 @@ pub struct MainChrome {
     pub settings_shortcut: String,
     /// With no Spaces: the heading.
     pub empty_title: String,
-    /// With no Spaces: creates the default Linux Space.
+    /// With no Spaces: the default Linux Space's tile.
     pub empty_action: String,
-    /// With no Spaces: how much disk the first Linux Space uses.
+    /// Under it: the time and disk.
+    pub empty_linux_detail: String,
+    /// With no Spaces: the line under the heading.
     pub empty_detail: String,
-    /// With no Spaces: creates the default macOS Space.
+    /// With no Spaces: the default macOS Space's tile.
     pub empty_macos_action: String,
+    /// Under it: the download size.
+    pub empty_macos_detail: String,
     /// The sidebar's Volume page entry ("Volume"); none while the Cua Volume
     /// experiment is off (the page and its route are hidden; a mounted
     /// volume stays mounted).
@@ -84,17 +88,17 @@ pub fn chrome(input: &ChromeInput) -> MainChrome {
         settings_label: "Settings".into(),
         settings_shortcut: "\u{2318},".into(),
         empty_title: "No Spaces yet".into(),
-        empty_action: "Create a Linux Space (about 1 minute)".into(),
+        empty_action: "Linux".into(),
         // Measured (#4817); catalog sizes omit the runtime and what a Space writes.
-        empty_detail:
-            "The first Linux Space uses about 3.2 GB to 7.1 GB of disk, including the Linux runtime."
-                .into(),
-        empty_macos_action: empty_macos_action(),
+        empty_linux_detail: "About 1 minute \u{b7} 3.2\u{2013}7.1 GB of disk".into(),
+        empty_detail: "Choose a system for your first Space.".into(),
+        empty_macos_action: "macOS".into(),
+        empty_macos_detail: empty_macos_detail(),
         volume_label: volume_shown(input.experiments.as_ref()).then(|| "Volume".into()),
     }
 }
 
-fn empty_macos_action() -> String {
+fn empty_macos_detail() -> String {
     use crate::wizard::{picker_images, platform_size, size_text};
     let images = picker_images();
     let found = images.iter().find(|i| i.os == crate::SpaceOs::Macos);
@@ -103,7 +107,7 @@ fn empty_macos_action() -> String {
     let arch = crate::run_arch(&image.arch, true, Some(cpu));
     let row = platform_size(image, arch.as_deref());
     let text = size_text(row.expect("a macOS download size").download);
-    format!("Create a macOS Space (about {text} download)")
+    format!("About {text} download")
 }
 
 /// Whether Cua Volume shows (its page, the menu's sync line): with its

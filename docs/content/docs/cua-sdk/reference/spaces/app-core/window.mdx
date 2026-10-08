@@ -585,9 +585,11 @@ Returned by [`app_main_chrome`](#app_main_chrome).
 | `settings_label` / `settingsLabel` | `String` |  | "Settings". |
 | `settings_shortcut` / `settingsShortcut` | `String` |  | "⌘,". |
 | `empty_title` / `emptyTitle` | `String` |  | With no Spaces: the heading. |
-| `empty_action` / `emptyAction` | `String` |  | With no Spaces: creates the default Linux Space. |
-| `empty_detail` / `emptyDetail` | `String` |  | With no Spaces: how much disk the first Linux Space uses. |
-| `empty_macos_action` / `emptyMacosAction` | `String` |  | With no Spaces: creates the default macOS Space. |
+| `empty_action` / `emptyAction` | `String` |  | With no Spaces: the default Linux Space's tile. |
+| `empty_linux_detail` / `emptyLinuxDetail` | `String` |  | Under it: the time and disk. |
+| `empty_detail` / `emptyDetail` | `String` |  | With no Spaces: the line under the heading. |
+| `empty_macos_action` / `emptyMacosAction` | `String` |  | With no Spaces: the default macOS Space's tile. |
+| `empty_macos_detail` / `emptyMacosDetail` | `String` |  | Under it: the download size. |
 | `volume_label` / `volumeLabel` | `Option<String>` |  | The sidebar's Volume page entry ("Volume"); none while the Cua Volume experiment is off (the page and its route are hidden; a mounted volume stays mounted). |
 
 ## `AppMenuItem` record

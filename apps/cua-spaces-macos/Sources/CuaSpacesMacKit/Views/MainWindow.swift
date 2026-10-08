@@ -389,19 +389,43 @@ struct EmptySpaces: View {
     var body: some View {
         let chrome = model.chrome
         ContentUnavailableView {
-            Text(model.rosterError == nil ? chrome.emptyTitle : "Spaces could not be loaded")
+            Label(model.rosterError == nil ? chrome.emptyTitle : "Spaces could not be loaded",
+                  systemImage: "desktopcomputer")
         } description: {
             if model.rosterError == nil { Text(chrome.emptyDetail) }
         } actions: {
-            VStack {
+            VStack(spacing: 18) {
                 if model.rosterError == nil {
-                    Button(chrome.emptyAction) { Task { await model.openNewSpace(quick: .linux) } }
-                        .buttonStyle(.glassProminent)
-                    Button(chrome.emptyMacosAction) { Task { await model.openNewSpace(quick: .macos) } }
+                    HStack(spacing: 12) {
+                        tile("os-linux", chrome.emptyAction, chrome.emptyLinuxDetail, .linux)
+                        tile("os-macos", chrome.emptyMacosAction, chrome.emptyMacosDetail, .macos)
+                    }
                 }
                 Button(chrome.newSpaceLabel) { Task { await model.openNewSpace() } }
+                    .buttonStyle(.glass)
             }
+            .padding(.top, 10)
         }
+    }
+
+    private func tile(_ icon: String, _ name: String, _ detail: String, _ os: AppSpaceOs) -> some View {
+        Button { Task { await model.openNewSpace(quick: os) } } label: {
+            HStack(spacing: 12) {
+                OsIconImage(id: icon, size: 24)
+                    .frame(width: 44, height: 44)
+                    .background(.fill.tertiary, in: .rect(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name).font(.headline)
+                    Text(detail).font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 16)
+            .frame(width: 288, height: 80, alignment: .leading)
+            .contentShape(.rect(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16))
+        .accessibilityLabel("\(name), \(detail)")
     }
 }
 

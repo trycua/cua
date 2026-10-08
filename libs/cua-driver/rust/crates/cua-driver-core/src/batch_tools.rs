@@ -1177,7 +1177,11 @@ fn validate_against_schema(
     let def = registry
         .get_def(tool)
         .ok_or_else(|| format!("tool `{tool}` is not available on this platform"))?;
-    let schema = crate::tool::advertised_runtime_input_schema(&def.name, &def.input_schema);
+    // Advertised schemas mark optional nulls with OpenAPI `nullable`, which
+    // JSON Schema ignores; expand it so an explicit `null` step arg passes.
+    let schema = cua_driver_contract::json_schema_validation_form(
+        &crate::tool::advertised_runtime_input_schema(&def.name, &def.input_schema),
+    );
     let validator = jsonschema::validator_for(&schema)
         .map_err(|error| format!("input schema is unusable: {error}"))?;
     validator.validate(args).map_err(|error| {

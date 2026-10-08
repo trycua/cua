@@ -64,6 +64,59 @@ fn normalize_schema(value: &mut Value) {
     }
 }
 
+/// Translate advertised OpenAPI `nullable: true` back into JSON Schema.
+///
+/// Published input schemas use `nullable` because Vertex/Gemini reject type
+/// arrays (#4798), but JSON Schema validators ignore the flag. Validate tool
+/// arguments against this form so an explicit `null` is still accepted where
+/// the field allows it.
+pub fn json_schema_validation_form(schema: &Value) -> Value {
+    let mut schema = schema.clone();
+    expand_nullable(&mut schema);
+    schema
+}
+
+fn expand_nullable(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            for child in object.values_mut() {
+                expand_nullable(child);
+            }
+            if object.get("nullable") != Some(&Value::Bool(true)) {
+                return;
+            }
+            object.remove("nullable");
+            match object.get_mut("type") {
+                Some(Value::String(name)) => {
+                    let name = std::mem::take(name);
+                    object.insert("type".into(), serde_json::json!([name, "null"]));
+                }
+                Some(Value::Array(names)) => {
+                    if !names.iter().any(|name| name == "null") {
+                        names.push(Value::String("null".into()));
+                    }
+                }
+                _ => {
+                    if let Some(Value::Array(variants)) = object.get_mut("anyOf") {
+                        variants.push(serde_json::json!({ "type": "null" }));
+                    }
+                }
+            }
+            if let Some(Value::Array(values)) = object.get_mut("enum") {
+                if !values.contains(&Value::Null) {
+                    values.push(Value::Null);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                expand_nullable(child);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn is_null_type_schema(schema: &Value) -> bool {
     schema.get("type").and_then(Value::as_str) == Some("null")
         && schema

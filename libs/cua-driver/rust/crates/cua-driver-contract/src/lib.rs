@@ -26,6 +26,7 @@ mod verification;
 mod visual;
 mod windows;
 pub use config_value::coerce_set_config_value;
+pub use inputs::json_schema_validation_form;
 pub use windows::*;
 
 pub(crate) fn schema_settings() -> SchemaSettings {

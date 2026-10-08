@@ -37,11 +37,32 @@ class ImageRetentionCallback(AsyncCallbackHandler):
 
         return self._apply_image_retention(messages)
 
+    @staticmethod
+    def _is_function_call_screenshot(messages: List[Dict[str, Any]], idx: int) -> bool:
+        """Whether messages[idx] is a post-action screenshot from a computer function call.
+
+        A `function_call_output` carries text only, so the function-calling
+        computer path (models without native computer-use support) delivers its
+        post-action screenshot as the user message right after that output.
+        Those images are subject to the same retention policy as
+        `computer_call_output` screenshots.
+        """
+        msg = messages[idx]
+        if msg.get("role") != "user":
+            return False
+        content = msg.get("content")
+        if not isinstance(content, list) or len(content) != 1:
+            return False
+        if not isinstance(content[0], dict) or content[0].get("type") != "input_image":
+            return False
+        return idx > 0 and messages[idx - 1].get("type") == "function_call_output"
+
     def _apply_image_retention(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Apply image retention policy to keep only the N most recent images.
 
         Removes computer_call_output items with image_url and their corresponding computer_call items,
-        keeping only the most recent N image pairs based on only_n_most_recent_images setting.
+        along with post-action screenshots delivered for computer function calls,
+        keeping only the most recent N images based on only_n_most_recent_images setting.
 
         Args:
             messages: List of message dictionaries
@@ -52,13 +73,15 @@ class ImageRetentionCallback(AsyncCallbackHandler):
         if self.only_n_most_recent_images is None:
             return messages
 
-        # Gather indices of all computer_call_output messages that contain an image_url
+        # Gather indices of all messages carrying a post-action screenshot
         output_indices: List[int] = []
         for idx, msg in enumerate(messages):
             if msg.get("type") == "computer_call_output":
                 out = msg.get("output")
                 if isinstance(out, dict) and ("image_url" in out):
                     output_indices.append(idx)
+            elif self._is_function_call_screenshot(messages, idx):
+                output_indices.append(idx)
 
         # Nothing to trim
         if len(output_indices) <= self.only_n_most_recent_images:
@@ -74,7 +97,13 @@ class ImageRetentionCallback(AsyncCallbackHandler):
             if idx in keep_output_indices:
                 continue  # keep this screenshot and its context
 
-            to_remove.add(idx)  # remove the computer_call_output itself
+            to_remove.add(idx)  # remove the image-bearing message itself
+
+            if messages[idx].get("type") != "computer_call_output":
+                # A function-call screenshot stands alone. Its `function_call` /
+                # `function_call_output` pair is text and must stay paired, so
+                # dropping the image is the whole trim.
+                continue
 
             # Remove the immediately preceding computer_call with matching call_id (if present)
             call_id = messages[idx].get("call_id")

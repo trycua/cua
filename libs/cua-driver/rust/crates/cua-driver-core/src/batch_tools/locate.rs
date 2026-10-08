@@ -1012,6 +1012,25 @@ fn pick(read: &Read, spec: &ElementSpec) -> Result<Found, Miss> {
     let found = narrow(matches(read, spec), spec);
     let chosen = match (found.len(), spec.nth) {
         (0, _) => {
+            // The tree may show the element as a row without an index: it
+            // exposes no AX actions (a LibreOffice sheet tab, for one), so no
+            // name lookup can act on it. Say so instead of offering
+            // look-alikes, so the next call clicks it by pixel.
+            if let Some(row) = display_rows(read, spec).first() {
+                let text = row.get("text").and_then(Value::as_str).unwrap_or_default();
+                return Err(Miss::new(
+                    "not_addressable",
+                    format!(
+                        "{} is in {} as `{}` but has no element index (it exposes no \
+                         accessibility actions), so it cannot be targeted by name or token. \
+                         Click it by pixel x,y read from the window's screenshot; toolkits \
+                         that ignore background clicks also need delivery_mode:\"foreground\"",
+                        spec.describe(),
+                        read.window.describe(),
+                        clip(text, 80)
+                    ),
+                ));
+            }
             return Err(Miss::new(
                 "not_found",
                 format!(
@@ -1020,7 +1039,7 @@ fn pick(read: &Read, spec: &ElementSpec) -> Result<Found, Miss> {
                     read.window.describe(),
                     near_misses(read, spec)
                 ),
-            ))
+            ));
         }
         (count, Some(nth)) if nth >= count => {
             return Err(Miss::new(
@@ -1613,6 +1632,30 @@ mod tests {
             ..spec
         };
         assert_eq!(pick(&read, &second).unwrap().element["element_index"], 9);
+    }
+
+    #[test]
+    fn a_row_without_an_index_says_to_click_it_by_pixel() {
+        // v037b: the LibreOffice sheet tab "Controls" is an AXRadioButton row
+        // with no actions; the miss offered the menu item "Form Controls".
+        let read = read(
+            vec![element(359, "AXMenuItem", "Form Controls")],
+            "- [0] AXWindow \"Doc\"\n  - [99] AXButton \"Add\"\n    - AXRadioButton \"Controls\"\n",
+        );
+        let spec = ElementSpec {
+            role: Some("AXRadioButton".into()),
+            name: Some("Controls".into()),
+            ..Default::default()
+        };
+        let miss = pick(&read, &spec).unwrap_err();
+        assert_eq!(miss.code, "not_addressable");
+        assert!(
+            miss.message.contains("no element index"),
+            "{}",
+            miss.message
+        );
+        assert!(miss.message.contains("by pixel"), "{}", miss.message);
+        assert!(!miss.worth_waiting());
     }
 
     #[test]

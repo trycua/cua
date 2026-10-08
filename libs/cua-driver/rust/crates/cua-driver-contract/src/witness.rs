@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 
 pub const RUNTIME_WITNESS_SCHEMA_VERSION: &str = "0";
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WitnessRuntimeHost {
     Embedded,
@@ -24,7 +24,7 @@ pub enum WitnessRuntimeHost {
     Remote,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WitnessHealthOverall {
     Ok,
@@ -33,7 +33,7 @@ pub enum WitnessHealthOverall {
     Unknown,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProbeOutcome {
     Pass,

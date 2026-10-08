@@ -36,6 +36,29 @@ use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
 use super::pixel_route::PixelClickRoute;
 use super::ToolState;
 
+#[derive(Debug)]
+struct ObservedIdentityChanged;
+impl std::fmt::Display for ObservedIdentityChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(cua_driver_core::element_token::STALE_TOKEN_ERROR)
+    }
+}
+impl std::error::Error for ObservedIdentityChanged {}
+
+fn ensure_observed_identity(element: &crate::ax::snapshot::RetainedElement) -> anyhow::Result<()> {
+    if !element.observed_identity_is_current() {
+        anyhow::bail!(ObservedIdentityChanged);
+    }
+    Ok(())
+}
+
+fn identity_refusal() -> ToolResult {
+    let message = cua_driver_core::element_token::STALE_TOKEN_ERROR;
+    ToolResult::error(message).with_structured(serde_json::json!({
+        "status": "refused", "refusal": { "code": "stale_element_token", "message": message }
+    }))
+}
+
 pub struct ClickTool {
     state: Arc<ToolState>,
 }
@@ -536,6 +559,19 @@ impl Tool for ClickTool {
                 None
             };
 
+            let identity_guard = element_guard.clone();
+            let identity_current =
+                tokio::task::spawn_blocking(move || identity_guard.observed_identity_is_current())
+                    .await
+                    .unwrap_or(false);
+            if !identity_current {
+                let message = cua_driver_core::element_token::STALE_TOKEN_ERROR;
+                return ToolResult::error(message).with_structured(serde_json::json!({
+                    "status": "refused",
+                    "refusal": { "code": "stale_element_token", "message": message }
+                }));
+            }
+
             // Surface 5: button=right on the AX path → AXShowMenu (the same surface
             // the dedicated `right_click` tool dispatches). Threads through the
             // identical perform_ax_click code path with the action remapped.
@@ -600,12 +636,14 @@ impl Tool for ClickTool {
                             pid as libc::pid_t,
                             wid,
                             || {
+                                ensure_observed_identity(&element_guard)?;
                                 crate::input::mouse::click_at_xy_desktop_with_modifiers_preserving_cursor(
                                     cx, cy, 1, "middle", &m,
                                 )
                             },
                         )
                     } else {
+                        ensure_observed_identity(&element_guard)?;
                         crate::input::mouse::middle_click_at_xy(pid, cx, cy, &m)
                     }
                 })
@@ -616,6 +654,7 @@ impl Tool for ClickTool {
                          (background CGEvent; not driver-verified — confirm via screenshot)."
                     ))
                     .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
+                    Ok(Err(e)) if e.downcast_ref::<ObservedIdentityChanged>().is_some() => identity_refusal(),
                     Ok(Err(e)) => ToolResult::error(format!("Middle-click failed: {e}")),
                     Err(e)     => ToolResult::error(format!("Task error: {e}")),
                 };
@@ -726,6 +765,7 @@ impl Tool for ClickTool {
                             let mut outcome = None;
                             let has_modifiers = !selection_modifiers.is_empty();
                             let action = || {
+                                ensure_observed_identity(&element_guard)?;
                                 outcome = Some(perform_ax_click(
                                     (element_ptr, idx),
                                     (pid, wid),
@@ -757,6 +797,7 @@ impl Tool for ClickTool {
                             })?;
                             Ok((outcome, fronted))
                         } else {
+                            ensure_observed_identity(&element_guard)?;
                             perform_ax_click(
                                 (element_ptr, idx),
                                 (pid, wid),
@@ -835,6 +876,9 @@ impl Tool for ClickTool {
                         });
                     }
                     ToolResult::text(msg).with_structured(structured)
+                }
+                Ok(Err(e)) if e.downcast_ref::<ObservedIdentityChanged>().is_some() => {
+                    identity_refusal()
                 }
                 Ok(Err(e)) => ToolResult::error(format!("AX action failed: {e}")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),

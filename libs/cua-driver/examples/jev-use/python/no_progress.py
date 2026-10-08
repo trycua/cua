@@ -64,11 +64,14 @@ class NoProgressGuard:
         token = f"performed:{candidate_id}" if kind == "performed" else kind
 
         if kind == "performed" and score is None:
-            # A successful dispatch is not proof of progress. When the app
-            # exposes no intermediate score, only repeated delivery of the
-            # same candidate is comparable evidence. Switching candidates
-            # starts a fresh window (for example set note -> save note).
-            if self.recent and any(item != token for item in self.recent):
+            # A successful dispatch is not proof of progress. Only a switch
+            # from a previously delivered candidate starts fresh evidence;
+            # stale/refused/reobserve signals must not erase the streak.
+            prior_performed = next(
+                (item for item in reversed(self.recent) if item.startswith("performed:")),
+                None,
+            )
+            if prior_performed is not None and prior_performed != token:
                 self._reset_evidence()
 
         return self._record(token)

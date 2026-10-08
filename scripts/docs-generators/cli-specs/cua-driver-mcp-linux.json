@@ -57,6 +57,10 @@
       ],
       "type": "string"
      },
+     "display_only": {
+      "description": "Default false. With include_accessibility_tree:false, returns pixels for display without registering an action capture or replacing the agent snapshot. The image cannot ground input actions.",
+      "type": "boolean"
+     },
      "full_output": {
       "description": "Default false. Set true to restore the previous full response: both `elements` and `tree_markdown`, all metadata, and the platform's own walk limits unless max_elements / max_depth are passed. Does not combine with `since`.",
       "type": "boolean"

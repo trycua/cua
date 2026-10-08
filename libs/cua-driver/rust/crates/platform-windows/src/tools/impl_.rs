@@ -3211,22 +3211,37 @@ fn background_element_click_result(
     message: String,
     transport: ActionTransport,
     failed_calls: Vec<ActionTransport>,
+    window_change: Option<&crate::window_change::WindowSetChange>,
 ) -> ToolResult {
     use cua_driver_core::action_record::{
-        ActionAttempt, ActionEffect, ActionExecutionRecord, ActionFallback, ActualDelivery,
-        RequestedDelivery,
+        ActionAttempt, ActionEffect, ActionEvidence, ActionExecutionRecord, ActionFallback,
+        ActualDelivery, EvidenceKind, RequestedDelivery,
     };
     let path = match transport {
         ActionTransport::WindowsTargetedInjection => "pixel",
         ActionTransport::WindowsPostMessage => "post_message",
         _ => "ax",
     };
+    let window_changed = window_change.is_some_and(|change| change.changed());
     let mut record = ActionExecutionRecord::new(
-        ActionEffect::Unverifiable,
+        if window_changed {
+            ActionEffect::Confirmed
+        } else {
+            ActionEffect::Unverifiable
+        },
         transport,
         RequestedDelivery::Background,
     );
     record.actual_delivery = Some(ActualDelivery::Background);
+    if let Some(change) = window_change.filter(|change| change.changed()) {
+        record.evidence.push(ActionEvidence {
+            kind: EvidenceKind::WindowChange,
+            detail: format!(
+                "top-level window set changed: added={:?}, removed={:?}",
+                change.added, change.removed
+            ),
+        });
+    }
     for (index, attempted) in failed_calls.iter().copied().enumerate() {
         record.attempts.push(ActionAttempt {
             transport: attempted,
@@ -3240,7 +3255,16 @@ fn background_element_click_result(
         });
     }
     ToolResult::text(message)
-        .with_structured(json!({ "path": path, "verified": false, "effect": "unverifiable" }))
+        .with_structured(json!({
+            "path": path,
+            "verified": window_changed,
+            "effect": if window_changed { "confirmed" } else { "unverifiable" },
+            "evidence": if window_changed {
+                json!([{ "kind": "window_change" }])
+            } else {
+                json!([])
+            }
+        }))
         .with_action_record(record)
 }
 
@@ -3896,6 +3920,7 @@ impl Tool for ClickTool {
                         ),
                         ActionTransport::WindowsPostMessage,
                         vec![],
+                        None,
                     ),
                     Ok(Err(error)) => ToolResult::error(error.to_string()),
                     Err(error) => ToolResult::error(format!("Task error: {error}")),
@@ -3912,6 +3937,11 @@ impl Tool for ClickTool {
             //   - count > 1 (double-click semantics aren't an Invoke
             //     concept — PostMessage produces the actual WM_LBUTTONDBLCLK)
             let use_uia_invoke = (btn == "left" || btn == "middle") && count == 1;
+            let windows_before = tokio::task::spawn_blocking(move || {
+                crate::window_change::snapshot_pid_windows(pid)
+            })
+            .await
+            .unwrap_or_default();
             let result = tokio::task::spawn_blocking({ let admitted = admitted.clone(); move || -> anyhow::Result<BackgroundElementClick> {
                 let _admission = &admitted;
                 let mut failed_calls = Vec::new();
@@ -4053,7 +4083,21 @@ impl Tool for ClickTool {
                     transport,
                     failed_calls,
                 } => {
-                    return background_element_click_result(message, transport, failed_calls);
+                    let windows_after = tokio::task::spawn_blocking(move || {
+                        crate::window_change::snapshot_pid_windows(pid)
+                    })
+                    .await
+                    .unwrap_or_default();
+                    let window_change = crate::window_change::diff_window_ids(
+                        windows_before.iter().copied(),
+                        windows_after,
+                    );
+                    return background_element_click_result(
+                        message,
+                        transport,
+                        failed_calls,
+                        Some(&window_change),
+                    );
                 }
                 BackgroundElementClick::Inject { x, y, failed_calls } => (x, y, failed_calls, true),
                 BackgroundElementClick::Post { x, y, failed_calls } => (x, y, failed_calls, false),
@@ -4092,7 +4136,7 @@ impl Tool for ClickTool {
                             ActionTransport::WindowsPostMessage,
                         )
                     };
-                    background_element_click_result(message, transport, failed_calls)
+                    background_element_click_result(message, transport, failed_calls, None)
                 }
                 Ok(Err(error)) if inject => {
                     crate::input::delivery::background_unavailable_error_with_cause(

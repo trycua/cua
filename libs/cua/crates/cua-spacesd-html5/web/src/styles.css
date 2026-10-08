@@ -75,10 +75,12 @@ body {
   caret-color: transparent;
 }
 
-/* Toolbar: a pill at the top; the menu slides out on hover or focus. */
+/* Toolbar: a small tab on one edge (top by default, drag it to another);
+   it expands into the pill on hover or focus, and while connecting. */
 .cua-toolbar {
+  --gap: 8px;
   position: absolute;
-  top: 8px;
+  top: var(--gap);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -92,15 +94,72 @@ body {
   backdrop-filter: blur(12px);
   z-index: 10;
   transition: opacity 0.2s;
-  opacity: 0.35;
   max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
 }
 
-.cua-toolbar:hover,
-.cua-toolbar:focus-within,
-.cua-viewer[data-status="connecting"] .cua-toolbar,
-.cua-viewer[data-status="failed"] .cua-toolbar {
-  opacity: 1;
+.cua-toolbar[data-edge="bottom"] {
+  top: auto;
+  bottom: var(--gap);
+}
+
+.cua-toolbar[data-edge="left"],
+.cua-toolbar[data-edge="right"] {
+  top: 50%;
+  left: var(--gap);
+  transform: translateY(-50%);
+  flex-direction: column;
+}
+
+.cua-toolbar[data-edge="right"] {
+  left: auto;
+  right: var(--gap);
+}
+
+.cua-toolbar[data-edge="left"] .cua-menu,
+.cua-toolbar[data-edge="right"] .cua-menu {
+  flex-direction: column;
+}
+
+.cua-toolbar[data-edge="left"] .cua-title,
+.cua-toolbar[data-edge="right"] .cua-title {
+  display: none;
+}
+
+/* Keeps the expanded pill hovered across the gap to its collapsed tab, and
+   lets a drag start where the tab was. */
+.cua-toolbar:hover::before {
+  cursor: grab;
+  content: "";
+  position: absolute;
+  inset: calc(-1 * var(--gap) - 1px);
+  z-index: -1;
+}
+
+/* Collapsed: a thin tab flush with its edge, so it covers at most a few
+   pixels of a guest menu bar, dock or taskbar. */
+.cua-viewer:not([data-status="connecting"]):not([data-status="failed"]) .cua-toolbar:not(:hover):not(:focus-within) {
+  --gap: 0px;
+  padding: 0;
+  opacity: 0.6;
+  box-shadow: none;
+}
+
+.cua-viewer:not([data-status="connecting"]):not([data-status="failed"]) .cua-toolbar:not(:hover):not(:focus-within) > :not(.cua-handle),
+.cua-viewer:not([data-status="connecting"]):not([data-status="failed"]) .cua-toolbar:not(:hover):not(:focus-within) .cua-handle > * {
+  display: none;
+}
+
+.cua-viewer:not([data-status="connecting"]):not([data-status="failed"]) .cua-toolbar:not(:hover):not(:focus-within) .cua-handle {
+  width: 40px;
+  height: 4px;
+  padding: 0;
+}
+
+.cua-viewer:not([data-status="connecting"]):not([data-status="failed"]) .cua-toolbar[data-edge="left"]:not(:hover):not(:focus-within) .cua-handle,
+.cua-viewer:not([data-status="connecting"]):not([data-status="failed"]) .cua-toolbar[data-edge="right"]:not(:hover):not(:focus-within) .cua-handle {
+  width: 4px;
+  height: 40px;
 }
 
 .cua-handle {
@@ -109,10 +168,22 @@ body {
   gap: 8px;
   padding: 0 10px 0 8px;
   white-space: nowrap;
+  font: inherit;
   font-weight: 600;
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: grab;
+  touch-action: none;
+}
+
+.cua-toolbar[data-edge="left"] .cua-handle,
+.cua-toolbar[data-edge="right"] .cua-handle {
+  padding: 8px;
 }
 
 .cua-title {
@@ -189,6 +260,23 @@ body {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.cua-toolbar[data-edge="bottom"] .cua-popover {
+  top: auto;
+  bottom: 40px;
+}
+
+.cua-toolbar[data-edge="left"] .cua-popover,
+.cua-toolbar[data-edge="right"] .cua-popover {
+  top: 0;
+  left: 40px;
+  transform: none;
+}
+
+.cua-toolbar[data-edge="right"] .cua-popover {
+  left: auto;
+  right: 40px;
 }
 
 .cua-popover.open {
@@ -412,10 +500,24 @@ body {
 }
 
 @media (max-width: 600px) {
-  .cua-handle {
+  .cua-title {
     display: none;
   }
+}
+
+/* A tab a finger can hit. */
+@media (pointer: coarse) {
+  .cua-viewer:not([data-status="connecting"]):not([data-status="failed"]) .cua-toolbar:not(:hover):not(:focus-within) .cua-handle {
+    height: 12px;
+  }
+  .cua-viewer:not([data-status="connecting"]):not([data-status="failed"]) .cua-toolbar[data-edge="left"]:not(:hover):not(:focus-within) .cua-handle,
+  .cua-viewer:not([data-status="connecting"]):not([data-status="failed"]) .cua-toolbar[data-edge="right"]:not(:hover):not(:focus-within) .cua-handle {
+    width: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
   .cua-toolbar {
-    opacity: 0.8;
+    transition: none;
   }
 }

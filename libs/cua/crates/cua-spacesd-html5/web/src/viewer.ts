@@ -655,8 +655,12 @@ export class Viewer {
   }
 
   private buildToolbar(): void {
-    const handle = el("div", "cua-handle");
+    const handle = el("button", "cua-handle");
+    handle.type = "button";
+    handle.title = "Toolbar (drag to another edge)";
+    handle.setAttribute("aria-label", "Toolbar: arrow keys move it to another edge");
     handle.append(this.statusDot, this.title);
+    this.dockToolbar(handle);
     const menu = el("div", "cua-menu");
     const keys = el("div", "cua-popover");
     const combos: Array<[string, string[]]> = [
@@ -703,6 +707,68 @@ export class Viewer {
     );
     this.toolbar.append(handle, menu);
     this.updateButtons();
+  }
+
+  /** Docks the toolbar on the edge it was last dragged to (remembered). */
+  private dockToolbar(handle: HTMLButtonElement): void {
+    const dock = (edge: ToolbarEdge, save: boolean) => {
+      this.toolbar.dataset.edge = edge;
+      if (!save) return;
+      try {
+        localStorage.setItem(TOOLBAR_EDGE_KEY, edge);
+      } catch {
+        // Storage blocked: the edge lasts for this page only.
+      }
+    };
+    let saved: string | null = null;
+    try {
+      saved = localStorage.getItem(TOOLBAR_EDGE_KEY);
+    } catch {
+      // Storage blocked: start at the top.
+    }
+    dock(TOOLBAR_EDGES.find((e) => e === saved) ?? "top", false);
+    let start: { x: number; y: number } | null = null;
+    let dragged = false;
+    // The handle, or the toolbar around the buttons: pressing where the tab
+    // was lands on the expanded toolbar's edge, not on the handle.
+    const bar = this.toolbar;
+    bar.addEventListener("pointerdown", (event) => {
+      if (event.target !== bar && !handle.contains(event.target as Node)) return;
+      start = { x: event.clientX, y: event.clientY };
+      dragged = false;
+      bar.setPointerCapture(event.pointerId);
+    });
+    bar.addEventListener("pointermove", (event) => {
+      if (!start) return;
+      dragged ||= Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8;
+      if (dragged) dock(nearestEdge(event.clientX, event.clientY, window.innerWidth, window.innerHeight), false);
+    });
+    // A drag drops the toolbar collapsed on its new edge and gives the
+    // keyboard back to the sandbox.
+    bar.addEventListener("pointerup", () => {
+      if (start && dragged) {
+        dock(bar.dataset.edge as ToolbarEdge, true);
+        handle.blur();
+        this.input?.focus();
+      }
+      start = null;
+    });
+    bar.addEventListener("pointercancel", () => {
+      start = null;
+      dragged = false;
+    });
+    // A click keeps the toolbar open (focus; some engines do not focus a
+    // clicked button), except the click that ends a drag. Keyboard clicks
+    // have no pointer (detail 0).
+    handle.addEventListener("click", (event) => {
+      if (!dragged || event.detail === 0) handle.focus();
+    });
+    handle.addEventListener("keydown", (event) => {
+      const edge = ARROW_EDGES[event.key];
+      if (!edge) return;
+      event.preventDefault();
+      dock(edge, true);
+    });
   }
 
   private sendInput(event: InteractiveInputEvent): void {
@@ -888,6 +954,17 @@ function pretty(path: string, root: string): string {
     if (home) return `~${path.slice(root.length)}`;
   }
   return path;
+}
+
+const TOOLBAR_EDGE_KEY = "cua-viewer-toolbar-edge";
+const TOOLBAR_EDGES = ["top", "bottom", "left", "right"] as const;
+type ToolbarEdge = (typeof TOOLBAR_EDGES)[number];
+const ARROW_EDGES: Record<string, ToolbarEdge> = { ArrowUp: "top", ArrowDown: "bottom", ArrowLeft: "left", ArrowRight: "right" };
+
+/** The viewport edge nearest to the point (x, y). */
+function nearestEdge(x: number, y: number, width: number, height: number): ToolbarEdge {
+  const distance = { top: y, bottom: height - y, left: x, right: width - x };
+  return TOOLBAR_EDGES.reduce((best, edge) => (distance[edge] < distance[best] ? edge : best));
 }
 
 function safeSession(): Storage | null {

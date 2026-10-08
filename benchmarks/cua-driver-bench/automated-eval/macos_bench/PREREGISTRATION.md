@@ -4,7 +4,7 @@ Status: frozen when this file is committed, before any trial that enters the ana
 Date: 2026-10-05 (UTC evening). Scope: head-to-head, macOS host, one Mac. Owner: Cua Driver Bench maintainers.
 Supersedes the pilot pre-registration (private trycua/cua-driver-bench PR #59: Codex CLI with gpt-6-astra, Cua Driver arm only).
 
-**Amended on 6 Oct 2026, before any analysed trial: see Amendment 1 immediately below (Amendment 2, the GUI-only variant, after it, Amendment 3, the 7 Oct before/after check of the Cua Driver 0.35.0 changes, Amendment 4, named Electron bundles and a skill-in-prompt arm, Amendment 5, the v036 validation run of the 0.36 fixes, and Amendment 6, the mini-runs of the overnight hill-climb). Where sections 0 to 12 differ from them, the amendments win.**
+**Amended on 6 Oct 2026, before any analysed trial: see Amendment 1 immediately below (Amendment 2, the GUI-only variant, after it, Amendment 3, the 7 Oct before/after check of the Cua Driver 0.35.0 changes, Amendment 4, named Electron bundles and a skill-in-prompt arm, Amendment 5, the v036 validation run of the 0.36 fixes, Amendment 6, the mini-runs of the overnight hill-climb, and Amendment 7, the full rerun v037-full). Where sections 0 to 12 differ from them, the amendments win.**
 
 ## Amendment 1 (6 Oct 2026, before any analysed trial)
 
@@ -387,6 +387,60 @@ Fixes are general driver or guidance changes. Nothing is tuned to a task's evalu
 * `tools/analyze_mini.py`.
 * `tools/vm_main_build/assemble_script.sh`, and `tcc_grant.sh` with app and id arguments.
 * Tests in `tests/test_bench.py`.
+
+## Amendment 7 (8 Oct 2026, before the first trial of run v037-full): the full rerun triggered by mini-run v037a
+
+Written and committed before the first trial of run `v037-full`. Mini-run v037a (A6.5) met the A6.4 trigger for both Cua Driver arms, with three runs per cell. This is the full pre-registered rerun that decides the overnight definition of done. It changes nothing about earlier runs.
+
+### A7.1 Arms
+
+| Label | Runner arm | Tool layer |
+|---|---|---|
+| A | `cc-cua-driver-main` | Cua Driver built from trycua/cua main at `7b3a8ee656a62a5d490e47c2dec1f534f2d53aca` (the A5.2 recipe), with that commit's skill as a project skill. Binary sha256 `8a25586ff515b1e3e8a27f07d05a12ed296ff343e45c87f22dcb2f3ecc1896b0`, skill tree `e25749c4eca5282184780935e1bdbf917b86cdcb5bc904195a4d7f0c1a99430b` |
+| AX | `cc-cua-driver-script` | the same build in its own app (A6.1), with `CUA_DRIVER_EXPERIMENTAL_SCRIPT=1` in the daemon and MCP environment and the `run_script` addendum in the system prompt. Binary sha256 `4eb5243d7cfb40f29e6cb0726da74097f8c117892ba198909999a59bca3436d0` (the same build, re-signed under its own identifier) |
+| A0 | `cc-cua-driver` | Cua Driver 0.34.0, the pinned private copy, as in every earlier run |
+| B | `cc-codex-cu` | OpenAI's `cua_repl` launcher, unchanged |
+
+The main commit is the main of the time of writing. It includes everything v037a ran (45469a59c), plus the fixes merged since: #4857 (invoke_menu lists the items of a missing segment), #4854 (a mouse-moved event after a desktop pointer warp), #4858 (common key-name spellings), #4855 (get_window_state query searches the whole window), #4859 (run_actions takes the shapes models send and recovers from stale tokens), #4856 (refuse background submits into a Chromium address bar) and #4862 (accept the invoke_menu and zoom shapes models send). `pins.json` `cua_main` holds these hashes, and the preflight fails if any of them, the commit reported by the daemons, or the `run_script` listing (present in AX only) differs.
+
+### A7.2 Tasks, order, runs, limits
+
+* The ten tasks of v036, in the A3.3 order: CDB-S01, CDB-S04, CDB-G02, CDB-G03, CDB-G04, MB-09, MB-10, MB-11, CDB-S02, CDB-S03.
+* Four arms interleaved in every task block. The first arm is `(task position + run index) mod 4` over the list (A, AX, A0, B).
+* Phase 1 is runs 1 to 3 of every task. Phase 2 is runs 4 and 5, only when phase 1 is complete and the stop rule and cutoff allow it. Only complete task blocks are analysed.
+* `CUTOFF_UTC` for new trials: 2026-10-08T16:00:00Z.
+* Everything else is as in v036 (Amendments 4 and 5): Sonnet 5.5 (Claude Code 2.1.289), 360 s and 45 turns, the shared system prompt, ToolSearch on, the VM `cdb-h2h`, named Electron bundles, the BenchLab occlusion check, pointer parking, reset, recorder, sentinel, evaluator isolation, side-door flags and the peek scan.
+
+### A7.3 Seats and stop rule
+
+* As in A5.6: cswap seats, access tokens only, a host watchdog that switches seats at 0.94 on either window and spares the owner's active seat and account 7 when others have headroom.
+* The registered stop is unchanged: no new trial once the seat in use is at 0.95 or more on its seven-day window, or on a seven-day `rejected`.
+* At the end of the run the token file is deleted, with sync, before a graceful shutdown.
+
+### A7.4 Decision rule (the overnight definition of done), registered before any trial
+
+Over all counted trials of complete blocks:
+
+1. **The best Cua Driver arm** is whichever of A and AX has the higher share of passed trials over the ten tasks; a tie goes to the arm with fewer mean turns. Choosing it on the same data favours Cua Driver slightly. That is part of the owner's definition and is reported as such.
+2. **Done** when all three hold for that arm:
+   * its share of passed trials is at least arm B's;
+   * on each of CDB-G02, CDB-G03 and CDB-G04, its share of passed trials is at least arm B's;
+   * its mean turns per trial are at most 1.2 × arm B's.
+
+These are point comparisons with no interval. The report gives the per-task numbers next to them, and says that five runs per cell cannot resolve small differences.
+
+### A7.5 Other analyses
+
+* H1 to H3 of A5.4 (A against A0, GUI-heavy set, same tests).
+* AX against A, descriptive: task-macro success difference and turns ratio, with the A5.4 bootstrap.
+* Per task and arm: success, score, turns, wall time, tokens and cost.
+* The A6.3 failure classes.
+
+These are produced by `tools/analyze_v037.py`, written before the first trial. Arm B's numbers stay internal (CUA-1225). Only the yes/no outcome of the decision rule and the Cua Driver arms' own numbers may go into anything shared outside the team.
+
+### A7.6 Harness changes for this amendment
+
+`tools/analyze_v037.py`; `pins.json` `cua_main` (this build).
 
 ## 0. Decisions made before the first trial, and why
 

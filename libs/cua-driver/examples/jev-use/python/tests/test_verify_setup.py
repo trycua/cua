@@ -23,7 +23,7 @@ from urllib.request import Request, urlopen
 url, value, outcome, log, code = sys.argv[1:]
 with urlopen(Request(url + 'submit', data=urlencode({'value': value}).encode()), timeout=2):
     pass
-Path(log).write_text(json.dumps({'event': 'outcome', 'outcome': outcome, 'token': 'proof'}) + '\\n')
+Path(log).write_text(json.dumps({'event': 'outcome', 'outcome': outcome}) + '\\n')
 raise SystemExit(int(code))
 """
 
@@ -119,14 +119,130 @@ class VerifySetupTests(unittest.TestCase):
             acted_path([type_step, self.submit_step('browser_click', 'not_installed')]),
             {'submit_tool': 'browser_click', 'acted_path': 'page_structure',
              'submit_delivery_mode': None,
-             'visual_statuses': ['not_installed', 'not_installed'], 'escalations': []},
+             'visual_statuses': ['not_installed', 'not_installed'],
+             'decision_routes': [None, None], 'escalations': []},
         )
         self.assertEqual(
             acted_path([type_step, self.submit_step('click', 'ok')])['acted_path'], 'visual'
         )
         self.assertEqual(acted_path([type_step])['acted_path'], None)
 
-    def replay(self, events, *, submit=True, code='0', **options):
+    def test_acted_path_reports_decision_routes(self):
+        events = [
+            {'event': 'step', 'step': 1, 'candidate': 'type-verification-value',
+             'tool': 'browser_type', 'decision_route': 'provider',
+             'visual': {'status': 'skipped', 'reason': 'page_structure_candidate'}},
+            {**self.submit_step('browser_click', 'not_installed'),
+             'decision_route': 'guarded-completion'},
+        ]
+        self.assertEqual(
+            acted_path(events)['decision_routes'],
+            ['provider', 'guarded-completion'],
+        )
+
+    def test_required_guarded_completion_requires_exact_route(self):
+        events = [
+            {
+                "event": "step",
+                "step": 1,
+                "candidate": "type-verification-value",
+                "tool": "browser_type",
+                "decision_route": "provider",
+                "visual": {"status": "skipped", "reason": "page_structure_candidate"},
+            },
+            {
+                **self.submit_step("browser_click", "not_installed"),
+                "decision_route": "guarded-completion",
+                "provider_decision_ms": 0,
+                "confidence": None,
+                "probabilities": None,
+                "guarded_completion": {
+                    "status": "accepted",
+                    "prior_ref": "p1:1",
+                    "fresh_ref": "p2:1",
+                    "verification_field": "contains_required_token",
+                    "submit_matches": 1,
+                    "session": "session-a",
+                },
+            },
+            {"event": "outcome", "outcome": "verified"},
+        ]
+        result = self.replay(events, require_guarded_completion=True)
+        self.assertEqual(result['decision_routes'], ['provider', 'guarded-completion'])
+
+        wrong = [dict(event) for event in events]
+        wrong[1] = {**wrong[1], "decision_route": "provider"}
+        with self.assertRaisesRegex(RuntimeError, "exact provider→guarded route"):
+            self.replay(wrong, require_guarded_completion=True)
+
+    def test_required_guarded_completion_rejects_missing_or_invalid_proof(self):
+        proof = {
+            "status": "accepted",
+            "prior_ref": "p1:1",
+            "fresh_ref": "p2:1",
+            "verification_field": "contains_required_token",
+            "submit_matches": 1,
+            "session": "session-a",
+        }
+        for change in (
+            {"guarded_completion": None},
+            {"guarded_completion": {**proof, "fresh_ref": "p1:1"}},
+            {"confidence": 1.0},
+            {"probabilities": {"submit-form": 1.0}},
+        ):
+            with (
+                self.subTest(change=change),
+                self.assertRaisesRegex(RuntimeError, "guard proof"),
+            ):
+                self.replay(
+                    [
+                        {"event": "step", "decision_route": "provider"},
+                        {
+                            **self.submit_step("browser_click", "skipped"),
+                            "decision_route": "guarded-completion",
+                            "confidence": None,
+                            "probabilities": None,
+                            "provider_decision_ms": 0,
+                            "guarded_completion": proof,
+                            **change,
+                        },
+                        {"event": "outcome", "outcome": "verified"},
+                    ],
+                    require_guarded_completion=True,
+                )
+
+    def test_required_guard_decline_keeps_the_independent_oracle(self):
+        events = [
+            {"event": "step", "decision_route": "provider"},
+            {
+                **self.submit_step("browser_click", "skipped"),
+                "decision_route": "provider",
+                "guarded_completion": {
+                    "status": "declined",
+                    "reason": "submit_not_unique",
+                },
+            },
+            {"event": "outcome", "outcome": "verified"},
+        ]
+        result = self.replay(events, require_guarded_decline=True)
+        self.assertEqual(result["observed"], {"submitted": "proof"})
+        for replacement in (
+            {"guarded_completion": None},
+            {"guarded_completion": {"status": "declined", "reason": "ref_reused"}},
+            {"decision_route": "guarded-completion"},
+        ):
+            with (
+                self.subTest(replacement=replacement),
+                self.assertRaisesRegex(RuntimeError, "guard decline"),
+            ):
+                self.replay(
+                    [events[0], {**events[1], **replacement}, events[2]],
+                    require_guarded_decline=True,
+                )
+        with self.assertRaisesRegex(RuntimeError, "Independent"):
+            self.replay(events, submit=False, require_guarded_decline=True)
+
+    def replay(self, events, *, submit=True, code="0", **options):
         """Run a child that replays a JSONL log and optionally submits the token."""
         child = (
             "import sys\n"
@@ -147,7 +263,10 @@ class VerifySetupTests(unittest.TestCase):
             return verify(command, url, 'proof', log, **options)
 
     def verified(self, tool, status):
-        return [self.submit_step(tool, status), {'event': 'outcome', 'outcome': 'verified', 'token': 'proof'}]
+        return [
+            self.submit_step(tool, status),
+            {"event": "outcome", "outcome": "verified"},
+        ]
 
     def test_reports_page_structure_path(self):
         result = self.replay(self.verified('browser_click', 'not_installed'))
@@ -169,52 +288,106 @@ class VerifySetupTests(unittest.TestCase):
 
     def test_visual_fixture_fallback_is_observable_and_never_claims_success(self):
         events = [
-            {'event': 'step', 'step': 1, 'candidate': 'type-verification-value', 'tool': 'browser_type',
-             'visual': {'status': 'not_installed', 'error_code': 'not_installed'}},
-            {'event': 'step', 'step': 2, 'candidate': 'reobserve', 'tool': None,
-             'visual': {'status': 'not_installed', 'error_code': 'not_installed'}},
-            {'event': 'outcome', 'outcome': 'budget_exhausted', 'token': 'proof'},
+            {
+                "event": "step",
+                "step": 1,
+                "candidate": "type-verification-value",
+                "tool": "browser_type",
+                "visual": {"status": "not_installed", "error_code": "not_installed"},
+            },
+            {
+                "event": "step",
+                "step": 2,
+                "candidate": "reobserve",
+                "tool": None,
+                "visual": {"status": "not_installed", "error_code": "not_installed"},
+            },
+            {"event": "outcome", "outcome": "budget_exhausted"},
         ]
-        result = self.replay(events, submit=False, code='1', visual_fixture=True,
-                             expect_visual_status='not_installed')
-        self.assertEqual(result['outcome'], 'budget_exhausted')
-        self.assertIsNone(result['acted_path'])
-        self.assertEqual(result['observed'], {'submitted': None})
-        with self.assertRaisesRegex(RuntimeError, 'unexpected submission'):
-            self.replay(events, submit=True, code='1', visual_fixture=True,
-                        expect_visual_status='not_installed')
-
+        result = self.replay(
+            events,
+            submit=False,
+            code="1",
+            visual_fixture=True,
+            expect_visual_status="not_installed",
+        )
+        self.assertEqual(result["outcome"], "budget_exhausted")
+        self.assertIsNone(result["acted_path"])
+        self.assertEqual(result["observed"], {"submitted": None})
+        with self.assertRaisesRegex(RuntimeError, "unexpected submission"):
+            self.replay(
+                events,
+                submit=True,
+                code="1",
+                visual_fixture=True,
+                expect_visual_status="not_installed",
+            )
 
     def test_skipped_steps_are_not_visual_attempts(self):
-        skipped = {'status': 'skipped', 'reason': 'page_structure_candidate'}
-        type_step = {'event': 'step', 'step': 1, 'candidate': 'type-verification-value',
-                     'tool': 'browser_type', 'visual': skipped}
-        events = [type_step, self.submit_step('click', 'ok'),
-                  {'event': 'outcome', 'outcome': 'verified', 'token': 'proof'}]
-        result = self.replay(events, expect_visual_status='ok', require_visual=True, visual_fixture=True)
-        self.assertEqual(result['visual_statuses'], ['skipped', 'ok'])
+        skipped = {"status": "skipped", "reason": "page_structure_candidate"}
+        type_step = {
+            "event": "step",
+            "step": 1,
+            "candidate": "type-verification-value",
+            "tool": "browser_type",
+            "visual": skipped,
+        }
+        events = [
+            type_step,
+            self.submit_step("click", "ok"),
+            {"event": "outcome", "outcome": "verified"},
+        ]
+        result = self.replay(
+            events, expect_visual_status="ok", require_visual=True, visual_fixture=True
+        )
+        self.assertEqual(result["visual_statuses"], ["skipped", "ok"])
         only_skipped = [
-            {**type_step, 'step': 1},
-            {'event': 'step', 'step': 2, 'candidate': 'submit-form', 'tool': 'browser_click', 'visual': skipped},
-            {'event': 'outcome', 'outcome': 'verified', 'token': 'proof'},
+            {**type_step, "step": 1},
+            {
+                "event": "step",
+                "step": 2,
+                "candidate": "submit-form",
+                "tool": "browser_click",
+                "visual": skipped,
+            },
+            {"event": "outcome", "outcome": "verified"},
         ]
         with self.assertRaisesRegex(RuntimeError, "visual status 'not_installed'"):
-            self.replay(only_skipped, expect_visual_status='not_installed')
+            self.replay(only_skipped, expect_visual_status="not_installed")
 
     def test_reports_foreground_escalation_after_background_refusal(self):
-        refused = {**self.submit_step('click', 'ok'), 'delivery_mode': 'background',
-                   'action_error': 'background_unavailable',
-                   'escalation': {'from': 'background', 'to': 'foreground', 'reason': 'background_unavailable'}}
-        foreground = {**self.submit_step('click', 'ok'), 'step': 3,
-                      'candidate': 'submit-form-foreground', 'delivery_mode': 'foreground'}
-        events = [refused, foreground, {'event': 'outcome', 'outcome': 'verified', 'token': 'proof'}]
+        refused = {
+            **self.submit_step("click", "ok"),
+            "delivery_mode": "background",
+            "action_error": "background_unavailable",
+            "escalation": {
+                "from": "background",
+                "to": "foreground",
+                "reason": "background_unavailable",
+            },
+        }
+        foreground = {
+            **self.submit_step("click", "ok"),
+            "step": 3,
+            "candidate": "submit-form-foreground",
+            "delivery_mode": "foreground",
+        }
+        events = [refused, foreground, {"event": "outcome", "outcome": "verified"}]
         result = self.replay(events, require_visual=True, visual_fixture=True)
-        self.assertEqual(result['acted_path'], 'visual')
-        self.assertEqual(result['submit_delivery_mode'], 'foreground')
-        self.assertEqual(result['escalations'],
-                         [{'from': 'background', 'to': 'foreground', 'reason': 'background_unavailable'}])
-        self.assertEqual(acted_path([refused])['submit_tool'], None)
+        self.assertEqual(result["acted_path"], "visual")
+        self.assertEqual(result["submit_delivery_mode"], "foreground")
+        self.assertEqual(
+            result["escalations"],
+            [
+                {
+                    "from": "background",
+                    "to": "foreground",
+                    "reason": "background_unavailable",
+                }
+            ],
+        )
+        self.assertEqual(acted_path([refused])["submit_tool"], None)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

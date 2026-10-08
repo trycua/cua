@@ -11,7 +11,7 @@
 )]
 
 use core_foundation::{
-    array::CFArrayRef,
+    array::{CFArrayRef, CFIndex},
     base::{CFRelease, CFRetain, CFTypeID, CFTypeRef},
     string::CFStringRef,
 };
@@ -83,6 +83,12 @@ extern "C" {
         timeout_in_seconds: f32,
     ) -> AXError;
     pub fn AXUIElementGetTypeID() -> CFTypeID;
+    pub fn AXUIElementCopyMultipleAttributeValues(
+        element: AXUIElementRef,
+        attributes: CFArrayRef,
+        options: u32,
+        values: *mut CFArrayRef,
+    ) -> AXError;
     pub fn AXIsProcessTrusted() -> bool;
     /// `AXIsProcessTrustedWithOptions(options)` — when called with
     /// `{kAXTrustedCheckOptionPrompt: true}` raises the system Accessibility
@@ -160,6 +166,81 @@ pub unsafe fn is_attribute_settable(element: AXUIElementRef, attr_name: &str) ->
     AXUIElementIsAttributeSettable(element, attr.as_concrete_TypeRef(), &mut settable)
         == kAXErrorSuccess
         && settable != 0
+}
+
+/// Fetch several string attributes of an element in ONE IPC round-trip.
+///
+/// Returns one `Option<String>` per requested attribute, in the same order as
+/// `attr_names`:
+/// - `Some(s)` when the slot came back as a CFString (including the empty
+///   string `""` — an attribute that is *present but empty* stays distinct from
+///   an *absent* attribute, which is critical for the AXTitle-vs-AXDescription
+///   None-vs-empty semantics the tree formatter relies on);
+/// - `None` when the attribute is unsupported/has no value (the slot is an
+///   AXValue error placeholder) or is present but not a string.
+///
+/// `options` is hard-coded to `0` (NOT StopOnError): one failing attribute must
+/// not abort the batch — its slot is simply filtered out by position.
+pub unsafe fn copy_multiple_attrs(
+    element: AXUIElementRef,
+    attr_names: &[&str],
+) -> Vec<Option<String>> {
+    if attr_names.is_empty() {
+        return Vec::new();
+    }
+
+    // Build the CFArray of attribute-name CFStrings.
+    let cf_names: Vec<CFStr> = attr_names.iter().map(|n| CFStr::new(n)).collect();
+    let names_array = CFArray::from_CFTypes(&cf_names);
+
+    let mut values: CFArrayRef = std::ptr::null();
+    let err = AXUIElementCopyMultipleAttributeValues(
+        element,
+        names_array.as_concrete_TypeRef(),
+        0, // options = 0: do NOT stop on the first failing attribute.
+        &mut values,
+    );
+    if err != kAXErrorSuccess || values.is_null() {
+        // Apps that reject the batch API retain the existing single-read path.
+        if !values.is_null() {
+            CFRelease(values as CFTypeRef);
+        }
+        return attr_names
+            .iter()
+            .map(|name| copy_string_attr(element, name))
+            .collect();
+    }
+
+    let arr = CFArray::<CFTypeRef>::wrap_under_create_rule(values as _);
+    decode_string_slots(&arr, attr_names.len())
+}
+
+unsafe fn decode_string_slots(arr: &CFArray<CFTypeRef>, requested: usize) -> Vec<Option<String>> {
+    let cf_string_type_id = CFStr::type_id();
+    let len = arr.len() as usize;
+
+    (0..requested)
+        .map(|i| {
+            if i >= len {
+                return None;
+            }
+            let item = match arr.get(i as CFIndex) {
+                Some(it) => *it,
+                None => return None,
+            };
+            if item.is_null() {
+                return None;
+            }
+            // Per-slot failures come back as an AXValue of error type, not a
+            // CFString — filter them out by type so they read as "absent".
+            if core_foundation::base::CFGetTypeID(item) != cf_string_type_id {
+                return None;
+            }
+            // Borrow (get-rule): the array owns the element; clone into a String.
+            let s = CFStr::wrap_under_get_rule(item as _);
+            Some(s.to_string())
+        })
+        .collect()
 }
 
 /// Copy a string attribute from an AX element. Returns `None` on any error.
@@ -950,6 +1031,28 @@ mod tests {
     use super::*;
     use crate::windows::WindowSpaceView;
     use core_foundation::{boolean::CFBoolean, number::CFNumber};
+
+    #[test]
+    fn batch_slots_preserve_absent_empty_and_later_labels() {
+        let error = kAXErrorAttributeUnsupported;
+        let placeholder = unsafe { AXValueCreate(5, &error as *const _ as *const c_void) };
+        assert!(!placeholder.is_null());
+        let empty = CFStr::new("");
+        let label = CFStr::new("Submit");
+        let values = CFArray::from_copyable(&[
+            placeholder as CFTypeRef,
+            empty.as_CFTypeRef(),
+            label.as_CFTypeRef(),
+        ]);
+        let decoded = unsafe { decode_string_slots(&values, 4) };
+        unsafe {
+            CFRelease(placeholder as CFTypeRef);
+        }
+        assert_eq!(
+            decoded,
+            vec![None, Some("".into()), Some("Submit".into()), None]
+        );
+    }
 
     #[test]
     fn remote_token_layout_is_pid_zero_coco_element_id() {

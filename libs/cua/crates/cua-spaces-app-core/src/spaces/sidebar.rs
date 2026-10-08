@@ -292,13 +292,12 @@ pub fn percent(permille: u32) -> String {
 }
 
 /// The selection the window shows: the chosen id if it still exists, else
-/// the first Space that is not this machine, else the first.
+/// the first Space that is not this machine (none: the empty home).
 pub fn effective_selection<'a>(spaces: &'a [Space], selected_id: &str) -> Option<&'a Space> {
     spaces
         .iter()
         .find(|s| s.id == selected_id)
         .or_else(|| spaces.iter().find(|s| s.id != THIS_MACHINE_ID))
-        .or_else(|| spaces.first())
 }
 
 /// Builds the sidebar for `spaces` filtered by `query`.
@@ -1138,6 +1137,30 @@ pub fn detail_for(
 mod tests {
     use super::*;
     use crate::model::SpaceRow;
+
+    /// Only This machine is not a Space to open: an empty id selects nothing,
+    /// choosing it does, and a real Space wins over it.
+    #[test]
+    fn this_machine_alone_selects_nothing() {
+        use crate::host::this_machine_space;
+        use crate::model::SpaceOs;
+        let machine = this_machine_space(None, 0, SpaceOs::Macos);
+        assert!(effective_selection(std::slice::from_ref(&machine), "").is_none());
+        assert_eq!(
+            effective_selection(std::slice::from_ref(&machine), "this-mac").map(|s| s.id.as_str()),
+            Some("this-mac")
+        );
+        let real = super::super::row_to_space(&local_row("local:box", None, None, None), 0);
+        let both = [machine, real];
+        assert_eq!(
+            effective_selection(&both, "").map(|s| s.id.as_str()),
+            Some("local:box")
+        );
+        assert_eq!(
+            effective_selection(&both, "this-mac").map(|s| s.id.as_str()),
+            Some("this-mac")
+        );
+    }
 
     /// Sharing off (the default): no Share button; on: Share, between
     /// Picture in picture and Delete as before.

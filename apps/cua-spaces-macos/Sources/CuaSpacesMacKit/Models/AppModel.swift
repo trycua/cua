@@ -413,7 +413,9 @@ public final class AppModel {
         wizard.send(.choosePlacement(on: on))
     }
 
-    public func openNewSpace() async {
+    /// `quick`: the empty home's one click: that OS's default Space, created at once
+    /// when the core says it can be; else New Space opens on it and says why.
+    public func openNewSpace(quick os: AppSpaceOs? = nil) async {
         async let runtimesProbe = backend.localRuntimes()
         async let storageProbe = backend.localStorage()
         async let pricingProbe = backend.cloudPricing()
@@ -427,6 +429,10 @@ public final class AppModel {
         hosts = await hostsProbe
         wizard.reset(env: wizardEnv(cloud: cloud, runtimes: runtimes, storage: storage, pricing: pricing,
                                     gpus: gpus))
+        if let os {
+            wizard.send(.chooseOs(os: os))
+            if wizard.view.canContinue { create(wizard.view.plan); return }
+        }
         showingNewSpace = true
         telemetry?.record([.spaceWizard(action: "opened")])
         self.cloud.onConnected = { [weak self] in self?.cloudsChanged() }

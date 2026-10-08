@@ -17396,9 +17396,25 @@ public struct AppMainChrome: Equatable, Hashable {
      */
     public var emptyTitle: String
     /**
-     * With no Spaces: the button.
+     * With no Spaces: the default Linux Space's tile.
      */
     public var emptyAction: String
+    /**
+     * Under it: the time and disk.
+     */
+    public var emptyLinuxDetail: String
+    /**
+     * With no Spaces: the line under the heading.
+     */
+    public var emptyDetail: String
+    /**
+     * With no Spaces: the default macOS Space's tile.
+     */
+    public var emptyMacosAction: String
+    /**
+     * Under it: the download size.
+     */
+    public var emptyMacosDetail: String
     /**
      * The sidebar's Volume page entry ("Volume"); none while the Cua Volume
      * experiment is off (the page and its route are hidden; a mounted
@@ -17440,8 +17456,20 @@ public struct AppMainChrome: Equatable, Hashable {
          * With no Spaces: the heading.
          */emptyTitle: String,
         /**
-         * With no Spaces: the button.
+         * With no Spaces: the default Linux Space's tile.
          */emptyAction: String,
+        /**
+         * Under it: the time and disk.
+         */emptyLinuxDetail: String,
+        /**
+         * With no Spaces: the line under the heading.
+         */emptyDetail: String,
+        /**
+         * With no Spaces: the default macOS Space's tile.
+         */emptyMacosAction: String,
+        /**
+         * Under it: the download size.
+         */emptyMacosDetail: String,
         /**
          * The sidebar's Volume page entry ("Volume"); none while the Cua Volume
          * experiment is off (the page and its route are hidden; a mounted
@@ -17458,6 +17486,10 @@ public struct AppMainChrome: Equatable, Hashable {
         self.settingsShortcut = settingsShortcut
         self.emptyTitle = emptyTitle
         self.emptyAction = emptyAction
+        self.emptyLinuxDetail = emptyLinuxDetail
+        self.emptyDetail = emptyDetail
+        self.emptyMacosAction = emptyMacosAction
+        self.emptyMacosDetail = emptyMacosDetail
         self.volumeLabel = volumeLabel
     }
 
@@ -17488,6 +17520,10 @@ public struct FfiConverterTypeAppMainChrome: FfiConverterRustBuffer {
                 settingsShortcut: FfiConverterString.read(from: &buf),
                 emptyTitle: FfiConverterString.read(from: &buf),
                 emptyAction: FfiConverterString.read(from: &buf),
+                emptyLinuxDetail: FfiConverterString.read(from: &buf),
+                emptyDetail: FfiConverterString.read(from: &buf),
+                emptyMacosAction: FfiConverterString.read(from: &buf),
+                emptyMacosDetail: FfiConverterString.read(from: &buf),
                 volumeLabel: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -17504,6 +17540,10 @@ public struct FfiConverterTypeAppMainChrome: FfiConverterRustBuffer {
         FfiConverterString.write(value.settingsShortcut, into: &buf)
         FfiConverterString.write(value.emptyTitle, into: &buf)
         FfiConverterString.write(value.emptyAction, into: &buf)
+        FfiConverterString.write(value.emptyLinuxDetail, into: &buf)
+        FfiConverterString.write(value.emptyDetail, into: &buf)
+        FfiConverterString.write(value.emptyMacosAction, into: &buf)
+        FfiConverterString.write(value.emptyMacosDetail, into: &buf)
         FfiConverterOptionString.write(value.volumeLabel, into: &buf)
     }
 }

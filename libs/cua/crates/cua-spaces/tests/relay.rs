@@ -261,6 +261,12 @@ async fn relay_spaces_carry_the_enrolled_device_session() {
         .build();
     let err = bare.relay_machines().await.unwrap_err();
     assert_eq!(err.tag(), "permission_denied", "{err}");
+    let err = bare.find(&format!("relay:{MACHINE}")).await.unwrap_err();
+    assert_eq!(err.tag(), "permission_denied", "{err}");
+    assert_eq!(
+        err.to_string(),
+        "This device could not list relay machines. Check its account access."
+    );
     assert_eq!(
         bare.list_all().await.unwrap_err().tag(),
         "permission_denied"
@@ -426,6 +432,47 @@ async fn discovery_failure_is_not_stale_success_and_empty_recovery_clears_cache(
     assert_eq!(recovered.len(), 1);
     assert_eq!(recovered[0].id, local.id);
     assert_eq!(spaces.list().unwrap().len(), 1);
+
+    *tokens.current.lock().unwrap() = "owner".into();
+    let calls = tokens.calls.load(Ordering::SeqCst);
+    let found = spaces.find(&format!("relay:{MACHINE}")).await.unwrap();
+    assert_eq!(found.name, "studio");
+    assert_eq!(tokens.calls.load(Ordering::SeqCst), calls + 1);
+    let calls = tokens.calls.load(Ordering::SeqCst);
+    spaces.find(&format!("relay:{MACHINE}")).await.unwrap();
+    assert_eq!(tokens.calls.load(Ordering::SeqCst), calls, "max-age hit");
+    for id in ["direct:127.0.0.1:1", "local:nope", "some-name"] {
+        assert_eq!(
+            spaces.find(id).await.unwrap_err().tag(),
+            "not_found",
+            "{id}"
+        );
+    }
+    assert_eq!(tokens.calls.load(Ordering::SeqCst), calls, "non-relay");
+    let second = "abcdef0123456789";
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "owner",
+            &cua_host::relay::RegisterRequest {
+                id: second.into(),
+                name: "second".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(spaces.find(&format!("relay:{second}")).await.is_ok());
+    assert_eq!(tokens.calls.load(Ordering::SeqCst), calls + 1, "late join");
+    *tokens.current.lock().unwrap() = "bad".into();
+    assert_eq!(
+        spaces
+            .find("relay:ffffffffffffffff")
+            .await
+            .unwrap_err()
+            .tag(),
+        "unauthenticated"
+    );
 }
 
 #[tokio::test]

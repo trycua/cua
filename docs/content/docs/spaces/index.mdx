@@ -28,7 +28,7 @@ run agents in them from Python, TypeScript, Swift or Rust.
 | Direct | `direct:<host:port>` | `spaces.add(url, token)`: an existing machine |
 | Relay | `relay:<machine-id>` | Your machines set up with `cua host setup`, listed automatically |
 
-The app, the `cua` CLI, the SDKs and `cua daemon` share one registry (`~/.cua/spaces.json`).
+The app, the `cua` CLI, the SDKs and `cua daemon` share one registry (`~/.cua/spaces.json`). Relay machines come from the account's directory and are never written to `spaces.json`.
 
 ## What you can do with a Space
 

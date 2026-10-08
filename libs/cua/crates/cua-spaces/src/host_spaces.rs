@@ -1957,7 +1957,6 @@ impl Spaces {
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
-        let _ = self.relay_machines().await;
         let m = match row {
             Some(m) => m,
             None => client.machine(&token, &machine).await?,
@@ -2193,7 +2192,7 @@ impl Spaces {
             Ok(()) | Err(cua_host::Error::NotFound(_)) => {}
             Err(e) => return Err(e.into()),
         }
-        let _ = self.relay_machines().await;
+        self.relay_forget(machine);
         Ok(())
     }
 

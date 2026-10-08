@@ -148,11 +148,6 @@ impl Spaces {
         }
         // Provisioning has already succeeded. A directory outage must not
         // conceal a recorded target or imply that creation should be retried.
-        let listed = match self.list_all().await {
-            Ok(rows) => Ok(rows),
-            Err(Error::Relay(_)) => self.list(),
-            Err(e) => Err(e),
-        };
         let unavailable = || {
             Error::Relay(cua_host::Error::Relay(
                 concat!(
@@ -162,11 +157,7 @@ impl Spaces {
                 .into(),
             ))
         };
-        let info = listed
-            .map_err(|_| unavailable())?
-            .into_iter()
-            .find(|i| i.id == id)
-            .ok_or_else(unavailable)?;
+        let info = self.find(&id).await.map_err(|_| unavailable())?;
         Ok(info)
     }
 

@@ -790,6 +790,9 @@ impl Backend for DaemonBackend {
     }
 
     async fn wipe(&self, target: &str, import_id: &str) -> KvResult<Vec<String>> {
+        // A Space that no longer exists, or one that no longer knows the
+        // import, holds nothing to wipe: report that as NotFound so the
+        // broker can finish deleting the item (see `wipe_where`).
         let space = self.open_target(target).await?;
         let resp = space
             .spacesd()
@@ -800,7 +803,13 @@ impl Backend for DaemonBackend {
                 all: false,
             })
             .await
-            .map_err(|e| backend_err("wipe import", e))?
+            .map_err(|e| {
+                if e.code() == tonic::Code::NotFound {
+                    KvError::NotFound(format!("import {import_id:?} on {target}"))
+                } else {
+                    backend_err("wipe import", e)
+                }
+            })?
             .into_inner();
         Ok(resp.removed_paths)
     }

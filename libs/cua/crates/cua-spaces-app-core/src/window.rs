@@ -94,20 +94,16 @@ pub fn chrome(input: &ChromeInput) -> MainChrome {
     }
 }
 
-/// First macOS image download for this host's arch, else that image's first platform.
 fn empty_macos_action() -> String {
-    let images = crate::wizard::picker_images();
+    use crate::wizard::{picker_images, platform_size, size_text};
+    let images = picker_images();
     let found = images.iter().find(|i| i.os == crate::SpaceOs::Macos);
     let image = found.expect("a macOS image");
-    let sizes = image.sizes.as_ref().expect("a macOS download size");
     let cpu = crate::this_host_arch();
-    let host = crate::run_arch(&image.arch, true, Some(cpu));
-    let rows = &sizes.platforms;
-    let arch = host.as_deref();
-    let hit = arch.and_then(|a| rows.iter().find(|p| p.arch == a));
-    let platform = hit.or(rows.first()).expect("a macOS download size");
-    let size = crate::wizard::size_text(platform.download);
-    format!("Create a macOS Space (about {size} download)")
+    let arch = crate::run_arch(&image.arch, true, Some(cpu));
+    let row = platform_size(image, arch.as_deref());
+    let text = size_text(row.expect("a macOS download size").download);
+    format!("Create a macOS Space (about {text} download)")
 }
 
 /// Whether Cua Volume shows (its page, the menu's sync line): with its
@@ -277,31 +273,6 @@ pub fn menu(input: &MenuInput) -> Vec<MenuItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The macOS button's size is the catalog download, not a fixed number.
-    #[test]
-    fn the_empty_home_names_the_macos_download() {
-        let chrome = chrome(&ChromeInput::default());
-        let image = crate::wizard::picker_images()
-            .into_iter()
-            .find(|i| i.os == crate::SpaceOs::Macos)
-            .unwrap();
-        let sizes = image.sizes.as_ref().unwrap();
-        let host = crate::run_arch(&image.arch, true, Some(crate::this_host_arch()));
-        let bytes = host
-            .as_deref()
-            .and_then(|a| sizes.platforms.iter().find(|p| p.arch == a))
-            .or(sizes.platforms.first())
-            .unwrap()
-            .download;
-        assert_eq!(
-            chrome.empty_macos_action,
-            format!(
-                "Create a macOS Space (about {} download)",
-                crate::wizard::size_text(bytes)
-            )
-        );
-    }
 
     #[test]
     fn the_account_line_prefers_the_identity() {

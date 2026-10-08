@@ -393,12 +393,14 @@ struct EmptySpaces: View {
         } description: {
             if model.rosterError == nil { Text(chrome.emptyDetail) }
         } actions: {
-            if model.rosterError == nil {
-                Button(chrome.emptyAction) { Task { await model.openNewSpace(quick: .linux) } }
-                    .buttonStyle(.glassProminent)
-                Button(chrome.emptyMacosAction) { Task { await model.openNewSpace(quick: .macos) } }
+            VStack {
+                if model.rosterError == nil {
+                    Button(chrome.emptyAction) { Task { await model.openNewSpace(quick: .linux) } }
+                        .buttonStyle(.glassProminent)
+                    Button(chrome.emptyMacosAction) { Task { await model.openNewSpace(quick: .macos) } }
+                }
+                Button(chrome.newSpaceLabel) { Task { await model.openNewSpace() } }
             }
-            Button(chrome.newSpaceLabel) { Task { await model.openNewSpace() } }
         }
     }
 }

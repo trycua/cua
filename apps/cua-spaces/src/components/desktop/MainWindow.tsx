@@ -234,7 +234,6 @@ export function MainWindow({
     startView === 'this-machine' || startView === 'host-setup' ? THIS_MACHINE_ID : null
   );
   const [query, setQuery] = useState('');
-  // Closed, the full wizard, or one click for that system.
   const [wizard, setWizard] = useState<boolean | 'linux' | 'macos'>(
     startView === 'new-space' || startView === 'new-space-resources'
   );

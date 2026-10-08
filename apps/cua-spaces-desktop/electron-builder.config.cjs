@@ -26,7 +26,9 @@
 // Native layer: every package needs `pnpm native -- --target <triple>` for
 // its arch first (both mac triples for universal); `afterPack` refuses a
 // package without it unless CUA_SPACES_ALLOW_NO_NATIVE=1 (a shell-only QA
-// build, which cannot start).
+// build, which cannot start). A release packs every arch; a local build sets
+// CUA_SPACES_ARCHS=native to pack only the arches it has a native folder
+// for, or a list such as `x64` (packaging/archs.cjs).
 //
 // Electron fuses (packaging/fuses.cjs) are flipped in every packaged build;
 // `pnpm check:fuses` reads them back. CUA_SPACES_NO_FUSES=1 leaves them as
@@ -76,6 +78,7 @@ const pkg = require("./package.json");
 const { electronFuses } = require("./packaging/fuses.cjs");
 const { sign: signMac } = require("./packaging/sign-mac.cjs");
 const { normalizeModes } = require("./packaging/linux-permissions.cjs");
+const { packageArchs } = require("./packaging/archs.cjs");
 
 const version = env.CUA_SPACES_VERSION || pkg.version;
 const semver = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(version);
@@ -105,6 +108,9 @@ const macSigning = Boolean(env.CSC_LINK || env.CSC_NAME);
 const macNotarize =
   macSigning &&
   Boolean((env.APPLE_API_KEY && env.APPLE_API_KEY_ID && env.APPLE_API_ISSUER) || (env.APPLE_ID && env.APPLE_TEAM_ID));
+/** This build's arches for a platform's targets (CUA_SPACES_ARCHS, packaging/archs.cjs). */
+const archs = (platform, all) => packageArchs(platform, all, env.CUA_SPACES_ARCHS);
+
 const azureSigning = ["AZURE_SIGNING_ENDPOINT", "AZURE_SIGNING_ACCOUNT", "AZURE_SIGNING_PROFILE"].every((k) => env[k]);
 
 /**
@@ -179,8 +185,8 @@ module.exports = {
     artifactName: "Cua-Spaces-${version}-${arch}-mac.${ext}",
     icon: path.join(icons, "icon.icns"),
     target: [
-      { target: "dmg", arch: ["arm64", "universal"] },
-      { target: "zip", arch: ["arm64", "universal"] },
+      { target: "dmg", arch: archs("darwin", ["arm64", "universal"]) },
+      { target: "zip", arch: archs("darwin", ["arm64", "universal"]) },
     ],
     // null skips signing entirely; with CSC_* set electron-builder picks the
     // Developer ID identity itself.
@@ -219,7 +225,7 @@ module.exports = {
     icon: path.join(icons, "icon.ico"),
     // Tray icon (src/tray.ts), used as is.
     extraResources: [{ from: icons, to: "tray", filter: ["icon.ico"] }, nativeResources("win32")],
-    target: [{ target: "nsis", arch: ["x64", "arm64"] }],
+    target: [{ target: "nsis", arch: archs("win32", ["x64", "arm64"]) }],
     ...(azureSigning
       ? {
           azureSignOptions: {
@@ -261,8 +267,8 @@ module.exports = {
       },
     },
     target: [
-      { target: "AppImage", arch: ["x64", "arm64"] },
-      { target: "deb", arch: ["x64", "arm64"] },
+      { target: "AppImage", arch: archs("linux", ["x64", "arm64"]) },
+      { target: "deb", arch: archs("linux", ["x64", "arm64"]) },
     ],
     maintainer: "Cua AI, Inc. <founders@trycua.com>",
     synopsis: "Cua Spaces",

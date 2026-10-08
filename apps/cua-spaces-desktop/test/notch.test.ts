@@ -25,8 +25,9 @@ describe("where the notch runs", () => {
 
   it("finds the helper in Contents/Helpers when packaged and in native/notch in development", () => {
     const resources = "/Applications/Cua Spaces.app/Contents/Resources";
+    // path.join's separators, so the test reads the same on a Windows runner.
     expect(helperPath({ packaged: true, resourcesPath: resources, appPath: `${resources}/app.asar` })).toBe(
-      "/Applications/Cua Spaces.app/Contents/Helpers/Cua Spaces Notch.app/Contents/MacOS/Cua Spaces Notch",
+      path.join("/Applications/Cua Spaces.app/Contents/Helpers/Cua Spaces Notch.app/Contents/MacOS/Cua Spaces Notch"),
     );
     expect(helperPath({ packaged: false, resourcesPath: "/x", appPath: "/src/apps/cua-spaces-desktop" })).toBe(
       path.join("/src/apps/cua-spaces-desktop/native/notch/Cua Spaces Notch.app/Contents/MacOS/Cua Spaces Notch"),

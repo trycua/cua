@@ -558,6 +558,19 @@ pnpm dist:win      # dist/Cua-Spaces-Setup-<v>-x64.exe, -arm64.exe, and both in 
 pnpm dist:linux    # dist/Cua-Spaces-<v>-x86_64.AppImage, -arm64.AppImage, cua-spaces_<v>_{amd64,arm64}.deb
 ```
 
+A release packs both arches and stops at one without its native layer.
+A local build that has only some `native/<platform>-<arch>` folders sets
+`CUA_SPACES_ARCHS=native` to pack just those arches (a mac universal build
+needs both darwin folders), or a list such as `CUA_SPACES_ARCHS=x64`
+(`packaging/archs.cjs`). On Windows: `set CUA_SPACES_ARCHS=native` in cmd,
+`$env:CUA_SPACES_ARCHS="native"` in PowerShell, then `pnpm dist:win`.
+
+Building on Windows itself (`pnpm native`, then `pnpm dist:win`) needs, besides
+Node and pnpm: Rust with the MSVC toolchain, the Visual Studio C++ build
+tools, and CMake on PATH (some of the native layer's C dependencies build with
+it). The scripts run under cmd.exe and PowerShell: `pnpm build` removes
+`dist-electron` with Node, and `pnpm native` runs `npm.cmd` through the shell.
+
 Sizes for 0.6.0 with the real web UI, built on 2026-10-03 (MB = 10^6 bytes):
 
 | Artifact | Size |
@@ -715,5 +728,6 @@ Swift app's files stay as they are.
 | `CUA_SPACES_BUILD_NUMBER` | Build time: the last part of CFBundleVersion and the Windows file version, `X.Y.Z.N` (default 0) |
 | `GITHUB_REPOSITORY` | Build time: the repository whose `cua-spaces-latest` release is the update feed (default `trycua/cua`) |
 | `CUA_SPACES_NO_FUSES=1` | Build time: leave the Electron fuses as Electron ships them (QA builds only) |
+| `CUA_SPACES_ARCHS` | Build time: `native` packs only the arches with a native folder, or a list (`x64`, `arm64,x64`); unset packs all (a release) |
 | `CUA_SPACES_TEST_STREAM_URL` | Answer every `spaces.openStream` with this URL (`{id}`, `{tier}` filled in), for the WebCodecs harness |
 | `CUA_BIN`, `CUA_HOME` | Where to find `cua` and `~/.cua`. A `CUA_BIN` that doesn't exist means no cua (demo data) |

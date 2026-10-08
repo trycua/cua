@@ -81,9 +81,18 @@ const cliName = platform === "win32" ? "cua.exe" : "cua";
 const cargoTarget = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : join(cuaRoot, "target");
 const releaseDir = target === host && !option("--target") ? join(cargoTarget, "release") : join(cargoTarget, target, "release");
 
+/** A Windows `.cmd` (npm.cmd, ubrn.cmd) runs only through cmd.exe, which takes one command line. */
+export function shellCommand(command, args) {
+  const quote = (a) => (/[\s"&|<>^]/.test(a) ? `"${a.replaceAll('"', '""')}"` : a);
+  return [command, ...args].map(quote).join(" ");
+}
+
 function run(command, args, options = {}) {
   console.log(`> ${command} ${args.join(" ")}`);
-  const result = spawnSync(command, args, { stdio: "inherit", shell: process.platform === "win32" && command.endsWith(".cmd"), ...options });
+  const viaShell = process.platform === "win32" && command.endsWith(".cmd");
+  const result = viaShell
+    ? spawnSync(shellCommand(command, args), { stdio: "inherit", shell: true, ...options })
+    : spawnSync(command, args, { stdio: "inherit", ...options });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${command} exited with status ${result.status}`);
 }
@@ -98,7 +107,7 @@ function cargoEnv() {
 
 function ensureUniffiTools() {
   if (existsSync(join(typescriptRoot, "node_modules", "uniffi-bindgen-react-native", "package.json"))) return;
-  run("npm", ["ci", "--ignore-scripts"], { cwd: typescriptRoot });
+  run(process.platform === "win32" ? "npm.cmd" : "npm", ["ci", "--ignore-scripts"], { cwd: typescriptRoot });
 }
 
 /** Local symbols out of what ships (the exported UniFFI symbols stay). */

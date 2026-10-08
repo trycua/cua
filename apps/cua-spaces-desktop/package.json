@@ -11,7 +11,7 @@
   "packageManager": "pnpm@11.20.0",
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "build": "pnpm typecheck && rm -rf dist-electron && tsdown && node scripts/check-channels.mjs",
+    "build": "pnpm typecheck && node -e \"require('node:fs').rmSync('dist-electron',{recursive:true,force:true})\" && tsdown && node scripts/check-channels.mjs",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
     "dist:mac": "pnpm build && electron-builder --mac --config electron-builder.config.cjs --publish never",

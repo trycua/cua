@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
 pub mod compatibility;
+mod config_value;
 pub mod cursor;
 mod cursor_tools;
 mod desktop;
@@ -24,6 +25,7 @@ mod session;
 mod verification;
 mod visual;
 mod windows;
+pub use config_value::coerce_set_config_value;
 pub use windows::*;
 
 pub(crate) fn schema_settings() -> SchemaSettings {
@@ -941,7 +943,11 @@ mod tests {
             ("cursor.motion", Value::Null),
             ("unknown_key", json!("800")),
         ] {
-            assert_eq!(coerce_set_config_value(key, &value), value, "{key} = {value}");
+            assert_eq!(
+                coerce_set_config_value(key, &value),
+                value,
+                "{key} = {value}"
+            );
         }
     }
 }

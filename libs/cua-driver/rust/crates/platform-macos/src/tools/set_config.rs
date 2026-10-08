@@ -54,7 +54,7 @@ fn def() -> &'static ToolDef {
                 },
                 "value": {
                     "type": "string",
-                    "description": "New value for `key` in the {key, value} shape. Typed as a string for function-calling portability (Vertex/Gemini): pass string-valued keys here (experimental_pip_geometry, cursor.motion.*); for integer or boolean keys prefer the matching typed field (max_image_dimension, experimental_pip). A raw JSON number or boolean is still accepted here at runtime."
+                    "description": "New value for `key` in the {key, value} shape, sent as a string. The driver parses it to the key's type: \"800\" for max_image_dimension, \"true\"/\"false\" for cursor.motion.effects.*. cursor.motion.style/timing take the string as is; `default` resets a cursor.motion key. Other settings use their typed fields. Raw JSON numbers and booleans are also accepted."
                 },
                 "max_image_dimension": {
                     "type": "integer",
@@ -116,9 +116,12 @@ impl Tool for SetConfigTool {
         };
 
         // Accept BOTH the direct field and {key,value} shapes.
-        let kv: Option<(String, Value)> = args
-            .opt_str("key")
-            .and_then(|k| args.get("value").map(|v| (k, v.clone())));
+        let kv: Option<(String, Value)> = args.opt_str("key").and_then(|k| {
+            // `value` is advertised as a string (#4798): parse "800" into
+            // the key's type before reading it.
+            let v = cua_driver_contract::coerce_set_config_value(&k, args.get("value")?);
+            Some((k, v))
+        });
         let kv_u64 = |name: &str| -> Option<u64> {
             kv.as_ref()
                 .filter(|(k, _)| k == name)

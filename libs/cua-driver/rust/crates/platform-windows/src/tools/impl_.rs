@@ -8756,7 +8756,7 @@ impl Tool for SetConfigTool {
                 Returns the full updated config in the same shape as `get_config`.".into(),
             input_schema: with_cursor_motion_config_properties(json!({"type":"object","properties":{
                 "key":{"type":"string","description":"Dotted snake_case path to a leaf config field (Swift-compatible shape). Pair with `value`."},
-                "value":{"type":"string","description":"New value for `key` in the {key, value} shape. Typed as a string for function-calling portability (Vertex/Gemini): pass string-valued keys here (capture_mode, experimental_pip_geometry, cursor.motion.*); for integer or boolean keys prefer the matching typed field (max_image_dimension, experimental_pip). A raw JSON number or boolean is still accepted here at runtime."},
+                "value":{"type":"string","description":"New value for `key` in the {key, value} shape, sent as a string. The driver parses it to the key's type: \"800\" for max_image_dimension, \"true\"/\"false\" for experimental_pip and cursor.motion.effects.*. capture_mode, experimental_pip_geometry and cursor.motion.style/timing take the string as is; `default` resets a cursor.motion key. Raw JSON numbers and booleans are also accepted."},
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"DEPRECATED and ignored — get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Legacy per-field shape."},
                 "experimental_pip":{"type":"boolean","description":"Legacy per-field shape. Enables PiP preview (applies next restart)."},
@@ -8785,9 +8785,12 @@ impl Tool for SetConfigTool {
         let mut cfg = self.state.config.write().unwrap();
         let mut applied = !motion_keys.is_empty();
         // Swift-compatible {key, value} shape.
-        if let (Some(key), Some(val)) =
+        if let (Some(key), Some(raw)) =
             (args.get("key").and_then(|v| v.as_str()), args.get("value"))
         {
+            // `value` is advertised as a string (#4798): parse "800" / "true"
+            // into the key's type before the per-key checks below.
+            let val = &cua_driver_contract::coerce_set_config_value(key, raw);
             match key {
                 "capture_mode" => match val.as_str() {
                     Some(s) => {

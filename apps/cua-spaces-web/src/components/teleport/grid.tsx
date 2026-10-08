@@ -19,6 +19,11 @@ const thumbnailSource = (t: PickerTileThumbnail) =>
  * app's icon and one line of name. What the app can take is the tooltip; an
  * app that cannot move is dimmed. Arrow keys move the selection, Return and
  * a double click open it.
+ *
+ * Only tiles that came near the view are in the accessibility tree, as in
+ * the SwiftUI app's lazy grid: a Mac's hundreds of apps (most "Not
+ * available") would otherwise fill it, and a reader with a budget (an
+ * agent's snapshot) never reached the dialog's Cancel and Continue.
  */
 export function TeleportGrid({ session: s, teleport, images }: { session: TeleportSession; teleport: TeleportStore; images: ReadonlyMap<string, string | null> }) {
   const onKeyDown = (e: KeyboardEvent) => {
@@ -53,7 +58,8 @@ export function TeleportGrid({ session: s, teleport, images }: { session: Telepo
 }
 
 function Tile({ tile, teleport, images }: { tile: PickerTile; teleport: TeleportStore; images: ReadonlyMap<string, string | null> }) {
-  // Only tiles in view ask the host for their icon and preview.
+  // Only tiles in view ask the host for their icon and preview, and only
+  // they (and the selected one) are in the accessibility tree.
   const ref = useRef<HTMLDivElement | null>(null);
   const [seen, setSeen] = useState(typeof IntersectionObserver === "undefined");
   useEffect(() => {
@@ -74,6 +80,7 @@ function Tile({ tile, teleport, images }: { tile: PickerTile; teleport: Teleport
     <div
       ref={ref}
       role="option"
+      aria-hidden={seen || tile.selected ? undefined : true}
       aria-selected={tile.selected}
       aria-disabled={tile.disabled}
       title={tile.help}

@@ -30,7 +30,7 @@ import { devDirName, nativeFiles } from "../src/native/location";
 import { loadNative, type Native } from "../src/native/load";
 import { FixtureAccount, FixtureSpacesBackend, FixtureTelemetry, fixtureDevices, fixtureHost } from "./fixtures";
 import { AGENT_METHODS } from "./agents-fixtures";
-import { HOST_METHODS, HOST_OPS } from "./host-fixtures";
+import { HOST_METHODS, HOST_OPS, sdkError } from "./host-fixtures";
 import { NOT_YET } from "./not-yet";
 import { VAULT_METHODS, VAULT_OPS } from "./vault-fixtures";
 
@@ -380,6 +380,39 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     await tick(5);
     expect(((await call("spaces.list")) as { rosterError: unknown }).rosterError).toBeNull();
     expect(events.filter((e) => e.event === "spaces.changed")).toHaveLength(2);
+  });
+
+  it("does not reconnect while the daemon answers the list with its own error, only when the connection broke", async () => {
+    // Signed out on Windows and Linux, every read failed with the relay's refusal and the app
+    // reconnected every 50 s (the SwiftUI app's StalePollTests).
+    let reconnects = 0;
+    const saved = { reconnect: model.reconnect, stale: model.listStaleAfterMs, rows: backend.rows.bind(backend) };
+    model.reconnect = async () => ((reconnects += 1), true);
+    model.listStaleAfterMs = 50;
+    const wait = () => new Promise((r) => setTimeout(r, 80));
+    try {
+      backend.rows = async () => {
+        throw sdkError("Unauthenticated", "Relay authentication failed. Sign in again to refresh your machines.");
+      };
+      await wait();
+      await model.refresh();
+      await model.checkListHealth();
+      expect(reconnects).toBe(0);
+      expect(model.rosterError).not.toBeNull();
+
+      backend.rows = async () => {
+        throw sdkError("DaemonNotRunning", "The cua daemon is not running.");
+      };
+      await wait();
+      await model.refresh();
+      await model.checkListHealth();
+      expect(reconnects).toBe(1);
+    } finally {
+      model.reconnect = saved.reconnect;
+      model.listStaleAfterMs = saved.stale;
+      backend.rows = saved.rows;
+      await model.refresh();
+    }
   });
 
   it("says the Spaces could not be loaded when the first read fails", async () => {

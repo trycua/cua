@@ -36,7 +36,7 @@ import { AgentsModel, type AgentSetupRunning, type ToolRunner } from "./agents";
 import type { CloudModel } from "./cloud";
 import type { DevicesModel } from "./devices";
 import { NotchActivity } from "./activity";
-import { isCancelled, words } from "./errors";
+import { daemonAnswered, isCancelled, words } from "./errors";
 import type { HostModel } from "./host";
 import { KeyvaultModel } from "./keyvault";
 import type { AccountRunning, TelemetryRunning } from "./services";
@@ -136,6 +136,9 @@ export class AppModel {
   /** With no successful list read for this long, the daemon connection is made again (ms). */
   listStaleAfterMs = 45_000;
   lastListOk: number | null = null;
+  /** The last time the daemon answered a list read, with the rows or with an error of its own
+   * (the relay refused the sign-in, say): the connection works, so a new one would not help. */
+  lastListAnswer: number | null = null;
   /** Makes a new SDK client of the daemon; false when it could not (set once the services are in). */
   reconnect: (() => Promise<boolean>) | null = null;
   reconnecting = false;
@@ -340,7 +343,7 @@ export class AppModel {
 
   async checkListHealth(now = Date.now()): Promise<void> {
     if (!this.startup.isReady || !this.reconnect || this.reconnecting) return;
-    const since = Math.max(this.lastListOk ?? this.listWatchedSince, this.listWatchedSince);
+    const since = Math.max(this.lastListAnswer ?? this.listWatchedSince, this.listWatchedSince);
     if (now - since < this.listStaleAfterMs) return;
     await this.reconnectNow(`the Space list was not read for ${Math.round((now - since) / 1000)} s`);
   }
@@ -394,6 +397,7 @@ export class AppModel {
     try {
       const rows = await this.readRows();
       this.lastListOk = Date.now();
+      this.lastListAnswer = this.lastListOk;
       this.registrySpaces = this.native.appRowsToSpaces(rows, AppModel.nowMs());
       this.creates = this.native.appCreatesSettle(this.creates, this.registrySpaces);
       this.recompose();
@@ -410,6 +414,7 @@ export class AppModel {
     } catch (error) {
       // The daemon is slow or gone: the list stays, and the poll reconnects when it stays stale.
       if (error instanceof TimeoutError) return;
+      if (daemonAnswered(error)) this.lastListAnswer = Date.now();
       this.rosterError = this.loaded ? "Could not refresh Spaces. Previously loaded rows may be out of date." : "Could not load Spaces. Try refreshing again.";
       this.changed("spaces");
     }

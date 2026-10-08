@@ -45,6 +45,15 @@ pub fn relay_url_from_env() -> String {
 pub trait AccountTokens: Send + Sync {
     /// A valid access token (without the `Bearer ` prefix).
     async fn access_token(&self) -> Result<String>;
+
+    /// Whether an account is signed in at all (no network). False tells a
+    /// refused token apart from no sign-in, which is the normal state of
+    /// many hosts: a Spaces listing then skips the account's machines
+    /// instead of failing. A store that cannot be read right now is not a
+    /// sign-out.
+    async fn signed_in(&self) -> bool {
+        true
+    }
 }
 
 /// A fixed account token (tests, bindings that pass a token per call).
@@ -61,6 +70,10 @@ impl AccountTokens for StaticToken {
         }
         Ok(self.0.clone())
     }
+
+    async fn signed_in(&self) -> bool {
+        !self.0.trim().is_empty()
+    }
 }
 
 /// No account (direct mode, or not signed in).
@@ -72,6 +85,10 @@ impl AccountTokens for NoAccount {
         Err(Error::Unauthenticated(
             "not signed in to cua.ai (run `cua auth login` or sign in from the app)".into(),
         ))
+    }
+
+    async fn signed_in(&self) -> bool {
+        false
     }
 }
 

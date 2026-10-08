@@ -792,10 +792,19 @@ impl Spaces {
 
     /// Refreshes the relay directory when an account is configured, then
     /// lists every Space. A failed refresh is an error, not an empty or
-    /// current directory. [`Self::list`] remains the cached, local read.
+    /// current directory, except when no account is signed in at all: that
+    /// is the normal state of many hosts, so this machine's own Spaces are
+    /// listed without the account's machines (and any listed before the
+    /// sign-out are dropped). [`Self::list`] remains the cached, local read.
     pub async fn list_all(&self) -> Result<Vec<SpaceInfo>> {
-        if self.relay_account().is_some() {
-            self.relay_machines().await?;
+        if let Some(account) = self.relay_account()
+            && let Err(e) = self.relay_machines().await
+        {
+            if e.tag() != "unauthenticated" || account.tokens.signed_in().await {
+                return Err(e);
+            }
+            tracing::debug!("relay directory skipped: not signed in");
+            self.inner.relay_cache.lock().expect("relay cache").clear();
         }
         self.list()
     }

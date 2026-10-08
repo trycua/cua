@@ -24,3 +24,9 @@ export function sdkErrorKind(error: unknown): string | null {
 
 /** A create ended because it was cancelled (here, or `cua spaces cancel`), not because it failed. */
 export const isCancelled = (error: unknown) => sdkErrorKind(error) === "Cancelled";
+
+/** A failed call is the daemon's own answer, not a connection that broke (only that one is made again). */
+export function daemonAnswered(error: unknown): boolean {
+  const kind = sdkErrorKind(error);
+  return kind !== null && kind !== "DaemonNotRunning" && kind !== "Transport" && kind !== "Closed";
+}

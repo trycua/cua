@@ -30,6 +30,9 @@ import Testing
 
         func wedge() { lock.withLock { isWedged = true } }
         var wedged: Bool { lock.withLock { isWedged } }
+        /// Every list read answers with this error (the daemon's own).
+        private var refusal: Error?
+        func refuse(_ error: Error?) { lock.withLock { refusal = error } }
 
         /// Never returns, cancelled or not (a UniFFI future).
         private func hang() async {
@@ -39,6 +42,7 @@ import Testing
         func rows() async throws -> [AppSpaceRow] {
             lock.withLock { listCalls += 1 }
             if wedged { await hang() }
+            if let refusal = lock.withLock({ refusal }) { throw refusal }
             return try await inner.rows()
         }
 
@@ -154,6 +158,29 @@ import Testing
         #expect(first.listCalls <= 3)
         // No banner for a read that only timed out.
         #expect(model.banner == nil)
+    }
+
+    /// Signed out on Windows and Linux, every read failed with the relay's
+    /// refusal and the app reconnected every 50 s: a daemon that answers
+    /// is not a stale connection.
+    @Test func aListTheDaemonRefusesIsNotAStaleConnection() async throws {
+        let first = Connection(rows: [Self.row("local:a")])
+        first.refuse(CuaError.Unauthenticated(message: "Relay authentication failed. Sign in again to refresh your machines."))
+        let gate = LiveGate<LiveServices>()
+        gate.resolve(LiveServices(backend: first))
+        let model = makeModel(gate: gate) { first }
+        let poll = model.startListPoll(every: .milliseconds(50))
+        defer { poll.cancel() }
+        #expect(await eventually { model.rosterError != nil })
+        // From the first answer on (a loaded run may reconnect before it).
+        let before = model.reconnects
+        try await Task.sleep(for: .seconds(4))
+        #expect(model.reconnects == before)
+
+        // A connection that broke is made again.
+        first.refuse(CuaError.DaemonNotRunning(message: "The cua daemon is not running."))
+        #expect(await eventually { model.reconnects > before })
+        #expect(AppModel.daemonAnswered(CuaError.Transport(message: "reset")) == false)
     }
 
     @Test func aReconnectThatFailsIsTriedAgainLater() async {

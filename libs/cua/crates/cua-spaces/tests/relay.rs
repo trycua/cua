@@ -510,3 +510,77 @@ async fn discovery_errors_do_not_expose_provider_payloads() {
         "relay: Could not refresh relay machines."
     );
 }
+
+/// Signed out (no account at all, the normal state of many hosts) lists
+/// this machine's own Spaces and drops the machines of the account that
+/// signed out, while a refused sign-in stays an error.
+#[tokio::test]
+async fn signed_out_lists_this_machines_spaces() {
+    struct SignOut {
+        token: std::sync::Mutex<Option<String>>,
+    }
+    #[async_trait::async_trait]
+    impl AccountTokens for SignOut {
+        async fn access_token(&self) -> cua_host::Result<String> {
+            self.token
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or_else(|| cua_host::Error::Unauthenticated("not signed in".into()))
+        }
+        async fn signed_in(&self) -> bool {
+            self.token.lock().unwrap().is_some()
+        }
+    }
+    let relay = FakeRelay::start().await;
+    relay.add_account("owner", "owner", None);
+    cua_host::RelayClient::new(&relay.url)
+        .unwrap()
+        .register(
+            "owner",
+            &cua_host::relay::RegisterRequest {
+                id: MACHINE.into(),
+                name: "studio".into(),
+                allow: vec![],
+                host: None,
+                meta: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let tokens = Arc::new(SignOut {
+        token: std::sync::Mutex::new(Some("owner".into())),
+    });
+    let spaces = Spaces::builder()
+        .home(home.path())
+        .relay(RelayAccount::new(&relay.url, tokens.clone()))
+        .build();
+    let direct = MockServer::start(MockAuth::default()).await;
+    let local = spaces
+        .add(&direct.url(), None, Some("registered".into()))
+        .await
+        .unwrap();
+    assert_eq!(spaces.list_all().await.unwrap().len(), 2);
+
+    *tokens.token.lock().unwrap() = None;
+    let listed = spaces.list_all().await.unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].id, local.id);
+    assert_eq!(
+        spaces.list().unwrap().len(),
+        1,
+        "the account's machines are dropped"
+    );
+
+    // `NoAccount` is signed out too.
+    let none = Spaces::builder()
+        .home(home.path())
+        .relay(RelayAccount::new(&relay.url, Arc::new(cua_host::NoAccount)))
+        .build();
+    assert_eq!(none.list_all().await.unwrap()[0].id, local.id);
+
+    // Signed in again: the machines come back.
+    *tokens.token.lock().unwrap() = Some("owner".into());
+    assert_eq!(spaces.list_all().await.unwrap().len(), 2);
+}

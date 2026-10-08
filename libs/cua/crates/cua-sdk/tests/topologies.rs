@@ -950,3 +950,36 @@ async fn discovery_refusal_daemon_socket() {
 async fn discovery_refusal_daemon_loopback() {
     discovery_refusal(Topology::DaemonLoopback).await;
 }
+
+/// Signed out, the list is this machine's Spaces (no relay error): the apps
+/// show local Spaces before anyone signs in.
+async fn signed_out_lists(t: Topology) {
+    let relay = cua_host::testing::FakeRelay::start().await;
+    let (_world, cua) = world_with_relay(
+        t,
+        Some(cua_spaces::RelayAccount::new(
+            &relay.url,
+            Arc::new(cua_host::NoAccount),
+        )),
+    )
+    .await;
+    let listed = cua.spaces().list().await.unwrap();
+    assert!(
+        listed.iter().all(|s| !s.id.starts_with("relay:")),
+        "{listed:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_lists_embedded() {
+    signed_out_lists(Topology::Embedded).await;
+}
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_lists_daemon_socket() {
+    signed_out_lists(Topology::DaemonSocket).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_lists_daemon_loopback() {
+    signed_out_lists(Topology::DaemonLoopback).await;
+}

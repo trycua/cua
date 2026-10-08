@@ -881,6 +881,10 @@ impl AccountTokens for SetupTokens {
             Err(e) => Err(e),
         }
     }
+
+    async fn signed_in(&self) -> bool {
+        self.cached.lock().await.is_some() || self.stored.signed_in().await
+    }
 }
 
 /// Signs in for `cua host setup` without storing the session.
@@ -909,6 +913,10 @@ impl AccountTokens for SessionTokens {
             )),
             Err(e) => Err(cua_host::Error::Unauthenticated(e.to_string())),
         }
+    }
+
+    async fn signed_in(&self) -> bool {
+        !matches!(auth::session().credentials(), Ok(None))
     }
 }
 

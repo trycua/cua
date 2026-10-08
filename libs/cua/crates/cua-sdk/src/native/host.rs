@@ -772,6 +772,10 @@ impl cua_host::AccountTokens for SessionTokens {
             .await
             .map_err(|e| cua_host::Error::Unauthenticated(e.to_string()))
     }
+
+    async fn signed_in(&self) -> bool {
+        !matches!(self.0.credentials(), Ok(None))
+    }
 }
 
 /// This device as a client of the signed-in account on a relay: its

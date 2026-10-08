@@ -435,6 +435,10 @@ public final class AppModel {
     public var listStaleAfter: TimeInterval = 45
     /// The last time the registry was read.
     public private(set) var lastListOk: Date?
+    /// The last time the daemon answered a list read, with the rows or with
+    /// an error of its own (the relay refused the sign-in, say): the
+    /// connection works, so a new one would not help.
+    public private(set) var lastListAnswer: Date?
     /// Since when the list has been watched (the live services came in, or
     /// the last reconnect).
     private var listWatchedSince = Date()
@@ -468,7 +472,7 @@ public final class AppModel {
     /// (nothing before the live services are in).
     func checkListHealth(now: Date = Date()) async {
         guard startup.isReady, reconnect != nil, !reconnecting else { return }
-        let since = max(lastListOk ?? listWatchedSince, listWatchedSince)
+        let since = max(lastListAnswer ?? listWatchedSince, listWatchedSince)
         guard now.timeIntervalSince(since) >= listStaleAfter else { return }
         await reconnectNow(reason: "the Space list was not read for \(Int(now.timeIntervalSince(since))) s")
     }
@@ -487,6 +491,16 @@ public final class AppModel {
         reconnecting = false
         if !ok { NSLog("Cua Spaces: the reconnect did not make a new connection; trying again later") }
         await refresh()
+    }
+
+    /// Whether a failed read is the daemon's own answer, not a connection
+    /// that broke (only that one is made again).
+    static func daemonAnswered(_ error: Error) -> Bool {
+        switch error {
+        case CuaError.DaemonNotRunning, CuaError.Transport, CuaError.Closed: false
+        case is CuaError: true
+        default: false
+        }
     }
 
     /// The live services just came in: watch the list from now.
@@ -529,6 +543,7 @@ public final class AppModel {
         do {
             let rows = try await readRows()
             lastListOk = Date()
+            lastListAnswer = lastListOk
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             registrySpaces = appRowsToSpaces(rows: rows, nowMs: now)
             creates = appCreatesSettle(state: creates, spaces: registrySpaces)
@@ -544,6 +559,7 @@ public final class AppModel {
             // The daemon is slow or gone: the list stays as it was, and the
             // poll reconnects when it stays stale (`checkListHealth`).
         } catch {
+            if Self.daemonAnswered(error) { lastListAnswer = Date() }
             // Errors may contain server bodies or credential-bearing URLs.
             rosterError = loaded
                 ? "Could not refresh Spaces. Previously loaded rows may be out of date."

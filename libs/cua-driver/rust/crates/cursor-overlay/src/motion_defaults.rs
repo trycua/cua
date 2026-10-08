@@ -84,20 +84,10 @@ fn allowed_styles() -> String {
     MotionStyle::ALL.map(MotionStyle::as_str).join(", ")
 }
 
-fn effect_flag(key: &str, value: &Value) -> Result<Option<bool>, String> {
-    match value {
-        Value::Null => Ok(None),
-        Value::Bool(flag) => Ok(Some(*flag)),
-        Value::String(text) => match text.as_str() {
-            "true" | "on" => Ok(Some(true)),
-            "false" | "off" => Ok(Some(false)),
-            "default" => Ok(None),
-            _ => Err(format!(
-                "{key} must be true, false or default, got `{text}`"
-            )),
-        },
-        other => Err(format!("{key} must be true, false or default, got {other}")),
-    }
+pub fn effect_flag(key: &str, value: &Value) -> Result<Option<bool>, String> {
+    cua_driver_contract::CursorEffectSetting::from_json(value)
+        .map(cua_driver_contract::CursorEffectSetting::override_value)
+        .ok_or_else(|| format!("{key} must be on, off or default, got {value}"))
 }
 
 /// Validate one config write and fold it into `saved`.
@@ -206,15 +196,18 @@ pub fn config_schema_properties() -> Map<String, Value> {
         properties.insert(
             format!("cursor.motion.effects.{name}"),
             json!({
-                "type": "boolean",
-                "description": format!("Saved default for the `{name}` cursor effect. Unset follows the style.")
+                "type": "string",
+                "enum": ["on", "off", "default"],
+                "description": format!("Saved default for the `{name}` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged.")
             }),
         );
     }
     properties.insert(
         KEY_PREFIX.to_owned(),
         json!({
-            "description": "Pass null (or `default`) to clear every saved cursor motion default."
+            "type": "string",
+            "enum": ["default"],
+            "description": "Pass `default` to clear every saved cursor motion default."
         }),
     );
     properties
@@ -225,11 +218,6 @@ pub fn config_schema_properties() -> Map<String, Value> {
 /// the first validation error (later keys are not written after an error).
 pub fn apply_config_args(args: &Value) -> Result<Vec<String>, String> {
     let mut writes: Vec<(String, Value)> = Vec::new();
-    if let (Some(key), Some(value)) = (args.get("key").and_then(Value::as_str), args.get("value")) {
-        if is_motion_key(key) {
-            writes.push((key.to_owned(), value.clone()));
-        }
-    }
     if let Some(object) = args.as_object() {
         for (key, value) in object {
             if is_motion_key(key) {
@@ -534,7 +522,45 @@ mod tests {
         assert!(properties.contains_key(TIMING_KEY));
         assert!(properties.contains_key(KEY_PREFIX));
         for name in EFFECT_NAMES {
-            assert!(properties.contains_key(&format!("cursor.motion.effects.{name}")));
+            let property = &properties[&format!("cursor.motion.effects.{name}")];
+            assert_eq!(property["enum"], json!(["on", "off", "default"]));
         }
+        assert_eq!(properties[KEY_PREFIX]["enum"], json!(["default"]));
+    }
+
+    #[test]
+    fn default_resets_one_effect_and_an_omitted_effect_keeps() {
+        let path = temp_path("effects");
+        set_key_at(&path, "cursor.motion.effects.trail", &json!("off")).unwrap();
+        set_key_at(&path, "cursor.motion.effects.glow", &json!("on")).unwrap();
+        set_key_at(&path, "cursor.motion.effects.trail", &json!("default")).unwrap();
+        let saved = load_from(&path);
+        assert_eq!(saved.effects.trail, None);
+        assert_eq!(saved.effects.glow, Some(true));
+
+        let base = MotionConfig::default();
+        let set = base
+            .with_style_args(
+                &json!({"effects": {"trail": "off", "glow": "on", "ripple": "default"}}),
+            )
+            .unwrap();
+        assert_eq!(set.effects.trail, Some(false));
+        assert_eq!(set.effects.glow, Some(true));
+        assert_eq!(set.effects.ripple, None);
+        let kept = set
+            .with_style_args(&json!({"effects": {"trail": "on"}}))
+            .unwrap();
+        assert_eq!(kept.effects.trail, Some(true));
+        assert_eq!(kept.effects.glow, Some(true));
+
+        let legacy = base
+            .with_style_args(&json!({"effects": {"trail": true, "glow": false, "magnet": null, "ripple": "true", "squish": "false"}}))
+            .unwrap();
+        assert_eq!(legacy.effects.trail, Some(true));
+        assert_eq!(legacy.effects.glow, Some(false));
+        assert_eq!(legacy.effects.magnet, None);
+        assert_eq!(legacy.effects.ripple, Some(true));
+        assert_eq!(legacy.effects.squish, Some(false));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

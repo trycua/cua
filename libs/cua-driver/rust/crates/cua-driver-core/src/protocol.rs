@@ -385,7 +385,7 @@ Efficient loop:
 1. `list_windows` or `launch_app` for `pid` and `window_id`.
 2. Read narrowly: `get_window_state` with `query:"Save"` (or `max_elements`). Re-read with `since:"latest"` for only what changed. For just a picture, `include_accessibility_tree:false` (tokens stay valid).
 3. Act by `element_token` ({tree_kind}): row `[N]` is `<snapshot_id>:N`. Pixel `x,y` only for surfaces missing from the tree.
-4. Act through `run_actions({{steps:[{{tool,args}}],observe:true}})`, even for one step: it stops at the first failure and returns what changed, so no separate re-read.
+4. Act through `run_actions({{steps:[{{tool,args}}],observe:{{}}}})`, even for one step: it stops at the first failure and returns what changed, so no separate re-read.
 5. Verify at checkpoints, not after every action: `verify_state(pid, window_id, expect)`. `unknown` and `effect:"unverifiable"` are not success.
 
 Use the narrowest semantic route first: `set_window_frame` plus `list_windows` for geometry, typed browser tools for pages, clipboard tools for the clipboard. Stay in the background; `delivery_mode:"foreground"` only if refused or unverifiable.

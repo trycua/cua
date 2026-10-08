@@ -93,9 +93,13 @@ fn tools_list_schema_shape() {
                 "{name} top-level {unsupported} is rejected by Bedrock: {schema}"
             );
         }
-        for field in ["inputSchema", "outputSchema"] {
-            assert_string_enums(&tool[field], &format!("{name}.{field}"));
-        }
+        assert_string_enums(&tool["outputSchema"], &format!("{name}.outputSchema"));
+        let violations = cua_driver_testkit::vertex::input_schema_violations(schema);
+        assert!(
+            violations.is_empty(),
+            "{name} inputSchema is outside the Vertex AI Schema object (#4798):\n{}",
+            violations.join("\n")
+        );
     }
     assert!(
         undocumented.is_empty(),

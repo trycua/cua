@@ -106,7 +106,7 @@ mod tests {
             serde_json::from_value(json!({"session": "s", "effects": {"trail": false}})).unwrap();
         assert_eq!(
             serde_json::to_value(&input).unwrap()["effects"],
-            json!({"trail": false})
+            json!({"trail": "off"})
         );
     }
 }

@@ -43,6 +43,7 @@ Click a target pid. Prefer `element_token` (from get_window_state): it identifie
 | <span id="click--macos--pid"></span>`pid` | `integer` |  | Target process ID. Optional with element_token (it carries the pid). |
 | <span id="click--macos--scope"></span>`scope` | `"window" \| "desktop"` |  | Default "window". "desktop": x,y with no pid/window_id are true screen pixels from get_desktop_state. |
 | <span id="click--macos--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
+| <span id="click--macos--target"></span>`target` | `window target \| desktop target` |  | Exact capture/input target selected independently for each action. `display_id="primary"` is the portable desktop target in this release. Platforms that cannot address another display reject it explicitly rather than silently changing coordinate spaces. |
 | <span id="click--macos--window_id"></span>`window_id` | `integer` |  | Target window ID. Omit with element_token. |
 | <span id="click--macos--x"></span>`x` | `number` |  | X in screenshot pixels (get_window_state PNG, or get_desktop_state PNG for a desktop target). |
 | <span id="click--macos--y"></span>`y` | `number` |  | Y in screenshot pixels from the image selected by target. |
@@ -75,6 +76,11 @@ button: "left" (default), "right", or "middle". Defaults to left so the field is
 | <span id="click--linux--pid"></span>`pid` | `integer` |  | Target process ID. Required unless scope is "desktop" or element_token is supplied (the token carries the pid). |
 | <span id="click--linux--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Coordinate frame (default "window"). Pass "desktop" with x,y and no pid/window_id for a screen-absolute click in get_desktop_state coordinates. |
 | <span id="click--linux--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="click--linux--target"></span>`target` | `object` |  | Exact window (kind "window", with pid and window_id) or desktop (kind "desktop", with display_id). "primary" is the portable desktop target. |
+| <span id="click--linux--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
+| <span id="click--linux--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
+| <span id="click--linux--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
+| <span id="click--linux--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
 | <span id="click--linux--window_id"></span>`window_id` | `integer` |  | Window id from list_windows. Required with x/y or element_index; optional with element_token (the token carries it). |
 | <span id="click--linux--x"></span>`x` | `number` |  | Window-local pixel X of the target window's own get_window_state screenshot (0..screenshot_width). For get_desktop_state pixels pass scope:"desktop" (or coordinate_frame:"desktop"). |
 | <span id="click--linux--y"></span>`y` | `number` |  | Window-local pixel Y of the target window's own get_window_state screenshot (0..screenshot_height); see x. |
@@ -108,6 +114,7 @@ Windows-only convenience: `button: "left"|"right"|"middle"` switches the mouse b
 | <span id="click--windows--pid"></span>`pid` | `integer` |  | Target process ID for window scope. Optional with element_token (the token carries the pid). Omit with scope=desktop for screen-absolute coordinates from get_desktop_state. |
 | <span id="click--windows--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Coordinate frame (default "window"). Pass "desktop" with x,y and no pid/window_id for a screen-absolute click in get_desktop_state coordinates. |
 | <span id="click--windows--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="click--windows--target"></span>`target` | `window target \| desktop target` |  | Exact capture/input target selected independently for each action. `display_id="primary"` is the portable desktop target in this release. Platforms that cannot address another display reject it explicitly rather than silently changing coordinate spaces. |
 | <span id="click--windows--window_id"></span>`window_id` | `integer` |  | HWND of the target window. Omit when element_token is supplied (the token carries it). |
 | <span id="click--windows--x"></span>`x` | `number` |  | X in window-local screenshot pixels: same space as the PNG get_window_state returns. Must be provided together with y. |
 | <span id="click--windows--y"></span>`y` | `number` |  | Y in window-local screenshot pixels. Must be provided together with x. |
@@ -120,4 +127,3 @@ Windows-only convenience: `button: "left"|"right"|"middle"` switches the mouse b
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="click--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
-| <span id="click--target"></span>`target` | `window target \| desktop target` |  | Exact capture/input target selected independently for each action. `display_id="primary"` is the portable desktop target in this release. Platforms that cannot address another display reject it explicitly rather than silently changing coordinate spaces. |

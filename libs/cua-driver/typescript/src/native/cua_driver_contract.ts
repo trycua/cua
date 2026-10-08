@@ -1317,30 +1317,65 @@ const FfiConverterTypeClipboardWriteOutput = (() => {
 })();
 
 /**
- * Per-effect overrides for the agent cursor. Unset fields are omitted on the wire, so they
- * keep their current setting.
+ * One cursor effect: `on`, `off`, or `default` (the style's own setting).
+ */
+export enum CursorEffectSetting {
+    On,
+    Off,
+    Default
+}
+
+const FfiConverterTypeCursorEffectSetting = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = CursorEffectSetting;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return CursorEffectSetting.On;
+                case 2: return CursorEffectSetting.Off;
+                case 3: return CursorEffectSetting.Default;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case CursorEffectSetting.On: return ordinalConverter.write(1, into);
+                case CursorEffectSetting.Off: return ordinalConverter.write(2, into);
+                case CursorEffectSetting.Default: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+/**
+ * Per-effect overrides for the agent cursor. An omitted field keeps the current setting.
+ * `on` and `off` set it; `default` restores the style default.
  */
 export type CursorMotionEffects = {
     /**
      * Short fading trail behind the cursor.
      */
-    trail?: boolean,
+    trail?: CursorEffectSetting,
     /**
      * Soft glow around the cursor that grows with speed.
      */
-    glow?: boolean,
+    glow?: CursorEffectSetting,
     /**
      * Target glow when the `magnetic` style locks on.
      */
-    magnet?: boolean,
+    magnet?: CursorEffectSetting,
     /**
      * Ring that expands from the hotspot on click.
      */
-    ripple?: boolean,
+    ripple?: CursorEffectSetting,
     /**
      * Brief scale-down of the cursor on click.
      */
-    squish?: boolean
+    squish?: CursorEffectSetting
 }
 
 /**
@@ -1364,26 +1399,26 @@ const FfiConverterTypeCursorMotionEffects = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                trail: FfiConverterOptionalBoolean.read(from),
-                glow: FfiConverterOptionalBoolean.read(from),
-                magnet: FfiConverterOptionalBoolean.read(from),
-                ripple: FfiConverterOptionalBoolean.read(from),
-                squish: FfiConverterOptionalBoolean.read(from)
+                trail: FfiConverterOptionalTypeCursorEffectSetting.read(from),
+                glow: FfiConverterOptionalTypeCursorEffectSetting.read(from),
+                magnet: FfiConverterOptionalTypeCursorEffectSetting.read(from),
+                ripple: FfiConverterOptionalTypeCursorEffectSetting.read(from),
+                squish: FfiConverterOptionalTypeCursorEffectSetting.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
-            FfiConverterOptionalBoolean.write(value.trail, into);
-            FfiConverterOptionalBoolean.write(value.glow, into);
-            FfiConverterOptionalBoolean.write(value.magnet, into);
-            FfiConverterOptionalBoolean.write(value.ripple, into);
-            FfiConverterOptionalBoolean.write(value.squish, into);
+            FfiConverterOptionalTypeCursorEffectSetting.write(value.trail, into);
+            FfiConverterOptionalTypeCursorEffectSetting.write(value.glow, into);
+            FfiConverterOptionalTypeCursorEffectSetting.write(value.magnet, into);
+            FfiConverterOptionalTypeCursorEffectSetting.write(value.ripple, into);
+            FfiConverterOptionalTypeCursorEffectSetting.write(value.squish, into);
         }
         allocationSize(value: TypeName): number {
-            return FfiConverterOptionalBoolean.allocationSize(value.trail) +
-             FfiConverterOptionalBoolean.allocationSize(value.glow) +
-             FfiConverterOptionalBoolean.allocationSize(value.magnet) +
-             FfiConverterOptionalBoolean.allocationSize(value.ripple) +
-             FfiConverterOptionalBoolean.allocationSize(value.squish);
+            return FfiConverterOptionalTypeCursorEffectSetting.allocationSize(value.trail) +
+             FfiConverterOptionalTypeCursorEffectSetting.allocationSize(value.glow) +
+             FfiConverterOptionalTypeCursorEffectSetting.allocationSize(value.magnet) +
+             FfiConverterOptionalTypeCursorEffectSetting.allocationSize(value.ripple) +
+             FfiConverterOptionalTypeCursorEffectSetting.allocationSize(value.squish);
 
         }
     };
@@ -1634,8 +1669,8 @@ export type CursorMotionSelection = {
      */
     timing?: CursorMotionTiming,
     /**
-     * Turn single effects on or off. An omitted effect keeps its current setting; null
-     * restores the style's default.
+     * Turn single effects on or off. An omitted effect keeps its current setting;
+     * `"default"` restores the style's default.
      */
     effects?: CursorMotionEffects,
     /**
@@ -5263,8 +5298,8 @@ export type SetAgentCursorMotionInput = {
      */
     timing?: CursorMotionTiming,
     /**
-     * Turn single effects on or off. An omitted effect keeps its current setting; null
-     * restores the style's default.
+     * Turn single effects on or off. An omitted effect keeps its current setting;
+     * `"default"` restores the style's default.
      */
     effects?: CursorMotionEffects,
     /**
@@ -6526,8 +6561,8 @@ const FfiConverterOptionalTypeClickButton = new FfiConverterOptional(FfiConverte
 // FfiConverter for Array<string>
 const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 
-// FfiConverter for boolean | undefined
-const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
+// FfiConverter for CursorEffectSetting | undefined
+const FfiConverterOptionalTypeCursorEffectSetting = new FfiConverterOptional(FfiConverterTypeCursorEffectSetting);
 
 // FfiConverter for CursorMotionStyle | undefined
 const FfiConverterOptionalTypeCursorMotionStyle = new FfiConverterOptional(FfiConverterTypeCursorMotionStyle);
@@ -6552,6 +6587,9 @@ const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 
 // FfiConverter for Array<string> | undefined
 const FfiConverterOptionalSequenceString = new FfiConverterOptional(FfiConverterSequenceString);
+
+// FfiConverter for boolean | undefined
+const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
 
 // FfiConverter for CursorPointOutput | undefined
 const FfiConverterOptionalTypeCursorPointOutput = new FfiConverterOptional(FfiConverterTypeCursorPointOutput);
@@ -6685,6 +6723,7 @@ export default Object.freeze({
     FfiConverterTypeClipboardWriteInput,
     FfiConverterTypeClipboardWriteOutput,
     FfiConverterTypeCursorAction,
+    FfiConverterTypeCursorEffectSetting,
     FfiConverterTypeCursorMotionEffects,
     FfiConverterTypeCursorMotionEffectsOutput,
     FfiConverterTypeCursorMotionOutput,

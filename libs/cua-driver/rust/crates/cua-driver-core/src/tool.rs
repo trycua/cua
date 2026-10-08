@@ -256,7 +256,36 @@ pub(crate) fn normalize_argument_aliases(tool_name: &str, args: &mut Value) -> R
     normalize_zoom_args(tool_name, args);
     normalize_key_args(tool_name, args);
     normalize_menu_args(tool_name, args);
-    normalize_scroll_args(tool_name, args)
+    normalize_scroll_args(tool_name, args)?;
+    normalize_set_config_args(tool_name, args)
+}
+
+/// `{key, value}` is no longer advertised. Rewrite it onto the direct field
+/// before the closed schema rejects `key`.
+fn normalize_set_config_args(tool_name: &str, args: &mut Value) -> Result<(), String> {
+    if tool_name != "set_config" {
+        return Ok(());
+    }
+    let Some(object) = args.as_object_mut() else {
+        return Ok(());
+    };
+    if !object.contains_key("key") && !object.contains_key("value") {
+        return Ok(());
+    }
+    let key = object.get("key").and_then(Value::as_str).map(str::to_owned);
+    let value = object.get("value").cloned();
+    let (Some(key), Some(value)) = (key, value) else {
+        return Err(if object.contains_key("key") {
+            "set_config key requires an exact value"
+        } else {
+            "set_config value requires an exact key"
+        }
+        .into());
+    };
+    object.remove("key");
+    object.remove("value");
+    object.insert(key, value);
+    Ok(())
 }
 
 /// `invoke_menu` takes `path` as a list of labels. Models also send
@@ -1843,6 +1872,22 @@ impl ToolRegistry {
             );
         }
 
+        // Alias rewrite turns `{key: capture_scope}` into a field this schema
+        // no longer advertises. Refuse it before that looks like an unknown argument.
+        if resolved_name == "set_config"
+            && (args.get("capture_scope").is_some()
+                || args.get("key").and_then(Value::as_str) == Some("capture_scope"))
+        {
+            return ToolResult::error(
+                "config key 'capture_scope' is retired; select a window or desktop target on each action",
+            )
+            .with_structured(serde_json::json!({
+                "code": "config_key_retired",
+                "key": "capture_scope",
+                "replacement": "action.target",
+            }));
+        }
+
         if let Some(detail) = unknown_argument {
             return protected_refusal(
                 "invalid_arguments",
@@ -2943,20 +2988,6 @@ impl ToolRegistry {
         context: &crate::session_authorization::EffectiveAuthorizationContext,
         lifecycle_session: Option<&str>,
     ) -> Result<(), ToolResult> {
-        if args.get("capture_scope").is_some()
-            || args.get("key").and_then(Value::as_str) == Some("capture_scope")
-        {
-            return Err(
-                ToolResult::error(
-                    "config key 'capture_scope' is retired; select a window or desktop target on each action",
-                )
-                .with_structured(serde_json::json!({
-                    "code": "config_key_retired",
-                    "key": "capture_scope",
-                    "replacement": "action.target",
-                })),
-            );
-        }
         if context.mode() == crate::authorization::PermissionMode::Unrestricted
             && context.capability_manifest().is_none()
         {
@@ -2983,23 +3014,6 @@ impl ToolRegistry {
         }
 
         let mut exact = serde_json::Map::new();
-        if let Some(key) = args.get("key").and_then(Value::as_str) {
-            if matches!(key, "key" | "value" | "session" | "_session_id")
-                || !properties.contains_key(key)
-            {
-                return Err(protected_scope_refusal(&format!(
-                    "set_config key '{key}' is not present in the concrete tool schema"
-                )));
-            }
-            let value = args
-                .get("value")
-                .ok_or_else(|| protected_scope_refusal("set_config key requires an exact value"))?;
-            exact.insert(key.to_owned(), value.clone());
-        } else if args.get("value").is_some() {
-            return Err(protected_scope_refusal(
-                "set_config value requires an exact key",
-            ));
-        }
         for (key, value) in object {
             if matches!(key.as_str(), "session" | "key" | "value") || key.starts_with('_') {
                 continue;
@@ -7096,6 +7110,55 @@ mod argument_shape_tests {
         let mut click = json!({"dy": 4});
         normalize_argument_aliases("click", &mut click).unwrap();
         assert_eq!(click, json!({"dy": 4}));
+    }
+
+    #[test]
+    fn set_config_key_value_alias_matches_the_direct_field_for_every_key() {
+        for key in [
+            "capture_mode",
+            "max_image_dimension",
+            "experimental_pip",
+            "experimental_pip_geometry",
+            "cursor.motion",
+            "cursor.motion.style",
+            "cursor.motion.timing",
+            "cursor.motion.effects.trail",
+            "cursor.motion.effects.glow",
+            "cursor.motion.effects.magnet",
+            "cursor.motion.effects.ripple",
+            "cursor.motion.effects.squish",
+        ] {
+            let mut aliased = json!({"key": key, "value": "default"});
+            normalize_argument_aliases("set_config", &mut aliased).unwrap();
+            assert_eq!(aliased, json!({key: "default"}), "{key}");
+        }
+        let mut bare_key = json!({"key": "capture_mode"});
+        let error = normalize_argument_aliases("set_config", &mut bare_key).unwrap_err();
+        assert!(error.contains("exact value"), "{error}");
+        let mut bare_value = json!({"value": 1});
+        let error = normalize_argument_aliases("set_config", &mut bare_value).unwrap_err();
+        assert!(error.contains("exact key"), "{error}");
+
+        let mut unknown = json!({"key": "not_a_key", "value": 1});
+        normalize_argument_aliases("set_config", &mut unknown).unwrap();
+        let def = ToolDef {
+            name: "set_config".into(),
+            description: String::new(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"max_image_dimension": {"type": "integer"}},
+                "additionalProperties": false
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        };
+        let detail = unknown_argument(&def, &unknown).unwrap();
+        assert!(detail.contains("not_a_key"), "{detail}");
+        let mut retired = json!({"key": "capture_scope", "value": "desktop"});
+        normalize_argument_aliases("set_config", &mut retired).unwrap();
+        assert_eq!(retired, json!({"capture_scope": "desktop"}));
     }
 
     #[test]

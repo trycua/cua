@@ -59,7 +59,16 @@ async function load() {
     return Object.keys(fields).length ? ctor.new(camelKeys(fields)) : ctor.new()
   }
   const effects = (o) =>
-    Object.fromEntries(EFFECTS.map((k) => [k, o[k] === null ? undefined : o[k]]))
+    Object.fromEntries(
+      EFFECTS.map((k) => [
+        k,
+        o[k] === null || o[k] === undefined
+          ? undefined
+          : o[k]
+            ? m.CursorEffectSetting.On
+            : m.CursorEffectSetting.Off,
+      ]),
+    )
   const params = (p) => ({
     style: m.CursorMotionStyle[pascal(p.style)],
     timing: m.CursorMotionTiming[pascal(p.timing)],

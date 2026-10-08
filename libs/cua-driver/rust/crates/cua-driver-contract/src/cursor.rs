@@ -6,6 +6,7 @@
 //! Tool implementations emit these semantics as best-effort visual telemetry.
 //! They never affect authorization, dispatch, input delivery, or tool results.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -267,8 +268,61 @@ impl CursorMotionTiming {
     }
 }
 
-/// Per-effect overrides for the agent cursor. Unset fields are omitted on the wire, so they
-/// keep their current setting.
+/// One cursor effect: `on`, `off`, or `default` (the style's own setting).
+#[derive(
+    Debug, Clone, Copy, Default, Serialize, schemars::JsonSchema, PartialEq, Eq, uniffi::Enum,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum CursorEffectSetting {
+    On,
+    Off,
+    #[default]
+    Default,
+}
+
+impl CursorEffectSetting {
+    /// Advertised spellings, plus unadvertised bool / `"true"` / `"false"` / null.
+    /// Null is `Default` here; a typed `Option` still treats JSON null as absent.
+    pub fn from_json(value: &Value) -> Option<Self> {
+        Some(match value {
+            Value::Null => Self::Default,
+            Value::Bool(true) => Self::On,
+            Value::Bool(false) => Self::Off,
+            Value::String(text) => match text.as_str() {
+                "on" | "true" => Self::On,
+                "off" | "false" => Self::Off,
+                "default" => Self::Default,
+                _ => return None,
+            },
+            _ => return None,
+        })
+    }
+
+    /// `None` clears the override back to the style default.
+    pub fn override_value(self) -> Option<bool> {
+        match self {
+            Self::On => Some(true),
+            Self::Off => Some(false),
+            Self::Default => None,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for CursorEffectSetting {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        Self::from_json(&value).ok_or_else(|| {
+            serde::de::Error::custom(format!("expected on, off or default, got {value}"))
+        })
+    }
+}
+
+fn cursor_effect_setting_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    CursorEffectSetting::json_schema(generator)
+}
+
+/// Per-effect overrides for the agent cursor. An omitted field keeps the current setting.
+/// `on` and `off` set it; `default` restores the style default.
 #[derive(
     Debug,
     Clone,
@@ -285,19 +339,24 @@ impl CursorMotionTiming {
 pub struct CursorMotionEffects {
     /// Short fading trail behind the cursor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trail: Option<bool>,
+    #[schemars(schema_with = "cursor_effect_setting_schema")]
+    pub trail: Option<CursorEffectSetting>,
     /// Soft glow around the cursor that grows with speed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub glow: Option<bool>,
+    #[schemars(schema_with = "cursor_effect_setting_schema")]
+    pub glow: Option<CursorEffectSetting>,
     /// Target glow when the `magnetic` style locks on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub magnet: Option<bool>,
+    #[schemars(schema_with = "cursor_effect_setting_schema")]
+    pub magnet: Option<CursorEffectSetting>,
     /// Ring that expands from the hotspot on click.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ripple: Option<bool>,
+    #[schemars(schema_with = "cursor_effect_setting_schema")]
+    pub ripple: Option<CursorEffectSetting>,
     /// Brief scale-down of the cursor on click.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub squish: Option<bool>,
+    #[schemars(schema_with = "cursor_effect_setting_schema")]
+    pub squish: Option<CursorEffectSetting>,
 }
 
 /// Effects in use after applying overrides to the style's defaults.
@@ -519,6 +578,55 @@ mod tests {
         assert_eq!(
             classify_cursor_semantics("set_agent_cursor_theme", &json!({})),
             None
+        );
+    }
+
+    #[test]
+    fn effect_setting_accepts_advertised_and_legacy_spellings() {
+        assert_eq!(
+            CursorEffectSetting::from_json(&json!("on")),
+            Some(CursorEffectSetting::On)
+        );
+        assert_eq!(
+            CursorEffectSetting::from_json(&json!("off")),
+            Some(CursorEffectSetting::Off)
+        );
+        assert_eq!(
+            CursorEffectSetting::from_json(&json!("default")),
+            Some(CursorEffectSetting::Default)
+        );
+        assert_eq!(
+            CursorEffectSetting::from_json(&json!(true)),
+            Some(CursorEffectSetting::On)
+        );
+        assert_eq!(
+            CursorEffectSetting::from_json(&json!("false")),
+            Some(CursorEffectSetting::Off)
+        );
+        assert_eq!(
+            CursorEffectSetting::from_json(&json!(null)),
+            Some(CursorEffectSetting::Default)
+        );
+        assert_eq!(CursorEffectSetting::On.override_value(), Some(true));
+        assert_eq!(CursorEffectSetting::Off.override_value(), Some(false));
+        assert_eq!(CursorEffectSetting::Default.override_value(), None);
+
+        let set: CursorMotionEffects =
+            serde_json::from_value(json!({"trail": "off", "ripple": "default", "glow": true}))
+                .unwrap();
+        assert_eq!(set.trail, Some(CursorEffectSetting::Off));
+        assert_eq!(set.ripple, Some(CursorEffectSetting::Default));
+        assert_eq!(set.glow, Some(CursorEffectSetting::On));
+        assert!(set.magnet.is_none());
+        let kept: CursorMotionEffects = serde_json::from_value(json!({"trail": null})).unwrap();
+        assert!(kept.trail.is_none());
+        assert_eq!(
+            serde_json::to_value(CursorMotionEffects {
+                trail: Some(CursorEffectSetting::On),
+                ..CursorMotionEffects::default()
+            })
+            .unwrap()["trail"],
+            "on"
         );
     }
 }

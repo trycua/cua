@@ -52,7 +52,16 @@ class CursorMotionGoldenTests(unittest.TestCase):
         return n.CursorMotionParams(
             style=getattr(c.CursorMotionStyle, p["style"].upper()),
             timing=getattr(c.CursorMotionTiming, p["timing"].upper()),
-            effects=c.CursorMotionEffects(**{k: p["effects"][k] for k in self.effect_names}),
+            effects=c.CursorMotionEffects(
+                **{
+                    k: None
+                    if p["effects"][k] is None
+                    else c.CursorEffectSetting.ON
+                    if p["effects"][k]
+                    else c.CursorEffectSetting.OFF
+                    for k in self.effect_names
+                }
+            ),
             start_handle=p["start_handle"],
             end_handle=p["end_handle"],
             arc_size=p["arc_size"],

@@ -213,9 +213,9 @@ impl Tool for RunActionsTool {
                 Example (fill a form, submit, confirm the dialog, check the result):\n\
                 {\"steps\":[\
                 {\"set_value\":{\"app\":\"Safari\",\"role\":\"textfield\",\"name\":\"Email\",\"value\":\"ada@example.com\"}},\
-                {\"click\":{\"role\":\"button\",\"name\":\"Submit\"},\"expect\":{\"role\":\"button\",\"name\":\"Confirm\"}},\
+                {\"click\":{\"role\":\"button\",\"name\":\"Submit\"},\"expect\":[{\"role\":\"button\",\"name\":\"Confirm\"}]},\
                 {\"click\":{\"role\":\"button\",\"name\":\"Confirm\"},\"expect\":[{\"name\":\"Confirm\",\"gone\":true},{\"text\":\"Thanks\"}]}\
-                ],\"observe\":true}"
+                ],\"observe\":{}}"
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -227,30 +227,16 @@ impl Tool for RunActionsTool {
                         "maxItems": MAX_STEPS,
                         "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
                         "items": {
-                            "anyOf": [
-                                {
-                                    "type": "object",
-                                    "required": ["tool"],
-                                    "properties": {
-                                        "tool": { "type": "string", "enum": BATCHABLE_TOOLS, "description": "Action tool to run." },
-                                        "args": { "type": "object", "description": "Arguments for that tool, as in a direct call, optionally with role/name/nth/app/window to name the target instead of pid/window_id/element_token." },
-                                        "wait_for": { "type": "object", "description": "Check that must hold before the action: {role?, name?, text?, gone?, app?, window?, timeout_ms?}. Default timeout 5000 ms." },
-                                        "expect": { "type": ["object", "array"], "description": "Check (or up to 4) that must hold after the action: {role?, name?, text?, gone?, value?, value_contains?, enabled?, selected?, app?, window?, timeout_ms?}. Default timeout 2000 ms." },
-                                        "timeout_ms": { "type": "integer", "minimum": 0, "maximum": 10000, "description": "How long a named target may take to appear. Default 3000." }
-                                    },
-                                    "additionalProperties": false
-                                },
-                                {
-                                    "type": "object",
-                                    "description": "Shorthand {<tool>: args} with optional wait_for / expect / timeout_ms, or a step that is only a wait_for or expect check.",
-                                    "properties": {
-                                        "wait_for": { "type": "object" },
-                                        "expect": { "type": ["object", "array"] },
-                                        "timeout_ms": { "type": "integer", "minimum": 0, "maximum": 10000 }
-                                    },
-                                    "additionalProperties": true
-                                }
-                            ]
+                            "type": "object",
+                            "description": "Each step is {tool, args} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
+                            "properties": {
+                                "tool": { "type": "string", "enum": BATCHABLE_TOOLS, "description": "Action tool to run." },
+                                "args": { "type": "object", "description": "Arguments for that tool, as in a direct call, optionally with role/name/nth/app/window to name the target instead of pid/window_id/element_token." },
+                                "wait_for": { "type": "object", "description": "Check that must hold before the action: {role?, name?, text?, gone?, app?, window?, timeout_ms?}. Default timeout 5000 ms." },
+                                "expect": { "type": "array", "maxItems": 4, "items": {"type": "object"}, "description": "Up to 4 checks that must hold after the action: {role?, name?, text?, gone?, value?, value_contains?, enabled?, selected?, app?, window?, timeout_ms?}. Default timeout 2000 ms." },
+                                "timeout_ms": { "type": "integer", "minimum": 0, "maximum": 10000, "description": "How long a named target may take to appear. Default 3000." }
+                            },
+                            "additionalProperties": true
                         }
                     },
                     "delay_ms": {
@@ -276,8 +262,8 @@ impl Tool for RunActionsTool {
                         "description": "Default window title substring for steps that name no window."
                     },
                     "observe": {
-                        "type": ["object", "boolean"],
-                        "description": "Optional end-of-batch observation: `true`, or arguments for ONE get_window_state call. `pid` and `window_id` default to those of the last step that names both. Defaults to since=\"latest\" (only what changed since your last read of that window with the same query/max_elements/max_depth; a full read when there is none), include_screenshot=false and max_elements=250; pass include_screenshot=true to see the window, or since=null for a full read. Omit to read nothing."
+                        "type": "object",
+                        "description": "Optional end-of-batch observation: arguments for ONE get_window_state call. `pid` and `window_id` default to those of the last step that names both. Defaults to since=\"latest\" (only what changed since your last read of that window with the same query/max_elements/max_depth; a full read when there is none), include_screenshot=false and max_elements=250; pass include_screenshot=true to see the window, or since=null for a full read. Omit to read nothing. {} observes the last window."
                     }
                 },
                 "additionalProperties": false
@@ -457,6 +443,11 @@ impl Plan {
         let mut raw_steps = raw_steps.as_slice();
         let mut observe_value = match object.get("observe") {
             None | Some(Value::Null) | Some(Value::Bool(false)) => None,
+            // Published schema is an object; bool and the old string form stay accepted.
+            Some(Value::String(text)) if text.eq_ignore_ascii_case("false") => None,
+            Some(Value::String(text)) if text.eq_ignore_ascii_case("true") => {
+                Some(Value::Bool(true))
+            }
             Some(value) => Some(value.clone()),
         };
         let mut trailing_observe: Option<Value> = None;
@@ -1496,6 +1487,10 @@ fn parse_action(
         Some(value @ Value::Object(_)) => value.clone(),
         Some(_) => return Err(PlanError::step(index, "`args` must be an object")),
     };
+    // `target: null` is omit. The target normalizer rejects a null it still sees.
+    if let Some(object) = args.as_object_mut() {
+        object.retain(|_, value| !value.is_null());
+    }
     let name = TOOL_ALIASES
         .iter()
         .find(|(alias, _)| *alias == name)
@@ -1732,7 +1727,13 @@ fn validate_against_schema(
     let schema = crate::tool::advertised_runtime_input_schema(&def.name, &def.input_schema);
     let validator = jsonschema::validator_for(&schema)
         .map_err(|error| format!("input schema is unusable: {error}"))?;
-    validator.validate(args).map_err(|error| {
+    // `target: null` is still accepted at runtime; the advertised schema is a
+    // single object type, so drop top-level nulls before the probe.
+    let mut probe = args.clone();
+    if let Some(object) = probe.as_object_mut() {
+        object.retain(|_, value| !value.is_null());
+    }
+    validator.validate(&probe).map_err(|error| {
         let path = error.instance_path().to_string();
         if path.is_empty() {
             format!("invalid arguments: {error}")

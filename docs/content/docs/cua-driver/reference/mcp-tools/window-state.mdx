@@ -193,14 +193,51 @@ For the full UIA subtree of a single window (with interactive element indices yo
 
 ## `verify_state`
 
+Effect: read-only. Platforms: macOS, Linux, Windows.
+
+<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
+<Tab value="macOS">
+
 Deterministically verify bounded predicates against one exact window. The driver evaluates structured window/accessibility state and may return the final screenshot as uninterpreted visual evidence for a multimodal caller. Predicate results are satisfied, unsatisfied, or unknown; unknown never implies success. Accessibility projections are conservative: absence remains unknown unless the observed search domain is proven exhaustive.
 
-Effect: read-only. Platforms: macOS, Linux, Windows.
+**macOS parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="verify_state--expect"></span>`expect` | `object[]` | required | One to eight predicates, combined with logical AND. Items: 1 to 8. |
-| <span id="verify_state--include_screenshot"></span>`include_screenshot` | `boolean` |  | Return the final window screenshot as image content for a multimodal caller. The driver does not interpret that image. |
+| <span id="verify_state--macos--expect"></span>`expect` | `object[]` | required | One to eight predicates, combined with logical AND. Items: 1 to 8. |
+| <span id="verify_state--macos--include_screenshot"></span>`include_screenshot` | `boolean` |  | Return the final window screenshot as image content for a multimodal caller. The driver does not interpret that image. |
+
+</Tab>
+<Tab value="Linux">
+
+Deterministically verify bounded predicates against one exact window. The driver evaluates structured window/accessibility state and may return the final screenshot as uninterpreted visual evidence for a multimodal caller. Predicate results are satisfied, unsatisfied, or unknown; unknown never implies success. Accessibility projections are conservative: absence remains unknown unless the observed search domain is proven exhaustive.
+
+**Linux parameters**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="verify_state--linux--expect"></span>`expect` | `object[]` | required | One to eight predicates, combined with logical AND. Items: 1 to 8. |
+| <span id="verify_state--linux--include_screenshot"></span>`include_screenshot` | `boolean` |  | Return the final window screenshot as image content for a multimodal caller. The driver does not interpret that image. |
+
+</Tab>
+<Tab value="Windows">
+
+Deterministically verify bounded predicates against one exact window. The driver evaluates structured window/accessibility state and may return the final screenshot as uninterpreted visual evidence for a multimodal caller. Predicate results are satisfied, unsatisfied, or unknown; unknown never implies success. Accessibility projections are conservative: absence remains unknown unless the observed search domain is proven exhaustive.
+
+**Windows parameters**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="verify_state--windows--expect"></span>`expect` | `object[]` | required | One to eight predicates, combined with logical AND. Items: 1 to 8. |
+| <span id="verify_state--windows--include_screenshot"></span>`include_screenshot` | `boolean` |  | Return the final window screenshot as image content for a multimodal caller. The driver does not interpret that image. |
+
+</Tab>
+</Tabs>
+
+**Parameters on every platform**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
 | <span id="verify_state--pid"></span>`pid` | `integer` | required | Exact process whose window may be observed. Minimum: 1. |
 | <span id="verify_state--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. This field never selects capture modality or authorization. |
 | <span id="verify_state--stable_samples"></span>`stable_samples` | `integer` | `2` | Consecutive satisfied samples required before returning success. Range: 1 to 5. |
@@ -215,17 +252,58 @@ Effect: read-only. Platforms: macOS, Linux, Windows.
 
 ## `parse_visual_regions`
 
+Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
+
+<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
+<Tab value="macOS">
+
 Parse one immutable registered capture into model-neutral text and icon regions.
 
-Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
+**macOS parameters**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="parse_visual_regions--macos--options"></span>`options` | `object` | `{}` | Optional, model-neutral controls for one bounded parse. |
+| <span id="parse_visual_regions--macos--options-kinds"></span>`options.kinds` | `"text" \| "icon"[]` |  | Region kinds to return (`text`, `icon`). Omit for all kinds. |
+| <span id="parse_visual_regions--macos--options-max_regions"></span>`options.max_regions` | `integer` |  | Return at most this many regions. Minimum: 1. |
+| <span id="parse_visual_regions--macos--options-min_confidence"></span>`options.min_confidence` | `number` |  | Drop regions below this confidence (0 to 1). Range: 0 to 1. |
+
+</Tab>
+<Tab value="Linux">
+
+Parse one immutable registered capture into model-neutral text and icon regions.
+
+**Linux parameters**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="parse_visual_regions--linux--options"></span>`options` | `object` | `{}` | Optional, model-neutral controls for one bounded parse. |
+| <span id="parse_visual_regions--linux--options-kinds"></span>`options.kinds` | `"text" \| "icon"[]` |  | Region kinds to return (`text`, `icon`). Omit for all kinds. Items: 1 to 2. |
+| <span id="parse_visual_regions--linux--options-max_regions"></span>`options.max_regions` | `integer` |  | Return at most this many regions. Minimum: 1. |
+| <span id="parse_visual_regions--linux--options-min_confidence"></span>`options.min_confidence` | `number` |  | Drop regions below this confidence (0 to 1). Range: 0 to 1. |
+
+</Tab>
+<Tab value="Windows">
+
+Parse one immutable registered capture into model-neutral text and icon regions.
+
+**Windows parameters**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="parse_visual_regions--windows--options"></span>`options` | `object` | `{}` | Optional, model-neutral controls for one bounded parse. |
+| <span id="parse_visual_regions--windows--options-kinds"></span>`options.kinds` | `"text" \| "icon"[]` |  | Region kinds to return (`text`, `icon`). Omit for all kinds. |
+| <span id="parse_visual_regions--windows--options-max_regions"></span>`options.max_regions` | `integer` |  | Return at most this many regions. Minimum: 1. |
+| <span id="parse_visual_regions--windows--options-min_confidence"></span>`options.min_confidence` | `number` |  | Drop regions below this confidence (0 to 1). Range: 0 to 1. |
+
+</Tab>
+</Tabs>
+
+**Parameters on every platform**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="parse_visual_regions--capture_id"></span>`capture_id` | `string` | required | `capture_id` of a screenshot returned by get_window_state or get_desktop_state. |
-| <span id="parse_visual_regions--options"></span>`options` | `object` | `{}` | Optional, model-neutral controls for one bounded parse. |
-| <span id="parse_visual_regions--options-kinds"></span>`options.kinds` | `"text" \| "icon"[]` |  | Region kinds to return (`text`, `icon`). Omit for all kinds. |
-| <span id="parse_visual_regions--options-max_regions"></span>`options.max_regions` | `integer` |  | Return at most this many regions. Minimum: 1. |
-| <span id="parse_visual_regions--options-min_confidence"></span>`options.min_confidence` | `number` |  | Drop regions below this confidence (0 to 1). Range: 0 to 1. |
 | <span id="parse_visual_regions--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 
 **Example arguments**

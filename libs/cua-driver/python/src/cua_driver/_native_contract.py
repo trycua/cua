@@ -2429,11 +2429,62 @@ class _UniffiFfiConverterTypeClipboardWriteOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.privacy_sensitive, buf)
         _UniffiFfiConverterBoolean.write(value.content_redacted_from_telemetry, buf)
 
-class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
+
+
+
+
+
+class CursorEffectSetting(enum.Enum):
+    """
+    One cursor effect: `on`, `off`, or `default` (the style's own setting).
+"""
+
+    ON = 0
+
+    OFF = 1
+
+    DEFAULT = 2
+
+
+
+class _UniffiFfiConverterTypeCursorEffectSetting(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return CursorEffectSetting.ON
+        if variant == 2:
+            return CursorEffectSetting.OFF
+        if variant == 3:
+            return CursorEffectSetting.DEFAULT
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == CursorEffectSetting.ON:
+            return
+        if value == CursorEffectSetting.OFF:
+            return
+        if value == CursorEffectSetting.DEFAULT:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == CursorEffectSetting.ON:
+            buf.write_i32(1)
+        if value == CursorEffectSetting.OFF:
+            buf.write_i32(2)
+        if value == CursorEffectSetting.DEFAULT:
+            buf.write_i32(3)
+
+
+
+class _UniffiFfiConverterOptionalTypeCursorEffectSetting(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
         if value is not None:
-            _UniffiFfiConverterBoolean.check_lower(value)
+            _UniffiFfiConverterTypeCursorEffectSetting.check_lower(value)
 
     @classmethod
     def write(cls, value, buf):
@@ -2442,7 +2493,7 @@ class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
             return
 
         buf.write_u8(1)
-        _UniffiFfiConverterBoolean.write(value, buf)
+        _UniffiFfiConverterTypeCursorEffectSetting.write(value, buf)
 
     @classmethod
     def read(cls, buf):
@@ -2450,17 +2501,17 @@ class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
         if flag == 0:
             return None
         elif flag == 1:
-            return _UniffiFfiConverterBoolean.read(buf)
+            return _UniffiFfiConverterTypeCursorEffectSetting.read(buf)
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
 @dataclass
 class CursorMotionEffects:
     """
-    Per-effect overrides for the agent cursor. Unset fields are omitted on the wire, so they
-    keep their current setting.
+    Per-effect overrides for the agent cursor. An omitted field keeps the current setting.
+    `on` and `off` set it; `default` restores the style default.
 """
-    def __init__(self, *, trail:typing.Optional[bool], glow:typing.Optional[bool], magnet:typing.Optional[bool], ripple:typing.Optional[bool], squish:typing.Optional[bool]):
+    def __init__(self, *, trail:typing.Optional[CursorEffectSetting], glow:typing.Optional[CursorEffectSetting], magnet:typing.Optional[CursorEffectSetting], ripple:typing.Optional[CursorEffectSetting], squish:typing.Optional[CursorEffectSetting]):
         self.trail = trail
         self.glow = glow
         self.magnet = magnet
@@ -2489,28 +2540,28 @@ class _UniffiFfiConverterTypeCursorMotionEffects(_UniffiConverterRustBuffer):
     @staticmethod
     def read(buf):
         return CursorMotionEffects(
-            trail=_UniffiFfiConverterOptionalBoolean.read(buf),
-            glow=_UniffiFfiConverterOptionalBoolean.read(buf),
-            magnet=_UniffiFfiConverterOptionalBoolean.read(buf),
-            ripple=_UniffiFfiConverterOptionalBoolean.read(buf),
-            squish=_UniffiFfiConverterOptionalBoolean.read(buf),
+            trail=_UniffiFfiConverterOptionalTypeCursorEffectSetting.read(buf),
+            glow=_UniffiFfiConverterOptionalTypeCursorEffectSetting.read(buf),
+            magnet=_UniffiFfiConverterOptionalTypeCursorEffectSetting.read(buf),
+            ripple=_UniffiFfiConverterOptionalTypeCursorEffectSetting.read(buf),
+            squish=_UniffiFfiConverterOptionalTypeCursorEffectSetting.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
-        _UniffiFfiConverterOptionalBoolean.check_lower(value.trail)
-        _UniffiFfiConverterOptionalBoolean.check_lower(value.glow)
-        _UniffiFfiConverterOptionalBoolean.check_lower(value.magnet)
-        _UniffiFfiConverterOptionalBoolean.check_lower(value.ripple)
-        _UniffiFfiConverterOptionalBoolean.check_lower(value.squish)
+        _UniffiFfiConverterOptionalTypeCursorEffectSetting.check_lower(value.trail)
+        _UniffiFfiConverterOptionalTypeCursorEffectSetting.check_lower(value.glow)
+        _UniffiFfiConverterOptionalTypeCursorEffectSetting.check_lower(value.magnet)
+        _UniffiFfiConverterOptionalTypeCursorEffectSetting.check_lower(value.ripple)
+        _UniffiFfiConverterOptionalTypeCursorEffectSetting.check_lower(value.squish)
 
     @staticmethod
     def write(value, buf):
-        _UniffiFfiConverterOptionalBoolean.write(value.trail, buf)
-        _UniffiFfiConverterOptionalBoolean.write(value.glow, buf)
-        _UniffiFfiConverterOptionalBoolean.write(value.magnet, buf)
-        _UniffiFfiConverterOptionalBoolean.write(value.ripple, buf)
-        _UniffiFfiConverterOptionalBoolean.write(value.squish, buf)
+        _UniffiFfiConverterOptionalTypeCursorEffectSetting.write(value.trail, buf)
+        _UniffiFfiConverterOptionalTypeCursorEffectSetting.write(value.glow, buf)
+        _UniffiFfiConverterOptionalTypeCursorEffectSetting.write(value.magnet, buf)
+        _UniffiFfiConverterOptionalTypeCursorEffectSetting.write(value.ripple, buf)
+        _UniffiFfiConverterOptionalTypeCursorEffectSetting.write(value.squish, buf)
 
 @dataclass
 class CursorMotionEffectsOutput:
@@ -3645,6 +3696,31 @@ class _UniffiFfiConverterTypeElementSelector(_UniffiConverterRustBuffer):
     def write(value, buf):
         _UniffiFfiConverterOptionalString.write(value.role, buf)
         _UniffiFfiConverterOptionalString.write(value.label_contains, buf)
+
+class _UniffiFfiConverterOptionalBoolean(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterBoolean.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterBoolean.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterBoolean.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
 
 @dataclass
 class ElementPredicate:
@@ -8500,6 +8576,7 @@ __all__ = [
     "ClickPosition",
     "InputDeliveryMode",
     "ClickButton",
+    "CursorEffectSetting",
     "CursorMotionStyle",
     "CursorMotionTiming",
     "CursorReducedMotion",

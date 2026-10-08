@@ -68,15 +68,62 @@ pub fn provider_of(env: &str) -> &'static str {
 /// Names a stored key may not take: they would change how a run's shell,
 /// loader or tools behave rather than give it a credential.
 const REFUSED: &[&str] = &[
-    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "OLDPWD", "TMPDIR", "TMP", "TEMP", "IFS",
-    "ENV", "BASH_ENV", "CDPATH", "TERM", "LANG", "LANGUAGE", "DISPLAY", "EDITOR", "VISUAL",
-    "PAGER", "PS1", "PS2", "PS4", "PROMPT_COMMAND", "SSH_AUTH_SOCK", "NODE_OPTIONS", "NODE_PATH",
-    "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PERL5OPT", "PERL5LIB", "RUBYOPT", "RUBYLIB",
-    "JAVA_TOOL_OPTIONS", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE",
-    "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "PWD",
+    "OLDPWD",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "IFS",
+    "ENV",
+    "BASH_ENV",
+    "CDPATH",
+    "TERM",
+    "LANG",
+    "LANGUAGE",
+    "DISPLAY",
+    "EDITOR",
+    "VISUAL",
+    "PAGER",
+    "PS1",
+    "PS2",
+    "PS4",
+    "PROMPT_COMMAND",
+    "SSH_AUTH_SOCK",
+    "NODE_OPTIONS",
+    "NODE_PATH",
+    "PYTHONPATH",
+    "PYTHONHOME",
+    "PYTHONSTARTUP",
+    "PERL5OPT",
+    "PERL5LIB",
+    "RUBYOPT",
+    "RUBYLIB",
+    "JAVA_TOOL_OPTIONS",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
 ];
 const REFUSED_PREFIXES: &[&str] = &[
-    "DYLD_", "LD_", "CUA_", "BASH_FUNC_", "LC_", "XDG_", "GIT_", "NPM_CONFIG_", "MALLOC",
+    "DYLD_",
+    "LD_",
+    "CUA_",
+    "BASH_FUNC_",
+    "LC_",
+    "XDG_",
+    "GIT_",
+    "NPM_CONFIG_",
+    "MALLOC",
 ];
 
 /// Checks a name for an Other key: an env identifier (`A-Z`, `a-z`, `0-9`,
@@ -86,9 +133,7 @@ const REFUSED_PREFIXES: &[&str] = &[
 pub fn validate_name(name: &str) -> Result<()> {
     let ident = !name.is_empty()
         && name.len() <= 128
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
         && !name.as_bytes()[0].is_ascii_digit();
     if !ident {
         return Err(Error::InvalidArgument(format!(
@@ -96,8 +141,7 @@ pub fn validate_name(name: &str) -> Result<()> {
         )));
     }
     let upper = name.to_ascii_uppercase();
-    if REFUSED.contains(&upper.as_str()) || REFUSED_PREFIXES.iter().any(|p| upper.starts_with(p))
-    {
+    if REFUSED.contains(&upper.as_str()) || REFUSED_PREFIXES.iter().any(|p| upper.starts_with(p)) {
         return Err(Error::InvalidArgument(format!(
             "{name} can't be used for an agent key: it changes how programs run"
         )));
@@ -445,7 +489,11 @@ struct RemoveArgs {
 
 /// Runs one of [`APP_METHODS`] against `keys`; every answer is the
 /// [`KeysReport`] after the change. `None` for any other name.
-pub fn app_call(keys: &AgentKeys, name: &str, args: serde_json::Value) -> Option<Result<KeysReport>> {
+pub fn app_call(
+    keys: &AgentKeys,
+    name: &str,
+    args: serde_json::Value,
+) -> Option<Result<KeysReport>> {
     let args = if args.is_null() {
         serde_json::json!({})
     } else {
@@ -516,7 +564,8 @@ mod tests {
         keys.set("other", Some("MISTRAL_API_KEY"), "mk-123456789012")
             .unwrap();
         // Replacing keeps one entry.
-        keys.set("anthropic", None, "sk-ant-test-0000-wxyz").unwrap();
+        keys.set("anthropic", None, "sk-ant-test-0000-wxyz")
+            .unwrap();
         let listed = keys.list().unwrap();
         assert_eq!(listed.len(), 2);
         let report = serde_json::to_string(&keys.report().unwrap()).unwrap();
@@ -579,8 +628,21 @@ mod tests {
             validate_name(ok).unwrap();
         }
         for bad in [
-            "", "1KEY", "MY-KEY", "MY KEY", "KEY=1", "PATH", "path", "HOME", "DYLD_INSERT_LIBRARIES",
-            "LD_PRELOAD", "CUA_HOME", "NODE_OPTIONS", "BASH_ENV", "BASH_FUNC_x%%", "SHELL",
+            "",
+            "1KEY",
+            "MY-KEY",
+            "MY KEY",
+            "KEY=1",
+            "PATH",
+            "path",
+            "HOME",
+            "DYLD_INSERT_LIBRARIES",
+            "LD_PRELOAD",
+            "CUA_HOME",
+            "NODE_OPTIONS",
+            "BASH_ENV",
+            "BASH_FUNC_x%%",
+            "SHELL",
         ] {
             assert!(validate_name(bad).is_err(), "{bad} accepted");
         }
@@ -626,7 +688,10 @@ mod tests {
         assert!(r.keys.is_empty());
         assert!(app_call(&keys, "agent_start", serde_json::json!({})).is_none());
         for m in APP_METHODS {
-            assert!(cua_spaces_contract::tool(m).is_none(), "{m} is a contract tool");
+            assert!(
+                cua_spaces_contract::tool(m).is_none(),
+                "{m} is a contract tool"
+            );
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -87,7 +87,11 @@ pub async fn run(
         .call_tool_json(method.into(), Some(args.to_string()))
         .await?;
     if r.is_error {
-        let msg = r.text.strip_prefix("error: ").unwrap_or(&r.text).to_string();
+        let msg = r
+            .text
+            .strip_prefix("error: ")
+            .unwrap_or(&r.text)
+            .to_string();
         return Err(CuaError::InvalidArgument(msg));
     }
     let report: serde_json::Value = serde_json::from_str(&r.text).unwrap_or_default();
@@ -147,7 +151,10 @@ mod tests {
     #[test]
     fn listing_never_prints_more_than_the_last_four() {
         let r = serde_json::json!({"keys": [{"provider": "anthropic", "env": "ANTHROPIC_API_KEY", "last4": "0000", "added_ms": 1}], "available": true});
-        assert_eq!(lines(&r), vec!["anthropic  ANTHROPIC_API_KEY        ****0000"]);
+        assert_eq!(
+            lines(&r),
+            vec!["anthropic  ANTHROPIC_API_KEY        ****0000"]
+        );
         let r = serde_json::json!({"keys": [], "available": false, "unavailable": "no Keychain"});
         assert!(lines(&r)[0].contains("no Keychain"));
     }

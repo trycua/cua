@@ -2049,15 +2049,17 @@ impl Host {
     async fn tool(&self, name: &str, arguments: Value) -> Result<ToolOut> {
         match self {
             Host::Embedded(spaces) => {
-                let o = match cua_spaces::agents::keys::is_app_method(name) {
-                    true => cua_spaces::agents::keys::app_tool(name, arguments)
-                        .unwrap_or_else(|| cua_spaces::mcp::ToolOutcome::error_message("not_found", name)),
-                    false => {
-                        cua_spaces::mcp::McpServer::new(spaces.clone())
-                            .call(name, arguments)
-                            .await
-                    }
-                };
+                let o =
+                    match cua_spaces::agents::keys::is_app_method(name) {
+                        true => cua_spaces::agents::keys::app_tool(name, arguments).unwrap_or_else(
+                            || cua_spaces::mcp::ToolOutcome::error_message("not_found", name),
+                        ),
+                        false => {
+                            cua_spaces::mcp::McpServer::new(spaces.clone())
+                                .call(name, arguments)
+                                .await
+                        }
+                    };
                 Ok(ToolOut {
                     content: o.content,
                     structured: o.structured,

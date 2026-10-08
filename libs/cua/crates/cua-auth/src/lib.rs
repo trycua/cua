@@ -444,7 +444,8 @@ impl Store {
             Store::Keyring => {
                 let wanted = |a: &str| {
                     a == KEYRING_ACCOUNT
-                        || a.strip_prefix(KEYRING_ACCOUNT).is_some_and(|r| r.starts_with('.'))
+                        || a.strip_prefix(KEYRING_ACCOUNT)
+                            .is_some_and(|r| r.starts_with('.'))
                 };
                 let items = macos_keychain::check_items(
                     macos_keychain::Keychain::Default,
@@ -504,7 +505,9 @@ impl Store {
         #[cfg(target_os = "macos")]
         {
             matches!(self, Store::Keyring)
-                && std::env::var("CUA_CREDENTIAL_STORE").ok().is_none_or(|v| v.trim().is_empty())
+                && std::env::var("CUA_CREDENTIAL_STORE")
+                    .ok()
+                    .is_none_or(|v| v.trim().is_empty())
                 && !cua_home::is_test_process()
                 && signed_by_cua()
         }
@@ -521,7 +524,11 @@ impl Store {
     /// (unsigned `cua` CLIs on this machine still use it). Each file session
     /// is imported once ([`FILE_IMPORT_MARKER`]): signing out of the vault
     /// is not undone by the same file. Returns the imported session.
-    fn import_file_session_in(&self, home: &Path, stored: Option<&Credentials>) -> Option<Credentials> {
+    fn import_file_session_in(
+        &self,
+        home: &Path,
+        stored: Option<&Credentials>,
+    ) -> Option<Credentials> {
         let file = Self::file_session_to_import(home)?;
         let file_expires = file.expires().ok()?;
         let marker = home.join(FILE_IMPORT_MARKER);
@@ -536,7 +543,9 @@ impl Store {
         }
         let _ = write_private(
             &marker,
-            serde_json::json!({ "expires_at": file.expires_at }).to_string().as_bytes(),
+            serde_json::json!({ "expires_at": file.expires_at })
+                .to_string()
+                .as_bytes(),
         );
         tracing::info!(
             "imported the sign-in from an unsigned build ({}; the file stays)",
@@ -1044,7 +1053,10 @@ pub fn keychain_noninteractive() -> bool {
 }
 
 fn truthy(v: &str) -> bool {
-    matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+    matches!(
+        v.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 /// Keychain prompts off while it lives, when this process is
@@ -2076,13 +2088,14 @@ mod tests {
         assert_eq!(c.state, KeychainState::NeedsAccess);
         let c = KeychainCheck::from_items(vec![ready(), needs()], || true);
         assert_eq!(c.state, KeychainState::Locked);
-        let c = KeychainCheck::from_items(
-            vec![needs(), ("cua-cli".into(), S::Denied)],
-            || false,
-        );
+        let c = KeychainCheck::from_items(vec![needs(), ("cua-cli".into(), S::Denied)], || false);
         assert_eq!(c.state, KeychainState::Denied);
-        assert_eq!(KeychainCheck::from_items(vec![], || true).state, KeychainState::Ready);
-        let json = serde_json::to_value(KeychainCheck::from_items(vec![needs()], || false)).unwrap();
+        assert_eq!(
+            KeychainCheck::from_items(vec![], || true).state,
+            KeychainState::Ready
+        );
+        let json =
+            serde_json::to_value(KeychainCheck::from_items(vec![needs()], || false)).unwrap();
         assert_eq!(json["state"], "needs_access");
         assert_eq!(json["items"][0]["account"], "cua-cli.device-key");
         let file = Store::File(std::env::temp_dir().join("cua-no-such-credentials.json"));
@@ -2093,7 +2106,8 @@ mod tests {
         Credentials {
             access_token: token.into(),
             refresh_token: Some(format!("{token}-refresh")),
-            expires_at: (chrono::Utc::now() + chrono::Duration::hours(expires_in_hours)).to_rfc3339(),
+            expires_at: (chrono::Utc::now() + chrono::Duration::hours(expires_in_hours))
+                .to_rfc3339(),
             token_type: bearer(),
             scope: None,
             id_token: None,
@@ -2119,27 +2133,52 @@ mod tests {
         std::fs::write(&file, "{not json").unwrap();
         assert!(vault.import_file_session_in(home.path(), None).is_none());
         // The ad hoc build's session; the vault has none.
-        write_private(&file, serde_json::to_string(&session("adhoc", 1)).unwrap().as_bytes()).unwrap();
+        write_private(
+            &file,
+            serde_json::to_string(&session("adhoc", 1))
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
         let got = vault.import_file_session_in(home.path(), None).unwrap();
         assert_eq!(got.access_token, "adhoc");
         assert_eq!(vault_token(&vault).as_deref(), Some("adhoc"));
         assert!(file.is_file(), "the file stays for unsigned CLIs");
         let marker = std::fs::read_to_string(home.path().join(FILE_IMPORT_MARKER)).unwrap();
-        assert!(!marker.contains("adhoc"), "no token in the marker: {marker}");
+        assert!(
+            !marker.contains("adhoc"),
+            "no token in the marker: {marker}"
+        );
         // Signed out of the vault: the same file is not imported again.
         assert!(!vault.has_file_session_to_import(home.path()));
         assert!(vault.clear().unwrap());
         assert!(vault.import_file_session_in(home.path(), None).is_none());
         assert_eq!(vault_token(&vault), None);
         // The unsigned build signs in again (a newer file session): it comes in.
-        write_private(&file, serde_json::to_string(&session("adhoc2", 2)).unwrap().as_bytes()).unwrap();
+        write_private(
+            &file,
+            serde_json::to_string(&session("adhoc2", 2))
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
         assert!(vault.import_file_session_in(home.path(), None).is_some());
         assert_eq!(vault_token(&vault).as_deref(), Some("adhoc2"));
         // A newer vault session wins over an older file one.
         let newer = session("signed", 5);
         vault.save(&newer).unwrap();
-        write_private(&file, serde_json::to_string(&session("adhoc3", 3)).unwrap().as_bytes()).unwrap();
-        assert!(vault.import_file_session_in(home.path(), Some(&newer)).is_none());
+        write_private(
+            &file,
+            serde_json::to_string(&session("adhoc3", 3))
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
+        assert!(
+            vault
+                .import_file_session_in(home.path(), Some(&newer))
+                .is_none()
+        );
         assert_eq!(vault_token(&vault).as_deref(), Some("signed"));
         // Only a Cua-signed build's default store imports: never a file
         // store, a test keychain, or an override (and never in tests).

@@ -201,7 +201,11 @@ pub(crate) const ACL_MARKER_UNSIGNED: &str = "cua-acl/v2";
 
 /// The marker a writer leaves.
 fn marker(signed: bool) -> &'static str {
-    if signed { ACL_MARKER } else { ACL_MARKER_UNSIGNED }
+    if signed {
+        ACL_MARKER
+    } else {
+        ACL_MARKER_UNSIGNED
+    }
 }
 
 /// Whether a writer (Cua-signed or not) recreates an item with `comment`
@@ -456,7 +460,13 @@ fn create(
     signed: bool,
 ) -> Result<(), Status> {
     let access = cua_access(service)?;
-    create_with(kc, service, account, secret, Some((&access, marker(signed))))
+    create_with(
+        kc,
+        service,
+        account,
+        secret,
+        Some((&access, marker(signed))),
+    )
 }
 
 /// Creates the item with `access` and its marker, or (`None`) with the
@@ -482,7 +492,11 @@ fn create_with(
         attr(ATTR_COMMENT, comment),
     ];
     // No marker: no comment attribute at all.
-    let count = if access.is_some() { attrs.len() } else { attrs.len() - 1 };
+    let count = if access.is_some() {
+        attrs.len()
+    } else {
+        attrs.len() - 1
+    };
     let mut list = SecKeychainAttributeList {
         count: count as u32,
         attr: attrs.as_mut_ptr(),
@@ -521,7 +535,13 @@ pub(crate) fn set_generic_password(
     account: &str,
     secret: &[u8],
 ) -> Result<(), Status> {
-    set_in(Keychain::Default, service, account, secret, crate::signed_by_cua())
+    set_in(
+        Keychain::Default,
+        service,
+        account,
+        secret,
+        crate::signed_by_cua(),
+    )
 }
 
 /// [`set_generic_password`] in `kc`, for a writer that is Cua-signed or not.
@@ -542,7 +562,8 @@ pub(crate) fn set_in(
             if recreate(kc, item, service, account, secret, signed)? {
                 Ok(())
             } else {
-                let item = find_item(kc, service, account)?.ok_or(Status(ERR_SEC_ITEM_NOT_FOUND))?;
+                let item =
+                    find_item(kc, service, account)?.ok_or(Status(ERR_SEC_ITEM_NOT_FOUND))?;
                 modify(&item, secret)
             }
         }
@@ -839,7 +860,8 @@ mod tests {
             for j in 0..unsafe { CFArrayGetCount(apps.0 as CFArrayRef) } {
                 let app = unsafe { CFArrayGetValueAtIndex(apps.0 as CFArrayRef, j) } as SecRef;
                 let mut data: CFTypeRef = ptr::null();
-                if unsafe { SecTrustedApplicationCopyData(app, &mut data) } == 0 && !data.is_null() {
+                if unsafe { SecTrustedApplicationCopyData(app, &mut data) } == 0 && !data.is_null()
+                {
                     let data = Owned(data as SecRef);
                     let bytes = unsafe {
                         std::slice::from_raw_parts(
@@ -847,7 +869,11 @@ mod tests {
                             CFDataGetLength(data.0 as CFTypeRef) as usize,
                         )
                     };
-                    out.push(String::from_utf8_lossy(bytes).trim_end_matches('\0').to_string());
+                    out.push(
+                        String::from_utf8_lossy(bytes)
+                            .trim_end_matches('\0')
+                            .to_string(),
+                    );
                 }
             }
         }
@@ -934,7 +960,10 @@ mod tests {
         // An unsigned writer: its marker, readable by this process.
         set_in(t.at(), SERVICE, "cua-cli", b"one", false).unwrap();
         assert_eq!(t.comment("cua-cli").as_deref(), Some(ACL_MARKER_UNSIGNED));
-        assert_eq!(read_secret(t.at(), SERVICE, "cua-cli").unwrap().as_deref(), Some(&b"one"[..]));
+        assert_eq!(
+            read_secret(t.at(), SERVICE, "cua-cli").unwrap().as_deref(),
+            Some(&b"one"[..])
+        );
         // An unsigned reader changes nothing.
         assert!(!adopt(t.at(), SERVICE, "cua-cli", b"one", false, true).unwrap());
         assert_eq!(
@@ -947,7 +976,10 @@ mod tests {
             vec![("cua-cli".into(), ItemState::Ready { recreated: true })]
         );
         assert_eq!(t.comment("cua-cli").as_deref(), Some(ACL_MARKER));
-        assert_eq!(read_secret(t.at(), SERVICE, "cua-cli").unwrap().as_deref(), Some(&b"one"[..]));
+        assert_eq!(
+            read_secret(t.at(), SERVICE, "cua-cli").unwrap().as_deref(),
+            Some(&b"one"[..])
+        );
         // Once: the next signed read keeps it.
         assert!(!adopt(t.at(), SERVICE, "cua-cli", b"one", true, true).unwrap());
         // A signed write updates it in place; an unsigned one too (it never
@@ -955,7 +987,10 @@ mod tests {
         set_in(t.at(), SERVICE, "cua-cli", b"two", true).unwrap();
         set_in(t.at(), SERVICE, "cua-cli", b"three", false).unwrap();
         assert_eq!(t.comment("cua-cli").as_deref(), Some(ACL_MARKER));
-        assert_eq!(read_secret(t.at(), SERVICE, "cua-cli").unwrap().as_deref(), Some(&b"three"[..]));
+        assert_eq!(
+            read_secret(t.at(), SERVICE, "cua-cli").unwrap().as_deref(),
+            Some(&b"three"[..])
+        );
     }
 
     #[test]
@@ -967,7 +1002,9 @@ mod tests {
         set_in(t.at(), SERVICE, "cua-cli.device-key", b"key2", true).unwrap();
         assert_eq!(t.comment("cua-cli.device-key").as_deref(), Some(ACL_MARKER));
         assert_eq!(
-            read_secret(t.at(), SERVICE, "cua-cli.device-key").unwrap().as_deref(),
+            read_secret(t.at(), SERVICE, "cua-cli.device-key")
+                .unwrap()
+                .as_deref(),
             Some(&b"key2"[..])
         );
     }
@@ -980,7 +1017,10 @@ mod tests {
         set_in(t.at(), SERVICE, "other", b"o", false).unwrap();
         let wanted = |a: &str| a.starts_with("cua-cli");
         let found = check_items(t.at(), SERVICE, &wanted, false, false);
-        assert_eq!(found, vec![("cua-cli".into(), ItemState::Ready { recreated: false })]);
+        assert_eq!(
+            found,
+            vec![("cua-cli".into(), ItemState::Ready { recreated: false })]
+        );
     }
 
     /// After the one consented read by the bundle's `cua` (the reader), the
@@ -1000,19 +1040,35 @@ mod tests {
         // As an older build left it: the default list (only its creator,
         // here this process, as after the user chose Always Allow), no comment.
         create_with(t.at(), SERVICE, "cua-cli", b"session", None).unwrap();
-        assert!(!trusted_paths(&t, "cua-cli").iter().any(|p| p == app.to_str().unwrap()));
+        assert!(
+            !trusted_paths(&t, "cua-cli")
+                .iter()
+                .any(|p| p == app.to_str().unwrap())
+        );
         // The reader is the bundle's `cua`.
         AS_EXE.with(|e| *e.borrow_mut() = Some(macos.join("cua")));
         let found = check_items(t.at(), SERVICE, &all, false, true);
         AS_EXE.with(|e| *e.borrow_mut() = None);
-        assert_eq!(found, vec![("cua-cli".into(), ItemState::Ready { recreated: true })]);
+        assert_eq!(
+            found,
+            vec![("cua-cli".into(), ItemState::Ready { recreated: true })]
+        );
         assert_eq!(t.comment("cua-cli").as_deref(), Some(ACL_MARKER));
         let trusted = trusted_paths(&t, "cua-cli");
-        assert!(trusted.iter().any(|p| p == app.to_str().unwrap()), "{trusted:?}");
+        assert!(
+            trusted.iter().any(|p| p == app.to_str().unwrap()),
+            "{trusted:?}"
+        );
         // The reader itself stays trusted, and the secret is unchanged.
         let me = std::env::current_exe().unwrap().canonicalize().unwrap();
-        assert!(trusted.iter().any(|p| p == me.to_str().unwrap()), "{trusted:?}");
-        assert_eq!(read_secret(t.at(), SERVICE, "cua-cli").unwrap().as_deref(), Some(&b"session"[..]));
+        assert!(
+            trusted.iter().any(|p| p == me.to_str().unwrap()),
+            "{trusted:?}"
+        );
+        assert_eq!(
+            read_secret(t.at(), SERVICE, "cua-cli").unwrap().as_deref(),
+            Some(&b"session"[..])
+        );
         // Once: the next read keeps it.
         assert_eq!(
             check_items(t.at(), SERVICE, &all, false, true),
@@ -1029,9 +1085,16 @@ mod tests {
         create_with(t.at(), SERVICE, "cua-cli", b"s1", None).unwrap();
         let item = find_item(t.at(), SERVICE, "cua-cli").unwrap().unwrap();
         assert!(recreate(t.at(), item, SERVICE, "cua-cli", b"s1", true).unwrap());
-        assert_eq!(read_secret(t.at(), SERVICE, "cua-cli").unwrap().as_deref(), Some(&b"s1"[..]));
+        assert_eq!(
+            read_secret(t.at(), SERVICE, "cua-cli").unwrap().as_deref(),
+            Some(&b"s1"[..])
+        );
         assert_eq!(t.comment("cua-cli").as_deref(), Some(ACL_MARKER));
-        assert!(find_item(t.at(), SERVICE, "cua-cli~staging").unwrap().is_none());
+        assert!(
+            find_item(t.at(), SERVICE, "cua-cli~staging")
+                .unwrap()
+                .is_none()
+        );
         // Interrupted between the delete and the rename: only the staged copy.
         let item = find_item(t.at(), SERVICE, "cua-cli").unwrap().unwrap();
         create(t.at(), SERVICE, "cua-cli~staging", b"s1", true).unwrap();
@@ -1039,7 +1102,10 @@ mod tests {
         // It is not a Cua item of its own.
         assert!(check_items(t.at(), SERVICE, &all, false, true).is_empty());
         assert!(recover_staged(t.at(), SERVICE, "cua-cli"));
-        assert_eq!(read_secret(t.at(), SERVICE, "cua-cli").unwrap().as_deref(), Some(&b"s1"[..]));
+        assert_eq!(
+            read_secret(t.at(), SERVICE, "cua-cli").unwrap().as_deref(),
+            Some(&b"s1"[..])
+        );
         assert!(!recover_staged(t.at(), SERVICE, "cua-cli"));
     }
 
@@ -1053,9 +1119,11 @@ mod tests {
         check(unsafe { SecTrustedApplicationCreateFromPath(c.as_ptr(), &mut other) }).unwrap();
         let other = Owned(other);
         let values = [other.0 as CFTypeRef];
-        let list = Owned(unsafe {
-            CFArrayCreate(ptr::null(), values.as_ptr(), 1, &kCFTypeArrayCallBacks)
-        } as SecRef);
+        let list =
+            Owned(
+                unsafe { CFArrayCreate(ptr::null(), values.as_ptr(), 1, &kCFTypeArrayCallBacks) }
+                    as SecRef,
+            );
         let desc = CString::new(SERVICE).unwrap();
         let desc =
             Owned(unsafe { CFStringCreateWithCString(ptr::null(), desc.as_ptr(), UTF8) } as SecRef);
@@ -1063,7 +1131,14 @@ mod tests {
         check(unsafe { SecAccessCreate(desc.0 as CFStringRef, list.0 as CFArrayRef, &mut access) })
             .unwrap();
         let access = Owned(access);
-        create_with(t.at(), SERVICE, "cua-cli", b"s", Some((&access, "elsewhere"))).unwrap();
+        create_with(
+            t.at(),
+            SERVICE,
+            "cua-cli",
+            b"s",
+            Some((&access, "elsewhere")),
+        )
+        .unwrap();
         assert_eq!(
             check_items(t.at(), SERVICE, &all, false, true),
             vec![("cua-cli".into(), ItemState::NeedsAccess)]

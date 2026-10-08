@@ -2550,7 +2550,13 @@ mod tests {
     #[test]
     fn the_app_keychain_check_records_nothing() {
         let cli = Cli::try_parse_from(["cua", "auth", "keychain", "--prompt"]).unwrap();
-        assert!(matches!(cli.command, Command::Auth(AuthCmd::Keychain { prompt: true, forget: false })));
+        assert!(matches!(
+            cli.command,
+            Command::Auth(AuthCmd::Keychain {
+                prompt: true,
+                forget: false
+            })
+        ));
         assert!(!records_telemetry(&cli.command));
         assert!(Cli::try_parse_from(["cua", "auth", "keychain", "--prompt", "--forget"]).is_err());
         let status = Cli::try_parse_from(["cua", "auth", "status"]).unwrap();

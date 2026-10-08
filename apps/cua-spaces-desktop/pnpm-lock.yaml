@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@ubjs/core@0.31.0-3': 7a70f4dfe952e3fe3e2dd8065c522d81cc27e2028725ef29105ea0ba79b1afb0
+
 importers:
 
   .:
@@ -20,7 +23,7 @@ importers:
         version: 24.19.1
       '@ubjs/core':
         specifier: 0.31.0-3
-        version: 0.31.0-3
+        version: 0.31.0-3(patch_hash=7a70f4dfe952e3fe3e2dd8065c522d81cc27e2028725ef29105ea0ba79b1afb0)
       electron:
         specifier: 44.5.1
         version: 44.5.1(supports-color@7.2.0)
@@ -1966,7 +1969,7 @@ snapshots:
     dependencies:
       '@types/node': 24.19.1
 
-  '@ubjs/core@0.31.0-3': {}
+  '@ubjs/core@0.31.0-3(patch_hash=7a70f4dfe952e3fe3e2dd8065c522d81cc27e2028725ef29105ea0ba79b1afb0)': {}
 
   '@vitest/mocker@5.0.3(vite@8.3.2(@types/node@24.19.1)(jiti@2.7.0))':
     dependencies:

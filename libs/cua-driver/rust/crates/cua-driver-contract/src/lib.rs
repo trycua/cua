@@ -783,75 +783,161 @@ mod tests {
         }
     }
 
-    /// Vertex AI / Gemini function calling rejects the whole tools/list payload
-    /// when any advertised parameter uses untyped anyOf/oneOf, `const`, a type
-    /// array such as `["number","null"]`, or an enum without a string `type`
-    /// (#4798, building on #4220).
-    fn vertex_input_schema_violations(value: &Value, path: &str, out: &mut Vec<String>) {
-        match value {
-            Value::Object(map) => {
-                if let Some(types) = map.get("type") {
-                    if types.as_array().is_some() {
-                        out.push(format!(
-                            "{path}: type arrays are rejected by Vertex/Gemini: {types}"
-                        ));
-                    }
-                } else if map.contains_key("properties")
-                    || map.contains_key("items")
-                    || map.contains_key("enum")
-                    || map.contains_key("const")
-                    || map.contains_key("anyOf")
-                    || map.contains_key("oneOf")
-                    || map.contains_key("allOf")
-                {
-                    // Combinators and enums must still carry a concrete type, or
-                    // be rewritten before advertising. Bare annotation objects
-                    // (description-only) are also rejected.
-                    if map.contains_key("anyOf")
-                        || map.contains_key("oneOf")
-                        || map.contains_key("allOf")
-                        || map.contains_key("enum")
-                        || map.contains_key("const")
-                        || map.contains_key("properties")
-                        || map.contains_key("items")
-                    {
-                        out.push(format!(
-                            "{path}: schema node is missing a single string type field"
-                        ));
-                    }
-                }
-                if map.contains_key("const") {
-                    out.push(format!(
-                        "{path}: const is rejected by Vertex/Gemini; use a one-value enum"
-                    ));
-                }
-                for key in ["anyOf", "oneOf", "allOf"] {
-                    if map.contains_key(key) {
-                        out.push(format!(
-                            "{path}: {key} combinators are rejected by Vertex/Gemini function calling"
-                        ));
-                    }
-                }
-                if let Some(values) = map.get("enum").and_then(Value::as_array) {
-                    if map.get("type").and_then(Value::as_str) != Some("string") {
-                        out.push(format!("{path}: enum must be paired with type \"string\""));
-                    }
-                    for (index, item) in values.iter().enumerate() {
-                        if !item.is_string() {
-                            out.push(format!("{path}.enum[{index}] must be a string: {item}"));
-                        }
-                    }
-                }
-                for (key, child) in map {
-                    vertex_input_schema_violations(child, &format!("{path}.{key}"), out);
+    /// Fields of the Vertex AI `Schema` object, the OpenAPI 3.0 subset used
+    /// for function declaration parameters:
+    /// https://cloud.google.com/vertex-ai/docs/reference/rest/v1/Schema
+    /// (`ref`/`defs` are written `$ref`/`$defs` in JSON Schema form, as the
+    /// function-calling guide shows). Any other keyword, such as `oneOf`,
+    /// `allOf`, `not`, `const` or `uniqueItems`, is not part of the object.
+    const VERTEX_SCHEMA_FIELDS: &[&str] = &[
+        "type",
+        "format",
+        "title",
+        "description",
+        "nullable",
+        "default",
+        "items",
+        "minItems",
+        "maxItems",
+        "enum",
+        "properties",
+        "propertyOrdering",
+        "required",
+        "minProperties",
+        "maxProperties",
+        "minimum",
+        "maximum",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "example",
+        "anyOf",
+        "additionalProperties",
+        "$ref",
+        "$defs",
+    ];
+
+    /// `Schema.type` values (`TYPE_UNSPECIFIED` excluded), in JSON Schema case.
+    const VERTEX_SCHEMA_TYPES: &[&str] = &[
+        "string", "number", "integer", "boolean", "array", "object", "null",
+    ];
+
+    /// Collect every node of a published input schema that falls outside the
+    /// Vertex AI / Gemini function-declaration `Schema` object (#4798,
+    /// following #4220). Walks schema positions only, so property names and
+    /// `default`/`example`/`enum` payloads are never mistaken for keywords.
+    fn vertex_input_schema_violations(schema: &Value, path: &str, out: &mut Vec<String>) {
+        let Some(node) = schema.as_object() else {
+            out.push(format!("{path}: schema must be an object, got {schema}"));
+            return;
+        };
+        for key in node.keys() {
+            if !VERTEX_SCHEMA_FIELDS.contains(&key.as_str()) {
+                out.push(format!(
+                    "{path}: `{key}` is not a field of the Vertex AI Schema object"
+                ));
+            }
+        }
+        match node.get("type") {
+            Some(Value::String(name)) if VERTEX_SCHEMA_TYPES.contains(&name.as_str()) => {}
+            Some(other) => out.push(format!(
+                "{path}: type must be one of {VERTEX_SCHEMA_TYPES:?} as a single string, got {other}"
+            )),
+            // Vertex answers "schema didn't specify the schema type field"
+            // for an untyped node, including an anyOf without a type (#4798).
+            None if !node.contains_key("$ref") => {
+                out.push(format!("{path}: schema node has no type"))
+            }
+            None => {}
+        }
+        if let Some(values) = node.get("enum") {
+            match values.as_array() {
+                Some(values) if values.iter().all(Value::is_string) => {}
+                _ => out.push(format!(
+                    "{path}: enum must be a list of strings, got {values}"
+                )),
+            }
+        }
+        for keyword in ["properties", "$defs"] {
+            if let Some(children) = node.get(keyword).and_then(Value::as_object) {
+                for (name, child) in children {
+                    vertex_input_schema_violations(child, &format!("{path}.{keyword}.{name}"), out);
                 }
             }
-            Value::Array(items) => {
-                for (index, item) in items.iter().enumerate() {
-                    vertex_input_schema_violations(item, &format!("{path}[{index}]"), out);
-                }
+        }
+        if let Some(items) = node.get("items") {
+            vertex_input_schema_violations(items, &format!("{path}.items"), out);
+        }
+        if let Some(additional) = node.get("additionalProperties") {
+            if !additional.is_boolean() {
+                vertex_input_schema_violations(
+                    additional,
+                    &format!("{path}.additionalProperties"),
+                    out,
+                );
             }
-            _ => {}
+        }
+        if let Some(variants) = node.get("anyOf").and_then(Value::as_array) {
+            for (index, variant) in variants.iter().enumerate() {
+                vertex_input_schema_violations(variant, &format!("{path}.anyOf[{index}]"), out);
+            }
+        }
+    }
+
+    #[test]
+    fn vertex_lint_follows_the_documented_schema_fields() {
+        let lint = |schema: Value| {
+            let mut out = Vec::new();
+            vertex_input_schema_violations(&schema, "$", &mut out);
+            out
+        };
+        // Documented fields pass, including a typed anyOf, nullable, bounds,
+        // additionalProperties and a property literally named `const`.
+        let accepted = lint(serde_json::json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["value"],
+            "properties": {
+                "value": {
+                    "type": "string",
+                    "anyOf": [{"type": "string", "minLength": 1}, {"type": "string", "enum": ["x"]}]
+                },
+                "limit": {"type": "integer", "nullable": true, "minimum": 0, "maximum": 9},
+                "tags": {"type": "array", "minItems": 1, "maxItems": 2, "items": {"type": "string"}},
+                "const": {"type": "string", "default": {"oneOf": "payload, not a keyword"}}
+            }
+        }));
+        assert!(accepted.is_empty(), "{accepted:#?}");
+
+        // Keywords outside the Schema object, untyped nodes, type arrays and
+        // non-string enums are flagged.
+        let rejected = lint(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "a": {"oneOf": [{"type": "string"}]},
+                "b": {"type": "string", "const": "x"},
+                "c": {"type": ["number", "null"]},
+                "d": {"type": "array", "uniqueItems": true, "items": {"enum": ["x"]}},
+                "e": {"type": "boolean", "enum": [true]},
+                "f": {"anyOf": [{"type": "string"}, {"type": "integer"}]}
+            }
+        }));
+        for expected in [
+            "$.properties.a: `oneOf` is not a field",
+            "$.properties.a: schema node has no type",
+            "$.properties.b: `const` is not a field",
+            "$.properties.c: type must be one of",
+            "$.properties.d: `uniqueItems` is not a field",
+            "$.properties.d.items: schema node has no type",
+            "$.properties.e: enum must be a list of strings",
+            "$.properties.f: schema node has no type",
+        ] {
+            assert!(
+                rejected
+                    .iter()
+                    .any(|violation| violation.starts_with(expected)),
+                "missing `{expected}` in {rejected:#?}"
+            );
         }
     }
 
@@ -867,7 +953,7 @@ mod tests {
         }
         assert!(
             violations.is_empty(),
-            "Vertex/Gemini-incompatible input schema nodes (#4798):\n{}",
+            "input schema nodes outside the Vertex AI Schema object (#4798):\n{}",
             violations.join("\n")
         );
     }

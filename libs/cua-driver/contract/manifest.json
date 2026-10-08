@@ -486,6 +486,7 @@
           "target": {
             "additionalProperties": true,
             "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
+            "nullable": true,
             "properties": {
               "display_id": {
                 "type": "string"
@@ -2014,6 +2015,7 @@
           "target": {
             "additionalProperties": true,
             "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
+            "nullable": true,
             "properties": {
               "display_id": {
                 "type": "string"
@@ -2517,6 +2519,7 @@
           "limit": {
             "description": "Maximum number of content-free summaries to return (default 50, max\n100). Ordinary agent transports are scoped to their own lease.",
             "minimum": 0,
+            "nullable": true,
             "type": "integer"
           }
         },
@@ -2812,6 +2815,7 @@
           "target": {
             "additionalProperties": true,
             "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
+            "nullable": true,
             "properties": {
               "display_id": {
                 "type": "string"
@@ -3046,6 +3050,7 @@
                 },
                 "maxItems": 2,
                 "minItems": 1,
+                "nullable": true,
                 "type": "array",
                 "uniqueItems": true
               },
@@ -3536,6 +3541,7 @@
           "target": {
             "additionalProperties": true,
             "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
+            "nullable": true,
             "properties": {
               "display_id": {
                 "type": "string"
@@ -3774,6 +3780,7 @@
           "target": {
             "additionalProperties": true,
             "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
+            "nullable": true,
             "properties": {
               "display_id": {
                 "type": "string"
@@ -4036,38 +4043,47 @@
         "properties": {
           "arc_flow": {
             "description": "Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`:\npositive moves the apex toward the destination. Clamped to -1..1 (default 0).",
+            "nullable": true,
             "type": "number"
           },
           "arc_size": {
             "description": "Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default)\nkeeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1.",
+            "nullable": true,
             "type": "number"
           },
           "dwell_after_click_ms": {
             "description": "Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).",
+            "nullable": true,
             "type": "number"
           },
           "effects": {
             "additionalProperties": false,
             "description": "Turn single effects on or off. An omitted effect keeps its current setting; null\nrestores the style's default.",
+            "nullable": true,
             "properties": {
               "glow": {
                 "description": "Soft glow around the cursor that grows with speed.",
+                "nullable": true,
                 "type": "boolean"
               },
               "magnet": {
                 "description": "Target glow when the `magnetic` style locks on.",
+                "nullable": true,
                 "type": "boolean"
               },
               "ripple": {
                 "description": "Ring that expands from the hotspot on click.",
+                "nullable": true,
                 "type": "boolean"
               },
               "squish": {
                 "description": "Brief scale-down of the cursor on click.",
+                "nullable": true,
                 "type": "boolean"
               },
               "trail": {
                 "description": "Short fading trail behind the cursor.",
+                "nullable": true,
                 "type": "boolean"
               }
             },
@@ -4076,14 +4092,17 @@
           },
           "end_handle": {
             "description": "Arc control-point offset from the end, as a fraction of the distance, for\n`signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).",
+            "nullable": true,
             "type": "number"
           },
           "glide_duration_ms": {
             "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` timing also fixes the duration. Clamped to 0..5000.",
+            "nullable": true,
             "type": "number"
           },
           "idle_hide_ms": {
             "description": "Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to\n0..60000 (default 15000).",
+            "nullable": true,
             "type": "number"
           },
           "session": {
@@ -4092,10 +4111,12 @@
           },
           "spring": {
             "description": "Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped\nto 0.3..1 (default 0.72).",
+            "nullable": true,
             "type": "number"
           },
           "start_handle": {
             "description": "Arc control-point offset from the start, as a fraction of the distance, for\n`signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).",
+            "nullable": true,
             "type": "number"
           },
           "style": {
@@ -4121,6 +4142,7 @@
           },
           "turn_radius": {
             "description": "Minimum turning radius of the `classic` glide path, in points; smaller turns tighter.\nClamped to 1..1000 (default 80).",
+            "nullable": true,
             "type": "number"
           }
         },
@@ -4587,41 +4609,51 @@
           "cursor_motion": {
             "additionalProperties": false,
             "description": "Optional initial cursor motion (style, timing, effects and tuning). The host applies it\nbefore the cursor is first made visible. A later `set_agent_cursor_motion` call wins;\nthis wins over the saved default (`cursor.motion.*` in the driver config) and the\nbuilt-in `signature_arc`. Reduced motion always wins.",
+            "nullable": true,
             "properties": {
               "arc_flow": {
                 "description": "Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`:\npositive moves the apex toward the destination. Clamped to -1..1 (default 0).",
+                "nullable": true,
                 "type": "number"
               },
               "arc_size": {
                 "description": "Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default)\nkeeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1.",
+                "nullable": true,
                 "type": "number"
               },
               "dwell_after_click_ms": {
                 "description": "Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).",
+                "nullable": true,
                 "type": "number"
               },
               "effects": {
                 "additionalProperties": false,
                 "description": "Turn single effects on or off. An omitted effect keeps its current setting; null\nrestores the style's default.",
+                "nullable": true,
                 "properties": {
                   "glow": {
                     "description": "Soft glow around the cursor that grows with speed.",
+                    "nullable": true,
                     "type": "boolean"
                   },
                   "magnet": {
                     "description": "Target glow when the `magnetic` style locks on.",
+                    "nullable": true,
                     "type": "boolean"
                   },
                   "ripple": {
                     "description": "Ring that expands from the hotspot on click.",
+                    "nullable": true,
                     "type": "boolean"
                   },
                   "squish": {
                     "description": "Brief scale-down of the cursor on click.",
+                    "nullable": true,
                     "type": "boolean"
                   },
                   "trail": {
                     "description": "Short fading trail behind the cursor.",
+                    "nullable": true,
                     "type": "boolean"
                   }
                 },
@@ -4630,22 +4662,27 @@
               },
               "end_handle": {
                 "description": "Arc control-point offset from the end, as a fraction of the distance, for\n`signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).",
+                "nullable": true,
                 "type": "number"
               },
               "glide_duration_ms": {
                 "description": "Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A\nnonzero value with `native` timing also fixes the duration. Clamped to 0..5000.",
+                "nullable": true,
                 "type": "number"
               },
               "idle_hide_ms": {
                 "description": "Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to\n0..60000 (default 15000).",
+                "nullable": true,
                 "type": "number"
               },
               "spring": {
                 "description": "Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped\nto 0.3..1 (default 0.72).",
+                "nullable": true,
                 "type": "number"
               },
               "start_handle": {
                 "description": "Arc control-point offset from the start, as a fraction of the distance, for\n`signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3).",
+                "nullable": true,
                 "type": "number"
               },
               "style": {
@@ -4671,6 +4708,7 @@
               },
               "turn_radius": {
                 "description": "Minimum turning radius of the `classic` glide path, in points; smaller turns tighter.\nClamped to 1..1000 (default 80).",
+                "nullable": true,
                 "type": "number"
               }
             },
@@ -4680,6 +4718,7 @@
           "cursor_theme": {
             "additionalProperties": true,
             "description": "Optional initial cursor theme. The host applies it before the cursor is\nfirst made visible, avoiding a flash of the default theme.",
+            "nullable": true,
             "properties": {
               "reduced_motion": {
                 "default": "auto",
@@ -4943,6 +4982,7 @@
           "target": {
             "additionalProperties": true,
             "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`).",
+            "nullable": true,
             "properties": {
               "display_id": {
                 "type": "string"
@@ -5155,8 +5195,10 @@
               "properties": {
                 "element": {
                   "additionalProperties": false,
+                  "nullable": true,
                   "properties": {
                     "enabled": {
+                      "nullable": true,
                       "type": "boolean"
                     },
                     "exists": {
@@ -5164,6 +5206,7 @@
                       "type": "boolean"
                     },
                     "selected": {
+                      "nullable": true,
                       "type": "boolean"
                     },
                     "selector": {
@@ -5182,6 +5225,7 @@
                       "type": "object"
                     },
                     "value_equals": {
+                      "nullable": true,
                       "type": "string"
                     }
                   },
@@ -5192,9 +5236,11 @@
                 },
                 "window": {
                   "additionalProperties": false,
+                  "nullable": true,
                   "properties": {
                     "bounds": {
                       "additionalProperties": false,
+                      "nullable": true,
                       "properties": {
                         "height": {
                           "type": "number"
@@ -5223,6 +5269,7 @@
                       "type": "object"
                     },
                     "exists": {
+                      "nullable": true,
                       "type": "boolean"
                     }
                   },
@@ -5239,6 +5286,7 @@
           },
           "include_screenshot": {
             "description": "Return the final window screenshot as image content for a multimodal\ncaller. The driver does not interpret that image.",
+            "nullable": true,
             "type": "boolean"
           },
           "pid": {

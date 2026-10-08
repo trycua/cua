@@ -216,7 +216,8 @@ pub fn config_schema_properties() -> Map<String, Value> {
         json!({
             "type": "string",
             "enum": ["default"],
-            "description": "Pass `default` (or omit / null at runtime) to clear every saved cursor motion default."
+            "nullable": true,
+            "description": "Pass `default` or null to clear every saved cursor motion default."
         }),
     );
     properties

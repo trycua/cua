@@ -28,6 +28,7 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
     "required",
     "properties",
     "additionalProperties",
+    "nullable",
 ];
 
 const ANNOTATION_KEYWORDS: &[&str] = &["description", "default", "title", "examples"];
@@ -76,6 +77,7 @@ fn compare_schema(path: &str, portable: &Value, live: &Value, violations: &mut V
     check_keywords(path, "live", live_object.keys(), violations);
 
     compare_type(path, portable, live, violations);
+    compare_nullable(path, portable, live, violations);
     compare_allowed_values(path, portable, live, violations);
     compare_pattern(path, portable, live, violations);
     compare_lower_bound(path, "minimum", portable, live, violations);
@@ -114,6 +116,25 @@ fn check_keywords<'a>(
         {
             violations.push(format!("{path}: unsupported {side} schema keyword `{key}`"));
         }
+    }
+}
+
+/// OpenAPI `nullable: true` on the portable side admits `null`; the live
+/// schema must admit it too (its own `nullable`, a `null` type entry, or no
+/// type constraint at all).
+fn compare_nullable(path: &str, portable: &Value, live: &Value, violations: &mut Vec<String>) {
+    if portable.get("nullable") != Some(&Value::Bool(true)) {
+        return;
+    }
+    let live_accepts_null = live.get("nullable") == Some(&Value::Bool(true))
+        || match live.get("type") {
+            None => true,
+            Some(Value::String(name)) => name == "null",
+            Some(Value::Array(names)) => names.iter().any(|name| name == "null"),
+            Some(_) => false,
+        };
+    if !live_accepts_null {
+        violations.push(format!("{path}: portable allows null but live rejects it"));
     }
 }
 

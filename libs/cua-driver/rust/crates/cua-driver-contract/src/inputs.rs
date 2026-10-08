@@ -71,8 +71,9 @@ fn is_null_type_schema(schema: &Value) -> bool {
             .is_some_and(|object| object.keys().all(|key| key == "type"))
 }
 
-/// Optional fields already omit to mean "unset"; drop `| null` unions so the
-/// advertised node keeps a single string `type` for Vertex/Gemini.
+/// Rewrite `anyOf/oneOf: [T, {type: null}]` as `T` plus the OpenAPI
+/// `nullable: true` flag Vertex/Gemini document, so the node keeps a single
+/// string `type` and explicit `null` stays expressible.
 fn collapse_null_union(object: &mut serde_json::Map<String, Value>, keyword: &str) {
     let Some(Value::Array(variants)) = object.get(keyword).cloned() else {
         return;
@@ -104,9 +105,11 @@ fn collapse_null_union(object: &mut serde_json::Map<String, Value>, keyword: &st
                 // Non-object singleton should not occur for Option<T> schemas.
                 object.insert(keyword.into(), Value::Array(kept));
             }
+            object.insert("nullable".into(), Value::Bool(true));
         }
         _ => {
             object.insert(keyword.into(), Value::Array(kept));
+            object.insert("nullable".into(), Value::Bool(true));
         }
     }
 }
@@ -220,12 +223,14 @@ fn rewrite_nullable_type_array(object: &mut serde_json::Map<String, Value>) {
         .cloned()
         .collect();
     if non_null.len() == 1 && types.iter().any(|value| value.as_str() == Some("null")) {
-        // Prefer omission over `nullable: true`: optional inputs already mean
-        // "unset" when the field is absent, matching Gemini-facing enum fields.
+        // `["T", "null"]` becomes `T` plus OpenAPI `nullable: true`: Vertex
+        // rejects type arrays, and `null` keeps its meaning (for example
+        // `effects.glow: null` restores the style's default).
         object.insert(
             "type".into(),
             non_null.into_iter().next().expect("len == 1"),
         );
+        object.insert("nullable".into(), Value::Bool(true));
     }
 }
 

@@ -274,6 +274,14 @@ impl RenderStateCore {
         self.visible && is_placed(self.pos) && self.idle_alpha >= 0.004
     }
 
+    /// Whether an input tool should wait for this cursor to glide.
+    /// Explicitly disabled cursors keep their launch configuration, but
+    /// do not paint motion and must not delay input on an invisible path.
+    /// Idle fading does not disable a future glide, which reveals the cursor.
+    pub fn should_animate_to_target(&self) -> bool {
+        self.cfg.enabled && self.visible && is_placed(self.pos)
+    }
+
     /// Whether a revealed cursor keeps changing pixels while it rests.
     ///
     /// The default theme levitates through the shared float motion (the
@@ -1796,6 +1804,23 @@ mod agent_idle_tests {
             t += step;
         }
         assert!(!core.is_revealed(), "hidden after the fade at {t}s");
+    }
+
+    #[test]
+    fn disabled_cursor_does_not_wait_for_an_invisible_glide() {
+        let mut core = placed();
+        assert!(core.should_animate_to_target());
+        core.apply_command_base(OverlayCommand::SetEnabled(false), false, false);
+        assert!(!core.should_animate_to_target());
+        core.apply_command_base(OverlayCommand::SetEnabled(true), false, false);
+        assert!(core.should_animate_to_target());
+        core.idle_alpha = 0.0;
+        assert!(
+            core.should_animate_to_target(),
+            "idle fading must still permit a new glide"
+        );
+        core.cfg.enabled = false;
+        assert!(!core.should_animate_to_target());
     }
 
     /// A held button is activity for as long as it is held; the timeout

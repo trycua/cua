@@ -1,6 +1,6 @@
 ---
 title: "Guest access"
-description: "Prepare unattended setup, open SSH sessions and change SIP in a guest."
+description: "Prepare unattended setup, open SSH sessions, copy files and change SIP in a guest."
 ---
 
 {/*
@@ -14,6 +14,7 @@ description: "Prepare unattended setup, open SSH sessions and change SIP in a gu
 | --- | --- |
 | [`lume setup`](#lume-setup) | Prepare unattended macOS setup. |
 | [`lume ssh`](#lume-ssh) | Connect to a VM via SSH or execute commands remotely. |
+| [`lume cp`](#lume-cp) | Copy files between the host and a VM. |
 | [`lume sip`](#lume-sip) | Enable or disable System Integrity Protection on a macOS VM. |
 
 Every command also accepts the [global options](/lume/reference/cli#global-options).
@@ -81,6 +82,42 @@ lume ssh my-vm "ls -la"
 
 # A long-running command with no timeout
 lume ssh my-vm --timeout 0 "cd /app && npm test"
+```
+
+## `lume cp`
+
+Copy files between the host and a VM.
+
+Copies a file or directory between the host and a running VM over SSH, using the same credentials as `lume ssh`. Exactly one of the source or destination is a VM path, written as VM:PATH. Host directories are copied recursively automatically; pass --recursive for a recursive guest-to-host copy.
+
+```text output
+lume cp [OPTIONS] <source> <destination>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<source>` | string | required | Source path. Use VM:PATH for a path inside a VM. |
+| `<destination>` | string | required | Destination path. Use VM:PATH for a path inside a VM. |
+
+| Flag | Short | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| <span id="lume-cp--user"></span>`--user` | `-u` | string | `lume` | SSH username. |
+| <span id="lume-cp--password"></span>`--password` | `-p` | string | `lume` | SSH password. |
+| <span id="lume-cp--storage"></span>`--storage` |  | string |  | Storage location name or path. |
+| <span id="lume-cp--timeout"></span>`--timeout` | `-t` | integer | `600` | Transfer timeout in seconds (0 for no timeout). |
+| <span id="lume-cp--recursive"></span>`--recursive` | `-r` | boolean | `false` | Copy directories recursively. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-lume-cp"
+# Copy a host file into the VM
+lume cp ./build.zip my-vm:/tmp/build.zip
+
+# Copy a file out of the VM
+lume cp my-vm:/tmp/out.log ./out.log
+
+# Copy a directory into the VM
+lume cp -r ./assets my-vm:/tmp/assets
 ```
 
 ## `lume sip`

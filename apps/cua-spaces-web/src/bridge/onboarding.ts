@@ -21,6 +21,7 @@
  */
 
 import type { CoreClient } from "./core";
+import { hostOs, type HostOs } from "./host-os";
 import type { OnboardingMode, PermissionHint, TelemetryView } from "./contracts/host";
 import type {
   OnboardingAction,
@@ -92,9 +93,10 @@ export function onboardingReduce(
   return s;
 }
 
-/** The page as drawn, without the native-only pages' dots and facts. */
-export function onboardingView(core: CoreClient, state: OnboardingFlowState): OnboardingView {
-  const v = core.tryCall<OnboardingView>("onboarding.view", { state }) ?? fallbackView(state);
+/** The page as drawn, without the native-only pages' dots and facts, in
+ * the words of the system the app runs on (the tray off a Mac). */
+export function onboardingView(core: CoreClient, state: OnboardingFlowState, os: HostOs = hostOs()): OnboardingView {
+  const v = core.tryCall<OnboardingView>("onboarding.view", { state, hostOs: os }) ?? fallbackView(state, os);
   return {
     ...v,
     dots: v.dots.filter((d) => !NATIVE_ONLY_STEPS.includes(d.step)),
@@ -203,12 +205,12 @@ function fallbackReduce(s: OnboardingFlowState, a: OnboardingAction): Onboarding
   }
 }
 
-function fallbackView(s: OnboardingFlowState): OnboardingView {
+function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
   const pages: Partial<Record<OnboardingStep, [string, string, string]>> = {
     welcome: ["Welcome to Cua Spaces", "Computers for you and your agents.", "Get started"],
     signin: ["Sign in", "Connect your machines and your team.", "Continue"],
     mode: ["How will you use this machine?", "You can change this later.", "Continue"],
-    done: ["You're all set", "Cua Spaces is in your menu bar.", "Start using Cua Spaces"],
+    done: ["You're all set", os === "macos" ? "Cua Spaces is in your menu bar." : "Cua Spaces is in your system tray.", "Start using Cua Spaces"],
   };
   const [title, lede, primaryLabel] = pages[s.step] ?? ["", "", "Continue"];
   const pre = s.installerMode ?? "client";

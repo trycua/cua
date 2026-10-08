@@ -1069,8 +1069,22 @@ pub fn installed_at_text(target: &str) -> String {
     format!("Installed at {target}")
 }
 
-/// The flow as drawn.
+/// The flow as drawn, in a Mac's words.
 pub fn view(s: &OnboardingState) -> OnboardingView {
+    view_on(s, SpaceOs::Macos)
+}
+
+/// Where the app stays once the window closes: the menu bar on a Mac, the
+/// tray elsewhere.
+pub fn done_lede(os: SpaceOs) -> &'static str {
+    match os {
+        SpaceOs::Macos => "Cua Spaces is in your menu bar.",
+        _ => "Cua Spaces is in your system tray.",
+    }
+}
+
+/// [`view`] in the words of the system the app runs on (`os`).
+pub fn view_on(s: &OnboardingState, os: SpaceOs) -> OnboardingView {
     use crate::spaces::sidebar::Fact;
     use OnboardingStep::*;
     let (title, lede, primary) = match s.step {
@@ -1110,11 +1124,7 @@ pub fn view(s: &OnboardingState) -> OnboardingView {
             "You can change this later.",
             "Continue",
         ),
-        Done => (
-            "You're all set",
-            "Cua Spaces is in your menu bar.",
-            "Start using Cua Spaces",
-        ),
+        Done => ("You're all set", done_lede(os), "Start using Cua Spaces"),
     };
     let summary = if s.step == Done {
         let mut facts = vec![
@@ -1277,6 +1287,24 @@ mod tests {
                 },
             },
         )
+    }
+
+    /// The last page says where the app stays: the menu bar on a Mac, the
+    /// tray on Windows and Linux.
+    #[test]
+    fn done_names_the_menu_bar_only_on_a_mac() {
+        let done = OnboardingState {
+            step: OnboardingStep::Done,
+            ..initial(None, None)
+        };
+        assert_eq!(view(&done).lede, "Cua Spaces is in your menu bar.");
+        assert_eq!(view_on(&done, SpaceOs::Macos), view(&done));
+        for os in [SpaceOs::Windows, SpaceOs::Linux] {
+            assert_eq!(
+                view_on(&done, os).lede,
+                "Cua Spaces is in your system tray."
+            );
+        }
     }
 
     /// Cua Volume off (the default): no Volume page, dot, Done line or

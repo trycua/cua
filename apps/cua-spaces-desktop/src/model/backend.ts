@@ -207,6 +207,7 @@ export class LiveSpacesBackend implements SpacesBackend {
     readonly cua: CuaLike,
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly fetchImpl: typeof fetch = fetch,
+    private readonly platform: NodeJS.Platform = process.platform,
   ) {}
 
   async rows(): Promise<AppSpaceRow[]> {
@@ -353,8 +354,9 @@ export class LiveSpacesBackend implements SpacesBackend {
     }
   }
 
+  /** Lume (macOS VMs) runs on a Mac only: elsewhere there is no setting, so Settings has no macOS VMs row. */
   async lumeSource(): Promise<string | null> {
-    return this.config("runtime.lume");
+    return this.platform === "darwin" ? this.config("runtime.lume") : null;
   }
 
   async setLumeSource(value: string): Promise<void> {

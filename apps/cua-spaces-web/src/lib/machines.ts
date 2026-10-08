@@ -3,6 +3,7 @@
 
 import type { Machine, SpaceOs } from "@/bridge";
 import { OS_NAME } from "@/components/os-icon";
+import { plural } from "@/lib/plural";
 import { relativeTime } from "@/lib/utils";
 
 /** The machine's OS as one of the three the app draws, or null when the host did not say. */
@@ -67,4 +68,9 @@ export function spaceCount(n: number): string {
 /** The selected machine: the chosen one if it is still listed, else the first. */
 export function selectedMachine<T extends Pick<Machine, "id">>(machines: readonly T[], id: string | null): T | undefined {
   return machines.find((m) => m.id === id) ?? machines[0];
+}
+
+/** The Machines header: "1 machine, 1 online", "3 machines, 2 online". */
+export function machinesSummary(total: number, online: number): string {
+  return `${plural(total, "machine")}, ${online} online`;
 }

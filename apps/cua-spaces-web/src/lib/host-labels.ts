@@ -28,3 +28,18 @@ export function thisComputerText(platform?: string): string {
 export function showsMacShellSettings(platform?: string): boolean {
   return isMacPlatform(platform);
 }
+
+const osOf = (platform?: string): HostOs => (platform === undefined ? hostOs() : osOfPlatform(platform));
+
+/** The core's line for a Space being created here ("This Mac · Downloading
+ * image…"), naming this computer in the words of its system. */
+export function creatingLine(detail: string, platform?: string): string {
+  const os = osOf(platform);
+  return os === "macos" ? detail : detail.replace(/^This Mac(?= \u00b7 )/, THIS_MACHINE[os]);
+}
+
+/** What keeps the Keyvault's key besides a passphrase: "Touch ID",
+ * "Windows Hello", "the system keyring" (Linux). */
+export function keyvaultUnlockWay(platform?: string): string {
+  return { macos: "Touch ID", windows: "Windows Hello", linux: "the system keyring" }[osOf(platform)];
+}

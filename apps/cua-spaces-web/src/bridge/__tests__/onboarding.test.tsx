@@ -49,6 +49,10 @@ describe.each([
     const v = onboardingView(core, s);
     expect(v.title).toBe("You're all set");
     expect(v.summary.map((f) => f.label)).toEqual(["Account", "AI agents", "This machine"]);
+    // Where the app stays: the menu bar on a Mac, the tray on Windows and Linux.
+    expect(onboardingView(core, s, "macos").lede).toBe("Cua Spaces is in your menu bar.");
+    expect(onboardingView(core, s, "windows").lede).toBe("Cua Spaces is in your system tray.");
+    expect(onboardingView(core, s, "linux").lede).toBe("Cua Spaces is in your system tray.");
   });
 
   it("keeps the presentation setting the machine has", async () => {

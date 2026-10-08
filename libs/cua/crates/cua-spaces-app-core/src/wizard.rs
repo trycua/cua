@@ -903,6 +903,20 @@ fn runtime_switch(image: &SandboxImage, env: &WizardEnv) -> Option<RuntimeSwitch
 pub const OTHER_MAC_HINT: &str = "To use another Mac, open Cua Spaces on it, choose Set up for \
      access and turn on Spaces for your devices. It then shows up here.";
 
+/// [`OTHER_MAC_HINT`] on Windows and Linux, where the other machine may be
+/// any computer.
+pub const OTHER_COMPUTER_HINT: &str = "To use another computer, open Cua Spaces on it, choose \
+     Set up for access and turn on Spaces for your devices. It then shows up here.";
+
+/// The line under "Run on" naming how another machine joins, in the words
+/// of the system the app runs on.
+pub fn other_machine_hint(os: SpaceOs) -> &'static str {
+    match os {
+        SpaceOs::Macos => OTHER_MAC_HINT,
+        _ => OTHER_COMPUTER_HINT,
+    }
+}
+
 /// `host:port` or `http(s)://host:port`: a shape check only.
 pub fn looks_like_address(value: &str) -> bool {
     let v = value.trim();
@@ -2686,7 +2700,7 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         // Yours and online, but its owner stopped sharing it.
         None => match env.hosts.iter().find_map(SpaceHost::stopped_sharing) {
             Some(line) => line,
-            None if env.hosts.is_empty() => OTHER_MAC_HINT.to_string(),
+            None if env.hosts.is_empty() => other_machine_hint(os).to_string(),
             None => String::new(),
         },
     })
@@ -4072,6 +4086,13 @@ mod tests {
             ("runtime.lume", "builtin", "Use built-in Lume")
         );
         assert_eq!(v.placement_hint.as_deref(), Some(OTHER_MAC_HINT));
+        // Off a Mac, the other machine is any computer.
+        for os in [SpaceOs::Windows, SpaceOs::Linux] {
+            assert_eq!(
+                view_on(&s, &system, os).placement_hint.as_deref(),
+                Some(OTHER_COMPUTER_HINT)
+            );
+        }
         assert!(!v.can_continue);
         // Not on an Intel Mac (Lume needs Apple silicon).
         let intel = WizardEnv {

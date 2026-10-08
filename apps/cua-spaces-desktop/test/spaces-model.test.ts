@@ -9,7 +9,8 @@ import { describe, expect, it } from "vitest";
 import { dropped, FileOffers } from "../src/bridge/files";
 import { NotchActivity } from "../src/model/activity";
 import { isAppBundle } from "../src/notch-feed";
-import type { SpaceThumbnailData } from "../src/model/backend";
+import { LiveSpacesBackend, type SpaceThumbnailData } from "../src/model/backend";
+import type { Native } from "../src/native/load";
 import { DESKTOP, PipSet, pipKey, pipTitle, remoteWindow, type PipSpec, type StreamWindow } from "../src/model/streams";
 import { SpaceThumbnails, thumbnailDataUrl } from "../src/model/thumbnails";
 
@@ -255,5 +256,19 @@ describe("the notch's activity", () => {
 
   it("tells app bundles from files", () => {
     expect(["/Applications/Notes.app", "/A/Notes.app/", "/a/app.txt", "/a/notes.APP"].map(isAppBundle)).toEqual([true, true, false, true]);
+  });
+});
+
+describe("LiveSpacesBackend's runtime settings", () => {
+  // The SDK's `runtime.*` config, without the native layer.
+  const native = { configGet: (key: string) => ({ value: key === "runtime.lume" ? "builtin" : "auto" }) } as unknown as Native;
+  const backend = (platform: NodeJS.Platform) => new LiveSpacesBackend(native, {} as never, {}, fetch, platform);
+
+  it("has a macOS VMs (Lume) setting on a Mac only", async () => {
+    expect(await backend("darwin").lumeSource()).toBe("builtin");
+    // Windows and Linux: no Lume, so Settings shows no macOS VMs row.
+    expect(await backend("linux").lumeSource()).toBeNull();
+    expect(await backend("win32").lumeSource()).toBeNull();
+    expect(await backend("linux").linuxSource()).toBe("auto");
   });
 });

@@ -102,6 +102,7 @@ export function makeModel(o: EnvironmentOptions): Environment {
   const cloud = new CloudModel(native, () => backend.current);
   const startup = new StartupModel({ kind: "starting" });
   const keyvault = new KeyvaultModel(native, keyvaultClient(native));
+  keyvault.appImage = (o.platform ?? process.platform) === "linux" && Boolean(env.APPIMAGE);
   const model = new AppModel({
     native,
     backend,

@@ -23,6 +23,19 @@ pub enum SpaceOs {
 }
 
 impl SpaceOs {
+    /// The system this build runs on, for the words of a view a native
+    /// shell asks the library for (the Electron shell on Windows and Linux).
+    /// macOS in the wasm core, whose callers name theirs (`hostOs`).
+    pub fn this_host() -> Self {
+        if cfg!(target_os = "windows") {
+            SpaceOs::Windows
+        } else if cfg!(target_os = "linux") {
+            SpaceOs::Linux
+        } else {
+            SpaceOs::Macos
+        }
+    }
+
     /// "macOS", "Windows", "Linux".
     pub fn label(self) -> &'static str {
         match self {

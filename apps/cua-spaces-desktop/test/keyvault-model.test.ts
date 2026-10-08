@@ -5,7 +5,8 @@
 // sentence, and what an unreachable broker looks like. The rest of the model
 // runs on the app core in vault-native.test.ts.
 import { describe, expect, it } from "vitest";
-import { brokerWords, unavailableOverview } from "../src/model/keyvault";
+import type { KvPage } from "../src/native/generated/index";
+import { appImagePage, brokerWords, unavailableOverview } from "../src/model/keyvault";
 
 const sdkError = (message: string, tag = "InvalidArgument") => Object.assign(new Error(message), { [Symbol.for("typeName")]: "CuaError", tag });
 
@@ -35,5 +36,27 @@ describe("an unreachable broker", () => {
     expect([o.items, o.pending, o.grants, o.rules, o.deliveries, o.audit]).toEqual([[], [], [], [], [], []]);
     expect(o.namesVisible).toBe(false);
     expect(o.serverVerified).toBe(false);
+  });
+});
+
+describe("the AppImage's Keyvault page", () => {
+  const page = {
+    ready: false,
+    unavailableTitle: "Keyvault is unavailable: the Cua daemon is not signed by Cua (a development build, or a modified install)",
+    message: "The process serving the Keyvault (...) is not signed by Cua",
+  } as KvPage;
+
+  it("says the AppImage can't use the Keyvault and to install the .deb, not a development build", () => {
+    for (const availability of ["impostor", "not_first_party"]) {
+      const p = appImagePage(page, availability);
+      expect(p.unavailableTitle).toBe("The AppImage can't use the Keyvault");
+      expect(p.message).toContain("Install the .deb");
+      expect(`${p.unavailableTitle} ${p.message}`).not.toMatch(/development build|signed app/);
+    }
+  });
+
+  it("leaves every other state as the core draws it", () => {
+    expect(appImagePage(page, "not_running")).toBe(page);
+    expect(appImagePage(page, "ready")).toBe(page);
   });
 });

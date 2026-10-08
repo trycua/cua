@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { hostOs, osOfPlatform, showsMacShellSettings, thisComputerLabel, thisComputerText } from "./host-labels";
+import { creatingLine, hostOs, keyvaultUnlockWay, osOfPlatform, showsMacShellSettings, thisComputerLabel, thisComputerText } from "./host-labels";
 
 describe("host labels", () => {
   it("names the local machine after its system", () => {
@@ -30,5 +30,21 @@ describe("host labels", () => {
     expect(showsMacShellSettings("MacIntel")).toBe(true);
     expect(showsMacShellSettings("Win32")).toBe(false);
     expect(showsMacShellSettings("Linux x86_64")).toBe(false);
+  });
+
+  it("names this computer in a Space being created here", () => {
+    const line = "This Mac \u00b7 Downloading image\u2026";
+    expect(creatingLine(line, "darwin")).toBe(line);
+    expect(creatingLine(line, "linux")).toBe("This computer \u00b7 Downloading image\u2026");
+    expect(creatingLine(line, "win32")).toBe("This PC \u00b7 Downloading image\u2026");
+    // Elsewhere, or a failure in the core's own words: as it is.
+    expect(creatingLine("Cua Cloud \u00b7 Starting\u2026", "linux")).toBe("Cua Cloud \u00b7 Starting\u2026");
+    expect(creatingLine("This Mac can't reach its new VM", "linux")).toBe("This Mac can't reach its new VM");
+  });
+
+  it("says what keeps the Keyvault's key on each system", () => {
+    expect(keyvaultUnlockWay("darwin")).toBe("Touch ID");
+    expect(keyvaultUnlockWay("win32")).toBe("Windows Hello");
+    expect(keyvaultUnlockWay("linux")).toBe("the system keyring");
   });
 });

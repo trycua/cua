@@ -68,6 +68,19 @@ export function unavailableOverview(): KeyvaultOverview {
   };
 }
 
+/** The Keyvault page of the Linux AppImage. The Keyvault trusts Cua Spaces
+ * by where it is installed (the .deb's place), and an AppImage runs from a
+ * temporary mount, so neither it nor the cua it ships is ever trusted: say
+ * that and what to do, not "a development build". */
+export function appImagePage(page: KvPage, availability: string): KvPage {
+  if (availability !== "impostor" && availability !== "not_first_party") return page;
+  return {
+    ...page,
+    unavailableTitle: "The AppImage can't use the Keyvault",
+    message: "The Keyvault only trusts Cua Spaces installed from its .deb package. Install the .deb to use the Keyvault.",
+  };
+}
+
 export class KeyvaultModel {
   overview: KeyvaultOverview;
   /** The sidebar's pick (the bridge answers the list of the "All" category unless told). */
@@ -82,6 +95,8 @@ export class KeyvaultModel {
   dismissed: string[] = [];
   /** The Access row to bring forward (a Space's "Signed in" badge). */
   focusKey: string | null = null;
+  /** This is the Linux AppImage (`$APPIMAGE`): its page says it can't use the Keyvault ({@link appImagePage}). */
+  appImage = false;
   /** Told the sharing label after every refresh (and after a dismissal). */
   onSharing: ((label: string | null) => void) | null = null;
   /** Told the dismissed copies when they change (the app saves them). */
@@ -114,7 +129,8 @@ export class KeyvaultModel {
   }
 
   get page(): KvPage {
-    return this.native.kvPage(this.overview, this.nowMs);
+    const page = this.native.kvPage(this.overview, this.nowMs);
+    return this.appImage ? appImagePage(page, this.overview.availability) : page;
   }
 
   get sidebar(): KvSidebar {

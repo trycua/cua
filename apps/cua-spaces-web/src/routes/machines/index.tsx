@@ -15,7 +15,7 @@ import { StateLabel } from "@/components/state-dot";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
-import { connectionLabel, machineOs, machineSubtitle, osName, presenceLabel, presenceWord, reachable, selectedMachine, spaceCount } from "@/lib/machines";
+import { connectionLabel, machineOs, machinesSummary, machineSubtitle, osName, presenceLabel, presenceWord, reachable, selectedMachine, spaceCount } from "@/lib/machines";
 import { osLabel, realSpaces, spaceState } from "@/lib/spaces";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -50,7 +50,7 @@ function MachinesPage() {
       <PageHeader
         title="Machines"
         description={
-          isLoading ? "Loading machines…" : machines.length ? `${machines.length} machines, ${online} online` : "Computers that can run your Spaces."
+          isLoading ? "Loading machines…" : machines.length ? machinesSummary(machines.length, online) : "Computers that can run your Spaces."
         }
         actions={
           <Button variant="outline" onClick={() => setAdding(true)}>

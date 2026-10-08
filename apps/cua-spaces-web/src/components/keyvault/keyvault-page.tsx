@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Segmented } from "@/components/ui/segmented";
 import { toastError } from "@/components/ui/toast";
+import { hostOs, keyvaultUnlockWay } from "@/lib/host-labels";
 
 import { ApprovalDialog } from "./approval-dialog";
 import { CategoryPane } from "./category-pane";
@@ -247,10 +248,10 @@ function SetUpVault({ passphrase, help, label, busy, onSetUp }: { passphrase: bo
         }
       >
         Set it up to save logins your agents can use.{" "}
-        {passphrase ? "You choose a passphrase to protect it." : (help ?? "Touch ID or a passphrase protects it.")}
+        {passphrase ? "You choose a passphrase to protect it." : (help ?? `${capitalized(keyvaultUnlockWay())} or a passphrase protects it.`)}
       </EmptyState>
       <p className="mt-3 px-1 text-center text-xs text-muted-foreground">
-        Or run <code className="font-mono">{KEYVAULT_SETUP_COMMAND}</code> in Terminal.
+        Or run <code className="font-mono">{KEYVAULT_SETUP_COMMAND}</code> in {hostOs() === "macos" ? "Terminal" : "a terminal"}.
       </p>
     </div>
   );
@@ -262,7 +263,7 @@ function RecoveryKey({ value, onDone }: { value: string; onDone: () => void }) {
   return (
     <div data-vault-recovery className="mb-4 rounded-xl border bg-brand-surface/60 px-4 py-3">
       <p className="text-[13px] font-medium">Save your recovery key</p>
-      <p className="mt-0.5 text-xs text-muted-foreground">It's shown once. You need it if Touch ID or your passphrase stops working.</p>
+      <p className="mt-0.5 text-xs text-muted-foreground">It's shown once. You need it if {keyvaultUnlockWay()} or your passphrase stops working.</p>
       <div className="mt-2 flex items-center gap-2">
         <code className="flex-1 truncate rounded-md bg-background px-2 py-1 font-mono text-[13px]" data-recovery-key>
           {value}
@@ -282,3 +283,5 @@ function RecoveryKey({ value, onDone }: { value: string; onDone: () => void }) {
     </div>
   );
 }
+
+const capitalized = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

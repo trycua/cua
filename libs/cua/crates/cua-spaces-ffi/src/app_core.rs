@@ -1489,7 +1489,7 @@ pub fn app_notch_estimated_progress(elapsed_ms: i64, estimate_ms: u32) -> u32 {
 /// The page chrome.
 #[uniffi::export]
 pub fn kv_page(overview: KeyvaultOverview, now_ms: i64) -> KvPage {
-    core::keyvault::view::page(&overview, now_ms)
+    core::keyvault::view::page_on(&overview, now_ms, core::model::SpaceOs::this_host())
 }
 
 /// The always-visible signal while Keyvault sign-ins are live in a Space
@@ -1569,7 +1569,7 @@ pub fn kv_vault_reduce(
 /// the batch bar.
 #[uniffi::export]
 pub fn kv_vault_view(overview: KeyvaultOverview, state: KvVaultState, now_ms: i64) -> KvVaultView {
-    core::keyvault::vault::view(&overview, &state, now_ms)
+    core::keyvault::vault::view_on(&overview, &state, now_ms, core::model::SpaceOs::this_host())
 }
 
 /// The selection without what the vault no longer holds.
@@ -1690,7 +1690,7 @@ pub fn kv_duration(ms: i64) -> String {
 /// when the daemon can use the OS key store, else a passphrase.
 #[uniffi::export]
 pub fn kv_credential_form(overview: KeyvaultOverview) -> Option<KvCredentialForm> {
-    core::keyvault::credential::credential_form(&overview)
+    core::keyvault::credential::credential_form_on(&overview, core::model::SpaceOs::this_host())
 }
 
 /// The passphrase fields' hint and whether the form can be sent. Pure: the

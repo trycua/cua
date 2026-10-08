@@ -647,7 +647,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get("identity")?,
         )),
         "onboarding.reduce" => out(onboarding::reduce(&a.get("state")?, &a.get("action")?)),
-        "onboarding.view" => out(onboarding::view(&a.get("state")?)),
+        // `hostOs`: the shell's system, for its words (macOS when absent).
+        "onboarding.view" => out(onboarding::view_on(
+            &a.get("state")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
         "onboarding.copy" => out(onboarding::copy()),
         "onboarding.signedInText" => out(onboarding::signed_in_text(
             a.get::<Option<String>>("identity")?.as_deref(),
@@ -1077,6 +1082,27 @@ mod tests {
         // Not known: it reported no features. Not a machine: a local Space.
         assert_eq!(space("relay:m1", &[]), Value::Null);
         assert_eq!(space("local:dev", &["files"]), Value::Null);
+    }
+
+    /// `onboarding.view` names the menu bar only for a Mac (`hostOs`).
+    #[test]
+    fn onboarding_words_follow_the_hosts_system() {
+        let state = call_value(
+            "onboarding.initial",
+            json!({ "installerMode": null, "identity": null }),
+        )
+        .unwrap();
+        let mut done = state.clone();
+        done["step"] = json!("done");
+        let lede = |os: Value| {
+            call_value("onboarding.view", json!({ "state": done, "hostOs": os })).unwrap()["lede"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(lede(Value::Null), "Cua Spaces is in your menu bar.");
+        assert_eq!(lede(json!("linux")), "Cua Spaces is in your system tray.");
+        assert_eq!(lede(json!("windows")), "Cua Spaces is in your system tray.");
     }
 
     /// `agentKeys.view` and `agentKeys.form` say where keys stay in the shell's

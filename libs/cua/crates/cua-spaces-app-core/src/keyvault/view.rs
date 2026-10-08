@@ -7,6 +7,7 @@
 //! access, and the page's unavailable and protection states.
 
 use super::wire::*;
+use crate::model::SpaceOs;
 use serde::{Deserialize, Serialize};
 
 /// A live grant: not revoked, not expired, uses left.
@@ -649,8 +650,13 @@ pub struct KvLabels {
     pub protection_title: String,
 }
 
-/// The Keyvault's fixed words.
+/// The Keyvault's fixed words, in a Mac's.
 pub fn labels() -> KvLabels {
+    labels_on(SpaceOs::Macos)
+}
+
+/// [`labels`] in the words of the system the Keyvault runs on.
+pub fn labels_on(os: SpaceOs) -> KvLabels {
     KvLabels {
         deny: "Deny".into(),
         review: "Review\u{2026}".into(),
@@ -658,7 +664,13 @@ pub fn labels() -> KvLabels {
         set_up: "Set up Keyvault".into(),
         unlock: "Unlock".into(),
         revoke_all: "Revoke all".into(),
-        confirm_note: "Touch ID confirms in the Cua daemon.".into(),
+        confirm_note: match os {
+            SpaceOs::Linux => "The Cua daemon asks for your password (polkit).".into(),
+            _ => format!(
+                "{} confirms in the Cua daemon.",
+                super::credential::presence_word(os)
+            ),
+        },
         protection_title: "Protection".into(),
     }
 }
@@ -668,9 +680,16 @@ pub fn recovery_key_text(key: &str) -> String {
     format!("Recovery key, shown once: {key}")
 }
 
-/// The page chrome for an overview.
+/// The page chrome for an overview, in a Mac's words.
 pub fn page(o: &KeyvaultOverview, now: i64) -> KeyvaultPage {
+    page_on(o, now, SpaceOs::Macos)
+}
+
+/// [`page`] in the words of the system the Keyvault runs on (`os`): how it
+/// confirms presence and unlocks, and no Secure Enclave off a Mac.
+pub fn page_on(o: &KeyvaultOverview, now: i64, os: SpaceOs) -> KeyvaultPage {
     use crate::spaces::sidebar::Fact;
+    let presence = super::credential::presence_word(os);
     let ready = o.availability == "ready";
     let s = o.status.as_ref();
     let disabled = s.is_some_and(|s| s.disabled);
@@ -698,23 +717,40 @@ pub fn page(o: &KeyvaultOverview, now: i64) -> KeyvaultPage {
     };
     let protection = s
         .map(|s| {
-            vec![
-                fact("Touch ID", "Asked by the Cua daemon to widen access".into()),
+            let mut facts = vec![
+                fact(
+                    match os {
+                        SpaceOs::Linux => "Password prompt",
+                        _ => presence,
+                    },
+                    "Asked by the Cua daemon to widen access".into(),
+                ),
                 fact(
                     "Unlock",
                     if super::credential::passphrase_only(s) {
                         "Passphrase"
                     } else if s.unlock_policy.as_deref() == Some("presence") {
-                        "Touch ID"
+                        match os {
+                            SpaceOs::Linux => "Password",
+                            _ => presence,
+                        }
                     } else {
-                        "Mac login"
+                        match os {
+                            SpaceOs::Windows => "Windows sign-in",
+                            SpaceOs::Linux => "Desktop login",
+                            SpaceOs::Macos | SpaceOs::Unknown => "Mac login",
+                        }
                     }
                     .into(),
                 ),
-                fact(
+            ];
+            if matches!(os, SpaceOs::Macos | SpaceOs::Unknown) {
+                facts.push(fact(
                     "Secure Enclave",
                     "Not used: needs a provisioning-signed build".into(),
-                ),
+                ));
+            }
+            facts.extend([
                 fact(
                     "This app",
                     if s.caller_first_party {
@@ -733,7 +769,8 @@ pub fn page(o: &KeyvaultOverview, now: i64) -> KeyvaultPage {
                     }
                     .into(),
                 ),
-            ]
+            ]);
+            facts
         })
         .unwrap_or_default();
     let live_grants = o.grants.iter().filter(|g| live_grant(g, now)).count();
@@ -769,13 +806,12 @@ pub fn page(o: &KeyvaultOverview, now: i64) -> KeyvaultPage {
         reset_notice: s.and_then(|s| s.reset_notice.clone()),
         pending_count: o.pending.len() as u32,
         kill_switch_help: if disabled {
-            "Turning it back on asks for Touch ID"
+            format!("Turning it back on asks for {presence}")
         } else {
-            "Stops every teleport, import and approval"
-        }
-        .into(),
-        labels: labels(),
-        form: super::credential::credential_form(o),
+            "Stops every teleport, import and approval".into()
+        },
+        labels: labels_on(os),
+        form: super::credential::credential_form_on(o, os),
     }
 }
 
@@ -939,5 +975,79 @@ mod sharing_tests {
                 "Keyvault is unavailable: the Cua daemon is not signed by Cua (a development build, or a modified install)"
             )
         );
+    }
+}
+
+#[cfg(test)]
+mod host_words_tests {
+    use super::*;
+
+    fn locked() -> KeyvaultOverview {
+        KeyvaultOverview {
+            availability: "locked".into(),
+            status: Some(KvStatus {
+                version: "1".into(),
+                initialized: true,
+                unlocked: false,
+                disabled: true,
+                caller_first_party: true,
+                caller_display: "Cua Spaces".into(),
+                items: 0,
+                pending: 0,
+                unlock_policy: None,
+                auto_wipe: None,
+                os_protector_available: true,
+                passphrase_available: true,
+                unlock_protectors: vec!["windows-credential".into()],
+                browse_until_ms: None,
+                skip_unlock_prompt: None,
+                reset_notice: None,
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// Off a Mac the page names Windows Hello or the password prompt, its
+    /// own sign-in, and no Secure Enclave; the Mac's page is unchanged.
+    #[test]
+    fn the_page_speaks_the_hosts_words() {
+        let mac = page(&locked(), 0);
+        assert_eq!(mac, page_on(&locked(), 0, SpaceOs::Macos));
+        assert_eq!(
+            mac.labels.confirm_note,
+            "Touch ID confirms in the Cua daemon."
+        );
+        assert_eq!(mac.kill_switch_help, "Turning it back on asks for Touch ID");
+        assert!(mac.protection.iter().any(|f| f.label == "Secure Enclave"));
+        assert!(mac.protection.iter().any(|f| f.value == "Mac login"));
+
+        let win = page_on(&locked(), 0, SpaceOs::Windows);
+        assert_eq!(
+            win.labels.confirm_note,
+            "Windows Hello confirms in the Cua daemon."
+        );
+        assert_eq!(
+            win.kill_switch_help,
+            "Turning it back on asks for Windows Hello"
+        );
+        assert!(win.protection.iter().any(|f| f.value == "Windows sign-in"));
+        assert_eq!(
+            win.form.unwrap().help,
+            "Unlocks with Windows Credential Manager."
+        );
+
+        let linux = page_on(&locked(), 0, SpaceOs::Linux);
+        assert_eq!(
+            linux.labels.confirm_note,
+            "The Cua daemon asks for your password (polkit)."
+        );
+        assert!(linux.protection.iter().any(|f| f.value == "Desktop login"));
+        for p in [&page_on(&locked(), 0, SpaceOs::Windows), &linux] {
+            let text = serde_json::to_string(p).unwrap();
+            assert!(!text.contains("Touch ID"), "{text}");
+            assert!(!text.contains("Secure Enclave"), "{text}");
+            assert!(!text.contains("keychain"), "{text}");
+            assert!(!text.contains("Mac login"), "{text}");
+        }
     }
 }

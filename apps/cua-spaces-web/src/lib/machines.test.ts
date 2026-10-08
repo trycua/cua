@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Machine } from "@/bridge";
-import { connectionLabel, machineOs, machineSubtitle, presenceLabel, presenceWord, reachable, selectedMachine, spaceCount } from "./machines";
+import { connectionLabel, machineOs, machinesSummary, machineSubtitle, presenceLabel, presenceWord, reachable, selectedMachine, spaceCount } from "./machines";
 
 const NOW = Date.parse("2026-10-03T12:00:00Z");
 
@@ -22,6 +22,11 @@ const machine = (over: Partial<Machine>): Machine => ({
 });
 
 describe("machines", () => {
+  it("counts machines in the Machines header in the singular too", () => {
+    expect(machinesSummary(1, 1)).toBe("1 machine, 1 online");
+    expect(machinesSummary(3, 2)).toBe("3 machines, 2 online");
+  });
+
   it("reads the OS the host reported", () => {
     expect(machineOs(machine({ os: "macos" }))).toBe("macos");
     expect(machineOs(machine({ os: "Windows" }))).toBe("windows");

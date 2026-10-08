@@ -15,7 +15,7 @@ import { useTileVideo } from "@/components/video/tile-video";
 import { useNewSpace } from "@/hooks/use-new-space";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
-import { thisComputerText } from "@/lib/host-labels";
+import { creatingLine, thisComputerText } from "@/lib/host-labels";
 import { plural } from "@/lib/plural";
 import { createError, createProgress, machineName, realSpaces, spacePlace, spaceState, visibleSpaces, type SpaceFilter } from "@/lib/spaces";
 
@@ -130,9 +130,9 @@ function SpaceLink({ space, machine }: { space: Space; machine: string }) {
         <OsIcon os={space.os} className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-medium">{space.name}</div>
-          {/* Being created: the core's pending line ("This Mac · Downloading"), as the SwiftUI row says it. */}
+          {/* Being created: the core's pending line ("This Mac · Downloading"), as the SwiftUI row says it, naming this computer by its system. */}
           <div className="mt-0.5 truncate text-xs text-muted-foreground">
-            {spaceState(space) === "creating" && space.detail ? space.detail : spacePlace(space, machine)}
+            {spaceState(space) === "creating" && space.detail ? creatingLine(space.detail) : spacePlace(space, machine)}
           </div>
           {createError(space) ? (
             <p data-create-error="" title={createError(space)!} className="mt-1 line-clamp-2 text-xs text-destructive">

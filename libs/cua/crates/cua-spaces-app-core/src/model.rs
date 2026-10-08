@@ -52,6 +52,26 @@ impl SpaceOs {
             _ => None,
         }
     }
+
+    /// What the app calls the computer it runs on, when that runs this
+    /// system: "This Mac", "This PC", "This computer".
+    pub fn this_machine(self) -> &'static str {
+        match self {
+            SpaceOs::Macos => "This Mac",
+            SpaceOs::Windows => "This PC",
+            SpaceOs::Linux | SpaceOs::Unknown => "This computer",
+        }
+    }
+
+    /// [`Self::this_machine`] mid-sentence: "this Mac", "this PC",
+    /// "this computer".
+    pub fn this_machine_lower(self) -> &'static str {
+        match self {
+            SpaceOs::Macos => "this Mac",
+            SpaceOs::Windows => "this PC",
+            SpaceOs::Linux | SpaceOs::Unknown => "this computer",
+        }
+    }
 }
 
 /// Lifecycle status of a Space.
@@ -406,6 +426,16 @@ pub fn arch_label(arch: &str) -> Option<&'static str> {
     normalize_arch(arch).map(|a| if a == "arm64" { "ARM" } else { "x64" })
 }
 
+/// The architecture in words on a host of `os`: "ARM" or "x64" on a Mac
+/// (as [`arch_label`]), "arm64" or "x64" on Windows and Linux, where
+/// "ARM" alone reads as 32-bit.
+pub fn arch_label_on(os: SpaceOs, arch: &str) -> Option<&'static str> {
+    match os {
+        SpaceOs::Macos => arch_label(arch),
+        _ => normalize_arch(arch).map(|a| if a == "arm64" { "arm64" } else { "x64" }),
+    }
+}
+
 /// This machine's CPU architecture, as the image catalog spells it (`arm64`,
 /// `amd64`): what a native shell passes as `host_arch` (the Swift app
 /// through the SDK's `app_host_arch`, the Tauri shell's `host_arch`
@@ -446,12 +476,24 @@ pub fn emulation_warning(
     host_arch: Option<&str>,
     arch: Option<&str>,
 ) -> Option<String> {
+    emulation_warning_on(SpaceOs::Macos, local, host_arch, arch)
+}
+
+/// [`emulation_warning`] on a host of `os` ("Emulated on this PC\u{2019}s
+/// arm64 processor. ...").
+pub fn emulation_warning_on(
+    os: SpaceOs,
+    local: bool,
+    host_arch: Option<&str>,
+    arch: Option<&str>,
+) -> Option<String> {
     let host = normalize_arch(host_arch?)?;
     let arch = normalize_arch(arch?)?;
     (local && host != arch).then(|| {
         format!(
-            "Emulated on this Mac\u{2019}s {} processor. Performance may be degraded.",
-            arch_label(host).unwrap_or(host)
+            "Emulated on {}\u{2019}s {} processor. Performance may be degraded.",
+            os.this_machine_lower(),
+            arch_label_on(os, host).unwrap_or(host)
         )
     })
 }
@@ -484,9 +526,15 @@ pub enum Location {
 impl Location {
     /// "Cua Cloud" / "This Mac" / "Your cloud" / "Your machine".
     pub fn label(self) -> &'static str {
+        self.label_on(SpaceOs::Macos)
+    }
+
+    /// [`Self::label`] in a shell on `os`: local is "This PC" on Windows,
+    /// "This computer" on Linux.
+    pub fn label_on(self, os: SpaceOs) -> &'static str {
         match self {
             Location::Cloud => "Cua Cloud",
-            Location::Local => "This Mac",
+            Location::Local => os.this_machine(),
             Location::Yours => "Your cloud",
             Location::Host => "Your machine",
         }

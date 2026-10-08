@@ -677,10 +677,14 @@ pub fn page(o: &KeyvaultOverview, now: i64) -> KeyvaultPage {
     let unavailable_title = (!ready).then(|| {
         match o.availability.as_str() {
             "not_running" => "The Keyvault is not running",
-            "impostor" => "The Cua daemon is not signed by Cua",
+            "impostor" => {
+                "Keyvault is unavailable: the Cua daemon is not signed by Cua (a development build, or a modified install)"
+            }
             "no_vault" => "No Keyvault yet",
             "locked" => "The Keyvault is locked",
-            "not_first_party" => "This app is not signed by Cua",
+            "not_first_party" => {
+                "Keyvault is unavailable: this app is not signed by Cua (a development build, or a modified copy)"
+            }
             _ => "The Keyvault is unavailable",
         }
         .to_string()
@@ -931,7 +935,9 @@ mod sharing_tests {
         };
         assert_eq!(
             page(&o, 0).unavailable_title.as_deref(),
-            Some("The Cua daemon is not signed by Cua")
+            Some(
+                "Keyvault is unavailable: the Cua daemon is not signed by Cua (a development build, or a modified install)"
+            )
         );
     }
 }

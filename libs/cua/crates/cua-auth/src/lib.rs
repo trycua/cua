@@ -238,6 +238,10 @@ pub enum Store {
     TestKeychain(PathBuf),
 }
 
+/// Under the cua home: which file session ([`Store::import_file_session_in`])
+/// was imported into the OS credential vault (its `expires_at`; no token).
+pub const FILE_IMPORT_MARKER: &str = "keychain-import.json";
+
 /// The session marker file under the cua home: a non-secret record that a
 /// session is stored, so callers that must not touch the OS credential
 /// vault implicitly (the default sandbox listing) know whether it holds one.
@@ -283,6 +287,7 @@ pub fn may_have_session() -> bool {
         return true;
     }
     read_session_marker().is_some_and(|m| m.store == store.kind())
+        || (store.imports_file_session() && store.has_file_session_to_import(&cua_home()))
 }
 
 /// Cua's Apple Developer team (the one `cua_keyvault::caller::CUA_TEAM_ID`
@@ -426,8 +431,139 @@ impl Store {
         Ok(())
     }
 
-    /// Loads credentials (`None` when there are none).
+    /// Whether this process can read the Cua items in the macOS keychain
+    /// (the session and the named secrets) without a prompt, for callers
+    /// that must never wait on a hidden keychain dialog (the Spaces app asks
+    /// before it starts anything that reads the session). With `prompt`,
+    /// macOS asks for each item that needs it. Either way, a Cua-signed
+    /// build recreates each item it read that lacks the Cua access list, so
+    /// later Cua builds read it without a prompt. Other stores: `NotUsed`.
+    pub fn check_keychain(&self, prompt: bool) -> KeychainCheck {
+        match self {
+            #[cfg(target_os = "macos")]
+            Store::Keyring => {
+                let wanted = |a: &str| {
+                    a == KEYRING_ACCOUNT
+                        || a.strip_prefix(KEYRING_ACCOUNT).is_some_and(|r| r.starts_with('.'))
+                };
+                let items = macos_keychain::check_items(
+                    macos_keychain::Keychain::Default,
+                    KEYRING_SERVICE,
+                    &wanted,
+                    prompt,
+                    signed_by_cua(),
+                );
+                KeychainCheck::from_items(items, || {
+                    macos_keychain::default_keychain_unlocked() == Some(false)
+                })
+            }
+            _ => KeychainCheck {
+                state: KeychainState::NotUsed,
+                items: vec![],
+            },
+        }
+    }
+
+    /// Starts over when the keychain cannot be read ("Sign in again"):
+    /// removes the stored session without reading it, and every other Cua
+    /// item this process cannot read without a prompt (a secret this build
+    /// can never use without one). Then checks again, without a prompt.
+    pub fn forget_keychain(&self) -> Result<KeychainCheck> {
+        self.clear()?;
+        let check = self.check_keychain(false);
+        #[cfg(target_os = "macos")]
+        for item in &check.items {
+            if matches!(item.state, KeychainState::NeedsAccess)
+                && let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &item.account)
+            {
+                let _ = vault_delete(&entry);
+            }
+        }
+        Ok(self.check_keychain(false))
+    }
+
+    /// Loads credentials (`None` when there are none). A Cua-signed macOS
+    /// build that finds a newer session left by an unsigned build of this
+    /// machine (`~/.cua/credentials.json`) imports it first
+    /// ([`Store::import_file_session_in`]).
     pub fn load(&self) -> Result<Option<Credentials>> {
+        let stored = self.load_stored()?;
+        if self.imports_file_session()
+            && let Some(c) = self.import_file_session_in(&cua_home(), stored.as_ref())
+        {
+            return Ok(Some(c));
+        }
+        Ok(stored)
+    }
+
+    /// Whether this store takes in the session an unsigned build kept in a
+    /// file: only the default store of a Cua-signed macOS build (the
+    /// keychain because of its signature, not `CUA_CREDENTIAL_STORE`),
+    /// outside tests.
+    fn imports_file_session(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            matches!(self, Store::Keyring)
+                && std::env::var("CUA_CREDENTIAL_STORE").ok().is_none_or(|v| v.trim().is_empty())
+                && !cua_home::is_test_process()
+                && signed_by_cua()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
+    }
+
+    /// Imports the session an unsigned or ad hoc build of cua left in
+    /// `<home>/credentials.json` (such builds use the file store) when it is
+    /// newer than `stored` (or there is none), so moving from an ad hoc
+    /// build to a Developer ID one keeps you signed in. The file stays
+    /// (unsigned `cua` CLIs on this machine still use it). Each file session
+    /// is imported once ([`FILE_IMPORT_MARKER`]): signing out of the vault
+    /// is not undone by the same file. Returns the imported session.
+    fn import_file_session_in(&self, home: &Path, stored: Option<&Credentials>) -> Option<Credentials> {
+        let file = Self::file_session_to_import(home)?;
+        let file_expires = file.expires().ok()?;
+        let marker = home.join(FILE_IMPORT_MARKER);
+        if let Some(k) = stored
+            && k.expires().is_ok_and(|e| e >= file_expires)
+        {
+            return None;
+        }
+        if let Err(e) = self.save(&file) {
+            tracing::warn!("could not import the sign-in from an unsigned build: {e}");
+            return None;
+        }
+        let _ = write_private(
+            &marker,
+            serde_json::json!({ "expires_at": file.expires_at }).to_string().as_bytes(),
+        );
+        tracing::info!(
+            "imported the sign-in from an unsigned build ({}; the file stays)",
+            home.join("credentials.json").display()
+        );
+        Some(file)
+    }
+
+    /// The unsigned build's file session under `home`, unless that one was
+    /// imported already. Reads no vault (for [`may_have_session`]).
+    fn file_session_to_import(home: &Path) -> Option<Credentials> {
+        let raw = std::fs::read_to_string(home.join("credentials.json")).ok()?;
+        let file: Credentials = serde_json::from_str(&raw).ok()?;
+        file.expires().ok()?;
+        let imported: Option<String> = std::fs::read_to_string(home.join(FILE_IMPORT_MARKER))
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v["expires_at"].as_str().map(str::to_string));
+        (imported.as_deref() != Some(file.expires_at.as_str())).then_some(file)
+    }
+
+    fn has_file_session_to_import(&self, home: &Path) -> bool {
+        Self::file_session_to_import(home).is_some()
+    }
+
+    /// The stored session, as it is.
+    fn load_stored(&self) -> Result<Option<Credentials>> {
         let raw = match self {
             Store::File(p) => match std::fs::read_to_string(p) {
                 Ok(s) => Some(s),
@@ -435,10 +571,25 @@ impl Store {
                 Err(e) => return Err(store_err(e)),
             },
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            Store::Keyring => match keyring_entry()?.get_password() {
-                Ok(s) => Some(s),
-                Err(keyring::Error::NoEntry) => None,
-                Err(e) => return Err(store_err(e)),
+            Store::Keyring => match vault_get(&keyring_entry()?) {
+                Ok(s) => {
+                    adopt_read(KEYRING_ACCOUNT, &s);
+                    Some(s)
+                }
+                Err(keyring::Error::NoEntry) => {
+                    // A recreate interrupted before its rename left the
+                    // session under its staging name: take it back.
+                    #[cfg(target_os = "macos")]
+                    if macos_keychain::recover_staged(
+                        macos_keychain::Keychain::Default,
+                        KEYRING_SERVICE,
+                        KEYRING_ACCOUNT,
+                    ) {
+                        return self.load_stored();
+                    }
+                    None
+                }
+                Err(e) => return Err(vault_err(e)),
             },
             Store::TestKeychain(d) => {
                 let reads = d.join("reads");
@@ -493,7 +644,7 @@ impl Store {
                 Err(e) => Err(store_err(e)),
             },
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            Store::Keyring => match keyring_entry()?.delete_credential() {
+            Store::Keyring => match vault_delete(&keyring_entry()?) {
                 Ok(()) => Ok(true),
                 Err(keyring::Error::NoEntry) => Ok(false),
                 Err(e) => Err(store_err(e)),
@@ -567,10 +718,13 @@ impl Store {
         let path = self.secret_path(name)?;
         match self {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            Store::Keyring => match secret_entry(name)?.get_password() {
-                Ok(s) => Ok(Some(s)),
+            Store::Keyring => match vault_get(&secret_entry(name)?) {
+                Ok(s) => {
+                    adopt_read(&format!("{KEYRING_ACCOUNT}.{name}"), &s);
+                    Ok(Some(s))
+                }
                 Err(keyring::Error::NoEntry) => Ok(None),
-                Err(e) => Err(store_err(e)),
+                Err(e) => Err(vault_err(e)),
             },
             _ => read_optional(&path),
         }
@@ -585,7 +739,7 @@ impl Store {
         }
         #[cfg(target_os = "macos")]
         {
-            secret_entry(name).ok()?.get_password().ok()
+            vault_get(&secret_entry(name).ok()?).ok()
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -711,7 +865,7 @@ impl Store {
         let path = self.secret_path(name)?;
         match self {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            Store::Keyring => match secret_entry(name)?.delete_credential() {
+            Store::Keyring => match vault_delete(&secret_entry(name)?) {
                 Ok(()) => Ok(true),
                 Err(keyring::Error::NoEntry) => Ok(false),
                 Err(e) => Err(store_err(e)),
@@ -767,14 +921,186 @@ impl Store {
     }
 }
 
+/// After a read of the vault item `account`: a Cua-signed build gives an
+/// item that lacks the Cua access list that list (best effort; see
+/// `macos_keychain::adopt`).
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn adopt_read(account: &str, text: &str) {
+    #[cfg(target_os = "macos")]
+    if signed_by_cua() {
+        let _ = macos_keychain::adopt(
+            macos_keychain::Keychain::Default,
+            KEYRING_SERVICE,
+            account,
+            text.as_bytes(),
+            true,
+            true,
+        );
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (account, text);
+}
+
+/// What [`Store::check_keychain`] found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeychainState {
+    /// The store is not the macOS keychain (a file, or another OS).
+    NotUsed,
+    /// Every Cua item can be read without a prompt (or there is none).
+    Ready,
+    /// Reading needs a macOS prompt: this build is not trusted by an item
+    /// yet (an item another build wrote).
+    NeedsAccess,
+    /// Reading needs a macOS prompt: the login keychain is locked.
+    Locked,
+    /// The user denied the prompt.
+    Denied,
+    /// The keychain failed otherwise.
+    Failed,
+}
+
+/// One Cua item in [`KeychainCheck`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct KeychainItemCheck {
+    /// The item's account (`cua-cli`, `cua-cli.<secret>`).
+    pub account: String,
+    /// `ready`, `needs_access`, `denied` or `failed`.
+    pub state: KeychainState,
+    /// It was recreated with the Cua access list just now.
+    pub recreated: bool,
+    /// Why it failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// The Cua items in the macOS keychain, and whether they can be read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct KeychainCheck {
+    /// The worst of the items' states (`not_used` for other stores).
+    pub state: KeychainState,
+    pub items: Vec<KeychainItemCheck>,
+}
+
+#[cfg(target_os = "macos")]
+impl KeychainCheck {
+    fn from_items(
+        items: Vec<(String, macos_keychain::ItemState)>,
+        locked: impl Fn() -> bool,
+    ) -> Self {
+        use macos_keychain::ItemState as S;
+        let items: Vec<KeychainItemCheck> = items
+            .into_iter()
+            .map(|(account, s)| {
+                let (state, recreated, error) = match s {
+                    S::Ready { recreated } => (KeychainState::Ready, recreated, None),
+                    S::NeedsAccess => (KeychainState::NeedsAccess, false, None),
+                    S::Denied => (KeychainState::Denied, false, None),
+                    S::Failed(e) => (KeychainState::Failed, false, Some(e)),
+                };
+                KeychainItemCheck {
+                    account,
+                    state,
+                    recreated,
+                    error,
+                }
+            })
+            .collect();
+        let rank = |s: KeychainState| match s {
+            KeychainState::Failed => 3,
+            KeychainState::Denied => 2,
+            KeychainState::NeedsAccess | KeychainState::Locked => 1,
+            KeychainState::Ready | KeychainState::NotUsed => 0,
+        };
+        let mut state = items
+            .iter()
+            .map(|i| i.state)
+            .max_by_key(|s| rank(*s))
+            .unwrap_or(KeychainState::Ready);
+        if state == KeychainState::NeedsAccess && locked() {
+            state = KeychainState::Locked;
+        }
+        Self { state, items }
+    }
+}
+
+/// `CUA_KEYCHAIN_NONINTERACTIVE=1`: this process never shows a keychain
+/// prompt. A read or write that would need one fails at once with
+/// [`KEYCHAIN_NEEDS_ACCESS`] instead of waiting on a dialog nobody may see.
+/// The Cua Spaces app sets it for itself and the daemon it starts (the one
+/// interactive read is its explicit `cua auth keychain --prompt`); a `cua`
+/// run from a terminal stays interactive.
+pub const KEYCHAIN_NONINTERACTIVE_ENV: &str = "CUA_KEYCHAIN_NONINTERACTIVE";
+
+/// Why a non-interactive keychain read failed.
+pub const KEYCHAIN_NEEDS_ACCESS: &str = "the macOS keychain needs your permission to read the Cua \
+     sign-in (needs access); open Cua Spaces and click Allow access, or run `cua auth status` in \
+     a terminal";
+
+/// Whether this process may not show keychain prompts
+/// ([`KEYCHAIN_NONINTERACTIVE_ENV`]).
+pub fn keychain_noninteractive() -> bool {
+    std::env::var(KEYCHAIN_NONINTERACTIVE_ENV).is_ok_and(|v| truthy(&v))
+}
+
+fn truthy(v: &str) -> bool {
+    matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+}
+
+/// Keychain prompts off while it lives, when this process is
+/// non-interactive.
+#[cfg(target_os = "macos")]
+fn quiet() -> Option<macos_keychain::Quiet> {
+    keychain_noninteractive().then(macos_keychain::Quiet::new)
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn vault_get(entry: &keyring::Entry) -> keyring::Result<String> {
+    #[cfg(target_os = "macos")]
+    let _quiet = quiet();
+    entry.get_password()
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn vault_delete(entry: &keyring::Entry) -> keyring::Result<()> {
+    #[cfg(target_os = "macos")]
+    let _quiet = quiet();
+    entry.delete_credential()
+}
+
+/// A vault read's failure; one that needed a prompt this process may not
+/// show says so.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn vault_err(e: keyring::Error) -> Error {
+    #[cfg(target_os = "macos")]
+    if keychain_noninteractive() && (interaction_not_allowed(&e) || auth_failed(&e)) {
+        return Error::Store(KEYCHAIN_NEEDS_ACCESS.into());
+    }
+    store_err(e)
+}
+
+/// `errSecAuthFailed`, which a prompt-less read of an untrusted item gives.
+#[cfg(target_os = "macos")]
+fn auth_failed(e: &keyring::Error) -> bool {
+    match e {
+        keyring::Error::PlatformFailure(inner) | keyring::Error::NoStorageAccess(inner) => inner
+            .downcast_ref::<security_framework::base::Error>()
+            .is_some_and(|e| e.code() == -25293),
+        _ => false,
+    }
+}
+
 /// Writes the OS vault item `account` (service [`KEYRING_SERVICE`]). On
 /// macOS the item trusts every Cua executable of this machine, so the app,
 /// the daemon and the CLI share it without a keychain prompt (see
 /// `macos_keychain`).
 #[cfg(target_os = "macos")]
 fn vault_set(account: &str, text: &str) -> Result<()> {
+    let _quiet = quiet();
     macos_keychain::set_generic_password(KEYRING_SERVICE, account, text.as_bytes()).map_err(|e| {
-        if e.0 == macos_keychain::ERR_SEC_INTERACTION_NOT_ALLOWED {
+        if e.0 == macos_keychain::ERR_SEC_INTERACTION_NOT_ALLOWED && keychain_noninteractive() {
+            Error::Store(KEYCHAIN_NEEDS_ACCESS.into())
+        } else if e.0 == macos_keychain::ERR_SEC_INTERACTION_NOT_ALLOWED {
             Error::Store(format!("{e}: {KEYCHAIN_LOCKED_HINT}"))
         } else {
             store_err(e)
@@ -1643,6 +1969,11 @@ impl Session {
                     }
                     Ok(Some(_)) => {
                         *guard = None;
+                        // Said once, where the daemon logs: the session that
+                        // disappears is one the provider refused.
+                        tracing::warn!(
+                            "the stored Cua session was refused when refreshing ({m}); removed it, sign in again"
+                        );
                         let _ = self.store.clear();
                         Err(Error::Unauthenticated(m))
                     }
@@ -1728,6 +2059,102 @@ mod tests {
     #[test]
     fn an_unsigned_build_is_not_cua_signed() {
         assert!(!signed_by_cua());
+    }
+
+    /// The check's overall state is its worst item's; a locked keychain
+    /// says so; no item is ready; other stores do not use the keychain.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_keychain_check_reports_the_worst_item() {
+        use macos_keychain::ItemState as S;
+        let ready = || ("cua-cli".to_string(), S::Ready { recreated: true });
+        let needs = || ("cua-cli.device-key".to_string(), S::NeedsAccess);
+        let c = KeychainCheck::from_items(vec![ready()], || false);
+        assert_eq!(c.state, KeychainState::Ready);
+        assert!(c.items[0].recreated);
+        let c = KeychainCheck::from_items(vec![ready(), needs()], || false);
+        assert_eq!(c.state, KeychainState::NeedsAccess);
+        let c = KeychainCheck::from_items(vec![ready(), needs()], || true);
+        assert_eq!(c.state, KeychainState::Locked);
+        let c = KeychainCheck::from_items(
+            vec![needs(), ("cua-cli".into(), S::Denied)],
+            || false,
+        );
+        assert_eq!(c.state, KeychainState::Denied);
+        assert_eq!(KeychainCheck::from_items(vec![], || true).state, KeychainState::Ready);
+        let json = serde_json::to_value(KeychainCheck::from_items(vec![needs()], || false)).unwrap();
+        assert_eq!(json["state"], "needs_access");
+        assert_eq!(json["items"][0]["account"], "cua-cli.device-key");
+        let file = Store::File(std::env::temp_dir().join("cua-no-such-credentials.json"));
+        assert_eq!(file.check_keychain(false).state, KeychainState::NotUsed);
+    }
+
+    fn session(token: &str, expires_in_hours: i64) -> Credentials {
+        Credentials {
+            access_token: token.into(),
+            refresh_token: Some(format!("{token}-refresh")),
+            expires_at: (chrono::Utc::now() + chrono::Duration::hours(expires_in_hours)).to_rfc3339(),
+            token_type: bearer(),
+            scope: None,
+            id_token: None,
+        }
+    }
+
+    fn vault_token(vault: &Store) -> Option<String> {
+        vault.load_stored().unwrap().map(|c| c.access_token)
+    }
+
+    /// Moving from an ad hoc build (file store) to a Developer ID one (the
+    /// vault): its newer session comes in once, the file stays, and a
+    /// newer vault session or a sign-out is never overwritten by it.
+    #[test]
+    fn a_signed_build_imports_the_newer_session_an_unsigned_one_left() {
+        let home = tempfile::tempdir().unwrap();
+        let vault = Store::TestKeychain(home.path().join("vault"));
+        let file = home.path().join("credentials.json");
+        // No file: nothing.
+        assert!(vault.import_file_session_in(home.path(), None).is_none());
+        assert!(!vault.has_file_session_to_import(home.path()));
+        // A broken file: nothing (and it stays).
+        std::fs::write(&file, "{not json").unwrap();
+        assert!(vault.import_file_session_in(home.path(), None).is_none());
+        // The ad hoc build's session; the vault has none.
+        write_private(&file, serde_json::to_string(&session("adhoc", 1)).unwrap().as_bytes()).unwrap();
+        let got = vault.import_file_session_in(home.path(), None).unwrap();
+        assert_eq!(got.access_token, "adhoc");
+        assert_eq!(vault_token(&vault).as_deref(), Some("adhoc"));
+        assert!(file.is_file(), "the file stays for unsigned CLIs");
+        let marker = std::fs::read_to_string(home.path().join(FILE_IMPORT_MARKER)).unwrap();
+        assert!(!marker.contains("adhoc"), "no token in the marker: {marker}");
+        // Signed out of the vault: the same file is not imported again.
+        assert!(!vault.has_file_session_to_import(home.path()));
+        assert!(vault.clear().unwrap());
+        assert!(vault.import_file_session_in(home.path(), None).is_none());
+        assert_eq!(vault_token(&vault), None);
+        // The unsigned build signs in again (a newer file session): it comes in.
+        write_private(&file, serde_json::to_string(&session("adhoc2", 2)).unwrap().as_bytes()).unwrap();
+        assert!(vault.import_file_session_in(home.path(), None).is_some());
+        assert_eq!(vault_token(&vault).as_deref(), Some("adhoc2"));
+        // A newer vault session wins over an older file one.
+        let newer = session("signed", 5);
+        vault.save(&newer).unwrap();
+        write_private(&file, serde_json::to_string(&session("adhoc3", 3)).unwrap().as_bytes()).unwrap();
+        assert!(vault.import_file_session_in(home.path(), Some(&newer)).is_none());
+        assert_eq!(vault_token(&vault).as_deref(), Some("signed"));
+        // Only a Cua-signed build's default store imports: never a file
+        // store, a test keychain, or an override (and never in tests).
+        assert!(!vault.imports_file_session());
+        assert!(!Store::File(file.clone()).imports_file_session());
+    }
+
+    #[test]
+    fn the_noninteractive_switch_reads_like_other_flags() {
+        for on in ["1", "true", " YES ", "on"] {
+            assert!(truthy(on), "{on}");
+        }
+        for off in ["", "0", "false", "no", "off", "2"] {
+            assert!(!truthy(off), "{off}");
+        }
     }
 
     #[test]

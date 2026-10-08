@@ -23,6 +23,7 @@
 //! and `--daemon <addr>` force one.
 
 mod agent_cmd;
+mod agent_keys_cmd;
 mod agents;
 mod auth;
 mod browse;
@@ -322,6 +323,20 @@ enum AuthCmd {
   cua auth status
   cua auth status --json")]
     Status,
+    /// Whether this cua can read the Cua items in the macOS keychain
+    /// without a prompt (JSON; for the Spaces app, which asks before it
+    /// starts anything that reads the session). A Cua-signed cua gives
+    /// every item it reads the Cua access list, so later Cua builds read it
+    /// without a prompt.
+    #[command(hide = true)]
+    Keychain {
+        /// Let macOS ask for access (its keychain prompt) where needed.
+        #[arg(long)]
+        prompt: bool,
+        /// Remove the stored session without reading it (to sign in again).
+        #[arg(long, conflicts_with = "prompt")]
+        forget: bool,
+    },
     /// The active Fleet identity, verified against Fleet.
     #[command(after_help = "Examples:
   cua auth whoami")]
@@ -1223,7 +1238,12 @@ fn all_command_paths() -> Vec<String> {
 /// Whether a command records a `cua_cli_command` event (not `cua telemetry`
 /// itself, and not the internal docs dump).
 fn records_telemetry(c: &Command) -> bool {
-    !matches!(c, Command::Telemetry(_) | Command::DumpDocs { .. })
+    // `cua auth keychain` is the Spaces app's own launch check: no usage
+    // event, and never the first-run notice (the app shows its own).
+    !matches!(
+        c,
+        Command::Telemetry(_) | Command::DumpDocs { .. } | Command::Auth(AuthCmd::Keychain { .. })
+    )
 }
 
 fn print(out: &mut dyn Write, v: serde_json::Value, json: bool, text: impl FnOnce() -> String) {
@@ -1425,6 +1445,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                         vars: vars.clone(),
                         assume: assume.clone(),
                         scope: scope.clone(),
+                        caps: None,
                     })?;
                     if json {
                         util::json_line(out, &v);
@@ -1476,6 +1497,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                 }
                 AuthCmd::Logout => auth::logout(out).await,
                 AuthCmd::Status => auth::status(json, out).await,
+                AuthCmd::Keychain { prompt, forget } => auth::keychain(*prompt, *forget, out),
                 AuthCmd::Whoami => auth::whoami(json, out).await,
                 AuthCmd::Keys(KeysCmd::Ls) => auth::keys_list(json, out).await,
                 AuthCmd::Keys(KeysCmd::Create { name, scope }) => {
@@ -2371,6 +2393,20 @@ fn keep_stdio_out_of_children() {
     }
 }
 
+/// How this process shows the first-run telemetry notice. A daemon the
+/// Spaces app starts (`CUA_DAEMON_STARTED_BY=app`) leaves it to the app:
+/// its stderr is a pipe nobody reads, so printing the notice there and
+/// marking it shown would let it (and the app) send before the person saw
+/// the app's Welcome page and its usage-data switch. The app acknowledges
+/// the notice when Welcome is left with the switch on; until then this
+/// daemon sends nothing.
+fn notice_mode(started_by: Option<&str>) -> cua_telemetry::NoticeMode {
+    match started_by {
+        Some("app") => cua_telemetry::NoticeMode::External,
+        _ => cua_telemetry::NoticeMode::Stderr,
+    }
+}
+
 /// The `cua` command: parses this process's arguments, runs them and exits.
 /// The Cua Spaces build registers its [`extension`] first.
 pub fn main() {
@@ -2387,6 +2423,9 @@ pub fn main() {
     );
     let record = records_telemetry(&cli.command);
     let json_output = cli.json;
+    telemetry.set_notice_mode(notice_mode(
+        std::env::var("CUA_DAEMON_STARTED_BY").ok().as_deref(),
+    ));
     // The first-run notice goes to stderr before anything could be sent
     // (not for `cua telemetry` / `cua config`, which are how you answer it).
     if record && !matches!(cli.command, Command::Config(_)) {
@@ -2487,6 +2526,54 @@ pub fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Spaces app's launch check (`cua auth keychain`) records no usage
+    /// event and never shows the first-run notice; other auth commands do.
+    #[test]
+    fn the_app_keychain_check_records_nothing() {
+        let cli = Cli::try_parse_from(["cua", "auth", "keychain", "--prompt"]).unwrap();
+        assert!(matches!(cli.command, Command::Auth(AuthCmd::Keychain { prompt: true, forget: false })));
+        assert!(!records_telemetry(&cli.command));
+        assert!(Cli::try_parse_from(["cua", "auth", "keychain", "--prompt", "--forget"]).is_err());
+        let status = Cli::try_parse_from(["cua", "auth", "status"]).unwrap();
+        assert!(records_telemetry(&status.command));
+        // One compact JSON line (the app reads it). A test build is not
+        // Cua-signed, so its store is a file and no keychain is touched.
+        if std::env::var_os("CUA_CREDENTIAL_STORE").is_none() {
+            let mut out = Vec::new();
+            assert_eq!(auth::keychain(false, false, &mut out).unwrap(), 0);
+            let text = String::from_utf8(out).unwrap();
+            assert_eq!(text.lines().count(), 1, "{text}");
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(v["state"], "not_used");
+        }
+    }
+
+    /// A daemon the Spaces app starts never shows or acknowledges the
+    /// first-run notice (the app's Welcome page does), so it sends nothing
+    /// before the person answered it; every other process prints it.
+    #[test]
+    fn an_app_started_daemon_leaves_the_notice_to_the_app() {
+        use cua_telemetry::{NoticeMode, Telemetry};
+        assert_eq!(notice_mode(Some("app")), NoticeMode::External);
+        for other in [None, Some("cli"), Some("launchd")] {
+            assert_eq!(notice_mode(other), NoticeMode::Stderr, "{other:?}");
+        }
+        let home = tempfile::tempdir().unwrap();
+        let t = Telemetry::builder()
+            .home(home.path())
+            .env(|k| (k == "CUA_TELEMETRY").then(|| "1".to_string()))
+            .build();
+        t.set_notice_mode(notice_mode(Some("app")));
+        if !t.is_enabled() {
+            return; // telemetry forced off in this environment
+        }
+        assert!(!t.show_notice_if_needed());
+        assert!(!t.notice_shown(), "the app's Welcome page acknowledges it");
+        t.set_notice_mode(notice_mode(None));
+        assert!(t.show_notice_if_needed());
+        assert!(t.notice_shown());
+    }
 
     /// Every CLI command path is in the telemetry vocabulary, so a new
     /// command cannot silently report as `other` (or leak its name). With

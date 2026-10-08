@@ -334,18 +334,86 @@ pub fn permission_hints(os: &str, driver: &Path) -> Vec<PermissionHint> {
     ]
 }
 
+/// What a Mac that provides Spaces must allow in Local Network privacy, or
+/// `None` (another OS, or no Spaces provided). Its macOS Spaces are Lume
+/// VMs on vmnet (192.168.64.x), and the cua daemon that creates them must
+/// reach the guest; macOS blocks that ("No route to host") until Local
+/// Network access is allowed for the process responsible for the daemon.
+/// For a host set up with the CLI, that is the cua-spacesd LaunchAgent
+/// (`driver`), which starts the daemon when a Space is created, unless the
+/// daemon was already running from Terminal or an SSH session: then it is
+/// that app's (and over SSH nobody can be asked). macOS asks once, on this
+/// Mac's own screen; it can't be granted from here. Linux Spaces (reached
+/// through localhost) don't need it.
+pub fn local_network_hint(os: &str, provide_spaces: bool, driver: &Path) -> Option<PermissionHint> {
+    if os != "macos" || !provide_spaces {
+        return None;
+    }
+    let d = driver.display();
+    Some(PermissionHint {
+        id: "local-network".into(),
+        title: "Local Network".into(),
+        settings_url:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork".into(),
+        instructions: format!(
+            "macOS Spaces on this Mac need Local Network access for cua-spacesd ({d}). When \
+             macOS asks \"Allow cua-spacesd to find devices on local networks?\" on this Mac's \
+             screen, click Allow; or turn on cua-spacesd in System Settings → Privacy & \
+             Security → Local Network. If the cua daemon was started from Terminal or over SSH, \
+             run `cua daemon stop` so the host service starts it at the next create (over SSH \
+             nothing can grant it). Without it, macOS Space creates fail with \"No route to \
+             host\"; Linux Spaces don't need it."
+        ),
+    })
+}
+
 /// The relay machine meta key saying whether this machine provides Spaces
 /// (`on` / `off`), as of its last setup. Your other devices list a machine
 /// that provides Spaces in their "Run on" menu even while it is offline
 /// (with why), instead of leaving it out.
 pub const META_PROVIDES_SPACES: &str = "cua.host.spaces";
 
+/// The relay machine meta key with this machine's OS family (`macos`,
+/// `linux`, `windows`), as of its last setup. The relay directory says
+/// nothing else about the OS, so without it a client lists the machine
+/// with no OS until it has connected to it.
+pub const META_OS: &str = "cua.host.os";
+
+/// The relay machine meta key with this machine's architecture (`arm64`,
+/// `amd64`: the names Spaces use), as of its last setup.
+pub const META_ARCH: &str = "cua.host.arch";
+
+/// This build's OS family, as Spaces name it.
+fn os_family() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macos",
+        "windows" => "windows",
+        "linux" => "linux",
+        _ => "",
+    }
+}
+
+/// This build's architecture, as Spaces name it.
+fn arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "amd64",
+        _ => "",
+    }
+}
+
 /// The meta a host registers with.
 fn host_meta(provide_spaces: bool) -> std::collections::BTreeMap<String, String> {
-    std::collections::BTreeMap::from([(
+    let mut meta = std::collections::BTreeMap::from([(
         META_PROVIDES_SPACES.to_string(),
         if provide_spaces { "on" } else { "off" }.to_string(),
-    )])
+    )]);
+    for (key, value) in [(META_OS, os_family()), (META_ARCH, arch())] {
+        if !value.is_empty() {
+            meta.insert(key.to_string(), value.to_string());
+        }
+    }
+    meta
 }
 
 /// What `status` reports (camelCase for the app).
@@ -1583,6 +1651,20 @@ pub fn owned_by(policy: &HostPolicy, account: &str) -> bool {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn a_host_registers_its_os_and_arch() {
+        let meta = super::host_meta(true);
+        assert_eq!(meta[super::META_PROVIDES_SPACES], "on");
+        #[cfg(target_os = "macos")]
+        assert_eq!(meta[super::META_OS], "macos");
+        #[cfg(target_os = "linux")]
+        assert_eq!(meta[super::META_OS], "linux");
+        #[cfg(target_arch = "aarch64")]
+        assert_eq!(meta[super::META_ARCH], "arm64");
+        #[cfg(target_arch = "x86_64")]
+        assert_eq!(meta[super::META_ARCH], "amd64");
+    }
+
+    #[test]
     fn strip_local_suffix_drops_mdns_and_localdomain() {
         use super::strip_local_suffix;
         assert_eq!(strip_local_suffix("Mac.localdomain"), "Mac");
@@ -1607,6 +1689,25 @@ mod tests {
         assert_eq!(load_or_create_machine_id(&path).unwrap(), id);
         std::fs::write(&path, "NOT VALID").unwrap();
         assert_ne!(load_or_create_machine_id(&path).unwrap(), "NOT VALID");
+    }
+
+    #[test]
+    fn local_network_is_asked_of_macs_that_provide_spaces() {
+        let d = Path::new("/Users/me/.cua/host/bin/cua-spacesd");
+        assert!(local_network_hint("linux", true, d).is_none());
+        assert!(local_network_hint("macos", false, d).is_none());
+        let h = local_network_hint("macos", true, d).unwrap();
+        assert_eq!(h.id, "local-network");
+        assert!(h.settings_url.ends_with("Privacy_LocalNetwork"));
+        assert!(
+            h.instructions
+                .contains("cua-spacesd (/Users/me/.cua/host/bin/cua-spacesd)")
+        );
+        assert!(
+            h.instructions
+                .contains("Privacy & Security → Local Network")
+        );
+        assert!(h.instructions.contains("`cua daemon stop`"));
     }
 
     #[test]

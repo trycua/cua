@@ -191,6 +191,22 @@ if [ "$identity" != "-" ]; then
       { echo "$f does not meet the Keyvault requirement (team $team, $id): sign with the Cua team's Developer ID" >&2; exit 1; }
   done
 fi
+# The saved sign-in's keychain items trust each Cua executable by its
+# designated requirement (cua-auth's macos_keychain.rs, README "Keychain"):
+# it must be the identifier and the team, never a cdhash, or the next build
+# would not meet it and macOS would ask for the login password again.
+if [ "$identity" != "-" ]; then
+  for pair in "$app/Contents/MacOS/CuaSpacesMac:com.trycua.spaces.macos" "$app/Contents/MacOS/cua:com.trycua.cua"; do
+    f="${pair%:*}"
+    id="${pair##*:}"
+    dr="$(codesign -d -r- "$f" 2>&1 | sed -n 's/^designated => //p')"
+    case "$dr" in
+      *cdhash*|"") echo "$f has no stable designated requirement ($dr)" >&2; exit 1 ;;
+      *"identifier \"$id\""*"leaf[subject.OU] = $team"*) ;;
+      *) echo "$f: designated requirement does not name $id and team $team ($dr)" >&2; exit 1 ;;
+    esac
+  done
+fi
 # A Developer ID build signs Sparkle with the same team (library
 # validation stays on: the app loads only its own team's code).
 if [ "$identity" != "-" ]; then

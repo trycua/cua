@@ -43,6 +43,47 @@ pub struct Notification {
     pub read: bool,
 }
 
+/// Longest reason in a failure's title.
+const MAX_REASON: usize = 80;
+
+/// The title of a failed run or turn: "<agent> stopped: <short reason>".
+pub fn stopped_title(agent: &str, error: &str) -> String {
+    format!("{agent} stopped: {}", short_reason(error))
+}
+
+/// A provider error in a few words: its first line, with an embedded JSON
+/// error object (`API Error: 401 {"error":{"message":"invalid x-api-key"}}`)
+/// reduced to its message.
+pub fn short_reason(error: &str) -> String {
+    let first = error
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let short = match first.find('{') {
+        Some(i) => {
+            let message = serde_json::from_str::<serde_json::Value>(&first[i..])
+                .ok()
+                .and_then(|v| {
+                    [&v["error"]["message"], &v["message"], &v["error"]]
+                        .into_iter()
+                        .find_map(|m| m.as_str().map(str::to_string))
+                });
+            match message {
+                Some(m) => format!("{} {m}", first[..i].trim()).trim().to_string(),
+                None => first.to_string(),
+            }
+        }
+        None => first.to_string(),
+    };
+    let short = short.trim_end_matches('.').trim();
+    if short.is_empty() {
+        "unknown error".into()
+    } else {
+        clip(short, MAX_REASON)
+    }
+}
+
 /// The feed file (`<home>/persistent/notifications.json`).
 #[derive(Clone, Debug)]
 pub struct Feed {
@@ -139,6 +180,27 @@ impl Feed {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failure_title_names_the_agent_and_a_short_reason() {
+        assert_eq!(
+            stopped_title("Claude Code", "Invalid API key · Please run /login"),
+            "Claude Code stopped: Invalid API key · Please run /login"
+        );
+        assert_eq!(
+            stopped_title(
+                "ada",
+                r#"API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#
+            ),
+            "ada stopped: API Error: 401 invalid x-api-key"
+        );
+        assert_eq!(
+            short_reason("Authentication required.\nsee the log"),
+            "Authentication required"
+        );
+        assert_eq!(short_reason("  "), "unknown error");
+        assert!(short_reason(&"x".repeat(500)).chars().count() <= 80);
+    }
 
     #[test]
     fn post_list_ack_and_cap() {

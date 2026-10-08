@@ -110,7 +110,7 @@ impl SocketTransport {
 #[async_trait::async_trait]
 impl KvTransport for SocketTransport {
     async fn call(&self, req: Request) -> Result<Value, KvFailure> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             use cua_keyvault::client::{ConnectError, KeyvaultClient, ServerCheck};
             let mut client = KeyvaultClient::connect(&self.path, ServerCheck::default_for_build())
@@ -140,7 +140,7 @@ impl KvTransport for SocketTransport {
                 .await
                 .map_err(|e| KvFailure::from_error(&e))
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = req;
             Err(KvFailure {
@@ -154,14 +154,14 @@ impl KvTransport for SocketTransport {
     }
 
     fn server_verified(&self) -> bool {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             matches!(
                 cua_keyvault::client::ServerCheck::default_for_build(),
                 cua_keyvault::client::ServerCheck::Require(_)
             )
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             false
         }
@@ -636,7 +636,11 @@ impl KeyvaultCommands {
         Ok(match command {
             KvCommand::Setup => KvOutcome::RecoveryKey {
                 key: self
-                    .setup(cfg!(any(target_os = "macos", target_os = "windows")))
+                    .setup(cfg!(any(
+                        target_os = "macos",
+                        target_os = "windows",
+                        target_os = "linux"
+                    )))
                     .await?,
             },
             KvCommand::Unlock => {

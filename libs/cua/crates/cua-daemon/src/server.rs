@@ -142,11 +142,7 @@ async fn maintenance_loop(shared: Arc<Shared>, mut shutdown: watch::Receiver<boo
             continue;
         }
         let config = cua_disk::CacheConfig::load();
-        let gc = config.auto_gc.then(|| cua_disk::GcOptions {
-            grace: cua_disk::gc::AUTO_GRACE,
-            budget: (config.budget == cua_disk::Budget::Off).then_some(cua_disk::Budget::Off),
-            ..Default::default()
-        });
+        let gc = crate::maintenance::daemon_gc_options(&config);
         let r =
             crate::maintenance::run(vmm.as_ref(), &state, cua_disk::Layout::default(), gc, false)
                 .await;
@@ -381,12 +377,20 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
     }
     // Extension tasks (the Cua Spaces build: the persistent-agent
     // supervisor and the Keyvault socket beside `cua.sock`).
+    // Where they put their sockets: beside `cua.sock`, or on Windows (which
+    // has no Unix socket) in the home the discovery file is in.
     #[cfg(feature = "spaces")]
-    for a in shared.runtime.attached_extensions() {
-        tasks.extend(a.daemon_tasks(
-            &shared.runtime,
-            socket_path.as_ref().and_then(|p| p.parent()),
-        ));
+    {
+        let extension_dir = socket_path.as_ref().and_then(|p| p.parent()).or_else(|| {
+            config
+                .discovery_path
+                .as_deref()
+                .and_then(|p| p.parent())
+                .filter(|_| cfg!(windows))
+        });
+        for a in shared.runtime.attached_extensions() {
+            tasks.extend(a.daemon_tasks(&shared.runtime, extension_dir));
+        }
     }
     if let Some(p) = &config.discovery_path {
         Discovery {

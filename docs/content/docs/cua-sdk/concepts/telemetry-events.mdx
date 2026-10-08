@@ -26,7 +26,7 @@ Every event carries: `telemetry_schema_version`, `event_version`, `product`
 | `cua_keyvault_consent` | `decision` (`requested`, `approved`, `denied`, `expired`) | Consent counts only; nothing about the request. |
 | `cua_spaces_feature_used` | `feature` (a fixed Spaces app feature) | Spaces app feature adoption. |
 | `cua_stream_stats` | `transport`, `codec`, `decode` (`hw` or `sw`), `fps_bucket`, `latency_bucket`, `resolution`, `duration_bucket` | Streaming performance (50% sampled). |
-| `cua_onboarding_step` | `step`, `outcome` | Install and onboarding funnel. |
+| `cua_onboarding_step` | `step`, `outcome`, `onboarding_eligible` (`yes` or `no` on the Spaces app's `app_launched`: its first run was still to finish at that launch; `unknown` otherwise), `error_kind` (a failed `signed_in`: `timeout`, `cancelled`, `permission_denied`, `transport`, `unauthenticated` or `other`, never the message; `none` otherwise) | Install and onboarding funnel. |
 | `cua_agent_run_started` | `harness` (cua-agents id or `other`), `location`, `entry` (`spaces_tool`, `cli`, `sdk`, `persistent`, `routine`), `outcome`, `error_kind` | Agent runs started, and failed starts. |
 | `cua_agent_run_completed` | `harness`, `location`, `entry`, `outcome`, `error_kind`, `duration_bucket` | First agent run, and how reliably runs finish. Once per run. |
 | `cua_bench_run_completed` | `taskset` (cua-bench dataset or `custom`), `score_bucket`, `task_count`, `outcome` | Benchmark use and coarse scores. |

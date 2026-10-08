@@ -227,6 +227,7 @@ struct DriveMountPreview: View {
     /// Overrides the system's Reduce Motion (tests).
     var stillOverride: Bool?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.onboardingMotionStill) private var motionStill
     @Environment(\.appearsActive) private var appearsActive
     @State private var onScreen = false
     @State private var origin = Date()
@@ -236,7 +237,7 @@ struct DriveMountPreview: View {
         Group {
             if let fixedMs {
                 DriveMountCanvas(scene: scene, frame: appDriveMountPreviewFrame(tMs: fixedMs))
-            } else if stillOverride ?? reduceMotion {
+            } else if stillOverride ?? (reduceMotion || motionStill) {
                 DriveMountCanvas(scene: scene, frame: appDriveMountPreviewStill())
             } else {
                 TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !onScreen || !appearsActive)) { context in

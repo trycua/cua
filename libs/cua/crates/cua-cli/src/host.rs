@@ -1250,6 +1250,22 @@ pub async fn run_host(
                     host_error(e, message)
                 })?;
             emit(&s, json, out)?;
+            // macOS Spaces here need Local Network access, which only this
+            // Mac's own screen can grant: say exactly what to allow.
+            if let Ok(Some(config)) = host.config()
+                && let Some(hint) = cua_host::local_network_hint(
+                    std::env::consts::OS,
+                    s.provide_spaces,
+                    &config.driver_bin,
+                )
+            {
+                let l = format!("Local Network: {}", hint.instructions);
+                if json {
+                    eprintln!("{l}");
+                } else {
+                    line(out, l);
+                }
+            }
             if allow_any_address && s.provide_spaces {
                 eprintln!(
                     "warning: --allow-any-address: host calls are accepted from any address; {}.",
@@ -1484,15 +1500,50 @@ pub fn relay_url(flag: Option<String>, home: &Path) -> String {
     cua_host::relay_url_for(flag.as_deref(), home)
 }
 
-/// `cua spaces ls` rows: every Space, with the Spaces a machine provides
-/// indented under it (or, when that machine is not listed, marked with its
-/// name).
+/// A Space's name as the apps show it: the name typed at create
+/// (`local:<name>`, `cloud:<name>`), not the container hostname (12 hex
+/// digits) its cua-spacesd reported. The same rule as the app core's
+/// `spaces::name_of`, kept here because this crate is MIT and the app core
+/// is not.
+fn display_name(s: &cua_spaces::SpaceInfo) -> String {
+    let container_hostname = s.name.len() == 12
+        && s.name
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    let from_id =
+        s.id.strip_prefix("local:")
+            .or_else(|| s.id.strip_prefix("cloud:"))
+            .filter(|rest| !rest.is_empty());
+    match from_id {
+        Some(from_id) if s.name.is_empty() || container_hostname => from_id.to_string(),
+        _ if s.name.is_empty() => s.id.clone(),
+        _ => s.name.clone(),
+    }
+}
+
+/// `cua spaces ls --json`: each Space as the registry has it, plus
+/// `display_name` (the name the list and the apps show).
+fn ls_json(list: &[cua_spaces::SpaceInfo]) -> Vec<serde_json::Value> {
+    list.iter()
+        .map(|s| {
+            let mut v = serde_json::to_value(s).unwrap_or_default();
+            if let Some(o) = v.as_object_mut() {
+                o.insert("display_name".into(), display_name(s).into());
+            }
+            v
+        })
+        .collect()
+}
+
+/// `cua spaces ls` rows: every Space (its id, then its name as the apps
+/// show it), with the Spaces a machine provides indented under it (or,
+/// when that machine is not listed, marked with its name).
 fn grouped_lines(list: &[cua_spaces::SpaceInfo]) -> Vec<String> {
     let row = |s: &cua_spaces::SpaceInfo, indent: &str| {
         let line = format!(
             "{indent}{:<width$} {:<24} {:<7} {}",
             s.id,
-            s.name,
+            display_name(s),
             s.provider.as_str(),
             s.spacesd_version,
             width = 48usize.saturating_sub(indent.len()),
@@ -1588,6 +1639,55 @@ pub async fn run_add_host(
     Ok(0)
 }
 
+/// How long `cua spaces ls` waits for the daemon's power answer.
+const LS_DAEMON_POWER_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// The registry alone can't say how a local Space turns off and on: that
+/// takes the daemon's local runtime. When a daemon runs, its list fills in
+/// `power` and `power_state` for the rows that lack them, so `--json`
+/// readers (the Electron app) offer Stop and Start and show a suspended
+/// Space as off. No daemon, or no answer in time: the rows stay as they are.
+async fn power_from_daemon(list: &mut [cua_spaces::SpaceInfo]) {
+    if !list.iter().any(|s| s.power.is_empty()) || cua_daemon::client::live_address().is_none() {
+        return;
+    }
+    let answer = tokio::time::timeout(LS_DAEMON_POWER_WAIT, async {
+        let client = cua_daemon::client::existing_daemon().await.ok()?;
+        let r = client
+            .spaces()
+            .list_spaces(cua_proto::daemon::v1::ListSpacesRequest {})
+            .await
+            .ok()?;
+        Some(r.into_inner().spaces)
+    })
+    .await;
+    let Ok(Some(records)) = answer else {
+        return;
+    };
+    fill_power(
+        list,
+        records
+            .iter()
+            .map(|r| (r.id.as_str(), r.power.as_str(), r.power_state.as_str())),
+    );
+}
+
+/// Copies `power` and `power_state` onto the rows that lack them, by id.
+fn fill_power<'a>(
+    list: &mut [cua_spaces::SpaceInfo],
+    from: impl Iterator<Item = (&'a str, &'a str, &'a str)>,
+) {
+    for (id, power, state) in from {
+        if power.is_empty() {
+            continue;
+        }
+        if let Some(s) = list.iter_mut().find(|s| s.id == id && s.power.is_empty()) {
+            s.power = power.to_string();
+            s.power_state = state.to_string();
+        }
+    }
+}
+
 /// `cua spaces ls`.
 pub async fn run_spaces(
     cmd: SpacesCmd,
@@ -1617,13 +1717,14 @@ pub async fn run_spaces(
     {
         relay_error = Some(e.to_string());
     }
-    let list = spaces
+    let mut list = spaces
         .list()
         .map_err(|e| CuaError::Internal(e.to_string()))?;
+    power_from_daemon(&mut list).await;
     if json {
         line(
             out,
-            serde_json::json!({ "spaces": list, "relay_error": relay_error }).to_string(),
+            serde_json::json!({ "spaces": ls_json(&list), "relay_error": relay_error }).to_string(),
         );
         return Ok(0);
     }
@@ -1792,6 +1893,59 @@ mod tests {
     }
 
     #[test]
+    fn ls_takes_power_from_the_daemon_where_the_registry_has_none() {
+        let space = |id: &str, power: &str| cua_spaces::SpaceInfo {
+            id: id.into(),
+            name: id.into(),
+            provider: cua_spaces::Provider::Local,
+            spacesd_version: String::new(),
+            features: vec![],
+            os: String::new(),
+            os_name: String::new(),
+            os_pretty_name: String::new(),
+            image: String::new(),
+            image_digest: String::new(),
+            kind: String::new(),
+            arch: String::new(),
+            services: vec![],
+            added_at: None,
+            host: String::new(),
+            host_name: String::new(),
+            power: power.into(),
+            power_state: String::new(),
+            cloud: String::new(),
+            cloud_place: String::new(),
+            cloud_delete: String::new(),
+            status: String::new(),
+        };
+        let mut list = vec![
+            space("local:box", ""),
+            space("relay:mini", "stop"),
+            space("local:odd", ""),
+        ];
+        fill_power(
+            &mut list,
+            [
+                ("local:box", "suspend", "suspended"),
+                ("relay:mini", "suspend", "running"),
+                ("local:odd", "", ""),
+                ("local:gone", "stop", "stopped"),
+            ]
+            .into_iter(),
+        );
+        assert_eq!(
+            (list[0].power.as_str(), list[0].power_state.as_str()),
+            ("suspend", "suspended")
+        );
+        // What the registry already knew stays.
+        assert_eq!(list[1].power, "stop");
+        assert_eq!(list[2].power, "");
+        let json = ls_json(&list);
+        assert_eq!(json[0]["power"], "suspend");
+        assert_eq!(json[0]["power_state"], "suspended");
+    }
+
+    #[test]
     fn spaces_on_a_host_list_under_it() {
         let space = |id: &str, host: &str| cua_spaces::SpaceInfo {
             id: id.into(),
@@ -1858,6 +2012,61 @@ mod tests {
         let lines = grouped_lines(&[stopped, off]);
         assert!(lines[0].ends_with("(not sharing)"), "{lines:?}");
         assert!(lines[1].ends_with("(offline)"), "{lines:?}");
+    }
+
+    /// A Space created from the app lists by the name typed there, not the
+    /// container hostname its cua-spacesd reported; the id stays first and
+    /// `--json` keeps both.
+    #[test]
+    fn spaces_list_by_the_name_the_user_typed() {
+        let mut s = cua_spaces::SpaceInfo {
+            id: "local:e2e-1005-cli".into(),
+            name: "327b8dc70418".into(),
+            provider: cua_spaces::Provider::Local,
+            spacesd_version: "0.5.3".into(),
+            features: vec![],
+            os: "linux".into(),
+            os_name: String::new(),
+            os_pretty_name: String::new(),
+            image: String::new(),
+            image_digest: String::new(),
+            kind: String::new(),
+            arch: String::new(),
+            services: vec![],
+            added_at: None,
+            host: String::new(),
+            host_name: String::new(),
+            power: String::new(),
+            power_state: String::new(),
+            cloud: String::new(),
+            cloud_place: String::new(),
+            cloud_delete: String::new(),
+            status: String::new(),
+        };
+        let lines = grouped_lines(std::slice::from_ref(&s));
+        let cols: Vec<&str> = lines[0].split_whitespace().collect();
+        assert_eq!(
+            cols,
+            ["local:e2e-1005-cli", "e2e-1005-cli", "local", "0.5.3"]
+        );
+        let json = ls_json(std::slice::from_ref(&s));
+        assert_eq!(json[0]["id"], "local:e2e-1005-cli");
+        assert_eq!(json[0]["name"], "327b8dc70418");
+        assert_eq!(json[0]["display_name"], "e2e-1005-cli");
+        // A relay machine keeps its own name.
+        s.id = "relay:96fedb7e".into();
+        s.name = "gamma-4 Mac Studio".into();
+        assert_eq!(display_name(&s), "gamma-4 Mac Studio");
+        // No name reported: the id's name, else the id itself.
+        s.name = String::new();
+        s.id = "cloud:builder".into();
+        assert_eq!(display_name(&s), "builder");
+        s.id = "relay:96fedb7e".into();
+        assert_eq!(display_name(&s), "relay:96fedb7e");
+        // A name that is not a container hostname wins over the id's.
+        s.id = "local:dev".into();
+        s.name = "Design review".into();
+        assert_eq!(display_name(&s), "Design review");
     }
 
     #[test]

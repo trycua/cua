@@ -1,0 +1,44 @@
+{
+  "name": "@cua/cua-spaces-desktop",
+  "productName": "Cua Spaces",
+  "version": "0.7.2",
+  "private": true,
+  "license": "FSL-1.1-MIT",
+  "description": "Cua Spaces desktop shell (Electron)",
+  "author": "Cua AI, Inc. <founders@trycua.com>",
+  "homepage": "https://cua.ai",
+  "main": "dist-electron/boot.cjs",
+  "packageManager": "pnpm@11.20.0",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "pnpm typecheck && rm -rf dist-electron && tsdown && node scripts/check-channels.mjs",
+    "start": "electron .",
+    "typecheck": "tsc --noEmit",
+    "dist:mac": "pnpm build && electron-builder --mac --config electron-builder.config.cjs --publish never",
+    "dist:mac:dir": "pnpm build && electron-builder --mac dir --arm64 --config electron-builder.config.cjs --publish never",
+    "dist:win": "pnpm build && electron-builder --win --config electron-builder.config.cjs --publish never",
+    "dist:linux": "pnpm build && electron-builder --linux --config electron-builder.config.cjs --publish never",
+    "smoke:linux": "scripts/smoke/linux.sh arm64 x64",
+    "smoke:win": "scripts/smoke/windows.sh",
+    "measure": "node scripts/measure.mjs",
+    "video:bench": "node scripts/video-bench.mjs",
+    "native": "node scripts/build-native.mjs",
+    "notch": "node scripts/build-notch.mjs",
+    "check:channels": "node scripts/check-channels.mjs",
+    "check:fuses": "node scripts/check-fuses.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
+  },
+  "devDependencies": {
+    "@electron/fuses": "1.8.0",
+    "@types/node": "^24.0.0",
+    "@ubjs/core": "0.31.0-3",
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
+    "tsdown": "0.23.0",
+    "typescript": "^5.9.0",
+    "vitest": "5.0.3"
+  }
+}

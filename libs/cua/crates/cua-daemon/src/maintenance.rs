@@ -105,12 +105,41 @@ pub async fn reap_orphans(
     reap_leases(local, state, reap_after, now, dry_run, alive).await
 }
 
+/// The collection the daemon's idle maintenance runs: budget eviction and
+/// orphans with the automatic grace period ([`cua_disk::BASE_POLICY`] keeps
+/// base images in use), `None` when `auto_gc` is off.
+pub fn daemon_gc_options(config: &CacheConfig) -> Option<GcOptions> {
+    config.auto_gc.then(|| GcOptions {
+        grace: cua_disk::gc::AUTO_GRACE,
+        // Orphans still go when the budget is off.
+        budget: (config.budget == cua_disk::Budget::Off).then_some(cua_disk::Budget::Off),
+        ..Default::default()
+    })
+}
+
 /// One full pass: reap orphans, collect the cache (budget and orphans; the
 /// automatic grace period), cap logs. `dry_run` reports only.
 pub async fn run(
     local: &dyn LocalRuntime,
     state: &StateStore,
     layout: Layout,
+    gc: Option<GcOptions>,
+    dry_run: bool,
+) -> MaintenanceReport {
+    let scanner = match gc {
+        Some(_) => Some(Scanner::system(layout.clone()).await),
+        None => None,
+    };
+    run_with(local, state, &layout, scanner.as_ref(), gc, dry_run).await
+}
+
+/// [`run`] over an explicit scanner (the cache collection runs when both
+/// `scanner` and `gc` are given).
+pub async fn run_with(
+    local: &dyn LocalRuntime,
+    state: &StateStore,
+    layout: &Layout,
+    scanner: Option<&Scanner>,
     gc: Option<GcOptions>,
     dry_run: bool,
 ) -> MaintenanceReport {
@@ -125,21 +154,20 @@ pub async fn run(
         &cua_vmm::host::pid_alive,
     )
     .await;
-    let gc = match gc {
-        Some(mut o) => {
-            let scanner = Scanner::system(layout.clone()).await;
+    let gc = match (gc, scanner) {
+        (Some(mut o), Some(scanner)) => {
             o.dry_run = dry_run;
-            Some(cua_disk::collect(&scanner, o).await)
+            Some(cua_disk::collect(scanner, o).await)
         }
-        None => None,
+        _ => None,
     };
     let rotated_logs = if dry_run {
         vec![]
     } else {
         // Logs past their cap, plus old screenshots and temp leftovers.
-        cua_disk::logs::rotate_all(&layout)
+        cua_disk::logs::rotate_all(layout)
             .into_iter()
-            .chain(cua_disk::scratch::prune_all(&layout))
+            .chain(cua_disk::scratch::prune_all(layout))
             .map(|p| p.display().to_string())
             .collect()
     };
@@ -168,7 +196,7 @@ mod tests {
     use cua_sandbox_core::{
         InstanceStatus, LocalEndpoints, LocalInstance, LocalStartSpec, LocalSummary, RuntimeResult,
     };
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
     struct Fake {
@@ -328,5 +356,122 @@ mod tests {
         assert_eq!(r.len(), 1);
         assert_eq!(fake.deleted.lock().unwrap().as_slice(), ["cua-eph-ancient"]);
         assert_eq!(state.leases().len(), 1);
+    }
+
+    struct FakeLume(Mutex<Vec<cua_disk::lume::LumeVm>>);
+
+    #[async_trait]
+    impl cua_disk::lume::LumeApi for FakeLume {
+        async fn vms(&self) -> Result<Vec<cua_disk::lume::LumeVm>, String> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+        async fn delete(&self, name: &str) -> Result<(), String> {
+            self.0.lock().unwrap().retain(|v| v.name != name);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn daemon_maintenance_keeps_bases_in_use_under_a_small_budget() {
+        use cua_vmm::lume::{OwnedKind, OwnedVm, OwnedVms};
+        let d = tempfile::tempdir().unwrap();
+        let layout = Layout::new(d.path().join("home"));
+        let state = StateStore::new(d.path().join("state"));
+        let owned = OwnedVms::new(layout.lume_owned());
+        let now = cua_vmm::host::now_secs();
+        let lume = Arc::new(FakeLume(Mutex::new(vec![])));
+        let record = |name: &str, kind: OwnedKind, source: &str, pulled_ago: u64| {
+            std::fs::create_dir_all(owned.dir()).unwrap();
+            let rec = OwnedVm {
+                name: name.into(),
+                kind,
+                source: Some(source.into()),
+                created_at: now - pulled_ago,
+                last_used: None,
+            };
+            let f = owned.dir().join(format!("{name}.json"));
+            std::fs::write(&f, serde_json::to_vec(&rec).unwrap()).unwrap();
+            // Idle past the automatic grace period.
+            cua_vmm::disk::mark_used_at(&f, SystemTime::now() - Duration::from_secs(3600));
+            lume.0.lock().unwrap().push(cua_disk::lume::LumeVm {
+                name: name.into(),
+                status: "stopped".into(),
+                allocated: 28 << 30,
+            });
+        };
+        // An old base nothing uses, the base a Space was cloned from, and the
+        // newest base, whose create failed.
+        record(
+            "cua-base-old",
+            OwnedKind::Base,
+            "ghcr.io/trycua/macos:15",
+            90 * 86_400,
+        );
+        record(
+            "cua-base-used",
+            OwnedKind::Base,
+            "ghcr.io/trycua/macos:26-slim",
+            30 * 86_400,
+        );
+        record("my-mac", OwnedKind::Instance, "cua-base-used", 86_400);
+        record(
+            "cua-base-failed",
+            OwnedKind::Base,
+            "ghcr.io/trycua/macos:15@sha256:ff",
+            3600,
+        );
+        // A budget smaller than one base (the automatic one is ~26 GiB on a
+        // 236 GiB-free disk).
+        let config = CacheConfig {
+            budget: cua_disk::Budget::Bytes(26 << 30),
+            ..CacheConfig::default()
+        };
+        let scanner = Scanner::new(
+            layout.clone(),
+            config,
+            None,
+            Some(lume.clone() as Arc<dyn cua_disk::lume::LumeApi>),
+        );
+        let opts = daemon_gc_options(&config).expect("auto_gc is on by default");
+        let r = run_with(
+            &Fake::default(),
+            &state,
+            &layout,
+            Some(&scanner),
+            Some(opts),
+            false,
+        )
+        .await;
+        let g = r.gc.expect("collected");
+        let mut left: Vec<String> = lume
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|v| v.name.clone())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            vec!["cua-base-failed", "cua-base-used", "my-mac"],
+            "{g:?}"
+        );
+        assert_eq!(g.removed.len(), 1, "{g:?}");
+        assert_eq!(g.removed[0].item.name, "cua-base-old");
+        let why: Vec<(String, String)> = g
+            .kept_bases
+            .iter()
+            .map(|k| (k.name.clone(), k.why.to_string()))
+            .collect();
+        assert_eq!(
+            why,
+            vec![
+                (
+                    "cua-base-failed".into(),
+                    "kept for a retry: no newer base is in use".into()
+                ),
+                ("cua-base-used".into(), "in use by my-mac".into()),
+            ]
+        );
     }
 }

@@ -20,10 +20,18 @@
 //!   (`LAContext` / `evaluatePolicy:localizedReason:reply:`) using
 //!   `LAPolicyDeviceOwnerAuthentication` — Touch ID with a device-passcode
 //!   fallback, the robust choice for an unsigned CLI.
+//! - **Windows**: Windows Hello (`UserConsentVerifier`): the face, fingerprint
+//!   or PIN the user set up, shown over the foreground window. No Hello set up
+//!   (or a policy that turns it off) is [`AuthError::Unavailable`].
+//! - **Linux**: polkit. `pkcheck` asks the desktop's authentication agent to
+//!   confirm the user ([`POLKIT_ACTION`], `auth_self`: their own password or
+//!   fingerprint, every time). No polkit, no agent or no installed action is
+//!   [`AuthError::Unavailable`].
 //! - **Other platforms**: fail **closed** — [`AuthError::Unavailable`] — unless
 //!   the operator sets `CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT=1`, an explicit
-//!   override that logs to stderr and proceeds. This keeps Linux/Windows from
-//!   silently exfiltrating while not hard-breaking deliberate use.
+//!   override that logs to stderr and proceeds. The same override applies on
+//!   Windows and Linux when their prompt is unavailable. This keeps those
+//!   systems from silently exfiltrating while not hard-breaking deliberate use.
 //!
 //! ## Escape hatch (test/CI only)
 //!
@@ -43,6 +51,17 @@ pub const SKIP_ENV: &str = "CUA_ENV_SKIP_SENSITIVE_AUTH";
 /// without OS authorization. An explicit operator override; when set, the gate
 /// logs to stderr that it proceeded unverified.
 pub const ALLOW_UNVERIFIED_ENV: &str = "CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT";
+
+/// What the user needs for the confirmation to be possible on this system.
+#[cfg(target_os = "macos")]
+const UNAVAILABLE_HELP: &str = "this Mac needs Touch ID or a login password";
+#[cfg(target_os = "windows")]
+const UNAVAILABLE_HELP: &str =
+    "Windows Hello needs a PIN, fingerprint or face set up in Settings, Accounts, Sign-in options";
+#[cfg(target_os = "linux")]
+const UNAVAILABLE_HELP: &str = "polkit needs an authentication agent in the session and the ai.cua.spaces.keyvault action installed (the Cua .deb installs it)";
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+const UNAVAILABLE_HELP: &str = "this platform has no confirmation prompt";
 
 /// Why an interactive authorization did not succeed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,7 +83,7 @@ impl std::fmt::Display for AuthError {
             Self::Denied => write!(f, "biometric authorization was denied"),
             Self::Unavailable => write!(
                 f,
-                "biometric authorization is unavailable on this platform (set {ALLOW_UNVERIFIED_ENV}=1 to override on non-macOS)"
+                "user confirmation is unavailable: {UNAVAILABLE_HELP} (set {ALLOW_UNVERIFIED_ENV}=1 to proceed without it)"
             ),
             Self::Cancelled => write!(f, "biometric authorization was cancelled"),
         }
@@ -139,12 +158,27 @@ fn authorize_platform(reason: &str) -> Result<(), AuthError> {
     macos::authorize(reason)
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows Hello or polkit; where that prompt is unavailable, the operator's
+/// explicit override alone lets the export through. A prompt the user
+/// answered, either way, is final.
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn authorize_platform(reason: &str) -> Result<(), AuthError> {
+    #[cfg(target_os = "windows")]
+    let asked = hello::authorize(reason);
+    #[cfg(target_os = "linux")]
+    let asked = polkit::authorize(POLKIT_ACTION, reason);
+    match asked {
+        Err(AuthError::Unavailable) => non_macos_decision(env_flag(ALLOW_UNVERIFIED_ENV), reason),
+        other => other,
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn authorize_platform(reason: &str) -> Result<(), AuthError> {
     non_macos_decision(env_flag(ALLOW_UNVERIFIED_ENV), reason)
 }
 
-/// Fail-closed decision for platforms without a supported biometric backend.
+/// Fail-closed decision for platforms without a (usable) prompt.
 ///
 /// Split out (and pure) so it can be unit-tested without mutating process env.
 /// With the operator override it logs to stderr and proceeds; otherwise it
@@ -253,6 +287,200 @@ mod macos {
     }
 }
 
+/// The polkit action Linux asks the desktop to confirm
+/// (`apps/cua-spaces-desktop/packaging/ai.cua.spaces.policy` installs it).
+pub const POLKIT_ACTION: &str = "ai.cua.spaces.keyvault";
+
+/// The polkit action the Cua Spaces app asks for before it approves another
+/// device for the account (the same policy file).
+pub const POLKIT_DEVICE_ACTION: &str = "ai.cua.spaces.devices";
+
+/// Confirms the person at this computer with the system's own prompt: Touch
+/// ID, an Apple Watch or the login password on macOS, Windows Hello on
+/// Windows, polkit's `polkit_action` on Linux. Unlike
+/// [`authorize_sensitive_export`] there is no operator override: where the
+/// system has no usable prompt the answer is [`AuthError::Unavailable`], so
+/// the caller can say so and decide. The test escape hatch
+/// ([`skip_is_honored`]) still applies in debug builds.
+pub fn confirm_user(polkit_action: &str, reason: &str) -> Result<(), AuthError> {
+    if skip_is_honored(cfg!(debug_assertions), env_flag(SKIP_ENV)) {
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = polkit_action;
+        macos::authorize(reason)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = polkit_action;
+        hello::authorize(reason)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        polkit::authorize(polkit_action, reason)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        let _ = (polkit_action, reason);
+        Err(AuthError::Unavailable)
+    }
+}
+
+/// `UserConsentVerificationResult`'s values, as the system numbers them.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn hello_result(value: i32) -> Result<(), AuthError> {
+    match value {
+        0 => Ok(()),
+        // DeviceNotPresent, NotConfiguredForUser, DisabledByPolicy: no Hello to ask.
+        1..=3 => Err(AuthError::Unavailable),
+        // Canceled.
+        6 => Err(AuthError::Cancelled),
+        // DeviceBusy, RetriesExhausted, and anything the system adds later.
+        _ => Err(AuthError::Denied),
+    }
+}
+
+/// `pkcheck`'s exit status: 0 authorized, 1 not authorized, 2 needs a
+/// challenge it was not allowed to make, 3 the user dismissed the dialog.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn pkcheck_result(code: Option<i32>) -> Result<(), AuthError> {
+    match code {
+        Some(0) => Ok(()),
+        Some(3) => Err(AuthError::Cancelled),
+        _ => Err(AuthError::Denied),
+    }
+}
+
+/// The process start time (clock ticks since boot) in a `/proc/<pid>/stat`
+/// line: the 22nd field, counted after the process name, which may hold
+/// spaces and parentheses itself. polkit names a process by id and start time,
+/// so a recycled id is never mistaken for it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn proc_start_time(stat: &str) -> Option<u64> {
+    let after_name = &stat[stat.rfind(')')? + 1..];
+    // The fields after the name begin with the state (field 3).
+    after_name.split_whitespace().nth(19)?.parse().ok()
+}
+
+/// The reason as a polkit detail: one line, no control characters, bounded.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn detail_text(reason: &str) -> String {
+    reason
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(200)
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+mod hello {
+    //! Windows Hello through `UserConsentVerifier`.
+    //!
+    //! The prompt is a system dialog (CredentialUIBroker), so it needs a window
+    //! to sit over: the foreground one, which is the app that asked when the
+    //! app brought itself forward first. The call blocks until the user
+    //! answers, on a thread of its own in the multithreaded apartment.
+
+    use windows::Foundation::IAsyncOperation;
+    use windows::Security::Credentials::UI::{
+        UserConsentVerificationResult, UserConsentVerifier, UserConsentVerifierAvailability,
+    };
+    use windows::Win32::System::WinRT::{
+        IUserConsentVerifierInterop, RO_INIT_MULTITHREADED, RoInitialize,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetDesktopWindow, GetForegroundWindow};
+    use windows::core::{HSTRING, factory};
+
+    use super::{AuthError, hello_result};
+
+    pub(super) fn authorize(reason: &str) -> Result<(), AuthError> {
+        // SAFETY: RoInitialize takes no pointers. A thread that is already
+        // initialized answers an error that changes nothing.
+        let _ = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
+        let available = UserConsentVerifier::CheckAvailabilityAsync()
+            .and_then(|op| op.get())
+            .map_err(|_| AuthError::Unavailable)?;
+        if available != UserConsentVerifierAvailability::Available {
+            return Err(AuthError::Unavailable);
+        }
+        let interop = factory::<UserConsentVerifier, IUserConsentVerifierInterop>()
+            .map_err(|_| AuthError::Unavailable)?;
+        // SAFETY: both calls take no arguments and answer a handle (or null).
+        let window = unsafe {
+            let w = GetForegroundWindow();
+            if w.is_invalid() {
+                GetDesktopWindow()
+            } else {
+                w
+            }
+        };
+        // SAFETY: `window` is a window handle of this desktop and the message
+        // lives through the call.
+        let op: IAsyncOperation<UserConsentVerificationResult> =
+            unsafe { interop.RequestVerificationForWindowAsync(window, &HSTRING::from(reason)) }
+                .map_err(|_| AuthError::Unavailable)?;
+        let result = op.get().map_err(|_| AuthError::Denied)?;
+        hello_result(result.0)
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod polkit {
+    //! polkit through `pkcheck`, which asks the session's authentication agent.
+
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    use super::{AuthError, detail_text, pkcheck_result, proc_start_time};
+
+    /// How long the user has to answer before the prompt counts as dismissed.
+    const REPLY_TIMEOUT: Duration = Duration::from_secs(120);
+
+    pub(super) fn authorize(action: &str, reason: &str) -> Result<(), AuthError> {
+        // This process, named the way polkit wants: id and start time.
+        let start = std::fs::read_to_string("/proc/self/stat")
+            .ok()
+            .and_then(|stat| proc_start_time(&stat))
+            .ok_or(AuthError::Unavailable)?;
+        let mut child = Command::new("pkcheck")
+            .args([
+                "--action-id",
+                action,
+                "--allow-user-interaction",
+                "--process",
+            ])
+            .arg(format!("{},{start}", std::process::id()))
+            .args(["--detail", "reason"])
+            .arg(detail_text(reason))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    AuthError::Unavailable
+                } else {
+                    AuthError::Denied
+                }
+            })?;
+        let deadline = Instant::now() + REPLY_TIMEOUT;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return pkcheck_result(status.code()),
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(100))
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(AuthError::Cancelled);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,5 +574,65 @@ mod tests {
     #[test]
     fn non_macos_override_allows_export() {
         assert_eq!(non_macos_decision(true, "reason"), Ok(()));
+    }
+
+    #[test]
+    fn windows_hello_results_map_to_the_gate() {
+        assert_eq!(hello_result(0), Ok(()));
+        for unavailable in [1, 2, 3] {
+            assert_eq!(
+                hello_result(unavailable),
+                Err(AuthError::Unavailable),
+                "{unavailable}"
+            );
+        }
+        assert_eq!(hello_result(6), Err(AuthError::Cancelled));
+        for denied in [4, 5, 99] {
+            assert_eq!(hello_result(denied), Err(AuthError::Denied), "{denied}");
+        }
+    }
+
+    #[test]
+    fn pkcheck_exit_statuses_map_to_the_gate() {
+        assert_eq!(pkcheck_result(Some(0)), Ok(()));
+        assert_eq!(pkcheck_result(Some(3)), Err(AuthError::Cancelled));
+        for denied in [Some(1), Some(2), Some(127), None] {
+            assert_eq!(pkcheck_result(denied), Err(AuthError::Denied), "{denied:?}");
+        }
+    }
+
+    #[test]
+    fn the_start_time_is_the_22nd_field_even_with_an_odd_process_name() {
+        let stat = "4242 (cua daemon) (x) S 1 4242 4242 0 -1 4194560 1000 0 0 0 5 3 0 0 20 0 8 0 987654 1000000 2000 18446744073709551615 1 1 0 0 0 0 0 0 0 0 0 0 17 2 0 0 0 0 0";
+        assert_eq!(proc_start_time(stat), Some(987654));
+        assert_eq!(proc_start_time("no name here"), None);
+        assert_eq!(proc_start_time("1 (x) S 1"), None);
+    }
+
+    #[test]
+    fn the_reason_reaches_polkit_as_one_bounded_line() {
+        assert_eq!(
+            detail_text("Unlock the Keyvault\nfor Cua: a\tb"),
+            "Unlock the Keyvault for Cua: a b"
+        );
+        assert_eq!(detail_text(&"x".repeat(500)).chars().count(), 200);
+    }
+
+    /// The policy file the `.deb` installs names the action the gate asks for.
+    #[test]
+    fn the_polkit_policy_names_the_action_the_gate_asks_for() {
+        let policy = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../../apps/cua-spaces-desktop/packaging/ai.cua.spaces.policy"
+        ))
+        .expect("the policy file the deb installs");
+        assert!(policy.contains(&format!("<action id=\"{POLKIT_ACTION}\">")));
+        assert!(policy.contains(&format!("<action id=\"{POLKIT_DEVICE_ACTION}\">")));
+        // The user's own password or fingerprint, every time, in a session they are at.
+        assert!(policy.contains("<allow_active>auth_self</allow_active>"));
+        assert!(
+            policy.contains("<allow_any>no</allow_any>")
+                && policy.contains("<allow_inactive>no</allow_inactive>")
+        );
     }
 }

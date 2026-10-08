@@ -65,6 +65,41 @@ struct LocalNetworkPermissionTests {
         #expect(fake.requests == 1)
     }
 
+    /// A client Mac runs its own macOS Spaces on vmnet too: the end of
+    /// onboarding asks, whatever was chosen, once.
+    @Test func onboardingEndAsksOnEveryMac() {
+        let o = OnboardingModel(statePath: nil)
+        let fake = FakeLocalNetwork()
+        o.host.localNetwork = fake
+        #expect(o.host.state?.provideSpaces != true)
+        o.finish()
+        #expect(fake.requests == 1)
+        o.finish()
+        #expect(fake.requests == 1)
+    }
+
+    /// Create on this Mac asks (the person who pressed Create is here); a
+    /// Space elsewhere does not need it.
+    @Test func aCreateOnThisMacAsksACloudOneDoesNot() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-mac-tests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let model = AppModel(backend: FixtureSpacesBackend(),
+                             keyvault: KeyvaultModel(client: nil, clock: { fixtureNow }),
+                             onboarding: OnboardingModel(statePath: nil),
+                             settingsPath: dir.appendingPathComponent("settings.json").path,
+                             telemetry: FixtureTelemetry())
+        let fake = FakeLocalNetwork()
+        model.host.localNetwork = fake
+        await model.openNewSpace()
+        var args = appWizardCreateArgs(plan: model.wizard.view.plan)
+        args.on = "cloud"
+        _ = try? await model.runCreate(args, os: .linux, pendingId: "pending:cloud")
+        #expect(fake.requests == 0)
+        args.on = "local"
+        _ = try? await model.runCreate(args, os: .linux, pendingId: "pending:local")
+        #expect(fake.requests == 1)
+    }
+
     @Test func subnetHostIsTheFirstAddress() {
         let ip: UInt32 = 0xC0A8_0117 // 192.168.1.23
         #expect(LiveLocalNetworkPermission.subnetHost(ip: ip, mask: 0xFFFF_FF00) == "192.168.1.1")

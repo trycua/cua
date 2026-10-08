@@ -4,7 +4,8 @@ name: "CI: Cua Spaces for macOS (SwiftUI)"
 # shares with the Tauri app (libs/cua/crates/cua-spaces-app-core): core
 # tests and parity flows, the UniFFI mirror drift gate, the app export
 # (libs/cua/crates/cua-spaces-ffi) and its Swift binding
-# (libs/spaces-app-swift: drift gate and tests), the Swift package's unit,
+# (libs/spaces-app-swift: drift gate and tests), the notch package shared
+# with the Electron app's notch helper (libs/spaces-notch-swift), the Swift package's unit,
 # parity and snapshot tests, the app bundle (with Sparkle, and a launch
 # check), and the XCUITests. Unsigned; the only secret is the optional
 # Sparkle key, for the appcast dry run. The Keyvault's live paths need a daemon and are not
@@ -24,6 +25,7 @@ on:
       - "libs/cua/swift/**"
       - "libs/spaces-sdk-swift/**"
       - "libs/spaces-app-swift/**"
+      - "libs/spaces-notch-swift/**"
       - "libs/images/sandbox-images.json"
       - "libs/cua/crates/cua-icon-cache/**"
       - ".github/workflows/ci-cua-spaces-macos.yml"
@@ -92,9 +94,26 @@ jobs:
         run: node libs/spaces-app-swift/scripts/generate-bindings.mjs --check --skip-build
       - name: spaces-app-swift tests
         run: libs/spaces-app-swift/scripts/test.sh
+      - name: Notch package tests (the views and the Electron helper's protocol)
+        run: libs/spaces-notch-swift/scripts/test.sh
       - name: Swift tests (view models, parity, snapshots)
         working-directory: apps/cua-spaces-macos
         run: scripts/test.sh
+      # BridgeContractTests (above) checked every answer against
+      # apps/cua-spaces-web/src/bridge/contracts/bridge-shapes.json; its
+      # answers then go through the web UI's webkit adapter.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Bridge contract (the Swift host's answers through the webkit adapter)
+        run: |
+          (cd apps/cua-spaces-web && pnpm install --ignore-workspace --frozen-lockfile)
+          answers="$RUNNER_TEMP/bridge-answers.json"
+          (cd apps/cua-spaces-macos && CUA_BRIDGE_ANSWERS="$answers" scripts/test.sh --filter BridgeContractTests)
+          (cd apps/cua-spaces-web && CUA_BRIDGE_ANSWERS="$answers" npx vitest run src/bridge/__tests__/contract.test.ts)
       - name: Upload snapshot differences
         if: failure()
         uses: actions/upload-artifact@v4

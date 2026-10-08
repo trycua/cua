@@ -18,6 +18,10 @@ cua sb ls                           # SIZE column (--no-size skips it)
   idle.
 - **Never removed:** sandboxes (running or stopped), anything a sandbox uses,
   checkpoints, and Docker objects the SDK did not create or pull.
+- **Base images stay over budget** when a sandbox was created from them, when
+  they are this release's macOS or Linux default, or when a create from them
+  failed (so the retry does not download it again). `cua cache prune --all`
+  removes every base no sandbox uses.
 - **Ephemeral sandboxes** are deleted with their handle. If the program
   crashes, the next `cua sb` command or the daemon deletes them 10 minutes
   later.

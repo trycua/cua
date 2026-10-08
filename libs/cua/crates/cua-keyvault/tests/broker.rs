@@ -1561,8 +1561,14 @@ async fn os_setup_fails_fast_without_a_presence_prompt_when_unavailable() {
     let cua = CallerIdentity::for_tests("com.trycua.cua", true);
     // `false`: a debug daemon serving a test identity. `true`: a daemon
     // allowed to use it, but this test binary is not the signed Cua daemon,
-    // so it may not create the OS protector (red-team F2) either.
-    for configured in [false, true] {
+    // so it may not create the OS protector (red-team F2) either. (Only a
+    // Mac asks for the signature; elsewhere a configured daemon can.)
+    let configured_daemons: &[bool] = if cfg!(target_os = "macos") {
+        &[false, true]
+    } else {
+        &[false]
+    };
+    for &configured in configured_daemons {
         let (_dir, broker, presence) = bare_broker(configured);
         let st = broker.status(&cua).await;
         assert!(!st.os_protector_available, "configured={configured}");

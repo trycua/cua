@@ -55,7 +55,11 @@ pub struct KvCredentialForm {
 }
 
 /// The OS key store kinds `cua_keyvault::protector::ProtectorKind` names.
-const OS_KINDS: [&str; 2] = ["macos-keychain", "windows-credential"];
+const OS_KINDS: [&str; 3] = [
+    "macos-keychain",
+    "windows-credential",
+    "linux-secret-service",
+];
 
 /// The vault unlocks with a passphrase and not with the OS key store.
 pub fn passphrase_only(s: &super::wire::KvStatus) -> bool {
@@ -284,6 +288,28 @@ mod tests {
         let f = credential_form(&overview("locked", false, &["passphrase", "recovery"])).unwrap();
         assert_eq!(f.method, KvMethod::Passphrase);
         assert!(f.confirm_label.is_none());
+    }
+
+    #[test]
+    fn every_os_key_store_unlocks_without_a_passphrase() {
+        // The Mac's keychain, Windows' Credential Manager and the Linux
+        // desktop's keyring are all "the OS key store" to the form.
+        for kind in [
+            "macos-keychain",
+            "windows-credential",
+            "linux-secret-service",
+        ] {
+            let f = credential_form(&overview("locked", true, &[kind, "recovery"])).unwrap();
+            assert_eq!(f.method, KvMethod::TouchId, "{kind}");
+            assert!(!passphrase_only(
+                overview("locked", true, &[kind, "recovery"])
+                    .status
+                    .as_ref()
+                    .unwrap()
+            ));
+        }
+        let only = overview("locked", false, &["passphrase", "recovery"]);
+        assert!(passphrase_only(only.status.as_ref().unwrap()));
     }
 
     #[test]

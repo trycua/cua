@@ -45,6 +45,16 @@ impl LocalEngine {
         }
     }
 
+    /// [`Self::label`] in a shell on `os` ("Container on this PC ...").
+    pub fn label_on(self, os: SpaceOs) -> String {
+        let label = self.label();
+        if os == SpaceOs::Macos {
+            label.into()
+        } else {
+            label.replace("this Mac", os.this_machine_lower())
+        }
+    }
+
     /// The `local_status().backends` that run it.
     pub fn backends(self) -> &'static [&'static str] {
         match self {
@@ -522,8 +532,9 @@ pub struct ConnectedCloud {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostLimit {
-    /// `spaces` (every Space it provides) or `macos_vms` (macOS VMs on that
-    /// Mac).
+    /// `spaces` (every Space it provides), `macos_vms` (macOS VMs on that
+    /// Mac), or [`HOST_SHARING_STOPPED`] (not a limit: its owner stopped
+    /// sharing it).
     pub resource: String,
     /// In use now.
     pub used: u32,
@@ -548,14 +559,48 @@ pub struct SpaceHost {
     pub name: String,
     /// `relay` or `direct` (its Tailscale or LAN address).
     pub via: String,
-    /// It answered just now.
+    /// It is online: it answered just now, or the relay sees it connected
+    /// (the Machines page says the same).
     pub online: bool,
     /// Its operating system (`macos`, `linux`, `windows`), when it answered.
     #[serde(default)]
     pub os: String,
-    /// Its limits, when it answered.
+    /// Its limits, when it answered; a [`HOST_SHARING_STOPPED`] entry when
+    /// it is online and refused because its owner stopped sharing it.
     #[serde(default)]
     pub limits: Vec<HostLimit>,
+}
+
+/// The [`HostLimit::resource`] of a machine that is online but whose owner
+/// stopped sharing it (`cua-spaces`' `STOPPED_SHARING`): not a count, its
+/// `reason` (empty: the standard line) says what to do. It rides with the
+/// limits because those cross the SDK, the daemon and the apps' FFI without
+/// a change of their shapes.
+pub const HOST_SHARING_STOPPED: &str = "sharing";
+
+impl SpaceHost {
+    /// The line that says it is online but its owner stopped sharing it,
+    /// when it reported that: "Studio stopped sharing: ask its owner to
+    /// Resume sharing (or run `cua host start` there)." `None` offline: it
+    /// is offline then, whatever it last said.
+    pub fn stopped_sharing(&self) -> Option<String> {
+        if !self.online {
+            return None;
+        }
+        let entry = self
+            .limits
+            .iter()
+            .find(|l| l.resource == HOST_SHARING_STOPPED)?;
+        let reason = entry.reason.trim().trim_end_matches('.');
+        Some(if reason.is_empty() {
+            format!(
+                "{} stopped sharing: ask its owner to Resume sharing (or run `cua host start` there).",
+                self.name
+            )
+        } else {
+            format!("{reason}.")
+        })
+    }
 }
 
 /// Why `host` cannot create a Space of `image` now, as a short word for
@@ -563,6 +608,9 @@ pub struct SpaceHost {
 pub fn host_refusal(image: &SandboxImage, host: &SpaceHost) -> Option<(&'static str, String)> {
     if !host.online {
         return Some(("offline", format!("{} is offline.", host.name)));
+    }
+    if let Some(line) = host.stopped_sharing() {
+        return Some(("not sharing", line));
     }
     if image.os == SpaceOs::Macos && !host.os.is_empty() && host.os != "macos" {
         return Some((
@@ -612,14 +660,14 @@ pub struct PlacementOption {
     /// `host:<machine>`, or a connected cloud's word (`aws`).
     pub id: String,
     /// The menu's text: "This Mac", "Mac mini", "Mac mini (offline)",
-    /// "AWS · us-west-2".
+    /// "Mac mini (not sharing)", "AWS · us-west-2".
     pub label: String,
     /// Its group, in menu order (a separator between groups): `this-mac`,
     /// `hosts`, `clouds`.
     pub group: String,
     /// Chosen.
     pub selected: bool,
-    /// It can be chosen now (offline, at its limit: not).
+    /// It can be chosen now (offline, not sharing, at its limit: not).
     pub enabled: bool,
     /// One line: why not, or what it runs (the tooltip).
     pub detail: String,
@@ -896,6 +944,27 @@ pub fn looks_like_address(value: &str) -> bool {
         return false;
     };
     (1..=5).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Apple's macOS license: at most two macOS VMs run on a Mac at once
+/// (Apple Virtualization enforces it when the VM boots).
+pub const MACOS_VMS_PER_MAC: u32 = 2;
+
+/// Why a macOS Space can't be created on this Mac now, before its 22 GB
+/// download: `spaces_busy` of its macOS Spaces run or are being created, or
+/// the host says `vms_running` macOS VMs run here (Lume's, Spaces or not:
+/// the license counts every one). `None` when there is room. The New Space
+/// wizard shows it as an alert and keeps Continue and Create off.
+pub fn macos_limit_text(spaces_busy: u32, vms_running: Option<u32>) -> Option<String> {
+    let limit = "the most Apple's macOS license allows at once. Stop one, then create this one.";
+    if spaces_busy >= MACOS_VMS_PER_MAC {
+        return Some(format!(
+            "This Mac is already running {spaces_busy} macOS Spaces, {limit}"
+        ));
+    }
+    let vms = vms_running.unwrap_or(0);
+    (vms >= MACOS_VMS_PER_MAC)
+        .then(|| format!("This Mac is already running {vms} macOS virtual machines, {limit}"))
 }
 
 /// The SDK's handshake errors in words a person can act on (the raw detail
@@ -1750,9 +1819,24 @@ pub fn creating_text(plan: &CreatePlan) -> String {
     )
 }
 
-/// The notice when `create_space` failed with `error`.
+/// The notice when `create_space` failed with `error`: the cause in plain
+/// words when it is a known one ([`crate::spaces::creating::failure_text`]).
 pub fn create_failed_text(error: &str) -> String {
-    format!("Could not create the Space: {error}")
+    create_failed_text_on(error, None, None)
+}
+
+/// [`create_failed_text`] for a create that ran on `provider`, on the
+/// machine named `host_name` when it is one of yours: a failure about the
+/// Mac that runs the Space names it, not this Mac.
+pub fn create_failed_text_on(
+    error: &str,
+    provider: Option<crate::model::SpaceProvider>,
+    host_name: Option<&str>,
+) -> String {
+    format!(
+        "Could not create the Space: {}",
+        crate::spaces::creating::failure_text_on(error, None, provider, host_name, false)
+    )
 }
 
 /// The SDK arguments of a plan (`create_space`).
@@ -2081,15 +2165,16 @@ pub struct WizardView {
     pub labels: WizardLabels,
 }
 
-fn runtime_word(r: Runtime, variant: SpaceKind) -> String {
+fn runtime_word(r: Runtime, variant: SpaceKind, os: SpaceOs) -> String {
     format!(
-        "{} {} on this Mac",
+        "{} {} on {}",
         r.label(),
         if variant == SpaceKind::Vm {
             "virtual machine"
         } else {
             "container"
-        }
+        },
+        os.this_machine_lower()
     )
 }
 
@@ -2235,6 +2320,13 @@ pub fn arch_label(arch: &str) -> String {
     crate::model::arch_label(arch).unwrap_or(arch).to_string()
 }
 
+/// [`arch_label`] on a host of `os`: `arm64`, `x64` on Windows and Linux.
+fn arch_label_on(os: SpaceOs, arch: &str) -> String {
+    crate::model::arch_label_on(os, arch)
+        .unwrap_or(arch)
+        .to_string()
+}
+
 /// The platform that runs ([`crate::model::run_arch`]).
 fn run_arch(image: &SandboxImage, placement: Location, host: Option<&str>) -> Option<String> {
     crate::model::run_arch(&image.arch, placement == Location::Local, host)
@@ -2334,7 +2426,7 @@ struct DiskView {
     resized: bool,
 }
 
-fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv) -> DiskView {
+fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv, os: SpaceOs) -> DiskView {
     let local = state.placement == Location::Local;
     let host = env.host_arch.as_deref();
     // A machine of yours runs its own platform: not guessed here.
@@ -2344,12 +2436,12 @@ fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv) -> Disk
         run_arch(image, state.placement, host)
     };
     let mut facts = vec![fact_line("kind", "Kind", image.variant.label().into())];
-    let emulated = crate::model::emulation_warning(local, host, arch.as_deref());
+    let emulated = crate::model::emulation_warning_on(os, local, host, arch.as_deref());
     if let Some(a) = &arch {
         facts.push(WizardFact {
             symbol: emulated.as_ref().map(|_| WARNING_SYMBOL.to_string()),
             help: emulated.clone(),
-            ..fact_line("arch", "Architecture", arch_label(a))
+            ..fact_line("arch", "Architecture", arch_label_on(os, a))
         });
     }
     let size = platform_size(image, arch.as_deref());
@@ -2400,8 +2492,9 @@ fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv) -> Disk
     let resized = bounds.is_some_and(|(min, _)| disk_gb.is_some_and(|d| d != min));
     let note = bounds.zip(disk_gb).zip(size).map(|((_, d), s)| {
         let uses = format!(
-            "Uses about {} on this Mac at first, up to {d} GB as the Space fills it.",
-            size_text(s.unpacked)
+            "Uses about {} on {} at first, up to {d} GB as the Space fills it.",
+            size_text(s.unpacked),
+            os.this_machine_lower()
         );
         if resized {
             format!("The disk will be resized to {d} GB after downloading. {uses}")
@@ -2437,7 +2530,7 @@ fn effective(state: &WizardState, env: &WizardEnv) -> WizardState {
 }
 
 /// This Mac's line: its engine for `image`, or why it cannot.
-fn local_detail(image: &SandboxImage, env: &WizardEnv) -> String {
+fn local_detail(image: &SandboxImage, env: &WizardEnv, os: SpaceOs) -> String {
     if !env.local_available {
         env.local_reason
             .clone()
@@ -2446,7 +2539,7 @@ fn local_detail(image: &SandboxImage, env: &WizardEnv) -> String {
     } else {
         image
             .local
-            .map(|l| l.label().to_string())
+            .map(|l| l.label_on(os))
             .unwrap_or_else(|| "Not available for this image.".into())
     }
 }
@@ -2472,20 +2565,30 @@ fn via_text(host: &SpaceHost) -> &'static str {
 }
 
 /// The "Run on" menu: This Mac, each machine of yours that provides Spaces
-/// (disabled with why while offline or at its limit), then each connected
+/// (disabled with why while offline, not sharing or at its limit), then each connected
 /// cloud while the "Your cloud" experiment is on (Cua Cloud first, while
 /// the apps offer it).
 pub fn placement_options(state: &WizardState, env: &WizardEnv) -> Vec<PlacementOption> {
+    placement_options_on(state, env, SpaceOs::Macos)
+}
+
+/// [`placement_options`] in a shell on `os` ("This PC" on Windows, "This
+/// computer" on Linux).
+pub fn placement_options_on(
+    state: &WizardState,
+    env: &WizardEnv,
+    os: SpaceOs,
+) -> Vec<PlacementOption> {
     let state = &effective(state, env);
     let image = image_of(state);
     let placement = state.placement;
     let mut out = vec![PlacementOption {
         id: "local".into(),
-        label: Location::Local.label().into(),
+        label: Location::Local.label_on(os).into(),
         group: "this-mac".into(),
         selected: placement == Location::Local,
         enabled: image.local.is_some(),
-        detail: local_detail(&image, env),
+        detail: local_detail(&image, env, os),
     }];
     for h in &env.hosts {
         let why = host_refusal(&image, h);
@@ -2536,6 +2639,13 @@ pub fn placement_options(state: &WizardState, env: &WizardEnv) -> Vec<PlacementO
 
 /// The wizard as drawn.
 pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
+    view_on(state, env, SpaceOs::Macos)
+}
+
+/// [`view`] in a shell on `os`: the words for this machine ("This PC",
+/// "This computer") and its architecture ("arm64", "x64") are that
+/// system's. macOS gives the same view as [`view`].
+pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView {
     let eff = effective(state, env);
     let state = &eff;
     let image = image_of(state);
@@ -2573,8 +2683,12 @@ pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
             "{name} is offline. Open Cua Spaces on {name}; once it is back, choose it in Run on.",
             name = h.name
         ),
-        None if env.hosts.is_empty() => OTHER_MAC_HINT.to_string(),
-        None => String::new(),
+        // Yours and online, but its owner stopped sharing it.
+        None => match env.hosts.iter().find_map(SpaceHost::stopped_sharing) {
+            Some(line) => line,
+            None if env.hosts.is_empty() => OTHER_MAC_HINT.to_string(),
+            None => String::new(),
+        },
     })
     .filter(|h| !h.is_empty());
     let placement_ready = match placement {
@@ -2587,7 +2701,7 @@ pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
     let name_invalid = !name.is_empty() && !valid_space_name(&name);
     let custom = custom_ref(state).is_some();
     let image_error = validate_image_ref(&state.image_text);
-    let disk = disk_view(state, &image, env);
+    let disk = disk_view(state, &image, env, os);
     let can_continue = image.os != SpaceOs::Unknown
         && match state.step {
             0 => placeable && placement_ready && image_error.is_none(),
@@ -2622,7 +2736,7 @@ pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
         }
     })
     .collect();
-    let placements = placement_options(state, env);
+    let placements = placement_options_on(state, env, os);
     let placement_id = placements
         .iter()
         .find(|o| o.selected)
@@ -2640,9 +2754,15 @@ pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
             .unwrap_or_else(|| "Choose a machine.".to_string()),
         Location::Local if runtime_switch.is_some() => match image.local {
             Some(LocalEngine::Container) => {
-                "No container engine is running on this Mac.".to_string()
+                format!(
+                    "No container engine is running on {}.",
+                    os.this_machine_lower()
+                )
             }
-            _ => "This Mac\u{2019}s own Lume isn\u{2019}t installed.".to_string(),
+            _ => format!(
+                "{}\u{2019}s own Lume isn\u{2019}t installed.",
+                os.this_machine()
+            ),
         },
         Location::Local => {
             if env.local_available {
@@ -2652,8 +2772,8 @@ pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
                     _ => "container",
                 };
                 match local_engine_detail(&image, env) {
-                    Some(why) => format!("This Mac cannot run {what} Spaces: {why}."),
-                    None => format!("This Mac cannot run {what} Spaces."),
+                    Some(why) => format!("{} cannot run {what} Spaces: {why}.", os.this_machine()),
+                    None => format!("{} cannot run {what} Spaces.", os.this_machine()),
                 }
             } else {
                 env.local_reason
@@ -2684,9 +2804,9 @@ pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
             .map(|c| c.label().to_string())
             .unwrap_or_else(|| "Not available in Cua Cloud yet".into()),
         Location::Local => match image.local {
-            Some(l) if runtime == Runtime::Auto => l.label().to_string(),
-            Some(_) => runtime_word(runtime, image.variant),
-            None => "Not available on this Mac".into(),
+            Some(l) if runtime == Runtime::Auto => l.label_on(os),
+            Some(_) => runtime_word(runtime, image.variant, os),
+            None => format!("Not available on {}", os.this_machine_lower()),
         },
         Location::Yours => match offer {
             Some(o) if !o.machine_type.is_empty() => {
@@ -2739,7 +2859,7 @@ pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
             value: match (cloud.filter(|_| yours), host) {
                 (Some(c), _) => c.label.clone(),
                 (None, Some(h)) => h.name.clone(),
-                _ => placement.label().into(),
+                _ => placement.label_on(os).into(),
             },
             copy: None,
             help: None,
@@ -2758,8 +2878,8 @@ pub fn view(state: &WizardState, env: &WizardEnv) -> WizardView {
         summary.push(Fact {
             label: "Architecture".into(),
             value: match &disk.emulated {
-                Some(_) => format!("{} (emulated)", arch_label(a)),
-                None => arch_label(a),
+                Some(_) => format!("{} (emulated)", arch_label_on(os, a)),
+                None => arch_label_on(os, a),
             },
             copy: None,
             help: disk.emulated.clone(),
@@ -3048,6 +3168,40 @@ mod tests {
             reason: (!supported).then(|| "Needs a Mac with Apple silicon".into()),
             learn_more: Some("https://cua.ai/docs/lume/guides/gpu-passthrough".into()),
         }
+    }
+
+    #[test]
+    fn macos_limit_counts_spaces_and_other_vms() {
+        assert_eq!(macos_limit_text(1, None), None);
+        assert_eq!(macos_limit_text(1, Some(1)), None);
+        assert_eq!(
+            macos_limit_text(2, Some(2)).as_deref(),
+            Some(
+                "This Mac is already running 2 macOS Spaces, the most Apple's macOS license allows at once. Stop one, then create this one."
+            )
+        );
+        // macOS VMs that aren't Spaces (Lume's own, another app's) count too.
+        assert_eq!(
+            macos_limit_text(0, Some(2)).as_deref(),
+            Some(
+                "This Mac is already running 2 macOS virtual machines, the most Apple's macOS license allows at once. Stop one, then create this one."
+            )
+        );
+        assert_eq!(
+            crate::dispatch::call_value(
+                "wizard.macosLimit",
+                serde_json::json!({"spacesBusy": 0, "vmsRunning": 3})
+            )
+            .unwrap(),
+            serde_json::json!(
+                "This Mac is already running 3 macOS virtual machines, the most Apple's macOS license allows at once. Stop one, then create this one."
+            )
+        );
+        assert_eq!(
+            crate::dispatch::call_value("wizard.macosLimit", serde_json::json!({"spacesBusy": 1}))
+                .unwrap(),
+            serde_json::Value::Null
+        );
     }
 
     #[test]
@@ -3371,6 +3525,66 @@ mod tests {
             "Disk".into(),
             format!("{} (download {})", size_text(p.disk), size_text(p.download))
         )));
+    }
+
+    #[test]
+    fn windows_and_linux_shells_name_their_own_machine() {
+        let e = storage_env();
+        let s = on("ghcr.io/trycua/omarchy:edge", &e);
+        let summary_on = |os| {
+            let step = |st: &WizardState| reduce(st, &WizardAction::Next, &e);
+            view_on(&step(&step(&s)), &e, os).summary
+        };
+        let value = |facts: &[Fact], label: &str| {
+            facts
+                .iter()
+                .find(|f| f.label == label)
+                .map(|f| f.value.clone())
+        };
+        // macOS is unchanged: view_on(.., Macos) is view.
+        assert_eq!(view_on(&s, &e, SpaceOs::Macos), view(&s, &e));
+        assert_eq!(placement_options(&s, &e)[0].label, "This Mac");
+        for (os, here, lower) in [
+            (SpaceOs::Windows, "This PC", "this PC"),
+            (SpaceOs::Linux, "This computer", "this computer"),
+        ] {
+            let local = &placement_options_on(&s, &e, os)[0];
+            assert_eq!(local.label, here);
+            assert!(!local.detail.contains("Mac"), "{}", local.detail);
+            let v = view_on(&s, &e, os);
+            let arch = v.resource_facts.iter().find(|f| f.id == "arch").unwrap();
+            assert_eq!(arch.value, "x64");
+            assert_eq!(
+                arch.help.as_deref(),
+                Some(
+                    format!(
+                        "Emulated on {lower}\u{2019}s arm64 processor. Performance may be degraded."
+                    )
+                    .as_str()
+                )
+            );
+            let summary = summary_on(os);
+            assert_eq!(value(&summary, "Runs on").as_deref(), Some(here));
+            assert_eq!(
+                value(&summary, "Architecture").as_deref(),
+                Some("x64 (emulated)")
+            );
+            for f in &summary {
+                assert!(
+                    !f.value.contains("this Mac") && !f.value.contains("This Mac"),
+                    "{}",
+                    f.value
+                );
+            }
+        }
+        // An x64 PC running an x64 image: no warning, "x64".
+        let pc = WizardEnv {
+            host_arch: Some("amd64".into()),
+            ..e.clone()
+        };
+        let v = view_on(&s, &pc, SpaceOs::Windows);
+        let arch = v.resource_facts.iter().find(|f| f.id == "arch").unwrap();
+        assert_eq!((arch.value.as_str(), arch.help.as_deref()), ("x64", None));
     }
 
     #[test]
@@ -4025,6 +4239,90 @@ mod tests {
         assert_eq!(v.placement_id, "local");
         assert_eq!(create_args(&v.plan).on, "local");
         assert_eq!(e.clouds.len(), 1, "still connected");
+    }
+
+    /// A machine the relay sees connected whose owner stopped sharing it is
+    /// online (as the Machines page says) and listed as not sharing, with
+    /// the line the SDK's create gives, not as offline. It is never chosen
+    /// for you and blocks Continue when picked.
+    #[test]
+    fn a_machine_that_stopped_sharing_is_listed_as_not_sharing_not_offline() {
+        let stopped = |reason: &str| SpaceHost {
+            limits: vec![HostLimit {
+                resource: HOST_SHARING_STOPPED.into(),
+                used: 0,
+                limit: 0,
+                reason: reason.into(),
+            }],
+            ..host("m-gamma", "gamma-4 Mac Studio", "relay", true)
+        };
+        let e = WizardEnv {
+            hosts: vec![stopped("")],
+            ..env()
+        };
+        let line = "gamma-4 Mac Studio stopped sharing: ask its owner to Resume sharing \
+                    (or run `cua host start` there).";
+        let v = view(&initial(&e), &e);
+        assert_eq!(
+            menu(&v),
+            [
+                "local [this-mac] This Mac *",
+                "host:m-gamma [hosts] gamma-4 Mac Studio (not sharing) (disabled)",
+            ]
+        );
+        assert_eq!(v.placements[1].detail, line);
+        // The SDK's own words win, with one full stop.
+        let sdk = WizardEnv {
+            hosts: vec![stopped(
+                "gamma-4 Mac Studio stopped sharing: ask its owner to Resume sharing (or run `cua host start` there)",
+            )],
+            ..env()
+        };
+        assert_eq!(view(&initial(&sdk), &sdk).placements[1].detail, line);
+        // It is online: not "offline", and never chosen for you.
+        let s = reduce(
+            &initial(&e),
+            &WizardAction::ChooseOs { os: SpaceOs::Macos },
+            &e,
+        );
+        let v = view(&s, &e);
+        assert_eq!(v.placement_id, "local");
+        assert!(!v.placements[1].label.contains("offline"));
+        // Said once, where an offline machine's hint would be.
+        assert_eq!(v.placement_hint.as_deref(), Some(line));
+        // Picked on purpose (a preset): Continue says why not.
+        let picked = reduce(
+            &s,
+            &WizardAction::ChoosePlacement {
+                on: "host:m-gamma".into(),
+            },
+            &e,
+        );
+        assert_eq!(picked.placement, Location::Local, "it cannot be chosen");
+        // The same words when the machine is the one the wizard is on.
+        let on = WizardState {
+            placement: Location::Host,
+            host: Some("m-gamma".into()),
+            picked: true,
+            ..initial(&e)
+        };
+        let v = view(&on, &e);
+        assert!(!v.can_continue);
+        assert_eq!(v.placement_error.as_deref(), Some(line));
+        // Offline wins: it says nothing about sharing then.
+        let gone = SpaceHost {
+            online: false,
+            ..stopped("")
+        };
+        assert_eq!(gone.stopped_sharing(), None);
+        let e = WizardEnv {
+            hosts: vec![gone],
+            ..env()
+        };
+        assert_eq!(
+            view(&initial(&e), &e).placements[1].label,
+            "gamma-4 Mac Studio (offline)"
+        );
     }
 
     /// Choosing a machine creates there (`host:<id>`) with its own engine,

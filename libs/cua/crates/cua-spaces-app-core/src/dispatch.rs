@@ -14,8 +14,8 @@ use crate::model::*;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
-    CoreError, about, agents, cloud_connect, devices, drive_mount_preview, drive_page,
-    drive_settings, driver_preview, experiments, host, login_item, notch, notifications,
+    CoreError, about, agent_keys, agents, cloud_connect, devices, drive_mount_preview, drive_page,
+    drive_settings, driver_preview, experiments, host, login_item, machines, notch, notifications,
     onboarding, onboarding_preview, paths, persistent, presence, settings, share, telemetry,
     window, wizard,
 };
@@ -34,6 +34,7 @@ pub const METHODS: &[&str] = &[
     "spaces.cloudNamespaceOf",
     "spaces.sceneForOs",
     "spaces.hasFeature",
+    "spaces.sharesDesktop",
     "spaces.isSpacesPool",
     "spaces.sortByMru",
     "spaces.touchSpace",
@@ -53,7 +54,9 @@ pub const METHODS: &[&str] = &[
     "sidebar.detailCopy",
     "sidebar.deleteFailedText",
     "sidebar.powerButton",
+    "sidebar.statusText",
     "sidebar.streamSection",
+    "spaces.desktopCover",
     "stream.pipReduce",
     "stream.pipClick",
     "window.chrome",
@@ -73,6 +76,7 @@ pub const METHODS: &[&str] = &[
     "wizard.localRuntimeReady",
     "wizard.looksLikeAddress",
     "wizard.friendlyAddError",
+    "wizard.macosLimit",
     "wizard.imageSuggestions",
     "wizard.validateImageRef",
     "wizard.creatingText",
@@ -100,6 +104,7 @@ pub const METHODS: &[&str] = &[
     "flow.canConfirm",
     "flow.consent",
     "flow.progress",
+    "flow.status",
     "flow.formatBytes",
     "flow.defaultMove",
     "flow.review",
@@ -131,6 +136,10 @@ pub const METHODS: &[&str] = &[
     "keyvault.list",
     "keyvault.vaultReduce",
     "keyvault.vaultView",
+    "keyvault.vaultSource",
+    "keyvault.signedInSpaces",
+    "keyvault.spaceAccessKey",
+    "keyvault.liveCopySpaces",
     "keyvault.unlockPrompt",
     "keyvault.deleteConfirm",
     "keyvault.labels",
@@ -163,6 +172,10 @@ pub const METHODS: &[&str] = &[
     "settings.formatHotkey",
     "settings.page",
     "loginItem.launchPlan",
+    "agentKeys.view",
+    "agentKeys.form",
+    "agentKeys.removeConfirm",
+    "agentKeys.nameProblem",
     "about.view",
     "about.afterLaunch",
     "about.restartDaemon",
@@ -204,6 +217,7 @@ pub const METHODS: &[&str] = &[
     "agents.name",
     "agents.initial",
     "agents.subtitle",
+    "agents.statusLabel",
     "agents.filter",
     "agents.order",
     "agents.settingsRows",
@@ -211,6 +225,7 @@ pub const METHODS: &[&str] = &[
     "paths.displayPath",
     "paths.displayPaths",
     "devices.view",
+    "machines.merge",
     "devices.activityText",
     "devices.labels",
     "devices.platformName",
@@ -250,6 +265,8 @@ pub const METHODS: &[&str] = &[
     "telemetry.feature",
     "telemetry.onboarding",
     "telemetry.onboardingFinished",
+    "telemetry.onboardingSkipped",
+    "telemetry.signInFailed",
     "telemetry.creates",
     "telemetry.storage",
     "telemetry.share",
@@ -308,6 +325,10 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("space")?,
             &a.get::<String>("feature")?,
         )),
+        // Whether one of your machines shares its desktop (null: not known
+        // or not one of your machines): when it does not, nothing asks its
+        // desktop or its processes.
+        "spaces.sharesDesktop" => out(sidebar::shares_desktop(&a.get("space")?)),
         "spaces.isSpacesPool" => out(spaces::is_spaces_pool(&a.get("space")?)),
         "spaces.sortByMru" => out(spaces::sort_by_mru(&a.get::<Vec<Space>>("spaces")?)),
         "spaces.touchSpace" => out(spaces::touch_space(
@@ -351,17 +372,30 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<String>>("query")?.unwrap_or_default(),
             &a.get::<Option<String>>("selectedId")?.unwrap_or_default(),
         )),
-        // With `experiments`, what Settings, Experiments hides is left out.
+        // With `experiments`, what Settings, Experiments hides is left out;
+        // with `access` (this device is signed in but not enrolled), the
+        // detail as this device sees it (`detail_for`, as the SwiftUI app's
+        // `AppModel.detail`).
         "sidebar.detail" => {
             let space = a.get("space")?;
             let usage = a.get::<Option<sidebar::SpaceUsage>>("usage")?;
             let host_arch = a.get::<Option<String>>("hostArch")?;
+            let access = a.get::<Option<devices::MachineAccessNotice>>("access")?;
             out(
-                match a.get::<Option<experiments::Experiments>>("experiments")? {
-                    Some(x) => {
-                        sidebar::detail_with(&space, usage.as_ref(), host_arch.as_deref(), &x)
+                match (
+                    a.get::<Option<experiments::Experiments>>("experiments")?,
+                    access,
+                ) {
+                    (None, None) => {
+                        sidebar::detail_live(&space, usage.as_ref(), host_arch.as_deref())
                     }
-                    None => sidebar::detail_live(&space, usage.as_ref(), host_arch.as_deref()),
+                    (x, access) => sidebar::detail_for(
+                        &space,
+                        usage.as_ref(),
+                        host_arch.as_deref(),
+                        &x.unwrap_or_default(),
+                        access.as_ref(),
+                    ),
                 },
             )
         }
@@ -371,7 +405,12 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<String>("error")?,
         )),
         "sidebar.powerButton" => out(sidebar::power_button(&a.get::<Space>("space")?)),
+        // The status word a Space's row and detail show ("Suspended",
+        // "Stopped", "Turning on…").
+        "sidebar.statusText" => out(sidebar::status_text(&a.get::<Space>("space")?)),
         "sidebar.streamSection" => out(stream::stream_section(&a.get("input")?)),
+        // What the preview shows over (or instead of) the live desktop.
+        "spaces.desktopCover" => out(spaces::cover::desktop_cover(&a.get("input")?)),
         "stream.pipReduce" => out(stream::pip_reduce(
             &a.get::<Option<Vec<String>>>("open")?.unwrap_or_default(),
             &a.get("event")?,
@@ -396,11 +435,20 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get("action")?,
             &a.get("env")?,
         )),
-        "wizard.view" => out(wizard::view(&a.get("state")?, &a.get("env")?)),
+        // `hostOs`: the shell's system, for its words (macOS when absent).
+        "wizard.view" => out(wizard::view_on(
+            &a.get("state")?,
+            &a.get("env")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
         "wizard.createArgs" => out(wizard::create_args(&a.get("plan")?)),
-        "wizard.placementOptions" => {
-            out(wizard::placement_options(&a.get("state")?, &a.get("env")?))
-        }
+        "wizard.placementOptions" => out(wizard::placement_options_on(
+            &a.get("state")?,
+            &a.get("env")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
         "wizard.pickerImages" => out(wizard::picker_images()),
         "wizard.pickerGroups" => out(wizard::picker_groups()),
         "wizard.findImage" => out(wizard::find_image(&a.get::<String>("ref")?)),
@@ -413,10 +461,18 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "wizard.looksLikeAddress" => out(wizard::looks_like_address(&a.get::<String>("value")?)),
         "wizard.friendlyAddError" => out(wizard::friendly_add_error(&a.get::<String>("raw")?)),
+        "wizard.macosLimit" => out(wizard::macos_limit_text(
+            a.get::<Option<u32>>("spacesBusy")?.unwrap_or(0),
+            a.get("vmsRunning")?,
+        )),
         "wizard.imageSuggestions" => out(wizard::image_suggestions(&a.get::<String>("query")?)),
         "wizard.validateImageRef" => out(wizard::validate_image_ref(&a.get::<String>("ref")?)),
         "wizard.creatingText" => out(wizard::creating_text(&a.get("plan")?)),
-        "wizard.createFailedText" => out(wizard::create_failed_text(&a.get::<String>("error")?)),
+        "wizard.createFailedText" => out(wizard::create_failed_text_on(
+            &a.get::<String>("error")?,
+            a.get("provider")?,
+            a.get::<Option<String>>("hostName")?.as_deref(),
+        )),
         "windows.filterWindows" => out(windows::filter_windows(
             &a.get::<Vec<_>>("windows")?,
             &a.get::<String>("query")?,
@@ -477,6 +533,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "flow.canConfirm" => out(flow::can_confirm(&a.get("state")?)),
         "flow.consent" => out(flow::consent(&a.get("state")?)),
         "flow.progress" => out(flow::progress(&a.get("state")?)),
+        "flow.status" => out(flow::status(&a.get("state")?)),
         "flow.formatBytes" => out(flow::format_bytes(a.get("n")?)),
         "flow.defaultMove" => out(flow::default_move(
             &a.get("entry")?,
@@ -533,6 +590,26 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "keyvault.vaultView" => out(vault::view(
             &a.get("overview")?,
             &a.get("state")?,
+            a.get("now")?,
+        )),
+        "keyvault.vaultSource" => out(vault::vault_source(
+            &a.get("overview")?,
+            &a.get::<String>("providerId")?,
+        )),
+        "keyvault.signedInSpaces" => out(kv::signed_in_spaces(
+            &a.get("overview")?,
+            a.get("now")?,
+            &a.get::<Vec<String>>("dismissed")?,
+            &a.get::<Vec<crate::model::Space>>("spaces")?,
+        )),
+        "keyvault.spaceAccessKey" => out(kv::space_access_key(
+            &a.get("overview")?,
+            a.get("now")?,
+            &a.get::<crate::model::Space>("space")?,
+        )),
+        "keyvault.liveCopySpaces" => out(vault::live_copy_spaces(
+            &a.get("overview")?,
+            &a.get::<Vec<String>>("ids")?,
             a.get("now")?,
         )),
         "keyvault.unlockPrompt" => out(vault::unlock_prompt(
@@ -596,6 +673,23 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "onboarding.drivePreviewFrame" => out(drive_mount_preview::frame(a.get("tMs")?)),
         "onboarding.drivePreviewStill" => out(drive_mount_preview::still()),
         "settings.defaults" => out(settings::AppSettings::default()),
+        // `hostOs`: the shell's system, for where the keys stay (macOS when absent).
+        "agentKeys.view" => out(agent_keys::view_on(
+            &a.get("input")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
+        "agentKeys.form" => out(agent_keys::form_on(
+            &a.get("input")?,
+            &a.get("form")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
+        "agentKeys.removeConfirm" => out(agent_keys::remove_confirm(
+            &a.get("input")?,
+            &a.get::<String>("env")?,
+        )),
+        "agentKeys.nameProblem" => out(agent_keys::name_problem(&a.get::<String>("name")?)),
         "about.view" => out(about::view(&a.get::<about::AboutInput>("input")?)),
         "about.afterLaunch" => out(about::after_launch(&a.get::<about::LaunchInput>("input")?)),
         "about.restartDaemon" => out(about::restart_daemon(
@@ -706,6 +800,10 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "host.looksLikeListen" => out(host::looks_like_listen(&a.get::<String>("value")?)),
         "host.parseAllowList" => out(host::parse_allow_list(&a.get::<String>("value")?)),
+        "machines.merge" => out(machines::merge(
+            &a.get::<Option<machines::MachinesInput>>("input")?
+                .unwrap_or_default(),
+        )),
         "devices.view" => out(devices::devices_view(
             &a.get::<Option<devices::DevicesInput>>("input")?
                 .unwrap_or_default(),
@@ -865,6 +963,9 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "agents.name" => out(agents::agent_name(&a.get::<String>("agent")?)),
         "agents.initial" => out(agents::agent_initial(&a.get::<String>("agent")?)),
         "agents.subtitle" => out(agents::agent_subtitle(&a.get("run")?)),
+        // A run's status word ("Running", "Idle", ...), as the SwiftUI
+        // detail's Agents rows say it.
+        "agents.statusLabel" => out(a.get::<agents::AgentStatus>("status")?.label()),
         "agents.filter" => out(agents::filter_agent_runs(
             &a.get::<Vec<_>>("runs")?,
             &a.get::<String>("query")?,
@@ -887,10 +988,14 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<String>("text")?,
             a.get::<Option<String>>("home")?.as_deref(),
         )),
-        "telemetry.launched" => out(telemetry::launched()),
+        "telemetry.launched" => out(telemetry::launched(a.get("onboardingEligible")?)),
         "telemetry.feature" => out(telemetry::feature_used(&a.get::<String>("feature")?)),
         "telemetry.onboarding" => out(telemetry::onboarding(&a.get("state")?, &a.get("action")?)),
         "telemetry.onboardingFinished" => out(telemetry::onboarding_finished(&a.get("state")?)),
+        "telemetry.onboardingSkipped" => out(telemetry::onboarding_skipped(&a.get("state")?)),
+        "telemetry.signInFailed" => out(telemetry::sign_in_failed(
+            a.get::<Option<String>>("message")?.as_deref(),
+        )),
         "telemetry.creates" => out(telemetry::creates(
             &a.get::<Option<creating::CreatesState>>("state")?
                 .unwrap_or_default(),
@@ -925,6 +1030,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn dispatch_covers_every_method() {
@@ -943,11 +1049,346 @@ mod tests {
         ));
     }
 
+    /// The web asks the core whether a machine shares its desktop before it
+    /// reads the machine's agent runs, usage or windows (calls that a
+    /// machine that does not share its desktop refuses).
+    #[test]
+    fn a_machine_that_does_not_share_its_desktop_says_so() {
+        let space = |id: &str, features: &[&str]| {
+            let row = |features: &[&str]| {
+                json!({
+                    "id": id, "name": "Studio", "provider": "relay", "os": "macos",
+                    "spacesdVersion": "0.4.1", "features": features, "reachable": true,
+                })
+            };
+            let space = call_value(
+                "spaces.rowToSpace",
+                json!({ "row": row(features), "now": 0 }),
+            )
+            .unwrap();
+            call_value("spaces.sharesDesktop", json!({ "space": space })).unwrap()
+        };
+        // A spare Mac: it answered, with the desktop's features unsupported.
+        assert_eq!(space("relay:m1", &["host_spaces", "files"]), json!(false));
+        assert_eq!(
+            space("relay:m1", &["desktop_stream", "host_spaces"]),
+            json!(true)
+        );
+        // Not known: it reported no features. Not a machine: a local Space.
+        assert_eq!(space("relay:m1", &[]), Value::Null);
+        assert_eq!(space("local:dev", &["files"]), Value::Null);
+    }
+
+    /// `agentKeys.view` and `agentKeys.form` say where keys stay in the shell's
+    /// system's words (`hostOs`), and in a Mac's when it names none.
+    #[test]
+    fn agent_keys_words_follow_the_hosts_system() {
+        let intro = |args: Value| {
+            call_value("agentKeys.view", args).unwrap()["intro"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let input = json!({ "keys": [] });
+        let mac = intro(json!({ "input": input }));
+        assert!(mac.contains("on this Mac in the Keychain,"));
+        assert_eq!(intro(json!({ "input": input, "hostOs": "macos" })), mac);
+        assert_eq!(intro(json!({ "input": input, "hostOs": null })), mac);
+        assert!(
+            intro(json!({ "input": input, "hostOs": "windows" }))
+                .contains("on this PC in Windows Credential Manager,")
+        );
+        let linux = intro(json!({ "input": input, "hostOs": "linux" }));
+        assert!(linux.contains("on this computer,") && !linux.contains("Keychain"));
+        let help = |os: Value| {
+            call_value(
+                "agentKeys.form",
+                json!({ "input": input, "form": { "provider": "openai" }, "hostOs": os }),
+            )
+            .unwrap()["valueHelp"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(
+            help(Value::Null),
+            "It's saved in the Keychain on this Mac and won't be shown again."
+        );
+        assert!(help(json!("windows")).contains("in Windows Credential Manager on this PC"));
+        assert_eq!(
+            help(json!("linux")),
+            "It's saved on this computer and won't be shown again."
+        );
+    }
+
+    /// The run's status line (which step it is on, with bytes) is the
+    /// core's, not the page's: only a running picker has one.
+    #[test]
+    fn flow_status_says_which_step_a_run_is_on() {
+        let event = |detail: &str, done: u64, total: u64| {
+            json!({ "step": 0, "steps": 2, "kind": "state", "phase": "progress",
+                    "detail": detail, "doneBytes": done, "totalBytes": total })
+        };
+        let mut state = call_value("flow.initial", json!({ "spaceName": "dev" })).unwrap();
+        assert_eq!(
+            call_value("flow.status", json!({ "state": state })).unwrap(),
+            Value::Null
+        );
+        state["step"] = json!("running");
+        state["events"] = json!([event("Uploading", 12 << 20, 80 << 20)]);
+        assert_eq!(
+            call_value("flow.status", json!({ "state": state })).unwrap(),
+            json!("Uploading 12 / 80 MB")
+        );
+        state["step"] = json!("done");
+        assert_eq!(
+            call_value("flow.status", json!({ "state": state })).unwrap(),
+            Value::Null
+        );
+    }
+
+    fn overview_with(items: Value, deliveries: Value) -> Value {
+        json!({
+            "availability": "ready", "serverVerified": true, "namesVisible": true,
+            "itemsTotal": 3, "items": items, "deliveries": deliveries,
+        })
+    }
+
+    fn kv_item(id: &str, kind: &str, provider: &str, updated: u64) -> Value {
+        json!({
+            "id": id, "kind": kind, "provider_id": provider, "app_display": provider,
+            "domain": "github.com", "key": id, "source": "test", "session": false,
+            "bytes": 10, "identity_provider": false,
+            "policy": { "allowed_targets": [], "ttl_secs": 0, "unattended": false },
+            "created_ms": 1, "updated_ms": updated, "rev": 1, "record_digest": "d",
+        })
+    }
+
+    /// What the Keyvault holds for an app a teleport can send: passwords
+    /// never are, and are listed apart.
+    #[test]
+    fn keyvault_vault_source_counts_what_a_teleport_can_send() {
+        let items = json!([
+            kv_item("c1", "cookie", "chrome", 100),
+            kv_item("c2", "cookie", "chrome", 300),
+            kv_item("p1", "password", "chrome", 200),
+            kv_item("o1", "cookie", "safari", 900),
+        ]);
+        let source = call_value(
+            "keyvault.vaultSource",
+            json!({ "overview": overview_with(items, json!([])), "providerId": "chrome" }),
+        )
+        .unwrap();
+        assert_eq!(source["count"], json!(2));
+        assert_eq!(source["newestMs"], json!(300));
+        assert_eq!(source["ids"], json!(["c1", "c2"]));
+        assert_eq!(source["passwordIds"], json!(["p1"]));
+    }
+
+    /// A Space with a live Keyvault copy is "Signed in" (its Access row is
+    /// where the badge goes); a dismissed copy still marks the Spaces list
+    /// but not the notch, and a wiped one marks nothing.
+    #[test]
+    fn keyvault_marks_spaces_with_live_access() {
+        let space = |id: &str| {
+            call_value(
+                "spaces.rowToSpace",
+                json!({ "row": { "id": id, "name": id.split(':').nth(1).unwrap(), "provider": "relay",
+                                  "os": "linux", "reachable": true }, "now": 0 }),
+            )
+            .unwrap()
+        };
+        let (dev, other) = (space("local:dev"), space("local:other"));
+        let delivery = |import: &str, wiped: bool| {
+            json!({ "import_id": import, "target": "dev", "provider_id": "chrome", "items": ["c1"],
+                    "caller_fp": "fp", "delivered_ms": 1, "expires_ms": 0, "wiped": wiped })
+        };
+        let now = 1_800_000_000_000_i64;
+        let ids = |overview: &Value, dismissed: Value| {
+            call_value(
+                "keyvault.signedInSpaces",
+                json!({ "overview": overview, "now": now, "dismissed": dismissed,
+                        "spaces": [dev.clone(), other.clone()] }),
+            )
+            .unwrap()
+        };
+        let live = overview_with(json!([]), json!([delivery("i1", false)]));
+        assert_eq!(ids(&live, json!([])), json!(["local:dev"]));
+        assert_eq!(ids(&live, json!(["i1"])), json!([]));
+        let wiped = overview_with(json!([]), json!([delivery("i1", true)]));
+        assert_eq!(ids(&wiped, json!([])), json!([]));
+        let key = |space: &Value| {
+            call_value(
+                "keyvault.spaceAccessKey",
+                json!({ "overview": live, "now": now, "space": space }),
+            )
+            .unwrap()
+        };
+        assert_eq!(key(&dev), json!("d:dev"));
+        assert_eq!(key(&other), Value::Null);
+        // Deleting an item with a live copy says how many Spaces are wiped.
+        let copies = |overview: &Value, ids: Value| {
+            call_value(
+                "keyvault.liveCopySpaces",
+                json!({ "overview": overview, "ids": ids, "now": now }),
+            )
+            .unwrap()
+        };
+        assert_eq!(copies(&live, json!(["c1"])), json!(1));
+        assert_eq!(copies(&live, json!(["other"])), json!(0));
+        assert_eq!(copies(&wiped, json!(["c1"])), json!(0));
+    }
+
+    /// The web reads a Space's detail as this device sees it: with
+    /// `access`, a machine on the relay has its connection actions greyed
+    /// out under the notice; one that keeps its desktop private says so,
+    /// and Share follows Settings, Experiments.
+    #[test]
+    fn the_detail_follows_access_and_experiments() {
+        let space = |id: &str, features: &[&str]| {
+            call_value(
+                "spaces.rowToSpace",
+                json!({ "row": {
+                    "id": id, "name": "Studio", "provider": "relay", "os": "macos",
+                    "spacesdVersion": "0.4.1", "features": features, "reachable": true,
+                }, "now": 0 }),
+            )
+            .unwrap()
+        };
+        let shared = space(
+            "relay:m1",
+            &["desktop_stream", "host_spaces", "relay_attach"],
+        );
+        let ids = |d: &Value| -> Vec<(String, bool)> {
+            d["actions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| {
+                    (
+                        a["id"].as_str().unwrap().to_string(),
+                        a["enabled"].as_bool().unwrap(),
+                    )
+                })
+                .collect()
+        };
+        let has = |d: &Value, id: &str| ids(d).iter().any(|(a, _)| a == id);
+        // No experiments, no access: every action, as before.
+        let live = call_value("sidebar.detail", json!({ "space": shared })).unwrap();
+        assert!(has(&live, "share"));
+        // Sharing off hides Share; on shows it.
+        let off = call_value(
+            "sidebar.detail",
+            json!({ "space": shared, "experiments": { "sharing": false } }),
+        )
+        .unwrap();
+        assert!(!has(&off, "share"));
+        let on = call_value(
+            "sidebar.detail",
+            json!({ "space": shared, "experiments": { "sharing": true } }),
+        )
+        .unwrap();
+        assert!(has(&on, "share") && on.get("access").is_none());
+        // Not enrolled: the notice, Status says why, connection actions off.
+        let notice = serde_json::to_value(
+            devices::machine_access_notice(devices::EnrollmentKind::NeedsEnrollment, None).unwrap(),
+        )
+        .unwrap();
+        let d = call_value(
+            "sidebar.detail",
+            json!({ "space": shared, "experiments": { "sharing": true }, "access": notice }),
+        )
+        .unwrap();
+        assert_eq!(d["access"], notice);
+        assert_eq!(d["canStream"], json!(false));
+        assert_eq!(d["previewText"], notice["text"]);
+        for (id, enabled) in ids(&d) {
+            if ["teleport", "pip", "share", "open"].contains(&id.as_str()) {
+                assert!(!enabled, "{id} stays off while not enrolled");
+            }
+        }
+        // Without experiments, `access` still applies.
+        let d = call_value(
+            "sidebar.detail",
+            json!({ "space": shared, "access": notice }),
+        )
+        .unwrap();
+        assert_eq!(d["access"], notice);
+        // A machine that keeps its desktop private: its note, no New Space
+        // button word in the note itself, its desktop actions gone.
+        let private = space("relay:m1", &["host_spaces", "files"]);
+        let d = call_value(
+            "sidebar.detail",
+            json!({ "space": private, "experiments": {} }),
+        )
+        .unwrap();
+        assert_eq!(
+            d["desktopNote"],
+            json!("Studio isn\u{2019}t sharing its desktop. You can still create Spaces on it.")
+        );
+        assert!(!has(&d, "teleport") && !has(&d, "open"));
+    }
+
+    /// The preview's cover: Connect while auto-connect is off, Connecting
+    /// while it opens, Try again after a failure, and Connect greyed out
+    /// under the notice while this device is not enrolled.
+    #[test]
+    fn the_desktop_cover_is_the_cores() {
+        let cover =
+            |input: Value| call_value("spaces.desktopCover", json!({ "input": input })).unwrap();
+        let input = |auto: bool, stream: &str| {
+            json!({ "canStream": true, "previewText": "", "autoConnect": auto,
+                    "connectRequested": false, "stream": stream })
+        };
+        let c = cover(input(true, "nosession"));
+        assert_eq!(c["kind"], json!("connecting"));
+        assert_eq!(c["openStream"], json!(true));
+        let c = cover(input(false, "nosession"));
+        assert_eq!(c["kind"], json!("connect"));
+        assert_eq!(c["button"], json!("Connect"));
+        let c = cover(input(true, "failed"));
+        assert_eq!(c["text"], json!("Could not connect to the desktop"));
+        assert_eq!(c["button"], json!("Try again"));
+        let notice = serde_json::to_value(
+            devices::machine_access_notice(devices::EnrollmentKind::Due, None).unwrap(),
+        )
+        .unwrap();
+        let mut locked = input(true, "nosession");
+        locked["access"] = notice.clone();
+        let c = cover(locked);
+        assert_eq!(c["buttonDisabled"], json!(true));
+        assert_eq!(c["action"], notice["actionLabel"]);
+    }
+
+    /// The words the web's Agents rows and status labels read: the core's,
+    /// not the page's.
+    #[test]
+    fn status_words_are_the_cores() {
+        assert_eq!(
+            call_value("agents.statusLabel", json!({ "status": "idle" })).unwrap(),
+            json!("Idle")
+        );
+        let space = |reachable: bool| {
+            call_value(
+                "spaces.rowToSpace",
+                json!({ "row": {
+                    "id": "local:dev", "name": "dev", "provider": "local", "os": "linux",
+                    "spacesdVersion": "0.6.0", "features": [], "reachable": reachable,
+                }, "now": 0 }),
+            )
+            .unwrap()
+        };
+        let word = |s: Value| call_value("sidebar.statusText", json!({ "space": s })).unwrap();
+        // Not reachable, with no power record: the registry's word.
+        assert_eq!(word(space(false)), json!("Suspended"));
+        assert_eq!(word(space(true)), json!("Running"));
+    }
+
     #[test]
     fn calls_round_trip_json() {
         assert_eq!(
             call("spaces.displayName", r#"{"name":"brave-otter"}"#).unwrap(),
-            "\"Brave Otter\""
+            "\"brave-otter\""
         );
         assert_eq!(
             call("keyvault.duration", r#"{"ms":90000}"#).unwrap(),

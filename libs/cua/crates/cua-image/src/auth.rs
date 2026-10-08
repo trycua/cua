@@ -6,7 +6,11 @@
 //! * `GITHUB_TOKEN` for `ghcr.io` (user `GITHUB_ACTOR`, else `x-access-token`).
 //! * `$DOCKER_CONFIG/config.json` or `~/.docker/config.json`: inline `auths`,
 //!   then `credHelpers`/`credsStore` via `docker-credential-<helper> get`
-//!   (disable helpers with `CUA_REGISTRY_CRED_HELPERS=0`).
+//!   (disable helpers with `CUA_REGISTRY_CRED_HELPERS=0`). Pulls ask the
+//!   helper only when the registry refuses anonymous access ([`resolve_quiet`],
+//!   then [`resolve_helper`]): Docker Desktop's helper makes macOS ask whether
+//!   the app may use "data from other apps", which nobody wants for a public
+//!   image.
 //! * Private ECR (`<account>.dkr.ecr.<region>.amazonaws.com`, as Fleet's
 //!   private images): `aws ecr get-login-password --region <region>` with
 //!   the caller's AWS CLI credentials, when `aws` is installed (disable with
@@ -31,8 +35,30 @@ pub enum AuthSource {
     Anonymous,
 }
 
-/// Resolve credentials for `registry` (a host like `ghcr.io`).
+/// Resolve credentials for `registry` (a host like `ghcr.io`): the whole
+/// chain, credential helper included. Pushes use this; pulls start with
+/// [`resolve_quiet`].
 pub async fn resolve(registry: &str) -> (RegistryAuth, AuthSource) {
+    resolve_chain(registry, true).await
+}
+
+/// [`resolve`] without the credential helper. Nothing here starts a program
+/// that may make macOS ask whether this app can read another app's data
+/// (Docker Desktop's helper does), so a pull goes out with what is at hand
+/// (or anonymously) and only asks [`resolve_helper`] if the registry refuses.
+pub async fn resolve_quiet(registry: &str) -> (RegistryAuth, AuthSource) {
+    resolve_chain(registry, false).await
+}
+
+/// What the docker credential helper configured for `registry` has for it,
+/// `None` when there is none (or `CUA_REGISTRY_CRED_HELPERS=0`). The answer,
+/// "nothing" included, is kept for five minutes: one create asks the helper
+/// once, not once per request.
+pub async fn resolve_helper(registry: &str) -> Option<(RegistryAuth, AuthSource)> {
+    helper_credentials(&docker_config()?, registry).await
+}
+
+async fn resolve_chain(registry: &str, helpers: bool) -> (RegistryAuth, AuthSource) {
     if let (Ok(u), Ok(p)) = (
         std::env::var("CUA_REGISTRY_USERNAME"),
         std::env::var("CUA_REGISTRY_PASSWORD"),
@@ -52,14 +78,8 @@ pub async fn resolve(registry: &str) -> (RegistryAuth, AuthSource) {
         if let Some((u, p)) = inline_auth(&cfg, registry) {
             return (RegistryAuth::Basic(u, p), AuthSource::DockerConfig);
         }
-        if std::env::var("CUA_REGISTRY_CRED_HELPERS").as_deref() != Ok("0")
-            && let Some(helper) = helper_for(&cfg, registry)
-            && let Some((u, p)) = run_helper(&helper, registry).await
-        {
-            return (
-                RegistryAuth::Basic(u, p),
-                AuthSource::CredentialHelper(helper),
-            );
+        if helpers && let Some(found) = helper_credentials(&cfg, registry).await {
+            return found;
         }
     }
     if let Some(region) = ecr_region(registry)
@@ -69,6 +89,43 @@ pub async fn resolve(registry: &str) -> (RegistryAuth, AuthSource) {
         return (RegistryAuth::Basic("AWS".into(), p), AuthSource::AwsCli);
     }
     (RegistryAuth::Anonymous, AuthSource::Anonymous)
+}
+
+async fn helper_credentials(
+    cfg: &serde_json::Value,
+    registry: &str,
+) -> Option<(RegistryAuth, AuthSource)> {
+    if std::env::var("CUA_REGISTRY_CRED_HELPERS").as_deref() == Ok("0") {
+        return None;
+    }
+    let helper = helper_for(cfg, registry)?;
+    let (u, p) = helper_login(&helper, registry).await?;
+    Some((
+        RegistryAuth::Basic(u, p),
+        AuthSource::CredentialHelper(helper),
+    ))
+}
+
+/// [`run_helper`], remembered for five minutes per helper and registry.
+async fn helper_login(helper: &str, registry: &str) -> Option<(String, String)> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+    type Login = Option<(String, String)>;
+    static CACHE: OnceLock<Mutex<HashMap<String, (Login, Instant)>>> = OnceLock::new();
+    let key = format!("{helper}\0{registry}");
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some((login, at)) = cache.lock().ok()?.get(&key)
+        && at.elapsed() < Duration::from_secs(300)
+    {
+        return login.clone();
+    }
+    let login = run_helper(helper, registry).await;
+    cache
+        .lock()
+        .ok()?
+        .insert(key, (login.clone(), Instant::now()));
+    login
 }
 
 /// Region of a private ECR host (`<acct>.dkr.ecr.<region>.amazonaws.com`).

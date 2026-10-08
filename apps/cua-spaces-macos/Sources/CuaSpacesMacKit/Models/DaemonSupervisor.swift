@@ -41,11 +41,62 @@ public final class DaemonSupervisor: @unchecked Sendable {
     /// build waits up to 30 s for it to stop (one with Spaces running takes
     /// that long), then up to 10 s for this build's to start.
     public func start(timeout: TimeInterval = 60) -> String? {
+        run(["daemon", "start"], timeout: timeout)
+    }
+
+    /// Restarts this app's daemon (Try again after it did not start): asks
+    /// it to stop (bounded), kills this bundle's daemon that is still
+    /// starting or no longer answers (one stuck on a keychain read, say),
+    /// then starts it. `nil` when it runs afterwards, else why not.
+    public func restart(timeout: TimeInterval = 30) -> String? {
+        _ = run(["daemon", "stop"], timeout: 15)
+        for pid in Self.daemonPids(cuaHome: cuaHome) where isOwn(pid: UInt32(pid)) {
+            Self.stop(pid: pid)
+        }
+        return start(timeout: timeout)
+    }
+
+    /// The cua home the daemon uses (`CUA_HOME`, else `~/.cua`).
+    var cuaHome: URL {
+        let env = ProcessInfo.processInfo.environment
+        if let home = env["CUA_HOME"], !home.isEmpty { return URL(fileURLWithPath: home, isDirectory: true) }
+        return URL(fileURLWithPath: env["HOME"] ?? NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent(".cua", isDirectory: true)
+    }
+
+    /// The daemon still starting (`daemon.starting`) and the one running
+    /// (`daemon.json`), as their files name them.
+    static func daemonPids(cuaHome: URL) -> [Int32] {
+        var out: [Int32] = []
+        if let text = try? String(contentsOf: cuaHome.appendingPathComponent("daemon.starting"), encoding: .utf8),
+           let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            out.append(pid)
+        }
+        if let data = try? Data(contentsOf: cuaHome.appendingPathComponent("daemon.json")),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let pid = (obj["pid"] as? NSNumber)?.int32Value {
+            out.append(pid)
+        }
+        return Array(Set(out.filter { $0 > 0 })).sorted()
+    }
+
+    /// SIGTERM, then SIGKILL when it is still there after `grace` s.
+    static func stop(pid: Int32, grace: TimeInterval = 2) {
+        guard kill(pid, SIGTERM) == 0 else { return }
+        let deadline = Date().addingTimeInterval(grace)
+        while kill(pid, 0) == 0, Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+    }
+
+    private func run(_ args: [String], timeout: TimeInterval) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: cua)
-        process.arguments = ["daemon", "start"]
+        process.arguments = args
         var env = ProcessInfo.processInfo.environment
         env["CUA_DAEMON_STARTED_BY"] = "app"
+        // The daemon never waits on a keychain prompt nobody may see; the
+        // app asks for access itself.
+        env[AppEnvironment.keychainNonInteractiveEnv] = "1"
         process.environment = env
         let output = Pipe()
         process.standardInput = FileHandle.nullDevice
@@ -56,7 +107,7 @@ public final class DaemonSupervisor: @unchecked Sendable {
         while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
         if process.isRunning {
             process.terminate()
-            return "`cua daemon start` did not finish in \(Int(timeout)) s"
+            return "`cua \(args.joined(separator: " "))` did not finish in \(Int(timeout)) s"
         }
         let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -64,22 +115,40 @@ public final class DaemonSupervisor: @unchecked Sendable {
             NSLog("Cua Spaces: %@", text)
             return nil
         }
-        return text.isEmpty ? "`cua daemon start` exited with \(process.terminationStatus)" : text
+        return text.isEmpty ? "`cua \(args.joined(separator: " "))` exited with \(process.terminationStatus)" : text
     }
 
     /// While the returned task runs: every `interval`, `isUp` says whether
     /// this app's daemon answers (another build's does not count); when it
     /// does not, `start` runs again (replacing another build's), backing off
     /// from 2 s to a minute between tries. `report` hears why it could not
-    /// (after three tries in a row) and `nil` once it answers again.
+    /// (after three tries in a row) and `nil` once it answers again;
+    /// `restarted` runs after each start that succeeded (the app connects
+    /// again; `start` replaces `cua daemon start` in tests).
+    ///
+    /// Between probes it watches the daemon's process (`daemonPid`, by
+    /// default the pid in `daemon.json`, when it is this app's): its exit
+    /// wakes the loop at once (a kqueue exit event, no polling), so a killed
+    /// daemon is started again in about a second, not at the next probe.
     public func supervise(interval: Duration = .seconds(10),
                           isUp: @escaping @Sendable () async -> Bool,
-                          report: @escaping @MainActor @Sendable (String?) -> Void) -> Task<Void, Never> {
-        Task.detached(priority: .utility) { [self] in
+                          report: @escaping @MainActor @Sendable (String?) -> Void,
+                          restarted: (@MainActor @Sendable () async -> Void)? = nil,
+                          start: (@Sendable () -> String?)? = nil,
+                          daemonPid: (@Sendable () -> Int32?)? = nil) -> Task<Void, Never> {
+        let wake = SupervisorWake()
+        let watcher = ProcessExitWatcher { wake.fire() }
+        let pidNow: @Sendable () -> Int32? = daemonPid ?? { [self] in
+            Self.daemonPids(cuaHome: self.cuaHome).first { self.isOwn(pid: UInt32($0)) }
+        }
+        return Task.detached(priority: .utility) { [self] in
+            defer { watcher.stop() }
             var failures = 0
             var reported = false
             while !Task.isCancelled {
-                try? await Task.sleep(for: failures == 0 ? interval : Self.backoff(failures))
+                // A daemon that already exited fires at once.
+                if failures == 0, let pid = pidNow() { watcher.watch(pid) }
+                await wake.wait(for: failures == 0 ? interval : Self.backoff(failures))
                 if Task.isCancelled { return }
                 if await isUp() {
                     if reported { await report(nil) }
@@ -87,12 +156,21 @@ public final class DaemonSupervisor: @unchecked Sendable {
                     reported = false
                     continue
                 }
-                let error = self.start()
-                if error == nil, await isUp() {
-                    if reported { await report(nil) }
-                    failures = 0
-                    reported = false
-                    continue
+                let error = start.map { $0() } ?? self.start()
+                if error == nil {
+                    // Running now (started again, or it ran and only this
+                    // app's connection to it stopped answering): connect
+                    // again, which supervises the new connection.
+                    if let restarted {
+                        await restarted()
+                        if Task.isCancelled { return }
+                    }
+                    if await isUp() {
+                        if reported { await report(nil) }
+                        failures = 0
+                        reported = false
+                        continue
+                    }
                 }
                 failures += 1
                 NSLog("Cua Spaces: the cua daemon is not answering (try %d): %@", failures, error ?? "no answer")
@@ -108,5 +186,96 @@ public final class DaemonSupervisor: @unchecked Sendable {
     /// The wait before try `n` (1, 2, ...): 2 s doubling, at most a minute.
     static func backoff(_ n: Int) -> Duration {
         .seconds(min(60, 2 << min(max(n - 1, 0), 5)))
+    }
+}
+
+/// Wakes the supervisor's wait early (the daemon exited).
+final class SupervisorWake: @unchecked Sendable {
+    private let lock = NSLock()
+    private var waiting: CheckedContinuation<Void, Never>?
+    private var token = 0
+    private var fired = false
+
+    /// Wakes the current wait, or the next one if none is running.
+    func fire() {
+        let c: CheckedContinuation<Void, Never>? = lock.withLock {
+            guard let w = waiting else { fired = true; return nil }
+            waiting = nil
+            return w
+        }
+        c?.resume()
+    }
+
+    /// Returns after `d`, or as soon as `fire` is called.
+    func wait(for d: Duration) async {
+        let mine: Int = lock.withLock { token += 1; return token }
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let now: Bool = lock.withLock {
+                if fired { fired = false; return true }
+                waiting = c
+                return false
+            }
+            if now { c.resume(); return }
+            Task { [weak self] in
+                try? await Task.sleep(for: d)
+                guard let self else { return }
+                let w: CheckedContinuation<Void, Never>? = self.lock.withLock {
+                    guard self.token == mine, let w = self.waiting else { return nil }
+                    self.waiting = nil
+                    return w
+                }
+                w?.resume()
+            }
+        }
+    }
+}
+
+/// Calls `onExit` when the process it watches exits: a kqueue exit event
+/// (`DispatchSource` process source), which needs no parent relationship.
+final class ProcessExitWatcher: @unchecked Sendable {
+    private let lock = NSLock()
+    private var source: DispatchSourceProcess?
+    private var pid: Int32?
+    private let onExit: @Sendable () -> Void
+
+    init(onExit: @escaping @Sendable () -> Void) { self.onExit = onExit }
+
+    /// Watches `pid` (once; another pid replaces it). A pid already gone
+    /// calls `onExit` at once.
+    func watch(_ pid: Int32) {
+        lock.withLock {
+            guard self.pid != pid else { return }
+            source?.cancel()
+            self.pid = pid
+            let s = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit,
+                                                     queue: .global(qos: .utility))
+            let onExit = self.onExit
+            s.setEventHandler { [weak self, weak s] in
+                s?.cancel()
+                self?.lock.withLock { if self?.pid == pid { self?.pid = nil; self?.source = nil } }
+                onExit()
+            }
+            source = s
+            s.resume()
+        }
+        // Exited before the source was armed: kqueue would never report it.
+        if kill(pid, 0) != 0, errno == ESRCH {
+            let gone: Bool = lock.withLock {
+                guard self.pid == pid else { return false }
+                source?.cancel()
+                source = nil
+                self.pid = nil
+                return true
+            }
+            if gone { onExit() }
+        }
+    }
+
+    func stop() {
+        lock.withLock {
+            source?.cancel()
+            source = nil
+            pid = nil
+        }
     }
 }

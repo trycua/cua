@@ -26,6 +26,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeSet, HashMap},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 /// Spaces contract permissions are `spaces:<tool>`; groups `spaces:all` and
@@ -1378,13 +1379,101 @@ fn num(a: &Value, k: &str) -> Result<f64, CuaError> {
         .ok_or_else(|| CuaError::InvalidArgument(format!("{k} is required and must be a number")))
 }
 
-/// Serves stdio until EOF.
+/// Contract tools that read a host path. `cua mcp` runs them itself, with
+/// the permissions of the agent that launched it, instead of in the daemon:
+/// the daemon is a child of the Cua Spaces app, and on a Mac its read of
+/// ~/Documents (or ~/Desktop, ~/Downloads, iCloud Drive) waits on a privacy
+/// decision that is never shown, so the call never returned.
+const HOST_READ_TOOLS: [&str; 2] = ["upload", "send_file"];
+
+/// Overrides every tool's time limit, in seconds.
+const TOOL_TIMEOUT_ENV: &str = "CUA_MCP_TOOL_TIMEOUT";
+
+/// How long one tool call may take before `cua mcp` stops waiting and says
+/// so: an agent must never wait in silence. Calls that create machines or
+/// move files get longer; a call with its own `timeout` gets that plus a
+/// minute.
+fn tool_budget(tool: &str, arguments: &Value, env: Option<&str>) -> Duration {
+    if let Some(secs) = env
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|s| *s > 0)
+    {
+        return Duration::from_secs(secs);
+    }
+    let base = match tool {
+        // A macOS image pull is ~25 GB before readiness starts counting.
+        "create_space" | "start_space" | "sandbox_create" | "sandbox_start" => 2 * 3600,
+        "upload"
+        | "send_file"
+        | "download"
+        | "agent_start"
+        | "teleport_app"
+        | "teleport_browser_session" => 30 * 60,
+        _ => 10 * 60,
+    };
+    let asked = arguments
+        .get("timeout")
+        .and_then(Value::as_u64)
+        .map_or(0, |t| t.min(24 * 3600) + 60);
+    Duration::from_secs(base.max(asked))
+}
+
+/// Runs `call` within [`tool_budget`]; past it, a `timeout` tool error.
+async fn bounded(
+    tool: &str,
+    arguments: &Value,
+    call: impl std::future::Future<Output = ToolOutcome>,
+) -> ToolOutcome {
+    let env = std::env::var(TOOL_TIMEOUT_ENV).ok();
+    within(tool, tool_budget(tool, arguments, env.as_deref()), call).await
+}
+
+async fn within(
+    tool: &str,
+    budget: Duration,
+    call: impl std::future::Future<Output = ToolOutcome>,
+) -> ToolOutcome {
+    match tokio::time::timeout(budget, call).await {
+        Ok(o) => o,
+        Err(_) => ToolOutcome::error_message("timeout", timed_out(tool, budget)),
+    }
+}
+
+fn timed_out(tool: &str, budget: Duration) -> String {
+    let secs = budget.as_secs();
+    let took = if secs >= 120 && secs.is_multiple_of(60) {
+        format!("{} minutes", secs / 60)
+    } else {
+        format!("{secs} seconds")
+    };
+    format!(
+        "{tool} did not answer within {took}, so cua stopped waiting. It may still finish \
+         in the background: check its result (list_spaces, space_bash) before retrying. \
+         Set {TOOL_TIMEOUT_ENV} (seconds) to wait longer."
+    )
+}
+
 /// Runs the contract tools through the SDK: in process, or in the daemon.
 struct SdkTools(Arc<cua_sdk::Spaces>);
 
-#[async_trait::async_trait]
-impl cua_spaces::mcp::ToolBackend for SdkTools {
-    async fn call(&self, tool: &str, arguments: Value) -> ToolOutcome {
+impl SdkTools {
+    /// `upload` / `send_file` on a handle connected from this process, so
+    /// the host file is read here. `None` when no Space is named (the
+    /// daemon reports that).
+    async fn call_here(&self, tool: &str, arguments: &Value) -> Option<ToolOutcome> {
+        let space = arguments.get("space")?.as_str()?.to_string();
+        Some(match self.0.space(space).await {
+            Ok(s) => s.call_tool_here(tool, arguments.clone()).await,
+            Err(e) => ToolOutcome::error_message(error_kind(&e), e.to_string()),
+        })
+    }
+
+    async fn forward(&self, tool: &str, arguments: Value) -> ToolOutcome {
+        if HOST_READ_TOOLS.contains(&tool)
+            && let Some(o) = self.call_here(tool, &arguments).await
+        {
+            return o;
+        }
         match self
             .0
             .call_tool_json(tool.to_string(), Some(arguments.to_string()))
@@ -1408,6 +1497,13 @@ impl cua_spaces::mcp::ToolBackend for SdkTools {
 }
 
 #[async_trait::async_trait]
+impl cua_spaces::mcp::ToolBackend for SdkTools {
+    async fn call(&self, tool: &str, arguments: Value) -> ToolOutcome {
+        bounded(tool, &arguments, self.forward(tool, arguments.clone())).await
+    }
+}
+
+#[async_trait::async_trait]
 impl cua_spaces::mcp::ToolExtension for Server {
     fn tools(&self) -> Vec<Value> {
         self.permitted()
@@ -1423,15 +1519,18 @@ impl cua_spaces::mcp::ToolExtension for Server {
 
     async fn call(&self, tool: &str, arguments: Value) -> Option<ToolOutcome> {
         self.permitted().find(|t| t.name == tool)?;
-        Some(match Server::call(self, tool, &arguments).await {
-            Ok(content) => ToolOutcome {
-                content,
-                structured: None,
-                is_error: false,
-                meta: None,
-            },
-            Err(e) => ToolOutcome::error_message(error_kind(&e), e.to_string()),
-        })
+        let run = async {
+            match Server::call(self, tool, &arguments).await {
+                Ok(content) => ToolOutcome {
+                    content,
+                    structured: None,
+                    is_error: false,
+                    meta: None,
+                },
+                Err(e) => ToolOutcome::error_message(error_kind(&e), e.to_string()),
+            }
+        };
+        Some(bounded(tool, &arguments, run).await)
     }
 }
 
@@ -1481,6 +1580,49 @@ pub async fn serve_stdio(server: McpServer) -> Result<i32, CuaError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_tool_call_has_a_time_limit() {
+        let none = json!({});
+        let b = |tool: &str, a: &Value| tool_budget(tool, a, None).as_secs();
+        assert_eq!(b("list_spaces", &none), 600);
+        assert_eq!(b("upload", &none), 1800);
+        assert_eq!(b("send_file", &none), 1800);
+        assert_eq!(b("create_space", &none), 7200);
+        // A call's own timeout wins, plus a minute, capped at a day.
+        assert_eq!(b("space_bash", &json!({"timeout": 3600})), 3660);
+        assert_eq!(b("space_bash", &json!({"timeout": 5})), 600);
+        assert_eq!(
+            b("space_bash", &json!({"timeout": u64::MAX})),
+            24 * 3600 + 60
+        );
+        assert_eq!(tool_budget("upload", &none, Some("12")).as_secs(), 12);
+        assert_eq!(tool_budget("upload", &none, Some("0")).as_secs(), 1800);
+        assert_eq!(tool_budget("upload", &none, Some("x")).as_secs(), 1800);
+    }
+
+    #[tokio::test]
+    async fn a_call_that_never_answers_becomes_a_timeout_error() {
+        let short = Duration::from_millis(50);
+        let o = within("upload", short, std::future::pending()).await;
+        assert!(o.is_error);
+        let text = o.first_text().unwrap();
+        assert!(
+            text.contains("upload did not answer within 0 seconds"),
+            "{text}"
+        );
+        assert_eq!(o.structured.unwrap()["error"]["kind"], "timeout");
+        let quick = within("upload", short, async { ToolOutcome::text("ok") }).await;
+        assert!(!quick.is_error);
+        assert!(timed_out("x", Duration::from_secs(600)).contains("within 10 minutes"));
+    }
+
+    #[test]
+    fn host_reading_tools_are_space_scoped() {
+        for t in HOST_READ_TOOLS {
+            assert!(cua_spaces::mcp::SPACE_SCOPED_TOOLS.contains(&t), "{t}");
+        }
+    }
 
     #[test]
     fn sandbox_create_workload_arguments() {

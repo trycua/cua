@@ -985,10 +985,18 @@ pub async fn serve_socket(broker: Arc<Broker>, path: std::path::PathBuf) {
             cua_keyvault::ipc::serve(listener, broker, policy).await;
         }
     }
-    // The socket verifies every peer through the kernel (a Unix socket
-    // feature); on other OSes only the in-process broker (the app and the
-    // daemon's MCP tools) reaches the vault.
-    #[cfg(not(unix))]
+    // Windows serves a named pipe in its place, open to this account only,
+    // and identifies every client by its process and Authenticode signature.
+    #[cfg(windows)]
+    {
+        match cua_keyvault::ipc::bind_pipe(&path) {
+            Ok(listener) => cua_keyvault::ipc::serve_pipe(listener, broker, policy).await,
+            Err(e) => tracing::warn!(error = %e, "keyvault: pipe not served"),
+        }
+    }
+    // On other OSes only the in-process broker (the app and the daemon's MCP
+    // tools) reaches the vault.
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = (broker, policy);
         tracing::info!(path = %path.display(), "keyvault: no external socket on this OS");

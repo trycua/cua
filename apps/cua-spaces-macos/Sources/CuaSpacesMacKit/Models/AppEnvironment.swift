@@ -4,6 +4,7 @@
 import AppKit
 import CuaSDK
 import CuaSpacesFFI
+import CuaSpacesNotchUI
 import Foundation
 
 /// Process-level wiring: which backend, where state lives, and the start
@@ -40,8 +41,17 @@ public enum AppEnvironment {
         let info = AboutBundleInfo(bundle: .main)
         // Before the first `Cua`: this process's usage events are the app's
         // (`spaces_app`), wait for the notice the first run shows (never a
-        // terminal notice), and start with `app_launched`.
-        if !fixtures { _ = appTelemetryStart(version: info.version) }
+        // terminal notice), and start with `app_launched` (saying whether
+        // the first run is still to finish).
+        if !fixtures {
+            // No keychain prompt from this process or the daemon it starts
+            // (they inherit it): a read that would need one fails fast as
+            // "needs access", and the window asks (`StartupModel`). The one
+            // interactive read is the clicked `cua auth keychain --prompt`.
+            setenv(keychainNonInteractiveEnv, "1", 1)
+            let due = !(OnboardingModel.readCompleted(onboardingPath) ?? false)
+            _ = appTelemetryStart(version: info.version, onboardingEligible: due)
+        }
         var refresh: UpdateRefresh?
         if !fixtures || env["CUA_SPACES_REFRESH"] == "1",
            UpdateRefresh.record(settingsPath: settingsPath, version: info.version, build: info.build,
@@ -49,27 +59,17 @@ public enum AppEnvironment {
            let cua = bundledCua {
             refresh = UpdateRefresh(cua: cua, bundle: Bundle.main.bundlePath)
         }
-        let backend: SpacesBackend
-        var startError: String?
+        let updateRefresh = refresh
         let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
         // This app's own daemon, started before the SDK connects (it
         // replaces another build's, or its own from before an update);
         // fixtures never touch the host.
         let supervisor = fixtures ? nil : bundledCua.flatMap { DaemonSupervisor(bundledCua: $0) }
-        var daemonError: String?
-        if fixtures {
-            backend = FixtureSpacesBackend()
-        } else {
-            do {
-                backend = try makeLiveBackend(supervisor: supervisor, daemonError: &daemonError)
-            } catch {
-                // Say so: an empty list (and an empty notch) would look
-                // like "no Spaces".
-                startError = "Could not start the cua SDK: \(LiveSpacesBackend.words(error))"
-                NSLog("Cua Spaces: %@", startError!)
-                backend = FixtureSpacesBackend(rows: [])
-            }
-        }
+        // The live services come later, off the main thread (`StartupModel`):
+        // until then the window shows the launch, on stand-ins that wait
+        // for them. Nothing here reads the keychain or waits on the daemon.
+        let gate = LiveGate<LiveServices>()
+        let backend: SpacesBackend = fixtures ? FixtureSpacesBackend(rows: FixtureSpacesBackend.rows(environment: env)) : PendingSpacesBackend(gate: gate)
         let keyvault = KeyvaultModel(client: fixtures ? nil : KeyvaultClient(cuaHome: nil))
         if !fixtures {
             // Icons: caches survive restarts; fixtures never resolve apps or
@@ -80,20 +80,17 @@ public enum AppEnvironment {
             keyvault.siteIconStore = SiteIconStore(dir: caches?.appendingPathComponent("sites"))
             keyvault.iconScale = Int(NSScreen.main?.backingScaleFactor ?? 2)
         }
-        let live = backend as? LiveSpacesBackend
         // Fixtures never touch the host service, the account, the telemetry
         // config or the coding agents' configs.
-        let host: HostRunning = fixtures || live == nil ? FixtureHost() : CuaSDK.Host(cuaHome: nil)
-        let account: AccountRunning? = fixtures ? FixtureAccount() : live.map { LiveAccount(auth: $0.cua.auth()) }
+        let host: HostRunning = fixtures ? FixtureHost() : PendingHost(gate: gate)
+        let account: AccountRunning = fixtures ? FixtureAccount() : PendingAccount(gate: gate)
         let telemetry: TelemetryRunning = fixtures ? FixtureTelemetry() : LiveTelemetry()
-        let agents: AgentSetupRunning? = fixtures ? FixtureAgentSetup()
-            : live.map { LiveAgentSetup(inner: $0.cua.agentSetup(),
-                                        cuaBinary: bundledCua) }
+        let agents: AgentSetupRunning = fixtures ? FixtureAgentSetup() : PendingAgentSetup(gate: gate)
         // First run's writes go through the shared core (the Tauri app runs
         // the same installer and host setup); fixtures run none of them.
         let onboarding = OnboardingModel(
             statePath: onboardingPath,
-            identity: account?.identity(),
+            identity: account.identity(),
             cli: fixtures ? nil : AppCliInstaller.forExecutable(executable: executable),
             host: host, agentSetup: agents)
         if !fixtures {
@@ -106,29 +103,22 @@ public enum AppEnvironment {
         }
         // This Mac on the relay: the session's device key (fixtures: an
         // in-memory account; presence answers yes there).
-        let devices: DevicesRunning? = fixtures ? FixtureDevices()
-            : live.flatMap { LiveDevices.make(auth: $0.cua.auth()) }
+        let devices: DevicesRunning = fixtures ? FixtureDevices() : PendingDevices(gate: gate)
+        let startup = fixtures ? fixtureStartup(env["CUA_SPACES_STARTUP"]) : StartupModel(phase: .starting)
         let model = AppModel(backend: backend, keyvault: keyvault, onboarding: onboarding,
                              settingsPath: settingsPath,
                              host: host, account: account, telemetry: telemetry, agentSetup: agents,
-                             billing: fixtures ? FixtureBilling() : live.map { LiveBilling(cua: $0.cua) },
+                             billing: fixtures ? FixtureBilling() : PendingBilling(gate: gate),
                              devices: devices,
                              presence: fixtures ? FixturePresence() : LivePresence(),
-                             loginItem: fixtures ? fixtureLoginItem(env["CUA_SPACES_LOGIN_ITEM"]) : MainAppLoginItem())
-        if !fixtures, live != nil {
-            // Ask for Local Network access while someone is at this Mac
-            // (the first run's setup, and launch on a Mac that provides
-            // Spaces); one request shared by both.
-            let localNetwork = LiveLocalNetworkPermission()
-            model.host.localNetwork = localNetwork
-            onboarding.host.localNetwork = localNetwork
-        }
-        if let live {
-            let auth = live.cua.auth()
+                             loginItem: fixtures ? fixtureLoginItem(env["CUA_SPACES_LOGIN_ITEM"]) : MainAppLoginItem(),
+                             startup: startup)
+        if !fixtures {
             // Signed out is nil (setup signs in first); anything else (no
             // network, the credential vault) is the error itself, never a
             // silent nil that reads as "not signed in".
             let token: (Bool) async throws -> String? = { force in
+                guard let auth = await gate.wait().live?.cua.auth() else { return nil }
                 do {
                     return try await auth.accessToken(force: force)
                 } catch CuaError.Unauthenticated {
@@ -137,26 +127,25 @@ public enum AppEnvironment {
             }
             onboarding.accountToken = token
             model.host.accountToken = token
-        }
-        if let startError { model.show(error: startError) }
-        if let live, let supervisor {
-            if live.cua.mode() == .daemon {
-                daemonSupervision = supervisor.supervise(
-                    isUp: { [cua = live.cua] in
-                        let probe = await withTimeout(seconds: 5) { try await cua.info() }
-                        guard let pid = (try? probe.get())?.daemonPid else { return false }
-                        return supervisor.isOwn(pid: pid)
-                    },
-                    report: { [weak model] error in
-                        guard let model else { return }
-                        if let error { model.show(error: error) } else if model.bannerIsError { model.banner = nil }
-                    })
-            } else {
-                // Last resort: Spaces run in the app; say what is missing.
-                model.show(error: "Cua Spaces could not start its daemon (\(daemonError ?? "it does not answer")). "
-                           + "Spaces run inside the app for now; the Keyvault, agents and Cua Volume need the daemon. "
-                           + "Reopen Cua Spaces to try again.")
+            // The keychain check first (the bundled `cua`, without a prompt),
+            // then the daemon and the SDK, all off the main thread.
+            startup.keychain = bundledCua.map { BundledCuaKeychain(cua: $0) }
+            startup.promptShowing = { SecurityAgentWindow.isShowing() }
+            startup.start = { [weak model] in
+                let services = await Task.detached(priority: .userInitiated) {
+                    makeLiveServices(supervisor: supervisor)
+                }.value
+                // A start run again after a failed one: the first to finish
+                // is the one handed over.
+                guard gate.resolve(services), let model else { return }
+                attach(services, to: model, supervisor: supervisor, refresh: updateRefresh)
             }
+            startup.restart = { [weak model] in
+                await Task.detached(priority: .userInitiated) { _ = supervisor?.restart() }.value
+                // Signed in now (access given after the start): read it again.
+                if let model, gate.current != nil { model.attachLive(model.live) }
+            }
+            startup.begin()
         }
         // Settings → About: Sparkle in the shipped app (a debug build's
         // `CUA_SPACES_UPDATER=live` starts it in a fixtures run too), an
@@ -175,17 +164,150 @@ public enum AppEnvironment {
         if env["CUA_SPACES_UPDATE_CHECK"] == "background", let sparkle = updater as? SparkleUpdater {
             sparkle.checkInBackground()
         }
-        if let refresh {
-            let daemon = daemonError
-            Task.detached {
-                let agents = refresh.updateAgents()
-                let notice = appAboutRefreshNotice(report: AppRefreshReport(agentsError: agents, daemonError: daemon))
-                NSLog("Cua Spaces: refreshed after an update (agents: %@, daemon: %@)",
-                      agents ?? "ok", daemon ?? "ok")
-                if let notice { await MainActor.run { model.show(info: notice) } }
-            }
+        if fixtures, let updateRefresh {
+            runRefresh(updateRefresh, daemonError: nil, model: model)
         }
         return model
+    }
+
+    /// Makes the live services (off the main thread: the daemon start
+    /// waits up to 30 s, the SDK reads the session from the keychain).
+    nonisolated static func makeLiveServices(supervisor: DaemonSupervisor?) -> LiveServices {
+        var daemonError: String?
+        do {
+            let live = try makeLiveBackend(supervisor: supervisor, daemonError: &daemonError)
+            let auth = live.cua.auth()
+            return LiveServices(
+                backend: live, live: live, account: LiveAccount(auth: auth),
+                agentSetup: LiveAgentSetup(inner: live.cua.agentSetup(), cuaBinary: bundledCuaPath),
+                billing: LiveBilling(cua: live.cua), devices: LiveDevices.make(auth: auth),
+                host: CuaSDK.Host(cuaHome: nil), daemonError: daemonError)
+        } catch {
+            // Say so: an empty list (and an empty notch) would look like
+            // "no Spaces".
+            let message = "Could not start the cua SDK: \(LiveSpacesBackend.words(error))"
+            NSLog("Cua Spaces: %@", message)
+            return LiveServices(backend: FixtureSpacesBackend(rows: []), startError: message, daemonError: daemonError)
+        }
+    }
+
+    /// The live services are in: what needs them starts now (on the main
+    /// thread, nothing here waits).
+    static func attach(_ services: LiveServices, to model: AppModel, supervisor: DaemonSupervisor?,
+                       refresh: UpdateRefresh?) {
+        if let live = services.live {
+            // Ask for Local Network access while someone is at this Mac
+            // (the first run's setup, and launch on a Mac that provides
+            // Spaces); one request shared by both.
+            let localNetwork = LiveLocalNetworkPermission()
+            model.host.localNetwork = localNetwork
+            model.onboarding.host.localNetwork = localNetwork
+            if let supervisor {
+                if live.cua.mode() == .daemon {
+                    supervise(live, supervisor: supervisor, model: model)
+                    model.reconnect = { [weak model] in
+                        guard let model else { return false }
+                        return await reconnect(model, supervisor: supervisor)
+                    }
+                } else {
+                    // Last resort: Spaces run in the app; say what is missing.
+                    model.show(error: "Cua Spaces could not start its daemon (\(services.daemonError ?? "it does not answer")). "
+                               + "Spaces run inside the app for now; the Keyvault, agents and Cua Volume need the daemon. "
+                               + "Reopen Cua Spaces to try again.")
+                }
+            }
+        }
+        model.attachLive(services.live)
+        if let startError = services.startError { model.show(error: startError) }
+        if let refresh { runRefresh(refresh, daemonError: services.daemonError, model: model) }
+    }
+
+    /// Watches the daemon `live` talks to, the one this app started or one
+    /// it found running (a daemon from an earlier launch of this app is its
+    /// own too): when it stops answering it is started again (`cua daemon
+    /// start`, with keychain prompts off) and the app connects again.
+    static func supervise(_ live: LiveSpacesBackend, supervisor: DaemonSupervisor, model: AppModel) {
+        daemonSupervision?.cancel()
+        daemonSupervision = supervisor.supervise(
+            isUp: { [cua = live.cua] in
+                // Bounded for real (`withTimeout`): a call that never
+                // returns reads as down, not as a supervisor stuck for good.
+                let probe = await withTimeout(seconds: 5) { try await cua.info() }
+                guard let pid = (try? probe.get())?.daemonPid else { return false }
+                return supervisor.isOwn(pid: pid)
+            },
+            report: { [weak model] error in
+                guard let model else { return }
+                if let error { model.show(error: error) } else if model.bannerIsError { model.banner = nil }
+            },
+            restarted: { [weak model] in
+                await model?.reconnectNow(reason: "the cua daemon was started again")
+            })
+    }
+
+    /// A new SDK client: `cua daemon start` (which starts the daemon when
+    /// it is gone and does nothing when it runs), then `Cua.auto`, which
+    /// reads the daemon's discovery file again (its socket, loopback URL
+    /// and token, new after a restart). The backend, the model and the
+    /// supervisor move to it.
+    static func reconnect(_ model: AppModel, supervisor: DaemonSupervisor) async -> Bool {
+        let made: LiveSpacesBackend? = await Task.detached(priority: .userInitiated) {
+            var daemonError: String?
+            let live = try? makeLiveBackend(supervisor: supervisor, daemonError: &daemonError)
+            if let daemonError { NSLog("Cua Spaces: reconnect: %@", daemonError) }
+            return live
+        }.value
+        guard let live = made, let pending = model.backend as? PendingSpacesBackend else { return false }
+        pending.replace(live, live: live)
+        model.attachLive(live)
+        if live.cua.mode() == .daemon { supervise(live, supervisor: supervisor, model: model) }
+        return true
+    }
+
+    /// After an update: the agents' skills, then a notice saying so.
+    static func runRefresh(_ refresh: UpdateRefresh, daemonError: String?, model: AppModel) {
+        Task.detached {
+            let agents = refresh.updateAgents()
+            let notice = appAboutRefreshNotice(report: AppRefreshReport(agentsError: agents, daemonError: daemonError))
+            NSLog("Cua Spaces: refreshed after an update (agents: %@, daemon: %@)",
+                  agents ?? "ok", daemonError ?? "ok")
+            if let notice { await MainActor.run { model.show(info: notice) } }
+        }
+    }
+
+    /// `CUA_KEYCHAIN_NONINTERACTIVE` (cua-auth's `KEYCHAIN_NONINTERACTIVE_ENV`).
+    nonisolated static let keychainNonInteractiveEnv = "CUA_KEYCHAIN_NONINTERACTIVE"
+
+    /// Fixtures' launch (`CUA_SPACES_STARTUP`, for captures and UI tests):
+    /// `needs-keychain` (`-locked`), `waiting` (the prompt left open; slow
+    /// after 3 s), `denied`, `starting` (never finishes); else ready. Every
+    /// one finishes on the fixture backend once its button is pressed.
+    static func fixtureStartup(_ state: String?) -> StartupModel {
+        let startup = StartupModel()
+        let keychain: FixtureKeychain
+        switch state ?? "" {
+        case "needs-keychain": keychain = FixtureKeychain(quiet: .needsAccess(locked: false))
+        case "needs-keychain-locked": keychain = FixtureKeychain(quiet: .needsAccess(locked: true))
+        case "waiting":
+            keychain = FixtureKeychain(quiet: .needsAccess(locked: false), prompted: nil)
+            startup.slowAfter = .seconds(3)
+        case "denied": keychain = FixtureKeychain(quiet: .needsAccess(locked: false), prompted: .denied)
+        case "starting":
+            keychain = FixtureKeychain(quiet: .ready)
+            startup.start = { try? await Task.sleep(for: .seconds(3600)) }
+            startup.startingSlowAfter = .seconds(3)
+        default: return startup
+        }
+        startup.keychain = keychain
+        startup.begin()
+        if state == "waiting" { startup.act(.allowAccess) }
+        if state == "denied" {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(100))
+                startup.act(.allowAccess)
+            }
+        }
+        return startup
     }
 
     /// Fixtures' login item, never the Mac's: `CUA_SPACES_LOGIN_ITEM` sets
@@ -209,7 +331,8 @@ public enum AppEnvironment {
     /// only this build's daemon. When another build's daemon came up in
     /// between, the SDK refuses it with `DaemonNotRunning`, and one more
     /// start replaces it. Without a daemon the SDK runs Spaces in the app.
-    static func makeLiveBackend(supervisor: DaemonSupervisor?, daemonError: inout String?) throws -> LiveSpacesBackend {
+    nonisolated static func makeLiveBackend(supervisor: DaemonSupervisor?,
+                                            daemonError: inout String?) throws -> LiveSpacesBackend {
         daemonError = startDaemon(supervisor)
         do {
             return try LiveSpacesBackend.make()
@@ -223,7 +346,7 @@ public enum AppEnvironment {
     /// before an update that was slow to stop is gone by then, and the
     /// second start brings up this build's instead of leaving the app to
     /// run Spaces in-process.
-    static func startDaemon(_ supervisor: DaemonSupervisor?) -> String? {
+    nonisolated static func startDaemon(_ supervisor: DaemonSupervisor?) -> String? {
         guard let supervisor else { return nil }
         guard let first = supervisor.start() else { return nil }
         NSLog("Cua Spaces: starting the cua daemon failed, trying again: %@", first)
@@ -231,7 +354,9 @@ public enum AppEnvironment {
     }
 
     /// The `cua` this app bundles, when it has one.
-    static var bundledCua: String? {
+    static var bundledCua: String? { bundledCuaPath }
+
+    nonisolated static var bundledCuaPath: String? {
         let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
         let cua = URL(fileURLWithPath: executable).deletingLastPathComponent().appendingPathComponent("cua").path
         return FileManager.default.isExecutableFile(atPath: cua) ? cua : nil
@@ -288,7 +413,7 @@ public enum AppEnvironment {
             if let id = env["CUA_SPACES_SELECT"] { model.select(id) }
             if let spec = env["CUA_SPACES_CREATE"], !spec.isEmpty {
                 let parts = spec.split(separator: ",", maxSplits: 1).map(String.init)
-                await model.openNewSpace()
+                await model.openNativeNewSpace()
                 let w = model.wizard
                 w.send(.setPlacement(placement: .local))
                 w.send(.setImageText(text: parts[0]))
@@ -304,10 +429,13 @@ public enum AppEnvironment {
                 }
             }
             switch env["CUA_SPACES_START_VIEW"] ?? "" {
+            case "webui":
+                WebUIWindowController.show(model: model)
+                WebUIWindowController.startVideoHarness(model: model)
             case "new-space":
-                await model.openNewSpace()
+                await model.openNativeNewSpace()
             case "new-space-picker":
-                await model.openNewSpace()
+                await model.openNativeNewSpace()
                 model.wizard.send(.openImageSuggestions)
             case "new-space-resources":
                 // The Resources step for `CUA_SPACES_WIZARD_IMAGE` on this
@@ -316,7 +444,7 @@ public enum AppEnvironment {
                 // `CUA_SPACES_WIZARD_CPUS` / `CUA_SPACES_WIZARD_MEMORY` (GB).
                 // Your cloud needs its experiment (this run only).
                 if env["CUA_SPACES_WIZARD_ON"] == "yours" { model.settings.experiments.yourCloud = true }
-                await model.openNewSpace()
+                await model.openNativeNewSpace()
                 let w = model.wizard
                 if let image = env["CUA_SPACES_WIZARD_IMAGE"] { w.send(.chooseImage(imageRef: image)) }
                 w.send(.setPlacement(placement: env["CUA_SPACES_WIZARD_ON"] == "cloud" ? .cloud

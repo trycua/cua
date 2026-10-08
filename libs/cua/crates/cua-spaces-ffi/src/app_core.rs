@@ -24,7 +24,7 @@ pub fn app_rows_to_spaces(rows: Vec<AppSpaceRow>, now_ms: i64) -> Vec<AppSpace> 
     core::spaces::rows_to_spaces(&rows, now_ms)
 }
 
-/// "brave-otter" as "Brave Otter".
+/// A Space name as shown: as typed, trimmed.
 #[uniffi::export]
 pub fn app_display_name(name: String) -> String {
     core::spaces::display_name(&name)
@@ -916,6 +916,50 @@ pub fn app_notifications_view(
 #[uniffi::export]
 pub fn app_notifications_from_json(json: String) -> Result<Vec<AppNotificationInput>> {
     from_json("notifications", &json)
+}
+
+// ---- Settings, Agents (provider keys) --------------------------------------
+
+/// Settings, Agents: the rows for the keys the daemon reported.
+#[uniffi::export]
+pub fn app_agent_keys_view(input: AppAgentKeysInput) -> AppAgentKeysView {
+    core::agent_keys::view(&input)
+}
+
+/// The add or replace sheet.
+#[uniffi::export]
+pub fn app_agent_key_form(
+    input: AppAgentKeysInput,
+    form: AppAgentKeyFormInput,
+) -> AppAgentKeyFormView {
+    core::agent_keys::form(&input, &form)
+}
+
+/// The question before removing the key `env` (`None`: none is saved).
+#[uniffi::export]
+pub fn app_agent_key_remove_confirm(
+    input: AppAgentKeysInput,
+    env: String,
+) -> Option<AppAgentKeyConfirm> {
+    core::agent_keys::remove_confirm(&input, &env)
+}
+
+/// Why `name` can't hold an Other key (`None`: it can).
+#[uniffi::export]
+pub fn app_agent_key_name_problem(name: String) -> Option<String> {
+    core::agent_keys::name_problem(&name)
+}
+
+/// The section's input from JSON (`agent_keys.list`'s answer, camelCase).
+#[uniffi::export]
+pub fn app_agent_keys_input_from_json(json: String) -> Result<AppAgentKeysInput> {
+    from_json("agent keys input", &json)
+}
+
+/// A sheet input from JSON (parity flows).
+#[uniffi::export]
+pub fn app_agent_key_form_input_from_json(json: String) -> Result<AppAgentKeyFormInput> {
+    from_json("agent key form", &json)
 }
 
 // ---- Settings, About and updates ------------------------------------------
@@ -2212,13 +2256,15 @@ impl AppCliInstaller {
 /// `version`, lets the app show the first-run notice itself (nothing is
 /// sent before it has been shown once), and records `app_launched` (on a
 /// first run, once the notice shows). Call once at launch, before the
-/// first `Cua`. Returns whether the notice was already shown here.
+/// first `Cua`. `onboarding_eligible`: the first run is still to finish
+/// (`app_launched` carries it). Returns whether the notice was already
+/// shown here.
 #[uniffi::export]
-pub fn app_telemetry_start(version: String) -> bool {
+pub fn app_telemetry_start(version: String, onboarding_eligible: Option<bool>) -> bool {
     let t = cua_telemetry::global();
     t.set_product("spaces_app", &version);
     t.set_notice_mode(cua_telemetry::NoticeMode::External);
-    core::telemetry::start(t)
+    core::telemetry::start_with(t, onboarding_eligible)
 }
 
 /// Records `signals` on the SDK's telemetry client (the switch, the notice
@@ -2231,8 +2277,8 @@ pub fn app_telemetry_record(signals: Vec<AppTelemetrySignal>) -> u32 {
 
 /// The app started (`app_launched`).
 #[uniffi::export]
-pub fn app_telemetry_launched() -> Vec<AppTelemetrySignal> {
-    core::telemetry::launched()
+pub fn app_telemetry_launched(onboarding_eligible: Option<bool>) -> Vec<AppTelemetrySignal> {
+    core::telemetry::launched(onboarding_eligible)
 }
 
 /// A Spaces app feature (a fixed name).
@@ -2258,6 +2304,13 @@ pub fn app_telemetry_onboarding(
     action: AppOnboardingAction,
 ) -> Vec<AppTelemetrySignal> {
     core::telemetry::onboarding(&state, &action)
+}
+
+/// A sign-in failed (`message`, which never leaves: only its kind) or was
+/// cancelled (none).
+#[uniffi::export]
+pub fn app_telemetry_sign_in_failed(message: Option<String>) -> Vec<AppTelemetrySignal> {
+    core::telemetry::sign_in_failed(message.as_deref())
 }
 
 /// "Start using Cua Spaces".

@@ -11,7 +11,9 @@ import PackageDescription
 // decision is the core's.
 //
 //  * CuaSpacesMacKit: view models (thin holders of core state), views, the
-//    notch panel and the menu bar extra.
+//    notch panel and the menu bar extra. The notch's views are
+//    CuaSpacesNotchUI (libs/spaces-notch-swift), shared with the Electron
+//    app's notch helper.
 //  * CuaSpacesMac: the app entry point.
 //  * CuaSpacesMacTests: view-model, parity and snapshot tests (swift-testing).
 //
@@ -32,6 +34,7 @@ let package = Package(
         .package(name: "Cua", path: "../../libs/cua/swift"),
         .package(name: "CuaSpacesSDK", path: "../../libs/spaces-sdk-swift"),
         .package(name: "CuaSpacesApp", path: "../../libs/spaces-app-swift"),
+        .package(name: "CuaSpacesNotch", path: "../../libs/spaces-notch-swift"),
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
     ],
     targets: [
@@ -43,6 +46,7 @@ let package = Package(
                 .product(name: "CuaSpacesStreaming", package: "CuaSpacesApp"),
                 .product(name: "CuaSpacesFFI", package: "CuaSpacesApp"),
                 .product(name: "CuaSpacesTeleport", package: "CuaSpacesApp"),
+                .product(name: "CuaSpacesNotchUI", package: "CuaSpacesNotch"),
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
             path: "Sources/CuaSpacesMacKit",
@@ -59,7 +63,9 @@ let package = Package(
             name: "CuaSpacesMacTests",
             dependencies: ["CuaSpacesMacKit", .product(name: "Cua", package: "Cua"),
                            .product(name: "CuaSpacesFFI", package: "CuaSpacesApp"),
-                           .product(name: "CuaSpacesStreaming", package: "CuaSpacesApp")],
+                           .product(name: "CuaSpacesStreaming", package: "CuaSpacesApp"),
+                           .product(name: "CuaSpacesNotchUI", package: "CuaSpacesNotch"),
+                           .product(name: "CuaSpacesNotchHelper", package: "CuaSpacesNotch")],
             path: "Tests/CuaSpacesMacTests",
             resources: [.copy("Snapshots")],
             swiftSettings: [.swiftLanguageMode(.v5)]

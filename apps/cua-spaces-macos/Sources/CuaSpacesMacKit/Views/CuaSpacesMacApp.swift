@@ -35,12 +35,23 @@ public struct CuaSpacesMacApp: App {
                 .onAppear { delegate.start(model) }
         }
         .defaultSize(width: 980, height: 660)
-        // Open at every launch (see `ignoreSavedWindowState`).
-        .defaultLaunchBehavior(.presented)
+        // Open at every launch (see `ignoreSavedWindowState`), except while
+        // New UI is on: then its window opens instead (`AppDelegate.start`).
+        .defaultLaunchBehavior(Self.opensWebUIAtLaunch(model) ? .suppressed : .presented)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button(model.chrome.newSpaceLabel) { Task { await model.openNewSpace() } }
                     .keyboardShortcut("n")
+            }
+            // No `.appSettings` group here: the `Settings` scene's item is the
+            // app menu's one "Settings…". The New UI window answers its
+            // action itself (`WebUIAppWindow`), so ⌘, opens its Settings.
+            // New UI (preview): the shared web UI in its own window.
+            CommandGroup(after: .newItem) {
+                if model.settings.experiments.webUi {
+                    OpenWebUIButton(model: model)
+                        .keyboardShortcut("u", modifiers: [.command, .shift])
+                }
             }
         }
 
@@ -61,10 +72,37 @@ public struct CuaSpacesMacApp: App {
         MenuBarExtra {
             MenuBarContent(model: model)
         } label: {
+            MenuBarLabel(model: model)
+        }
+    }
+
+    /// New UI is on and the first run is done: a launch opens the New UI
+    /// window rather than the native main window (the first run itself
+    /// stays in the main window).
+    static func opensWebUIAtLaunch(_ model: AppModel) -> Bool {
+        opensWebUIAtLaunch(webUi: model.settings.experiments.webUi, onboarded: model.onboarding.completed)
+    }
+
+    static func opensWebUIAtLaunch(webUi: Bool, onboarded: Bool) -> Bool { webUi && onboarded }
+}
+
+/// The menu bar icon. It is there from launch, so it also hands the New UI
+/// window the scenes' actions when the main window never opened.
+struct MenuBarLabel: View {
+    let model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Group {
             if let icon = MenuBarIcon.image {
                 Image(nsImage: icon)
             } else {
                 Text("Cua")
+            }
+        }
+        .onAppear {
+            if WebUIWindowController.actions == nil {
+                WebUIWindowController.actions = .make(openWindow: openWindow)
             }
         }
     }
@@ -74,11 +112,21 @@ public struct CuaSpacesMacApp: App {
 struct RootView: View {
     @Bindable var model: AppModel
     @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        if model.onboarding.completed {
+        if !model.startup.isReady {
+            // The launch (the keychain, the daemon) until the live services
+            // are in; then the first run or the main window.
+            StartupView(startup: model.startup)
+                .onAppear {
+                    if model.onboarding.completed, AppDelegate.takeQuietStart() { dismissWindow(id: "main") }
+                }
+        } else if model.onboarding.completed {
             MainWindow(model: model)
                 .onAppear {
+                    // The New UI window's bridge opens these scenes.
+                    WebUIWindowController.actions = .make(openWindow: openWindow)
                     // Opened at login: the menu bar item and the notch only,
                     // as after the window is closed (once per launch).
                     if AppDelegate.takeQuietStart() { dismissWindow(id: "main") }
@@ -87,7 +135,7 @@ struct RootView: View {
             OnboardingView(onboarding: model.onboarding, onSignIn: model.account == nil ? nil : {
                 await model.beginSignIn()
                 return model.identity
-            })
+            }, signInPhase: model.signIn, onCancelSignIn: { model.cancelSignIn() }, signInURL: model.signInURL)
                 .toolbar(removing: .title)
                 .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         }
@@ -125,7 +173,9 @@ struct MenuBarContent: View {
         switch id {
         case .open: activate(); openWindow(id: "main")
         case .newSpace:
-            activate(); openWindow(id: "main")
+            activate()
+            // The native sheet needs the main window; New UI opens its own.
+            if !model.settings.experiments.webUi { openWindow(id: "main") }
             Task { await model.openNewSpace() }
         case .settings: activate(); openSettings()
         case .volumeConflicts:
@@ -183,6 +233,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// Whether a launch brings the app to the front: a user's launch does,
+    /// one at login never does, a fixtures run only with
+    /// `CUA_SPACES_ACTIVATE=1`.
+    static func activatesAtLaunch(loginLaunch: Bool, fixtures: Bool, asked: Bool) -> Bool {
+        if asked { return true }
+        return !loginLaunch && !fixtures
+    }
+
     func applicationWillFinishLaunching(_ notification: Notification) {
         Self.launchedAtLogin = LoginLaunch.isLoginLaunch(NSAppleEventManager.shared().currentAppleEvent)
     }
@@ -194,6 +252,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func start(_ model: AppModel) {
         guard !started else { return }
         started = true
+        // New Space opens New UI's wizard while its experiment is on.
+        model.openWebNewSpace = { on in WebUIWindowController.showNewSpace(model: model, on: on) }
+        model.closeWebUI = { WebUIWindowController.closeShared() }
         let controller = NotchController(model: model.notch)
         controller.sidebar = model.dropTargets
         // Each of these shows its result in the main window: open it when
@@ -237,26 +298,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Closed too: running Spaces' thumbnails stay a minute or two old
         // (paused while the app is hidden or in Low Power Mode).
         thumbnails.keepFresh(running: { model.streamableSpaceIds })
-        if let live = model.backend as? LiveSpacesBackend {
+        // Once the launch has the SDK (it comes after the window).
+        model.onLive { [weak controller] live in
             let teleport = live.cua.teleport()
             model.notch.capture = { id in
                 (try? teleport.captureWindowThumbnail(windowId: id, maxWidth: 320)).flatMap { $0 }.flatMap(NSImage.init(data:))
             }
-            controller.followWindowDrags(teleport: teleport)
+            controller?.followWindowDrags(teleport: teleport)
             // The picker's app list and icons, cached before it first opens.
             teleport.prefetch()
         }
         notch = controller
         AppEnvironment.applyStartView(model, notch: controller)
+        // New UI on: its window is the one a launch opens (the main window
+        // is suppressed); not when opened at login.
+        if CuaSpacesMacApp.opensWebUIAtLaunch(model), !Self.launchedAtLogin,
+           DevHooks.value("CUA_SPACES_START_VIEW") == nil {
+            WebUIWindowController.show(model: model)
+        }
         // The notch shows the Spaces (and takes drops on them) with the main
         // window closed: keep the roster, and so each tile's reachability,
         // fresh from here rather than from the window.
-        Task { @MainActor in
-            while !Task.isCancelled {
-                await model.refresh()
-                try? await Task.sleep(for: .seconds(10))
-            }
-        }
+        // Bounded, and it reconnects to the daemon when the list goes stale.
+        _ = model.startListPoll()
         // Keyvault access is never silent: the notch indicator and the menu
         // bar line follow live deliveries even with the main window closed.
         Task { @MainActor in
@@ -282,11 +346,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try? await Task.sleep(for: .seconds(60))
             }
         }
-        // Captures and UI tests bring this app forward; normal launches do not
-        // steal focus.
-        if DevHooks.value("CUA_SPACES_ACTIVATE") == "1" {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                NSApp.activate(ignoringOtherApps: true)
+        // Opened by the user: in front, with its window (the launch shows
+        // there while it waits). Opened at login: in the background, never
+        // taking focus. Fixtures (UI tests, captures) come forward only
+        // when asked.
+        if Self.activatesAtLaunch(loginLaunch: Self.launchedAtLogin,
+                                  fixtures: DevHooks.value("CUA_SPACES_FIXTURES") == "1",
+                                  asked: DevHooks.value("CUA_SPACES_ACTIVATE") == "1") {
+            NSApp.activate()
+            DispatchQueue.main.async {
+                NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
             }
         }
     }

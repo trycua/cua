@@ -385,9 +385,11 @@ pub struct AgentStart {
     pub agent: String,
     /// The task.
     pub prompt: String,
-    /// Provider key variables to forward from this server's environment,
-    /// for example ["ANTHROPIC_API_KEY"]. Names only; values never pass
-    /// through the conversation.
+    /// Provider key variables to forward from this server's environment
+    /// (or from the keys saved in Cua Spaces, Settings → Agents), for
+    /// example ["ANTHROPIC_API_KEY"]. Names only; values never pass through
+    /// the conversation. Saved keys the harness reads are added without
+    /// being named.
     #[serde(default)]
     pub env_from_host: Vec<String>,
     /// More environment for the agent, for example
@@ -411,7 +413,8 @@ pub struct AgentStart {
     /// A custom model endpoint base URL (a proxy or compatible server).
     #[serde(default)]
     pub base_url: Option<String>,
-    /// Extra MCP servers. The Space's own tools are always included.
+    /// Extra MCP servers. The Space's own tools are included unless
+    /// `sandbox_mcp` is false.
     #[serde(default)]
     pub mcp_servers: Vec<AgentMcpServer>,
     /// Stop (resumably) once the prompt is answered. Default false.
@@ -421,6 +424,23 @@ pub struct AgentStart {
     /// false.
     #[serde(default)]
     pub show: Option<bool>,
+    /// The wire format of `base_url`: `anthropic`, `openai-responses`,
+    /// `openai-chat` or `gemini`. Default: the harness's own.
+    #[serde(default)]
+    pub wire: Option<String>,
+    /// Host files attached to the first prompt (absolute paths on this
+    /// server's machine, at most 8 MiB each).
+    #[serde(default)]
+    pub files: Vec<String>,
+    /// Give the agent the Space's own MCP tools. Default true.
+    #[serde(default)]
+    pub sandbox_mcp: Option<bool>,
+    /// Copy the cua skills into the harness. Default true.
+    #[serde(default)]
+    pub skills: Option<bool>,
+    /// A label for listings.
+    #[serde(default)]
+    pub label: Option<String>,
     /// Run as this persistent agent: its home in the Cua Volume
     /// (`agents/<home>/`) is restored into the Space first and saved after
     /// every turn, the harness keeps its memory there, and the agent gets
@@ -514,8 +534,9 @@ pub struct PersistentAgentCreate {
     /// A custom model endpoint base URL.
     #[serde(default)]
     pub base_url: Option<String>,
-    /// Provider key variables forwarded from this server's environment at
-    /// every start, for example ["ANTHROPIC_API_KEY"]. Names only.
+    /// Provider key variables forwarded from this server's environment (or
+    /// the keys saved in Cua Spaces) at every start, for example
+    /// ["ANTHROPIC_API_KEY"]. Names only.
     #[serde(default)]
     pub env_from_host: Vec<String>,
     /// More environment for every run (not secrets; see `env_from_host`).

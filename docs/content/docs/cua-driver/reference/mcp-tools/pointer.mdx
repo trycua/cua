@@ -136,7 +136,7 @@ Scroll the target pid.
 - Targeted wheel: pass `element_token` (preferred) or window-local `x, y`. Sends a real wheel event at that point, so it scrolls whatever is under it. The only way to scroll nested `overflow:auto` regions in web views.
 - Keystroke: no target, just pid + direction. PageDown/PageUp (by='page') or arrows (by='line') on the focused scroller.
 
-Electron/Chromium windows refuse background delivery; pass `delivery_mode:"foreground"`.
+Electron/Chromium windows drop background wheel events: there a background scroll reveals the content just past the edge of the scroll container under the target through accessibility (about `amount` notches); `delivery_mode:"foreground"` is the fallback.
 `amount` is wheel notches (targeted) or key repetitions (keystroke).
 
 **macOS parameters**

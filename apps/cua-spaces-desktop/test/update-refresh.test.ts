@@ -75,4 +75,15 @@ describe.skipIf(!built)("the refresh after an update", () => {
     writeFileSync(bare, "{}");
     expect(recordLaunch(native, bare, "0.3.0", "", true)).toBe(true);
   });
+
+  it("takes over the Swift app's record: the same version and build is no update", () => {
+    // What the Swift app wrote (`UpdateRefresh.record` with its CFBundleVersion), copied by the migration.
+    const file = path.join(mkdtempSync(path.join(home, "launch-")), "app-settings.json");
+    writeFileSync(file, JSON.stringify({ lastSeenVersion: "0.7.2 (0.7.2.41)" }));
+    expect(recordLaunch(native, file, "0.7.2", "0.7.2.41", true)).toBe(false);
+    expect(native.appSettingsLoad(file).lastSeenVersion).toBe("0.7.2 (0.7.2.41)");
+    // A newer build is an update, recorded in the same form.
+    expect(recordLaunch(native, file, "0.7.2", "0.7.2.42", true)).toBe(true);
+    expect(native.appSettingsLoad(file).lastSeenVersion).toBe("0.7.2 (0.7.2.42)");
+  });
 });

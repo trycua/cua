@@ -117,6 +117,18 @@ export function canPower(space: Pick<Space, "status" | "power">): boolean {
   return Boolean(space.power) && space.status !== "local" && space.status !== "provisioning" && space.status !== "deleting";
 }
 
+/**
+ * The power button's word, as the SwiftUI app's (the core's
+ * `sidebar.powerButton`): "Turn off" / "Turn on", or "Suspend" / "Resume"
+ * where the Space suspends. Without the core, the same words.
+ */
+export function powerLabel(core: { tryCall<T>(op: string, args?: Record<string, unknown>): T | undefined }, space: Space, on: boolean): string {
+  const button = core.tryCall<{ help: string; turnOn: boolean; busy: boolean }>("sidebar.powerButton", { space });
+  if (button && !button.busy && button.turnOn === on) return button.help;
+  const suspends = space.power?.control === "suspend";
+  return on ? (suspends ? "Resume" : "Turn on") : suspends ? "Suspend" : "Turn off";
+}
+
 /** A power action is running now: "Starting…" or "Stopping…". */
 export function powerPending(space: Pick<Space, "power">): string | null {
   const on = space.power?.turningOn;

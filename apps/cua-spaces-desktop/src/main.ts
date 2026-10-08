@@ -100,7 +100,10 @@ async function startNativeHost(showRoute: (route: string) => void) {
   };
   // Before the model loads the settings: a launch after an update refreshes the coding agents' skills.
   const core = appCoreStatePaths(app.getPath("userData"));
-  const refresh = recordLaunch(native, core.settings, app.getVersion(), "", readOnboardingCompleted(core.onboarding) ?? false);
+  // The version and build as the Swift app records them ("0.7.2 (0.7.2.41)"), so the
+  // first launch after taking over its settings is no update unless the build changed.
+  const build = appBuild({ platform: process.platform, packaged: app.isPackaged, resourcesPath: process.resourcesPath, read: (f) => readFileSync(f, "utf8") });
+  const refresh = recordLaunch(native, core.settings, app.getVersion(), build, readOnboardingCompleted(core.onboarding) ?? false);
   const env = makeModel({ native, nativeDir: dir, userData: app.getPath("userData"), version: app.getVersion(), openUrl });
   const pip = createPipWindows();
   app.on("will-quit", () => {
@@ -112,7 +115,7 @@ async function startNativeHost(showRoute: (route: string) => void) {
     model: env.model,
     supervisor: env.supervisor,
     version: app.getVersion(),
-    build: appBuild({ platform: process.platform, packaged: app.isPackaged, resourcesPath: process.resourcesPath, read: (f) => readFileSync(f, "utf8") }),
+    build,
     platform: process.platform,
     env: process.env,
     system: makeSystem({ native, showRoute }),

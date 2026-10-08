@@ -26,7 +26,7 @@ The video never passes through IPC:
 | Picture in picture | `StreamPiPWindow`: a floating panel, its own session | a floating window, its own session (`src/pip.ts`) |
 | One window (PiP) | `background_only`, reopened with activation on `would_require_activation` | the same (`windowId`, `activate`) |
 | Decode | VideoToolbox, one session per Space and tier | WebCodecs `prefer-hardware` with `optimizeForLatency`, one session per slot; software when the hardware decoder rejects the stream |
-| Keyboard | a click takes it; ⌘Esc, a click on the page or Stop controlling gives it back; plain Esc goes to the Space | the same (Ctrl+Shift+F12 off the Mac) |
+| Keyboard | a click takes it; Control+Option pressed and released alone, a click on the page or Stop controlling gives it back; Esc and ⌘Esc go to the Space | the same (Ctrl+Shift+F12 off the Mac) |
 | ⌘ on a Linux or Windows Space | sent as Control | the same (`metaAsControl`) |
 | Scrolls | to the page until the viewer has the keyboard | the same (`scrollNeedsFocus`) |
 | Hidden window | every session stops; reopens when shown | the same (`visibilitychange`: minimized, fully covered, another desktop) |

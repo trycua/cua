@@ -2,10 +2,10 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowDownCircleIcon, ChevronLeftIcon, MonitorIcon, PlayIcon, SquareIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
+import { ArrowDownCircleIcon, ChevronLeftIcon, MonitorIcon, PictureInPicture2Icon, PlayIcon, SquareIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { parseDropped, useDevices, useExperiments, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useTeleport, type Space, type StreamRow } from "@/bridge";
+import { parseDropped, useBridge, useDevices, useExperiments, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useTeleport, type Space, type StreamRow } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page } from "@/components/page";
 import { AgentsSection } from "@/components/space-detail/agents-section";
@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { useSpaceVolumeError } from "@/lib/space-volume";
 import { volumeUnavailableNote } from "@/lib/volume-notes";
-import { canDelete, canPower, createError, createProgress, machineName, powerPending, spacePlace, spaceState } from "@/lib/spaces";
+import { canDelete, canPower, createError, createProgress, machineName, powerLabel, powerPending, spacePlace, spaceState } from "@/lib/spaces";
 
 export const Route = createFileRoute("/spaces/$spaceId")({
   component: SpaceDetailPage,
@@ -45,6 +45,7 @@ function SpaceDetailPage() {
   const teleport = useTeleport();
   const sharing = useShareSheet();
   const { data: session } = useSession();
+  const { core } = useBridge();
   const space = spaces?.find((s) => s.id === spaceId);
   // Apps and files dropped on this Space's notch tile: the same as a drop on the well (an app opens Teleport at it), once.
   const files = useSpaceFiles(space ?? { id: spaceId, name: spaceId });
@@ -106,6 +107,9 @@ function SpaceDetailPage() {
   const state = spaceState(space);
   const machine = machineName(machines, space);
   const pending = powerPending(space);
+  // "Turn on" / "Turn off" (or Resume / Suspend), the SwiftUI app's words.
+  const turnOn = powerLabel(core, space, true);
+  const turnOff = powerLabel(core, space, false);
 
   const run = (label: string, action: () => Promise<void>) =>
     action().catch((e: unknown) => toast(`Couldn't ${label} ${space.name}`, { description: message(e), type: "error" }));
@@ -160,7 +164,20 @@ function SpaceDetailPage() {
       }
     });
 
-  const display = stream?.rows.find((r) => r.kind === "desktop")?.resolution?.split("×").map(Number);
+  const desktopRow = stream?.rows.find((r) => r.kind === "desktop");
+  const display = desktopRow?.resolution?.split("×").map(Number);
+  // The desktop plays in its picture-in-picture panel: said here, with Bring
+  // it back, instead of a second stream (`SpaceScreenView`'s placeholder).
+  const poppedOut = desktopRow?.actions.some((a) => a.id === "pip" && a.active) ?? false;
+  const poppedOutState = poppedOut ? (
+    <div data-popped-out="" className="flex flex-col items-center gap-2">
+      <PictureInPicture2Icon className="size-7 text-muted-foreground" />
+      <p className="text-xs text-muted-foreground">Playing in a floating window</p>
+      <Button variant="outline" size="sm" onClick={() => void onPip(desktopRow!)}>
+        Bring it back
+      </Button>
+    </div>
+  ) : undefined;
   const aspect = display?.length === 2 && display[0]! > 0 && display[1]! > 0 ? display[0]! / display[1]! : undefined;
   const showStream = detail.sections.includes("Stream") && stream;
   // The core's sections after Stream: Agents (where the host lists runs)
@@ -198,11 +215,11 @@ function SpaceDetailPage() {
           {canPower(space) ? (
             state === "stopped" ? (
               <Button variant="outline" disabled={Boolean(pending)} onClick={start}>
-                <PlayIcon /> Start
+                <PlayIcon /> {turnOn}
               </Button>
             ) : (
               <Button variant="outline" disabled={Boolean(pending)} onClick={() => setConfirm("stop")}>
-                <SquareIcon className="size-3.5" /> Stop
+                <SquareIcon className="size-3.5" /> {turnOff}
               </Button>
             )
           ) : null}
@@ -237,7 +254,7 @@ function SpaceDetailPage() {
           onAccessAction={enroll}
           className="h-72"
         >
-          {surfaceState(space, pending, start, dismiss, retry)}
+          {surfaceState(space, pending, turnOn, start, dismiss, retry) ?? poppedOutState}
         </StreamSurface>
       )}
 
@@ -289,13 +306,13 @@ function SpaceDetailPage() {
       <ConfirmDialog
         open={confirm === "stop"}
         onOpenChange={(o) => !o && setConfirm(null)}
-        title={`Stop ${space.name}?`}
+        title={`${turnOff} ${space.name}?`}
         description={
           space.power?.control === "suspend"
             ? "It's suspended in memory and picks up where it left off when you start it again."
             : "It shuts down. Anything unsaved inside it is lost."
         }
-        confirmLabel="Stop"
+        confirmLabel={turnOff}
         destructive={space.power?.control !== "suspend"}
         onConfirm={stop}
       />
@@ -370,7 +387,7 @@ function BackLink() {
 
 /** What replaces the stream while there is no desktop to show: a create's
  * progress, a delete, a stopped Space. Undefined: the stream surface. */
-function surfaceState(space: Space, pending: string | null, onStart: () => void, onDismiss: () => void, onRetry?: () => void): ReactNode {
+function surfaceState(space: Space, pending: string | null, startLabel: string, onStart: () => void, onDismiss: () => void, onRetry?: () => void): ReactNode {
   const state = spaceState(space);
   if (state === "failed") {
     return (
@@ -410,7 +427,7 @@ function surfaceState(space: Space, pending: string | null, onStart: () => void,
         </p>
         {canPower(space) ? (
           <Button className="mt-4" variant="outline" disabled={Boolean(pending)} onClick={onStart}>
-            <PlayIcon /> {pending ?? "Start"}
+            <PlayIcon /> {pending ?? startLabel}
           </Button>
         ) : null}
       </>

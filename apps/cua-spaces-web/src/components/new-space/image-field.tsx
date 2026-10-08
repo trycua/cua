@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import { ChevronsUpDownIcon } from "lucide-react";
 import type { KeyboardEvent } from "react";
 
 import type { ImageFieldView, WizardAction } from "@/bridge";
@@ -12,7 +13,8 @@ const optionId = (ref: string) => `ns-image-${ref.replace(/[^a-z0-9]/gi, "-")}`;
 /**
  * The image: any reference, with the catalog's presets as suggestions.
  * Filtering, the highlight, what Return picks and the check on a typed
- * reference are the app core's; this draws them.
+ * reference are the app core's; this draws them. The chevron at the end
+ * ("Show images", as the SwiftUI field's) opens or closes the list.
  */
 export function ImageField({
   label,
@@ -68,7 +70,7 @@ export function ImageField({
         autoCapitalize="off"
         autoCorrect="off"
         autoComplete="off"
-        className="font-mono text-xs aria-invalid:border-destructive"
+        className="pr-8 font-mono text-xs aria-invalid:border-destructive"
         onChange={(event) => send({ type: "set-image-text", text: event.target.value })}
         onClick={() => {
           if (!view.open) send({ type: "open-image-suggestions" });
@@ -78,6 +80,19 @@ export function ImageField({
           if (view.open) send({ type: "dismiss-image-suggestions" });
         }}
       />
+      <button
+        type="button"
+        data-image-toggle=""
+        aria-label="Show images"
+        title="Show images"
+        aria-expanded={view.open}
+        // Keep the field's focus, so its blur does not close the list first.
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => send(view.open ? { type: "dismiss-image-suggestions" } : { type: "open-image-suggestions" })}
+        className="absolute top-0 right-0 flex h-8 w-8 cursor-default items-center justify-center rounded-r-lg text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+      >
+        <ChevronsUpDownIcon className="size-3.5" />
+      </button>
       {view.open ? (
         <div
           id="ns-image-suggestions"

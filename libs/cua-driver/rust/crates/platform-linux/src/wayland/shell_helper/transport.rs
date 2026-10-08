@@ -188,8 +188,24 @@ mod tests {
 
     #[tokio::test]
     async fn typed_roundtrips_on_one_private_connection() {
+        // Use an explicit config: a sandbox (Nix) has no session.conf, and
+        // then the daemon exits without printing an address.
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("bus.conf");
+        std::fs::write(
+            &config,
+            format!(
+                "<busconfig><type>session</type>\
+                 <listen>unix:dir={}</listen><auth>EXTERNAL</auth>\
+                 <policy context=\"default\"><allow send_destination=\"*\" eavesdrop=\"true\"/>\
+                 <allow eavesdrop=\"true\"/><allow own=\"*\"/></policy></busconfig>",
+                dir.path().display()
+            ),
+        )
+        .unwrap();
         let spawned = Command::new("dbus-daemon")
-            .args(["--session", "--nofork", "--print-address=1"])
+            .arg(format!("--config-file={}", config.display()))
+            .args(["--nofork", "--print-address=1"])
             .stdout(Stdio::piped())
             .spawn();
         let mut bus = match spawned {
@@ -204,6 +220,7 @@ mod tests {
         std::io::BufReader::new(bus.0.stdout.take().unwrap())
             .read_line(&mut address)
             .unwrap();
+        assert!(!address.trim().is_empty(), "dbus-daemon printed no address");
         let service = zbus::connection::Builder::address(address.trim())
             .unwrap()
             .name("org.cua.WinRects")

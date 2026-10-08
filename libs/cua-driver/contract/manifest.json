@@ -3051,8 +3051,7 @@
                 "maxItems": 2,
                 "minItems": 1,
                 "nullable": true,
-                "type": "array",
-                "uniqueItems": true
+                "type": "array"
               },
               "max_regions": {
                 "description": "Return at most this many regions.",

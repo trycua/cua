@@ -32,6 +32,12 @@ fn normalize_schema(value: &mut Value) {
     match value {
         Value::Object(object) => {
             object.remove("title");
+            // The Vertex AI Schema object has no `uniqueItems` (#4798). Inputs
+            // that need distinct items (parse_visual_regions kinds) reject
+            // duplicates in their own validation.
+            if object.get("uniqueItems").is_some_and(Value::is_boolean) {
+                object.remove("uniqueItems");
+            }
             // Children first so nested unions/consts are already portable before
             // we rewrite this node (#4798 Vertex/Gemini tools/list subset).
             for child in object.values_mut() {
@@ -1091,9 +1097,9 @@ impl JsonSchema for ClickInput {
         "ClickInput".into()
     }
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {
-        // Advertise a plain object: Vertex/Gemini and Bedrock reject top-level
-        // oneOf/anyOf. Mutual exclusion of x/y vs element_token stays enforced
-        // by TryFrom/validate (#4798).
+        // Advertise a plain object: `oneOf` and `not` are not part of the
+        // Vertex AI Schema object. Mutual exclusion of x/y vs element_token
+        // stays enforced by TryFrom/validate (#4798).
         ClickWireInput::json_schema(generator)
     }
 }

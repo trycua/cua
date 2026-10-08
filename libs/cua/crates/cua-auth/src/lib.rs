@@ -439,6 +439,8 @@ impl Store {
     /// build recreates each item it read that lacks the Cua access list, so
     /// later Cua builds read it without a prompt. Other stores: `NotUsed`.
     pub fn check_keychain(&self, prompt: bool) -> KeychainCheck {
+        #[cfg(not(target_os = "macos"))]
+        let _ = prompt;
         match self {
             #[cfg(target_os = "macos")]
             Store::Keyring => {
@@ -471,9 +473,8 @@ impl Store {
     /// can never use without one). Then checks again, without a prompt.
     pub fn forget_keychain(&self) -> Result<KeychainCheck> {
         self.clear()?;
-        let check = self.check_keychain(false);
         #[cfg(target_os = "macos")]
-        for item in &check.items {
+        for item in &self.check_keychain(false).items {
             if matches!(item.state, KeychainState::NeedsAccess)
                 && let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &item.account)
             {

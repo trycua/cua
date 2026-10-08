@@ -583,6 +583,11 @@ fn store() -> &'static Mutex<VecDeque<StoredSnapshot>> {
 
 fn remember(snapshot_id: &str, ctx: &ViewContext<'_>, md: &str) {
     let mut guard = store().lock().unwrap_or_else(|e| e.into_inner());
+    // A screenshot-only read keeps its snapshot id and returns no tree. It
+    // must not erase the rows that snapshot's tokens were read from.
+    if md.trim().is_empty() && guard.iter().any(|s| s.snapshot_id == snapshot_id) {
+        return;
+    }
     guard.retain(|s| s.snapshot_id != snapshot_id);
     guard.push_back(StoredSnapshot {
         snapshot_id: snapshot_id.to_owned(),
@@ -637,8 +642,99 @@ pub(crate) fn snapshot_row(snapshot_id: &str, index: u64) -> Option<StoredRow> {
     })
 }
 
+/// The menu path of row `[index]` of the read that produced `snapshot_id`,
+/// when that row is an item in the app's menu bar: the labels of its
+/// AXMenuBarItem and AXMenuItem ancestors, then its own. `None` for any
+/// other row.
+pub(crate) fn snapshot_menu_path(snapshot_id: &str, index: u64) -> Option<Vec<String>> {
+    let markdown = {
+        let guard = store().lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .iter()
+            .find(|s| s.snapshot_id == snapshot_id && s.at.elapsed() <= STORE_TTL)
+            .map(|s| s.markdown.clone())
+    }?;
+    menu_path_in(&markdown, index)
+}
+
+fn menu_path_in(markdown: &str, index: u64) -> Option<Vec<String>> {
+    let lines: Vec<&str> = markdown.lines().collect();
+    let marker = format!("[{index}] ");
+    let at = lines.iter().position(|line| {
+        line.trim_start()
+            .strip_prefix("- ")
+            .is_some_and(|rest| rest.starts_with(&marker))
+    })?;
+    let indent = |line: &str| line.len() - line.trim_start().len();
+    let item = |line: &str| -> Option<(String, String)> {
+        let rest = line.trim_start().strip_prefix("- ")?;
+        let rest = rest
+            .strip_prefix('[')
+            .and_then(|r| r.split_once("] ").map(|(_, r)| r))
+            .unwrap_or(rest);
+        let (role, rest) = rest.split_once(' ').unwrap_or((rest, ""));
+        let label = rest
+            .trim_start()
+            .strip_prefix('"')
+            .and_then(|r| r.split_once('"').map(|(label, _)| label.to_owned()))
+            .unwrap_or_default();
+        Some((role.to_owned(), label))
+    };
+    let (role, label) = item(lines[at])?;
+    if !matches!(role.as_str(), "AXMenuItem" | "AXMenuBarItem") || label.is_empty() {
+        return None;
+    }
+    let mut path = vec![label];
+    let mut level = indent(lines[at]);
+    for line in lines[..at].iter().rev() {
+        if indent(line) >= level {
+            continue;
+        }
+        level = indent(line);
+        let (role, label) = item(line)?;
+        match role.as_str() {
+            "AXMenuBar" => {
+                path.reverse();
+                return Some(path);
+            }
+            "AXMenuItem" | "AXMenuBarItem" if !label.is_empty() => path.push(label),
+            "AXMenu" => {}
+            _ => return None,
+        }
+    }
+    None
+}
+
 /// Remember a read's markdown as `apply` does, for tests elsewhere in the
 /// crate that drive a fake get_window_state.
+#[cfg(test)]
+#[test]
+fn menu_paths_come_from_the_menu_bar_ancestors() {
+    let md = "- [0] AXWindow \"Doc\"\n  - [3] AXButton \"OK\"\n- [27] AXMenuBar\n  - [700] AXMenuBarItem \"Sheet\" [actions=[press]]\n    - [701] AXMenu\n      - [760] AXMenuItem \"Navigate\" [actions=[press]]\n        - [761] AXMenu\n          - [771] AXMenuItem \"To Next Sheet\" [actions=[press]]\n      - [780] AXMenuItem \"Delete Sheet...\"\n";
+    assert_eq!(
+        menu_path_in(md, 771),
+        Some(vec![
+            "Sheet".to_owned(),
+            "Navigate".to_owned(),
+            "To Next Sheet".to_owned()
+        ])
+    );
+    assert_eq!(
+        menu_path_in(md, 780),
+        Some(vec!["Sheet".to_owned(), "Delete Sheet...".to_owned()])
+    );
+    assert_eq!(menu_path_in(md, 3), None, "not a menu item");
+    assert_eq!(menu_path_in(md, 999), None);
+}
+
+#[cfg(test)]
+#[test]
+fn a_screenshot_only_read_keeps_the_remembered_rows() {
+    remember_for_test("s7e570001", 4, 5, "- [9] AXButton \"Send\"\n");
+    remember_for_test("s7e570001", 4, 5, "");
+    assert!(snapshot_row("s7e570001", 9).is_some_and(|row| row.line.contains("Send")));
+}
+
 #[cfg(test)]
 pub(crate) fn remember_for_test(snapshot_id: &str, pid: i64, window_id: u64, markdown: &str) {
     let ctx = ViewContext {

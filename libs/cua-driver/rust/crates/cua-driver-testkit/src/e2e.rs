@@ -1471,15 +1471,16 @@ fn validate_turn_evidence(
         return;
     }
 
+    let turn_observation = (turns.len() == 1).then_some(observed_behavior);
     for turn in turns {
-        validate_one_turn(&turn, cell_id, observed_behavior, errors);
+        validate_one_turn(&turn, cell_id, turn_observation, errors);
     }
 }
 
 fn validate_one_turn(
     turn: &Path,
     cell_id: &str,
-    observed_behavior: ObservedBehavior,
+    observed_behavior: Option<ObservedBehavior>,
     errors: &mut Vec<String>,
 ) {
     let turn_name = turn
@@ -1713,7 +1714,7 @@ fn validate_one_turn(
 
 fn validate_action_truthfulness(
     action: &Value,
-    observed_behavior: ObservedBehavior,
+    observed_behavior: Option<ObservedBehavior>,
     cell_id: &str,
     turn_name: &str,
     errors: &mut Vec<String>,
@@ -1749,17 +1750,19 @@ fn validate_action_truthfulness(
     }
 
     let contradiction = match observed_behavior {
-        ObservedBehavior::Delivered if matches!(effect, "refused" | "suspected_noop") => {
+        Some(ObservedBehavior::Delivered) if matches!(effect, "refused" | "suspected_noop") => {
             Some(format!(
                 "independent oracle observed delivery but action truth claimed {effect}"
             ))
         }
-        ObservedBehavior::Refused if effect != "refused" => Some(format!(
+        Some(ObservedBehavior::Refused) if effect != "refused" => Some(format!(
             "independent oracle observed refusal but action truth claimed {effect}"
         )),
-        ObservedBehavior::NoEffect if matches!(effect, "confirmed" | "partial") => Some(format!(
-            "independent oracle observed no effect but action truth claimed {effect}"
-        )),
+        Some(ObservedBehavior::NoEffect) if matches!(effect, "confirmed" | "partial") => {
+            Some(format!(
+                "independent oracle observed no effect but action truth claimed {effect}"
+            ))
+        }
         _ => None,
     };
     if let Some(contradiction) = contradiction {
@@ -2000,7 +2003,13 @@ mod tests {
 
     fn truthfulness_errors(action: &Value, observed: ObservedBehavior) -> Vec<String> {
         let mut errors = Vec::new();
-        validate_action_truthfulness(action, observed, "cell", "turn-00001", &mut errors);
+        validate_action_truthfulness(
+            action,
+            Some(observed),
+            "cell",
+            "turn-00001",
+            &mut errors,
+        );
         errors
     }
 
@@ -2085,6 +2094,32 @@ mod tests {
     fn action_truthfulness_is_backward_compatible_without_internal_truth() {
         let action = serde_json::json!({"tool":"click","result_error":false,"arguments":{}});
         assert!(truthfulness_errors(&action, ObservedBehavior::Delivered).is_empty());
+    }
+
+    #[test]
+    fn action_truthfulness_still_checks_internal_claim_without_case_oracle_binding() {
+        let confirmed = action_with_truth("confirmed", serde_json::json!([]));
+        let mut errors = Vec::new();
+        validate_action_truthfulness(
+            &confirmed,
+            None,
+            "cell",
+            "turn-setup",
+            &mut errors,
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("confirmed action truth has no evidence"))
+        );
+
+        let refused = action_with_truth("refused", serde_json::json!([]));
+        let mut errors = Vec::new();
+        validate_action_truthfulness(&refused, None, "cell", "turn-setup", &mut errors);
+        assert!(
+            errors.is_empty(),
+            "multi-turn recordings must not guess which turn owns the case-level oracle: {errors:?}"
+        );
     }
 
     #[test]

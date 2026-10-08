@@ -541,6 +541,8 @@ mod tests {
         // Vertex/Gemini reject description-only nodes (#4798).
         assert_eq!(properties[KEY_PREFIX]["type"], "string");
         assert_eq!(properties[KEY_PREFIX]["enum"], json!(["default"]));
+        // `null` clears every saved default, so keep it expressible (#4798).
+        assert_eq!(properties[KEY_PREFIX]["nullable"], true);
         for schema in properties.values() {
             assert!(
                 schema.get("type").and_then(Value::as_str).is_some(),

@@ -950,4 +950,42 @@ mod tests {
             );
         }
     }
+
+    /// Fields that used to advertise `T | null` keep explicit `null` through
+    /// the OpenAPI `nullable` flag Vertex/Gemini document, instead of a type
+    /// array (#4798). `effects.glow: null` restores the style's default.
+    #[test]
+    fn nullable_inputs_advertise_openapi_nullable() {
+        for (tool, pointer, ty) in [
+            (
+                "set_agent_cursor_motion",
+                "/properties/effects/properties/glow",
+                "boolean",
+            ),
+            ("set_agent_cursor_motion", "/properties/effects", "object"),
+            ("set_agent_cursor_motion", "/properties/arc_flow", "number"),
+            (
+                "start_session",
+                "/properties/cursor_motion/properties/effects/properties/trail",
+                "boolean",
+            ),
+            ("start_session", "/properties/cursor_theme", "object"),
+            ("list_sessions", "/properties/limit", "integer"),
+            ("verify_state", "/properties/include_screenshot", "boolean"),
+            (
+                "parse_visual_regions",
+                "/properties/options/properties/kinds",
+                "array",
+            ),
+            ("drag", "/properties/target", "object"),
+        ] {
+            let contract = tool_contract(tool).unwrap_or_else(|| panic!("{tool} contract"));
+            let field = contract
+                .input_schema
+                .pointer(pointer)
+                .unwrap_or_else(|| panic!("{tool}{pointer} missing"));
+            assert_eq!(field["type"], ty, "{tool}{pointer}: {field}");
+            assert_eq!(field["nullable"], true, "{tool}{pointer}: {field}");
+        }
+    }
 }

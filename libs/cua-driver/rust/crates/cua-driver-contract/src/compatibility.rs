@@ -483,4 +483,27 @@ mod tests {
             .iter()
             .any(|value| value.contains("portable permits additional properties")));
     }
+
+    /// Published input schemas mark optional `T | null` fields with the
+    /// OpenAPI `nullable` flag (#4798); the live schema must accept `null` too.
+    #[test]
+    fn portable_nullable_requires_live_to_accept_null() {
+        let portable = json!({"type": "boolean", "nullable": true});
+        for live in [
+            json!({"type": ["boolean", "null"]}),
+            json!({"type": "boolean", "nullable": true, "description": "live"}),
+            json!({}),
+        ] {
+            let violations = schema_subset_violations(&portable, &live);
+            assert!(violations.is_empty(), "{live}: {violations:?}");
+        }
+
+        let violations = schema_subset_violations(&portable, &json!({"type": "boolean"}));
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("allows null")),
+            "{violations:?}"
+        );
+    }
 }

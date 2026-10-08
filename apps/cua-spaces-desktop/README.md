@@ -515,7 +515,12 @@ environment is present:
   nor `libz.so` on the host. The default runtime's arm64 build links the
   unversioned `libz.so`, which stock distros only ship with `zlib1g-dev`, and
   did not start in the smoke test. The compile cache is skipped under
-  AppImage, because it mounts at a new path on every launch.
+  AppImage, because it mounts at a new path on every launch. The deb's
+  `/opt/Cua Spaces` is root's and writable by root alone, whatever the build
+  machine's umask: `afterPack` gives folders 755 and files 755 or 644
+  (`packaging/linux-permissions.cjs`), as the Keyvault's trust check needs of
+  every folder above the bundled `cua`. The desktop entry's Comment and the
+  package description are `linux.description`.
 
 Both signing paths were checked only as far as the config: with dummy values
 set, the config turns on the hardened runtime, notarization and

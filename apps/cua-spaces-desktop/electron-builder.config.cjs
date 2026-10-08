@@ -57,6 +57,17 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const env = process.env;
+
+// Every file electron-builder writes itself (the Linux packages' desktop
+// entry, apparmor profile and package type, after `afterPack`) is writable by
+// its owner only, whatever the build machine's umask (002 on many Linux
+// desktops); `afterPack` sets the modes of what it copied
+// (packaging/linux-permissions.cjs).
+try {
+  process.umask(0o022);
+} catch {
+  // A worker thread (a test runner's) has no umask of its own; packaging never runs there.
+}
 const icons = path.join(__dirname, "../cua-spaces/src-tauri/icons");
 const webDist = path.join(__dirname, "../cua-spaces-web/dist");
 // The macOS notch helper (`pnpm notch`, src/notch.ts), universal.
@@ -64,6 +75,7 @@ const notchApp = path.join(__dirname, "native/notch/Cua Spaces Notch.app");
 const pkg = require("./package.json");
 const { electronFuses } = require("./packaging/fuses.cjs");
 const { sign: signMac } = require("./packaging/sign-mac.cjs");
+const { normalizeModes } = require("./packaging/linux-permissions.cjs");
 
 const version = env.CUA_SPACES_VERSION || pkg.version;
 const semver = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(version);
@@ -145,6 +157,10 @@ module.exports = {
           `run \`pnpm native -- --target <triple>\` for this arch first (libcua_spaces_ffi: ${libraryFile})`,
       );
     }
+    // Linux: folders 755 and files 755 or 644, whatever the build machine's
+    // umask, so the deb's /opt/Cua Spaces is writable by root alone and the
+    // Keyvault trusts its `cua` (packaging/linux-permissions.cjs).
+    if (context.electronPlatformName === "linux") normalizeModes(context.appOutDir);
     // Windows: electron-builder signs the app's executables and app.asar.unpacked,
     // not extraResources. The Keyvault knows Cua by its Authenticode publisher
     // (cua-keyvault `windows_signing`), so the daemon and the libraries beside it
@@ -228,13 +244,15 @@ module.exports = {
     // 32x32 for the tray; 128x128@2x (256 px) as the window icon (src/icon.ts).
     extraResources: [{ from: icons, to: "tray", filter: ["32x32.png", "128x128@2x.png"] }, nativeResources("linux")],
     category: "Development",
+    // The desktop entry's Comment and the package description (electron-builder
+    // writes the description over an entry's own Comment).
+    description: "Run apps and agents in Cua Spaces",
     // Name the .desktop file after desktopName so it matches StartupWMClass
     // and the app id Electron reports.
     syncDesktopName: true,
     desktop: {
       entry: {
         Name: "Cua Spaces",
-        Comment: "Run apps and agents in Cua Spaces",
         StartupWMClass: linuxId,
         Keywords: "cua;spaces;sandbox;agents;",
       },

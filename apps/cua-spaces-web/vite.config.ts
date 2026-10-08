@@ -13,7 +13,18 @@ const src = (path: string) => fileURLToPath(new URL(`./src/${path}`, import.meta
 
 export default defineConfig({
   plugins: [
-    tanstackRouter({ target: "react", autoCodeSplitting: true }),
+    tanstackRouter({
+      target: "react",
+      autoCodeSplitting: true,
+      // The generated route tree is source-available like the rest of the
+      // app, so it carries the same header (scripts/spdx-headers.py checks it).
+      routeTreeFileHeader: [
+        "// SPDX-License-Identifier: FSL-1.1-MIT\n// Copyright (c) 2026 Cua AI, Inc.",
+        "/* eslint-disable */",
+        "// @ts-nocheck",
+        "// noinspection JSUnusedGlobalSymbols",
+      ],
+    }),
     react(),
     babel({
       parserOpts: { plugins: ["typescript", "jsx"] },

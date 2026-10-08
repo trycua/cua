@@ -900,4 +900,48 @@ mod tests {
             );
         }
     }
+
+    /// `set_config.value` is advertised as a string so Vertex/Gemini accept
+    /// it, so the driver must parse string values for typed keys (#4798).
+    #[test]
+    fn set_config_value_strings_are_coerced_to_the_key_type() {
+        use serde_json::json;
+        for (key, value, expected) in [
+            ("max_image_dimension", json!("800"), json!(800)),
+            ("max_image_dimension", json!(" 0 "), json!(0)),
+            ("experimental_pip", json!("true"), json!(true)),
+            ("experimental_pip", json!("false"), json!(false)),
+            ("cursor.motion.effects.glow", json!("true"), json!(true)),
+            ("cursor.motion.effects.trail", json!("false"), json!(false)),
+        ] {
+            assert_eq!(
+                coerce_set_config_value(key, &value),
+                expected,
+                "{key} = {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn set_config_value_coercion_leaves_other_values_alone() {
+        use serde_json::json;
+        for (key, value) in [
+            // Already typed: unchanged.
+            ("max_image_dimension", json!(800)),
+            ("experimental_pip", json!(true)),
+            // Unparseable: unchanged, so the key's own type error still fires.
+            ("max_image_dimension", json!("800px")),
+            ("max_image_dimension", json!("-1")),
+            ("experimental_pip", json!("yes")),
+            // String-valued and reset values are not reinterpreted.
+            ("capture_mode", json!("vision")),
+            ("experimental_pip_geometry", json!("640x480")),
+            ("cursor.motion.style", json!("signature_arc")),
+            ("cursor.motion.effects.glow", json!("default")),
+            ("cursor.motion", Value::Null),
+            ("unknown_key", json!("800")),
+        ] {
+            assert_eq!(coerce_set_config_value(key, &value), value, "{key} = {value}");
+        }
+    }
 }

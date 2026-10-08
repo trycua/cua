@@ -250,6 +250,15 @@ Returned by [`app_wizard_create_args`](#app_wizard_create_args).
 | `learn_more_label` / `learnMoreLabel` | `String` |  | "Learn more". |
 | `learn_more_url` / `learnMoreUrl` | `Option<String>` |  | The page it opens. |
 
+## `AppRuntimeSwitch` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `setting` | `String` |  | The `cua config` setting: `runtime.lume`. |
+| `value` | `String` |  | The value to set: `builtin`. |
+| `label` | `String` |  | The button: "Use built-in Lume". |
+| `detail` | `String` |  | One line on what that does. |
+
 ## `AppAddressForm` record
 
 | Field | Type | Default | Description |
@@ -391,7 +400,7 @@ Returned by [`app_wizard_view`](#app_wizard_view).
 | `host` | `Option<String>` |  | The machine of yours it creates on (`SpaceHost.id`). |
 | `placement_error` / `placementError` | `Option<String>` |  | Why the chosen placement cannot be used. |
 | `placement_hint` / `placementHint` | `Option<String>` |  | One line under "Run on" when This Mac cannot run the Space and no machine of yours is listed: how another Mac joins. |
-| `runtime_switch` / `runtimeSwitch` | [`Option<AppRuntimeSwitch>`](/cua-sdk/reference/spaces/app-core#appruntimeswitch-record) |  | Switches This Mac to the built-in runtime the Space needs, when it is set to use its own and that is missing. |
+| `runtime_switch` / `runtimeSwitch` | [`Option<AppRuntimeSwitch>`](#appruntimeswitch-record) |  | Switches This Mac to the built-in runtime the Space needs, when it is set to use its own and that is missing. |
 | `advanced` | `bool` |  | Advanced shown. |
 | `kind_tiles` / `kindTiles` | [`Vec<AppTile>`](#apptile-record) |  | Kind tiles. |
 | `runtimes` | [`Vec<AppMenuOption>`](#appmenuoption-record) |  | Runtime menu. |

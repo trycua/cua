@@ -84,8 +84,12 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
     hooks.core = useBridge().core;
     return null;
   }
+  // The store's create tick runs at the app's own pace (once a second), not
+  // every few ms: while a create is in flight each tick re-renders the whole
+  // app, and an `act` that ends while those renders keep coming never drains
+  // its queue when a render takes longer than the tick (a loaded CI runner).
   render(
-    <BridgeProvider adapter={adapter} core={await testCore()} storeOptions={{ tickMs: 5 }}>
+    <BridgeProvider adapter={adapter} core={await testCore()}>
       <TooltipProvider delay={500}>
         <ToastProvider>
           <Probe />

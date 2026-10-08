@@ -159,14 +159,32 @@ impl ViewOptions {
     /// Node budget for the walk. An explicit `max_elements` always wins;
     /// otherwise a model-facing read gets [`DEFAULT_MAX_ELEMENTS`], while
     /// `full_output` and internal observation reads keep the platform default.
+    ///
+    /// A `query` read filters the walked rows afterwards, so a small node
+    /// budget would hide matches that sit past it (an Electron form field
+    /// after a long list read back as zero matches). The filter already keeps
+    /// the response small, so a query searches with at least the platform
+    /// default budget.
     pub fn max_elements(
         &self,
         args: &Value,
         platform_default: usize,
         observation_only: bool,
     ) -> usize {
+        let has_query = args
+            .get("query")
+            .and_then(Value::as_str)
+            .is_some_and(|q| !q.trim().is_empty());
         if let Some(n) = args.get("max_elements").and_then(Value::as_u64) {
-            return n.max(1) as usize;
+            let n = n.max(1) as usize;
+            return if has_query {
+                n.max(platform_default)
+            } else {
+                n
+            };
+        }
+        if has_query {
+            return platform_default;
         }
         if self.full_output || observation_only {
             platform_default
@@ -955,6 +973,25 @@ mod tests {
         assert_eq!(o.max_elements(&json!({}), 2000, true), 2000);
         let full = opts(json!({"full_output": true}));
         assert_eq!(full.max_elements(&json!({}), 5000, false), 5000);
+    }
+
+    #[test]
+    fn query_reads_search_past_a_small_node_budget() {
+        let o = opts(json!({}));
+        assert_eq!(o.max_elements(&json!({"query": "Log"}), 2000, false), 2000);
+        assert_eq!(
+            o.max_elements(&json!({"query": "Log", "max_elements": 80}), 2000, false),
+            2000
+        );
+        assert_eq!(
+            o.max_elements(&json!({"query": "Log", "max_elements": 3000}), 2000, false),
+            3000
+        );
+        // A blank query is no query.
+        assert_eq!(
+            o.max_elements(&json!({"query": "  ", "max_elements": 80}), 2000, false),
+            80
+        );
     }
 
     fn payload(sid: &str, md: &str) -> (Vec<Content>, Value) {

@@ -1728,21 +1728,30 @@ pub struct KeyvaultClient {
     inner: core::keyvault::client::KeyvaultCommands,
 }
 
+/// `$CUA_HOME`, else `.cua` in the user's home: `$HOME`, or on Windows
+/// (where `HOME` is usually unset) `%USERPROFILE%`, as the daemon finds it.
+/// Without it the Keyvault was looked for at a relative `.cua` on Windows
+/// and read as "not running".
+fn default_cua_home(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
+    let set = |k: &str| var(k).filter(|v| !v.is_empty());
+    if let Some(h) = set("CUA_HOME") {
+        return PathBuf::from(h);
+    }
+    set("HOME")
+        .or_else(|| set("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_default()
+        .join(".cua")
+}
+
 #[uniffi::export]
 impl KeyvaultClient {
     /// The broker in `cua_home` (`None`: `$CUA_HOME`, else `~/.cua`).
     #[uniffi::constructor]
     pub fn new(cua_home: Option<String>) -> Arc<Self> {
-        let home = cua_home.map(PathBuf::from).unwrap_or_else(|| {
-            std::env::var_os("CUA_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    std::env::var_os("HOME")
-                        .map(PathBuf::from)
-                        .unwrap_or_default()
-                        .join(".cua")
-                })
-        });
+        let home = cua_home
+            .map(PathBuf::from)
+            .unwrap_or_else(|| default_cua_home(|k| std::env::var_os(k)));
         Arc::new(Self {
             inner: core::keyvault::client::KeyvaultCommands::for_cua_home(&home),
         })
@@ -2588,5 +2597,42 @@ mod size_limit_tests {
         );
         assert!(abs_cpus.contains(cpus.start()) && abs_cpus.contains(cpus.end()));
         assert!(abs_mem.contains(mem.start()) && abs_mem.contains(mem.end()));
+    }
+}
+
+#[cfg(test)]
+mod keyvault_home_tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn home(vars: &[(&str, &str)]) -> PathBuf {
+        default_cua_home(|k| {
+            vars.iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| OsString::from(v))
+        })
+    }
+
+    /// Windows has no `HOME`: the Keyvault is in the profile's `.cua`, where
+    /// the daemon serves it, not a relative `.cua` (which read as "the Cua
+    /// daemon is not running").
+    #[test]
+    fn the_keyvault_is_found_where_the_daemon_serves_it() {
+        assert_eq!(
+            home(&[("USERPROFILE", r"C:\Users\ada")]),
+            PathBuf::from(r"C:\Users\ada").join(".cua")
+        );
+        assert_eq!(
+            home(&[("HOME", "/home/ada"), ("USERPROFILE", "ignored")]),
+            PathBuf::from("/home/ada/.cua")
+        );
+        assert_eq!(
+            home(&[("CUA_HOME", "/srv/cua"), ("HOME", "/home/ada")]),
+            PathBuf::from("/srv/cua")
+        );
+        assert_eq!(
+            home(&[("HOME", ""), ("USERPROFILE", r"C:\Users\ada")]),
+            PathBuf::from(r"C:\Users\ada").join(".cua")
+        );
     }
 }

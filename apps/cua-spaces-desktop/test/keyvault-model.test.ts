@@ -6,6 +6,9 @@
 // runs on the app core in vault-native.test.ts.
 import { describe, expect, it } from "vitest";
 import type { KvPage } from "../src/native/generated/index";
+import * as path from "node:path";
+import { cuaHome } from "../src/model/daemon";
+import { keyvaultClient } from "../src/model/environment";
 import { appImagePage, brokerWords, unavailableOverview } from "../src/model/keyvault";
 
 const sdkError = (message: string, tag = "InvalidArgument") => Object.assign(new Error(message), { [Symbol.for("typeName")]: "CuaError", tag });
@@ -58,5 +61,22 @@ describe("the AppImage's Keyvault page", () => {
   it("leaves every other state as the core draws it", () => {
     expect(appImagePage(page, "not_running")).toBe(page);
     expect(appImagePage(page, "ready")).toBe(page);
+  });
+});
+
+describe("the Keyvault client's home", () => {
+  it("is the cua home the daemon serves it from, on Windows too (no HOME there)", () => {
+    const homes: unknown[] = [];
+    const native = {
+      KeyvaultClient: class {
+        constructor(home: string | undefined) {
+          homes.push(home);
+        }
+      },
+    } as never;
+    keyvaultClient(native, cuaHome({ USERPROFILE: "C:\\Users\\ada" }));
+    keyvaultClient(native, cuaHome({ CUA_HOME: "/srv/cua", HOME: "/home/ada" }));
+    // Not a relative `.cua`, which read as "the Cua daemon is not running" on Windows.
+    expect(homes).toEqual([path.join("C:\\Users\\ada", ".cua"), "/srv/cua"]);
   });
 });

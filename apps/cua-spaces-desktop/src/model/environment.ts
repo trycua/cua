@@ -19,7 +19,7 @@ import { PendingAgentSetup, LiveAgentSetup } from "./agents";
 import { AppModel } from "./app-model";
 import { LiveSpacesBackend } from "./backend";
 import { CloudModel } from "./cloud";
-import { DaemonSupervisor, KEYCHAIN_NONINTERACTIVE_ENV } from "./daemon";
+import { cuaHome, DaemonSupervisor, KEYCHAIN_NONINTERACTIVE_ENV } from "./daemon";
 import { computerName, DevicesModel } from "./devices";
 import { sdkErrorKind, words } from "./errors";
 import { HostModel } from "./host";
@@ -62,10 +62,12 @@ export interface Environment {
   cua: string | null;
 }
 
-/** The broker's client (`$CUA_HOME/keyvault.sock`); null when the library cannot make one, which leaves the Keyvault unavailable. */
-function keyvaultClient(native: Native) {
+/** The broker's client in the cua home the daemon serves it from (`$CUA_HOME/keyvault.sock`; on Windows
+ * `%USERPROFILE%\.cua`, as there is no `HOME`); null when the library cannot make one, which leaves the
+ * Keyvault unavailable. */
+export function keyvaultClient(native: Pick<Native, "KeyvaultClient">, home: string) {
   try {
-    return new native.KeyvaultClient(undefined);
+    return new native.KeyvaultClient(home);
   } catch (error) {
     console.warn(`[cua-spaces] no Keyvault client: ${words(error)}`);
     return null;
@@ -101,7 +103,7 @@ export function makeModel(o: EnvironmentOptions): Environment {
   const devices = new DevicesModel(native, () => gate.current?.devices ?? null);
   const cloud = new CloudModel(native, () => backend.current);
   const startup = new StartupModel({ kind: "starting" });
-  const keyvault = new KeyvaultModel(native, keyvaultClient(native));
+  const keyvault = new KeyvaultModel(native, keyvaultClient(native, cuaHome(env)));
   keyvault.appImage = (o.platform ?? process.platform) === "linux" && Boolean(env.APPIMAGE);
   const model = new AppModel({
     native,

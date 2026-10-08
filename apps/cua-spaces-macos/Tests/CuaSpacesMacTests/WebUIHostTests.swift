@@ -236,6 +236,10 @@ struct WebUIHostTests {
         #expect(rows?.first?["skillsTotal"] != nil)
         let configured = try await bridge.handle("agents.configure", ["agents": ["claude-code"]]) as? [[String: Any]]
         #expect(configured?.first { $0["agent"] as? String == "claude-code" }?["configured"] as? Bool == true)
+        // A Settings row's button, as the native one: Remove on a configured agent.
+        _ = try await bridge.handle("settings.choose", ["row": "agent:claude-code", "option": "press"])
+        let removed = try await bridge.handle("agents.setup", [:]) as? [[String: Any]]
+        #expect(removed?.first { $0["agent"] as? String == "claude-code" }?["configured"] as? Bool == false)
     }
 
     @Test func persistentAgentsListAsCamelCaseRecords() async throws {

@@ -18,6 +18,7 @@ import {
 } from "@/bridge";
 import { writeSavedOnboarding } from "@/bridge/onboarding";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
+import { AgentsSettingsSection } from "@/components/settings/agents-section";
 import { CoreSettingsRow, CoreSettingsSection } from "@/components/settings/core-section";
 import { Button } from "@/components/ui/button";
 import { Shortcut } from "@/components/ui/kbd";
@@ -56,7 +57,7 @@ const fail = toastError;
 
 /** Settings, General: the core's page as the SwiftUI app draws it when the
  * core is loaded (Account with Teams, General, Runtimes, Privacy, the
- * Keyvault), with this UI's own rows (appearance, keyboard shortcuts);
+ * Keyvault, AI agents), with this UI's own rows (appearance, keyboard shortcuts);
  * without the core, the same settings drawn by hand. */
 function SettingsPage() {
   const { data: settings } = useSettings();
@@ -78,6 +79,7 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
   const runtimes = section("runtimes");
   const privacy = section("privacy");
   const keyvault = section("keyvault");
+  const agents = section("agents");
   const autoWipe = keyvault && { ...keyvault, rows: keyvault.rows.filter((r) => KEYVAULT_ROWS.has(r.id)) };
   const mac = showsMacShellSettings();
 
@@ -137,7 +139,10 @@ function CoreGeneralPage({ page }: { page: CorePage }) {
       {privacy ? <CoreSettingsSection section={privacy} onChoose={choose} onPress={press} /> : null}
       {autoWipe?.rows.length ? <CoreSettingsSection section={autoWipe} foldNotes onChoose={choose} /> : null}
 
-      <SettingsGroup title="AI agents">
+      {agents ? <AgentsSettingsSection section={agents} /> : null}
+
+      {/* The cua-driver skill for every agent (the SwiftUI app offers it in its first run). */}
+      <SettingsGroup title="Background computer use">
         <Suspense fallback={<div className="h-48" />}>
           <DriverSettingsCard />
         </Suspense>

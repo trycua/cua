@@ -279,7 +279,18 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       return settingsSnapshot();
     },
     // The demo lays out none of the host's own rows: nothing to change.
-    "settings.choose": () => settingsSnapshot(),
+    "settings.choose": async ({ row }) => {
+      // An AI agents row's button (the SwiftUI host's `press`): set it up, or remove what cua added.
+      const agent = row.startsWith("agent:") ? state.agentSetup.find((r) => `agent:${r.agent}` === row && r.installed) : undefined;
+      if (agent) {
+        await wait(step);
+        const on = !agent.configured;
+        state.agentSetup = state.agentSetup.map((r) =>
+          r === agent ? { ...r, configured: on, skillsInstalled: on ? r.skillsTotal : 0, detail: on ? "Skills and MCP server set up" : "Not set up" } : r,
+        );
+      }
+      return settingsSnapshot();
+    },
 
     "keyvault.overview": () => overview(),
     "keyvault.unlock": async ({ passphrase }) => {

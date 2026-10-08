@@ -244,6 +244,10 @@ export class BridgeStore {
   private settingsSnap: SettingsSnapshot | undefined;
   private sessionSnap: SessionSnapshot | undefined;
   private signInPhase: SignInPhase = { kind: "idle" };
+  /** Settings, AI agents (`AppModel.agentRows`, `agentsBusy`, `agentsPending`): null until read. */
+  private agentRows: AgentSetupRow[] | null = null;
+  private agentsBusy = false;
+  private agentsPending: string[] = [];
   private signInUrl: string | null = null;
   private signInTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly signInTimeoutMs: number;
@@ -639,7 +643,11 @@ export class BridgeStore {
     if (!this.settingsSnap) return;
     const data: SettingsData = {
       ...this.settingsSnap,
-      page: settingsPage(this.core, this.settingsSnap, this.sessionSnap, this.signInPhase),
+      page: settingsPage(this.core, this.settingsSnap, this.sessionSnap, this.signInPhase, {
+        agents: this.agentRows,
+        agentsBusy: this.agentsBusy,
+        agentsPending: this.agentsPending,
+      }),
     };
     this.set("settings", { data, isLoading: false, error: null });
   }
@@ -1027,6 +1035,47 @@ export class BridgeStore {
 
   configureAgents(agents: string[] | null): Promise<AgentSetupRow[]> {
     return this.adapter.call("agents.configure", { agents });
+  }
+
+  /* ---- Settings, AI agents (the SwiftUI app's `AppModel` agent rows) ---- */
+
+  private setAgentRows(rows: AgentSetupRow[] | null): void {
+    this.agentRows = rows;
+    this.publishSettings();
+  }
+
+  /** Reads the coding agents on this machine for Settings, AI agents (`reloadAgents`). */
+  async loadAgentRows(): Promise<void> {
+    this.setAgentRows(await this.adapter.call("agents.setup", {}));
+  }
+
+  /** "Configure all detected agents" (`configureAllAgents`): "Configuring…" until it is done. */
+  async configureAllAgents(): Promise<void> {
+    if (this.agentsBusy) return;
+    this.agentsBusy = true;
+    this.publishSettings();
+    try {
+      this.setAgentRows(await this.adapter.call("agents.configure", { agents: null }));
+    } finally {
+      this.agentsBusy = false;
+      this.publishSettings();
+    }
+  }
+
+  /** A row's Configure or Remove (`press(row: "agent:<id>")`, which the
+   * host runs): "working…" on the row until it is done, then the rows again. */
+  async pressAgentRow(row: string): Promise<void> {
+    const id = row.slice("agent:".length);
+    if (!row.startsWith("agent:") || this.agentsPending.includes(id)) return;
+    this.agentsPending = [...this.agentsPending, id];
+    this.publishSettings();
+    try {
+      this.settingsSnap = await this.adapter.call("settings.choose", { row, option: "press" });
+      this.setAgentRows(await this.adapter.call("agents.setup", {}));
+    } finally {
+      this.agentsPending = this.agentsPending.filter((x) => x !== id);
+      this.publishSettings();
+    }
   }
 
   /* ---- a run's timeline ---- */

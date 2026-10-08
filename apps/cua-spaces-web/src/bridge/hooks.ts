@@ -152,6 +152,12 @@ export interface SettingsHook extends Resource<SettingsData> {
   updateSetting<K extends SettingKey>(key: K, value: SettingsValues[K]): Promise<void>;
   /** Picks an option on one of the host's own rows (the core's row id). */
   chooseSetting(row: string, option: string): Promise<void>;
+  /** Settings, AI agents: reads the coding agents on this machine. */
+  loadAgentRows(): Promise<void>;
+  /** "Configure all detected agents". */
+  configureAllAgents(): Promise<void>;
+  /** An agent row's Configure or Remove (`agent:<id>`). */
+  pressAgentRow(row: string): Promise<void>;
 }
 
 export function useSettings(): SettingsHook {
@@ -161,6 +167,9 @@ export function useSettings(): SettingsHook {
     ...r,
     updateSetting: (key, value) => run((s) => s.updateSetting(key, value)),
     chooseSetting: (row, option) => run((s) => s.chooseSetting(row, option)),
+    loadAgentRows: () => run((s) => s.loadAgentRows()),
+    configureAllAgents: () => run((s) => s.configureAllAgents()),
+    pressAgentRow: (row) => run((s) => s.pressAgentRow(row)),
   };
 }
 

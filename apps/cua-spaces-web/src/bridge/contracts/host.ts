@@ -11,6 +11,7 @@
  * Rust is the source of truth; these are its JSON (camelCase) shapes.
  */
 
+import type { AgentSetupRow } from "./agents";
 import type { MachineAccessNotice } from "./devices";
 import type { Location, Runtime, SpaceKind } from "./spaces";
 
@@ -430,6 +431,12 @@ export interface SettingsInput {
   lumeSource?: string | null;
   /** Which engine local Linux Spaces run on (none: no Linux row). */
   linuxSource?: string | null;
+  /** The coding agents (Settings, AI agents; none while detecting). */
+  agents?: AgentSetupRow[] | null;
+  /** "Configure all detected agents" is running. */
+  agentsBusy?: boolean;
+  /** The agents with a change running ("working…"). */
+  agentsPending?: string[];
 }
 
 export type SettingsRowKind =

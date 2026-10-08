@@ -248,6 +248,15 @@ describe.skipIf(!built)("agents", () => {
     expect(await code(bridge, "agents.setupDriver", {})).toBe("bad_args");
   });
 
+  it("runs a Settings row's button from the page (`settings.choose`, the SwiftUI host's press)", async () => {
+    const { bridge } = makeBridge();
+    await call(bridge, "agents.setup");
+    await call(bridge, "settings.choose", { row: "agent:claude-code", option: "press" });
+    expect(setup.calls).toEqual(["setup:claude-code"]);
+    const rows = (await call(bridge, "agents.setup")) as { agent: string; configured: boolean }[];
+    expect(rows.find((r) => r.agent === "claude-code")?.configured).toBe(true);
+  });
+
   it("presses a Settings row to configure it, and again to remove it, with a failure kept on its row", async () => {
     const { model } = makeBridge();
     const c = model.agents.coding;

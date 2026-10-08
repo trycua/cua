@@ -508,6 +508,8 @@ export function settingsPage(
   settings: SettingsSnapshot,
   session: SessionSnapshot | undefined,
   signIn: SettingsInput["signIn"],
+  /** Settings, AI agents: the coding agents read from the host (null: not yet, an empty section). */
+  agents?: Pick<SettingsInput, "agents" | "agentsBusy" | "agentsPending">,
 ): SettingsPage | null {
   const loc = settings.values.defaultLocation;
   const input: SettingsInput = {
@@ -532,6 +534,9 @@ export function settingsPage(
     autoConnect: settings.hostSettings?.autoConnect ?? null,
     lumeSource: settings.hostSettings?.lumeSource ?? null,
     linuxSource: settings.hostSettings?.linuxSource ?? null,
+    agents: agents?.agents ?? null,
+    agentsBusy: agents?.agentsBusy ?? false,
+    agentsPending: agents?.agentsPending ?? [],
   };
   return core.tryCall<SettingsPage>("settings.page", { input }) ?? null;
 }

@@ -268,9 +268,10 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
                 model.updates.choose(channel: option)
             } else if row.hasPrefix("experiment:") {
                 model.chooseExperiment(row: row, option: option)
-            } else if row == "welcome" {
+            } else if row == "welcome" || row.hasPrefix("agent:") {
                 // General's "Show again": the welcome window, as the native
-                // Settings button opens it.
+                // Settings button opens it. An AI agents row's Configure or
+                // Remove: what its native button does.
                 await model.press(row: row)
             } else {
                 await model.choose(row: row, option: option)

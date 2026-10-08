@@ -6,6 +6,9 @@ import { useNavigate } from "@tanstack/react-router";
 import { createFailedText, useBridge, useNewSpaceWizard, useSpaces } from "@/bridge";
 import { toast, toastError } from "@/components/ui/toast";
 
+/** The creates' toasts: one that worked closes the failure before it. */
+const CREATE = "create";
+
 /**
  * Opens New Space. Where the wizard can't run (no app core, or a host that
  * keeps New Space native), starts the host's own create instead: the
@@ -17,8 +20,8 @@ export function useNewSpace(): () => void {
   return () => {
     if (wizard.offered) return wizard.show();
     void createSpace()
-      .then((s) => toast(`${s.name} is ready`, { type: "success" }))
-      .catch(toastError("Couldn't create the Space"));
+      .then((s) => toast(`${s.name} is ready`, { type: "success", group: CREATE }))
+      .catch(toastError("Couldn't create the Space", CREATE));
   };
 }
 
@@ -41,11 +44,11 @@ export function useCreateFromWizard(): () => void {
     if (openDesktop) void navigate({ to: "/spaces/$spaceId", params: { spaceId: created.pendingId } });
     else void navigate({ to: "/spaces" });
     created.done
-      .then((s) => toast(`${s.name} is ready`, { type: "success" }))
+      .then((s) => toast(`${s.name} is ready`, { type: "success", group: CREATE }))
       .catch((e: unknown) => {
         const message = e instanceof Error ? e.message : String(e);
         // A cancelled create just goes away.
-        if (!message.startsWith("cancelled")) toast(createFailedText(core, e), { type: "error" });
+        if (!message.startsWith("cancelled")) toast(createFailedText(core, e), { type: "error", group: CREATE });
       });
   };
 }

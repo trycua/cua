@@ -9,22 +9,44 @@ export const toastManager = Toast.createToastManager();
 
 type ToastType = "info" | "success" | "error";
 
-/** How long an info or success toast stays. Errors stay until dismissed. */
+/** How long an info or success toast stays. */
 export const TOAST_MS = 5000;
+/**
+ * How long an error stays: longer, to read it, but it goes by itself too.
+ * What failed stays where it happened (a failed create keeps its row and
+ * reason, as in the SwiftUI app), so the toast need not.
+ */
+export const ERROR_TOAST_MS = 15000;
 
-export function toast(title: string, options: { description?: string; type?: ToastType } = {}) {
+/** The open toasts of each group (`toast`'s `group`). */
+const groups = new Map<string, Set<string>>();
+
+/**
+ * Shows a toast. One with a `group` replaces that group's earlier ones: a
+ * create that worked closes the failure of the try before it.
+ */
+export function toast(title: string, options: { description?: string; type?: ToastType; group?: string } = {}) {
   const type = options.type ?? "info";
+  const group = options.group;
+  if (group) {
+    for (const old of groups.get(group) ?? []) toastManager.close(old);
+    groups.delete(group);
+  }
   // Base UI's own timer pauses while the window is unfocused and resumes on
   // focus, which a webview in a native window may never report (an
   // "Opening…" toast stayed 10+ min). A plain timer closes it either way.
   const id = toastManager.add({ title, description: options.description, type, timeout: 0 });
-  if (type !== "error") setTimeout(() => toastManager.close(id), TOAST_MS);
+  if (group) groups.set(group, new Set([id]));
+  setTimeout(() => {
+    toastManager.close(id);
+    if (group) groups.get(group)?.delete(id);
+  }, type === "error" ? ERROR_TOAST_MS : TOAST_MS);
   return id;
 }
 
 /** A failed action: `title` says what didn't happen, the error says why. */
-export const toastError = (title: string) => (e: unknown) =>
-  toast(title, { description: e instanceof Error ? e.message : String(e), type: "error" });
+export const toastError = (title: string, group?: string) => (e: unknown) =>
+  toast(title, { description: e instanceof Error ? e.message : String(e), type: "error", group });
 
 const ICONS = { info: InfoIcon, success: CircleCheckIcon, error: CircleAlertIcon } as const;
 

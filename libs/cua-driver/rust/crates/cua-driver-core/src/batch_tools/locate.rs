@@ -109,6 +109,9 @@ pub(crate) struct ElementSpec {
     /// Any row of the tree containing this text, display-only rows included.
     pub text: Option<String>,
     pub nth: Option<usize>,
+    /// The tool that will act on the element, when known. Breaks a tie
+    /// between same-named rows: set_value means the field, not its label.
+    pub action: Option<&'static str>,
 }
 
 impl ElementSpec {
@@ -285,6 +288,7 @@ fn element_spec(object: &Map<String, Value>) -> Result<ElementSpec, String> {
         name,
         text: opt_string(object, "text")?,
         nth,
+        action: None,
     })
 }
 
@@ -943,8 +947,69 @@ pub(crate) fn matches<'r>(read: &'r Read, spec: &ElementSpec) -> Vec<&'r Value> 
     }
 }
 
+/// Lowercase role without the platform prefix: "AXTextField" -> "textfield".
+fn bare_role(role: &str) -> String {
+    let folded: String = role
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    folded
+        .strip_prefix("ax")
+        .map(str::to_owned)
+        .unwrap_or(folded)
+}
+
+/// Narrow several matches to the ones the caller most plausibly meant: those
+/// whose role is exactly the one named ("textfield" over a matching
+/// AXTextArea), then, with no role named, those the acting tool can use (a
+/// field for set_value rather than its label, a control for click rather
+/// than static text). Returns the input unchanged when no rule narrows it.
+fn narrow<'r>(found: Vec<&'r Value>, spec: &ElementSpec) -> Vec<&'r Value> {
+    if found.len() < 2 || spec.nth.is_some() {
+        return found;
+    }
+    let role_of = |element: &Value| {
+        element
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let keep = |found: &Vec<&'r Value>, rule: &dyn Fn(&Value) -> bool| -> Option<Vec<&'r Value>> {
+        let kept: Vec<&Value> = found.iter().copied().filter(|e| rule(e)).collect();
+        (!kept.is_empty() && kept.len() < found.len()).then_some(kept)
+    };
+    let mut found = found;
+    if let Some(role) = &spec.role {
+        let wanted = bare_role(role);
+        if let Some(kept) = keep(&found, &|e| bare_role(&role_of(e)) == wanted) {
+            found = kept;
+        }
+    } else if let Some(action) = spec.action {
+        let usable: &[&str] = match action {
+            "set_value" | "type_text" => &["textfield", "popupbutton", "checkbox", "slider"],
+            _ => &[],
+        };
+        let rule: Box<dyn Fn(&Value) -> bool> = if usable.is_empty() {
+            Box::new(|e: &Value| {
+                !matches!(
+                    role_family(&role_of(e)).as_str(),
+                    "statictext" | "image" | "group"
+                )
+            })
+        } else {
+            Box::new(move |e: &Value| usable.contains(&role_family(&role_of(e)).as_str()))
+        };
+        if let Some(kept) = keep(&found, &*rule) {
+            found = kept;
+        }
+    }
+    found
+}
+
 fn pick(read: &Read, spec: &ElementSpec) -> Result<Found, Miss> {
-    let found = matches(read, spec);
+    let found = narrow(matches(read, spec), spec);
     let chosen = match (found.len(), spec.nth) {
         (0, _) => {
             return Err(Miss::new(
@@ -1246,10 +1311,8 @@ fn row_matches(row: &str, spec: &ElementSpec) -> bool {
 fn near_misses(read: &Read, spec: &ElementSpec) -> String {
     // Same role, any name: the usual slip is a near-miss label.
     let relaxed = ElementSpec {
-        name: None,
-        text: None,
-        nth: None,
         role: spec.role.clone(),
+        ..Default::default()
     };
     let pool: Vec<&Value> = if spec.role.is_some() {
         matches(read, &relaxed)
@@ -1550,6 +1613,56 @@ mod tests {
             ..spec
         };
         assert_eq!(pick(&read, &second).unwrap().element["element_index"], 9);
+    }
+
+    #[test]
+    fn a_tie_goes_to_the_exact_role_or_what_the_tool_can_use() {
+        // v037a: set_value name "Reason" matched the label and the field.
+        let reason = read(
+            vec![
+                element(31, "AXStaticText", "Reason"),
+                element(32, "AXTextArea", "Reason"),
+            ],
+            "",
+        );
+        let by_name = |action| ElementSpec {
+            name: Some("Reason".into()),
+            action,
+            ..Default::default()
+        };
+        let set = pick(&reason, &by_name(Some("set_value"))).unwrap();
+        assert_eq!(set.element["element_index"], 32);
+        let click = pick(&reason, &by_name(Some("click"))).unwrap();
+        assert_eq!(click.element["element_index"], 32);
+        // Without a known tool the tie stays a tie.
+        assert_eq!(pick(&reason, &by_name(None)).unwrap_err().code, "ambiguous");
+
+        // v037a: role "textfield" matched AXTextField "A1" and AXTextArea "A1".
+        let cells = read(
+            vec![
+                element(3, "AXTextField", "A1"),
+                element(67, "AXTextArea", "A1"),
+            ],
+            "",
+        );
+        let field = ElementSpec {
+            role: Some("textfield".into()),
+            name: Some("A1".into()),
+            ..Default::default()
+        };
+        assert_eq!(pick(&cells, &field).unwrap().element["element_index"], 3);
+        // Two of the exact role stay ambiguous.
+        let twins = read(
+            vec![element(1, "AXButton", "OK"), element(2, "AXButton", "OK")],
+            "",
+        );
+        let ok = ElementSpec {
+            role: Some("button".into()),
+            name: Some("OK".into()),
+            action: Some("click"),
+            ..Default::default()
+        };
+        assert_eq!(pick(&twins, &ok).unwrap_err().code, "ambiguous");
     }
 
     #[test]

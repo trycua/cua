@@ -96,6 +96,30 @@ async fn batch_level_pid_and_window_id_are_the_default_window() {
     );
 }
 
+#[tokio::test]
+async fn an_empty_extra_step_field_is_ignored() {
+    let harness = Harness::new();
+    // v037a: `"args2": {}` next to a complete step.
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 7, "window_id": 3, "x": 1, "y": 2}, "args2": {}},
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}, "note": null}
+        ]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(harness.hits("click"), 2);
+    // One that carries something is still refused.
+    let refused = harness
+        .run(json!({"steps": [{"tool": "click", "args": {"pid": 7}, "args2": {"x": 1}}]}))
+        .await;
+    assert_eq!(refused.is_error, Some(true));
+    assert!(
+        text(&refused).contains("unknown field `args2`"),
+        "{}",
+        text(&refused)
+    );
+}
+
 // ── read steps ───────────────────────────────────────────────────────────
 
 #[tokio::test]

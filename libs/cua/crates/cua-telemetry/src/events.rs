@@ -844,6 +844,8 @@ pub struct SpaceCreate<'a> {
     pub stalled: bool,
     /// GPU acceleration was turned on.
     pub gpu: bool,
+    /// The error enum's case name (`InsufficientDisk`); empty when the shell had none.
+    pub error_variant: &'a str,
 }
 
 /// `cua_space_create`.
@@ -860,11 +862,17 @@ pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) ->
             p => p,
         },
     };
+    let error_kind = match outcome {
+        Outcome::Error if s.stalled && s.error_variant.is_empty() => "timeout",
+        Outcome::Error => error_kind(s.error_variant),
+        _ => "none",
+    };
     Event::new(event::SPACE_CREATE)
         .s("location", location(s.on))
         .s("guest_os", guest_os(s.guest_os))
         .s("kind", sandbox_kind(s.kind))
         .s("outcome", outcome.as_str())
+        .s("error_kind", error_kind)
         .s("failed_phase", failed_phase)
         .b("stalled", s.stalled && outcome == Outcome::Error)
         .s("time_bucket", create_time_bucket(elapsed))

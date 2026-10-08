@@ -4120,6 +4120,18 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
+    fn an_embedded_insufficient_disk_becomes_insufficient_disk() {
+        let err = cua_spaces::Error::from(cua_sandbox_core::Error::Runtime(
+            cua_sandbox_core::RuntimeError::InsufficientDisk("need 52 GB".into()),
+        ));
+        assert_eq!(err.tag(), "insufficient_disk");
+        match CuaError::from(err) {
+            CuaError::InsufficientDisk(message) => assert!(message.contains("need 52 GB")),
+            other => panic!("expected InsufficientDisk, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn send_file_keeps_both_copies_unless_overwrite_is_explicit() {
         use cua_spaces::files::Conflict;
         assert_eq!(parse_conflict(None).unwrap(), Conflict::Rename);

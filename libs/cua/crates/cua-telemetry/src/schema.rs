@@ -1030,6 +1030,7 @@ pub const EVENTS: &[EventSpec] = &[
             p("guest_os", Kind::Enum(GUEST_OS), "Guest OS family."),
             p("kind", Kind::Enum(SANDBOX_KINDS), "container or vm."),
             OUTCOME,
+            ERROR_KIND,
             p(
                 "failed_phase",
                 Kind::Enum(CREATE_PHASES),

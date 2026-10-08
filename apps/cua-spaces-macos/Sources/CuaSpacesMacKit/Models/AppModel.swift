@@ -569,7 +569,8 @@ public final class AppModel {
                 // Cancelled, here or elsewhere: the row goes; it did not fail.
                 sendCreate(.cancelDone(id: pendingId))
             } catch {
-                sendCreate(.fail(id: pendingId, error: LiveSpacesBackend.words(error)))
+                sendCreate(.fail(id: pendingId, error: LiveSpacesBackend.words(error),
+                                 errorVariant: (error as? CuaError).flatMap { Mirror(reflecting: $0).children.first?.label } ?? ""))
             }
         }
     }

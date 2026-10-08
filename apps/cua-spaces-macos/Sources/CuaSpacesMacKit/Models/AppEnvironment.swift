@@ -116,12 +116,7 @@ public enum AppEnvironment {
                              presence: fixtures ? FixturePresence() : LivePresence(),
                              loginItem: fixtures ? fixtureLoginItem(env["CUA_SPACES_LOGIN_ITEM"]) : MainAppLoginItem())
         if !fixtures, live != nil {
-            // Ask for Local Network access while someone is at this Mac
-            // (the first run's setup, and launch on a Mac that provides
-            // Spaces); one request shared by both.
-            let localNetwork = LiveLocalNetworkPermission()
-            model.host.localNetwork = localNetwork
-            onboarding.host.localNetwork = localNetwork
+            LiveLocalNetworkPermission().request()
         }
         if let live {
             let auth = live.cua.auth()

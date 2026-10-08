@@ -237,6 +237,9 @@ pub enum CreateAction {
         id: String,
         /// Why, one line.
         error: String,
+        /// The error enum's case name, when the shell has one.
+        #[serde(default)]
+        error_variant: String,
     },
     /// Remove a failed row.
     Dismiss {
@@ -756,7 +759,7 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 p.space_id = Some(space_id.clone());
             }
         }
-        CreateAction::Fail { id, error } => {
+        CreateAction::Fail { id, error, .. } => {
             // A create that ends while being cancelled was cancelled: its
             // row goes, it did not fail.
             if next.pending.iter().any(|p| &p.id == id && p.cancelling) {
@@ -1272,6 +1275,7 @@ mod tests {
             &CreateAction::Fail {
                 id: "pending:c".into(),
                 error: "cancelled: Cancelled local:space-1".into(),
+                error_variant: String::new(),
             },
         );
         assert!(gone.pending.is_empty());
@@ -1408,6 +1412,7 @@ mod tests {
             &CreateAction::Fail {
                 id: "pending:o".into(),
                 error: "x".into(),
+                error_variant: String::new(),
             },
         );
         assert_eq!(tick(&failed, 50.0), failed);
@@ -1469,6 +1474,7 @@ mod tests {
             &CreateAction::Fail {
                 id: "pending:c".into(),
                 error: "boom".into(),
+                error_variant: String::new(),
             },
         );
         let after = reduce(&failed, &at("pending:c", "connecting", None, 9_000));
@@ -1625,6 +1631,7 @@ mod tests {
             &CreateAction::Fail {
                 id: "pending:1".into(),
                 error: "no local runtime".into(),
+                error_variant: String::new(),
             },
         );
         let row = &compose(&[], &s)[0];
@@ -1737,6 +1744,7 @@ mod tests {
                 id: "pending:1".into(),
                 error: "You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing"
                     .into(),
+                error_variant: String::new(),
             },
         );
         let space = pending_space(&s.pending[0]);
@@ -1768,6 +1776,7 @@ mod tests {
             &CreateAction::Fail {
                 id: "pending:2".into(),
                 error: "no local runtime".into(),
+                error_variant: String::new(),
             },
         );
         assert!(

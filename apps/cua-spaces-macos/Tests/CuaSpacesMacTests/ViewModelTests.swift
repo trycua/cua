@@ -1183,7 +1183,8 @@ struct ViewModelTests {
                                        action: .start(id: "pending:1", name: "cloud", os: .linux, provider: .cloud,
                                                       now: 0, image: nil, kind: nil, hostArch: nil, gpu: false))
         creates = appCreatesReduce(state: creates, action: .fail(
-            id: "pending:1", error: "You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing"))
+            id: "pending:1", error: "You're out of Cua Cloud credit. Add credit at https://run.cua.ai/billing",
+            errorVariant: ""))
         let space = appCreatesCompose(spaces: [], state: creates)[0]
         #expect(space.detail == "You're out of Cua Cloud credit.")
         #expect(appSpaceDetail(space: space).creditNotice == nil)

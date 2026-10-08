@@ -242,6 +242,20 @@ pub async fn resolve_placement_for(
     first
 }
 
+/// Catalog `"gpu": false`, matched by tag or the digest the catalog recorded.
+#[rustfmt::skip]
+fn refuse_gpu(image: &str, gpu: bool, r: &Resolved) -> RuntimeResult<()> {
+    let digest = r.image.as_ref().map(|i| i.digest.as_str());
+    let Some(e) = gpu.then(|| cua_image::catalog::entries().iter().find(|e| {
+        e.gpu == Some(false) && (e.reference == image.trim() || e.digest.is_some() && e.digest.as_deref() == digest)
+    })).flatten() else { return Ok(()) };
+    let name = e.distro.as_ref().map_or(e.reference.as_str(), |d| d.name.as_str());
+    Err(RuntimeError::Unsupported {
+        backend: r.placement.backend.as_str().into(),
+        op: format!("GPU acceleration on {name}"),
+    })
+}
+
 async fn resolve_placement_inner(
     image: &str,
     os: &str,
@@ -792,6 +806,7 @@ impl LocalRuntime for VmmLocal {
                 op: "a disk size (disk_gb sizes VM disks; a container uses its engine's)".into(),
             });
         }
+        refuse_gpu(&spec.image, spec.gpu.is_some(), &r)?;
         let rt = self.runtime(p.backend).await.map_err(rt_err)?;
         let mut s = StartSpec::new(&spec.name, p.image)
             .os(os_of(&spec.os))
@@ -1436,6 +1451,57 @@ async fn build_with(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn refuse_gpu_follows_the_catalog() {
+        use super::{BackendKind, Placement, Resolved, RuntimeError, refuse_gpu};
+        use cua_vmm::ImageSource;
+
+        let digest = cua_image::catalog::entries()
+            .iter()
+            .find(|e| e.reference == "ghcr.io/trycua/macos:15")
+            .and_then(|e| e.digest.clone())
+            .expect("macos:15 digest");
+        let resolved = |digest: Option<&str>| Resolved {
+            placement: Placement {
+                backend: BackendKind::Lume,
+                image: ImageSource::oci("ignored"),
+            },
+            arch: None,
+            image: digest.map(|d| cua_image::ResolvedImage {
+                reference: "ghcr.io/trycua/macos".into(),
+                variant_ref: "ghcr.io/trycua/macos:15".into(),
+                pinned_ref: format!("ghcr.io/trycua/macos@{d}"),
+                digest: d.into(),
+                variant: cua_image::Variant::Lume,
+                arch: Some("arm64".into()),
+                architectures: vec!["arm64".into()],
+                emulated: false,
+                os: "macos".into(),
+                spacesd: Some(false),
+                layers: vec![],
+            }),
+        };
+        let refused = RuntimeError::Unsupported {
+            backend: "lume".into(),
+            op: "GPU acceleration on macOS Sequoia 15".into(),
+        };
+        assert_eq!(
+            refuse_gpu("ghcr.io/trycua/macos:15", true, &resolved(None)).unwrap_err(),
+            refused
+        );
+        assert_eq!(
+            refuse_gpu(
+                &format!("ghcr.io/trycua/macos@{digest}"),
+                true,
+                &resolved(Some(&digest))
+            )
+            .unwrap_err(),
+            refused
+        );
+        assert!(refuse_gpu("ghcr.io/trycua/macos:15", false, &resolved(None)).is_ok());
+        assert!(refuse_gpu("ghcr.io/trycua/macos:26", true, &resolved(None)).is_ok());
+    }
 
     #[test]
     fn an_engine_that_could_not_be_asked_is_not_reported_as_not_found() {

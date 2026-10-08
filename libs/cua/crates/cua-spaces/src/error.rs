@@ -168,6 +168,9 @@ impl Error {
             Error::Sandbox(cua_sandbox_core::Error::AmbiguousSandbox { .. }) => "ambiguous_sandbox",
             Error::Sandbox(cua_sandbox_core::Error::NotFound(_)) => "not_found",
             Error::Sandbox(cua_sandbox_core::Error::InvalidPlacement(_)) => "invalid_placement",
+            Error::Sandbox(cua_sandbox_core::Error::Runtime(
+                cua_sandbox_core::RuntimeError::InsufficientDisk(_),
+            )) => "insufficient_disk",
             Error::Sandbox(_) => "sandbox",
             Error::Io(_) => "io",
             Error::Mcp(_) => "mcp",
@@ -338,5 +341,14 @@ mod tests {
                 "error kind {tag} is not in cua_spaces_contract::ERROR_KINDS"
             );
         }
+    }
+
+    #[test]
+    fn an_embedded_insufficient_disk_keeps_its_kind() {
+        let err = Error::from(cua_sandbox_core::Error::Runtime(
+            cua_sandbox_core::RuntimeError::InsufficientDisk("need 52 GB".into()),
+        ));
+        assert_eq!(err.tag(), "insufficient_disk");
+        assert!(err.to_string().contains("need 52 GB"));
     }
 }

@@ -197,7 +197,8 @@
       "action": {
         "type": "fail",
         "id": "pending:2",
-        "error": "boot failed at /Users/maya/.cua/vmm"
+        "error": "boot failed at /Users/maya/.cua/vmm",
+        "errorVariant": "InsufficientDisk"
       }
     },
     {

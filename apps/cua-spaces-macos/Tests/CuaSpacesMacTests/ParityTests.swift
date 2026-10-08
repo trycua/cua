@@ -330,7 +330,8 @@ struct ParityTests {
                              bytesPerSecond: (a["bytesPerSecond"] as? NSNumber)?.doubleValue)
         case "tick": return .tick(now: Int64(a["now"] as! Int))
         case "finish": return .finish(id: id, spaceId: a["spaceId"] as! String)
-        case "fail": return .fail(id: id, error: a["error"] as! String)
+        case "fail": return .fail(id: id, error: a["error"] as! String,
+                                  errorVariant: a["errorVariant"] as? String ?? "")
         case "dismiss": return .dismiss(id: id)
         case "delete-start": return .deleteStart(id: id, now: Int64(a["now"] as! Int))
         case "delete-fail": return .deleteFail(id: id)

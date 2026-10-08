@@ -25179,6 +25179,10 @@ public struct AppSandboxImage: Equatable, Hashable {
      * How big it is per platform, when measured.
      */
     public var sizes: AppImageSizes?
+    /**
+     * `false`: its guest cannot use GPU acceleration.
+     */
+    public var gpu: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -25224,7 +25228,10 @@ public struct AppSandboxImage: Equatable, Hashable {
          */arch: [String],
         /**
          * How big it is per platform, when measured.
-         */sizes: AppImageSizes?) {
+         */sizes: AppImageSizes?,
+        /**
+         * `false`: its guest cannot use GPU acceleration.
+         */gpu: Bool) {
         self.imageRef = imageRef
         self.group = group
         self.os = os
@@ -25239,6 +25246,7 @@ public struct AppSandboxImage: Equatable, Hashable {
         self.distro = distro
         self.arch = arch
         self.sizes = sizes
+        self.gpu = gpu
     }
 
 
@@ -25270,7 +25278,8 @@ public struct FfiConverterTypeAppSandboxImage: FfiConverterRustBuffer {
                 published: FfiConverterBool.read(from: &buf),
                 distro: FfiConverterOptionTypeAppImageDistro.read(from: &buf),
                 arch: FfiConverterSequenceString.read(from: &buf),
-                sizes: FfiConverterOptionTypeAppImageSizes.read(from: &buf)
+                sizes: FfiConverterOptionTypeAppImageSizes.read(from: &buf),
+                gpu: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -25289,6 +25298,7 @@ public struct FfiConverterTypeAppSandboxImage: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppImageDistro.write(value.distro, into: &buf)
         FfiConverterSequenceString.write(value.arch, into: &buf)
         FfiConverterOptionTypeAppImageSizes.write(value.sizes, into: &buf)
+        FfiConverterBool.write(value.gpu, into: &buf)
     }
 }
 
@@ -41497,7 +41507,10 @@ public enum AppCreateAction: Equatable, Hashable {
          */id: String,
         /**
          * Why, one line.
-         */error: String
+         */error: String,
+        /**
+         * The error enum's case name, when the shell has one.
+         */errorVariant: String
     )
     /**
      * Remove a failed row.
@@ -41614,7 +41627,7 @@ public struct FfiConverterTypeAppCreateAction: FfiConverterRustBuffer {
         case 7: return .finish(id: try FfiConverterString.read(from: &buf), spaceId: try FfiConverterString.read(from: &buf)
         )
 
-        case 8: return .fail(id: try FfiConverterString.read(from: &buf), error: try FfiConverterString.read(from: &buf)
+        case 8: return .fail(id: try FfiConverterString.read(from: &buf), error: try FfiConverterString.read(from: &buf), errorVariant: try FfiConverterString.read(from: &buf)
         )
 
         case 9: return .dismiss(id: try FfiConverterString.read(from: &buf)
@@ -41697,10 +41710,11 @@ public struct FfiConverterTypeAppCreateAction: FfiConverterRustBuffer {
             FfiConverterString.write(spaceId, into: &buf)
 
 
-        case let .fail(id,error):
+        case let .fail(id,error,errorVariant):
             writeInt(&buf, Int32(8))
             FfiConverterString.write(id, into: &buf)
             FfiConverterString.write(error, into: &buf)
+            FfiConverterString.write(errorVariant, into: &buf)
 
 
         case let .dismiss(id):
@@ -49638,7 +49652,10 @@ public enum AppTelemetrySignal: Equatable, Hashable {
          */elapsedMs: UInt64,
         /**
          * GPU acceleration was turned on.
-         */gpu: Bool
+         */gpu: Bool,
+        /**
+         * The error enum's case name, when the shell sent one.
+         */errorVariant: String
     )
     /**
      * A Space create started (`cua_space_create_started`).
@@ -49771,7 +49788,7 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
         case 4: return .spaceWizard(action: try FfiConverterString.read(from: &buf)
         )
 
-        case 5: return .spaceCreate(location: try FfiConverterString.read(from: &buf), guestOs: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf), failedPhase: try FfiConverterString.read(from: &buf), stalled: try FfiConverterBool.read(from: &buf), elapsedMs: try FfiConverterUInt64.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf)
+        case 5: return .spaceCreate(location: try FfiConverterString.read(from: &buf), guestOs: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), outcome: try FfiConverterString.read(from: &buf), failedPhase: try FfiConverterString.read(from: &buf), stalled: try FfiConverterBool.read(from: &buf), elapsedMs: try FfiConverterUInt64.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf), errorVariant: try FfiConverterString.read(from: &buf)
         )
 
         case 6: return .spaceCreateStarted(location: try FfiConverterString.read(from: &buf), guestOs: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), gpu: try FfiConverterBool.read(from: &buf)
@@ -49826,7 +49843,7 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
             FfiConverterString.write(action, into: &buf)
 
 
-        case let .spaceCreate(location,guestOs,kind,outcome,failedPhase,stalled,elapsedMs,gpu):
+        case let .spaceCreate(location,guestOs,kind,outcome,failedPhase,stalled,elapsedMs,gpu,errorVariant):
             writeInt(&buf, Int32(5))
             FfiConverterString.write(location, into: &buf)
             FfiConverterString.write(guestOs, into: &buf)
@@ -49836,6 +49853,7 @@ public struct FfiConverterTypeAppTelemetrySignal: FfiConverterRustBuffer {
             FfiConverterBool.write(stalled, into: &buf)
             FfiConverterUInt64.write(elapsedMs, into: &buf)
             FfiConverterBool.write(gpu, into: &buf)
+            FfiConverterString.write(errorVariant, into: &buf)
 
 
         case let .spaceCreateStarted(location,guestOs,kind,gpu):

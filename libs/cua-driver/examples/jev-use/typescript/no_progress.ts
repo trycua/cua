@@ -60,7 +60,10 @@ export class NoProgressGuard {
       pending.kind === 'performed' ? `performed:${pending.candidateId}` : pending.kind;
 
     if (pending.kind === 'performed' && score === undefined) {
-      if (this.recent.length && this.recent.some((item) => item !== token)) {
+      // Only a changed previously delivered candidate starts fresh evidence.
+      // Recovery signals are not proof of app-owned progress.
+      const priorPerformed = [...this.recent].reverse().find((item) => item.startsWith('performed:'));
+      if (priorPerformed !== undefined && priorPerformed !== token) {
         this.resetEvidence();
       }
     }

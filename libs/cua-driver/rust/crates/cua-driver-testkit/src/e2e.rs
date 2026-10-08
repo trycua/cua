@@ -2416,6 +2416,38 @@ mod tests {
     }
 
     #[test]
+    fn catalog_validator_binds_action_truth_to_independent_observation() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        let action_path = turn.join("action.json");
+        let mut action: Value =
+            serde_json::from_slice(&std::fs::read(&action_path).unwrap()).unwrap();
+
+        action["action_truth"] = serde_json::json!({
+            "effect": "unverifiable",
+            "evidence": []
+        });
+        std::fs::write(&action_path, action.to_string()).unwrap();
+        validate_catalog(
+            std::slice::from_ref(&case),
+            std::slice::from_ref(&result),
+            Some(root.path()),
+            true,
+        )
+        .expect("conservative unverifiable claim must remain compatible with delivered oracle");
+
+        action["action_truth"]["effect"] = serde_json::json!("refused");
+        std::fs::write(&action_path, action.to_string()).unwrap();
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("driver refusal claim must contradict delivered external oracle");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("action-truth contradiction")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
     fn validator_unknown_dispatched_error_is_not_a_pretarget_refusal() {
         let (root, case, result, turn) = complete_turn_fixture();
         let mut action = semantic_click_fixture();

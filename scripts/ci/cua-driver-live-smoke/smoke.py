@@ -8,7 +8,9 @@ fixture window (GTK3 on Linux, WinForms on Windows) and checks:
   * the act-by-element_token loop (snapshot, click a token, fresh snapshot),
   * `since` (a diff against an earlier snapshot, and `no change`),
   * run_actions (one batch with an end-of-batch observation),
-  * set_value on a drop-down combo box and on an editable combo box.
+  * set_value on a drop-down combo box and on an editable combo box,
+  * display_only previews (and plain screenshot-only reads) keep the agent's
+    element tokens valid.
 
 Also checked: an element_token alone (no pid) acts and a stale one is
 refused as `stale_element_token`. Those are required: each is `pass` or
@@ -402,6 +404,9 @@ def run_checks(smoke):
     # 7. element_token alone, no pid: the token names its pid.
     token_without_pid_check(smoke)
 
+    # 7a. display_only previews leave the agent's snapshot alone.
+    display_only_check(smoke)
+
     # 7b. Lean-read ergonomics from the v035 bench: since:"latest", a bare row
     # number as element_token, run_actions observe:true, zoom x/y/width/height.
     lean_read_ergonomics_check(smoke)
@@ -477,6 +482,73 @@ def token_without_pid_check(smoke):
         "; ".join(problems)
         or f"click {json.dumps(args)} -> Count: {(before or 0) + 1}; a stale token -> "
         f"stale_element_token ({stale.first_line()})",
+    )
+
+
+DISPLAY_ONLY_READS = 8
+
+
+def display_only_check(smoke):
+    """A preview polling display_only reads (T3 Code's picture-in-picture)
+    must not stale the agent's element tokens; neither may a plain
+    screenshot-only read."""
+    check = f"tokens stay valid after {DISPLAY_ONLY_READS} display_only reads"
+    problems = []
+    listed = smoke.mcp.request("tools/list", {})
+    tools = (listed.get("result") or {}).get("tools") or []
+    schema = next(
+        (t.get("inputSchema") or {} for t in tools if t.get("name") == "get_window_state"), {}
+    )
+    if "display_only" not in (schema.get("properties") or {}):
+        problems.append("get_window_state does not advertise display_only")
+
+    state = smoke.read()
+    snapshot = state.structured.get("snapshot_id")
+    before = count_value(tree(state))
+    increment = find_row(tree(state), BUTTON, "Increment")
+    preview = {"include_accessibility_tree": False, "include_screenshot": True,
+               "max_dimension": 480, "display_only": True}
+    for n in range(DISPLAY_ONLY_READS):
+        frame = smoke.read(**preview)
+        f = frame.structured
+        bad = []
+        if frame.is_error:
+            bad.append(frame.first_line())
+        if f.get("display_only") is not True or not f.get("frame_note"):
+            bad.append("no display_only/frame_note")
+        if not isinstance(f.get("screenshot_width"), int) or not isinstance(f.get("screenshot_height"), int):
+            bad.append("no screenshot_width/height")
+        for key in ("snapshot_id", "invalidated_snapshot_ids", "capture_id"):
+            if key in f:
+                bad.append(f"carries {key}={f[key]!r}")
+        if bad:
+            problems.append(f"display_only read {n + 1}: " + "; ".join(bad))
+            break
+        time.sleep(0.25)
+    refused = smoke.read(display_only=True)
+    if not refused.is_error or "display_only requires include_accessibility_tree:false" not in refused.text:
+        problems.append(f"display_only with a tree walk was not refused: {refused.first_line()}")
+
+    plain = smoke.read(include_accessibility_tree=False)
+    if plain.structured.get("invalidated_snapshot_ids"):
+        problems.append(
+            f"a plain screenshot-only read invalidated {plain.structured['invalidated_snapshot_ids']}"
+        )
+
+    args = {"pid": smoke.pid, "element_token": token(state, increment)}
+    click = smoke.call("click", args)
+    after = smoke.wait_for_text(f"Count: {(before or 0) + 1}")
+    if click.is_error:
+        problems.append(f"click with the pre-preview token {args['element_token']} -> {click.first_line()}")
+    elif f"Count: {(before or 0) + 1}" not in tree(after):
+        problems.append(f"click ok but the count did not move from {before}")
+    smoke.record(
+        check,
+        "fail" if problems else "pass",
+        "; ".join(problems)
+        or f"schema advertises display_only; {DISPLAY_ONLY_READS} display_only reads of "
+        f"snapshot {snapshot} carried no snapshot_id/capture_id; a plain screenshot-only "
+        f"read invalidated nothing; click {args['element_token']} -> Count: {(before or 0) + 1}",
     )
 
 

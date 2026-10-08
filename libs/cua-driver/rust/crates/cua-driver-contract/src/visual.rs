@@ -52,14 +52,17 @@ fn visual_regions_schema(_: &mut SchemaGenerator) -> Schema {
 }
 
 fn region_kinds_schema(_: &mut SchemaGenerator) -> Schema {
-    // Optional: omit the field rather than advertising `| null`. Items need an
-    // explicit string type so Vertex/Gemini accept tools/list (#4798 / #4717).
     json_schema!({
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 2,
-        "uniqueItems": true,
-        "items": { "type": "string", "enum": ["text", "icon"] }
+        "anyOf": [
+            {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 2,
+                "uniqueItems": true,
+                "items": { "enum": ["text", "icon"] }
+            },
+            { "type": "null" }
+        ]
     })
 }
 

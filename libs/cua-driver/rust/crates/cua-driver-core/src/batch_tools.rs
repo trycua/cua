@@ -870,6 +870,10 @@ async fn run_step(
             window
         };
         if !element.is_empty() {
+            let element = ElementSpec {
+                action: Some(tool),
+                ..element
+            };
             match locator.find(&window_spec, &element, find_timeout).await {
                 Ok(found) => {
                     let object = args.as_object_mut().expect("object");
@@ -1282,8 +1286,7 @@ async fn refind_stale_target(
     let element = ElementSpec {
         role: Some(role.clone()),
         name: Some(label.clone()),
-        text: None,
-        nth: None,
+        ..Default::default()
     };
     let found = locator.find(&window, &element, REFIND_TIMEOUT).await.ok()?;
     let same_label = found
@@ -1353,9 +1356,17 @@ fn parse_step(
         PlanError::step(index, "must be an object: {tool, args} or {<tool>: args}")
     })?;
     // The action: `{tool, args}`, or the shorthand `{<tool>: args}`.
+    // An extra field that is empty (`"args2": {}`, `null`) says nothing; a
+    // step is only refused for fields that carry something.
     let shorthand: Vec<&String> = object
-        .keys()
-        .filter(|key| !STEP_KEYS.contains(&key.as_str()))
+        .iter()
+        .filter(|(key, _)| !STEP_KEYS.contains(&key.as_str()))
+        .filter(|(_, value)| match value {
+            Value::Null => false,
+            Value::Object(fields) => !fields.is_empty() || object.get("tool").is_none(),
+            _ => true,
+        })
+        .map(|(key, _)| key)
         .collect();
     let (name, raw_args) = match (object.get("tool"), shorthand.as_slice()) {
         (Some(_), [extra, ..]) => {

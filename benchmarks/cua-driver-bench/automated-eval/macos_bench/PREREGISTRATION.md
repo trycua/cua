@@ -442,6 +442,13 @@ These are produced by `tools/analyze_v037.py`, written before the first trial. A
 
 The first launch at 02:12 UTC passed every preflight check. At 02:14:56, during the first trial, it was stopped by a quoting bug in Stream C's host-side post-processing script. That script stopped the VM because it wrongly concluded the run had ended. No trial completed and `results.jsonl` was empty. The run folder was kept as `runs/v037-full.aborted-0214`, and the run was relaunched under the same id, build, arms, order and rules. No rule changed.
 
+### A7.8 Seat handling during the run (recorded 8 Oct 2026; no rule of the analysis changes)
+
+* **05:51 UTC.** The host watchdog refreshed the access token from the Mac's live Claude Code login. cswap had just switched that login from account 6 to account 7, so about two trials ran on account 7 while the log said account 6. The rows' own quota readings show it. That route was removed: from then on, tokens come only from the switcher's per-account items, and are always access tokens only.
+* **05:58 to 07:21 UTC.** Account 4's five-hour window was full. The runner waited for its reset under the registered rule. One attempt was an `infra_error` and was rerun.
+* **From about 08:10 UTC.** At the owner's instruction, any seat with headroom may be used, most headroom first. A seat is left at five-hour 0.94, or at seven-day 0.92 for account 6 and 0.94 for the others, or on any rejection, without pausing. The run waits only if no seat qualifies.
+* Every switch is in `runs/v037-full/account-switch.txt`.
+
 ### A7.6 Harness changes for this amendment
 
 `tools/analyze_v037.py`; `pins.json` `cua_main` (this build).

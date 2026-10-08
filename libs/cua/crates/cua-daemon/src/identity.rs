@@ -139,4 +139,71 @@ mod tests {
         // A CLI outside any bundle shares whatever daemon runs.
         assert_eq!(bundled_cua_of(&dir.path().join("cua")), None);
     }
+
+    #[test]
+    fn the_electron_app_ships_its_cua_in_resources_native() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = if cfg!(windows) { "cua.exe" } else { "cua" };
+        let touch = |p: &std::path::Path| {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b"").unwrap();
+        };
+        // macOS: `Contents/Resources/native/cua`, for the app, its helper
+        // apps and the `cua` itself.
+        let app = dir.path().join("Cua Spaces.app/Contents");
+        let main = app.join("MacOS/Cua Spaces");
+        let helper = app.join("Frameworks/Cua Spaces Helper.app/Contents/MacOS/Cua Spaces Helper");
+        let cua = app.join("Resources/native").join(exe);
+        touch(&main);
+        touch(&helper);
+        assert_eq!(bundled_cua_of(&main), None);
+        touch(&cua);
+        let want = cua.canonicalize().unwrap();
+        assert_eq!(bundled_cua_of(&main), Some(want.clone()));
+        assert_eq!(bundled_cua_of(&helper), Some(want.clone()));
+        assert_eq!(bundled_cua_of(&cua), Some(want));
+        // Windows and Linux: `resources/native/cua` beside the executable.
+        let install = dir.path().join("Programs/Cua Spaces");
+        let main = install.join(if cfg!(windows) {
+            "Cua Spaces.exe"
+        } else {
+            "cua-spaces"
+        });
+        let cua = install.join("resources/native").join(exe);
+        touch(&main);
+        assert_eq!(bundled_cua_of(&main), None);
+        touch(&cua);
+        let want = cua.canonicalize().unwrap();
+        assert_eq!(bundled_cua_of(&main), Some(want.clone()));
+        assert_eq!(bundled_cua_of(&cua), Some(want));
+        // A `cua` in some other `native` directory is not an app's.
+        let loose = dir.path().join("build/native").join(exe);
+        touch(&loose);
+        assert_eq!(bundled_cua_of(&loose), None);
+    }
+
+    /// The Electron app's `cua` and the SwiftUI app's are different
+    /// executables, so each app's `cua daemon start` replaces the other's
+    /// daemon rather than reuse it.
+    #[cfg(unix)]
+    #[test]
+    fn one_apps_daemon_is_a_stranger_to_the_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let swift = dir.path().join("Swift/Cua Spaces.app/Contents/MacOS/cua");
+        let electron = dir
+            .path()
+            .join("Electron/Cua Spaces.app/Contents/Resources/native/cua");
+        for p in [&swift, &electron] {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b"cua").unwrap();
+        }
+        let own = bundled_cua_of(&electron).unwrap();
+        let theirs = of(&swift).unwrap();
+        assert_eq!(
+            stranger(&theirs.executable, &theirs.build_id, &own),
+            Some(format!("it runs {}", theirs.executable))
+        );
+        let mine = of(&electron).unwrap();
+        assert_eq!(stranger(&mine.executable, &mine.build_id, &own), None);
+    }
 }

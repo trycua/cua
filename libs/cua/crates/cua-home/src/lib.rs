@@ -27,24 +27,51 @@ use std::path::{Path, PathBuf};
 /// Environment variable that marks a test process.
 pub const CUA_TEST_ENV: &str = "CUA_TEST";
 
-/// The `cua` of the app bundle this process runs in
-/// (`<Name>.app/Contents/MacOS/cua`, symlinks resolved), when there is one:
-/// the `cua` an app ships and expects its daemon to run. `None` outside an
-/// app bundle (a CLI on `PATH`, a Python host).
+/// The `cua` of the app this process runs in (symlinks resolved), when
+/// there is one: the `cua` an app ships and expects its daemon to run.
+/// `None` outside an app (a CLI on `PATH`, a Python host). The places an
+/// app ships it:
+///
+/// - the SwiftUI Mac app: `<Name>.app/Contents/MacOS/cua`;
+/// - the Electron app on macOS: `<Name>.app/Contents/Resources/native/cua`;
+/// - the Electron app on Windows and Linux: `resources/native/cua[.exe]`
+///   beside the app's executable.
 pub fn bundled_cua() -> Option<PathBuf> {
     bundled_cua_of(&std::env::current_exe().ok()?)
 }
 
-/// [`bundled_cua`] for the executable `exe`.
+/// The bundled CLI's file name on this platform.
+const CUA_FILE: &str = if cfg!(windows) { "cua.exe" } else { "cua" };
+
+/// [`bundled_cua`] for the executable `exe`: the app's executable, or a
+/// helper or the `cua` inside it.
 pub fn bundled_cua_of(exe: &Path) -> Option<PathBuf> {
     let exe = exe.canonicalize().unwrap_or_else(|_| exe.to_path_buf());
-    let bundle = exe
+    let file = |p: PathBuf| p.canonicalize().ok().filter(|p| p.is_file());
+    // macOS: the bundle's own `cua`. A helper app inside it (Electron's
+    // `Contents/Frameworks/<Name> Helper.app`) belongs to the outer bundle.
+    for bundle in exe
         .ancestors()
-        .find(|d| d.extension().is_some_and(|e| e == "app"))?;
-    let cua = bundle
-        .join("Contents/MacOS")
-        .join(if cfg!(windows) { "cua.exe" } else { "cua" });
-    cua.canonicalize().ok().filter(|p| p.is_file())
+        .filter(|d| d.extension().is_some_and(|e| e == "app"))
+    {
+        let contents = bundle.join("Contents");
+        if let Some(cua) = file(contents.join("MacOS").join(CUA_FILE))
+            .or_else(|| file(contents.join("Resources/native").join(CUA_FILE)))
+        {
+            return Some(cua);
+        }
+    }
+    // Windows and Linux (Electron): `<dir>/resources/native/cua`, for the
+    // app's executable in `<dir>` or that `cua` itself.
+    let named = |d: Option<&Path>, n: &str| {
+        d.and_then(Path::file_name)
+            .is_some_and(|f| f.to_string_lossy().eq_ignore_ascii_case(n))
+    };
+    let dir = exe.parent()?;
+    if named(Some(dir), "native") && named(dir.parent(), "resources") {
+        return file(dir.join(CUA_FILE));
+    }
+    file(dir.join("resources/native").join(CUA_FILE))
 }
 
 /// The cua home: `$CUA_HOME`, else `~/.cua`.

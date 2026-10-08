@@ -89,7 +89,7 @@ describe.skipIf(!posix)("the supervisor", () => {
         return null;
       },
       restarted: async () => void (reconnects += 1),
-      daemonPid: async () => null,
+      daemonPid: async () => (up ? process.pid : null),
       report: () => {},
       log: () => {},
     });
@@ -97,6 +97,35 @@ describe.skipIf(!posix)("the supervisor", () => {
     stop();
     expect(starts).toBe(1);
     expect(reconnects).toBe(1);
+  });
+
+  it("does not reconnect while another build's daemon keeps running", async () => {
+    // `cua daemon start` said "already running" and left another app's
+    // daemon in place: no "started again" reconnect, a failure that backs off.
+    let starts = 0;
+    let reconnects = 0;
+    const errors: (string | null)[] = [];
+    const lines: string[] = [];
+    const s = new DaemonSupervisor("/x/cua", scratch, () => false, { CUA_HOME: scratch });
+    const stop = s.supervise({
+      intervalMs: 10,
+      isUp: async () => false,
+      start: async () => {
+        starts += 1;
+        return null;
+      },
+      restarted: async () => void (reconnects += 1),
+      daemonPid: async () => null,
+      report: (e) => errors.push(e),
+      log: (l) => lines.push(l),
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    stop();
+    expect(reconnects).toBe(0);
+    // The first try after 10 ms, the next after the 2 s backoff.
+    expect(starts).toBe(1);
+    expect(errors).toEqual([]);
+    expect(lines[0]).toMatch(/not this app's, and `cua daemon start` did not replace it/);
   });
 });
 

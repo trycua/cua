@@ -95,7 +95,7 @@ export interface SuperviseOptions {
   isUp: () => Promise<boolean>;
   /** Why it could not be started (after three tries in a row), and null once it answers again. */
   report: (error: string | null) => void;
-  /** After each start that succeeded (the app connects again). */
+  /** After each start that left this app's daemon running (the app connects again). */
   restarted?: () => Promise<void>;
   /** Replaces `start` (tests). */
   start?: () => Promise<string | null>;
@@ -242,7 +242,14 @@ export class DaemonSupervisor {
           reported = false;
           continue;
         }
-        const error = o.start ? await o.start() : await this.start();
+        let error = o.start ? await o.start() : await this.start();
+        // `cua daemon start` succeeds when a daemon already runs; when that
+        // one is still another build's (it was not replaced), connecting
+        // again would only find it again, every interval.
+        if (error === null && (await pidNow()) === null) {
+          const other = daemonPids(this.cuaHome).at(-1);
+          error = `the running cua daemon${other ? ` (pid ${other})` : ""} is not this app's, and \`cua daemon start\` did not replace it`;
+        }
         if (error === null) {
           // Running now: connect again, which supervises the new connection.
           if (o.restarted) {

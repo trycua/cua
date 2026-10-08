@@ -1,0 +1,23 @@
+{
+  "source_sha256": "64352ed22d8cc926ac0cd4b811f24b55d5e67efcd4ff2836c98977d00947151c",
+  "runs": [
+    {
+      "mutation": "Remove required geometry agreement check",
+      "mutant_sha256": "85c6e0d97ea29c2669681942a1049f88b6f268483ff00cdc7a16cf4d192d9961",
+      "tests_run": 5,
+      "keeper_failed": true,
+      "failures": 1,
+      "errors": 0,
+      "log": "..F..\n======================================================================\nFAIL: test_owner_geometry_and_capture_shortcuts_fail (projection_mutation_tests.Tests.test_owner_geometry_and_capture_shortcuts_fail) (reason='Window moved or frame sources disagree')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/tmp/cua-observation-projection-20261006/libs/cua-driver/experiments/observation-projection-2026-10-06/test_tree_geometry.py\", line 44, in test_owner_geometry_and_capture_shortcuts_fail\n    with self.subTest(reason=reason),self.assertRaisesRegex(TreeGeometryHandoff,'^'+re.escape(reason)+'$'):enrich_tree(s,w,pid=7,window_id=9)\n                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: TreeGeometryHandoff not raised\n\n----------------------------------------------------------------------\nRan 5 tests in 0.002s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "mutation": "Remove required snapshot owner/identity check",
+      "mutant_sha256": "561d927c04922872af32211d7514a7aa10bde8ea34f73893a4006d555b0c01e6",
+      "tests_run": 5,
+      "keeper_failed": true,
+      "failures": 1,
+      "errors": 0,
+      "log": "..F..\n======================================================================\nFAIL: test_owner_geometry_and_capture_shortcuts_fail (projection_mutation_tests.Tests.test_owner_geometry_and_capture_shortcuts_fail) (reason='Snapshot owner/identity mismatch')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/private/tmp/cua-observation-projection-20261006/libs/cua-driver/experiments/observation-projection-2026-10-06/test_tree_geometry.py\", line 44, in test_owner_geometry_and_capture_shortcuts_fail\n    with self.subTest(reason=reason),self.assertRaisesRegex(TreeGeometryHandoff,'^'+re.escape(reason)+'$'):enrich_tree(s,w,pid=7,window_id=9)\n                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: TreeGeometryHandoff not raised\n\n----------------------------------------------------------------------\nRan 5 tests in 0.001s\n\nFAILED (failures=1)\n"
+    }
+  ]
+}

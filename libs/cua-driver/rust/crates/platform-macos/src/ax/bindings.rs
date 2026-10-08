@@ -56,6 +56,12 @@ extern "C" {
         attribute: CFStringRef,
         value: *mut CFTypeRef,
     ) -> AXError;
+    pub fn AXUIElementCopyMultipleAttributeValues(
+        element: AXUIElementRef,
+        attributes: CFArrayRef,
+        options: u32,
+        values: *mut CFArrayRef,
+    ) -> AXError;
     pub fn AXUIElementCopyAttributeNames(
         element: AXUIElementRef,
         names: *mut CFArrayRef,
@@ -124,6 +130,7 @@ pub unsafe fn element_at_screen_position(pid: i32, x: f64, y: f64) -> Option<AXU
 // ── AXValue functions ────────────────────────────────────────────────────────
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
+    pub fn AXValueGetTypeID() -> CFTypeID;
     pub fn AXValueCreate(the_type: AXValueType, value_ptr: *const c_void) -> AXValueRef;
     pub fn AXValueGetType(value: AXValueRef) -> AXValueType;
     pub fn AXValueGetValue(
@@ -160,6 +167,205 @@ pub unsafe fn is_attribute_settable(element: AXUIElementRef, attr_name: &str) ->
     AXUIElementIsAttributeSettable(element, attr.as_concrete_TypeRef(), &mut settable)
         == kAXErrorSuccess
         && settable != 0
+}
+
+/// Typed conversions used by the tree's batched observation reads.
+#[derive(Clone, Copy)]
+pub enum AttrKind {
+    String,
+    Stringish,
+    Number,
+    Bool,
+    Point,
+    Size,
+}
+#[derive(Debug, PartialEq)]
+pub enum AttrValue {
+    String(String),
+    Stringish(StringishAttrValue),
+    Number(f64),
+    Bool(bool),
+    Point([f64; 2]),
+    Size([f64; 2]),
+}
+impl AttrValue {
+    pub fn string(self) -> Option<String> {
+        if let Self::String(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+    pub fn stringish(self) -> Option<StringishAttrValue> {
+        if let Self::Stringish(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+    pub fn number(self) -> Option<f64> {
+        if let Self::Number(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+    pub fn boolean(self) -> Option<bool> {
+        if let Self::Bool(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+}
+unsafe fn decode_attr(value: CFTypeRef, kind: AttrKind) -> Option<AttrValue> {
+    use core_foundation::{boolean::CFBoolean, number::CFNumber};
+    if value.is_null() {
+        return None;
+    }
+    let type_id = core_foundation::base::CFGetTypeID(value);
+    match kind {
+        AttrKind::String if type_id == CFStr::type_id() => Some(AttrValue::String(
+            CFStr::wrap_under_get_rule(value as _).to_string(),
+        )),
+        AttrKind::Stringish => coerce_stringish_value(value).map(AttrValue::Stringish),
+        AttrKind::Number if type_id == CFNumber::type_id() => {
+            CFNumber::wrap_under_get_rule(value as _)
+                .to_f64()
+                .map(AttrValue::Number)
+        }
+        AttrKind::Bool if type_id == CFBoolean::type_id() => Some(AttrValue::Bool(
+            CFBoolean::wrap_under_get_rule(value as _).into(),
+        )),
+        AttrKind::Bool if type_id == CFNumber::type_id() => {
+            CFNumber::wrap_under_get_rule(value as _)
+                .to_f64()
+                .map(|n| AttrValue::Bool(n != 0.0))
+        }
+        AttrKind::Point
+            if type_id == AXValueGetTypeID()
+                && AXValueGetType(value as AXValueRef) == kAXValueCGPointType =>
+        {
+            let mut point = CGPointValue { x: 0.0, y: 0.0 };
+            AXValueGetValue(
+                value as AXValueRef,
+                kAXValueCGPointType,
+                &mut point as *mut _ as *mut c_void,
+            )
+            .then_some(AttrValue::Point([point.x, point.y]))
+        }
+        AttrKind::Size
+            if type_id == AXValueGetTypeID()
+                && AXValueGetType(value as AXValueRef) == kAXValueCGSizeType =>
+        {
+            let mut size = CGSizeValue {
+                width: 0.0,
+                height: 0.0,
+            };
+            AXValueGetValue(
+                value as AXValueRef,
+                kAXValueCGSizeType,
+                &mut size as *mut _ as *mut c_void,
+            )
+            .then_some(AttrValue::Size([size.width, size.height]))
+        }
+        _ => None,
+    }
+}
+unsafe fn decode_attr_slots(
+    array: &CFArray<CFTypeRef>,
+    kinds: &[AttrKind],
+) -> Vec<Option<AttrValue>> {
+    kinds
+        .iter()
+        .enumerate()
+        .map(|(i, kind)| {
+            if i >= array.len() as usize {
+                return None;
+            }
+            array
+                .get(i as core_foundation::base::CFIndex)
+                .and_then(|value| decode_attr(*value, *kind))
+        })
+        .collect()
+}
+unsafe fn decode_batch_or_fallback<F>(
+    error: AXError,
+    values: CFArrayRef,
+    kinds: &[AttrKind],
+    mut fallback: F,
+) -> Vec<Option<AttrValue>>
+where
+    F: FnMut(usize) -> Option<AttrValue>,
+{
+    if error != kAXErrorSuccess
+        || values.is_null()
+        || core_foundation::base::CFGetTypeID(values as CFTypeRef)
+            != CFArray::<CFTypeRef>::type_id()
+    {
+        if !values.is_null() {
+            CFRelease(values as CFTypeRef);
+        }
+        return (0..kinds.len()).map(&mut fallback).collect();
+    }
+    let array = CFArray::<CFTypeRef>::wrap_under_create_rule(values);
+    if array.len() as usize != kinds.len() {
+        return (0..kinds.len()).map(&mut fallback).collect();
+    }
+    decode_attr_slots(&array, kinds)
+}
+/// Copy heterogeneous AX values, preserving slot positions and existing conversions.
+///
+/// # Safety
+/// `element` must be valid for this call. Each borrowed value is decoded while
+/// its owning result array remains retained; no raw value escapes the batch.
+/// Whole-API errors use ordinary individual reads with the existing per-object
+/// messaging timeout. Slot errors never shift later attributes or abort a batch.
+pub unsafe fn copy_typed_attrs(
+    element: AXUIElementRef,
+    attributes: &[(&str, AttrKind)],
+) -> Vec<Option<AttrValue>> {
+    if attributes.is_empty() {
+        return Vec::new();
+    }
+    let names: Vec<CFStr> = attributes
+        .iter()
+        .map(|(name, _)| CFStr::new(name))
+        .collect();
+    let names_array = CFArray::from_CFTypes(&names);
+    let kinds: Vec<AttrKind> = attributes.iter().map(|(_, kind)| *kind).collect();
+    let mut values: CFArrayRef = std::ptr::null();
+    let error = AXUIElementCopyMultipleAttributeValues(
+        element,
+        names_array.as_concrete_TypeRef(),
+        0,
+        &mut values,
+    );
+    decode_batch_or_fallback(error, values, &kinds, |i| {
+        let mut value: CFTypeRef = std::ptr::null();
+        let error =
+            AXUIElementCopyAttributeValue(element, names[i].as_concrete_TypeRef(), &mut value);
+        let result = if error == kAXErrorSuccess {
+            decode_attr(value, kinds[i])
+        } else {
+            None
+        };
+        if !value.is_null() {
+            CFRelease(value);
+        }
+        result
+    })
+}
+/// Combine typed position/size with the same minimum-size rule as single reads.
+pub fn batch_screen_rect(position: Option<AttrValue>, size: Option<AttrValue>) -> Option<[f64; 4]> {
+    match (position, size) {
+        (Some(AttrValue::Point([x, y])), Some(AttrValue::Size([w, h])))
+            if !(w < 1.0 || h < 1.0) =>
+        {
+            Some([x, y, w, h])
+        }
+        _ => None,
+    }
 }
 
 /// Copy a string attribute from an AX element. Returns `None` on any error.
@@ -950,6 +1156,151 @@ mod tests {
     use super::*;
     use crate::windows::WindowSpaceView;
     use core_foundation::{boolean::CFBoolean, number::CFNumber};
+
+    #[test]
+    fn typed_batch_preserves_error_null_empty_and_later_typed_slots() {
+        let empty = CFStr::new("");
+        let number = CFNumber::from(8.0);
+        let yes = CFBoolean::true_value();
+        let error: AXError = kAXErrorAttributeUnsupported;
+        let point = CGPointValue { x: 12.5, y: -3.0 };
+        let size = CGSizeValue {
+            width: 42.0,
+            height: 9.5,
+        };
+        unsafe {
+            let err = AXValueCreate(5, &error as *const _ as *const c_void);
+            let p = AXValueCreate(kAXValueCGPointType, &point as *const _ as *const c_void);
+            let z = AXValueCreate(kAXValueCGSizeType, &size as *const _ as *const c_void);
+            let array = CFArray::<CFTypeRef>::from_copyable(&[
+                empty.as_CFTypeRef(),
+                std::ptr::null(),
+                err as CFTypeRef,
+                number.as_CFTypeRef(),
+                yes.as_CFTypeRef(),
+                p as CFTypeRef,
+                z as CFTypeRef,
+            ]);
+            let result = decode_attr_slots(
+                &array,
+                &[
+                    AttrKind::String,
+                    AttrKind::String,
+                    AttrKind::Number,
+                    AttrKind::Stringish,
+                    AttrKind::Bool,
+                    AttrKind::Point,
+                    AttrKind::Size,
+                ],
+            );
+            assert_eq!(
+                result,
+                vec![
+                    Some(AttrValue::String("".into())),
+                    None,
+                    None,
+                    Some(AttrValue::Stringish(StringishAttrValue {
+                        string_value: None,
+                        state_value: "8".into()
+                    })),
+                    Some(AttrValue::Bool(true)),
+                    Some(AttrValue::Point([12.5, -3.0])),
+                    Some(AttrValue::Size([42.0, 9.5]))
+                ]
+            );
+            assert_eq!(decode_attr(p as CFTypeRef, AttrKind::Size), None);
+            assert_eq!(decode_attr(z as CFTypeRef, AttrKind::Point), None);
+            CFRelease(err as CFTypeRef);
+            CFRelease(p as CFTypeRef);
+            CFRelease(z as CFTypeRef);
+        }
+    }
+    #[test]
+    fn typed_batch_coercions_match_individual_semantics_and_reject_wrong_types() {
+        let string = CFStr::new("2.5");
+        let number = CFNumber::from(2.5);
+        let zero = CFNumber::from(0.0);
+        let no = CFBoolean::false_value();
+        unsafe {
+            assert_eq!(decode_attr(string.as_CFTypeRef(), AttrKind::Number), None);
+            assert_eq!(decode_attr(number.as_CFTypeRef(), AttrKind::String), None);
+            assert_eq!(decode_attr(no.as_CFTypeRef(), AttrKind::Number), None);
+            assert_eq!(
+                decode_attr(number.as_CFTypeRef(), AttrKind::Number),
+                Some(AttrValue::Number(2.5))
+            );
+            assert_eq!(
+                decode_attr(number.as_CFTypeRef(), AttrKind::Bool),
+                Some(AttrValue::Bool(true))
+            );
+            assert_eq!(
+                decode_attr(zero.as_CFTypeRef(), AttrKind::Bool),
+                Some(AttrValue::Bool(false))
+            );
+            assert_eq!(
+                decode_attr(no.as_CFTypeRef(), AttrKind::Stringish),
+                Some(AttrValue::Stringish(StringishAttrValue {
+                    string_value: None,
+                    state_value: "0".into()
+                }))
+            );
+            assert_eq!(decode_attr(string.as_CFTypeRef(), AttrKind::Point), None);
+        }
+    }
+    #[test]
+    fn typed_batch_whole_error_null_wrong_type_and_short_array_use_exact_fallback() {
+        let value = CFStr::new("real");
+        let array = CFArray::<CFTypeRef>::from_copyable(&[value.as_CFTypeRef()]);
+        for (error, raw) in [
+            (kAXErrorFailure, array.as_concrete_TypeRef()),
+            (kAXErrorSuccess, std::ptr::null()),
+            (kAXErrorSuccess, value.as_CFTypeRef() as CFArrayRef),
+            (kAXErrorSuccess, array.as_concrete_TypeRef()),
+        ] {
+            let mut seen = Vec::new();
+            unsafe {
+                if !raw.is_null() {
+                    CFRetain(raw as CFTypeRef);
+                }
+                let result = decode_batch_or_fallback(
+                    error,
+                    raw,
+                    &[AttrKind::String, AttrKind::Bool],
+                    |i| {
+                        seen.push(i);
+                        Some(AttrValue::String(format!("single-{i}")))
+                    },
+                );
+                assert_eq!(
+                    result,
+                    vec![
+                        Some(AttrValue::String("single-0".into())),
+                        Some(AttrValue::String("single-1".into()))
+                    ]
+                );
+                assert_eq!(seen, vec![0, 1]);
+            }
+        }
+    }
+    #[test]
+    fn typed_geometry_keeps_fractional_negative_position_and_minimum_size_rule() {
+        let rect = |w, h| {
+            batch_screen_rect(
+                Some(AttrValue::Point([-4.5, 2.25])),
+                Some(AttrValue::Size([w, h])),
+            )
+        };
+        assert_eq!(rect(1.0, 1.0), Some([-4.5, 2.25, 1.0, 1.0]));
+        for (w, h) in [(0.0, 1.0), (1.0, 0.0), (-1.0, 9.0), (0.999, 2.0)] {
+            assert_eq!(rect(w, h), None);
+        }
+        assert_eq!(
+            batch_screen_rect(None, Some(AttrValue::Size([2.0, 2.0]))),
+            None
+        );
+        // Match the former <1 test exactly rather than silently sanitizing NaNs.
+        assert!(rect(f64::NAN, 2.0).unwrap()[2].is_nan());
+    }
 
     #[test]
     fn remote_token_layout_is_pid_zero_coco_element_id() {

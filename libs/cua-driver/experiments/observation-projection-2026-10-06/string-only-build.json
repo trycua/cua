@@ -1,0 +1,8 @@
+{
+  "base_source": "a2b3182eac9830d7935e8a459939ec9357a856b7",
+  "source_commit": "a2b3182eac9830d7935e8a459939ec9357a856b7",
+  "variant": "string-only",
+  "binary_sha256": "d2ecfb20fe75d783febae395d30d3873ce03560587db78e6d6f3de6c41ef396c",
+  "host_source_sha256": "c064342b33f9c6a4c4936a2da544e2294aa5bb732ad609e56b20810b3afe2c92",
+  "source_provenance": "Root worker compiled/verified build receipt; string-only is baseline plus isolated experimental string-batching patch, exact binary bound by SHA256"
+}

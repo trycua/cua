@@ -29,12 +29,12 @@
   },
   "cua_main": {
     "note": "Amendment 6 mini-runs: main at the commit of the latest mini-run (A6.5 lists every one); built in the VM with tools/vm_main_build. Earlier builds: v036 ccaacd8fd (Amendment 5), v035 365f5e3 (Amendment 3); see the history of this file.",
-    "git_sha": "0188a554de27774f62c3d3ba5c9e24a0618d41e2",
+    "git_sha": "c1c2b5fee428c3a39bebe5e77549c3d3525a608d",
     "version": "0.34.0",
     "version_string": "cua-driver 0.34.0",
-    "binary_sha256": "2b5f0e6a5fcd6604a9e28762f2bc5a53eeca907caf48695c8ce6985b90f56af3",
-    "skills_tree_sha256": "4d2a45055b0a63c61534e097db2c6fc4ad2c6905a4e1badf95c266c7a4d6e664",
+    "binary_sha256": "bf879098fe67a11f620410e16fdd73e725d54390c76483bfddade4e227c0fc5a",
+    "skills_tree_sha256": "0d60e4f271c98028fc0f05cb0c2265a26097c95160c07423706b1347217fcf07",
     "skills_source": "libs/cua-driver/rust/Skills/cua-driver at git_sha",
-    "script_binary_sha256": "87d2a0cddf67fc29a472f3482c197bfb3aedb2401c381fdc3d2294e615867e3e"
+    "script_binary_sha256": "5d958f585b6868b1571cd80ae53e27906705274392de7b4407456d9ae60aaec0"
   }
 }

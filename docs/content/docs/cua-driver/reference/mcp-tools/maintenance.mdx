@@ -85,7 +85,6 @@ Cursor motion defaults: cursor.motion.style, cursor.motion.timing and cursor.mot
 | --- | --- | --- | --- |
 | <span id="set_config--macos--experimental_pip"></span>`experimental_pip` | `boolean` |  | Enable the experimental picture-in-picture preview window. Applies on next daemon restart. |
 | <span id="set_config--macos--experimental_pip_geometry"></span>`experimental_pip_geometry` | `string` |  | PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart. |
-| <span id="set_config--macos--max_image_dimension"></span>`max_image_dimension` | `integer` |  | Max dimension for screenshot resizing (0 = no limit). |
 
 </Tab>
 <Tab value="Linux">
@@ -105,7 +104,6 @@ The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next
 | <span id="set_config--linux--capture_mode"></span>`capture_mode` | `"ax" \| "vision"` |  | Default capture mode for get_window_state. ("som"/"screenshot" still decode as deprecated aliases.). |
 | <span id="set_config--linux--experimental_pip"></span>`experimental_pip` | `boolean` |  | Enable the experimental PiP preview window (applies next restart; Linux backend stubbed). |
 | <span id="set_config--linux--experimental_pip_geometry"></span>`experimental_pip_geometry` | `string` |  | PiP window size + optional position in `WxH` or `WxH+X+Y` form. |
-| <span id="set_config--linux--max_image_dimension"></span>`max_image_dimension` | `integer` |  | Max dimension for screenshot resizing (0 = no limit). |
 
 </Tab>
 <Tab value="Windows">
@@ -129,7 +127,6 @@ Returns the full updated config in the same shape as `get_config`.
 | <span id="set_config--windows--capture_mode"></span>`capture_mode` | `"ax" \| "vision"` |  | DEPRECATED and ignored: get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. ("som"/"screenshot" still decode as deprecated aliases.). |
 | <span id="set_config--windows--experimental_pip"></span>`experimental_pip` | `boolean` |  | Enables PiP preview (applies next restart). |
 | <span id="set_config--windows--experimental_pip_geometry"></span>`experimental_pip_geometry` | `string` |  | PiP window size + optional position. |
-| <span id="set_config--windows--max_image_dimension"></span>`max_image_dimension` | `integer` |  |  |
 
 </Tab>
 </Tabs>
@@ -146,6 +143,7 @@ Returns the full updated config in the same shape as `get_config`.
 | <span id="set_config--cursor-motion-effects-trail"></span>`cursor.motion.effects.trail` | `"on" \| "off" \| "default"` |  | Saved default for the `trail` cursor effect: on, off, or default (the style's own). Omit the key to leave it unchanged. |
 | <span id="set_config--cursor-motion-style"></span>`cursor.motion.style` | `"signature_arc" \| "spring_settle" \| "magnetic" \| "comet_swoop" \| "adaptive" \| "classic"` |  | Saved default cursor motion style for new sessions. Overridden by start_session cursor_motion and set_agent_cursor_motion; reduced motion always wins. Built-in default: signature_arc. |
 | <span id="set_config--cursor-motion-timing"></span>`cursor.motion.timing` | `"native" \| "fitts" \| "fixed"` |  | Saved default cursor move timing for new sessions. |
+| <span id="set_config--max_image_dimension"></span>`max_image_dimension` | `integer` |  | Max dimension for screenshot resizing (0 = no limit). |
 | <span id="set_config--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 
 ## `check_permissions`

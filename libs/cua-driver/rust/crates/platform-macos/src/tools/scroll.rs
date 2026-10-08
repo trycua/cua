@@ -751,9 +751,9 @@ async fn electron_reveal_scroll(
             outcome.container_role
         ))
         .with_structured(serde_json::json!({
-            "path": "ax_reveal",
-            "effect": "no_change",
-            "at_end": true,
+            "path": "ax",
+            "verified": false,
+            "effect": "unverifiable",
         })),
         Ok(Some(outcome)) => ToolResult::text(format!(
             "✅ Scrolled {direction} about {:.0} pt in the background through accessibility \
@@ -762,9 +762,9 @@ async fn electron_reveal_scroll(
             outcome.moved, outcome.container_role
         ))
         .with_structured(serde_json::json!({
-            "path": "ax_reveal",
-            "effect": "changed",
-            "moved_pt": outcome.moved,
+            "path": "ax",
+            "verified": false,
+            "effect": "unverifiable",
         })),
         _ => unavailable(),
     }

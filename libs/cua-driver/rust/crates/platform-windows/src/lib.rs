@@ -48,6 +48,10 @@ mod keycodes;
 // pass that lives in this commit).
 pub mod lparam;
 
+// Pure set-diff logic is testable on every host; the live snapshot helper is Windows-only.
+#[cfg(any(target_os = "windows", test))]
+mod window_change;
+
 /// UIA / `WM_NCHITTEST` / `IDC_*` -> cursor shape tables for presence (pure,
 /// every host).
 pub mod pointer_shape_map;

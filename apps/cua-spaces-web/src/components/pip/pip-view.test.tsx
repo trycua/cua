@@ -104,6 +104,14 @@ describe("<PipView>", () => {
     expect(close).toHaveBeenCalled();
   });
 
+  it("names each control on its bar for screen readers: the panel has no window frame of its own", () => {
+    electron("win32");
+    const { getAllByRole } = render(<PipView params={params} />);
+    const buttons = getAllByRole("button");
+    expect(buttons.length).toBeGreaterThan(0);
+    expect(getAllByRole("button", { name: /\S/ })).toEqual(buttons);
+  });
+
   it("offers Try again when the stream fails", async () => {
     const calls = electron();
     const { findByText } = render(<PipView params={params} />);

@@ -38,3 +38,26 @@ export function overlayColors(theme: Theme, dimmed: boolean): { color: string; s
   const a = BACKDROP_ALPHA[theme];
   return { color: darken(BACKGROUND[theme], a), symbolColor: darken(SYMBOL[theme], a) };
 }
+
+export interface OverlayStyle {
+  color?: string;
+  symbolColor?: string;
+  height: number;
+}
+
+/**
+ * The `setTitleBarOverlay` calls that show `colors`: `now`, then `next` a
+ * frame later. On Windows the caption buttons were seen keeping their old
+ * colours when only the colours changed (the strip stayed bright over a
+ * dialog's backdrop), so they are also laid out again: a pixel shorter, then
+ * back, which repaints each button. Linux repaints the whole frame itself.
+ */
+export function overlaySteps(
+  platform: NodeJS.Platform,
+  colors: { color: string; symbolColor: string },
+  height: number,
+): { now: OverlayStyle[]; next: OverlayStyle | null } {
+  const style = { ...colors, height };
+  if (platform !== "win32") return { now: [style], next: null };
+  return { now: [{ ...style, height: height - 1 }], next: style };
+}

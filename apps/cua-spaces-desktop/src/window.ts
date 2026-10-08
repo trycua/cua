@@ -8,7 +8,7 @@ import { captureRoutes } from "./capture";
 import { windowIconPath } from "./icon";
 import { APP_ORIGIN } from "./protocol";
 import { readSettings, writeSettings, type WindowBounds } from "./settings";
-import { DIM_CHANNEL, overlayColors } from "./overlay";
+import { DIM_CHANNEL, overlayColors, overlaySteps } from "./overlay";
 import { KEYBOARD_CHANNEL, applyKeyboard } from "./keyboard";
 import { BACKGROUND, resolvedTheme } from "./theme";
 
@@ -96,14 +96,31 @@ function syncTitlebarInset(win: BrowserWindow): void {
 // Windows whose page shows a dialog backdrop (see overlay.ts).
 const dimmed = new WeakSet<BrowserWindow>();
 
+// Each window's pending second overlay step (overlaySteps); a newer style replaces it.
+const overlayNext = new WeakMap<BrowserWindow, NodeJS.Timeout>();
+
+/** The title bar overlay (Windows, Linux) in `theme`, dimmed while the page shows a backdrop. */
+function applyOverlay(win: BrowserWindow, theme: "dark" | "light"): void {
+  if (process.platform === "darwin") return;
+  const { now, next } = overlaySteps(process.platform, overlayColors(theme, dimmed.has(win)), TITLEBAR_HEIGHT);
+  clearTimeout(overlayNext.get(win));
+  for (const style of now) win.setTitleBarOverlay(style);
+  if (next) {
+    overlayNext.set(
+      win,
+      setTimeout(() => {
+        if (!win.isDestroyed()) win.setTitleBarOverlay(next);
+      }, 32),
+    );
+  }
+}
+
 /** The page's background color: the window's, and (Windows, Linux) the
  * title bar overlay's in the matching theme (`window.setBackgroundColor`). */
 export function setWindowBackground(win: BrowserWindow, color: string): void {
   if (win.isDestroyed()) return;
   win.setBackgroundColor(color);
-  if (process.platform !== "darwin") {
-    win.setTitleBarOverlay({ ...overlayColors(isDark(color) ? "dark" : "light", dimmed.has(win)), height: TITLEBAR_HEIGHT });
-  }
+  applyOverlay(win, isDark(color) ? "dark" : "light");
 }
 
 /** Whether `#rrggbb` is a dark background (relative luminance under a half). */
@@ -117,9 +134,7 @@ export function applyThemeToWindow(win: BrowserWindow): void {
   if (win.isDestroyed()) return;
   const theme = resolvedTheme();
   win.setBackgroundColor(BACKGROUND[theme]);
-  if (process.platform !== "darwin") {
-    win.setTitleBarOverlay({ ...overlayColors(theme, dimmed.has(win)), height: TITLEBAR_HEIGHT });
-  }
+  applyOverlay(win, theme);
 }
 
 // The preload reports when a dialog backdrop comes and goes; the overlay

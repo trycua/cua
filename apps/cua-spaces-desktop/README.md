@@ -134,7 +134,15 @@ numbers will grow once the real web UI replaces the placeholder.
   cover it. The web UI marks each backdrop `data-window-dim`; the preload
   watches for one and the main process repaints the overlay in the colour
   the backdrop gives the top bar (`src/overlay.ts`: black at 25% light, 40%
-  dark), so the whole title bar dims with the window.
+  dark), so the whole title bar dims with the window. On Windows the
+  caption buttons kept their old colours when only the colours changed, so
+  each change there also lays them out again (the overlay a pixel shorter,
+  then back a frame later, `overlaySteps`), which repaints them.
+- The window controls are Electron's own (the overlay on Windows and Linux,
+  the traffic lights on macOS), named Minimize, Maximize, Restore and Close
+  for screen readers by Chromium; the page cannot change those names. The
+  controls the page draws (the top bar's buttons, a picture-in-picture
+  panel's Open Space and Close) carry their own names.
 - `backgroundColor` follows `nativeTheme`, so there is no white flash. It
   updates live, along with the overlay colours, when the theme changes.
 - Bounds and the maximized state are saved to `settings.json` in the user data

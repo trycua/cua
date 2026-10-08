@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
-import { BACKGROUND, DIM_ATTRIBUTE, SYMBOL, darken, overlayColors } from "../src/overlay";
+import { BACKGROUND, DIM_ATTRIBUTE, SYMBOL, darken, overlayColors, overlaySteps } from "../src/overlay";
 
 const web = path.join(__dirname, "../../cua-spaces-web/src");
 
@@ -28,5 +28,14 @@ describe("title bar overlay", () => {
       expect(backdrop).toContain("bg-black/25");
       expect(backdrop).toContain("dark:bg-black/40");
     }
+  });
+
+  it("lays the Windows buttons out again so they repaint in the new colours; Linux sets them once", () => {
+    const dimmed = overlayColors("light", true);
+    expect(overlaySteps("linux", dimmed, 40)).toEqual({ now: [{ ...dimmed, height: 40 }], next: null });
+    const win = overlaySteps("win32", dimmed, 40);
+    // Every step carries the new colours; the height ends where it was.
+    expect(win.now).toEqual([{ ...dimmed, height: 39 }]);
+    expect(win.next).toEqual({ ...dimmed, height: 40 });
   });
 });

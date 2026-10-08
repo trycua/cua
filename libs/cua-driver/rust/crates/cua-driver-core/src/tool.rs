@@ -214,6 +214,10 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
     if unknown.is_empty() {
         return None;
     }
+    // A direct action named by role/name: that targeting lives in run_actions.
+    const NAME_TARGET: &[&str] = &["role", "name", "label", "app", "window", "nth"];
+    let name_targeted = crate::batch_tools::BATCHABLE_TOOLS.contains(&def.name.as_str())
+        && unknown.iter().all(|name| NAME_TARGET.contains(name));
     let accepted: Vec<&str> = properties
         .map(|properties| {
             properties
@@ -228,8 +232,17 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
     } else {
         "arguments"
     };
+    let hint = if name_targeted {
+        format!(
+            ". To target by role/name/app/window, send the same arguments as one run_actions \
+             step: run_actions {{\"steps\":[{{\"{}\": {{...}}}}]}}",
+            def.name
+        )
+    } else {
+        String::new()
+    };
     Some(format!(
-        "{noun} {}; accepted: {}",
+        "{noun} {}; accepted: {}{hint}",
         unknown.join(", "),
         accepted.join(", ")
     ))
@@ -242,7 +255,47 @@ fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
 pub(crate) fn normalize_argument_aliases(tool_name: &str, args: &mut Value) -> Result<(), String> {
     normalize_zoom_args(tool_name, args);
     normalize_key_args(tool_name, args);
+    normalize_menu_args(tool_name, args);
     normalize_scroll_args(tool_name, args)
+}
+
+/// `invoke_menu` takes `path` as a list of labels. Models also send
+/// `menu_path`, a JSON-encoded list, or one "File > Save As..." string.
+fn normalize_menu_args(tool_name: &str, args: &mut Value) {
+    if tool_name != "invoke_menu" {
+        return;
+    }
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+    if !arguments.contains_key("path") {
+        if let Some(alias) = ["menu_path", "menu", "items"]
+            .iter()
+            .find(|alias| arguments.contains_key(**alias))
+        {
+            let value = arguments.remove(*alias).expect("present");
+            arguments.insert("path".to_owned(), value);
+        }
+    }
+    let Some(Value::String(text)) = arguments.get("path") else {
+        return;
+    };
+    let text = text.trim();
+    let labels: Vec<String> = match serde_json::from_str::<Vec<String>>(text) {
+        Ok(labels) => labels,
+        Err(_) => text
+            .split(['>', '→'])
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    };
+    if !labels.is_empty() {
+        arguments.insert(
+            "path".to_owned(),
+            Value::Array(labels.into_iter().map(Value::String).collect()),
+        );
+    }
 }
 
 /// The JSON types a property schema admits, from `type` (a string or a list)
@@ -6848,6 +6901,51 @@ mod argument_shape_tests {
             junk,
             json!({"pid": "forty-two", "include_screenshot": "yes", "x": "NaN"})
         );
+    }
+
+    #[test]
+    fn menu_paths_in_the_shapes_models_send() {
+        let menu = |args: serde_json::Value| {
+            let mut args = args;
+            normalize_argument_aliases("invoke_menu", &mut args).unwrap();
+            args
+        };
+        // v036 shapes.
+        assert_eq!(
+            menu(json!({"pid": 1, "menu_path": "[\"Sheet\",\"Navigate\",\"Next Sheet\"]"})),
+            json!({"pid": 1, "path": ["Sheet", "Navigate", "Next Sheet"]})
+        );
+        assert_eq!(
+            menu(json!({"path": "File > Reload"})),
+            json!({"path": ["File", "Reload"]})
+        );
+        assert_eq!(
+            menu(json!({"menu": ["Edit", "Copy"]})),
+            json!({"path": ["Edit", "Copy"]})
+        );
+        // A real path and an explicit path win.
+        assert_eq!(
+            menu(json!({"path": ["File", "Save As..."], "menu_path": "x"})),
+            json!({"path": ["File", "Save As..."], "menu_path": "x"})
+        );
+    }
+
+    #[test]
+    fn a_direct_action_named_by_role_points_to_run_actions() {
+        let click = ToolDef {
+            name: "click".into(),
+            description: String::new(),
+            input_schema: json!({"type": "object", "properties": {"pid": {"type": "integer"}}, "additionalProperties": false}),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
+        let detail =
+            unknown_argument(&click, &json!({"pid": 1, "role": "button", "name": "OK"})).unwrap();
+        assert!(detail.contains("one run_actions step"), "{detail}");
+        let other = unknown_argument(&click, &json!({"pid": 1, "bogus": 1})).unwrap();
+        assert!(!other.contains("run_actions"), "{other}");
     }
 
     #[test]

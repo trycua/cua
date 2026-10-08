@@ -438,6 +438,10 @@ These are point comparisons with no interval. The report gives the per-task numb
 
 These are produced by `tools/analyze_v037.py`, written before the first trial. Arm B's numbers stay internal (CUA-1225). Only the yes/no outcome of the decision rule and the Cua Driver arms' own numbers may go into anything shared outside the team.
 
+### A7.7 Restart before any trial completed (recorded 8 Oct 2026, 02:30 UTC)
+
+The first launch at 02:12 UTC passed every preflight check. At 02:14:56, during the first trial, it was stopped by a quoting bug in Stream C's host-side post-processing script. That script stopped the VM because it wrongly concluded the run had ended. No trial completed and `results.jsonl` was empty. The run folder was kept as `runs/v037-full.aborted-0214`, and the run was relaunched under the same id, build, arms, order and rules. No rule changed.
+
 ### A7.6 Harness changes for this amendment
 
 `tools/analyze_v037.py`; `pins.json` `cua_main` (this build).

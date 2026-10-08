@@ -176,11 +176,6 @@
   background: var(--dw-hover);
   color: var(--dw-text);
 }
-.dw-btn-lg {
-  height: 34px;
-  padding: 0 18px;
-  font-size: 13px;
-}
 .dw-icon-btn {
   display: inline-grid;
   place-items: center;

@@ -332,7 +332,6 @@ export function NewSpaceWizard({
       telemetry.recordSignals([{ type: "space-wizard", action: "submitted" }]);
       onCreate(v.plan);
     } else telemetry.recordSignals([{ type: "space-wizard", action: "opened" }]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const step = v.step;
 

@@ -279,6 +279,7 @@ pub fn apply(
         .and_then(Value::as_str)
         .map(str::to_owned)
     else {
+        drop_walk_diagnostics(opts, structured);
         return;
     };
     let snapshot_id = structured
@@ -412,6 +413,26 @@ pub fn apply(
     }
 
     rewrite_tree_block(content, &md, &header_extra, &body);
+    drop_walk_diagnostics(opts, structured);
+}
+
+/// Walk diagnostics cost every read context and no caller acts on them:
+/// `truncated` and the truncation hint (built from them above) already say
+/// when a walk stopped early. `verbose:true` keeps them.
+fn drop_walk_diagnostics(opts: &ViewOptions, structured: &mut Value) {
+    if opts.verbose {
+        return;
+    }
+    if let Some(obj) = structured.as_object_mut() {
+        for key in [
+            "nodes_pending",
+            "nodes_visited",
+            "walk_elapsed_ms",
+            "screenshot_refreshed_snapshot",
+        ] {
+            obj.remove(key);
+        }
+    }
 }
 
 /// `since` value that names the window's most recent read of the same view.
@@ -514,6 +535,7 @@ fn trim_metadata(opts: &ViewOptions, structured: &mut Value) {
         // Linux restates the pixel-coordinate convention on every read; the
         // tool description already carries it.
         obj.remove("frame_note");
+
         if !degraded {
             obj.remove("background_input");
         }
@@ -583,6 +605,11 @@ fn store() -> &'static Mutex<VecDeque<StoredSnapshot>> {
 
 fn remember(snapshot_id: &str, ctx: &ViewContext<'_>, md: &str) {
     let mut guard = store().lock().unwrap_or_else(|e| e.into_inner());
+    // A screenshot-only read keeps its snapshot id and returns no tree. It
+    // must not erase the rows that snapshot's tokens were read from.
+    if md.trim().is_empty() && guard.iter().any(|s| s.snapshot_id == snapshot_id) {
+        return;
+    }
     guard.retain(|s| s.snapshot_id != snapshot_id);
     guard.push_back(StoredSnapshot {
         snapshot_id: snapshot_id.to_owned(),
@@ -637,8 +664,99 @@ pub(crate) fn snapshot_row(snapshot_id: &str, index: u64) -> Option<StoredRow> {
     })
 }
 
+/// The menu path of row `[index]` of the read that produced `snapshot_id`,
+/// when that row is an item in the app's menu bar: the labels of its
+/// AXMenuBarItem and AXMenuItem ancestors, then its own. `None` for any
+/// other row.
+pub(crate) fn snapshot_menu_path(snapshot_id: &str, index: u64) -> Option<Vec<String>> {
+    let markdown = {
+        let guard = store().lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .iter()
+            .find(|s| s.snapshot_id == snapshot_id && s.at.elapsed() <= STORE_TTL)
+            .map(|s| s.markdown.clone())
+    }?;
+    menu_path_in(&markdown, index)
+}
+
+fn menu_path_in(markdown: &str, index: u64) -> Option<Vec<String>> {
+    let lines: Vec<&str> = markdown.lines().collect();
+    let marker = format!("[{index}] ");
+    let at = lines.iter().position(|line| {
+        line.trim_start()
+            .strip_prefix("- ")
+            .is_some_and(|rest| rest.starts_with(&marker))
+    })?;
+    let indent = |line: &str| line.len() - line.trim_start().len();
+    let item = |line: &str| -> Option<(String, String)> {
+        let rest = line.trim_start().strip_prefix("- ")?;
+        let rest = rest
+            .strip_prefix('[')
+            .and_then(|r| r.split_once("] ").map(|(_, r)| r))
+            .unwrap_or(rest);
+        let (role, rest) = rest.split_once(' ').unwrap_or((rest, ""));
+        let label = rest
+            .trim_start()
+            .strip_prefix('"')
+            .and_then(|r| r.split_once('"').map(|(label, _)| label.to_owned()))
+            .unwrap_or_default();
+        Some((role.to_owned(), label))
+    };
+    let (role, label) = item(lines[at])?;
+    if !matches!(role.as_str(), "AXMenuItem" | "AXMenuBarItem") || label.is_empty() {
+        return None;
+    }
+    let mut path = vec![label];
+    let mut level = indent(lines[at]);
+    for line in lines[..at].iter().rev() {
+        if indent(line) >= level {
+            continue;
+        }
+        level = indent(line);
+        let (role, label) = item(line)?;
+        match role.as_str() {
+            "AXMenuBar" => {
+                path.reverse();
+                return Some(path);
+            }
+            "AXMenuItem" | "AXMenuBarItem" if !label.is_empty() => path.push(label),
+            "AXMenu" => {}
+            _ => return None,
+        }
+    }
+    None
+}
+
 /// Remember a read's markdown as `apply` does, for tests elsewhere in the
 /// crate that drive a fake get_window_state.
+#[cfg(test)]
+#[test]
+fn menu_paths_come_from_the_menu_bar_ancestors() {
+    let md = "- [0] AXWindow \"Doc\"\n  - [3] AXButton \"OK\"\n- [27] AXMenuBar\n  - [700] AXMenuBarItem \"Sheet\" [actions=[press]]\n    - [701] AXMenu\n      - [760] AXMenuItem \"Navigate\" [actions=[press]]\n        - [761] AXMenu\n          - [771] AXMenuItem \"To Next Sheet\" [actions=[press]]\n      - [780] AXMenuItem \"Delete Sheet...\"\n";
+    assert_eq!(
+        menu_path_in(md, 771),
+        Some(vec![
+            "Sheet".to_owned(),
+            "Navigate".to_owned(),
+            "To Next Sheet".to_owned()
+        ])
+    );
+    assert_eq!(
+        menu_path_in(md, 780),
+        Some(vec!["Sheet".to_owned(), "Delete Sheet...".to_owned()])
+    );
+    assert_eq!(menu_path_in(md, 3), None, "not a menu item");
+    assert_eq!(menu_path_in(md, 999), None);
+}
+
+#[cfg(test)]
+#[test]
+fn a_screenshot_only_read_keeps_the_remembered_rows() {
+    remember_for_test("s7e570001", 4, 5, "- [9] AXButton \"Send\"\n");
+    remember_for_test("s7e570001", 4, 5, "");
+    assert!(snapshot_row("s7e570001", 9).is_some_and(|row| row.line.contains("Send")));
+}
+
 #[cfg(test)]
 pub(crate) fn remember_for_test(snapshot_id: &str, pid: i64, window_id: u64, markdown: &str) {
     let ctx = ViewContext {
@@ -1383,6 +1501,25 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("larger max_elements"));
+    }
+
+    #[test]
+    fn walk_diagnostics_are_dropped_unless_verbose() {
+        let (mut content, mut s) = payload("s000000d2", OLD);
+        s["nodes_visited"] = json!(261);
+        s["walk_elapsed_ms"] = json!(149);
+        apply(&opts(json!({})), &ctx(7016), &mut content, &mut s);
+        assert!(s.get("nodes_visited").is_none());
+        assert!(s.get("walk_elapsed_ms").is_none());
+        let (mut content, mut s) = payload("s000000d3", OLD);
+        s["nodes_visited"] = json!(261);
+        apply(
+            &opts(json!({"verbose": true})),
+            &ctx(7017),
+            &mut content,
+            &mut s,
+        );
+        assert_eq!(s["nodes_visited"], 261);
     }
 
     #[test]

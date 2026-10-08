@@ -3653,10 +3653,19 @@ impl Broker {
                 .collect()
         };
         let mut wiped_ids = Vec::new();
+        let mut gone_ids: Vec<String> = Vec::new();
         let mut errors = Vec::new();
         for d in &live {
             match self.backend.wipe(&d.target, &d.import_id).await {
                 Ok(_) => wiped_ids.push(d.import_id.clone()),
+                // The Space or the import is gone (the user removed the
+                // Space, or the target's own expiry already wiped it): the
+                // copy no longer exists, so the delivery counts as wiped
+                // and must not block deleting the item.
+                Err(Error::NotFound(_)) => {
+                    gone_ids.push(d.import_id.clone());
+                    wiped_ids.push(d.import_id.clone());
+                }
                 Err(e) => errors.push(format!("{}: {e}", d.target)),
             }
         }
@@ -3673,7 +3682,14 @@ impl Broker {
         for d in live.iter().filter(|d| wiped_ids.contains(&d.import_id)) {
             let mut e = ev("target.wipe", caller, "ok");
             e.target = Some(d.target.clone());
-            e.detail = format!("import={}", d.import_id);
+            e.detail = if gone_ids.contains(&d.import_id) {
+                format!(
+                    "import={} already gone (target or import missing)",
+                    d.import_id
+                )
+            } else {
+                format!("import={}", d.import_id)
+            };
             Self::audit(&mut st, e);
         }
         if !errors.is_empty() {

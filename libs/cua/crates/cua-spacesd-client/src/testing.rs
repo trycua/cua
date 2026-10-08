@@ -239,6 +239,11 @@ impl MockState {
         self.teleport_wipes.lock().unwrap().clone()
     }
 
+    /// Forgets every import, as the target's own expiry would.
+    pub fn expire_teleport_imports(&self) {
+        self.teleport_imports.lock().unwrap().clear();
+    }
+
     /// Stored file content.
     pub fn file(&self, path: &str) -> Option<Vec<u8>> {
         self.files.lock().unwrap().get(path).cloned()

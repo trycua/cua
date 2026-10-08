@@ -933,7 +933,14 @@ async fn run_step(
 
         let mut result = registry.invoke(tool, args.clone()).await;
         let mut refound_note = None;
-        if result.is_error == Some(true) {
+        if result.is_error == Some(true) && tool == "click" {
+            if let Some((menu_args, note)) = menu_bar_route(&args, &result) {
+                report["refound"] = json!(note);
+                result = registry.invoke("invoke_menu", menu_args).await;
+                refound_note = Some(note);
+            }
+        }
+        if result.is_error == Some(true) && refound_note.is_none() {
             if let Some((retry, note)) = refind_stale_target(locator, &args, &result).await {
                 report["refound"] = json!(note);
                 result = registry.invoke(tool, retry).await;
@@ -1311,6 +1318,37 @@ async fn refind_stale_target(
     ))
 }
 
+/// A click on a menu-bar item addressed by token is refused as outside the
+/// window: menu-bar menus are the app's, not the window's. Send it as
+/// invoke_menu with the path read off the item's ancestors instead.
+fn menu_bar_route(args: &Value, result: &ToolResult) -> Option<(Value, String)> {
+    if !stale_element(result) {
+        return None;
+    }
+    let token = args.get("element_token").and_then(Value::as_str)?;
+    let (snapshot_id, row) = token.split_once(':')?;
+    let row: u64 = row.parse().ok()?;
+    let path = crate::window_state_view::snapshot_menu_path(snapshot_id, row)?;
+    let stored = crate::window_state_view::snapshot_row(snapshot_id, row)?;
+    let pid = args
+        .get("pid")
+        .and_then(Value::as_i64)
+        .unwrap_or(stored.pid);
+    let window_id = args
+        .get("window_id")
+        .and_then(Value::as_u64)
+        .unwrap_or(stored.window_id);
+    let mut menu_args = json!({ "pid": pid, "window_id": window_id, "path": path });
+    if let Some(session) = args.get("session") {
+        menu_args["session"] = session.clone();
+    }
+    let note = format!(
+        "{token} is a menu-bar item, so it ran as invoke_menu {}",
+        path.join(" > ")
+    );
+    Some((menu_args, note))
+}
+
 /// Role and label of one tree row: `[14] AXButton "Save"` or
 /// `[17] AXButton (Delete draft)`. None for a row without a label.
 fn row_role_and_label(line: &str) -> Option<(String, String)> {
@@ -1496,10 +1534,27 @@ fn parse_action(
         Some(value @ Value::Object(_)) => value.clone(),
         Some(_) => return Err(PlanError::step(index, "`args` must be an object")),
     };
-    let name = TOOL_ALIASES
+    // "press" with a target and no key is an AX press of that element.
+    let pressed_element = name == "press"
+        && args.get("key").is_none()
+        && [
+            "element_token",
+            "element_index",
+            "role",
+            "name",
+            "label",
+            "x",
+        ]
         .iter()
-        .find(|(alias, _)| *alias == name)
-        .map_or(name, |(_, tool)| *tool);
+        .any(|key| args.get(*key).is_some());
+    let name = if pressed_element {
+        "click"
+    } else {
+        TOOL_ALIASES
+            .iter()
+            .find(|(alias, _)| *alias == name)
+            .map_or(name, |(_, tool)| *tool)
+    };
     let name = rewrite_step(name, &mut args);
     let tool = BATCHABLE_TOOLS
         .iter()

@@ -18,12 +18,11 @@
 //!
 //! Everything here is **best-effort**: if the extension isn't installed/enabled
 //! the calls return `None` / no-op and callers keep the prior behaviour (no
-//! screen coords, no Wayland cursor). Uses a short-lived `gdbus` subprocess so
-//! there's no zbus blocking-feature or async-context coupling — the calls are
-//! infrequent (once per `get_window_state`, a few per click).
+//! screen coords, no Wayland cursor). Reuses one session-bus connection on a
+//! dedicated runtime; preview frames do not spawn subprocesses or poll for exit.
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::process::Command;
+mod transport;
 use std::time::Duration;
 
 use crate::x11::WindowInfo;
@@ -85,30 +84,7 @@ fn gdbus_call_to(
     args: &[String],
     timeout: Duration,
 ) -> Option<String> {
-    let mut cmd = Command::new("gdbus");
-    cmd.arg("call")
-        .arg("--session")
-        .arg("--dest")
-        .arg(destination)
-        .arg("--object-path")
-        .arg(object_path)
-        .arg("--method")
-        .arg(method);
-    for a in args {
-        cmd.arg(a);
-    }
-    // gdbus is local IPC; cap it so a wedged shell can't stall the caller.
-    let child = cmd
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .ok()?;
-    let out = wait_timeout(child, timeout)?;
-    if !out.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    transport::call(destination, object_path, method, args, timeout)
 }
 
 /// Resolve the helper's immutable unique bus name and prove that it is hosted
@@ -247,53 +223,6 @@ fn decode_capture(raw: &str) -> Option<Vec<u8>> {
     B64.decode(&raw[start..end]).ok()
 }
 
-/// `Child::wait` with a deadline (no extra crates). Kills + reaps on timeout.
-fn wait_timeout(mut child: std::process::Child, dur: Duration) -> Option<std::process::Output> {
-    use std::io::Read;
-
-    // Drain stdout while the child is running. Capture() returns a base64 PNG
-    // that readily exceeds a pipe's ~64 KiB capacity; waiting for exit before
-    // reading deadlocks the child on a full pipe and turns a healthy Shell
-    // response into a false timeout.
-    let stdout = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
-        let mut stdout = stdout;
-        let mut bytes = Vec::new();
-        stdout.read_to_end(&mut bytes).ok()?;
-        Some(bytes)
-    });
-    let deadline = std::time::Instant::now() + dur;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let status = child.wait().ok()?;
-                    let _ = reader.join();
-                    if !status.success() {
-                        return None;
-                    }
-                    return None;
-                }
-                std::thread::sleep(Duration::from_millis(15));
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = reader.join();
-                return None;
-            }
-        }
-    };
-    let stdout = reader.join().ok().flatten()?;
-    Some(std::process::Output {
-        status,
-        stdout,
-        stderr: Vec::new(),
-    })
-}
-
 /// Screen origin of the compositor frame backing `pid`.
 ///
 /// `screenshot_window_dispatch` crops the Shell stage to this same frame
@@ -308,13 +237,7 @@ pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
 }
 
 fn parse_window_origin(raw: &str, pid: u32) -> Option<(i32, i32)> {
-    // gdbus prints a GVariant tuple like `('[{"pid":..,"x":..}]',)`. Pull the
-    // JSON array out robustly (first '[' .. last ']') rather than parsing the
-    // GVariant wrapper, so an apostrophe in a window title can't break it.
-    let start = raw.find('[')?;
-    let end = raw.rfind(']')?;
-    let json = &raw[start..=end];
-    let arr: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
+    let arr: Vec<serde_json::Value> = serde_json::from_str(raw).ok()?;
     for w in &arr {
         if w.get("pid").and_then(|p| p.as_u64()) == Some(pid as u64) {
             let x = w.get("x").and_then(serde_json::Value::as_i64)? as i32;
@@ -458,18 +381,11 @@ fn window_is_focused(window_id: u32) -> bool {
     let Some(raw) = gdbus_call("GetRects", &[]) else {
         return false;
     };
-    let (Some(start), Some(end)) = (raw.find('['), raw.rfind(']')) else {
-        return false;
-    };
-    serde_json::from_str::<Vec<serde_json::Value>>(&raw[start..=end])
-        .ok()
-        .and_then(|windows| {
-            windows.into_iter().find(|window| {
-                window.get("id").and_then(serde_json::Value::as_u64) == Some(window_id as u64)
-            })
-        })
-        .and_then(|window| window.get("focused").and_then(serde_json::Value::as_bool))
-        .unwrap_or(false)
+    parse_shell_windows(&raw, None).is_some_and(|windows| {
+        windows
+            .into_iter()
+            .any(|window| window.info.xid == u64::from(window_id) && window.focused)
+    })
 }
 
 fn parse_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<WindowInfo>> {
@@ -482,9 +398,7 @@ fn parse_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<WindowInfo>> 
 }
 
 fn parse_shell_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<ShellWindow>> {
-    let start = raw.find('[')?;
-    let end = raw.rfind(']')?;
-    let windows: Vec<serde_json::Value> = serde_json::from_str(&raw[start..=end]).ok()?;
+    let windows: Vec<serde_json::Value> = serde_json::from_str(raw).ok()?;
 
     Some(
         windows
@@ -591,8 +505,16 @@ mod tests {
         include_str!("../../../../../wayland-helper/winrects@cua/metadata.json");
 
     #[test]
+    fn rejects_malformed_or_display_formatted_snapshots() {
+        for raw in ["not JSON", "{}", "('[{\"pid\":6079,\"x\":14,\"y\":12}]',)"] {
+            assert!(parse_shell_windows(raw, None).is_none());
+            assert!(parse_window_origin(raw, 6079).is_none());
+        }
+    }
+
+    #[test]
     fn parses_and_filters_shell_windows() {
-        let raw = r#"('[{"id":46,"pid":6079,"title":"Sentinel's window","x":66,"y":32,"w":958,"h":736,"focused":true,"minimized":false,"visible":true,"stacking":2},{"id":47,"pid":6080,"title":"Hidden","x":0,"y":0,"w":100,"h":100,"minimized":true,"visible":false,"stacking":1}]',)"#;
+        let raw = r#"[{"id":46,"pid":6079,"title":"Sentinel's window","x":66,"y":32,"w":958,"h":736,"focused":true,"minimized":false,"visible":true,"stacking":2},{"id":47,"pid":6080,"title":"Hidden","x":0,"y":0,"w":100,"h":100,"minimized":true,"visible":false,"stacking":1}]"#;
         let windows = parse_windows(raw, Some(6079)).expect("valid helper response");
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].xid, 46);
@@ -606,14 +528,14 @@ mod tests {
 
     #[test]
     fn accessibility_origin_matches_the_frame_cropped_screenshot() {
-        let raw = r#"('[{"id":46,"pid":6079,"title":"Floating GTK","x":14,"y":12,"w":560,"h":736,"buffer_x":0,"buffer_y":0}]',)"#;
+        let raw = r#"[{"id":46,"pid":6079,"title":"Floating GTK","x":14,"y":12,"w":560,"h":736,"buffer_x":0,"buffer_y":0}]"#;
 
         assert_eq!(parse_window_origin(raw, 6079), Some((14, 12)));
     }
 
     #[test]
     fn marks_minimized_shell_windows_off_screen() {
-        let raw = r#"('[{"id":47,"pid":6080,"title":"Hidden","x":0,"y":0,"w":100,"h":100,"minimized":true,"visible":false,"stacking":1}]',)"#;
+        let raw = r#"[{"id":47,"pid":6080,"title":"Hidden","x":0,"y":0,"w":100,"h":100,"minimized":true,"visible":false,"stacking":1}]"#;
         let windows = parse_windows(raw, None).expect("valid helper response");
         assert_eq!(windows.len(), 1);
         assert!(!windows[0].is_on_screen);
@@ -634,7 +556,7 @@ mod tests {
 
     #[test]
     fn preserves_exact_focus_from_shell_snapshot() {
-        let raw = r#"('[{"id":46,"pid":6079,"title":"Target","x":66,"y":32,"w":958,"h":736,"focused":false,"minimized":false,"visible":true,"stacking":2},{"id":47,"pid":6080,"title":"Sentinel","x":0,"y":0,"w":100,"h":100,"focused":true,"minimized":false,"visible":true,"stacking":3}]',)"#;
+        let raw = r#"[{"id":46,"pid":6079,"title":"Target","x":66,"y":32,"w":958,"h":736,"focused":false,"minimized":false,"visible":true,"stacking":2},{"id":47,"pid":6080,"title":"Sentinel","x":0,"y":0,"w":100,"h":100,"focused":true,"minimized":false,"visible":true,"stacking":3}]"#;
         let windows = parse_shell_windows(raw, None).expect("valid helper response");
         assert_eq!(windows.len(), 2);
         assert!(!windows[0].focused);

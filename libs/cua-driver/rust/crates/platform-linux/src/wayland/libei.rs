@@ -17,8 +17,7 @@
 //!    handshake → connection.seat events → seat.bind(capabilities) →
 //!    device.frame + emulate events.
 //! 4. Public API sends commands over a crossbeam-channel and blocks
-//!    until the worker reports the request was flushed to the EIS
-//!    server.
+//!    until EIS acknowledges the preceding input through ei_connection.sync.
 //!
 //! Persistence: ashpd `PersistMode::ExplicitlyRevoked` keeps the user's consent
 //! until they revoke it in desktop settings. The restore token is stored at
@@ -607,6 +606,16 @@ fn run_calloop(context: reis::ei::Context, rx: Receiver<Cmd>) -> anyhow::Result<
             pending = still;
         }
 
+        state.pending_sync.retain(|_, (reply, sent)| {
+            if sent.elapsed() < std::time::Duration::from_secs(5) {
+                return true;
+            }
+            let _ = reply.send(Err(anyhow::anyhow!(
+                "EIS did not acknowledge input within 5s; delivery is unknown"
+            )));
+            false
+        });
+
         // The handle_command path may have queued frame() requests; flush
         // them once per loop iteration so the EIS server sees them.
         if let Some(ctx) = state.context.as_ref() {
@@ -620,6 +629,8 @@ fn run_calloop(context: reis::ei::Context, rx: Receiver<Cmd>) -> anyhow::Result<
 #[derive(Default)]
 struct EisState {
     context: Option<reis::ei::Context>,
+    connection: Option<reis::ei::Connection>,
+    pending_sync: HashMap<reis::ei::Callback, (Sender<anyhow::Result<()>>, std::time::Instant)>,
     seats: HashMap<reis::ei::Seat, SeatData>,
     devices: HashMap<reis::ei::Device, DeviceData>,
     sequence: u32,
@@ -737,17 +748,25 @@ impl EisState {
                     handshake.finish();
                 }
             }
-            Event::Connection(_conn, ev) => match ev {
-                reis::ei::connection::Event::Seat { seat } => {
-                    self.seats.insert(seat, SeatData::default());
+            Event::Callback(callback, reis::ei::callback::Event::Done { .. }) => {
+                if let Some((reply, _)) = self.pending_sync.remove(&callback) {
+                    let _ = reply.send(Ok(()));
                 }
-                // The EIS server pings to check liveness; failing to answer
-                // makes it drop the connection. Mirror reis's examples.
-                reis::ei::connection::Event::Ping { ping } => {
-                    ping.done(0);
+            }
+            Event::Connection(conn, ev) => {
+                self.connection = Some(conn);
+                match ev {
+                    reis::ei::connection::Event::Seat { seat } => {
+                        self.seats.insert(seat, SeatData::default());
+                    }
+                    // The EIS server pings to check liveness; failing to answer
+                    // makes it drop the connection. Mirror reis's examples.
+                    reis::ei::connection::Event::Ping { ping } => {
+                        ping.done(0);
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
+            }
             Event::Seat(seat, ev) => {
                 let data = self.seats.entry(seat.clone()).or_default();
                 match ev {
@@ -945,33 +964,36 @@ impl EisState {
 
     fn handle_command(&mut self, cmd: Cmd) {
         let result = self.run_command(&cmd);
-        // Send the reply on whichever channel this command carries.
-        match cmd {
-            Cmd::WaitReady { reply, .. } => {
-                let _ = reply.send(result);
+        let needs_sync = !matches!(cmd, Cmd::WaitReady { .. });
+        let reply = match cmd {
+            Cmd::WaitReady { reply, .. }
+            | Cmd::Click { reply, .. }
+            | Cmd::MoveAbsolute { reply, .. }
+            | Cmd::Scroll { reply, .. }
+            | Cmd::TypeText { reply, .. }
+            | Cmd::PressKey { reply, .. }
+            | Cmd::KeySequence { reply, .. }
+            | Cmd::Drag { reply, .. } => reply,
+            Cmd::Shutdown => return,
+        };
+        if result.is_ok() && needs_sync {
+            if let (Some(connection), Some(context)) = (&self.connection, &self.context) {
+                // A socket flush is not delivery. Hold the caller's focus guard
+                // until EIS acknowledges all preceding input frames.
+                let callback = connection.sync(1);
+                if let Err(error) = context.flush() {
+                    let _ = reply.send(Err(error.into()));
+                    return;
+                }
+                self.pending_sync
+                    .insert(callback, (reply, std::time::Instant::now()));
+            } else {
+                let _ = reply.send(Err(anyhow::anyhow!(
+                    "EIS connection unavailable for input acknowledgement"
+                )));
             }
-            Cmd::Click { reply, .. } => {
-                let _ = reply.send(result);
-            }
-            Cmd::MoveAbsolute { reply, .. } => {
-                let _ = reply.send(result);
-            }
-            Cmd::Scroll { reply, .. } => {
-                let _ = reply.send(result);
-            }
-            Cmd::TypeText { reply, .. } => {
-                let _ = reply.send(result);
-            }
-            Cmd::PressKey { reply, .. } => {
-                let _ = reply.send(result);
-            }
-            Cmd::KeySequence { reply, .. } => {
-                let _ = reply.send(result);
-            }
-            Cmd::Drag { reply, .. } => {
-                let _ = reply.send(result);
-            }
-            Cmd::Shutdown => {}
+        } else {
+            let _ = reply.send(result);
         }
     }
 

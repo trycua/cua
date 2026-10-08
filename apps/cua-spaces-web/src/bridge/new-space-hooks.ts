@@ -18,6 +18,7 @@ import {
   cloudConnectView,
   connectInput,
   firstSpaceOffers,
+  localBlocked,
   loadNewSpaceHostData as loadHostData,
   optionsPending,
   readNewSpaceSession as read,
@@ -148,6 +149,10 @@ export function useNewSpaceWizard(): NewSpaceWizardHook {
 export interface FirstSpaceHook {
   /** Linux first, then macOS; empty while the core or the host's options load. */
   offers: FirstSpaceOffer[];
+  /** False while the host's options (its runtimes, storage) are still loading. */
+  known: boolean;
+  /** Why an image can't be created on this machine now (the offers' rule), or null. */
+  blockedReason(ref: string): string | null;
   /** macOS VMs running on this machine, when the host says (Apple's limit). */
   macosVmsRunning: number | null;
 }
@@ -186,7 +191,14 @@ export function useFirstSpaceOffers(): FirstSpaceHook {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [offered, ctx.ready, tries, needsOptions]);
   const offers = offered && s.options ? firstSpaceOffers(core, env) : [];
-  return { offers, macosVmsRunning: s.options?.macosVmsRunning ?? null };
+  // Without the wizard (no core, or a host without its options) nothing is known to block a create.
+  const known = !offered || Boolean(s.options && !needsOptions);
+  return {
+    offers,
+    known,
+    blockedReason: (ref) => (offered && s.options ? localBlocked(core, env, ref) : null),
+    macosVmsRunning: s.options?.macosVmsRunning ?? null,
+  };
 }
 
 /**

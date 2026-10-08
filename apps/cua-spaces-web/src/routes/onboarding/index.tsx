@@ -4,7 +4,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 
-import { useOnboarding, useOnboardingVolume, useSession, useSpaces, useThisMachine, type OnboardingHook, type OnboardingView, type SandboxImage } from "@/bridge";
+import { useFirstSpaceOffers, useOnboarding, useOnboardingVolume, useSession, useSpaces, useThisMachine, type OnboardingHook, type OnboardingView, type SandboxImage } from "@/bridge";
 import { CuaLogo } from "@/components/cua-logo";
 import { useAgentsStep, type AgentsStep } from "@/components/volume/use-agents-step";
 import { OsIcon } from "@/components/os-icon";
@@ -330,6 +330,9 @@ function DoneCard({ view, flow }: { view: OnboardingView; flow: OnboardingHook }
 
 function FirstSpace({ images }: { images: SandboxImage[] }) {
   const { createSpace } = useSpaces();
+  // What this machine can create: the Spaces page's one-click rule (no
+  // macOS off an Apple silicon Mac, nothing without a runtime).
+  const first = useFirstSpaceOffers();
   const [started, setStarted] = useState<SandboxImage | null>(null);
   const create = (image: SandboxImage) => {
     setStarted(image);
@@ -347,20 +350,28 @@ function FirstSpace({ images }: { images: SandboxImage[] }) {
         {started ? `Creating ${started.name}. It shows in Spaces when it's ready.` : "A separate desktop for an agent. You can also do this later."}
       </p>
       <ul className="grid grid-cols-3 gap-3">
-        {images.map((image) => (
-          <li key={image.ref}>
-            <Card className="flex items-center gap-3 px-4 py-3">
-              <OsIcon os={image.os} className="size-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[13px] font-medium">{image.name}</div>
-                <div className="truncate text-xs text-muted-foreground">{image.variant === "vm" ? "Virtual machine" : "Container"}</div>
-              </div>
-              <Button variant="outline" size="sm" disabled={started !== null} onClick={() => create(image)}>
-                {started?.ref === image.ref ? "Creating…" : "Create"}
-              </Button>
-            </Card>
-          </li>
-        ))}
+        {images.map((image) => {
+          const blocked = first.blockedReason(image.ref);
+          return (
+            <li key={image.ref}>
+              <Card className="flex items-center gap-3 px-4 py-3" data-first-space={image.os}>
+                <OsIcon os={image.os} className="size-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13px] font-medium">{image.name}</div>
+                  <div className="truncate text-xs text-muted-foreground">{image.variant === "vm" ? "Virtual machine" : "Container"}</div>
+                  {blocked ? (
+                    <p data-first-space-blocked="" title={blocked} className="mt-0.5 line-clamp-2 text-xs text-destructive">
+                      {blocked}
+                    </p>
+                  ) : null}
+                </div>
+                <Button variant="outline" size="sm" disabled={started !== null || !first.known || blocked !== null} onClick={() => create(image)}>
+                  {started?.ref === image.ref ? "Creating…" : "Create"}
+                </Button>
+              </Card>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

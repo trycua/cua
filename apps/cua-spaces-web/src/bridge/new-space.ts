@@ -194,11 +194,9 @@ export function firstSpaceOffers(core: CoreClient, env: WizardEnv): FirstSpaceOf
     ["macos", macos],
   ] as const) {
     if (!ref) continue;
-    let state = wizardReduce(core, start, { type: "choose-image", ref }, local);
-    state = wizardReduce(core, state, { type: "choose-placement", on: "local" }, local);
-    const system = wizardView(core, state, local);
-    if (system.image.ref !== ref || system.image.os !== os) continue;
-    const resources = wizardView(core, { ...state, step: 1 }, local);
+    const plan = localPlan(core, env, ref);
+    if (!plan || plan.system.image.os !== os) continue;
+    const { system } = plan;
     const platforms = (system.image as SizedImage).sizes?.platforms ?? [];
     const platform = platforms.find((p) => p.arch === local.hostArch) ?? platforms[0];
     const cached = local.storage ? pulled.has(ref) : false;
@@ -208,11 +206,34 @@ export function firstSpaceOffers(core: CoreClient, env: WizardEnv): FirstSpaceOf
       name: system.image.name,
       size: cached ? "Already downloaded" : platform ? `${sizeText(platform.download)} download` : null,
       time: os === "linux" ? (cached ? "under a minute" : "about 2 min") : cached ? "a few minutes" : "10 to 30 min the first time",
-      blocked: (system.canContinue ? null : (system.placementError ?? `${THIS_MACHINE[hostOs()]} can't run it.`)) ?? resources.resourcesError,
+      blocked: plan.blocked,
       args: wizardCreateArgs(core, system.plan),
     });
   }
   return offers;
+}
+
+/** The wizard's own plan for `ref` on this machine with its defaults, and
+ * why it can't be created here (the core's words: a system this machine
+ * can't run, no runtime, no room), or null. Null when the core has no such
+ * image. */
+function localPlan(core: CoreClient, env: WizardEnv, ref: string) {
+  const local = { ...env, defaultLocation: "local" as const };
+  let state = wizardReduce(core, wizardInitial(core, local), { type: "choose-image", ref }, local);
+  state = wizardReduce(core, state, { type: "choose-placement", on: "local" }, local);
+  const system = wizardView(core, state, local);
+  if (system.image.ref !== ref) return null;
+  const resources = wizardView(core, { ...state, step: 1 }, local);
+  const blocked = (system.canContinue ? null : (system.placementError ?? `${THIS_MACHINE[hostOs()]} can't run it.`)) ?? resources.resourcesError ?? null;
+  return { system, blocked };
+}
+
+/** Why `ref` can't be created on this machine now, by the rule the Spaces
+ * page's one-click offers use ({@link firstSpaceOffers}); null when it can,
+ * or when the core can't say. */
+export function localBlocked(core: CoreClient, env: WizardEnv, ref: string): string | null {
+  if (core.status !== "ready" || !core.methods.includes("wizard.view")) return null;
+  return localPlan(core, env, ref)?.blocked ?? null;
 }
 
 /* ---- The empty home: no Spaces yet ----------------------------------------- */

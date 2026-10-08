@@ -1106,6 +1106,7 @@ impl Tool for GetWindowStateTool {
                 "pid":{"type":"integer","description":"Process ID that owns the window."},
                 "window_id":{"type":"integer","description":"Native window identifier from list_windows, or the `popup.window_id` a click / right_click result named (an open context menu / popover; its menu items then get element indices). Omitted: the pid's open popup menu when one is mapped, else its focused / active / largest window."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
+                "display_only": cua_driver_core::display_only::schema(),
                 "include_accessibility_tree":{"type":"boolean",
                     "description":"Default true — walk the AT-SPI tree and return it (per `tree_format`) alongside the screenshot. Set false to SKIP the AT-SPI walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
                 "include_screenshot":{"type":"boolean",
@@ -1125,6 +1126,14 @@ impl Tool for GetWindowStateTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
+        // A display-only capture (a host's live preview) takes the internal
+        // observation-only path: no action capture, no snapshot replacement.
+        let display_only = match cua_driver_core::display_only::requested(&args) {
+            Ok(display_only) => display_only,
+            Err(message) => return ToolResult::error(message),
+        };
+        let observation_only =
+            display_only || args.get("_observation_only").and_then(Value::as_bool) == Some(true);
         let pid = match args.require_u32("pid") {
             Ok(v) => v,
             Err(e) => return e,
@@ -1230,15 +1239,8 @@ impl Tool for GetWindowStateTool {
         });
         // Optional caps — when omitted, the AT-SPI walker uses its built-in
         // defaults (#22865).
-        let max_elements = Some(
-            view.max_elements(
-                &args,
-                LINUX_DEFAULT_MAX_ELEMENTS,
-                args.get("_observation_only")
-                    .and_then(|value| value.as_bool())
-                    == Some(true),
-            ),
-        );
+        let max_elements =
+            Some(view.max_elements(&args, LINUX_DEFAULT_MAX_ELEMENTS, observation_only));
         let max_depth = args
             .get("max_depth")
             .and_then(|v| v.as_u64())
@@ -1313,10 +1315,6 @@ impl Tool for GetWindowStateTool {
                  screenshot_out_file to force a capture.",
             );
         }
-        let observation_only = args
-            .get("_observation_only")
-            .and_then(|value| value.as_bool())
-            == Some(true);
         let state = self.state.clone();
         let state_for_capture = state.clone();
         let query_for_walk = query.clone();
@@ -1759,6 +1757,9 @@ impl Tool for GetWindowStateTool {
                      window_bounds is where it sits on the screen. Pass scope:\"desktop\" only \
                      for get_desktop_state pixels."
                 );
+                if display_only {
+                    cua_driver_core::display_only::annotate(&mut structured);
+                }
 
                 // The capture-only path (include_accessibility_tree:false) leaves
                 // `content` empty when the screenshot was also unavailable — most
@@ -14694,5 +14695,42 @@ mod cursor_hook_emission_tests {
             ("agent-7", 10.0, 20.0, false)
         );
         assert!(seen[1].pressed);
+    }
+}
+
+#[cfg(test)]
+mod display_only_tests {
+    use super::*;
+
+    /// Hosts feature-detect display-only previews from the tool schema.
+    #[test]
+    fn get_window_state_advertises_display_only() {
+        let tool = GetWindowStateTool {
+            state: ToolState::new(),
+        };
+        let schema = &tool.def().input_schema["properties"]["display_only"];
+        assert_eq!(*schema, cua_driver_core::display_only::schema());
+    }
+
+    /// A display-only call never walks or publishes an element tree.
+    #[tokio::test]
+    async fn display_only_refuses_accessibility_snapshot_requests() {
+        let tool = GetWindowStateTool {
+            state: ToolState::new(),
+        };
+        for tree in [None, Some(true)] {
+            let mut args = json!({"pid": 42, "window_id": 7, "display_only": true});
+            if let Some(tree) = tree {
+                args["include_accessibility_tree"] = json!(tree);
+            }
+            let result = tool.invoke(args).await;
+            assert_eq!(
+                serde_json::to_value(result).unwrap(),
+                serde_json::to_value(ToolResult::error(
+                    cua_driver_core::display_only::REQUIRES_NO_TREE
+                ))
+                .unwrap()
+            );
+        }
     }
 }

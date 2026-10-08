@@ -861,7 +861,6 @@ impl Spaces {
         };
         let machines = match read.await {
             Ok(m) => m,
-            // A known row stays available when the directory cannot be read.
             Err(_) if listed => return Ok(cached),
             Err(e) => {
                 return Err(Error::Relay(match e.tag() {
@@ -898,7 +897,6 @@ impl Spaces {
             .ok_or_else(|| Error::NotFound(format!("Space {key}")))
     }
 
-    /// A machine this device removed leaves the snapshot (no read).
     pub(crate) fn relay_forget(&self, machine_id: &str) {
         self.inner
             .relay_cache

@@ -186,8 +186,6 @@ async fn discovered_relay_os_survives_embedded_and_daemon_connections() {
     }
 }
 
-/// A relay id resolves and connects with no prior list, including a machine
-/// that joins after the first read, in both topologies.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn relay_id_resolves_before_any_list_including_a_late_join() {
     for daemon in [false, true] {

@@ -177,6 +177,14 @@ async fn relay_spaces_need_an_account() {
     assert_eq!(err.tag(), "host_capability_missing", "{err}");
     let err = spaces.space(&format!("relay:{MACHINE}")).await.unwrap_err();
     assert_eq!(err.tag(), "host_capability_missing", "{err}");
+    assert_eq!(
+        spaces
+            .find(&format!("relay:{MACHINE}"))
+            .await
+            .unwrap_err()
+            .tag(),
+        "not_found"
+    );
 }
 
 #[tokio::test]

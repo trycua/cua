@@ -157,8 +157,7 @@ impl Spaces {
                 .into(),
             ))
         };
-        let info = self.find(&id).await.map_err(|_| unavailable())?;
-        Ok(info)
+        self.find(&id).await.map_err(|_| unavailable())
     }
 
     /// The name of the cloud sandbox behind a `relay:<machine>` Space, if

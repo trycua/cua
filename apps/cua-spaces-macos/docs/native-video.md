@@ -153,7 +153,7 @@ The last run passed every step (it pressed ⌘Esc, the release chord then).
 
 | Run | Tiles | Viewer | CPU (app + WebKit) | App CPU | Memory, all | Memory, app |
 |---|---|---|---|---|---|---|
-| No video (`VIDEO=0`) | — | — | 1% | 0.4% | 219 MB | 41 MB |
+| No video (`VIDEO=0`) | none | none | 1% | 0.4% | 219 MB | 41 MB |
 | 10 × 1280×800@30 (`tile30`) | 29.9 fps each | 59.5 to 59.7 fps | **28 to 31%** (max 45%) | 27% | 273 to 277 MB | 97 MB |
 | 10 × 960×600@10 (production tile tier) | 10.0 fps each | 59.9 fps | **13%** (max 24%) | 12% | 271 MB | 92 MB |
 

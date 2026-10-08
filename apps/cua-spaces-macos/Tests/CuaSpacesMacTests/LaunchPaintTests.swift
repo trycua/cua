@@ -66,12 +66,25 @@ import WebKit
         Thread.sleep(forTimeInterval: seconds)
     }
 
+    /// Runs a blocking read on a thread of its own: off the main thread, and
+    /// off the few threads every Swift task shares, which a blocked read
+    /// would hold for its whole wait (on a small CI machine that stalls the
+    /// tests running alongside, such as the timeout tests).
+    nonisolated static func onOwnThread(_ read: @escaping @Sendable () -> Void) async {
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            Thread.detachNewThread {
+                read()
+                done.resume()
+            }
+        }
+    }
+
     @Test func theFirstRendersAnswersComeAtOnceWhileTheStartIsStuck() async {
         let blocked = LiveGate<Bool>()
         // The start runs the slow read off the main thread, as makeModel's
         // does, and then never hands the services over.
         let (model, gate) = launchingModel {
-            await Task.detached { Self.blockingRead(seconds: 3) }.value
+            await Self.onOwnThread { Self.blockingRead(seconds: 3) }
             _ = await blocked.wait()
         }
         model.startup.begin()
@@ -106,7 +119,7 @@ import WebKit
     @Test func theMainThreadKeepsRunningWhileTheStartIsStuckOnARead() async {
         let stuck = StuckRead()
         let (model, _) = launchingModel {
-            await Task.detached { stuck.read() }.value
+            await Self.onOwnThread { stuck.read() }
         }
         model.startup.begin()
         let bridge = WebUIBridge(model: model, allowedOrigins: [])

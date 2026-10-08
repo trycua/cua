@@ -443,6 +443,8 @@ public final class AppModel {
     /// an error of its own (the relay refused the sign-in, say): the
     /// connection works, so a new one would not help.
     public private(set) var lastListAnswer: Date?
+    /// The list health's clock (tests step it instead of waiting).
+    @ObservationIgnored var listClock: @MainActor () -> Date = { Date() }
     /// Since when the list has been watched (the live services came in, or
     /// the last reconnect).
     private var listWatchedSince = Date()
@@ -474,8 +476,9 @@ public final class AppModel {
 
     /// Reconnects when the list has not been read for `listStaleAfter`
     /// (nothing before the live services are in).
-    func checkListHealth(now: Date = Date()) async {
+    func checkListHealth(now: Date? = nil) async {
         guard startup.isReady, reconnect != nil, !reconnecting else { return }
+        let now = now ?? listClock()
         let since = max(lastListAnswer ?? listWatchedSince, listWatchedSince)
         guard now.timeIntervalSince(since) >= listStaleAfter else { return }
         await reconnectNow(reason: "the Space list was not read for \(Int(now.timeIntervalSince(since))) s")
@@ -491,7 +494,7 @@ public final class AppModel {
         rowsInFlight = nil
         hostInFlight = nil
         let ok = await reconnect()
-        listWatchedSince = Date()
+        listWatchedSince = listClock()
         reconnecting = false
         if !ok { NSLog("Cua Spaces: the reconnect did not make a new connection; trying again later") }
         await refresh()
@@ -509,7 +512,7 @@ public final class AppModel {
 
     /// The live services just came in: watch the list from now.
     func watchListFromNow() {
-        listWatchedSince = Date()
+        listWatchedSince = listClock()
     }
 
     /// The host's reads, shared and bounded.
@@ -546,7 +549,7 @@ public final class AppModel {
         cloudConfigured = await backend.cloudAvailable()
         do {
             let rows = try await readRows()
-            lastListOk = Date()
+            lastListOk = listClock()
             lastListAnswer = lastListOk
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             registrySpaces = appRowsToSpaces(rows: rows, nowMs: now)
@@ -563,7 +566,7 @@ public final class AppModel {
             // The daemon is slow or gone: the list stays as it was, and the
             // poll reconnects when it stays stale (`checkListHealth`).
         } catch {
-            if Self.daemonAnswered(error) { lastListAnswer = Date() }
+            if Self.daemonAnswered(error) { lastListAnswer = listClock() }
             // Errors may contain server bodies or credential-bearing URLs.
             rosterError = loaded
                 ? "Could not refresh Spaces. Previously loaded rows may be out of date."

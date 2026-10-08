@@ -162,24 +162,42 @@ import Testing
 
     /// Signed out on Windows and Linux, every read failed with the relay's
     /// refusal and the app reconnected every 50 s: a daemon that answers
-    /// is not a stale connection.
+    /// is not a stale connection. The poll's steps run by hand on a stepped
+    /// clock, so a loaded run cannot make a read late (it failed on a
+    /// 3-core CI runner when the real 3 s staleness passed between polls).
     @Test func aListTheDaemonRefusesIsNotAStaleConnection() async throws {
         let first = Connection(rows: [Self.row("local:a")])
         first.refuse(CuaError.Unauthenticated(message: "Relay authentication failed. Sign in again to refresh your machines."))
         let gate = LiveGate<LiveServices>()
         gate.resolve(LiveServices(backend: first))
         let model = makeModel(gate: gate) { first }
-        let poll = model.startListPoll(every: .milliseconds(50))
-        defer { poll.cancel() }
-        #expect(await eventually { model.rosterError != nil })
-        // From the first answer on (a loaded run may reconnect before it).
-        let before = model.reconnects
-        try await Task.sleep(for: .seconds(4))
-        #expect(model.reconnects == before)
+        // Nothing times out on real time; only the stepped clock moves.
+        model.listTimeout = 600
+        model.hostTimeout = 600
+        model.listStaleAfter = 45
+        var now = Date()
+        model.listClock = { now }
+        model.watchListFromNow()
+        /// One poll, `seconds` after the last.
+        func poll(after seconds: TimeInterval) async {
+            now += seconds
+            await model.refresh()
+            await model.checkListHealth()
+        }
+        await poll(after: 0)
+        #expect(model.rosterError != nil)
+        // Ten minutes of refusals, a poll every 30 s: never stale.
+        for _ in 0..<20 { await poll(after: 30) }
+        #expect(model.reconnects == 0)
+        #expect(first.listCalls == 21)
 
-        // A connection that broke is made again.
+        // A connection that broke is made again, once it stayed so past
+        // the staleness (and not before).
         first.refuse(CuaError.DaemonNotRunning(message: "The cua daemon is not running."))
-        #expect(await eventually { model.reconnects > before })
+        await poll(after: 30)
+        #expect(model.reconnects == 0)
+        await poll(after: 30)
+        #expect(model.reconnects == 1)
         #expect(AppModel.daemonAnswered(CuaError.Transport(message: "reset")) == false)
     }
 

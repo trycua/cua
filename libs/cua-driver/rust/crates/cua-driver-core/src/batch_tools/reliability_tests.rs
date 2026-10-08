@@ -24,10 +24,7 @@ async fn observe_sent_as_a_string_is_refused() {
     assert!(text(&result).contains("observe"), "{}", text(&result));
 
     let result = harness
-        .run(json!({"steps": [
-            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
-            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3, "max_elements": 100}}
-        ], "observe": "false"}))
+        .run(json!({"steps": [{"tool": "click", "args": {"pid": 7, "window_id": 3}}], "observe": "false"}))
         .await;
     assert_eq!(result.is_error, Some(true));
     assert!(text(&result).contains("observe"), "{}", text(&result));

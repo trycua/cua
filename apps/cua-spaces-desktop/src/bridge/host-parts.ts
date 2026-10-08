@@ -63,7 +63,7 @@ export function hostParts(ctx: BridgeContext): HostParts {
   const updates = new UpdatesModel(
     native,
     system?.updater ?? null,
-    { version: ctx.version, build: "", os: osLine(platform, undefined, undefined, systemVersion(platform)) },
+    { version: ctx.version, build: ctx.build ?? "", os: osLine(platform, undefined, undefined, systemVersion(platform)) },
     system?.updater?.channel === "beta" ? native.AppUpdateChannel.Beta : system?.updater ? native.AppUpdateChannel.Stable : model.settings.updateChannel,
     (channel) => {
       model.settings = { ...model.settings, updateChannel: channel };

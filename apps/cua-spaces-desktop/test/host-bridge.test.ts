@@ -115,7 +115,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     rmSync(home, { recursive: true, force: true });
   });
 
-  const make = async (o: { system?: FixtureSystem | null; platform?: NodeJS.Platform; servicesIn?: boolean; account?: null } = {}) => {
+  const make = async (o: { system?: FixtureSystem | null; platform?: NodeJS.Platform; servicesIn?: boolean; account?: null; build?: string } = {}) => {
     backend = new ToolBackend(native);
     host = new FixtureHost();
     relay = new FixtureDevices();
@@ -140,6 +140,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
       model,
       supervisor: null,
       version: "1.2.3",
+      build: o.build,
       platform: o.platform ?? "darwin",
       env: { HOME: home },
       ui: { openSpace: () => {}, setBackground: () => {}, activate: () => {} },
@@ -588,10 +589,16 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     await tick(5);
     expect(system.updater.checks).toBe(1);
     expect(((await call("about.get")) as Record<string, unknown>).lastCheck).toEqual(expect.any(String));
+    expect(a.build).toBe("");
     await make({ system: null });
     expect(((await call("about.get")) as Record<string, unknown>).updater).toBe(false);
     expect(await code("about.set", { autoCheck: true })).toBe("unsupported");
     expect(await code("about.checkNow")).toBe("unsupported");
+  });
+
+  it("About carries the bundle's build, for \"Version 0.7.2 (0.7.2.41)\" as the SwiftUI app shows it", async () => {
+    await make({ build: "1.2.3.41" });
+    expect(((await call("about.get")) as Record<string, unknown>).build).toBe("1.2.3.41");
   });
 
   it("records what each check found", async () => {

@@ -2,10 +2,12 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { app, BrowserWindow, dialog, nativeTheme, Notification, screen, shell } from "electron";
 import { createBridge } from "./bridge";
+import { appBuild } from "./bundle-version";
 import { ELECTRON_EVENT_CHANNEL } from "./channels";
 import { applyVideoDecodeSwitches } from "./gpu";
 import { menuItems, realSpaces, startHost } from "./bridge/host-start";
@@ -110,6 +112,7 @@ async function startNativeHost(showRoute: (route: string) => void) {
     model: env.model,
     supervisor: env.supervisor,
     version: app.getVersion(),
+    build: appBuild({ platform: process.platform, packaged: app.isPackaged, resourcesPath: process.resourcesPath, read: (f) => readFileSync(f, "utf8") }),
     platform: process.platform,
     env: process.env,
     system: makeSystem({ native, showRoute }),

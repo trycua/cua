@@ -46,6 +46,8 @@ export interface BridgeContext {
   supervisor: DaemonSupervisor | null;
   /** The app's version (`app.info`). */
   version: string;
+  /** The build after the version in About (macOS: `CFBundleVersion`, `0.7.2.41`); empty or absent: none. */
+  build?: string;
   platform: NodeJS.Platform;
   /** Every method the registry routes, in order (`app.info`). */
   methods: () => string[];

@@ -5,7 +5,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { InfoIcon } from "lucide-react";
 import { useState } from "react";
 
-import { useAbout, useSession, type AboutLink, type AboutUpdates, type UpdateChannel } from "@/bridge";
+import { useAbout, useBridge, useSession, type AboutLink, type AboutUpdates, type UpdateChannel } from "@/bridge";
+import { aboutView } from "@/bridge/settings-derive";
 import { CuaLogo } from "@/components/cua-logo";
 import { NoticesDialog } from "@/components/settings/notices-dialog";
 import { Button } from "@/components/ui/button";
@@ -16,17 +17,24 @@ import { Tooltip } from "@/components/ui/tooltip";
 
 export const Route = createFileRoute("/settings/about")({ component: AboutPage });
 
+/** What the update controls say in a build that can't update itself. */
+const UPDATES_UNAVAILABLE = "Updates aren\u2019t available in this build";
+
 /**
  * Settings, About: the name and version, the links, the copyright, then the
  * update controls where the app updates itself. Everything shown is the
  * app core's `about::view`, as in the SwiftUI app's `AboutSettingsView`.
+ * The Electron app keeps the controls in a build with no update feed (a
+ * local build), greyed out, and says that this build doesn't update.
  */
 function AboutPage() {
   const { data, setAbout, checkNow } = useAbout();
   const { openExternal } = useSession();
+  const { mode, core } = useBridge();
   const [notices, setNotices] = useState(false);
   const view = data?.view;
   if (!view) return null;
+  const unavailable = !view.updates && mode === "electron" ? (aboutView(core, { ...data.input, updater: true })?.updates ?? null) : null;
 
   const open = (link: AboutLink) => {
     if (link.url) void openExternal(link.url).catch(toastError(`Couldn't open ${link.label}`));
@@ -67,6 +75,8 @@ function AboutPage() {
           onChange={(patch) => void setAbout(patch).catch(toastError("Couldn't change the update settings"))}
           onCheck={() => void checkNow().catch(toastError("Couldn't check for updates"))}
         />
+      ) : unavailable ? (
+        <UpdateControls updates={{ ...unavailable, checkEnabled: false, lastCheck: UPDATES_UNAVAILABLE }} canChange={false} unavailable onChange={() => {}} onCheck={() => {}} />
       ) : null}
       <NoticesDialog open={notices} onOpenChange={setNotices} />
     </section>
@@ -76,17 +86,20 @@ function AboutPage() {
 function UpdateControls({
   updates: u,
   canChange,
+  unavailable = false,
   onChange,
   onCheck,
 }: {
   updates: AboutUpdates;
   canChange: boolean;
+  /** This build can't update itself: every control greyed out, and why in place of the last check. */
+  unavailable?: boolean;
   onChange: (patch: { autoCheck?: boolean; autoInstall?: boolean; channel?: UpdateChannel }) => void;
   onCheck: () => void;
 }) {
   const channel = (u.channels.find((c) => c.active)?.id ?? "stable") as UpdateChannel;
   return (
-    <div className="mt-7 border-t pt-6" data-about-updates>
+    <div className="mt-7 border-t pt-6" data-about-updates {...(unavailable ? { "data-about-unavailable": "" } : {})}>
       <div className="mx-auto grid w-fit grid-cols-[auto_auto] items-center gap-x-3 gap-y-3">
         <span />
         <label className="flex items-center gap-2 text-[13px]">

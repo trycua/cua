@@ -25,7 +25,7 @@ Insert text via `AXSetAttribute(kAXSelectedText)` into the element given by `ele
 
 Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the text, so the result is `effect:"unverifiable"` and Electron web content refuses background delivery. For a browser tab use the `page` tool. For an embedded web view pass `x, y` (no element_token) to pixel-click the field then type in one call; a pixel click will not reliably open a closed control, so AX-press it open first. Confirm from the screenshot, and use `delivery_mode:"foreground"` only if background still drops the text.
 
-**Parameters**
+**macOS parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -35,7 +35,6 @@ Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the
 | <span id="type_text--macos--pid"></span>`pid` | `integer` |  | Target process ID. |
 | <span id="type_text--macos--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | "desktop" with no pid/window_id types into the frontmost app. |
 | <span id="type_text--macos--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
-| <span id="type_text--macos--target"></span>`target` | `window target \| desktop target` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 | <span id="type_text--macos--text"></span>`text` | `string` | required | Text to insert. |
 | <span id="type_text--macos--window_id"></span>`window_id` | `integer` |  | Window ID. Omit with element_token. |
 | <span id="type_text--macos--x"></span>`x` | `number` |  | Screenshot-pixel X of the field (get_window_state PNG, as in click). With y and no element_token, pixel-clicks to focus, then types. |
@@ -46,7 +45,7 @@ Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the
 
 Type text to a window via XSendEvent (KeyPress/KeyRelease). No focus steal.
 
-**Parameters**
+**Linux parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -56,11 +55,6 @@ Type text to a window via XSendEvent (KeyPress/KeyRelease). No focus steal.
 | <span id="type_text--linux--pid"></span>`pid` | `integer` |  | Target process ID. Omit with scope "desktop" to type into the focused application. |
 | <span id="type_text--linux--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Use "desktop" with no pid to type into the focused application. Default "window". |
 | <span id="type_text--linux--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
-| <span id="type_text--linux--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
-| <span id="type_text--linux--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
-| <span id="type_text--linux--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
-| <span id="type_text--linux--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
-| <span id="type_text--linux--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
 | <span id="type_text--linux--text"></span>`text` | `string` | required | Text to type. |
 | <span id="type_text--linux--window_id"></span>`window_id` | `integer` |  | Window id from list_windows. Required with x/y; optional with element_token (the token carries it). |
 | <span id="type_text--linux--x"></span>`x` | `number` |  | Pixel X of the field to type into: the element px action form. Pass x,y (no element_token) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Window-local pixels of the target window's own get_window_state screenshot by default (same convention as click); for get_desktop_state pixels pass scope:"desktop" (or coordinate_frame:"desktop"): a bare pid+x/y is otherwise misinterpreted as window-local and can focus the wrong widget. |
@@ -77,7 +71,7 @@ Special keys (Return, Escape, arrows, Tab) go through `press_key` / `hotkey`: th
 
 `delay_ms` (0–200, default 30) spaces successive characters on the PostMessage path so autocomplete and IME can keep up. Ignored on the UIA path (SetValue is atomic).
 
-**Parameters**
+**Windows parameters**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -87,7 +81,6 @@ Special keys (Return, Escape, arrows, Tab) go through `press_key` / `hotkey`: th
 | <span id="type_text--windows--pid"></span>`pid` | `integer` |  | Target process ID. |
 | <span id="type_text--windows--scope"></span>`scope` | `"window" \| "desktop"` |  | Use desktop with no pid/window_id to type into the current foreground application. |
 | <span id="type_text--windows--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
-| <span id="type_text--windows--target"></span>`target` | `window target \| desktop target` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 | <span id="type_text--windows--text"></span>`text` | `string` | required | Text to insert at the focused element's cursor. |
 | <span id="type_text--windows--window_id"></span>`window_id` | `integer` |  | HWND of the target window. Omit when element_token is supplied (the token carries it). |
 | <span id="type_text--windows--x"></span>`x` | `number` |  | Window-local screenshot-pixel X of the field to type into: the element px action form. Pass x,y (no element_token) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the UIA/WM_CHAR path can't reach. Read straight off the get_window_state PNG, same convention as click. |
@@ -95,6 +88,16 @@ Special keys (Return, Escape, arrows, Tab) go through `press_key` / `hotkey`: th
 
 </Tab>
 </Tabs>
+
+**Parameters on every platform**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="type_text--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
+| <span id="type_text--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
+| <span id="type_text--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
+| <span id="type_text--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
+| <span id="type_text--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
 
 **Example arguments**
 

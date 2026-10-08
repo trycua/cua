@@ -10,8 +10,6 @@ description: "Show, animate and style the agent cursor."
   Version: 0.34.0
 */}
 
-import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
-
 | Tool | Description | Platforms |
 | --- | --- | --- |
 | [`set_agent_cursor_enabled`](#set_agent_cursor_enabled) | Show or hide the agent cursor owned by a session. | macOS, Linux, Windows |
@@ -40,93 +38,30 @@ Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 
 ## `set_agent_cursor_motion`
 
+Configure the movement style, timing, effects and visibility timing for a session cursor.
+
 Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
 
-<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
-<Tab value="macOS">
-
-Configure the movement style, timing, effects and visibility timing for a session cursor.
-
-**macOS parameters**
-
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="set_agent_cursor_motion--macos--arc_flow"></span>`arc_flow` | `number` |  | Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`: positive moves the apex toward the destination. Clamped to -1..1 (default 0). |
-| <span id="set_agent_cursor_motion--macos--arc_size"></span>`arc_size` | `number` |  | Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default) keeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1. |
-| <span id="set_agent_cursor_motion--macos--dwell_after_click_ms"></span>`dwell_after_click_ms` | `number` |  | Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80). |
-| <span id="set_agent_cursor_motion--macos--effects"></span>`effects` | `object` |  | Turn single effects on or off. An omitted effect keeps its current setting; null restores the style's default. |
-| <span id="set_agent_cursor_motion--macos--effects-glow"></span>`effects.glow` | `boolean` |  | Soft glow around the cursor that grows with speed. |
-| <span id="set_agent_cursor_motion--macos--effects-magnet"></span>`effects.magnet` | `boolean` |  | Target glow when the `magnetic` style locks on. |
-| <span id="set_agent_cursor_motion--macos--effects-ripple"></span>`effects.ripple` | `boolean` |  | Ring that expands from the hotspot on click. |
-| <span id="set_agent_cursor_motion--macos--effects-squish"></span>`effects.squish` | `boolean` |  | Brief scale-down of the cursor on click. |
-| <span id="set_agent_cursor_motion--macos--effects-trail"></span>`effects.trail` | `boolean` |  | Short fading trail behind the cursor. |
-| <span id="set_agent_cursor_motion--macos--end_handle"></span>`end_handle` | `number` |  | Arc control-point offset from the end, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
-| <span id="set_agent_cursor_motion--macos--glide_duration_ms"></span>`glide_duration_ms` | `number` |  | Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A nonzero value with `native` timing also fixes the duration. Clamped to 0..5000. |
-| <span id="set_agent_cursor_motion--macos--idle_hide_ms"></span>`idle_hide_ms` | `number` |  | Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to 0..60000 (default 15000). |
-| <span id="set_agent_cursor_motion--macos--spring"></span>`spring` | `number` |  | Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1 (default 0.72). |
-| <span id="set_agent_cursor_motion--macos--start_handle"></span>`start_handle` | `number` |  | Arc control-point offset from the start, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
-| <span id="set_agent_cursor_motion--macos--turn_radius"></span>`turn_radius` | `number` |  | Minimum turning radius of the `classic` glide path, in points; smaller turns tighter. Clamped to 1..1000 (default 80). |
-
-</Tab>
-<Tab value="Linux">
-
-Configure the movement style, timing, effects and visibility timing for a session cursor.
-
-**Linux parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="set_agent_cursor_motion--linux--arc_flow"></span>`arc_flow` | `number` |  | Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`: positive moves the apex toward the destination. Clamped to -1..1 (default 0). |
-| <span id="set_agent_cursor_motion--linux--arc_size"></span>`arc_size` | `number` |  | Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default) keeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1. |
-| <span id="set_agent_cursor_motion--linux--dwell_after_click_ms"></span>`dwell_after_click_ms` | `number` |  | Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80). |
-| <span id="set_agent_cursor_motion--linux--effects"></span>`effects` | `object` |  | Turn single effects on or off. An omitted effect keeps its current setting; `"default"` restores the style's default. |
-| <span id="set_agent_cursor_motion--linux--effects-glow"></span>`effects.glow` | `"on" \| "off" \| "default"` |  | Soft glow around the cursor that grows with speed. |
-| <span id="set_agent_cursor_motion--linux--effects-magnet"></span>`effects.magnet` | `"on" \| "off" \| "default"` |  | Target glow when the `magnetic` style locks on. |
-| <span id="set_agent_cursor_motion--linux--effects-ripple"></span>`effects.ripple` | `"on" \| "off" \| "default"` |  | Ring that expands from the hotspot on click. |
-| <span id="set_agent_cursor_motion--linux--effects-squish"></span>`effects.squish` | `"on" \| "off" \| "default"` |  | Brief scale-down of the cursor on click. |
-| <span id="set_agent_cursor_motion--linux--effects-trail"></span>`effects.trail` | `"on" \| "off" \| "default"` |  | Short fading trail behind the cursor. |
-| <span id="set_agent_cursor_motion--linux--end_handle"></span>`end_handle` | `number` |  | Arc control-point offset from the end, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
-| <span id="set_agent_cursor_motion--linux--glide_duration_ms"></span>`glide_duration_ms` | `number` |  | Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A nonzero value with `native` timing also fixes the duration. Clamped to 0..5000. |
-| <span id="set_agent_cursor_motion--linux--idle_hide_ms"></span>`idle_hide_ms` | `number` |  | Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to 0..60000 (default 15000). |
-| <span id="set_agent_cursor_motion--linux--spring"></span>`spring` | `number` |  | Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1 (default 0.72). |
-| <span id="set_agent_cursor_motion--linux--start_handle"></span>`start_handle` | `number` |  | Arc control-point offset from the start, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
-| <span id="set_agent_cursor_motion--linux--turn_radius"></span>`turn_radius` | `number` |  | Minimum turning radius of the `classic` glide path, in points; smaller turns tighter. Clamped to 1..1000 (default 80). |
-
-</Tab>
-<Tab value="Windows">
-
-Configure the movement style, timing, effects and visibility timing for a session cursor.
-
-**Windows parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="set_agent_cursor_motion--windows--arc_flow"></span>`arc_flow` | `number` |  | Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`: positive moves the apex toward the destination. Clamped to -1..1 (default 0). |
-| <span id="set_agent_cursor_motion--windows--arc_size"></span>`arc_size` | `number` |  | Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default) keeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1. |
-| <span id="set_agent_cursor_motion--windows--dwell_after_click_ms"></span>`dwell_after_click_ms` | `number` |  | Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80). |
-| <span id="set_agent_cursor_motion--windows--effects"></span>`effects` | `object` |  | Turn single effects on or off. An omitted effect keeps its current setting; null restores the style's default. |
-| <span id="set_agent_cursor_motion--windows--effects-glow"></span>`effects.glow` | `boolean` |  | Soft glow around the cursor that grows with speed. |
-| <span id="set_agent_cursor_motion--windows--effects-magnet"></span>`effects.magnet` | `boolean` |  | Target glow when the `magnetic` style locks on. |
-| <span id="set_agent_cursor_motion--windows--effects-ripple"></span>`effects.ripple` | `boolean` |  | Ring that expands from the hotspot on click. |
-| <span id="set_agent_cursor_motion--windows--effects-squish"></span>`effects.squish` | `boolean` |  | Brief scale-down of the cursor on click. |
-| <span id="set_agent_cursor_motion--windows--effects-trail"></span>`effects.trail` | `boolean` |  | Short fading trail behind the cursor. |
-| <span id="set_agent_cursor_motion--windows--end_handle"></span>`end_handle` | `number` |  | Arc control-point offset from the end, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
-| <span id="set_agent_cursor_motion--windows--glide_duration_ms"></span>`glide_duration_ms` | `number` |  | Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A nonzero value with `native` timing also fixes the duration. Clamped to 0..5000. |
-| <span id="set_agent_cursor_motion--windows--idle_hide_ms"></span>`idle_hide_ms` | `number` |  | Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to 0..60000 (default 15000). |
-| <span id="set_agent_cursor_motion--windows--spring"></span>`spring` | `number` |  | Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1 (default 0.72). |
-| <span id="set_agent_cursor_motion--windows--start_handle"></span>`start_handle` | `number` |  | Arc control-point offset from the start, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
-| <span id="set_agent_cursor_motion--windows--turn_radius"></span>`turn_radius` | `number` |  | Minimum turning radius of the `classic` glide path, in points; smaller turns tighter. Clamped to 1..1000 (default 80). |
-
-</Tab>
-</Tabs>
-
-**Parameters on every platform**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
+| <span id="set_agent_cursor_motion--arc_flow"></span>`arc_flow` | `number` |  | Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`: positive moves the apex toward the destination. Clamped to -1..1 (default 0). |
+| <span id="set_agent_cursor_motion--arc_size"></span>`arc_size` | `number` |  | Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default) keeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1. |
+| <span id="set_agent_cursor_motion--dwell_after_click_ms"></span>`dwell_after_click_ms` | `number` |  | Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80). |
+| <span id="set_agent_cursor_motion--effects"></span>`effects` | `object` |  | Turn effects on or off. Omit a field to keep it; `"default"` restores the style default. |
+| <span id="set_agent_cursor_motion--effects-glow"></span>`effects.glow` | `"on" \| "off" \| "default"` |  | Soft glow around the cursor that grows with speed. |
+| <span id="set_agent_cursor_motion--effects-magnet"></span>`effects.magnet` | `"on" \| "off" \| "default"` |  | Target glow when the `magnetic` style locks on. |
+| <span id="set_agent_cursor_motion--effects-ripple"></span>`effects.ripple` | `"on" \| "off" \| "default"` |  | Ring that expands from the hotspot on click. |
+| <span id="set_agent_cursor_motion--effects-squish"></span>`effects.squish` | `"on" \| "off" \| "default"` |  | Brief scale-down of the cursor on click. |
+| <span id="set_agent_cursor_motion--effects-trail"></span>`effects.trail` | `"on" \| "off" \| "default"` |  | Short fading trail behind the cursor. |
+| <span id="set_agent_cursor_motion--end_handle"></span>`end_handle` | `number` |  | Arc control-point offset from the end, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
+| <span id="set_agent_cursor_motion--glide_duration_ms"></span>`glide_duration_ms` | `number` |  | Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A nonzero value with `native` timing also fixes the duration. Clamped to 0..5000. |
+| <span id="set_agent_cursor_motion--idle_hide_ms"></span>`idle_hide_ms` | `number` |  | Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to 0..60000 (default 15000). |
 | <span id="set_agent_cursor_motion--session"></span>`session` | `string` | required | Public label of the session that owns the cursor. Omitted or null motion fields keep their current value. |
+| <span id="set_agent_cursor_motion--spring"></span>`spring` | `number` |  | Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1 (default 0.72). |
+| <span id="set_agent_cursor_motion--start_handle"></span>`start_handle` | `number` |  | Arc control-point offset from the start, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
 | <span id="set_agent_cursor_motion--style"></span>`style` | `"signature_arc" \| "spring_settle" \| "magnetic" \| "comet_swoop" \| "adaptive" \| "classic"` |  | Trajectory style. `signature_arc` (default) is one arc with a small follow-through; `spring_settle` lands with one soft bounce; `magnetic` is pulled into the target; `comet_swoop` is a wide arc with a short trail; `adaptive` picks a careful approach for small targets and a swoop for long moves; `classic` is the previous Dubins glide. When the theme's reduced motion is on, every move is a short straight glide with no effects. |
 | <span id="set_agent_cursor_motion--timing"></span>`timing` | `"native" \| "fitts" \| "fixed"` |  | `native` uses the style's own timing; `fitts` scales the move time with distance and target size; `fixed` uses glide_duration_ms (1430 ms when 0). |
+| <span id="set_agent_cursor_motion--turn_radius"></span>`turn_radius` | `number` |  | Minimum turning radius of the `classic` glide path, in points; smaller turns tighter. Clamped to 1..1000 (default 80). |
 
 **Example arguments**
 

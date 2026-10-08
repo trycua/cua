@@ -1883,7 +1883,7 @@
      },
      "effects": {
       "additionalProperties": false,
-      "description": "Turn single effects on or off. An omitted effect keeps its current setting;\n`\"default\"` restores the style's default.",
+      "description": "Turn effects on or off. Omit a field to keep it; `\"default\"` restores the style default.",
       "properties": {
        "glow": {
         "description": "Soft glow around the cursor that grows with speed.",
@@ -2211,7 +2211,7 @@
       "type": "string"
      },
      "max_image_dimension": {
-      "description": "Legacy per-field shape. Max dimension for screenshot resizing (0 = no limit).",
+      "description": "Max dimension for screenshot resizing (0 = no limit).",
       "type": "integer"
      },
      "session": {
@@ -3035,7 +3035,7 @@
        },
        "effects": {
         "additionalProperties": false,
-        "description": "Turn single effects on or off. An omitted effect keeps its current setting;\n`\"default\"` restores the style's default.",
+        "description": "Turn effects on or off. Omit a field to keep it; `\"default\"` restores the style default.",
         "properties": {
          "glow": {
           "description": "Soft glow around the cursor that grows with speed.",
@@ -3315,7 +3315,6 @@
       "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
       "items": {
        "additionalProperties": true,
-       "description": "Each step is {tool, args} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
        "properties": {
         "args": {
          "description": "Arguments for that tool, as in a direct call, optionally with role/name/nth/app/window to name the target instead of pid/window_id/element_token.",

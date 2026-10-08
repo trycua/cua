@@ -57,7 +57,6 @@ macOS has no background drag: a window-scoped drag needs delivery_mode:"foregrou
 | <span id="drag--macos--pid"></span>`pid` | `integer` |  | Target process ID. |
 | <span id="drag--macos--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Use desktop with no pid/window_id for native get_desktop_state screenshot coordinates. |
 | <span id="drag--macos--steps"></span>`steps` | `integer` |  | Number of intermediate mouseDragged events linearly interpolated along the path. Default: 20. Range: 1 to 200. |
-| <span id="drag--macos--target"></span>`target` | `window target \| desktop target` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 | <span id="drag--macos--to_x"></span>`to_x` | `number` | required | Drag-end X in window-local screenshot pixels. |
 | <span id="drag--macos--to_y"></span>`to_y` | `number` | required | Drag-end Y in window-local screenshot pixels. |
 | <span id="drag--macos--window_id"></span>`window_id` | `integer` |  | CGWindowID for the window the pixel coordinates were measured against. Optional only when pid owns exactly one eligible top-level window; otherwise the action refuses with ambiguous_window_target. |
@@ -83,11 +82,6 @@ Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local
 | <span id="drag--linux--pid"></span>`pid` | `integer` |  | Target process ID. Required unless scope is "desktop". |
 | <span id="drag--linux--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Use "desktop" with no pid/window_id for get_desktop_state screen coordinates. Default "window". |
 | <span id="drag--linux--steps"></span>`steps` | `integer` |  | Intermediate MotionNotify events. Default: 20. Range: 1 to 200. |
-| <span id="drag--linux--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
-| <span id="drag--linux--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
-| <span id="drag--linux--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
-| <span id="drag--linux--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
-| <span id="drag--linux--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
 | <span id="drag--linux--to_x"></span>`to_x` | `number` | required | Drag end X (same frame as from_x). |
 | <span id="drag--linux--to_y"></span>`to_y` | `number` | required | Drag end Y (same frame as from_x). |
 | <span id="drag--linux--window_id"></span>`window_id` | `integer` |  | Target window XID. Required. |
@@ -111,7 +105,6 @@ Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local
 | <span id="drag--windows--pid"></span>`pid` | `integer` |  | Target process ID. |
 | <span id="drag--windows--scope"></span>`scope` | `"window" \| "desktop"` |  | Use desktop with no pid/window_id for screen-absolute coordinates. |
 | <span id="drag--windows--steps"></span>`steps` | `integer` |  | Number of intermediate WM_MOUSEMOVE events. Default: 20. Range: 1 to 200. |
-| <span id="drag--windows--target"></span>`target` | `window target \| desktop target` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 | <span id="drag--windows--to_x"></span>`to_x` | `number` | required | Drag-end X in window-local screenshot pixels. |
 | <span id="drag--windows--to_y"></span>`to_y` | `number` | required | Drag-end Y in window-local screenshot pixels. |
 | <span id="drag--windows--window_id"></span>`window_id` | `integer` |  | Target window handle (HWND). Optional: driver picks frontmost window of pid when omitted. |
@@ -124,6 +117,11 @@ Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="drag--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="drag--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
+| <span id="drag--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
+| <span id="drag--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
+| <span id="drag--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
+| <span id="drag--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
 
 **Example arguments**
 
@@ -142,7 +140,7 @@ Scroll the target pid.
 - Targeted wheel: pass `element_token` (preferred) or window-local `x, y`. Sends a real wheel event at that point, so it scrolls whatever is under it. The only way to scroll nested `overflow:auto` regions in web views.
 - Keystroke: no target, just pid + direction. PageDown/PageUp (by='page') or arrows (by='line') on the focused scroller.
 
-Electron/Chromium windows refuse background delivery; pass `delivery_mode:"foreground"`.
+Electron/Chromium windows drop background wheel events: there a background scroll reveals the content just past the edge of the scroll container under the target through accessibility (about `amount` notches); `delivery_mode:"foreground"` is the fallback.
 `amount` is wheel notches (targeted) or key repetitions (keystroke).
 
 **macOS parameters**
@@ -154,7 +152,6 @@ Electron/Chromium windows refuse background delivery; pass `delivery_mode:"foreg
 | <span id="scroll--macos--pid"></span>`pid` | `integer` |  | Target process ID. Required unless scope is "desktop" or element_token is supplied. |
 | <span id="scroll--macos--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | "desktop" with x,y and no pid/window_id uses get_desktop_state coordinates. |
 | <span id="scroll--macos--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. |
-| <span id="scroll--macos--target"></span>`target` | `window target \| desktop target` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 | <span id="scroll--macos--window_id"></span>`window_id` | `integer` |  | Window ID. Required with x/y; optional with element_token. |
 | <span id="scroll--macos--x"></span>`x` | `number` |  | Window-local screenshot X (get_window_state PNG). With y, wheel-scrolls at that point; needs window_id. |
 | <span id="scroll--macos--y"></span>`y` | `number` |  | Window-local screenshot Y. |
@@ -175,11 +172,6 @@ Scroll the target pid's focused region via XSendEvent Button4/5. direction requi
 | <span id="scroll--linux--pid"></span>`pid` | `integer` |  | Target process ID. Required unless scope is "desktop" or element_token is supplied (the token carries the pid). |
 | <span id="scroll--linux--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Use "desktop" with x,y and no pid/window_id for get_desktop_state screen coordinates. Default "window". |
 | <span id="scroll--linux--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
-| <span id="scroll--linux--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
-| <span id="scroll--linux--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
-| <span id="scroll--linux--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
-| <span id="scroll--linux--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
-| <span id="scroll--linux--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
 | <span id="scroll--linux--window_id"></span>`window_id` | `integer` |  | Window id from list_windows. Required with x/y; optional with element_token (the token carries it). |
 | <span id="scroll--linux--x"></span>`x` | `number` |  | Window-local screenshot-pixel X of the scroll target. Pass with y and without element_token. |
 | <span id="scroll--linux--y"></span>`y` | `number` |  | Window-local screenshot-pixel Y of the scroll target. Pass with x and without element_token. |
@@ -204,7 +196,6 @@ Note: `element_token` is accepted for cross-platform parity but currently no-op 
 | <span id="scroll--windows--pid"></span>`pid` | `integer` |  | Target process ID for window scope. Optional with element_token (the token carries the pid). Omit with scope=desktop for screen-absolute coordinates from get_desktop_state. |
 | <span id="scroll--windows--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | Use "desktop" with x,y and no pid/window_id for screen-absolute coordinates from get_desktop_state. Default "window". |
 | <span id="scroll--windows--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
-| <span id="scroll--windows--target"></span>`target` | `window target \| desktop target` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 | <span id="scroll--windows--window_id"></span>`window_id` | `integer` |  | HWND of the target window. Omit when element_token is supplied; otherwise auto-resolves the pid's first visible window. |
 | <span id="scroll--windows--x"></span>`x` | `number` |  | With pid/window_id: window-local screenshot X used to target a nested scroll surface in foreground mode. Without pid/window_id: screen-absolute X for desktop scope. Must be paired with y. |
 | <span id="scroll--windows--y"></span>`y` | `number` |  | With pid/window_id: window-local screenshot Y used to target a nested scroll surface in foreground mode. Without pid/window_id: screen-absolute Y for desktop scope. Must be paired with x. |
@@ -219,6 +210,11 @@ Note: `element_token` is accepted for cross-platform parity but currently no-op 
 | <span id="scroll--by"></span>`by` | `"line" \| "page"` |  | Scroll granularity. Default: line. |
 | <span id="scroll--direction"></span>`direction` | `"up" \| "down" \| "left" \| "right"` | required | Scroll direction. |
 | <span id="scroll--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
+| <span id="scroll--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
+| <span id="scroll--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
+| <span id="scroll--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
+| <span id="scroll--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
+| <span id="scroll--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
 
 **Example arguments**
 
@@ -240,7 +236,6 @@ Move a cursor to (x, y). In window scope (default), moves only the agent cursor 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="move_cursor--macos--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | "window" (default) moves only the agent cursor overlay; "desktop" moves the real OS pointer. |
-| <span id="move_cursor--macos--target"></span>`target` | `window target \| desktop target` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 | <span id="move_cursor--macos--x"></span>`x` | `number` | required | Destination X. Window scope: screen points for the agent cursor overlay. Desktop scope: native get_desktop_state screenshot pixels. |
 
 </Tab>
@@ -253,11 +248,6 @@ Move the synthetic agent cursor without changing the user's pointer. Only an exp
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="move_cursor--linux--scope"></span>`scope` | `"window" \| "desktop"` | `"window"` | "window" (default) moves only the agent cursor overlay; "desktop" moves the real OS pointer. |
-| <span id="move_cursor--linux--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
-| <span id="move_cursor--linux--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
-| <span id="move_cursor--linux--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
-| <span id="move_cursor--linux--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
-| <span id="move_cursor--linux--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
 | <span id="move_cursor--linux--x"></span>`x` | `number` | required | Destination X. Window scope: screen coordinates of the agent cursor overlay. Desktop scope: get_desktop_state screenshot pixels. |
 
 </Tab>
@@ -270,7 +260,6 @@ Move the agent cursor overlay to (x, y). Does NOT move the real mouse cursor.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="move_cursor--windows--scope"></span>`scope` | `"window" \| "desktop"` |  | desktop moves the real OS pointer; window moves only the agent overlay. |
-| <span id="move_cursor--windows--target"></span>`target` | `window target \| desktop target` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 | <span id="move_cursor--windows--x"></span>`x` | `number` | required | Destination X. Window scope: screen coordinates of the agent cursor overlay. Desktop scope: get_desktop_state screenshot pixels. |
 
 </Tab>
@@ -282,6 +271,11 @@ Move the agent cursor overlay to (x, y). Does NOT move the real mouse cursor.
 | --- | --- | --- | --- |
 | <span id="move_cursor--cursor_id"></span>`cursor_id` | `string` |  | Cursor instance to move. Default: 'default'. |
 | <span id="move_cursor--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
+| <span id="move_cursor--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
+| <span id="move_cursor--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
+| <span id="move_cursor--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |
+| <span id="move_cursor--target-pid"></span>`target.pid` | `integer` |  | Process id. Required when kind is window. Minimum: 0. |
+| <span id="move_cursor--target-window_id"></span>`target.window_id` | `integer` |  | Window id from list_windows. Required when kind is window. Minimum: 0. |
 | <span id="move_cursor--y"></span>`y` | `number` | required | Destination Y, in the same space as x. |
 
 **Example arguments**

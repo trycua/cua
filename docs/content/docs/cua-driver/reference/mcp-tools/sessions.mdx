@@ -10,8 +10,6 @@ description: "Start, escalate, inspect and end lifecycle sessions."
   Version: 0.34.0
 */}
 
-import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
-
 | Tool | Description | Platforms |
 | --- | --- | --- |
 | [`start_session`](#start_session) | Optionally create or return a lifecycle session before acting. | macOS, Linux, Windows |
@@ -25,94 +23,29 @@ Served by `cua-driver mcp`; see [MCP tools](/cua-driver/reference/mcp-tools) for
 
 ## `start_session`
 
+Optionally create or return a lifecycle session before acting. For multi-call work, prefer a short public `session` label and repeat it on every call that accepts it; an omitted value uses the authenticated transport lease's implicit session instead. This tool is optional because an ordinary action can create or reuse a named run directly. Use it to set the initial cursor theme before acting or to revive a public name after it has ended; ordinary actions never revive ended names. `capture_scope` is deprecated compatibility input; new callers select window or desktop modality per action. Idempotent.
+
 Effect: mutating, idempotent. Platforms: macOS, Linux, Windows.
-
-<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
-<Tab value="macOS">
-
-Optionally create or return a lifecycle session before acting. For multi-call work, prefer a short public `session` label and repeat it on every call that accepts it; an omitted value uses the authenticated transport lease's implicit session instead. This tool is optional because an ordinary action can create or reuse a named run directly. Use it to set the initial cursor theme before acting or to revive a public name after it has ended; ordinary actions never revive ended names. `capture_scope` is deprecated compatibility input; new callers select window or desktop modality per action. Idempotent.
-
-**macOS parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="start_session--macos--cursor_motion"></span>`cursor_motion` | `object` |  | Optional initial cursor motion (style, timing, effects and tuning). The host applies it before the cursor is first made visible. A later `set_agent_cursor_motion` call wins; this wins over the saved default (`cursor.motion.*` in the driver config) and the built-in `signature_arc`. Reduced motion always wins. |
-| <span id="start_session--macos--cursor_motion-arc_flow"></span>`cursor_motion.arc_flow` | `number` |  | Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`: positive moves the apex toward the destination. Clamped to -1..1 (default 0). |
-| <span id="start_session--macos--cursor_motion-arc_size"></span>`cursor_motion.arc_size` | `number` |  | Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default) keeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1. |
-| <span id="start_session--macos--cursor_motion-dwell_after_click_ms"></span>`cursor_motion.dwell_after_click_ms` | `number` |  | Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80). |
-| <span id="start_session--macos--cursor_motion-effects"></span>`cursor_motion.effects` | `object` |  | Turn single effects on or off. An omitted effect keeps its current setting; null restores the style's default. |
-| <span id="start_session--macos--cursor_motion-end_handle"></span>`cursor_motion.end_handle` | `number` |  | Arc control-point offset from the end, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
-| <span id="start_session--macos--cursor_motion-glide_duration_ms"></span>`cursor_motion.glide_duration_ms` | `number` |  | Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A nonzero value with `native` timing also fixes the duration. Clamped to 0..5000. |
-| <span id="start_session--macos--cursor_motion-idle_hide_ms"></span>`cursor_motion.idle_hide_ms` | `number` |  | Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to 0..60000 (default 15000). |
-| <span id="start_session--macos--cursor_motion-spring"></span>`cursor_motion.spring` | `number` |  | Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1 (default 0.72). |
-| <span id="start_session--macos--cursor_motion-start_handle"></span>`cursor_motion.start_handle` | `number` |  | Arc control-point offset from the start, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
-| <span id="start_session--macos--cursor_motion-style"></span>`cursor_motion.style` | `"signature_arc" \| "spring_settle" \| "magnetic" \| "comet_swoop" \| "adaptive" \| "classic"` |  | Trajectory style. `signature_arc` (default) is one arc with a small follow-through; `spring_settle` lands with one soft bounce; `magnetic` is pulled into the target; `comet_swoop` is a wide arc with a short trail; `adaptive` picks a careful approach for small targets and a swoop for long moves; `classic` is the previous Dubins glide. When the theme's reduced motion is on, every move is a short straight glide with no effects. |
-| <span id="start_session--macos--cursor_motion-timing"></span>`cursor_motion.timing` | `"native" \| "fitts" \| "fixed"` |  | `native` uses the style's own timing; `fitts` scales the move time with distance and target size; `fixed` uses glide_duration_ms (1430 ms when 0). |
-| <span id="start_session--macos--cursor_motion-turn_radius"></span>`cursor_motion.turn_radius` | `number` |  | Minimum turning radius of the `classic` glide path, in points; smaller turns tighter. Clamped to 1..1000 (default 80). |
-| <span id="start_session--macos--cursor_theme"></span>`cursor_theme` | `object` |  | Optional initial cursor theme. The host applies it before the cursor is first made visible, avoiding a flash of the default theme. |
-| <span id="start_session--macos--cursor_theme-reduced_motion"></span>`cursor_theme.reduced_motion` | `"auto" \| "on" \| "off"` | `"auto"` |  |
-| <span id="start_session--macos--cursor_theme-theme_id"></span>`cursor_theme.theme_id` | `string` |  |  |
-
-</Tab>
-<Tab value="Linux">
-
-Optionally create or return a lifecycle session before acting. For multi-call work, prefer a short public `session` label and repeat it on every call that accepts it; an omitted value uses the authenticated transport lease's implicit session instead. This tool is optional because an ordinary action can create or reuse a named run directly. Use it to set the initial cursor theme before acting or to revive a public name after it has ended; ordinary actions never revive ended names. `capture_scope` is deprecated compatibility input; new callers select window or desktop modality per action. Idempotent.
-
-**Linux parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="start_session--linux--cursor_motion"></span>`cursor_motion` | `object` |  | Optional initial cursor motion (style, timing, effects and tuning). The host applies it before the cursor is first made visible. A later `set_agent_cursor_motion` call wins; this wins over the saved default (`cursor.motion.*` in the driver config) and the built-in `signature_arc`. Reduced motion always wins. |
-| <span id="start_session--linux--cursor_motion-arc_flow"></span>`cursor_motion.arc_flow` | `number` |  | Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`: positive moves the apex toward the destination. Clamped to -1..1 (default 0). |
-| <span id="start_session--linux--cursor_motion-arc_size"></span>`cursor_motion.arc_size` | `number` |  | Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default) keeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1. |
-| <span id="start_session--linux--cursor_motion-dwell_after_click_ms"></span>`cursor_motion.dwell_after_click_ms` | `number` |  | Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80). |
-| <span id="start_session--linux--cursor_motion-effects"></span>`cursor_motion.effects` | `object` |  | Turn single effects on or off. An omitted effect keeps its current setting; `"default"` restores the style's default. |
-| <span id="start_session--linux--cursor_motion-end_handle"></span>`cursor_motion.end_handle` | `number` |  | Arc control-point offset from the end, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
-| <span id="start_session--linux--cursor_motion-glide_duration_ms"></span>`cursor_motion.glide_duration_ms` | `number` |  | Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A nonzero value with `native` timing also fixes the duration. Clamped to 0..5000. |
-| <span id="start_session--linux--cursor_motion-idle_hide_ms"></span>`cursor_motion.idle_hide_ms` | `number` |  | Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to 0..60000 (default 15000). |
-| <span id="start_session--linux--cursor_motion-spring"></span>`cursor_motion.spring` | `number` |  | Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1 (default 0.72). |
-| <span id="start_session--linux--cursor_motion-start_handle"></span>`cursor_motion.start_handle` | `number` |  | Arc control-point offset from the start, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
-| <span id="start_session--linux--cursor_motion-style"></span>`cursor_motion.style` | `"signature_arc" \| "spring_settle" \| "magnetic" \| "comet_swoop" \| "adaptive" \| "classic"` |  | Trajectory style. `signature_arc` (default) is one arc with a small follow-through; `spring_settle` lands with one soft bounce; `magnetic` is pulled into the target; `comet_swoop` is a wide arc with a short trail; `adaptive` picks a careful approach for small targets and a swoop for long moves; `classic` is the previous Dubins glide. When the theme's reduced motion is on, every move is a short straight glide with no effects. |
-| <span id="start_session--linux--cursor_motion-timing"></span>`cursor_motion.timing` | `"native" \| "fitts" \| "fixed"` |  | `native` uses the style's own timing; `fitts` scales the move time with distance and target size; `fixed` uses glide_duration_ms (1430 ms when 0). |
-| <span id="start_session--linux--cursor_motion-turn_radius"></span>`cursor_motion.turn_radius` | `number` |  | Minimum turning radius of the `classic` glide path, in points; smaller turns tighter. Clamped to 1..1000 (default 80). |
-| <span id="start_session--linux--cursor_theme"></span>`cursor_theme` | `object` |  | Optional initial cursor theme. The host applies it before the cursor is first made visible, avoiding a flash of the default theme. |
-| <span id="start_session--linux--cursor_theme-reduced_motion"></span>`cursor_theme.reduced_motion` | `"auto" \| "on" \| "off"` | `"auto"` |  |
-| <span id="start_session--linux--cursor_theme-theme_id"></span>`cursor_theme.theme_id` | `string` |  |  |
-
-</Tab>
-<Tab value="Windows">
-
-Optionally create or return a lifecycle session before acting. For multi-call work, prefer a short public `session` label and repeat it on every call that accepts it; an omitted value uses the authenticated transport lease's implicit session instead. This tool is optional because an ordinary action can create or reuse a named run directly. Use it to set the initial cursor theme before acting or to revive a public name after it has ended; ordinary actions never revive ended names. `capture_scope` is deprecated compatibility input; new callers select window or desktop modality per action. Idempotent.
-
-**Windows parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="start_session--windows--cursor_motion"></span>`cursor_motion` | `object` |  | Optional initial cursor motion (style, timing, effects and tuning). The host applies it before the cursor is first made visible. A later `set_agent_cursor_motion` call wins; this wins over the saved default (`cursor.motion.*` in the driver config) and the built-in `signature_arc`. Reduced motion always wins. |
-| <span id="start_session--windows--cursor_motion-arc_flow"></span>`cursor_motion.arc_flow` | `number` |  | Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`: positive moves the apex toward the destination. Clamped to -1..1 (default 0). |
-| <span id="start_session--windows--cursor_motion-arc_size"></span>`cursor_motion.arc_size` | `number` |  | Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default) keeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1. |
-| <span id="start_session--windows--cursor_motion-dwell_after_click_ms"></span>`cursor_motion.dwell_after_click_ms` | `number` |  | Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80). |
-| <span id="start_session--windows--cursor_motion-effects"></span>`cursor_motion.effects` | `object` |  | Turn single effects on or off. An omitted effect keeps its current setting; null restores the style's default. |
-| <span id="start_session--windows--cursor_motion-end_handle"></span>`cursor_motion.end_handle` | `number` |  | Arc control-point offset from the end, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
-| <span id="start_session--windows--cursor_motion-glide_duration_ms"></span>`cursor_motion.glide_duration_ms` | `number` |  | Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A nonzero value with `native` timing also fixes the duration. Clamped to 0..5000. |
-| <span id="start_session--windows--cursor_motion-idle_hide_ms"></span>`cursor_motion.idle_hide_ms` | `number` |  | Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to 0..60000 (default 15000). |
-| <span id="start_session--windows--cursor_motion-spring"></span>`cursor_motion.spring` | `number` |  | Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1 (default 0.72). |
-| <span id="start_session--windows--cursor_motion-start_handle"></span>`cursor_motion.start_handle` | `number` |  | Arc control-point offset from the start, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
-| <span id="start_session--windows--cursor_motion-style"></span>`cursor_motion.style` | `"signature_arc" \| "spring_settle" \| "magnetic" \| "comet_swoop" \| "adaptive" \| "classic"` |  | Trajectory style. `signature_arc` (default) is one arc with a small follow-through; `spring_settle` lands with one soft bounce; `magnetic` is pulled into the target; `comet_swoop` is a wide arc with a short trail; `adaptive` picks a careful approach for small targets and a swoop for long moves; `classic` is the previous Dubins glide. When the theme's reduced motion is on, every move is a short straight glide with no effects. |
-| <span id="start_session--windows--cursor_motion-timing"></span>`cursor_motion.timing` | `"native" \| "fitts" \| "fixed"` |  | `native` uses the style's own timing; `fitts` scales the move time with distance and target size; `fixed` uses glide_duration_ms (1430 ms when 0). |
-| <span id="start_session--windows--cursor_motion-turn_radius"></span>`cursor_motion.turn_radius` | `number` |  | Minimum turning radius of the `classic` glide path, in points; smaller turns tighter. Clamped to 1..1000 (default 80). |
-| <span id="start_session--windows--cursor_theme"></span>`cursor_theme` | `object` |  | Optional initial cursor theme. The host applies it before the cursor is first made visible, avoiding a flash of the default theme. |
-| <span id="start_session--windows--cursor_theme-reduced_motion"></span>`cursor_theme.reduced_motion` | `"auto" \| "on" \| "off"` | `"auto"` |  |
-| <span id="start_session--windows--cursor_theme-theme_id"></span>`cursor_theme.theme_id` | `string` |  |  |
-
-</Tab>
-</Tabs>
-
-**Parameters on every platform**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="start_session--capture_scope"></span>`capture_scope` | `"auto" \| "window" \| "desktop"` |  | Deprecated compatibility policy. New callers select window or desktop modality on each action instead of storing it on the session. |
+| <span id="start_session--cursor_motion"></span>`cursor_motion` | `object` |  | Optional initial cursor motion (style, timing, effects and tuning). The host applies it before the cursor is first made visible. A later `set_agent_cursor_motion` call wins; this wins over the saved default (`cursor.motion.*` in the driver config) and the built-in `signature_arc`. Reduced motion always wins. |
+| <span id="start_session--cursor_motion-arc_flow"></span>`cursor_motion.arc_flow` | `number` |  | Added to the arc asymmetry of `signature_arc`, `spring_settle` and `comet_swoop`: positive moves the apex toward the destination. Clamped to -1..1 (default 0). |
+| <span id="start_session--cursor_motion-arc_size"></span>`cursor_motion.arc_size` | `number` |  | Scales the arc of `signature_arc`, `spring_settle` and `comet_swoop`: 0.25 (default) keeps the style's arc, 0 is a straight line, 0.5 doubles it. Clamped to 0..1. |
+| <span id="start_session--cursor_motion-dwell_after_click_ms"></span>`cursor_motion.dwell_after_click_ms` | `number` |  | Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80). |
+| <span id="start_session--cursor_motion-effects"></span>`cursor_motion.effects` | `object` |  | Turn effects on or off. Omit a field to keep it; `"default"` restores the style default. |
+| <span id="start_session--cursor_motion-end_handle"></span>`cursor_motion.end_handle` | `number` |  | Arc control-point offset from the end, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
+| <span id="start_session--cursor_motion-glide_duration_ms"></span>`cursor_motion.glide_duration_ms` | `number` |  | Move duration in milliseconds for `fixed` timing (1430 ms when 0, the default). A nonzero value with `native` timing also fixes the duration. Clamped to 0..5000. |
+| <span id="start_session--cursor_motion-idle_hide_ms"></span>`cursor_motion.idle_hide_ms` | `number` |  | Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to 0..60000 (default 15000). |
+| <span id="start_session--cursor_motion-spring"></span>`cursor_motion.spring` | `number` |  | Arrival spring damping for `classic`: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1 (default 0.72). |
+| <span id="start_session--cursor_motion-start_handle"></span>`cursor_motion.start_handle` | `number` |  | Arc control-point offset from the start, as a fraction of the distance, for `signature_arc`, `spring_settle` and `comet_swoop`. Clamped to 0..1 (default 0.3). |
+| <span id="start_session--cursor_motion-style"></span>`cursor_motion.style` | `"signature_arc" \| "spring_settle" \| "magnetic" \| "comet_swoop" \| "adaptive" \| "classic"` |  | Trajectory style. `signature_arc` (default) is one arc with a small follow-through; `spring_settle` lands with one soft bounce; `magnetic` is pulled into the target; `comet_swoop` is a wide arc with a short trail; `adaptive` picks a careful approach for small targets and a swoop for long moves; `classic` is the previous Dubins glide. When the theme's reduced motion is on, every move is a short straight glide with no effects. |
+| <span id="start_session--cursor_motion-timing"></span>`cursor_motion.timing` | `"native" \| "fitts" \| "fixed"` |  | `native` uses the style's own timing; `fitts` scales the move time with distance and target size; `fixed` uses glide_duration_ms (1430 ms when 0). |
+| <span id="start_session--cursor_motion-turn_radius"></span>`cursor_motion.turn_radius` | `number` |  | Minimum turning radius of the `classic` glide path, in points; smaller turns tighter. Clamped to 1..1000 (default 80). |
+| <span id="start_session--cursor_theme"></span>`cursor_theme` | `object` |  | Optional initial cursor theme. The host applies it before the cursor is first made visible, avoiding a flash of the default theme. |
+| <span id="start_session--cursor_theme-reduced_motion"></span>`cursor_theme.reduced_motion` | `"auto" \| "on" \| "off"` | `"auto"` |  |
+| <span id="start_session--cursor_theme-theme_id"></span>`cursor_theme.theme_id` | `string` |  |  |
 | <span id="start_session--session"></span>`session` | `string` |  | Optional stable public label for this run (e.g. "research-run-1"). When omitted, the authenticated transport lease's implicit session is created or returned. |
 
 ## `escalate_session`
@@ -145,49 +78,14 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 
 ## `list_sessions`
 
+List content-free lifecycle summaries attached to this authenticated transport lease. It does not enumerate other callers' sessions.
+
 Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
-
-<Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
-<Tab value="macOS">
-
-List content-free lifecycle summaries attached to this authenticated transport lease. It does not enumerate other callers' sessions.
-
-**macOS parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="list_sessions--macos--limit"></span>`limit` | `integer` |  | Maximum number of content-free summaries to return (default 50, max 100). Ordinary agent transports are scoped to their own lease. Minimum: 0. |
-
-</Tab>
-<Tab value="Linux">
-
-List content-free lifecycle summaries attached to this authenticated transport lease. It does not enumerate other callers' sessions.
-
-**Linux parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="list_sessions--linux--limit"></span>`limit` | `integer` |  | Maximum number of content-free summaries to return (default 50, max 100). Ordinary agent transports are scoped to their own lease. Minimum: 0. |
-
-</Tab>
-<Tab value="Windows">
-
-List content-free lifecycle summaries attached to this authenticated transport lease. It does not enumerate other callers' sessions.
-
-**Windows parameters**
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| <span id="list_sessions--windows--limit"></span>`limit` | `integer` |  | Maximum number of content-free summaries to return (default 50, max 100). Ordinary agent transports are scoped to their own lease. Minimum: 0. |
-
-</Tab>
-</Tabs>
-
-**Parameters on every platform**
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="list_sessions--cursor"></span>`cursor` | `string` |  | Opaque continuation cursor returned by a previous call. |
+| <span id="list_sessions--limit"></span>`limit` | `integer` |  | Maximum number of content-free summaries to return (default 50, max 100). Ordinary agent transports are scoped to their own lease. Minimum: 0. |
 
 ## `get_session_state`
 

@@ -1267,7 +1267,7 @@ fn harness_winforms_background_element_key_preserves_focus() {
             );
             let deadline = Instant::now() + Duration::from_secs(3);
             loop {
-                let state = keyboard_fixture_state(&state_path);
+                let state = keyboard_fixture_state(state_path);
                 if state["target_up"] == 1 {
                     println!("native background key before={before} after={state}");
                     assert_eq!(state["target_down"], 1);
@@ -1285,7 +1285,7 @@ fn harness_winforms_background_element_key_preserves_focus() {
             response
         });
         assert_eq!(response.structured()["route"], "synthetic_events");
-        let after = keyboard_fixture_state(&state_path);
+        let after = keyboard_fixture_state(state_path);
         assert_eq!(
             after["activations"], before["activations"],
             "target activated during background key"

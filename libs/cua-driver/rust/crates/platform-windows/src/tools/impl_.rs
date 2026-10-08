@@ -5284,17 +5284,21 @@ impl Tool for PressKeyTool {
             name: "press_key".into(),
             // Description ported from Swift `PressKeyTool.swift` with
             // Windows-specific transport note (PostMessage WM_KEYDOWN/UP).
-            description: "Press and release a single key, delivered directly to the target pid's \
-                top-level window via PostMessage(WM_KEYDOWN/WM_KEYUP). The target does NOT need \
-                to be frontmost — no focus steal.\n\n\
+            description: "Press and release a single key. Background delivery uses \
+                PostMessage(WM_KEYDOWN/WM_KEYUP) without fronting the target; explicit \
+                foreground delivery uses SendInput.\n\n\
                 Optional `window_id` selects a specific HWND when the pid owns more than one; \
                 without it the first visible top-level window for the pid is used.\n\n\
                 Key vocabulary: return, tab, escape, up/down/left/right, space, delete, home, \
                 end, pageup, pagedown, f1-f12, plus any letter or digit. Optional `modifiers` \
                 array takes ctrl/shift/alt/win. For true combinations (ctrl+c), `hotkey` is a \
                 cleaner surface.\n\n\
-                `element_token` focuses the cached UIA element before sending the key; the \
-                top-level window remains backgrounded when delivery_mode is background.".into(),
+                `element_token` addresses the cached UIA control. Foreground delivery focuses \
+                it before sending the key. Background native-control delivery posts to its \
+                exact HWND without focus preparation, or returns background_unavailable when \
+                no safe exact target exists. Embedded WebView elements retain their background \
+                focus-click route; do not rely on a native background key establishing focus \
+                for later keys without an element_token.".into(),
             input_schema: json!({
                 "type":"object","required":["key"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),

@@ -804,7 +804,8 @@ impl Backend for DaemonBackend {
             })
             .await
             .map_err(|e| {
-                if e.code() == tonic::Code::NotFound {
+                // gRPC NOT_FOUND (5): the target no longer knows the import.
+                if e.code() as i32 == 5 {
                     KvError::NotFound(format!("import {import_id:?} on {target}"))
                 } else {
                     backend_err("wipe import", e)

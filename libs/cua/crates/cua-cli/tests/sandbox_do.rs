@@ -520,7 +520,6 @@ async fn select_closed(h: &Home) -> String {
     url
 }
 
-/// A direct target that stops answering is unselected; its registration stays.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn do_unselects_a_direct_target_that_stops_answering() {
     let h = Home::new();
@@ -534,7 +533,7 @@ async fn do_unselects_a_direct_target_that_stops_answering() {
     assert!(!o.stderr.contains("retry in a few seconds"), "{o:?}");
     assert!(!o.stdout.contains('💻'), "{o:?}");
     let o = h.run(&["--embedded", "do", "status"]).await;
-    assert_eq!(o.code, 1);
+    assert_eq!(o.code, 1, "{o:?}");
     assert!(o.stderr.contains("No target selected"), "{o:?}");
     let listed = h.run(&["--embedded", "do", "ls", "direct"]).await;
     listed.ok();
@@ -549,7 +548,6 @@ async fn do_unselects_a_direct_target_that_stops_answering() {
     h.run(&["--embedded", "do", "switch", "gone"]).await.ok();
 }
 
-/// The stale-target message names a registered relay Space, never a direct row.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn do_names_a_registered_relay_space_without_touching_the_registry() {
     let h = Home::new();

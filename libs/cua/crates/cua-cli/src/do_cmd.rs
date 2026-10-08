@@ -740,9 +740,6 @@ impl Run<'_> {
         Ok(0)
     }
 
-    /// A direct target that stops answering moved or went offline (cua does not
-    /// start one): unselect it so later actions fail at once instead of dialing
-    /// it again. Its registration and token stay.
     async fn computer(&mut self) -> Result<Computer, CuaError> {
         let name = self.state.name.clone();
         let err = match crate::sandbox::env_of(self.cua, &name).await {
@@ -765,7 +762,6 @@ impl Run<'_> {
         else {
             return Err(err);
         };
-        // A `cua do switch` may have run during the connect.
         if State::load().name == name {
             std::fs::remove_file(state_path()).map_err(internal)?;
             self.state.provider = None;

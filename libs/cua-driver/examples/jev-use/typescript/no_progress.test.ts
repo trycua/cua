@@ -71,6 +71,30 @@ test('unobservable candidate change starts a fresh evidence window', () => {
   assert.equal(guard.beforeStep({ note_saved: null }), undefined);
 });
 
+test('unobservable recovery plus dispatch remains bounded', () => {
+  for (const recovery of ['stale', 'refused'] as const) {
+    const guard = new NoProgressGuard('appkit-save-note');
+    guard.beforeStep({ note_saved: null });
+    for (const kind of [recovery, 'performed'] as const) {
+      guard.note(kind, 'ax:button:save-note');
+      assert.equal(guard.beforeStep({ note_saved: null }), undefined);
+    }
+    guard.note(recovery, 'ax:button:save-note');
+    assert.deepEqual(guard.beforeStep({ note_saved: null }), { pattern: 'recovery', streak: 3 });
+  }
+});
+
+test('unobservable new candidate after recovery resets', () => {
+  const guard = new NoProgressGuard('appkit-save-note');
+  guard.beforeStep({ note_saved: null });
+  guard.note('performed', 'ax:text_input:note:set:note');
+  guard.beforeStep({ note_saved: null });
+  guard.note('refused', 'ax:button:save-note');
+  guard.beforeStep({ note_saved: null });
+  guard.note('performed', 'ax:button:save-note:foreground');
+  assert.equal(guard.beforeStep({ note_saved: null }), undefined);
+});
+
 test('observed scores are task-local', () => {
   assert.equal(observedProgressScore('appkit-counter', { counter: 2 }), 2);
   assert.equal(observedProgressScore('gtk3-choose-size', { size: 'large', agreed: false }), 1);

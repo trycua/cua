@@ -73,6 +73,32 @@ class NoProgressGuardTest(unittest.TestCase):
         guard.note("performed", "ax:button:save-note")
         self.assertIsNone(guard.before_step({"note_saved": None}))
 
+    def test_unobservable_recovery_then_dispatch_remains_bounded(self) -> None:
+        # A successful dispatch without app-owned progress is not evidence
+        # that a stale/refused recovery cycle made progress.
+        for recovery in ("stale", "refused"):
+            with self.subTest(recovery=recovery):
+                guard = NoProgressGuard("appkit-save-note")
+                guard.before_step({"note_saved": None})
+                for kind in (recovery, "performed"):
+                    guard.note(kind, "ax:button:save-note")
+                    self.assertIsNone(guard.before_step({"note_saved": None}))
+                guard.note(recovery, "ax:button:save-note")
+                stop = guard.before_step({"note_saved": None})
+                self.assertIsNotNone(stop)
+                self.assertEqual((stop.pattern, stop.streak), ("recovery", 3))
+
+    def test_unobservable_new_candidate_after_recovery_resets(self) -> None:
+        guard = NoProgressGuard("appkit-save-note")
+        guard.before_step({"note_saved": None})
+        guard.note("performed", "ax:text_input:note:set:note")
+        guard.before_step({"note_saved": None})
+        guard.note("refused", "ax:button:save-note")
+        guard.before_step({"note_saved": None})
+        guard.note("performed", "ax:button:save-note:foreground")
+        self.assertIsNone(guard.before_step({"note_saved": None}))
+        self.assertEqual(guard.streak, 1)
+
     def test_observed_scores_are_value_free_and_task_local(self) -> None:
         self.assertEqual(observed_progress_score("appkit-counter", {"counter": 2}), 2)
         self.assertEqual(

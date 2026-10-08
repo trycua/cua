@@ -8,7 +8,7 @@
 
 ## [0.34.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.34.0...cua-driver-rs-v0.34.1) (2026-10-08)
 
-A patch release on the 0.34 line for apps that embed the driver. The typed contract and the UniFFI surface are unchanged, so 0.34.0 language bindings keep working with the 0.34.1 native library.
+A patch release on the 0.34 line for apps that embed the driver, backported in [#4895](https://github.com/trycua/cua/pull/4895). The typed contract and the UniFFI surface are unchanged, so 0.34.0 language bindings keep working with the 0.34.1 native library.
 
 ### Features
 

@@ -1316,9 +1316,6 @@ const FfiConverterTypeClipboardWriteOutput = (() => {
     return new FFIConverter();
 })();
 
-/**
- * One cursor effect: `on`, `off`, or `default` (the style's own setting).
- */
 export enum CursorEffectSetting {
     On,
     Off,
@@ -1669,8 +1666,7 @@ export type CursorMotionSelection = {
      */
     timing?: CursorMotionTiming,
     /**
-     * Turn single effects on or off. An omitted effect keeps its current setting;
-     * `"default"` restores the style's default.
+     * Turn effects on or off. Omit a field to keep it; `"default"` restores the style default.
      */
     effects?: CursorMotionEffects,
     /**
@@ -5298,8 +5294,7 @@ export type SetAgentCursorMotionInput = {
      */
     timing?: CursorMotionTiming,
     /**
-     * Turn single effects on or off. An omitted effect keeps its current setting;
-     * `"default"` restores the style's default.
+     * Turn effects on or off. Omit a field to keep it; `"default"` restores the style default.
      */
     effects?: CursorMotionEffects,
     /**

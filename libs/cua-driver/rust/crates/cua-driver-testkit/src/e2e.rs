@@ -1319,6 +1319,7 @@ pub fn validate_catalog_with_evidence(
                         &root.join(relative_dir),
                         cell_id,
                         case_requires_action_turn(&result.case),
+                        result.observed_behavior,
                         &mut errors,
                     );
                 }
@@ -1406,6 +1407,7 @@ fn validate_turn_evidence(
     recording_dir: &Path,
     cell_id: &str,
     require_turn: bool,
+    observed_behavior: ObservedBehavior,
     errors: &mut Vec<String>,
 ) {
     let trajectory = recording_dir.join("trajectory.json");
@@ -1470,11 +1472,16 @@ fn validate_turn_evidence(
     }
 
     for turn in turns {
-        validate_one_turn(&turn, cell_id, errors);
+        validate_one_turn(&turn, cell_id, observed_behavior, errors);
     }
 }
 
-fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
+fn validate_one_turn(
+    turn: &Path,
+    cell_id: &str,
+    observed_behavior: ObservedBehavior,
+    errors: &mut Vec<String>,
+) {
     let turn_name = turn
         .file_name()
         .and_then(|name| name.to_str())
@@ -1489,6 +1496,10 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             None
         }
     };
+    if let Some(action) = action.as_ref() {
+        validate_action_truthfulness(action, observed_behavior, cell_id, turn_name, errors);
+    }
+
     let manifest_path = turn.join("evidence.json");
     let manifest = match read_json_value(&manifest_path) {
         Ok(manifest) if manifest["schema"] == "cua-turn-evidence/v1" => Some(manifest),
@@ -1697,6 +1708,64 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
                 .and_then(|value| value["click"]["classification"].as_str()),
             errors,
         );
+    }
+}
+
+fn validate_action_truthfulness(
+    action: &Value,
+    observed_behavior: ObservedBehavior,
+    cell_id: &str,
+    turn_name: &str,
+    errors: &mut Vec<String>,
+) {
+    let Some(truth) = action.get("action_truth") else {
+        return;
+    };
+    let Some(effect) = truth.get("effect").and_then(Value::as_str) else {
+        errors.push(format!(
+            "action truth has no effect for {cell_id}/{turn_name}"
+        ));
+        return;
+    };
+    if !matches!(
+        effect,
+        "confirmed" | "partial" | "unverifiable" | "suspected_noop" | "refused"
+    ) {
+        errors.push(format!(
+            "action truth has unknown effect '{effect}' for {cell_id}/{turn_name}"
+        ));
+        return;
+    }
+
+    if effect == "confirmed"
+        && !truth
+            .get("evidence")
+            .and_then(Value::as_array)
+            .is_some_and(|evidence| !evidence.is_empty())
+    {
+        errors.push(format!(
+            "confirmed action truth has no evidence for {cell_id}/{turn_name}"
+        ));
+    }
+
+    let contradiction = match observed_behavior {
+        ObservedBehavior::Delivered if matches!(effect, "refused" | "suspected_noop") => {
+            Some(format!(
+                "independent oracle observed delivery but action truth claimed {effect}"
+            ))
+        }
+        ObservedBehavior::Refused if effect != "refused" => Some(format!(
+            "independent oracle observed refusal but action truth claimed {effect}"
+        )),
+        ObservedBehavior::NoEffect if matches!(effect, "confirmed" | "partial") => Some(format!(
+            "independent oracle observed no effect but action truth claimed {effect}"
+        )),
+        _ => None,
+    };
+    if let Some(contradiction) = contradiction {
+        errors.push(format!(
+            "action-truth contradiction for {cell_id}/{turn_name}: {contradiction}"
+        ));
     }
 }
 

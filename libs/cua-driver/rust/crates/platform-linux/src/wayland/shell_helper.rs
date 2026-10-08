@@ -307,14 +307,59 @@ pub fn window_origin_for_pid(pid: u32) -> Option<(i32, i32)> {
     parse_window_origin(&raw, pid)
 }
 
+/// Decode the single-string GVariant tuple printed by `gdbus call` before
+/// parsing GetRects JSON. This is deliberately not a general GVariant parser:
+/// accept only this method's `(string,)` response and GLib's string escapes.
+fn parse_rects_response(raw: &str) -> Option<Vec<serde_json::Value>> {
+    let payload = raw.trim().strip_prefix('(')?.trim_start();
+    let mut chars = payload.char_indices();
+    let (_, quote @ ('\'' | '"')) = chars.next()? else {
+        return None;
+    };
+    let mut json = String::new();
+    while let Some((offset, character)) = chars.next() {
+        if character == quote {
+            let tail = payload[offset + character.len_utf8()..].trim_start();
+            if tail.strip_prefix(',')?.trim() != ")" {
+                return None;
+            }
+            return serde_json::from_str(&json).ok();
+        }
+        let decoded = if character == '\\' {
+            match chars.next()?.1 {
+                '\\' => '\\',
+                '\'' => '\'',
+                '"' => '"',
+                'a' => '\u{7}',
+                'b' => '\u{8}',
+                'f' => '\u{c}',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                'v' => '\u{b}',
+                escape @ ('u' | 'U') => {
+                    let mut codepoint = 0;
+                    for _ in 0..if escape == 'u' { 4 } else { 8 } {
+                        codepoint = codepoint * 16 + chars.next()?.1.to_digit(16)?;
+                    }
+                    char::from_u32(codepoint)?
+                }
+                _ => return None,
+            }
+        } else {
+            character
+        };
+        // GVariant strings cannot contain NUL, including an escaped NUL.
+        if decoded == '\0' {
+            return None;
+        }
+        json.push(decoded);
+    }
+    None
+}
+
 fn parse_window_origin(raw: &str, pid: u32) -> Option<(i32, i32)> {
-    // gdbus prints a GVariant tuple like `('[{"pid":..,"x":..}]',)`. Pull the
-    // JSON array out robustly (first '[' .. last ']') rather than parsing the
-    // GVariant wrapper, so an apostrophe in a window title can't break it.
-    let start = raw.find('[')?;
-    let end = raw.rfind(']')?;
-    let json = &raw[start..=end];
-    let arr: Vec<serde_json::Value> = serde_json::from_str(json).ok()?;
+    let arr = parse_rects_response(raw)?;
     for w in &arr {
         if w.get("pid").and_then(|p| p.as_u64()) == Some(pid as u64) {
             let x = w.get("x").and_then(serde_json::Value::as_i64)? as i32;
@@ -458,11 +503,11 @@ fn window_is_focused(window_id: u32) -> bool {
     let Some(raw) = gdbus_call("GetRects", &[]) else {
         return false;
     };
-    let (Some(start), Some(end)) = (raw.find('['), raw.rfind(']')) else {
-        return false;
-    };
-    serde_json::from_str::<Vec<serde_json::Value>>(&raw[start..=end])
-        .ok()
+    parse_window_focus(&raw, window_id)
+}
+
+fn parse_window_focus(raw: &str, window_id: u32) -> bool {
+    parse_rects_response(raw)
         .and_then(|windows| {
             windows.into_iter().find(|window| {
                 window.get("id").and_then(serde_json::Value::as_u64) == Some(window_id as u64)
@@ -482,9 +527,7 @@ fn parse_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<WindowInfo>> 
 }
 
 fn parse_shell_windows(raw: &str, filter_pid: Option<u32>) -> Option<Vec<ShellWindow>> {
-    let start = raw.find('[')?;
-    let end = raw.rfind(']')?;
-    let windows: Vec<serde_json::Value> = serde_json::from_str(&raw[start..=end]).ok()?;
+    let windows = parse_rects_response(raw)?;
 
     Some(
         windows
@@ -591,13 +634,87 @@ mod tests {
         include_str!("../../../../../wayland-helper/winrects@cua/metadata.json");
 
     #[test]
+    fn decodes_double_quoted_gvariant_window_json() {
+        // GLib switches to double quotes when the JSON contains an apostrophe.
+        let raw = r#"("[{\"id\":46,\"pid\":6079,\"title\":\"Sentinel's window\",\"x\":66,\"y\":32,\"w\":958,\"h\":736,\"focused\":true}]",)"#;
+        let windows = parse_shell_windows(raw, Some(6079)).expect("valid GLib response");
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].info.title, "Sentinel's window");
+        assert_eq!(windows[0].info.xid, 46);
+        assert_eq!(windows[0].info.pid, Some(6079));
+        assert!(windows[0].focused);
+        assert_eq!(parse_window_origin(raw, 6079), Some((66, 32)));
+        assert_eq!(parse_window_origin(raw, 6080), None);
+        assert!(parse_shell_windows(raw, Some(6080)).unwrap().is_empty());
+        assert!(parse_window_focus(raw, 46));
+        assert!(!parse_window_focus(raw, 47));
+    }
+
+    #[test]
+    fn decodes_gvariant_escaped_titles_without_corrupting_json() {
+        // Literal fixtures produced by g_variant_print, not raw JSON slices.
+        let fixtures = [
+            (
+                r#"('[{"id":46,"pid":6079,"title":"Double \\"quote\\"","x":66,"y":32,"w":958,"h":736,"focused":true}]',)"#,
+                "Double \"quote\"",
+            ),
+            (
+                r#"('[{"id":46,"pid":6079,"title":"Path C:\\\\Users\\\\Example","x":66,"y":32,"w":958,"h":736,"focused":true}]',)"#,
+                r"Path C:\Users\Example",
+            ),
+            (
+                r#"('[{"id":46,"pid":6079,"title":"Line\\nbreak","x":66,"y":32,"w":958,"h":736,"focused":true}]',)"#,
+                "Line\nbreak",
+            ),
+            (
+                r#"('[{"id":46,"pid":6079,"title":"日本語 — café 😀","x":66,"y":32,"w":958,"h":736,"focused":true}]',)"#,
+                "日本語 — café 😀",
+            ),
+            (
+                r#"('[{"id":46,"pid":6079,"title":"Hidden\u200b\U000e0001","x":66,"y":32,"w":958,"h":736,"focused":true}]',)"#,
+                "Hidden\u{200b}\u{e0001}",
+            ),
+        ];
+        for (raw, title) in fixtures {
+            let windows = parse_shell_windows(raw, None).expect("valid GLib response");
+            assert_eq!(windows[0].info.title, title);
+            assert_eq!(parse_window_origin(raw, 6079), Some((66, 32)));
+            assert!(parse_window_focus(raw, 46));
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_gvariant_window_wrappers() {
+        for raw in [
+            "[]",
+            "('[',)",
+            "('not JSON',)",
+            "('[]',) trailing",
+            "prefix ('[]',)",
+            "('[]', 'extra')",
+            "('[]')",
+            "('[]',",
+            "('[]\\q',)",
+            "('[]\\',)",
+            "('[]\\uD800',)",
+            "('[]\\U00110000',)",
+            "('[]\\u12',)",
+            "('[]\\U00000000',)",
+        ] {
+            assert!(parse_shell_windows(raw, None).is_none(), "accepted {raw:?}");
+            assert_eq!(parse_window_origin(raw, 6079), None);
+            assert!(!parse_window_focus(raw, 46));
+        }
+    }
+
+    #[test]
     fn parses_and_filters_shell_windows() {
-        let raw = r#"('[{"id":46,"pid":6079,"title":"Sentinel's window","x":66,"y":32,"w":958,"h":736,"focused":true,"minimized":false,"visible":true,"stacking":2},{"id":47,"pid":6080,"title":"Hidden","x":0,"y":0,"w":100,"h":100,"minimized":true,"visible":false,"stacking":1}]',)"#;
+        let raw = r#"('[{"id":46,"pid":6079,"title":"Sentinel window","x":66,"y":32,"w":958,"h":736,"focused":true,"minimized":false,"visible":true,"stacking":2},{"id":47,"pid":6080,"title":"Hidden","x":0,"y":0,"w":100,"h":100,"minimized":true,"visible":false,"stacking":1}]',)"#;
         let windows = parse_windows(raw, Some(6079)).expect("valid helper response");
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].xid, 46);
         assert_eq!(windows[0].pid, Some(6079));
-        assert_eq!(windows[0].title, "Sentinel's window");
+        assert_eq!(windows[0].title, "Sentinel window");
         assert_eq!((windows[0].x, windows[0].y), (66, 32));
         assert_eq!((windows[0].width, windows[0].height), (958, 736));
         assert!(windows[0].is_on_screen);

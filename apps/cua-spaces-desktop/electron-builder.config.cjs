@@ -234,6 +234,9 @@ module.exports = {
   nsis: {
     oneClick: true,
     perMachine: false,
+    // Stops the cua daemon before files are written or removed, and on
+    // uninstall removes launch at login and the CLI the app put on PATH.
+    include: "packaging/installer.nsh",
     artifactName: "Cua-Spaces-Setup-${version}-${arch}.exe",
   },
 

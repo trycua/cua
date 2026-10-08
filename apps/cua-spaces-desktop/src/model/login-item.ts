@@ -149,10 +149,15 @@ export class LinuxAutostart implements LoginItemControlling {
     return path.join(this.dir, LinuxAutostart.FILE);
   }
 
-  /** The entry: the app, quietly (`--hidden`: no window, as macOS opens a login item). */
+  /**
+   * The entry: the app, quietly (`--hidden`: no window, as macOS opens a
+   * login item). `TryExec` makes a desktop skip it once the app is gone: a
+   * package's removal leaves users' home folders alone, so the entry stays
+   * behind, inert.
+   */
   static entry(exec: string): string {
     const quoted = /[\s"'\\$`]/.test(exec) ? `"${exec.replace(/(["\\$`])/g, "\\$1")}"` : exec;
-    return ["[Desktop Entry]", "Type=Application", "Name=Cua Spaces", `Exec=${quoted} --hidden`, "Icon=cua-spaces", "Terminal=false", "X-GNOME-Autostart-enabled=true", ""].join("\n");
+    return ["[Desktop Entry]", "Type=Application", "Name=Cua Spaces", `TryExec=${exec.replace(/\\/g, "\\\\")}`, `Exec=${quoted} --hidden`, "Icon=cua-spaces", "Terminal=false", "X-GNOME-Autostart-enabled=true", ""].join("\n");
   }
 
   /** On while the entry exists and no desktop turned it off (`Hidden=true`, `X-GNOME-Autostart-enabled=false`). */

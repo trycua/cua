@@ -576,6 +576,37 @@ Sizes for 0.6.0 with the real web UI, built on 2026-10-03 (MB = 10^6 bytes):
 
 Nearly all of it is Electron itself.
 
+### Upgrade and uninstall
+
+The cua daemon runs from the app's `resources/native` and outlives the app
+(it keeps the Spaces running). What each package does about it, and what it
+leaves when removed:
+
+- **Windows (NSIS, `packaging/installer.nsh`).** The installer and the
+  uninstaller check for the running app before touching a file; that check
+  is followed here by `cua daemon stop` with the installed `cua`, then by
+  stopping anything still running from the install folder. In the installer
+  that comes before the old version's uninstaller and before the new files
+  are written, so an upgrade replaces `cua.exe` (a running executable cannot
+  be overwritten) and an uninstall removes the folder. Uninstalling, not
+  upgrading, also removes the launch-at-login Run entry, and the `cua` the
+  app copied to `%LOCALAPPDATA%\Programs\cua\bin` with its user PATH entry,
+  only as far as the app recorded doing so (`HKCU\Software\ai.cua.spaces.desktop`,
+  written when it installs the CLI): a `cua` the CLI's own installer put
+  there is left alone.
+- **Linux deb.** Removing the package removes `/opt/Cua Spaces`; its scripts
+  leave users' home folders alone. The CLI the app puts on PATH is a link
+  to the package's `cua` (`~/.local/bin/cua`, as the Swift app links into its
+  bundle), so it goes with the package and upgrades with it. The autostart
+  entry carries `TryExec`, so desktops skip it once the app is gone.
+- **AppImage.** An AppImage stays mounted while any process started from it
+  runs. The daemon is started from a copy of the bundled `cua` in
+  `~/.local/share/cua-spaces/daemon/<build>/` (`src/model/appimage-cua.ts`),
+  so quitting the app unmounts it while the daemon keeps running; the copy of
+  an older build is removed when a newer one starts.
+- **Everywhere**, `~/.cua` (Spaces, the Keyvault, settings the CLI shares)
+  and the app's data folder are the user's and stay, as with the Swift app.
+
 ### What is tested
 
 `pnpm smoke:linux` runs each arch in an Ubuntu 24.04 container

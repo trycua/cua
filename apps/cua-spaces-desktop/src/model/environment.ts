@@ -7,6 +7,7 @@
 // the window's critical path. Nothing here reads the keychain or waits on
 // the daemon before the window shows: the page shows the launch
 // (`startup.get`) on stand-ins that wait for the services.
+import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -23,6 +24,7 @@ import { computerName, DevicesModel } from "./devices";
 import { sdkErrorKind, words } from "./errors";
 import { HostModel } from "./host";
 import { KeyvaultModel } from "./keyvault";
+import { appImageCua, appImageDaemonRoot } from "./appimage-cua";
 import { LiveGate, PendingAccount, PendingSpacesBackend, type LiveServices } from "./pending";
 import { LiveAccount, LiveTelemetry, hostAccount } from "./services";
 import { BundledCuaKeychain, StartupModel } from "./startup";
@@ -77,8 +79,9 @@ export function makeModel(o: EnvironmentOptions): Environment {
   const native = o.native;
   // The app core's files (on macOS, taken over from the SwiftUI app at first launch).
   const { settings: settingsPath, onboarding: onboardingPath } = appCoreStatePaths(o.userData);
-  const cuaPath = nativeFiles(o.nativeDir, platform).cua;
-  const cua = existsSync(cuaPath) ? cuaPath : null;
+  const bundledCua = nativeFiles(o.nativeDir, platform).cua;
+  // From an AppImage the daemon runs from a copy, so it does not keep the AppImage mounted (appimage-cua.ts).
+  const cua = !existsSync(bundledCua) ? null : platform === "linux" && env.APPIMAGE ? appImageCua(bundledCua, appImageDaemonRoot(env), o.version) : bundledCua;
 
   // No keychain prompt from this process or the daemon it starts: a read
   // that would need one fails fast as "needs access", and the page asks.
@@ -246,8 +249,26 @@ export async function reconnect(model: AppModel, supervisor: DaemonSupervisor, r
   return true;
 }
 
+/**
+ * Windows: the key the uninstaller reads (packaging/installer.nsh) to remove
+ * the `cua` this app put on PATH with the app, and nothing it did not: the
+ * file it copied, and its folder's PATH entry when this app added it.
+ * Elsewhere the CLI stays, like the user's ~/.cua: the .deb's is a link into
+ * the app that goes with it, as the SwiftUI app's into its bundle.
+ */
+export const WINDOWS_APP_KEY = "HKCU\\Software\\ai.cua.spaces.desktop";
+
+/** The `reg add` calls that record an installed CLI. */
+export function cliRecordArgs(target: string, addedToPath: boolean): string[][] {
+  const value = (name: string, data: string) => ["add", WINDOWS_APP_KEY, "/v", name, "/t", "REG_SZ", "/d", data, "/f"];
+  return [value("CliInstalled", target), ...(addedToPath ? [value("CliPathAdded", path.win32.dirname(target))] : [])];
+}
+
+const reg = (args: string[]) =>
+  new Promise<void>((resolve, reject) => execFile("reg", args, { windowsHide: true }, (error) => (error ? reject(error) : resolve())));
+
 /** Puts the bundled `cua` on PATH: a current install, or a build without the CLI, writes nothing. */
-export async function installCliSilently(native: Native, cua: string): Promise<void> {
+export async function installCliSilently(native: Native, cua: string, platform: NodeJS.Platform = process.platform, record = reg): Promise<void> {
   try {
     // The installer finds the CLI next to the "executable" it is given.
     const installer = native.AppCliInstaller.forExecutable(path.join(path.dirname(cua), "cua-spaces"));
@@ -255,6 +276,7 @@ export async function installCliSilently(native: Native, cua: string): Promise<v
     if (plan.upToDate || !plan.source) return;
     const installed = await installer.install({ modifyPath: !plan.onPath });
     console.log(`[cua-spaces] installed the cua command at ${installed.target}`);
+    if (platform === "win32") for (const args of cliRecordArgs(installed.target, !plan.onPath)) await record(args);
   } catch (error) {
     console.warn(`[cua-spaces] could not install the cua command: ${words(error)}`);
   }

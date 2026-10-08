@@ -27,6 +27,8 @@ describe("launch at login on Linux", () => {
     expect(item.status()).toBe("enabled");
     const text = readFileSync(item.file, "utf8");
     expect(text).toContain('Exec="/opt/Cua Spaces/cua-spaces" --hidden');
+    // Desktops skip the entry once the app is removed (a package leaves home folders alone).
+    expect(text).toContain("TryExec=/opt/Cua Spaces/cua-spaces\n");
     expect(text).toContain("Name=Cua Spaces");
     item.openSystemSettings();
     expect(opened).toEqual([item.dir]);

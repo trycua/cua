@@ -26,7 +26,7 @@ use std::{
     time::Duration,
 };
 
-const IMAGE: &str = "ghcr.io/trycua/cua-desktop-linux:docker-latest";
+const IMAGE: &str = "ghcr.io/trycua/linux:24.04";
 
 /// A local runtime whose guest ports map to loopback listeners; the
 /// listener a new instance gets is whatever `ports` holds when it starts.

@@ -1,0 +1,170 @@
+{
+  "source_commit": "0b90b6f4af6885ecbe696a6b33a3ad63773183d4",
+  "binary_sha256": "adf2e2fbb81de805c8a714afe255e304b4d127105206b2bd60888afe79bc4f76",
+  "server": {
+    "name": "action-observe-experiment",
+    "version": "0.34.0"
+  },
+  "scope": "same-process SDK experimental host; one exact action plus same-window read vs individual calls; synthetic AppKit",
+  "results": [
+    {
+      "rep": 0,
+      "composite": false,
+      "passed": true,
+      "wall_ms": 3711.11399999063,
+      "tool_ms": 3710.480208028457,
+      "visible_calls": 6,
+      "child_registry_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "submitted": 0
+      }
+    },
+    {
+      "rep": 0,
+      "composite": true,
+      "passed": true,
+      "wall_ms": 3786.3978340028552,
+      "tool_ms": 3786.107375010033,
+      "visible_calls": 3,
+      "child_registry_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "submitted": 0
+      }
+    },
+    {
+      "rep": 1,
+      "composite": true,
+      "passed": true,
+      "wall_ms": 3700.560333003523,
+      "tool_ms": 3700.3630830004113,
+      "visible_calls": 3,
+      "child_registry_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "submitted": 0
+      }
+    },
+    {
+      "rep": 1,
+      "composite": false,
+      "passed": true,
+      "wall_ms": 3695.462208997924,
+      "tool_ms": 3694.77466699027,
+      "visible_calls": 6,
+      "child_registry_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "submitted": 0
+      }
+    },
+    {
+      "rep": 2,
+      "composite": false,
+      "passed": true,
+      "wall_ms": 3732.499249992543,
+      "tool_ms": 3731.7130400042515,
+      "visible_calls": 6,
+      "child_registry_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "submitted": 0
+      }
+    },
+    {
+      "rep": 2,
+      "composite": true,
+      "passed": true,
+      "wall_ms": 3703.3256660070037,
+      "tool_ms": 3703.1171249982435,
+      "visible_calls": 3,
+      "child_registry_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "submitted": 0
+      }
+    },
+    {
+      "rep": 3,
+      "composite": true,
+      "passed": true,
+      "wall_ms": 3658.65554199263,
+      "tool_ms": 3658.454749995144,
+      "visible_calls": 3,
+      "child_registry_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "submitted": 0
+      }
+    },
+    {
+      "rep": 3,
+      "composite": false,
+      "passed": true,
+      "wall_ms": 3647.0057500118855,
+      "tool_ms": 3646.4608339883853,
+      "visible_calls": 6,
+      "child_registry_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "submitted": 0
+      }
+    },
+    {
+      "rep": 4,
+      "composite": false,
+      "passed": true,
+      "wall_ms": 3658.565958001418,
+      "tool_ms": 3657.845289024408,
+      "visible_calls": 6,
+      "child_registry_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "submitted": 0
+      }
+    },
+    {
+      "rep": 4,
+      "composite": true,
+      "passed": true,
+      "wall_ms": 3734.917374997167,
+      "tool_ms": 3734.2110829922603,
+      "visible_calls": 3,
+      "child_registry_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "submitted": 0
+      }
+    }
+  ],
+  "reference_fixture_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
+  "macos": "27.0.1",
+  "python": "3.12.12",
+  "cleanup": {
+    "owned_fixture_processes_reaped": 10,
+    "installed_daemon_changed": false,
+    "virtual_displays_created": 0,
+    "sdk_host_process_reaped": true
+  }
+}

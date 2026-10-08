@@ -1,0 +1,85 @@
+{
+  "condition": "composite",
+  "setup_calls": [
+    {
+      "tool": "list_windows",
+      "ms": 2.4708749988349155
+    },
+    {
+      "tool": "get_window_state",
+      "ms": 138.88899999437854
+    }
+  ],
+  "calls": [
+    {
+      "tool": "get_window_state",
+      "ms": 68.78566701197997,
+      "error": false,
+      "child_dispatches": [
+        "get_window_state"
+      ]
+    },
+    {
+      "tool": "experiment_action_observe",
+      "ms": 1705.8762920059962,
+      "error": false,
+      "child_dispatches": [
+        "set_value",
+        "get_window_state"
+      ]
+    },
+    {
+      "tool": "experiment_action_observe",
+      "ms": 1429.166667003301,
+      "error": false,
+      "child_dispatches": [
+        "set_value",
+        "get_window_state"
+      ]
+    },
+    {
+      "tool": "experiment_action_observe",
+      "ms": 1595.5983330059098,
+      "error": false,
+      "child_dispatches": [
+        "click",
+        "get_window_state"
+      ]
+    },
+    {
+      "tool": "get_window_state",
+      "ms": 72.2181669989368,
+      "error": false,
+      "child_dispatches": [
+        "get_window_state"
+      ]
+    }
+  ],
+  "driver_server": {
+    "name": "action-observe-experiment",
+    "version": "0.34.0"
+  },
+  "driver_metadata": {
+    "capability_version": "1",
+    "contract_version": "0.8.0",
+    "driver_version": "0.34.0",
+    "embedded": false,
+    "host_bundle_id": null,
+    "mcp_protocol_version": "2025-06-18",
+    "pid": 27624,
+    "tools_list_schema_version": "1"
+  },
+  "final_observation_verified": true,
+  "passed": true,
+  "oracle_state": {
+    "name": "Synthetic Person",
+    "email": "synthetic@example.invalid",
+    "subscribe": true,
+    "submitted": 0
+  },
+  "completed_fields": [
+    "Email",
+    "Full name",
+    "Subscribe"
+  ]
+}

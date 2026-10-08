@@ -1,0 +1,1247 @@
+{
+  "binary_sha256": "30166f4a4346e6eade16f7ca27b250d0e6c583d6e484a7bd1976f176c0f90349",
+  "prompt_sha256": "b8bcf9e34e2b6317e01124b031df92fbc42a99173765464b88bf15ce3e8e1a15",
+  "model": "gpt-6-sol",
+  "preflight": {
+    "fixture_source_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
+    "preflight_started_at": "2026-10-06T15:11:27.391680+00:00",
+    "source_checked_at": "2026-10-06T15:11:30.470919+00:00",
+    "daemon_metadata_checked_at": "2026-10-06T15:11:28.916920+00:00",
+    "release_check": {
+      "cache_hit": false,
+      "checked_at": "2026-10-06T15:11:27Z",
+      "current_channel": "stable",
+      "current_version": "0.34.0",
+      "error": null,
+      "install_command": null,
+      "latest_version": "0.34.0",
+      "release_notes_url": null,
+      "selected_channel": "stable",
+      "source": "github_releases",
+      "update_available": false
+    },
+    "daemon_server": {
+      "name": "cua-driver",
+      "version": "0.34.0"
+    },
+    "sdk_backend_metadata": {
+      "capability_version": "1",
+      "contract_version": "0.8.0",
+      "driver_version": "0.34.0",
+      "embedded": false,
+      "host_bundle_id": null,
+      "mcp_protocol_version": "2025-06-18",
+      "pid": 27624,
+      "tools_list_schema_version": "1"
+    },
+    "daemon_permissions": {
+      "accessibility": true,
+      "direct_capture_error": null,
+      "direct_capture_status": "not_checked",
+      "screen_recording": true,
+      "screen_recording_capturable": null,
+      "source": {
+        "attribution": "driver-daemon",
+        "bundle_id": "com.trycua.driver",
+        "disclaim_env": false,
+        "executable": "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
+        "note": "These booleans reflect the CuaDriver daemon's own TCC identity (com.trycua.driver) because this process is its own responsible process.",
+        "pid": 27624,
+        "responsible_ppid": 1
+      }
+    },
+    "sdk_upstream_commit": "aa7a31a5f3633249db69f766256b1749feb7a652",
+    "sdk_head": "c0f35c5943cf5b6594775156c0e12e9b8593579a",
+    "source_file_sha256": {
+      "operation.rs": "150df5b8195d5254a40837d42c0eef6008cc280b72e07dd5946bc70f21d0e762",
+      "agent_gateway.py": "9f568df53238216b614696feed7981c362af5c2f7aa0d1a41bdee0f52417ebde",
+      "run_agent_trials.py": "3a775cb26465be567b8aa999d48a9c5c1435be4f45f5c8265cc5a02ccb96b585",
+      "shared.py": "320bda4b0d30c8857b4baecb4a794c944d0d76f5f58a1bd3e1fd076e020d8bab",
+      "action_observe_experiment.rs": "36002758da218f2a93d6766cb682adac547de36f0ade4f288767a5382cb2d7d6"
+    },
+    "backend": "supported CuaDriver.connect existing signed daemon; same backend both arms"
+  },
+  "results": [
+    {
+      "reported_complete": true,
+      "rep": 0,
+      "condition": "baseline",
+      "model": "gpt-6-sol",
+      "returncode": 0,
+      "wall_ms": 33385.167291009566,
+      "passed": true,
+      "gateway": {
+        "condition": "baseline",
+        "setup_calls": [
+          {
+            "tool": "list_windows",
+            "ms": 11.367291997885332
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 152.03729200584348
+          }
+        ],
+        "calls": [
+          {
+            "tool": "get_window_state",
+            "ms": 98.20479199697729,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "set_value",
+            "ms": 1624.1412079980364,
+            "error": false,
+            "child_dispatches": [
+              "set_value"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 83.66016599757131,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "set_value",
+            "ms": 1367.6495419931598,
+            "error": false,
+            "child_dispatches": [
+              "set_value"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 71.22004100529011,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "click",
+            "ms": 1529.781292003463,
+            "error": false,
+            "child_dispatches": [
+              "click"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 60.5094999918947,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          }
+        ],
+        "driver_server": {
+          "name": "action-observe-experiment",
+          "version": "0.34.0"
+        },
+        "driver_metadata": {
+          "capability_version": "1",
+          "contract_version": "0.8.0",
+          "driver_version": "0.34.0",
+          "embedded": false,
+          "host_bundle_id": null,
+          "mcp_protocol_version": "2025-06-18",
+          "pid": 27624,
+          "tools_list_schema_version": "1"
+        },
+        "final_observation_verified": true,
+        "passed": true,
+        "oracle_state": {
+          "name": "Synthetic Person",
+          "email": "synthetic@example.invalid",
+          "subscribe": true,
+          "submitted": 0
+        },
+        "completed_fields": [
+          "Email",
+          "Full name",
+          "Subscribe"
+        ]
+      },
+      "turn_started_events": 1,
+      "turn_completed_events": 1,
+      "usage": [
+        {
+          "input_tokens": 178819,
+          "cached_input_tokens": 155776,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 318,
+          "reasoning_output_tokens": 0
+        }
+      ],
+      "mcp_items": 7,
+      "other_tool_items": [],
+      "visible_calls": 7,
+      "child_registry_calls": 7,
+      "driver_ms": 4835.166540986393
+    },
+    {
+      "reported_complete": true,
+      "rep": 0,
+      "condition": "composite",
+      "model": "gpt-6-sol",
+      "returncode": 0,
+      "wall_ms": 37447.41720799357,
+      "passed": true,
+      "gateway": {
+        "condition": "composite",
+        "setup_calls": [
+          {
+            "tool": "list_windows",
+            "ms": 4.522999995970167
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 136.96429099945817
+          }
+        ],
+        "calls": [
+          {
+            "tool": "get_window_state",
+            "ms": 91.0152919968823,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "experiment_action_observe",
+            "ms": 1786.6529169987189,
+            "error": false,
+            "child_dispatches": [
+              "set_value",
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "experiment_action_observe",
+            "ms": 1434.6923329867423,
+            "error": false,
+            "child_dispatches": [
+              "set_value",
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "experiment_action_observe",
+            "ms": 1614.6385419997387,
+            "error": false,
+            "child_dispatches": [
+              "click",
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 184.84262500714976,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          }
+        ],
+        "driver_server": {
+          "name": "action-observe-experiment",
+          "version": "0.34.0"
+        },
+        "driver_metadata": {
+          "capability_version": "1",
+          "contract_version": "0.8.0",
+          "driver_version": "0.34.0",
+          "embedded": false,
+          "host_bundle_id": null,
+          "mcp_protocol_version": "2025-06-18",
+          "pid": 27624,
+          "tools_list_schema_version": "1"
+        },
+        "final_observation_verified": true,
+        "passed": true,
+        "oracle_state": {
+          "name": "Synthetic Person",
+          "email": "synthetic@example.invalid",
+          "subscribe": true,
+          "submitted": 0
+        },
+        "completed_fields": [
+          "Email",
+          "Full name",
+          "Subscribe"
+        ]
+      },
+      "turn_started_events": 1,
+      "turn_completed_events": 1,
+      "usage": [
+        {
+          "input_tokens": 138171,
+          "cached_input_tokens": 116096,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 328,
+          "reasoning_output_tokens": 0
+        }
+      ],
+      "mcp_items": 5,
+      "other_tool_items": [],
+      "visible_calls": 5,
+      "child_registry_calls": 8,
+      "driver_ms": 5111.841708989232
+    },
+    {
+      "reported_complete": true,
+      "rep": 1,
+      "condition": "composite",
+      "model": "gpt-6-sol",
+      "returncode": 0,
+      "wall_ms": 20683.764458997757,
+      "passed": true,
+      "gateway": {
+        "condition": "composite",
+        "setup_calls": [
+          {
+            "tool": "list_windows",
+            "ms": 2.4708749988349155
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 138.88899999437854
+          }
+        ],
+        "calls": [
+          {
+            "tool": "get_window_state",
+            "ms": 68.78566701197997,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "experiment_action_observe",
+            "ms": 1705.8762920059962,
+            "error": false,
+            "child_dispatches": [
+              "set_value",
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "experiment_action_observe",
+            "ms": 1429.166667003301,
+            "error": false,
+            "child_dispatches": [
+              "set_value",
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "experiment_action_observe",
+            "ms": 1595.5983330059098,
+            "error": false,
+            "child_dispatches": [
+              "click",
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 72.2181669989368,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          }
+        ],
+        "driver_server": {
+          "name": "action-observe-experiment",
+          "version": "0.34.0"
+        },
+        "driver_metadata": {
+          "capability_version": "1",
+          "contract_version": "0.8.0",
+          "driver_version": "0.34.0",
+          "embedded": false,
+          "host_bundle_id": null,
+          "mcp_protocol_version": "2025-06-18",
+          "pid": 27624,
+          "tools_list_schema_version": "1"
+        },
+        "final_observation_verified": true,
+        "passed": true,
+        "oracle_state": {
+          "name": "Synthetic Person",
+          "email": "synthetic@example.invalid",
+          "subscribe": true,
+          "submitted": 0
+        },
+        "completed_fields": [
+          "Email",
+          "Full name",
+          "Subscribe"
+        ]
+      },
+      "turn_started_events": 1,
+      "turn_completed_events": 1,
+      "usage": [
+        {
+          "input_tokens": 138282,
+          "cached_input_tokens": 116096,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 332,
+          "reasoning_output_tokens": 0
+        }
+      ],
+      "mcp_items": 5,
+      "other_tool_items": [],
+      "visible_calls": 5,
+      "child_registry_calls": 8,
+      "driver_ms": 4871.645126026124
+    },
+    {
+      "reported_complete": true,
+      "rep": 1,
+      "condition": "baseline",
+      "model": "gpt-6-sol",
+      "returncode": 0,
+      "wall_ms": 25922.9032919975,
+      "passed": true,
+      "gateway": {
+        "condition": "baseline",
+        "setup_calls": [
+          {
+            "tool": "list_windows",
+            "ms": 6.346667010802776
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 138.5477910080226
+          }
+        ],
+        "calls": [
+          {
+            "tool": "get_window_state",
+            "ms": 78.28616700135171,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "set_value",
+            "ms": 1712.0928340009414,
+            "error": false,
+            "child_dispatches": [
+              "set_value"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 65.50683399836998,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "set_value",
+            "ms": 1385.359583000536,
+            "error": false,
+            "child_dispatches": [
+              "set_value"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 66.35987499612384,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "click",
+            "ms": 1537.868333994993,
+            "error": false,
+            "child_dispatches": [
+              "click"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 70.31191600253806,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          }
+        ],
+        "driver_server": {
+          "name": "action-observe-experiment",
+          "version": "0.34.0"
+        },
+        "driver_metadata": {
+          "capability_version": "1",
+          "contract_version": "0.8.0",
+          "driver_version": "0.34.0",
+          "embedded": false,
+          "host_bundle_id": null,
+          "mcp_protocol_version": "2025-06-18",
+          "pid": 27624,
+          "tools_list_schema_version": "1"
+        },
+        "final_observation_verified": true,
+        "passed": true,
+        "oracle_state": {
+          "name": "Synthetic Person",
+          "email": "synthetic@example.invalid",
+          "subscribe": true,
+          "submitted": 0
+        },
+        "completed_fields": [
+          "Email",
+          "Full name",
+          "Subscribe"
+        ]
+      },
+      "turn_started_events": 1,
+      "turn_completed_events": 1,
+      "usage": [
+        {
+          "input_tokens": 171668,
+          "cached_input_tokens": 149376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 366,
+          "reasoning_output_tokens": 9
+        }
+      ],
+      "mcp_items": 7,
+      "other_tool_items": [],
+      "visible_calls": 7,
+      "child_registry_calls": 7,
+      "driver_ms": 4915.785542994854
+    },
+    {
+      "reported_complete": true,
+      "rep": 2,
+      "condition": "baseline",
+      "model": "gpt-6-sol",
+      "returncode": 0,
+      "wall_ms": 26420.03841699625,
+      "passed": true,
+      "gateway": {
+        "condition": "baseline",
+        "setup_calls": [
+          {
+            "tool": "list_windows",
+            "ms": 3.048166006919928
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 270.7369999989169
+          }
+        ],
+        "calls": [
+          {
+            "tool": "get_window_state",
+            "ms": 73.35400000738446,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "set_value",
+            "ms": 1605.6889579922426,
+            "error": false,
+            "child_dispatches": [
+              "set_value"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 65.2669590053847,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "set_value",
+            "ms": 1387.1944999991683,
+            "error": false,
+            "child_dispatches": [
+              "set_value"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 147.2116249933606,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "click",
+            "ms": 1604.8234579939162,
+            "error": false,
+            "child_dispatches": [
+              "click"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 69.81183399329893,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          }
+        ],
+        "driver_server": {
+          "name": "action-observe-experiment",
+          "version": "0.34.0"
+        },
+        "driver_metadata": {
+          "capability_version": "1",
+          "contract_version": "0.8.0",
+          "driver_version": "0.34.0",
+          "embedded": false,
+          "host_bundle_id": null,
+          "mcp_protocol_version": "2025-06-18",
+          "pid": 27624,
+          "tools_list_schema_version": "1"
+        },
+        "final_observation_verified": true,
+        "passed": true,
+        "oracle_state": {
+          "name": "Synthetic Person",
+          "email": "synthetic@example.invalid",
+          "subscribe": true,
+          "submitted": 0
+        },
+        "completed_fields": [
+          "Email",
+          "Full name",
+          "Subscribe"
+        ]
+      },
+      "turn_started_events": 1,
+      "turn_completed_events": 1,
+      "usage": [
+        {
+          "input_tokens": 168162,
+          "cached_input_tokens": 162688,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 369,
+          "reasoning_output_tokens": 9
+        }
+      ],
+      "mcp_items": 7,
+      "other_tool_items": [],
+      "visible_calls": 7,
+      "child_registry_calls": 7,
+      "driver_ms": 4953.351333984756
+    },
+    {
+      "reported_complete": true,
+      "rep": 2,
+      "condition": "composite",
+      "model": "gpt-6-sol",
+      "returncode": 0,
+      "wall_ms": 23196.073374987463,
+      "passed": true,
+      "gateway": {
+        "condition": "composite",
+        "setup_calls": [
+          {
+            "tool": "list_windows",
+            "ms": 7.648375001735985
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 297.4441249971278
+          }
+        ],
+        "calls": [
+          {
+            "tool": "get_window_state",
+            "ms": 88.24408300279174,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "experiment_action_observe",
+            "ms": 1667.4635829986073,
+            "error": false,
+            "child_dispatches": [
+              "set_value",
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "experiment_action_observe",
+            "ms": 544.0312499995343,
+            "error": false,
+            "child_dispatches": [
+              "set_value",
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "experiment_action_observe",
+            "ms": 1429.2602500063367,
+            "error": false,
+            "child_dispatches": [
+              "click",
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 84.17029099655338,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          }
+        ],
+        "driver_server": {
+          "name": "action-observe-experiment",
+          "version": "0.34.0"
+        },
+        "driver_metadata": {
+          "capability_version": "1",
+          "contract_version": "0.8.0",
+          "driver_version": "0.34.0",
+          "embedded": false,
+          "host_bundle_id": null,
+          "mcp_protocol_version": "2025-06-18",
+          "pid": 27624,
+          "tools_list_schema_version": "1"
+        },
+        "final_observation_verified": true,
+        "passed": true,
+        "oracle_state": {
+          "name": "Synthetic Person",
+          "email": "synthetic@example.invalid",
+          "subscribe": true,
+          "submitted": 0
+        },
+        "completed_fields": [
+          "Email",
+          "Full name",
+          "Subscribe"
+        ]
+      },
+      "turn_started_events": 1,
+      "turn_completed_events": 1,
+      "usage": [
+        {
+          "input_tokens": 135923,
+          "cached_input_tokens": 113152,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 364,
+          "reasoning_output_tokens": 34
+        }
+      ],
+      "mcp_items": 5,
+      "other_tool_items": [],
+      "visible_calls": 5,
+      "child_registry_calls": 8,
+      "driver_ms": 3813.1694570038235
+    },
+    {
+      "reported_complete": true,
+      "rep": 3,
+      "condition": "composite",
+      "model": "gpt-6-sol",
+      "returncode": 0,
+      "wall_ms": 25391.25275000697,
+      "passed": true,
+      "gateway": {
+        "condition": "composite",
+        "setup_calls": [
+          {
+            "tool": "list_windows",
+            "ms": 2.3422500089509413
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 163.99729199474677
+          }
+        ],
+        "calls": [
+          {
+            "tool": "get_window_state",
+            "ms": 77.7503749995958,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "experiment_action_observe",
+            "ms": 1713.9778749988182,
+            "error": false,
+            "child_dispatches": [
+              "set_value",
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "experiment_action_observe",
+            "ms": 1480.4529579996597,
+            "error": false,
+            "child_dispatches": [
+              "set_value",
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "experiment_action_observe",
+            "ms": 1666.0044169984758,
+            "error": false,
+            "child_dispatches": [
+              "click",
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 56.530165995354764,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          }
+        ],
+        "driver_server": {
+          "name": "action-observe-experiment",
+          "version": "0.34.0"
+        },
+        "driver_metadata": {
+          "capability_version": "1",
+          "contract_version": "0.8.0",
+          "driver_version": "0.34.0",
+          "embedded": false,
+          "host_bundle_id": null,
+          "mcp_protocol_version": "2025-06-18",
+          "pid": 27624,
+          "tools_list_schema_version": "1"
+        },
+        "final_observation_verified": true,
+        "passed": true,
+        "oracle_state": {
+          "name": "Synthetic Person",
+          "email": "synthetic@example.invalid",
+          "subscribe": true,
+          "submitted": 0
+        },
+        "completed_fields": [
+          "Email",
+          "Full name",
+          "Subscribe"
+        ]
+      },
+      "turn_started_events": 1,
+      "turn_completed_events": 1,
+      "usage": [
+        {
+          "input_tokens": 135242,
+          "cached_input_tokens": 91776,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 350,
+          "reasoning_output_tokens": 20
+        }
+      ],
+      "mcp_items": 5,
+      "other_tool_items": [],
+      "visible_calls": 5,
+      "child_registry_calls": 8,
+      "driver_ms": 4994.715790991904
+    },
+    {
+      "reported_complete": true,
+      "rep": 3,
+      "condition": "baseline",
+      "model": "gpt-6-sol",
+      "returncode": 0,
+      "wall_ms": 24788.676124997437,
+      "passed": true,
+      "gateway": {
+        "condition": "baseline",
+        "setup_calls": [
+          {
+            "tool": "list_windows",
+            "ms": 6.220625000423752
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 151.1946669925237
+          }
+        ],
+        "calls": [
+          {
+            "tool": "get_window_state",
+            "ms": 83.59604098950513,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "set_value",
+            "ms": 1624.7557080059778,
+            "error": false,
+            "child_dispatches": [
+              "set_value"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 81.02379200863652,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "set_value",
+            "ms": 1399.6863749925978,
+            "error": false,
+            "child_dispatches": [
+              "set_value"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 68.26604099478573,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "click",
+            "ms": 1521.1434160009958,
+            "error": false,
+            "child_dispatches": [
+              "click"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 65.97804201010149,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          }
+        ],
+        "driver_server": {
+          "name": "action-observe-experiment",
+          "version": "0.34.0"
+        },
+        "driver_metadata": {
+          "capability_version": "1",
+          "contract_version": "0.8.0",
+          "driver_version": "0.34.0",
+          "embedded": false,
+          "host_bundle_id": null,
+          "mcp_protocol_version": "2025-06-18",
+          "pid": 27624,
+          "tools_list_schema_version": "1"
+        },
+        "final_observation_verified": true,
+        "passed": true,
+        "oracle_state": {
+          "name": "Synthetic Person",
+          "email": "synthetic@example.invalid",
+          "subscribe": true,
+          "submitted": 0
+        },
+        "completed_fields": [
+          "Email",
+          "Full name",
+          "Subscribe"
+        ]
+      },
+      "turn_started_events": 1,
+      "turn_completed_events": 1,
+      "usage": [
+        {
+          "input_tokens": 171448,
+          "cached_input_tokens": 149120,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 353,
+          "reasoning_output_tokens": 9
+        }
+      ],
+      "mcp_items": 7,
+      "other_tool_items": [],
+      "visible_calls": 7,
+      "child_registry_calls": 7,
+      "driver_ms": 4844.4494150026
+    },
+    {
+      "reported_complete": true,
+      "rep": 4,
+      "condition": "baseline",
+      "model": "gpt-6-sol",
+      "returncode": 0,
+      "wall_ms": 24499.381832996733,
+      "passed": true,
+      "gateway": {
+        "condition": "baseline",
+        "setup_calls": [
+          {
+            "tool": "list_windows",
+            "ms": 7.674791995668784
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 135.80304199422244
+          }
+        ],
+        "calls": [
+          {
+            "tool": "get_window_state",
+            "ms": 97.25354200054426,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "set_value",
+            "ms": 1623.4645829972578,
+            "error": false,
+            "child_dispatches": [
+              "set_value"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 64.02804200479295,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "set_value",
+            "ms": 1411.0662090097321,
+            "error": false,
+            "child_dispatches": [
+              "set_value"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 68.12233400705736,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "click",
+            "ms": 1538.8322079961654,
+            "error": false,
+            "child_dispatches": [
+              "click"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 63.873125007376075,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          }
+        ],
+        "driver_server": {
+          "name": "action-observe-experiment",
+          "version": "0.34.0"
+        },
+        "driver_metadata": {
+          "capability_version": "1",
+          "contract_version": "0.8.0",
+          "driver_version": "0.34.0",
+          "embedded": false,
+          "host_bundle_id": null,
+          "mcp_protocol_version": "2025-06-18",
+          "pid": 27624,
+          "tools_list_schema_version": "1"
+        },
+        "final_observation_verified": true,
+        "passed": true,
+        "oracle_state": {
+          "name": "Synthetic Person",
+          "email": "synthetic@example.invalid",
+          "subscribe": true,
+          "submitted": 0
+        },
+        "completed_fields": [
+          "Email",
+          "Full name",
+          "Subscribe"
+        ]
+      },
+      "turn_started_events": 1,
+      "turn_completed_events": 1,
+      "usage": [
+        {
+          "input_tokens": 168234,
+          "cached_input_tokens": 162688,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 368,
+          "reasoning_output_tokens": 9
+        }
+      ],
+      "mcp_items": 7,
+      "other_tool_items": [],
+      "visible_calls": 7,
+      "child_registry_calls": 7,
+      "driver_ms": 4866.640043022926
+    },
+    {
+      "reported_complete": true,
+      "rep": 4,
+      "condition": "composite",
+      "model": "gpt-6-sol",
+      "returncode": 0,
+      "wall_ms": 33939.96854200668,
+      "passed": true,
+      "gateway": {
+        "condition": "composite",
+        "setup_calls": [
+          {
+            "tool": "list_windows",
+            "ms": 34.85170799831394
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 244.95533399749547
+          }
+        ],
+        "calls": [
+          {
+            "tool": "get_window_state",
+            "ms": 80.34004100773018,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "experiment_action_observe",
+            "ms": 1680.012541997712,
+            "error": false,
+            "child_dispatches": [
+              "set_value",
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 71.73970900475979,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "experiment_action_observe",
+            "ms": 1390.7046670065029,
+            "error": false,
+            "child_dispatches": [
+              "set_value",
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 75.77279099496081,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "experiment_action_observe",
+            "ms": 1497.493167000357,
+            "error": false,
+            "child_dispatches": [
+              "click",
+              "get_window_state"
+            ]
+          },
+          {
+            "tool": "get_window_state",
+            "ms": 60.265374995651655,
+            "error": false,
+            "child_dispatches": [
+              "get_window_state"
+            ]
+          }
+        ],
+        "driver_server": {
+          "name": "action-observe-experiment",
+          "version": "0.34.0"
+        },
+        "driver_metadata": {
+          "capability_version": "1",
+          "contract_version": "0.8.0",
+          "driver_version": "0.34.0",
+          "embedded": false,
+          "host_bundle_id": null,
+          "mcp_protocol_version": "2025-06-18",
+          "pid": 27624,
+          "tools_list_schema_version": "1"
+        },
+        "final_observation_verified": true,
+        "passed": true,
+        "oracle_state": {
+          "name": "Synthetic Person",
+          "email": "synthetic@example.invalid",
+          "subscribe": true,
+          "submitted": 0
+        },
+        "completed_fields": [
+          "Email",
+          "Full name",
+          "Subscribe"
+        ]
+      },
+      "turn_started_events": 1,
+      "turn_completed_events": 1,
+      "usage": [
+        {
+          "input_tokens": 181085,
+          "cached_input_tokens": 174464,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 389,
+          "reasoning_output_tokens": 0
+        }
+      ],
+      "mcp_items": 7,
+      "other_tool_items": [],
+      "visible_calls": 7,
+      "child_registry_calls": 10,
+      "driver_ms": 4856.3282920076745
+    }
+  ]
+}

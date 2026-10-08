@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-use cua_driver_contract::{manifest, runtime_witness_schema};
+use cua_driver_contract::manifest;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -20,27 +20,17 @@ fn run() -> Result<(), String> {
         .find(|arg| !arg.starts_with('-'))
         .map(String::as_str)
         .unwrap_or("all");
-    if !matches!(target, "all" | "manifest" | "runtime-witness-schema") {
-        return Err("usage: cua-contract-gen [all|manifest|runtime-witness-schema] [--check]".into());
+    if !matches!(target, "all" | "manifest") {
+        return Err("usage: cua-contract-gen [all|manifest] [--check]".into());
     }
 
-    let root = driver_root()?;
-    if matches!(target, "all" | "manifest") {
-        let mut contents = serde_json::to_string_pretty(&manifest()).map_err(|e| e.to_string())?;
-        contents.push('\n');
-        write_or_check(&root.join("contract/manifest.json"), &contents, check)?;
-    }
-    if matches!(target, "all" | "runtime-witness-schema") {
-        let mut contents = serde_json::to_string_pretty(&runtime_witness_schema())
-            .map_err(|e| e.to_string())?;
-        contents.push('\n');
-        write_or_check(
-            &root.join("contract/runtime-witness-v0.schema.json"),
-            &contents,
-            check,
-        )?;
-    }
-    Ok(())
+    let mut contents = serde_json::to_string_pretty(&manifest()).map_err(|e| e.to_string())?;
+    contents.push('\n');
+    write_or_check(
+        &driver_root()?.join("contract/manifest.json"),
+        &contents,
+        check,
+    )
 }
 
 fn driver_root() -> Result<PathBuf, String> {

@@ -133,38 +133,28 @@ export class Driver {
       name,
       arguments: { ...args, session: this.session },
     });
-    // ActionResult refusals need not set MCP's isError flag.
-    const effect = (result.structuredContent as Record<string, unknown> | undefined)?.effect;
-    if (result.isError || effect === 'refused') {
-      const structured = result.structuredContent as Record<string, unknown> | undefined;
-      const refusalCode = (structured?.refusal as Record<string, unknown> | undefined)?.code;
+    const data = result.structuredContent as Record<string, any> | undefined;
+    // All refusal envelopes must preserve the same recovery metadata.
+    const failed = Boolean(result.isError) || data?.effect === 'refused';
+    if (failed || data?.status === 'refused' || data?.refusal) {
+      const refusalCode = (data?.refusal as Record<string, unknown> | undefined)?.code;
       const code =
-        typeof structured?.code === 'string' && structured.code
-          ? structured.code
+        typeof data?.code === 'string' && data.code
+          ? data.code
           : typeof refusalCode === 'string' && refusalCode
             ? refusalCode
             : undefined;
-      const escalation = structured?.escalation as Record<string, unknown> | undefined;
+      const escalation = data?.escalation as Record<string, unknown> | undefined;
       const recommended =
         typeof escalation?.recommended === 'string' && escalation.recommended
           ? escalation.recommended
           : undefined;
-      throw new DriverToolError(
-        `${name} failed: ${JSON.stringify(result.content)}`,
-        code,
-        recommended
-      );
+      const message = failed
+        ? `${name} failed: ${JSON.stringify(result.content)}`
+        : `${name} refused: ${JSON.stringify(data?.refusal ?? data)}`;
+      throw new DriverToolError(message, code, recommended);
     }
-    const data = result.structuredContent as Record<string, any> | undefined;
     if (!data) throw new Error(`${name} returned no structured result`);
-    if (data.status === 'refused' || data.refusal) {
-      const code = data.refusal?.code;
-      // DriverToolError is an Error, so existing handlers still match.
-      throw new DriverToolError(
-        `${name} refused: ${JSON.stringify(data.refusal ?? data)}`,
-        typeof code === 'string' && code ? code : undefined
-      );
-    }
     return data;
   }
 }

@@ -244,8 +244,14 @@ export class NotchModel {
     }
   }
 
-  /** The helper's screens: lay out for the notch screen. */
+  /**
+   * The helper's screens: lay out for the notch screen, else the primary
+   * one (the SwiftUI app's `NotchScreens.screen()`: the notched display,
+   * else the main one), so the helper always gets a layout when it has a
+   * screen at all.
+   */
   screens(notch: ScreenFacts | undefined, primary: ScreenFacts | undefined): void {
+    notch ??= primary;
     this.notchScreen = notch;
     const p = primary ?? notch;
     if (notch && p) {

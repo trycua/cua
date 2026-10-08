@@ -94,6 +94,20 @@ public enum NotchHelperRunner {
         guard notch.geometry.stage == CGSize(width: 680, height: 260), notch.thumbnail("local:aurora") != nil else {
             return fail("layout or thumbnail not applied")
         }
+        guard notch.panelUp else { return fail("no panel for a shown notch") }
+        // A screen the core has no layout for still gets the panel (the
+        // SwiftUI app keeps its panel before its first layout too).
+        let bare = HelperNotch(emit: { _ in })
+        bare.makesPanel = false
+        for line in lines.prefix(2) {
+            guard var message = try? HostMessage.decode(line) else { return fail("decode") }
+            if case .state(var s) = message {
+                s.layout = nil
+                message = .state(s)
+            }
+            bare.receive(message)
+        }
+        guard bare.panelUp else { return fail("no panel without a layout") }
         notch.openSpace("local:aurora")
         let encoded = String(decoding: out.last?.line() ?? Data(), as: UTF8.self)
         guard encoded == #"{"action":"openSpace","spaceId":"local:aurora","type":"action"}"# + "\n" else {

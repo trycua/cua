@@ -47,9 +47,11 @@ public final class NotchHostingView<Content: View>: NSHostingView<Content> {
 /// The screens the notch reads.
 @MainActor
 public enum NotchScreens {
-    /// The screen: the built-in notched display when there is one.
+    /// The screen: the built-in notched display when there is one, else the
+    /// main one (else the first: an agent app without a key window may have
+    /// no main screen).
     public static func screen() -> NSScreen? {
-        NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main
+        NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main ?? NSScreen.screens.first
     }
 
     /// The primary display (whose top the drag events measure from).

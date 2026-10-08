@@ -75,6 +75,21 @@ describe("notch model", () => {
     expect(states.length).toBe(n);
   });
 
+  it("lays out for the primary screen when no screen has a notch, so the helper gets a layout", () => {
+    // A Mac without a notch, where the helper finds no main screen either
+    // (an agent app with no key window): the state still carries a layout.
+    const { model, last } = setup();
+    const plain: ScreenFacts = { ...SCREEN, safeAreaTop: 0, auxLeftWidth: undefined, auxRightWidth: undefined };
+    model.screens(undefined, plain);
+    expect(last().layout).toBeDefined();
+    expect(last().shown).toBe(true);
+    // No screen at all: no layout, and the notch still shows (the helper keeps its panel).
+    const bare = setup();
+    bare.model.screens(undefined, undefined);
+    expect(bare.last().layout).toBeUndefined();
+    expect(bare.last().shown).toBe(true);
+  });
+
   it("lays out for the notch screen and re-lays out when the row above the tiles comes", () => {
     const { model, last, fake } = setup();
     model.screens(SCREEN, SCREEN);

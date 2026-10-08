@@ -29,6 +29,10 @@ public final class HelperNotch: NotchSurface {
     @ObservationIgnored public private(set) var dragging = false
     /// Hello came (motion and radii are the core's).
     @ObservationIgnored public private(set) var greeted = false
+    /// The panel is up: made and ordered front (with `makesPanel` off, it
+    /// would be). It is up whenever the notch shows, laid out or not, as the
+    /// SwiftUI app's `NotchController.show()` keeps its panel.
+    @ObservationIgnored public private(set) var panelUp = false
     @ObservationIgnored private var icons: [String: NotchData.OsIcon] = [:]
     /// Search texts sent and not yet echoed by a state, oldest first: a
     /// state carrying an older one never undoes newer typing.
@@ -61,6 +65,9 @@ public final class HelperNotch: NotchSurface {
             greeted = true
             emit(.hello(version: NotchProtocol.version, pid: ProcessInfo.processInfo.processIdentifier))
             reportScreens()
+            // A screen that comes later (or the first, read before the app
+            // finished launching) is reported then, panel or not.
+            if makesPanel { watchScreens() }
         case .state(let s):
             icons = s.icons
             if s.view != view { view = s.view }
@@ -68,7 +75,7 @@ public final class HelperNotch: NotchSurface {
             highlight = s.highlight.flatMap { NotchHighlight.parse($0, firstTile: s.view.tiles.first(where: \.dropTarget)?.id) }
             dragging = s.dragging
             if let layout = s.layout { apply(layout) }
-            if s.shown != shown || panel == nil { setShown(s.shown) }
+            if s.shown != shown || s.shown != panelUp { setShown(s.shown) }
         case .thumbnail(let id, let image):
             thumbnails[id] = image.flatMap(NSImage.init(data:))
         case .ghost(let image):
@@ -103,15 +110,18 @@ public final class HelperNotch: NotchSurface {
         if let panel, panel.frame != frame { panel.setFrame(frame, display: true) }
     }
 
-    /// Shows the panel once there is a layout and the setting allows it;
-    /// hides it otherwise.
+    /// Shows the panel once greeted when the setting allows it, sized to the
+    /// layout when there is one (until then it has no size, as the SwiftUI
+    /// app's panel before its first layout); hides it otherwise.
     func setShown(_ on: Bool) {
         shown = on
-        guard on, greeted, let layout else {
+        guard on, greeted else {
+            panelUp = false
             panel?.orderOut(nil)
             stopOutsideClicks()
             return
         }
+        panelUp = true
         guard makesPanel else { return }
         if panel == nil {
             let panel = NotchPanel()
@@ -119,23 +129,24 @@ public final class HelperNotch: NotchSurface {
             host.sizingOptions = []
             panel.contentView = host
             self.panel = panel
-            watchScreens()
         }
-        let s = layout.stageFrame
-        panel?.setFrame(NSRect(x: s.x, y: s.y, width: s.width, height: s.height), display: true)
+        if let s = layout?.stageFrame {
+            panel?.setFrame(NSRect(x: s.x, y: s.y, width: s.width, height: s.height), display: true)
+        }
         panel?.orderFrontRegardless()
     }
 
     private func watchScreens() {
         guard observers.isEmpty else { return }
-        observers.append(NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.reportScreens()
-                // `NSScreen.screens` can lag the notification.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.reportScreens() }
-            }
-        })
+        for name in [NSApplication.didChangeScreenParametersNotification, NSApplication.didFinishLaunchingNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.reportScreens()
+                    // `NSScreen.screens` can lag the notification.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self?.reportScreens() }
+                }
+            })
+        }
     }
 
     private func stopOutsideClicks() {

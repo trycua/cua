@@ -110,6 +110,35 @@ struct HelperNotchTests {
         }
     }
 
+    /// The panel is up whenever the notch shows, before (or without) a
+    /// layout, as the SwiftUI app's `NotchController.show()` keeps its panel;
+    /// a layout that comes later only sizes it.
+    @Test func aShownNotchKeepsItsPanelWithoutALayout() throws {
+        let (n, _) = try notch()
+        var s = try fixtureState()
+        let layout = s.layout
+        s.layout = nil
+        #expect(n.receive(.state(s)))
+        #expect(n.panelUp)
+        s.layout = layout
+        #expect(n.receive(.state(s)))
+        #expect(n.panelUp && n.layout == layout)
+        s.shown = false
+        #expect(n.receive(.state(s)))
+        #expect(!n.panelUp)
+        s.shown = true
+        #expect(n.receive(.state(s)))
+        #expect(n.panelUp)
+    }
+
+    /// Nothing is drawn before hello: the core's motion is not known yet.
+    @Test func noPanelBeforeHello() throws {
+        let n = HelperNotch(emit: { _ in })
+        n.makesPanel = false
+        #expect(n.receive(.state(try fixtureState())))
+        #expect(!n.panelUp)
+    }
+
     @Test func thumbnailsAndTheGhostDecodeAndClear() throws {
         let (n, _) = try notch()
         let lines = try Fixtures.lines("host-messages.jsonl")

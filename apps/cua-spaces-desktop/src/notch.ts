@@ -14,7 +14,7 @@ import { release } from "node:os";
 import * as path from "node:path";
 import { NotchModel, type NotchHost, type NotchModelOptions } from "./notch/model";
 import { NotchProcess, type NotchProcessOptions } from "./notch/process";
-import { NOTCH_PROTOCOL_VERSION, type HelperMessage } from "./notch/protocol";
+import { NOTCH_PROTOCOL_VERSION, type HelperMessage, type HostMessage } from "./notch/protocol";
 
 export type { NotchHost, NotchActions, NotchTeleport, WindowDragEvent } from "./notch/model";
 export type { NotchCore } from "./notch/core";
@@ -60,6 +60,8 @@ export interface Notch {
 export interface StartNotchOptions extends NotchModelOptions {
   /** The helper's executable (`helperPath`). */
   path: string;
+  /** Logs every protocol message both ways (`CUA_SPACES_NOTCH_DEBUG`; images left out). */
+  trace?: (line: string) => void;
   /** Process options for tests (spawn, timers, backoff). */
   process?: Partial<Omit<NotchProcessOptions, "path" | "onMessage" | "onStart">>;
 }
@@ -70,22 +72,28 @@ export function startNotch(host: NotchHost, options: StartNotchOptions): Notch {
   // The last thumbnail per Space, base64, for a restarted helper.
   const thumbnails = new Map<string, string>();
   let helper: NotchProcess | undefined;
+  const trace = options.trace;
+  const send = (m: HostMessage) => {
+    trace?.(`-> ${describe(m)}`);
+    helper?.send(m);
+  };
   const model = new NotchModel(
     host,
     {
-      state: (message) => helper?.send(message),
+      state: (message) => send(message),
       thumbnail: (id, image) => {
         const b64 = image ? Buffer.from(image).toString("base64") : undefined;
         if (b64) thumbnails.set(id, b64);
         else thumbnails.delete(id);
-        helper?.send({ type: "thumbnail", id, image: b64 });
+        send({ type: "thumbnail", id, image: b64 });
       },
-      ghost: (image) => helper?.send({ type: "ghost", image: image ? Buffer.from(image).toString("base64") : undefined }),
+      ghost: (image) => send({ type: "ghost", image: image ? Buffer.from(image).toString("base64") : undefined }),
     },
     { ...options, log },
   );
 
   const onMessage = (m: HelperMessage) => {
+    trace?.(`<- ${describe(m)}`);
     switch (m.type) {
       case "hello":
         if (m.v !== NOTCH_PROTOCOL_VERSION) log(`the helper speaks notch protocol ${m.v}, this app ${NOTCH_PROTOCOL_VERSION}`);
@@ -124,9 +132,10 @@ export function startNotch(host: NotchHost, options: StartNotchOptions): Notch {
     log,
     onMessage,
     onStart: () => {
-      helper?.send({ type: "hello", v: NOTCH_PROTOCOL_VERSION, ...model.motion() });
+      trace?.(`started ${options.path} (pid ${helper?.pid ?? "?"})`);
+      send({ type: "hello", v: NOTCH_PROTOCOL_VERSION, ...model.motion() });
       model.resend();
-      for (const [id, image] of thumbnails) helper?.send({ type: "thumbnail", id, image });
+      for (const [id, image] of thumbnails) send({ type: "thumbnail", id, image });
     },
   });
   helper.start();
@@ -143,6 +152,11 @@ export function startNotch(host: NotchHost, options: StartNotchOptions): Notch {
       helper?.stop();
     },
   };
+}
+
+/** A protocol message for the trace: images as their size, the rest as sent. */
+export function describe(m: HostMessage | HelperMessage): string {
+  return JSON.stringify(m, (key, value) => ((key === "image" || key === "svg") && typeof value === "string" ? `<${value.length} chars>` : value));
 }
 
 /**
@@ -185,6 +199,8 @@ export async function connectNotch(host: NotchHost): Promise<Notch | null> {
     path: executable,
     openURL: (url) => void shell.openExternal(url),
     highlight: process.env.CUA_SPACES_NOTCH_HIGHLIGHT || undefined,
+    // Diagnosing the notch (`CUA_SPACES_NOTCH_DEBUG=1`): the protocol both ways in the app's log.
+    trace: process.env.CUA_SPACES_NOTCH_DEBUG ? (line) => console.log(`[cua-spaces] notch ${line}`) : undefined,
   });
   app.on("did-become-active", () => notch.recheckPermission());
   app.on("will-quit", () => notch.stop());

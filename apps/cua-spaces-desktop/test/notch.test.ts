@@ -69,7 +69,7 @@ class FakeChild extends EventEmitter {
   }
 }
 
-function setup() {
+function setup(trace?: (line: string) => void) {
   const fake = fakeCore();
   const clock = manualClock();
   const children: FakeChild[] = [];
@@ -104,6 +104,7 @@ function setup() {
     },
     {
       path: "/helper",
+      trace,
       clock,
       openURL: (u) => opened.push(u),
       log: () => {},
@@ -179,6 +180,29 @@ describe("the notch end to end (fake helper)", () => {
     clock.advance(500);
     const again = children[1]!;
     await vi.waitFor(() => expect(again.received.map((m) => m.type)).toEqual(["hello", "state", "thumbnail"]));
+  });
+
+  // The recheck on a Mac without a notch: the setting taken over from the
+  // SwiftUI app hides the notch at launch, the helper reports a screen with
+  // no notch, and turning the setting on shows it with a layout for that
+  // screen (the panel is a layer-27 window, which `list_windows` leaves out).
+  it("shows a notch hidden from launch, laid out for a screen without a notch, when the setting turns it on", async () => {
+    const lines: string[] = [];
+    const { notch, children } = setup((l) => lines.push(l));
+    const c = children[0]!;
+    notch.setShown(false);
+    const wide = { frame: { x: 0, y: 0, width: 3440, height: 1440 }, visibleFrame: { x: 0, y: 90, width: 3440, height: 1320 }, safeAreaTop: 0 };
+    c.say({ type: "screens", notch: wide, primary: wide });
+    await vi.waitFor(() => expect(c.received.at(-1)?.layout).toBeDefined());
+    expect(c.received.at(-1)?.shown).toBe(false);
+    notch.setShown(true);
+    await vi.waitFor(() => expect(c.received.at(-1)?.shown).toBe(true));
+    expect(c.received.at(-1)?.layout).toEqual(c.received.at(-2)?.layout);
+    // The trace has both ways, images left out.
+    expect(lines[0]).toMatch(/^started \/helper/);
+    expect(lines.some((l) => l.startsWith('-> {"type":"hello"'))).toBe(true);
+    expect(lines.some((l) => l.startsWith('<- {"type":"screens"'))).toBe(true);
+    expect(lines.some((l) => l.startsWith("-> ") && l.includes('"shown":true'))).toBe(true);
   });
 
   it("follows the notch setting", async () => {

@@ -504,6 +504,14 @@ Spaces while the app is in use); its click selects the Space and shows it;
 files dropped on it are sent into the Space with the drop well's transfer,
 the activity indicator on meanwhile, and a notification says what landed.
 
+To see what the notch is doing, start the app with `CUA_SPACES_NOTCH_DEBUG=1`:
+its log then has every protocol message both ways (images as their size).
+The panel is an `NSPanel` above the menu bar (window layer 27), so window
+lists that keep to layer 0 (`cua-driver list_windows`) never show it; read
+`CGWindowListCopyWindowInfo`, or take a screenshot, instead. While "Spaces
+tab in the notch" is Hide (also when taken over from the SwiftUI app), the
+panel is made but ordered out.
+
 ## Packaging and signing
 
 `electron-builder.config.cjs` builds without signing unless the signing

@@ -2081,13 +2081,8 @@ pub async fn env_of(cua: &Cua, name: &str) -> Result<Arc<cua_sdk::SpacesdClient>
             crate::host::daemon_relay_account(&crate::util::cua_home())
         });
         let spaces = cua.spaces();
-        // `Spaces::space` looks the machine up in the relay directory cache.
-        // An embedded runtime fills that cache on list, not on connect. A
-        // qualified id that is not in the directory is not a Space yet.
-        let listed = spaces.list().await?;
-        if !listed.iter().any(|s| s.id == id) {
-            return Err(CuaError::NotFound(format!("Space {id}")));
-        }
+        // NotFound before dial, and the snapshot has the name space() dials with.
+        spaces.resolve(id.clone()).await?;
         return spaces.space(id).await?.spacesd();
     }
     let sbx = cua.sandboxes();

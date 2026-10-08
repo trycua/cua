@@ -86,7 +86,7 @@ export function demoSpaceDetailHandlers({ state, findRow }: DemoContext): DemoHa
       const row = findRow(spaceId);
       if (!running(row)) throw offline(row);
       const w = WINDOWS[row.os ?? "linux"] ?? WINDOWS.linux!;
-      return { windows: w.windows.map((x) => ({ ...x })), display: w.display ? { ...w.display } : null };
+      return { windows: w.windows.map((x) => ({ ...x })), display: w.display ? { ...w.display } : null, open: [...(state.pip.get(spaceId) ?? [])] };
     },
     "stream.pip": ({ spaceId, command }) => {
       const row = findRow(spaceId);

@@ -89,6 +89,7 @@ numbers will grow once the real web UI replaces the placeholder.
 | `src/media-bridge.ts` | `spaces.openStream`: media tickets from the cua daemon (see "Live video") |
 | `src/gpu.ts` | Chromium's hardware video decode switches (VA-API on Linux) |
 | `src/pip.ts`, `src/pip-layout.ts` | Picture in picture: a floating window per panel, where it opens and its shape |
+| `src/viewer.ts`, `src/viewer-layout.ts` | "Open in window": a Space's viewer window (the web UI's `/viewer`: its desktop under the source picker, size and Pop out), one per Space, shaped to the stream, where the last one was left |
 | `src/video-bench.ts`, `src/video-report.ts`, `scripts/video-bench.mjs` | The video bench, the same hooks as the SwiftUI app's ([docs/video.md](docs/video.md)) |
 | `src/icon.ts` | The window icon on Linux |
 | `src/menu.ts` | Native application menu built from roles |

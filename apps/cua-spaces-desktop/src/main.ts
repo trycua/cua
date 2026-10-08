@@ -26,7 +26,8 @@ import { makeSystem } from "./system";
 import { initTheme, setThemeSource } from "./theme";
 import { closesToTray, installTray, isQuitting } from "./tray";
 import { countsVideo, startVideoBench, videoBenchEnv } from "./video-bench";
-import { applyThemeToWindow, createMainWindow, handleOverlayDim, handleViewerKeyboard, openSpaceWindow, setWindowBackground } from "./window";
+import { createViewerWindows } from "./viewer";
+import { applyThemeToWindow, createMainWindow, handleOverlayDim, handleViewerKeyboard, setWindowBackground } from "./window";
 
 // Must match `appId` (Windows; macOS has the Swift app's bundle id) and the
 // Linux desktop entry in electron-builder.config.cjs.
@@ -53,6 +54,8 @@ if (process.env.CUA_SPACES_USER_DATA) app.setPath("userData", process.env.CUA_SP
 // The page decodes Spaces' video with WebCodecs: on the GPU where it can (gpu.ts).
 applyVideoDecodeSwitches(app.commandLine, process.platform, process.env);
 const VIDEO_BENCH = videoBenchEnv(process.env);
+// The Spaces' viewer windows ("Open in window"); the bench's own placement is never remembered.
+const viewers = createViewerWindows({ remember: !VIDEO_BENCH.bench });
 
 /** macOS, packaged: take over the Swift app's settings once (migrate-swift.ts). */
 function migrateSwiftApp() {
@@ -97,7 +100,10 @@ async function startNativeHost(showRoute: (route: string) => void) {
   const refresh = recordLaunch(native, core.settings, app.getVersion(), "", readOnboardingCompleted(core.onboarding) ?? false);
   const env = makeModel({ native, nativeDir: dir, userData: app.getPath("userData"), version: app.getVersion(), openUrl });
   const pip = createPipWindows();
-  app.on("will-quit", () => pip.closeAll());
+  app.on("will-quit", () => {
+    pip.closeAll();
+    viewers.closeAll();
+  });
   const prompts = await electronKeyvaultPrompts(native);
   const bridge = createBridge({
     model: env.model,
@@ -107,7 +113,7 @@ async function startNativeHost(showRoute: (route: string) => void) {
     env: process.env,
     system: makeSystem({ native, showRoute }),
     ui: {
-      openSpace: (spaceId, name) => void openSpaceWindow(spaceId, name),
+      openSpace: (spaceId, name, os) => void viewers.open(spaceId, name, os),
       setBackground: (win, color, appearance) => {
         if (appearance) setThemeSource(appearance);
         if (win instanceof BrowserWindow) setWindowBackground(win, color);
@@ -125,6 +131,10 @@ async function startNativeHost(showRoute: (route: string) => void) {
     },
   });
   env.model.startListPoll();
+  // A deleted Space's viewer closes (a loaded list only: an empty one is a launch).
+  env.model.subscribe((change) => {
+    if (change === "spaces" && env.model.loaded) viewers.prune(new Set(env.model.spaces.map((s) => s.id)));
+  });
   // Keyvault access is never silent: the notch indicator follows live deliveries even with no window open.
   env.model.keyvault.startPoll();
   if (refresh && env.cua) {
@@ -177,7 +187,7 @@ if (!app.requestSingleInstanceLock()) {
 
   const showMain = () => {
     if (!mainWindow || mainWindow.isDestroyed()) {
-      mainWindow = createMainWindow({ demo: E2E_DEMO });
+      mainWindow = createMainWindow({ demo: E2E_DEMO, remember: !VIDEO_BENCH.bench });
       mainWindow.on("close", (event) => {
         if (closesToTray() && !isQuitting()) {
           event.preventDefault();
@@ -247,7 +257,13 @@ if (!app.requestSingleInstanceLock()) {
     const main = openedAtLogin() && onboarded ? null : showMain();
     if (main && host && (VIDEO_BENCH.bench || countsVideo(VIDEO_BENCH))) {
       const model = host.env.model;
-      startVideoBench(VIDEO_BENCH, { main, openSpace: (id) => openSpaceWindow(id, model.spaces.find((s) => s.id === id)?.name ?? id) });
+      startVideoBench(VIDEO_BENCH, {
+        main,
+        openSpace: (id) => {
+          const s = model.spaces.find((x) => x.id === id);
+          return viewers.open(id, s?.name ?? id, s ? String(s.os) : undefined);
+        },
+      });
     }
     installTray({
       actions: {

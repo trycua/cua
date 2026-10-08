@@ -15,8 +15,8 @@ import type { SystemServices } from "./system";
 
 /** What the bridge asks the shell's windows to do (Electron owns them). */
 export interface BridgeUi {
-  /** A Space's desktop in a window of its own. */
-  openSpace(spaceId: string, name: string): void;
+  /** A Space's desktop in a window of its own (its viewer); `os` is the core's word (`linux`, `macos`, ...). */
+  openSpace(spaceId: string, name: string, os?: string): void;
   /** The calling window's background (and its chrome's appearance). */
   setBackground(window: unknown, color: string, appearance: "system" | "light" | "dark" | null): void;
   /** Brings the app to the front (a keychain prompt shows over the app that asked). */

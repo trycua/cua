@@ -710,7 +710,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "spaces.usage": nullable(
     obj<SpaceUsage>()({ memoryUsed: num, memoryTotal: num, memoryLimited: bool, diskUsed: num, diskTotal: num, diskLimited: bool }),
   ),
-  "spaces.windows": obj<SpaceWindows>()({ windows: list(RemoteWindowShape), display: nullable(object({ widthPx: num, heightPx: num })) }),
+  "spaces.windows": obj<SpaceWindows>()({ windows: list(RemoteWindowShape), display: nullable(object({ widthPx: num, heightPx: num })), open: opt(strings) }),
   "stream.pip": strings,
   "spaces.thumbnail": nullable(obj<SpaceThumbnail>()({ url: str, capturedAtMs: num })),
   "spaces.chooseFiles": strings,

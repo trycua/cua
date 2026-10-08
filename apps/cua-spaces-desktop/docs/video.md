@@ -22,7 +22,7 @@ The video never passes through IPC:
 | | SwiftUI app | Electron app |
 |---|---|---|
 | Tiles (Spaces grid) | `VideoTier.tile`: 10 fps, 960 px long edge, view only | the same (`tier: "tile"`) |
-| Viewer (a Space's page) | full rate and size, `allow_activation`, input | the same (`tier: "full"`) |
+| Viewer (a Space's page, its own window) | full rate and size, `allow_activation`, input | the same (`tier: "full"`) |
 | Picture in picture | `StreamPiPWindow`: a floating panel, its own session | a floating window, its own session (`src/pip.ts`) |
 | One window (PiP) | `background_only`, reopened with activation on `would_require_activation` | the same (`windowId`, `activate`) |
 | Decode | VideoToolbox, one session per Space and tier | WebCodecs `prefer-hardware` with `optimizeForLatency`, one session per slot; software when the hardware decoder rejects the stream |
@@ -112,7 +112,7 @@ Both apps have the same hooks:
 
 | Hook | What it does |
 |---|---|
-| `CUA_SPACES_VIDEO_BENCH=<spaceId>` | Opens the Spaces grid (its tiles) plus a second window on that Space's viewer. The windows are placed the same way in both apps. |
+| `CUA_SPACES_VIDEO_BENCH=<spaceId>` | Opens the Spaces grid (its tiles) plus a second window streaming that Space at full rate and size: here its viewer window ("Open in window"), in the SwiftUI app a web UI window on its page. The windows are placed the same way in both apps, and neither app saves that placement as the window's own. |
 | `CUA_SPACES_VIDEO_STATS=<file>` | Writes every stream's counts once a second. |
 
 The counts mean the same in both apps:

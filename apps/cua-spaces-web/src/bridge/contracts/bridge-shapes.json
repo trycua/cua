@@ -4080,6 +4080,12 @@
             "widthPx",
             "heightPx"
           ]
+        },
+        "open": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -5289,6 +5295,12 @@
             "widthPx",
             "heightPx"
           ]
+        },
+        "open": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [

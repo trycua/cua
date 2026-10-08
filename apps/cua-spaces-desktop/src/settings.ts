@@ -41,6 +41,8 @@ export interface Settings {
   updateChannel?: "stable" | "beta";
   /** Where the last picture-in-picture panel was left (pip.ts). */
   pipBounds?: { x: number; y: number; width: number; height: number };
+  /** Where the last Space viewer was left, and its content's width (viewer.ts). */
+  viewerBounds?: { x: number; y: number; width: number };
   /** Present once the Swift app's state was taken over (macOS). */
   swiftMigration?: SwiftMigration;
 }

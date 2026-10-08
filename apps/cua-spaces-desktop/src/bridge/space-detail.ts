@@ -102,9 +102,10 @@ export function spaceDetailMethods(ctx: BridgeContext): Handlers {
   return {
     "spaces.usage": async (args) => encode(await model.backend.usage(spaceId(args))),
     "spaces.windows": async (args) => {
-      const { rows } = streams.get(spaceId(args));
+      const { rows, pips } = streams.get(spaceId(args));
       await rows.refresh();
-      return { windows: (rows.windows ?? []).map(remoteWindow), display: encode(rows.display) };
+      // The open panels too: one closed by its own button (or from the viewer) shows on the next read.
+      return { windows: (rows.windows ?? []).map(remoteWindow), display: encode(rows.display), open: pips ? rows.openRows(pips.openKeys) : [] };
     },
     "stream.pip": async (args) => {
       const { rows, pips } = streams.get(spaceId(args));

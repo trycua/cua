@@ -253,8 +253,9 @@ export class SpaceDetailStore {
 
   private async readWindows(spaceId: string): Promise<void> {
     try {
-      const { windows, display } = await this.adapter.call("spaces.windows", { spaceId });
-      if (!this.held.has(spaceId)) this.patch(spaceId, { windows, display: display ?? this.get(spaceId).display, failed: false });
+      const { windows, display, open } = await this.adapter.call("spaces.windows", { spaceId });
+      // The host's open panels, where it says (one closed by its own button, or from another window).
+      if (!this.held.has(spaceId)) this.patch(spaceId, { windows, display: display ?? this.get(spaceId).display, failed: false, ...(open ? { open } : {}) });
     } catch (e) {
       if (this.held.has(spaceId)) return;
       if (isUnsupported(e)) this.patch(spaceId, { windows: [], windowsUnsupported: true });

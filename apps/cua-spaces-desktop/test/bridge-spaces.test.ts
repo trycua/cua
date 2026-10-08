@@ -104,6 +104,7 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
           { id: "w-2", appName: "Thunar", title: "", visible: true, appId: "", targetEpoch: 1, widthPx: null, heightPx: null, pid: null },
         ],
         display: { widthPx: 1920, heightPx: 1080 },
+        open: [],
       });
     });
 
@@ -130,8 +131,11 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
       expect(pipSpecs[0]).toMatchObject({ spaceId: aurora, os: "linux", key: "window:w-1", title: "cua@space: ~", source: { kind: "window", window: { id: "w-1", epoch: 3 } } });
       expect(await call("stream.pip", { spaceId: aurora, command: { type: "open", row: desktop } })).toEqual([desktop, "w-1"]);
       expect(await call("stream.pip", { spaceId: aurora, command: { type: "close", row: desktop } })).toEqual(["w-1"]);
+      // The window list says which panels are open (the viewer and the detail read it).
+      expect(((await call("spaces.windows", { spaceId: aurora })) as { open: string[] }).open).toEqual(["w-1"]);
       // The panel's own close button.
       pipsOpen.get("window:w-1")!();
+      expect(((await call("spaces.windows", { spaceId: aurora })) as { open: string[] }).open).toEqual([]);
       expect(await call("stream.pip", { spaceId: aurora, command: { type: "close", row: "w-1" } })).toEqual([]);
       expect(await code("stream.pip", { spaceId: aurora, command: { type: "open", row: "w-9" } })).toBe("not_found");
       expect(await code("stream.pip", { spaceId: aurora, command: { type: "open" } })).toBe("bad_args");

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { HostError } from "../adapter";
 import { createDemoAdapter } from "../adapters/demo";
 import type { TelemetryView } from "../contracts/host";
@@ -9,7 +9,8 @@ import { sanitizeSignals } from "../ops/telemetry";
 import { TelemetryForwarder, telemetryAllowed } from "../telemetry";
 import { toMachineRows } from "../adapters/webkit";
 import { rowsToSpaces, toMachines } from "../derive";
-import { agentRunLines, desktopCover, spaceDetail } from "../space-detail";
+import { agentRunLines, desktopCover, SpaceDetailStore, spaceDetail } from "../space-detail";
+import type { CoreClient } from "../core";
 import { parseDropped, sendFiles, splitDrop } from "../space-files";
 import type { MachineAccessNotice } from "../contracts/devices";
 import type { SpaceRow } from "../contracts/spaces";
@@ -80,8 +81,22 @@ describe("demo host: Space detail and This machine", () => {
     expect(windows.length).toBeGreaterThan(0);
     expect(display).not.toBeNull();
     expect(await demo.call("stream.pip", { spaceId: "local:design-review", command: { type: "open", row: "desktop" } })).toEqual(["desktop"]);
+    expect((await demo.call("spaces.windows", { spaceId: "local:design-review" })).open).toEqual(["desktop"]);
     expect(await demo.call("stream.pip", { spaceId: "local:design-review", command: { type: "close", row: "desktop" } })).toEqual([]);
     await expect(demo.call("spaces.windows", { spaceId: "local:agent-sandbox" })).rejects.toMatchObject({ code: "space_off" });
+    demo.dispose?.();
+  });
+
+  it("follows the host's open panels on each window read (one closed by its own button, or opened from the viewer)", async () => {
+    const demo = createDemoAdapter({ latencyMs: 0 });
+    const core = { tryCall: () => null } as unknown as CoreClient;
+    const store = new SpaceDetailStore(demo, core);
+    const id = "local:design-review";
+    await demo.call("stream.pip", { spaceId: id, command: { type: "open", row: "desktop" } });
+    const stop = store.watch(id);
+    await vi.waitFor(() => expect(store.get(id).open).toEqual(["desktop"]));
+    stop();
+    store.dispose();
     demo.dispose?.();
   });
 

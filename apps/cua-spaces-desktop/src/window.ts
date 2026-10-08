@@ -190,9 +190,11 @@ export function appWindow(options: BrowserWindowConstructorOptions): BrowserWind
   return win;
 }
 
-/** `demo`: the parity flows' test switch (the page plays the browser demo host). */
-export function createMainWindow({ demo = false }: { demo?: boolean } = {}): BrowserWindow {
-  const bounds = hidden() ? { ...DEFAULT_SIZE, width: 1440, height: 900 } : restoredBounds();
+/** `demo`: the parity flows' test switch (the page plays the browser demo
+ * host). `remember: false` (the video bench, which places the window
+ * itself): the saved bounds are neither used nor overwritten. */
+export function createMainWindow({ demo = false, remember = true }: { demo?: boolean; remember?: boolean } = {}): BrowserWindow {
+  const bounds = hidden() ? { ...DEFAULT_SIZE, width: 1440, height: 900 } : remember ? restoredBounds() : { ...DEFAULT_SIZE };
   const win = appWindow({ ...bounds, title: "Cua Spaces" });
 
   win.once("ready-to-show", () => {
@@ -224,36 +226,7 @@ export function createMainWindow({ demo = false }: { demo?: boolean } = {}): Bro
   const routesDir = process.env.CUA_SPACES_CAPTURE_ROUTES;
   if (routesDir) win.webContents.once("did-finish-load", () => void captureRoutes(win, routesDir));
 
-  trackBounds(win);
+  if (remember) trackBounds(win);
   void win.loadURL(demo ? `${APP_ORIGIN}/?bridge=demo` : `${APP_ORIGIN}/`);
-  return win;
-}
-
-/** The Spaces' own windows, by Space id. */
-const spaceWindows = new Map<string, BrowserWindow>();
-
-/** The route a Space's window shows: its detail page (its desktop, live). */
-export const spaceWindowUrl = (spaceId: string) => `${APP_ORIGIN}/spaces/${encodeURIComponent(spaceId)}`;
-
-/**
- * `spaces.open`: the Space's desktop in a window of its own (its detail
- * page, which streams it), or that window brought to the front.
- */
-export function openSpaceWindow(spaceId: string, name: string): BrowserWindow {
-  const open = spaceWindows.get(spaceId);
-  if (open && !open.isDestroyed()) {
-    if (!hidden()) open.show();
-    open.focus();
-    return open;
-  }
-  const win = appWindow({ ...DEFAULT_SIZE, title: name });
-  spaceWindows.set(spaceId, win);
-  win.on("closed", () => {
-    if (spaceWindows.get(spaceId) === win) spaceWindows.delete(spaceId);
-  });
-  win.once("ready-to-show", () => {
-    if (!hidden()) win.show();
-  });
-  void win.loadURL(spaceWindowUrl(spaceId));
   return win;
 }

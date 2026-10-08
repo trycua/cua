@@ -141,8 +141,10 @@ extension WebUIBridge {
         case "spaces.windows":
             let stream = try await stream(for: try spaceId(args))
             await stream.rows.refresh()
+            // The open panels too: one closed by its own button shows on the next read.
             return ["windows": BridgeValue.encode((stream.rows.windows ?? []).map(StreamRowsModel.remote)),
-                    "display": BridgeValue.encode(stream.rows.display)] as [String: Any]
+                    "display": BridgeValue.encode(stream.rows.display),
+                    "open": stream.rows.openRows(openKeys: stream.pips.openKeys)] as [String: Any]
         case "stream.pip":
             let stream = try await stream(for: try spaceId(args))
             let command = try object(args, "command")

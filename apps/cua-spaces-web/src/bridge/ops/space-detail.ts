@@ -67,6 +67,9 @@ export interface SentFileInfo {
 export interface SpaceWindows {
   windows: RemoteWindow[];
   display: StreamDisplay | null;
+  /** The Stream rows whose picture-in-picture panel is open now (a panel
+   * closed by its own button, or from another window, shows here). */
+  open?: string[];
 }
 
 /** What the Stream section is built from (`stream::StreamSectionInput`). */

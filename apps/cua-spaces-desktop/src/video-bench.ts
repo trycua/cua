@@ -6,9 +6,11 @@
 // (docs/video.md):
 //
 // - `CUA_SPACES_VIDEO_BENCH=<spaceId>`: beside the main window (the Spaces
-//   grid, its tiles), a second window on that Space's page, whose viewer
-//   streams it at full rate and size; both placed as the Swift app places
-//   them.
+//   grid, its tiles), that Space's viewer window ("Open in window"), which
+//   streams it at full rate and size (the Swift app's second window is a
+//   web UI window on its page, at the same tier); both placed as the Swift
+//   app places them, and neither placement saved over the person's
+//   (main.ts).
 // - `CUA_SPACES_VIDEO_STATS=<file>`: once a second, every stream's counts
 //   from the pages (`video-stats.ts` in the web UI), as JSON.
 // - `CUA_SPACES_VIDEO_REPORT=<file>`: after `CUA_SPACES_VIDEO_WARMUP`

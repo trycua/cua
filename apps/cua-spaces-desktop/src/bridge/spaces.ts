@@ -106,7 +106,7 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
     "spaces.list": () => spacesState(model),
     "spaces.open": (args) => {
       const s = space(args);
-      ui.openSpace(s.id, s.name);
+      ui.openSpace(s.id, s.name, String(s.os));
       return null;
     },
     "spaces.createOptions": async () => {

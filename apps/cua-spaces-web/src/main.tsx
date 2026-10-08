@@ -14,8 +14,11 @@ import "./index.css";
 const router = createRouter({ routeTree, defaultPreload: "intent", scrollRestoration: true });
 
 // The Electron shell's picture-in-picture windows show only the stream
-// (apps/cua-spaces-desktop/src/pip.ts), without the app around it.
+// (apps/cua-spaces-desktop/src/pip.ts), without the app around it; its
+// viewer windows ("Open in window") the stream with its toolbar
+// (apps/cua-spaces-desktop/src/viewer.ts).
 const pip = location.pathname === "/pip";
+const viewer = location.pathname === "/viewer";
 
 declare module "@tanstack/react-router" {
   interface Register {
@@ -29,6 +32,14 @@ if (pip) {
     root.render(
       <StrictMode>
         <PipView params={pipParams(location.search)} />
+      </StrictMode>,
+    ),
+  );
+} else if (viewer) {
+  void import("./components/viewer/viewer-view").then(({ ViewerView, viewerParams }) =>
+    root.render(
+      <StrictMode>
+        <ViewerView params={viewerParams(location.search)} />
       </StrictMode>,
     ),
   );

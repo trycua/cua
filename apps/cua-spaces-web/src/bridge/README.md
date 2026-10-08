@@ -429,7 +429,7 @@ something the native apps already do; nothing is a new mechanism.
 |---|---|---|---|---|
 | `telemetry.track` | `{ signals }` | `null` | `telemetry_record_signals` | `model.telemetrySink?.record(signals)` (`appTelemetryRecord`), only while `status().enabled`; each signal checked again |
 | `spaces.usage` | `{ spaceId }` | `SpaceUsage \| null` | `space_usage` | `backend.usage(id:)` |
-| `spaces.windows` | `{ spaceId }` | `{ windows, display }` | none (the viewer lists windows over its own stream) | `StreamRowsModel` over `backend.streamProvider(id:)` |
+| `spaces.windows` | `{ spaceId }` | `{ windows, display, open }` (`open`: the rows whose picture in picture is open) | none (the viewer lists windows over its own stream) | `StreamRowsModel` over `backend.streamProvider(id:)` |
 | `stream.pip` | `{ spaceId, command: { type: "open" \| "close", row } }` | open row ids | none (its PiP is a viewer window) | a `StreamPiPSet` per Space, as the detail view keeps |
 | `spaces.thumbnail` | `{ spaceId, maxAgeMs? }` | `{ url, capturedAtMs } \| null` | none | `SpaceThumbnails.refresh` (the notch's and the cover's image), as a JPEG `data:` URL (`WebUIBridge+Thumbnails.swift`) |
 | `host.setUp` | `{ request }` (`host.formView`'s `request`) | `HostStatus` | `host_setup` | `HostModel.setUp` (the form's submit); no timeout (it may wait for the sign-in in the browser) |

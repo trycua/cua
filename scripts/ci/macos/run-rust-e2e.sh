@@ -355,6 +355,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_query_projects_structured_elements \
     harness_appkit_stale_element_token_fails_closed \
     snapshot_publication::harness_appkit_pending_snapshot_cannot_retarget_token \
+    snapshot_publication::harness_appkit_cached_click_cannot_press_behind_sheet \
     harness_appkit_invoke_menu_live_path \
     harness_appkit_invoke_menu_failed_path_leaves_no_menu_open \
     harness_appkit_text_input \

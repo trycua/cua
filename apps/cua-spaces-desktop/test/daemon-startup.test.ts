@@ -10,7 +10,10 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { backoffMs, comparablePath, cuaHome, DaemonSupervisor, daemonPids, executablePath } from "../src/model/daemon";
+import { backoffMs, comparablePath, cuaHome, DaemonSupervisor, daemonPids, executablePath, type SuperviseOptions } from "../src/model/daemon";
+import { supervise } from "../src/model/environment";
+import type { AppModel } from "../src/model/app-model";
+import type { CuaLike } from "../src/native/generated/index";
 import { BundledCuaKeychain, parseKeychainCheck, StartupModel, startupState, type KeychainAccessChecking, type KeychainCheckResult } from "../src/model/startup";
 
 const scratch = mkdtempSync(path.join(tmpdir(), "cua-daemon-test-"));
@@ -99,14 +102,22 @@ describe.skipIf(!posix)("the supervisor", () => {
     expect(reconnects).toBe(1);
   });
 
-  it("does not reconnect while another build's daemon keeps running", async () => {
-    // `cua daemon start` said "already running" and left another app's
-    // daemon in place: no "started again" reconnect, a failure that backs off.
+  /** A cua home whose `daemon.json` names `pid` (this test process: alive, and never this app's own). */
+  const homeWith = (pid: number) => {
+    const home = mkdtempSync(path.join(scratch, "home-"));
+    writeFileSync(path.join(home, "daemon.json"), JSON.stringify({ pid }));
+    return home;
+  };
+
+  it("does not reconnect when the start leaves the other app's daemon it already uses", async () => {
+    // Another app's daemon of the same or a newer version, which this
+    // connection uses, stopped answering; `cua daemon start` kept it. No
+    // "started again" reconnect every interval: a failure that backs off.
     let starts = 0;
     let reconnects = 0;
     const errors: (string | null)[] = [];
     const lines: string[] = [];
-    const s = new DaemonSupervisor("/x/cua", scratch, () => false, { CUA_HOME: scratch });
+    const s = new DaemonSupervisor("/x/cua", scratch, () => false, { CUA_HOME: homeWith(process.pid) });
     const stop = s.supervise({
       intervalMs: 10,
       isUp: async () => false,
@@ -115,6 +126,7 @@ describe.skipIf(!posix)("the supervisor", () => {
         return null;
       },
       restarted: async () => void (reconnects += 1),
+      accepted: async () => process.pid,
       daemonPid: async () => null,
       report: (e) => errors.push(e),
       log: (l) => lines.push(l),
@@ -125,7 +137,49 @@ describe.skipIf(!posix)("the supervisor", () => {
     // The first try after 10 ms, the next after the 2 s backoff.
     expect(starts).toBe(1);
     expect(errors).toEqual([]);
-    expect(lines[0]).toMatch(/not this app's, and `cua daemon start` did not replace it/);
+    expect(lines[0]).toMatch(/is another app's, which this app uses, and it does not answer/);
+  });
+
+  it("connects once to another app's daemon that the start kept, then stays", async () => {
+    // This app's daemon is gone and another app's (not older) runs instead:
+    // the start keeps it, the app connects to it once, and it is up.
+    let up = false;
+    let starts = 0;
+    let reconnects = 0;
+    const s = new DaemonSupervisor("/x/cua", scratch, () => false, { CUA_HOME: homeWith(process.pid) });
+    const stop = s.supervise({
+      intervalMs: 10,
+      isUp: async () => up,
+      start: async () => {
+        starts += 1;
+        return null;
+      },
+      restarted: async () => void ((reconnects += 1), (up = true)),
+      accepted: async () => 1,
+      daemonPid: async () => null,
+      report: () => {},
+      log: () => {},
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    stop();
+    expect([starts, reconnects]).toEqual([1, 1]);
+  });
+});
+
+describe("the app's supervision", () => {
+  it("uses another app's daemon its connection was accepted on, and no other stranger", async () => {
+    // `Cua.auto` refuses an older app's daemon, so the one the connection
+    // was made on (the same or a newer version) is up; another is not.
+    let pid = 42;
+    const cua = { info: async () => ({ daemonPid: pid }) } as unknown as CuaLike;
+    let options: SuperviseOptions | undefined;
+    const supervisor = new DaemonSupervisor("/x/cua", scratch, () => false, {});
+    supervisor.supervise = (o) => ((options = o), () => {});
+    supervise(cua, supervisor, {} as AppModel);
+    expect(await options!.isUp()).toBe(true);
+    expect(await options!.accepted!()).toBe(42);
+    pid = 43;
+    expect(await options!.isUp()).toBe(false);
   });
 });
 

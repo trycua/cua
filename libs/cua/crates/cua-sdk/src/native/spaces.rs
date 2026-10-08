@@ -1855,6 +1855,21 @@ fn daemon_err(s: tonic::Status) -> CuaError {
     cua_daemon::client::status_error(s).into()
 }
 
+/// A Spaces tool the running daemon does not have: it is another app's
+/// build (kept because it is not older), so say whose and how to get this
+/// app's own instead of a bare "not found".
+async fn missing_tool(d: &DaemonClient, tool: &str, e: CuaError) -> CuaError {
+    let unknown =
+        matches!(&e, CuaError::NotFound(m) if m.ends_with(&format!("Spaces tool {tool}")));
+    if !unknown {
+        return e;
+    }
+    match d.info().await {
+        Ok(info) => CuaError::NotFound(cua_daemon::identity::missing_tool_error(tool, &info)),
+        Err(_) => e,
+    }
+}
+
 fn outcome_value(out: ToolOut) -> Result<Value> {
     if out.is_error {
         let (kind, message) = out
@@ -2051,15 +2066,17 @@ impl Host {
                 })
             }
             Host::Daemon(d) => {
-                let r = d
+                let r = match d
                     .spaces()
                     .call_space_tool(dpb::CallSpaceToolRequest {
                         name: name.into(),
                         arguments_json: arguments.to_string(),
                     })
                     .await
-                    .map_err(daemon_err)?
-                    .into_inner();
+                {
+                    Ok(r) => r.into_inner(),
+                    Err(s) => return Err(missing_tool(d, name, daemon_err(s)).await),
+                };
                 let content: Vec<Value> = serde_json::from_str(&r.content_json)
                     .map_err(|e| CuaError::Internal(format!("content_json: {e}")))?;
                 let structured = (!r.structured_json.is_empty())

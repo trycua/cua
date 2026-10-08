@@ -41,6 +41,65 @@ import Testing
         #expect(!supervisor.isOwn(pid: 0))
     }
 
+    /// Another app's daemon of the same or a newer version, which this
+    /// connection uses, stopped answering and `cua daemon start` kept it:
+    /// no "started again" reconnect every interval, a failure that backs off.
+    @Test func aStartThatKeepsTheOtherAppsDaemonInUseDoesNotReconnect() async throws {
+        let supervisor = try #require(DaemonSupervisor(bundledCua: try fakeCua("exit 0")))
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("cua-home-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        // This test process: alive, and not the fake app's own daemon.
+        try Data(#"{"pid":\#(getpid())}"#.utf8).write(to: home.appendingPathComponent("daemon.json"))
+        supervisor.homeOverride = home
+        let counts = Counts()
+        let task = supervisor.supervise(
+            interval: .milliseconds(10),
+            isUp: { false },
+            report: { _ in },
+            restarted: { counts.add(reconnect: true) },
+            start: { counts.add(reconnect: false); return nil },
+            daemonPid: { nil },
+            accepted: { UInt32(getpid()) })
+        try await Task.sleep(for: .milliseconds(300))
+        task.cancel()
+        // One start after 10 ms, the next only after the 2 s backoff.
+        #expect(counts.value == (starts: 1, reconnects: 0))
+
+        // A different daemon than the one in use (this app's is gone and the
+        // other app's runs): the start keeps it and the app connects to it.
+        let again = Counts()
+        let task2 = supervisor.supervise(
+            interval: .milliseconds(10),
+            isUp: { again.value.reconnects > 0 },
+            report: { _ in },
+            restarted: { again.add(reconnect: true) },
+            start: { again.add(reconnect: false); return nil },
+            daemonPid: { nil },
+            accepted: { 1 })
+        // The reconnect runs on the main actor, which other suites share.
+        for _ in 0..<500 where again.value.reconnects == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        try await Task.sleep(for: .milliseconds(100))
+        task2.cancel()
+        #expect(again.value == (starts: 1, reconnects: 1))
+    }
+
+    final class Counts: @unchecked Sendable {
+        private let lock = NSLock()
+        private var starts = 0
+        private var reconnects = 0
+        func add(reconnect: Bool) {
+            lock.lock()
+            if reconnect { reconnects += 1 } else { starts += 1 }
+            lock.unlock()
+        }
+        var value: (starts: Int, reconnects: Int) {
+            lock.lock()
+            defer { lock.unlock() }
+            return (starts, reconnects)
+        }
+    }
+
     @Test func restartsBackOffToAMinute() {
         #expect(DaemonSupervisor.backoff(1) == .seconds(2))
         #expect(DaemonSupervisor.backoff(2) == .seconds(4))

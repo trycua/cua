@@ -7,7 +7,8 @@ import Foundation
 /// This app's own `cua daemon`: the bundled `cua`'s build. The Keyvault, the
 /// persistent-agent supervisor, Cua Volume and host Spaces live only in the
 /// daemon, so the app starts it at launch, has it replace a daemon of
-/// another build (another app's, or its own from before an update), and
+/// another build (another app's older one, or its own from before an
+/// update; another app's of the same or a newer version is used), and
 /// starts it again when it dies. `cua daemon start` does the work: it
 /// starts a daemon that survives the app (as the Tauri app's does), replaces
 /// a stranger, and does nothing when this build's already runs.
@@ -56,8 +57,12 @@ public final class DaemonSupervisor: @unchecked Sendable {
         return start(timeout: timeout)
     }
 
+    /// Replaces the cua home (tests).
+    var homeOverride: URL?
+
     /// The cua home the daemon uses (`CUA_HOME`, else `~/.cua`).
     var cuaHome: URL {
+        if let homeOverride { return homeOverride }
         let env = ProcessInfo.processInfo.environment
         if let home = env["CUA_HOME"], !home.isEmpty { return URL(fileURLWithPath: home, isDirectory: true) }
         return URL(fileURLWithPath: env["HOME"] ?? NSHomeDirectory(), isDirectory: true)
@@ -130,12 +135,19 @@ public final class DaemonSupervisor: @unchecked Sendable {
     /// default the pid in `daemon.json`, when it is this app's): its exit
     /// wakes the loop at once (a kqueue exit event, no polling), so a killed
     /// daemon is started again in about a second, not at the next probe.
+    ///
+    /// `accepted` is the daemon this connection uses when it is another
+    /// app's (kept because it is not older than this app's cua): a start
+    /// that leaves exactly that daemon running does not connect again, so a
+    /// daemon that stopped answering is a failure that backs off, never a
+    /// reconnect every interval.
     public func supervise(interval: Duration = .seconds(10),
                           isUp: @escaping @Sendable () async -> Bool,
                           report: @escaping @MainActor @Sendable (String?) -> Void,
                           restarted: (@MainActor @Sendable () async -> Void)? = nil,
                           start: (@Sendable () -> String?)? = nil,
-                          daemonPid: (@Sendable () -> Int32?)? = nil) -> Task<Void, Never> {
+                          daemonPid: (@Sendable () -> Int32?)? = nil,
+                          accepted: (@Sendable () async -> UInt32?)? = nil) -> Task<Void, Never> {
         let wake = SupervisorWake()
         let watcher = ProcessExitWatcher { wake.fire() }
         let pidNow: @Sendable () -> Int32? = daemonPid ?? { [self] in
@@ -156,7 +168,11 @@ public final class DaemonSupervisor: @unchecked Sendable {
                     reported = false
                     continue
                 }
-                let error = start.map { $0() } ?? self.start()
+                var error = start.map { $0() } ?? self.start()
+                if error == nil, let accepted, let running = Self.daemonPids(cuaHome: self.cuaHome).last,
+                   let used = await accepted(), UInt32(running) == used, !self.isOwn(pid: used) {
+                    error = "the running cua daemon (pid \(running)) is another app's, which this app uses, and it does not answer"
+                }
                 if error == nil {
                     // Running now (started again, or it ran and only this
                     // app's connection to it stopped answering): connect

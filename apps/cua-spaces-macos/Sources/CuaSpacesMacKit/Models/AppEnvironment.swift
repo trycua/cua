@@ -228,13 +228,19 @@ public enum AppEnvironment {
     /// start`, with keychain prompts off) and the app connects again.
     static func supervise(_ live: LiveSpacesBackend, supervisor: DaemonSupervisor, model: AppModel) {
         daemonSupervision?.cancel()
+        // The daemon this connection was made on. `Cua.auto` refuses another
+        // app's daemon that is older than this app's cua, so one it accepted
+        // (of the same or a newer version) is used as this app's own.
+        let accepted = Task { [cua = live.cua] in
+            (try? await withTimeout(seconds: 5) { try await cua.info() }.get())?.daemonPid
+        }
         daemonSupervision = supervisor.supervise(
             isUp: { [cua = live.cua] in
                 // Bounded for real (`withTimeout`): a call that never
                 // returns reads as down, not as a supervisor stuck for good.
                 let probe = await withTimeout(seconds: 5) { try await cua.info() }
                 guard let pid = (try? probe.get())?.daemonPid else { return false }
-                return supervisor.isOwn(pid: pid)
+                return await pid == accepted.value || supervisor.isOwn(pid: pid)
             },
             report: { [weak model] error in
                 guard let model else { return }
@@ -242,7 +248,8 @@ public enum AppEnvironment {
             },
             restarted: { [weak model] in
                 await model?.reconnectNow(reason: "the cua daemon was started again")
-            })
+            },
+            accepted: { await accepted.value })
     }
 
     /// A new SDK client: `cua daemon start` (which starts the daemon when

@@ -91,7 +91,7 @@ export function comparablePath(p: string, platform: NodeJS.Platform = process.pl
 
 export interface SuperviseOptions {
   intervalMs?: number;
-  /** Whether this app's daemon answers (another build's does not count). */
+  /** Whether the daemon this app uses answers (its own, or another app's it was accepted on; an older build's does not count). */
   isUp: () => Promise<boolean>;
   /** Why it could not be started (after three tries in a row), and null once it answers again. */
   report: (error: string | null) => void;
@@ -101,6 +101,12 @@ export interface SuperviseOptions {
   start?: () => Promise<string | null>;
   /** The daemon's pid to watch (by default the one in `daemon.json`, when it is this app's). */
   daemonPid?: () => Promise<number | null>;
+  /**
+   * The daemon this connection uses when it is another app's (kept because
+   * it is not older than this app's cua): a start that leaves exactly that
+   * daemon running does not connect again.
+   */
+  accepted?: () => Promise<number | undefined>;
   log?: (line: string) => void;
 }
 
@@ -243,12 +249,15 @@ export class DaemonSupervisor {
           continue;
         }
         let error = o.start ? await o.start() : await this.start();
-        // `cua daemon start` succeeds when a daemon already runs; when that
-        // one is still another build's (it was not replaced), connecting
-        // again would only find it again, every interval.
-        if (error === null && (await pidNow()) === null) {
-          const other = daemonPids(this.cuaHome).at(-1);
-          error = `the running cua daemon${other ? ` (pid ${other})` : ""} is not this app's, and \`cua daemon start\` did not replace it`;
+        // `cua daemon start` succeeds when a daemon already runs, and keeps
+        // another app's of the same or a newer version. When that is the
+        // daemon this connection already uses, connecting again would only
+        // find it again, every interval: it is a daemon that does not answer.
+        if (error === null && o.accepted) {
+          const running = daemonPids(this.cuaHome).at(-1);
+          if (running !== undefined && running === (await o.accepted()) && !(await this.isOwn(running))) {
+            error = `the running cua daemon (pid ${running}) is another app's, which this app uses, and it does not answer`;
+          }
         }
         if (error === null) {
           // Running now: connect again, which supervises the new connection.

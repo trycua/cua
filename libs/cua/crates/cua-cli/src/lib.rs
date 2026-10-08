@@ -1132,10 +1132,11 @@ fn exit_code(e: &CuaError) -> i32 {
     }
 }
 
-/// For a `cua` inside an app bundle: why the running daemon is not the
-/// bundle's own build ([`cua_daemon::identity`]), or `None` when it is (or
-/// when this `cua` is not in a bundle, or no daemon answers).
-async fn stranger_daemon() -> Option<String> {
+/// For a `cua` inside an app bundle: what to do with the running daemon
+/// ([`cua_daemon::identity::verdict`]: its own, another app's of the same or
+/// a newer version to keep, or a stranger to replace), or `None` when this
+/// `cua` is not in a bundle or no daemon answers.
+async fn stranger_daemon() -> Option<cua_daemon::identity::Verdict> {
     let own = cua_daemon::identity::bundled_cua()?;
     let info = cua_daemon::client::existing_daemon()
         .await
@@ -1143,7 +1144,12 @@ async fn stranger_daemon() -> Option<String> {
         .info()
         .await
         .ok()?;
-    cua_daemon::identity::stranger(&info.executable, &info.build_id, &own)
+    Some(cua_daemon::identity::verdict(
+        &info.version,
+        &info.executable,
+        &info.build_id,
+        &own,
+    ))
 }
 
 /// The SDK handle. `with_session` passes the `cua auth login` session to
@@ -2134,22 +2140,34 @@ async fn daemon_start(
             // A daemon without an extension this `cua` carries (an MIT
             // daemon when this is the Cua Spaces build) is replaced, so the
             // Spaces apps and their tools find what they ship with. So is,
-            // for a `cua` inside an app bundle, any daemon but the bundle's
-            // own build (another app's, or its own before a rebuild or
-            // update): its Spaces would run with that app's build and
-            // permissions.
+            // for a `cua` inside an app bundle, another app's daemon older
+            // than this build (or of an unknown version), and its own
+            // before a rebuild or update: its Spaces would run with that
+            // build and permissions. Another app's of the same or a newer
+            // version is kept, so two apps never keep replacing each other's.
+            use cua_daemon::identity::Verdict;
             let missing = extension::missing_daemon_extensions().await;
             let why = if missing.is_empty() {
                 stranger_daemon().await
             } else {
-                Some(format!("it lacks {}", missing.join(", ")))
+                Some(Verdict::Replace(format!("it lacks {}", missing.join(", "))))
             };
             match why {
-                None => {
+                None | Some(Verdict::Own) => {
                     line(out, format!("cua daemon already running (pid {})", d.pid));
                     return Ok(0);
                 }
-                Some(why) => {
+                Some(Verdict::Keep(whose)) => {
+                    line(
+                        out,
+                        format!(
+                            "cua daemon already running (pid {}): {whose}; using it",
+                            d.pid
+                        ),
+                    );
+                    return Ok(0);
+                }
+                Some(Verdict::Replace(why)) => {
                     line(
                         out,
                         format!("replacing the running cua daemon (pid {}): {why}", d.pid),

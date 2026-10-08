@@ -225,11 +225,18 @@ same core: the launch (the keychain check through the bundled `cua` on
 macOS, `cua daemon start`, then `Cua.auto` on this app's daemon, with
 stand-ins that wait for it), the daemon's supervision (started again when it
 stops answering; it is this app's when its executable is in the native
-directory, the core's rule), the list poll with its reconnect, creates,
+directory, the core's rule, or another app's of the same or a newer cua
+version, which it uses rather than replaces:
+`cua_daemon::identity::verdict`), the list poll with its reconnect, creates,
 power and deletes through the core's state machines, the device sign-in, and
-the first run's CLI install. The app core's settings and first-run state are
-`app-settings.json` and `onboarding.json` in userData (on macOS taken over
-from the SwiftUI app, `migrate-swift.ts`).
+the first run's CLI install.
+
+The released SwiftUI app 0.7.2 predates that rule and still replaces this
+app's daemon, even a newer one, when both run.
+
+The app core's settings and first-run state are `app-settings.json` and
+`onboarding.json` in userData (on macOS taken over from the SwiftUI app,
+`migrate-swift.ts`).
 
 `CUA_SPACES_E2E_DEMO=1` is the parity flows' test switch: no native library,
 no daemon, and the page plays the browser demo host (`?bridge=demo`).

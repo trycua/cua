@@ -209,15 +209,24 @@ export function attach(services: LiveServices, model: AppModel, supervisor: Daem
 
 let stopSupervision: (() => void) | null = null;
 
-/** Watches the daemon `cua` talks to; when it stops answering it is started again and the app connects again. */
+/**
+ * Watches the daemon `cua` talks to (this app's, or another app's of the
+ * same or a newer version it was accepted on); when it stops answering it
+ * is started again and the app connects again.
+ */
 export function supervise(cua: CuaLike, supervisor: DaemonSupervisor, model: AppModel): void {
   stopSupervision?.();
+  // The daemon this connection was made on. `Cua.auto` refuses another
+  // app's daemon that is older than this app's cua, so one it accepted (of
+  // the same or a newer version) is used as this app's own.
+  const accepted = withTimeout(5, () => cua.info()).then((p) => (p.ok ? p.value.daemonPid : undefined));
   stopSupervision = supervisor.supervise({
     isUp: async () => {
       const probe = await withTimeout(5, () => cua.info());
       const pid = probe.ok ? probe.value.daemonPid : undefined;
-      return pid !== undefined && (await supervisor.isOwn(pid));
+      return pid !== undefined && (pid === (await accepted) || (await supervisor.isOwn(pid)));
     },
+    accepted: () => accepted,
     report: (error) => {
       if (error) model.show(error, true);
       else if (model.bannerIsError) model.banner = null;

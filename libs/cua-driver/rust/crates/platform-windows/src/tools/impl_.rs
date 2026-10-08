@@ -3222,18 +3222,14 @@ fn background_element_click_result(
         ActionTransport::WindowsPostMessage => "post_message",
         _ => "ax",
     };
-    let window_changed = window_change.is_some_and(|change| change.changed());
+    let window_change = window_change.filter(|change| change.changed());
     let mut record = ActionExecutionRecord::new(
-        if window_changed {
-            ActionEffect::Confirmed
-        } else {
-            ActionEffect::Unverifiable
-        },
+        ActionEffect::Unverifiable,
         transport,
         RequestedDelivery::Background,
     );
     record.actual_delivery = Some(ActualDelivery::Background);
-    if let Some(change) = window_change.filter(|change| change.changed()) {
+    if let Some(change) = window_change {
         record.evidence.push(ActionEvidence {
             kind: EvidenceKind::WindowChange,
             detail: format!(
@@ -3254,17 +3250,13 @@ fn background_element_click_result(
             reason: "Previous UIA provider action failed".into(),
         });
     }
+    let mut structured =
+        json!({ "path": path, "verified": false, "effect": "unverifiable" });
+    if window_change.is_some() {
+        structured["evidence"] = json!([{ "kind": "window_change" }]);
+    }
     ToolResult::text(message)
-        .with_structured(json!({
-            "path": path,
-            "verified": window_changed,
-            "effect": if window_changed { "confirmed" } else { "unverifiable" },
-            "evidence": if window_changed {
-                json!([{ "kind": "window_change" }])
-            } else {
-                json!([])
-            }
-        }))
+        .with_structured(structured)
         .with_action_record(record)
 }
 

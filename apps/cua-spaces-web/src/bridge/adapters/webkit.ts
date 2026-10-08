@@ -434,9 +434,12 @@ export function createWebkitAdapter(
 
   // What the host said about its last registry read (`listNotice`).
   let rosterError: string | null = null;
+  // The host's standing notice (`hostNotice`).
+  let daemonNotice: string | null = null;
   const listSpaces = async () => {
     const answer = await request<WkSpaces>("spaces.list");
     rosterError = answer.rosterError ?? null;
+    daemonNotice = answer.daemonNotice ?? null;
     return answer;
   };
 
@@ -618,6 +621,7 @@ export function createWebkitAdapter(
     },
     subscribe: (l) => events.subscribe(l),
     listNotice: () => rosterError,
+    hostNotice: () => daemonNotice,
     dispose() {
       for (const fail of [...pending]) fail(new HostError("the bridge was closed", "closed"));
       events.clear();

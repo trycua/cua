@@ -103,6 +103,12 @@ export class AppModel {
    * rows already listed stay (the SwiftUI app's `rosterError`). Never the
    * error's own words: they may carry a server's body or a credential-bearing URL. */
   rosterError: string | null = null;
+  /**
+   * Another app keeps its own daemon running and this app uses it (the
+   * supervisor yields to it after replacing it once): one line above every
+   * page while it lasts. Null otherwise.
+   */
+  daemonNotice: string | null = null;
   banner: string | null = null;
   bannerIsError = false;
   /** The signed-in account. */
@@ -648,6 +654,14 @@ export class AppModel {
       console.warn(`[cua-spaces] could not save ${this.settingsPath}: ${words(error)}`);
     }
     this.changed("settings");
+  }
+
+  /** Sets the daemon notice (`daemonNotice`); the page hears it with the Spaces. */
+  setDaemonNotice(text: string | null): void {
+    if (text === this.daemonNotice) return;
+    this.daemonNotice = text;
+    if (text) console.log(`[cua-spaces] ${text}`);
+    this.changed("spaces");
   }
 
   /** The banner (the SwiftUI app's `show(error:)` and `show(info:)`); logged here, as the page has no banner. */

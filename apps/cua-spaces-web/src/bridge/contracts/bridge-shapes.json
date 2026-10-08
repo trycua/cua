@@ -3416,6 +3416,12 @@
             "string",
             "null"
           ]
+        },
+        "daemonNotice": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

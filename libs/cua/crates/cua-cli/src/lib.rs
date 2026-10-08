@@ -1134,7 +1134,8 @@ fn exit_code(e: &CuaError) -> i32 {
 
 /// For a `cua` inside an app bundle: what to do with the running daemon
 /// ([`cua_daemon::identity::verdict`]: its own, another app's of the same or
-/// a newer version to keep, or a stranger to replace), or `None` when this
+/// a newer version to keep, one this app yields to, or a stranger to
+/// replace), or `None` when this
 /// `cua` is not in a bundle or no daemon answers.
 async fn stranger_daemon() -> Option<cua_daemon::identity::Verdict> {
     let own = cua_daemon::identity::bundled_cua()?;
@@ -2144,11 +2145,18 @@ async fn daemon_start(
             // than this build (or of an unknown version), and its own
             // before a rebuild or update: its Spaces would run with that
             // build and permissions. Another app's of the same or a newer
-            // version is kept, so two apps never keep replacing each other's.
+            // version is kept, so two apps never keep replacing each other's,
+            // and so is one this app replaced once that its app started
+            // again (`CUA_DAEMON_KEEP`): an older app restarts its own.
             use cua_daemon::identity::Verdict;
-            let missing = extension::missing_daemon_extensions().await;
+            let stranger = stranger_daemon().await;
+            let missing = if matches!(stranger, Some(Verdict::Yield(_))) {
+                Vec::new()
+            } else {
+                extension::missing_daemon_extensions().await
+            };
             let why = if missing.is_empty() {
-                stranger_daemon().await
+                stranger
             } else {
                 Some(Verdict::Replace(format!("it lacks {}", missing.join(", "))))
             };
@@ -2158,6 +2166,16 @@ async fn daemon_start(
                     return Ok(0);
                 }
                 Some(Verdict::Keep(whose)) => {
+                    line(
+                        out,
+                        format!(
+                            "cua daemon already running (pid {}): {whose}; using it",
+                            d.pid
+                        ),
+                    );
+                    return Ok(0);
+                }
+                Some(Verdict::Yield(whose)) => {
                     line(
                         out,
                         format!(

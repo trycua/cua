@@ -84,6 +84,73 @@ import Testing
         #expect(again.value == (starts: 1, reconnects: 1))
     }
 
+    /// A stand-in `cua daemon start` with cua-daemon's rule: it replaces
+    /// (kills) the running daemon unless `CUA_DAEMON_KEEP` names it.
+    func ruleCua(home: URL, log: String) throws -> String {
+        try fakeCua(#"""
+            echo "keep=$CUA_DAEMON_KEEP" >> '\#(log)'
+            f='\#(home.appendingPathComponent("daemon.json").path)'
+            pid=$(sed -n 's/.*"pid":\([0-9]*\).*/\1/p' "$f" 2>/dev/null)
+            [ -n "$pid" ] || exit 0
+            case ":$CUA_DAEMON_KEEP:" in *:/bin/sleep:*) echo "using it" ;; *) kill $pid; rm -f "$f"; echo "replacing" ;; esac
+            """#)
+    }
+
+    /// Another app's daemon: `/bin/sleep`, named in `home`'s `daemon.json`.
+    func otherDaemon(home: URL) throws -> Process {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        p.arguments = ["30"]
+        try p.run()
+        try Data(#"{"pid":\#(p.processIdentifier)}"#.utf8).write(to: home.appendingPathComponent("daemon.json"))
+        return p
+    }
+
+    /// An older app restarts its own daemon whenever it is replaced: it is
+    /// replaced once, then kept when it comes back (`CUA_DAEMON_KEEP`), and
+    /// the app says so; nothing is remembered in the normal cases.
+    @Test func anotherAppsDaemonIsReplacedOnceThenKept() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("cua-home-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let log = home.appendingPathComponent("cua.log").path
+        let supervisor = try #require(DaemonSupervisor(bundledCua: try ruleCua(home: home, log: log)))
+        supervisor.homeOverride = home
+        let published = Published()
+        supervisor.publishKeep = { published.set($0) }
+
+        // Nothing runs: nothing remembered.
+        #expect(supervisor.start() == nil)
+        #expect(published.value == nil)
+
+        // Replaced once.
+        let first = try otherDaemon(home: home)
+        #expect(supervisor.start() == nil)
+        first.waitUntilExit()
+        #expect(published.value == "/bin/sleep")
+        // Its app starts it again: kept, every time after.
+        let back = try otherDaemon(home: home)
+        defer { back.terminate() }
+        #expect(supervisor.start() == nil)
+        #expect(supervisor.start() == nil)
+        #expect(back.isRunning)
+        let lines = try String(contentsOfFile: log, encoding: .utf8).split(separator: "\n").map(String.init)
+        #expect(lines == ["keep=", "keep=", "keep=/bin/sleep", "keep=/bin/sleep"])
+        // And the app says so.
+        #expect(supervisor.yieldsTo(pid: UInt32(back.processIdentifier)) == "/bin/sleep")
+        #expect(supervisor.yieldsTo(pid: UInt32(getpid())) == nil)
+        let notice = DaemonSupervisor.yieldNotice(executable: "/Applications/Cua Spaces.app/Contents/MacOS/cua", version: "0.4.0")
+        #expect(notice.hasPrefix("Another Cua Spaces app (/Applications/Cua Spaces.app, cua 0.4.0) is running and keeps starting its own daemon"))
+        #expect(notice.contains("Quit the other app, then reopen Cua Spaces"))
+    }
+
+    final class Published: @unchecked Sendable {
+        private let lock = NSLock()
+        private var list: String?
+        func set(_ v: String) { lock.withLock { list = v } }
+        var value: String? { lock.withLock { list } }
+    }
+
     final class Counts: @unchecked Sendable {
         private let lock = NSLock()
         private var starts = 0

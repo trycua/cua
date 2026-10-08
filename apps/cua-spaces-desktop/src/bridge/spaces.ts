@@ -24,6 +24,8 @@ export function spacesState(model: AppModel) {
     statusLine: model.statusLine,
     // Why the list may be out of date (null when the last read worked).
     rosterError: model.rosterError,
+    // Another app keeps its own daemon and this app uses it (null otherwise).
+    daemonNotice: model.daemonNotice,
   };
 }
 

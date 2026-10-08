@@ -390,6 +390,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "statusLine": model.statusLine,
             // Why the list may be out of date (null when the last read worked).
             "rosterError": model.rosterError ?? NSNull(),
+            // Another app keeps its own daemon and this app uses it (null otherwise).
+            "daemonNotice": model.daemonNotice ?? NSNull(),
         ]
     }
 
@@ -794,7 +796,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     func startEvents() {
         followStartup()
         follow("spaces.changed") { [weak self, model] in
-            _ = (model.spaces, model.selectedSpaceId, model.loaded, model.rosterError)
+            _ = (model.spaces, model.selectedSpaceId, model.loaded, model.rosterError, model.daemonNotice)
             self?.pruneStreams()
         }
         follow("keyvault.changed") { [model] in _ = (model.keyvault.overview, model.keyvault.busy, model.keyvault.dismissed) }

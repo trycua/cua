@@ -12,9 +12,26 @@ import Foundation
 /// starts it again when it dies. `cua daemon start` does the work: it
 /// starts a daemon that survives the app (as the Tauri app's does), replaces
 /// a stranger, and does nothing when this build's already runs.
+///
+/// Another app's daemon is replaced at most once per session: an older app
+/// (an installed release) starts its own again, and replacing it each time
+/// would only take turns with it. Its executable then goes in
+/// `CUA_DAEMON_KEEP`, so `cua daemon start` and the SDK keep and use that
+/// daemon when it comes back, and the app says so (`yieldNotice`).
 public final class DaemonSupervisor: @unchecked Sendable {
+    /// `CUA_DAEMON_KEEP` (cua-daemon's `identity::KEEP_ENV`): other apps'
+    /// daemon executables this app replaced once.
+    public static let keepEnv = "CUA_DAEMON_KEEP"
+
     /// The bundled `cua`.
     public let cua: String
+    private let lock = NSLock()
+    /// Other apps' daemon executables (symlinks resolved) this app
+    /// replaced, once each.
+    private var replaced: [String] = []
+    /// Sets the keep list where `cua daemon start` and the SDK read it
+    /// (this process's environment; tests replace it).
+    var publishKeep: (String) -> Void = { setenv(DaemonSupervisor.keepEnv, $0, 1) }
     /// This app's bundle (`<App>.app`, holding `Contents/MacOS/cua`).
     public let bundle: String
 
@@ -41,8 +58,59 @@ public final class DaemonSupervisor: @unchecked Sendable {
     /// daemon runs afterwards, else why not. Replacing a daemon of another
     /// build waits up to 30 s for it to stop (one with Spaces running takes
     /// that long), then up to 10 s for this build's to start.
+    ///
+    /// Another app's daemon it replaced is remembered, so that daemon is kept
+    /// when its app starts it again (`CUA_DAEMON_KEEP`).
     public func start(timeout: TimeInterval = 60) -> String? {
-        run(["daemon", "start"], timeout: timeout)
+        let before = stranger()
+        let error = run(["daemon", "start"], timeout: timeout)
+        // Replaced: another daemon is named now, or that one is gone.
+        if error == nil, let before,
+           Self.runningPid(cuaHome: cuaHome) != before.pid || (kill(before.pid, 0) != 0 && errno == ESRCH) {
+            let list: String? = lock.withLock {
+                guard !replaced.contains(before.executable) else { return nil }
+                replaced.append(before.executable)
+                return replaced.joined(separator: ":")
+            }
+            if let list {
+                publishKeep(list)
+                NSLog("Cua Spaces: replaced another app's cua daemon (%@); if it comes back, it is kept", before.executable)
+            }
+        }
+        return error
+    }
+
+    /// The running daemon (`daemon.json`) when it is another app's: its pid
+    /// and executable (symlinks resolved).
+    func stranger() -> (pid: Int32, executable: String)? {
+        guard let pid = Self.runningPid(cuaHome: cuaHome), kill(pid, 0) == 0 || errno == EPERM,
+              let exe = executablePath(pid), !isOwn(pid: UInt32(pid)) else { return nil }
+        return (pid, Self.resolved(exe))
+    }
+
+    /// The executable of the daemon `pid` when it is another app's that this
+    /// app replaced once and now yields to.
+    public func yieldsTo(pid: UInt32) -> String? {
+        guard let exe = executablePath(Int32(bitPattern: pid)) else { return nil }
+        let real = Self.resolved(exe)
+        return lock.withLock { replaced.contains(real) } ? exe : nil
+    }
+
+    /// A process's executable (tests replace it).
+    var executablePath: (Int32) -> String? = { UpdateRefresh.executablePath($0) }
+
+    static func resolved(_ path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    }
+
+    /// What the app says while it uses another app's daemon it yields to
+    /// (that app keeps starting its own): which app, and how to get this
+    /// app's daemon.
+    public static func yieldNotice(executable: String, version: String?) -> String {
+        let app = executable.range(of: ".app/Contents/").map { String(executable[..<$0.lowerBound]) + ".app" } ?? executable
+        let which = version.map { "\(app), cua \($0)" } ?? app
+        return "Another Cua Spaces app (\(which)) is running and keeps starting its own daemon, so this app uses that one. "
+            + "Quit the other app, then reopen Cua Spaces to use all of this one's features."
     }
 
     /// Restarts this app's daemon (Try again after it did not start): asks
@@ -67,6 +135,14 @@ public final class DaemonSupervisor: @unchecked Sendable {
         if let home = env["CUA_HOME"], !home.isEmpty { return URL(fileURLWithPath: home, isDirectory: true) }
         return URL(fileURLWithPath: env["HOME"] ?? NSHomeDirectory(), isDirectory: true)
             .appendingPathComponent(".cua", isDirectory: true)
+    }
+
+    /// The running daemon's pid (`daemon.json`), when its file names one.
+    static func runningPid(cuaHome: URL) -> Int32? {
+        guard let data = try? Data(contentsOf: cuaHome.appendingPathComponent("daemon.json")),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let pid = (obj["pid"] as? NSNumber)?.int32Value, pid > 0 else { return nil }
+        return pid
     }
 
     /// The daemon still starting (`daemon.starting`) and the one running
@@ -102,6 +178,9 @@ public final class DaemonSupervisor: @unchecked Sendable {
         // The daemon never waits on a keychain prompt nobody may see; the
         // app asks for access itself.
         env[AppEnvironment.keychainNonInteractiveEnv] = "1"
+        if let keep = lock.withLock({ replaced.isEmpty ? nil : replaced.joined(separator: ":") }) {
+            env[Self.keepEnv] = keep
+        }
         process.environment = env
         let output = Pipe()
         process.standardInput = FileHandle.nullDevice

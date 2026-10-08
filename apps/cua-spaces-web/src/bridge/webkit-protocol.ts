@@ -231,6 +231,9 @@ export interface WkSpaces {
   /** The last registry read failed (`AppModel.rosterError`): the rows are
    * the ones listed before, and this says so. Null when it worked. */
   rosterError?: string | null;
+  /** Another app keeps its own daemon running and this app uses it
+   * (`AppModel.daemonNotice`): a line above every page. Null otherwise. */
+  daemonNotice?: string | null;
 }
 
 /** `machines.list`: the sidebar and the account's devices. */

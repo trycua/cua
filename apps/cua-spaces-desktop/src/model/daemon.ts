@@ -8,6 +8,12 @@
 // when it dies. `cua daemon start` does the work: it starts a daemon that
 // survives the app, replaces a stranger, and does nothing when this build's
 // already runs.
+//
+// Another app's daemon is replaced at most once per session: an older app
+// (an installed release) starts its own again, and replacing it each time
+// would only take turns with it. Its executable then goes in
+// `CUA_DAEMON_KEEP`, so `cua daemon start` and the SDK keep and use that
+// daemon when it comes back, and the app says so (`yieldNotice`).
 import { execFile, spawn } from "node:child_process";
 import { readFileSync, readlinkSync, realpathSync } from "node:fs";
 import * as os from "node:os";
@@ -16,6 +22,9 @@ import { sleep } from "./time";
 
 /** `CUA_KEYCHAIN_NONINTERACTIVE` (cua-auth's `KEYCHAIN_NONINTERACTIVE_ENV`). */
 export const KEYCHAIN_NONINTERACTIVE_ENV = "CUA_KEYCHAIN_NONINTERACTIVE";
+
+/** `CUA_DAEMON_KEEP` (cua-daemon's `identity::KEEP_ENV`): other apps' daemon executables this app replaced once. */
+export const DAEMON_KEEP_ENV = "CUA_DAEMON_KEEP";
 
 /** The cua home the daemon uses (`CUA_HOME`, else `~/.cua`). */
 export function cuaHome(env: NodeJS.ProcessEnv = process.env): string {
@@ -39,6 +48,31 @@ export function daemonPids(home: string, read: (file: string) => string = (f) =>
     // None running.
   }
   return [...out].sort((a, b) => a - b);
+}
+
+/** The running daemon's pid (`daemon.json`), when its file names one. */
+export function runningPid(home: string, read: (file: string) => string = (f) => readFileSync(f, "utf8")): number | null {
+  try {
+    const pid = (JSON.parse(read(path.join(home, "daemon.json"))) as { pid?: unknown }).pid;
+    return typeof pid === "number" && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The app a daemon executable belongs to (its `.app` bundle on macOS), else the executable. */
+export function appOf(executable: string): string {
+  const m = /^(.*?\.app)[\\/]Contents[\\/]/i.exec(executable);
+  return m ? m[1]! : executable;
+}
+
+/** What the app says while it uses another app's daemon it yields to (that app keeps starting its own). */
+export function yieldNotice(executable: string, version: string | undefined): string {
+  const which = version ? `${appOf(executable)}, cua ${version}` : appOf(executable);
+  return (
+    `Another Cua Spaces app (${which}) is running and keeps starting its own daemon, so this app uses that one. ` +
+    "Quit the other app, then reopen Cua Spaces to use all of this one's features."
+  );
 }
 
 /** The wait before try `n` (1, 2, ...): 2 s doubling, at most a minute (ms). */
@@ -111,6 +145,9 @@ export interface SuperviseOptions {
 }
 
 export class DaemonSupervisor {
+  /** Other apps' daemon executables (as `comparablePath` has them) this app replaced, once each. */
+  private readonly replaced = new Set<string>();
+
   constructor(
     /** The bundled `cua`. */
     readonly cua: string,
@@ -131,9 +168,43 @@ export class DaemonSupervisor {
     return this.ownership(exe && comparablePath(exe, this.platform), comparablePath(this.bundle, this.platform));
   }
 
-  /** `cua daemon start`, bounded: null when this app's daemon runs afterwards, else why not. */
-  start(timeoutMs = 60_000): Promise<string | null> {
-    return this.run(["daemon", "start"], timeoutMs);
+  /** The running daemon when it is another app's: its pid and executable (as `comparablePath` has it). */
+  async stranger(): Promise<{ pid: number; executable: string } | null> {
+    const pid = runningPid(this.cuaHome);
+    if (pid === null || !alive(pid)) return null;
+    const exe = await executablePath(pid, this.platform);
+    if (!exe) return null;
+    const executable = comparablePath(exe, this.platform);
+    if (this.ownership(executable, comparablePath(this.bundle, this.platform))) return null;
+    return { pid, executable };
+  }
+
+  /** The executable of the daemon `pid` when it is another app's that this app replaced once and now yields to. */
+  async yieldsTo(pid: number): Promise<string | null> {
+    if (this.replaced.size === 0) return null;
+    const exe = await executablePath(pid, this.platform);
+    if (!exe) return null;
+    const executable = comparablePath(exe, this.platform);
+    return this.replaced.has(executable) ? exe : null;
+  }
+
+  /**
+   * `cua daemon start`, bounded: null when this app's daemon runs
+   * afterwards (or another app's it keeps), else why not. Another app's
+   * daemon it replaced is remembered, so that daemon is kept when its app
+   * starts it again (`CUA_DAEMON_KEEP`, here and for the SDK in this process).
+   */
+  async start(timeoutMs = 60_000): Promise<string | null> {
+    const before = await this.stranger();
+    const error = await this.run(["daemon", "start"], timeoutMs);
+    // Replaced: another daemon is named now, or that one is gone.
+    const replaced = before !== null && (runningPid(this.cuaHome) !== before.pid || !alive(before.pid));
+    if (error === null && before && replaced && !this.replaced.has(before.executable)) {
+      this.replaced.add(before.executable);
+      this.env[DAEMON_KEEP_ENV] = [...this.replaced].join(this.platform === "win32" ? ";" : ":");
+      console.log(`[cua-spaces] replaced another app's cua daemon (${before.executable}); if it comes back, it is kept`);
+    }
+    return error;
   }
 
   /** Stops this app's daemon (bounded), kills one of this bundle that still starts or no longer answers, then starts it. */

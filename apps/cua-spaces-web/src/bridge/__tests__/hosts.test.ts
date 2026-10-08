@@ -434,6 +434,19 @@ describe("webkit adapter", () => {
     expect(a.listNotice?.()).toBeNull();
   });
 
+  it("says the host's standing notice while it lasts (another app keeps its own daemon)", async () => {
+    let daemonNotice: string | null = "Another Cua Spaces app (/Applications/Cua Spaces.app, cua 0.4.0) is running and keeps starting its own daemon, so this app uses that one.";
+    const { win } = webkitHost(() => ok({ loaded: true, selectedId: null, spaces: [{ space: wkSpace, deleting: false }], rosterError: null, daemonNotice }));
+    const a = createWebkitAdapter(win);
+    expect(a.hostNotice?.()).toBeNull();
+    await a.call("spaces.list", {});
+    expect(a.hostNotice?.()).toBe(daemonNotice);
+    expect(a.listNotice?.()).toBeNull();
+    daemonNotice = null;
+    await a.call("spaces.list", {});
+    expect(a.hostNotice?.()).toBeNull();
+  });
+
   it("keeps a failed create's reason from the host's own pending row", async () => {
     const error = "This Mac is already running two macOS VMs, the most Apple's macOS license allows at once.";
     const failed = { id: "pending:abc", name: "macOS", os: "macos", status: "suspended", detail: error, lastUsedAt: 1, provider: "local", progress: { phase: "booting", permille: 900, label: "Failed", error, cancellable: false, cancelling: false } };

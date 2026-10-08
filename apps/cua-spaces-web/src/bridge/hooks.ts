@@ -111,6 +111,8 @@ export interface SpacesHook extends Resource<Space[]> {
   /** The host's last registry read failed: why the rows may be out of date
    * (the SwiftUI app's `rosterError`). Null when it worked. */
   listNotice: string | null;
+  /** The host's standing notice (another app keeps its own daemon). Null when none. */
+  hostNotice: string | null;
 }
 
 export function useSpaces(): SpacesHook {
@@ -130,6 +132,7 @@ export function useSpaces(): SpacesHook {
     openSpace: (id) => run((s) => s.openSpace(id)),
     createdId: (id) => ctx.store?.createdId(id),
     listNotice: ctx.store?.listNotice ?? null,
+    hostNotice: ctx.store?.hostNotice ?? null,
   };
 }
 

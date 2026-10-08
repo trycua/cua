@@ -53,6 +53,10 @@ public final class AppModel {
     public var query = ""
     public var selection: MainSelection?
     public var rosterError: String?
+    /// Another app keeps its own daemon running and this app uses it (the
+    /// supervisor yields to it after replacing it once): one line above
+    /// every page while it lasts. Nil otherwise.
+    public var daemonNotice: String?
     public var banner: String?
     public var bannerIsError = false
     public var showingNewSpace = false

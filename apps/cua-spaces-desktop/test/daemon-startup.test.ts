@@ -6,11 +6,12 @@
 // `cua daemon start` and `cua auth keychain` (on a stand-in `cua`), and the
 // launch's states and buttons. Nothing here starts a real daemon or reads
 // the keychain.
+import { spawn } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
-import { backoffMs, comparablePath, cuaHome, DaemonSupervisor, daemonPids, executablePath, type SuperviseOptions } from "../src/model/daemon";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { appOf, backoffMs, comparablePath, cuaHome, DAEMON_KEEP_ENV, DaemonSupervisor, daemonPids, executablePath, yieldNotice, type SuperviseOptions } from "../src/model/daemon";
 import { supervise } from "../src/model/environment";
 import type { AppModel } from "../src/model/app-model";
 import type { CuaLike } from "../src/native/generated/index";
@@ -166,6 +167,93 @@ describe.skipIf(!posix)("the supervisor", () => {
   });
 });
 
+describe.skipIf(!posix)("another app that keeps its own daemon", () => {
+  /** A stand-in for another app's daemon: `/bin/sleep`, named in a fresh cua home's `daemon.json`. */
+  const otherDaemon = async (home?: string) => {
+    const child = spawn("/bin/sleep", ["30"], { stdio: "ignore" });
+    const dir = home ?? mkdtempSync(path.join(scratch, "home-"));
+    writeFileSync(path.join(dir, "daemon.json"), JSON.stringify({ pid: child.pid }));
+    await new Promise((r) => setTimeout(r, 100));
+    return { child, home: dir, pid: child.pid! };
+  };
+  const gone = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  /**
+   * A stand-in `cua daemon start` with the rule `cua-daemon` has: it replaces
+   * (kills) the running daemon unless `CUA_DAEMON_KEEP` names it, and says
+   * which it did.
+   */
+  const ruleCua = () => {
+    const bin = path.join(scratch, `cua-rule-${Math.random().toString(36).slice(2)}`);
+    writeFileSync(
+      bin,
+      `#!/bin/sh\necho "keep=$${DAEMON_KEEP_ENV}" >> '${bin}.log'\nf="$CUA_HOME/daemon.json"\npid=$(sed -n 's/.*"pid":\\([0-9]*\\).*/\\1/p' "$f" 2>/dev/null)\n[ -n "$pid" ] || exit 0\n` +
+        `case ":$${DAEMON_KEEP_ENV}:" in *:/bin/sleep:*) echo "cua daemon already running (pid $pid): using it" ;; *) kill $pid; rm -f "$f"; echo "replacing the running cua daemon (pid $pid)" ;; esac\n`,
+    );
+    chmodSync(bin, 0o755);
+    return { bin, seen: () => readFileSync(`${bin}.log`, "utf8").trim().split("\n") };
+  };
+
+  it("replaces it once; when its app starts it again it is kept, no longer replaced, and said", async () => {
+    const cua = ruleCua();
+    const first = await otherDaemon();
+    const env: NodeJS.ProcessEnv = { CUA_HOME: first.home };
+    const s = new DaemonSupervisor(cua.bin, scratch, () => false, env);
+    expect(await s.yieldsTo(first.pid)).toBeNull();
+    // Replaced once.
+    expect(await s.start()).toBeNull();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(gone(first.pid)).toBe(true);
+    expect(env[DAEMON_KEEP_ENV]).toBe(comparablePath("/bin/sleep"));
+    // Its app starts it again: kept, every time after.
+    const back = await otherDaemon(first.home);
+    try {
+      expect(await s.start()).toBeNull();
+      expect(await s.start()).toBeNull();
+      expect(gone(back.pid)).toBe(false);
+      expect(cua.seen()).toEqual(["keep=", "keep=/bin/sleep", "keep=/bin/sleep"]);
+      // And the app says so.
+      expect(await s.yieldsTo(back.pid)).toBe("/bin/sleep");
+      expect(await s.yieldsTo(process.pid)).toBeNull();
+    } finally {
+      back.child.kill();
+    }
+  });
+
+  it("leaves the normal cases alone: no stranger, or this app's own daemon", async () => {
+    const cua = ruleCua();
+    // Nothing runs: nothing to remember.
+    const empty = mkdtempSync(path.join(scratch, "home-"));
+    const env: NodeJS.ProcessEnv = { CUA_HOME: empty };
+    expect(await new DaemonSupervisor(cua.bin, scratch, () => false, env).start()).toBeNull();
+    expect(env[DAEMON_KEEP_ENV]).toBeUndefined();
+    // This app's own daemon (rebuilt, say) is replaced as before, and never kept for that.
+    const own = await otherDaemon();
+    const ownEnv: NodeJS.ProcessEnv = { CUA_HOME: own.home };
+    const s = new DaemonSupervisor(cua.bin, scratch, () => true, ownEnv);
+    expect(await s.stranger()).toBeNull();
+    expect(await s.start()).toBeNull();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(gone(own.pid)).toBe(true);
+    expect(ownEnv[DAEMON_KEEP_ENV]).toBeUndefined();
+  });
+
+  it("names the other app and its cua in the notice", () => {
+    expect(appOf("/Applications/Cua Spaces.app/Contents/MacOS/cua")).toBe("/Applications/Cua Spaces.app");
+    expect(appOf("C:\\Program Files\\Cua\\cua.exe")).toBe("C:\\Program Files\\Cua\\cua.exe");
+    const notice = yieldNotice("/Applications/Cua Spaces.app/Contents/MacOS/cua", "0.4.0");
+    expect(notice).toMatch(/^Another Cua Spaces app \(\/Applications\/Cua Spaces\.app, cua 0\.4\.0\) is running and keeps starting its own daemon/);
+    expect(notice).toMatch(/Quit the other app, then reopen Cua Spaces/);
+    expect(yieldNotice("/opt/cua", undefined)).toMatch(/^Another Cua Spaces app \(\/opt\/cua\) is running/);
+  });
+});
+
 describe("the app's supervision", () => {
   it("uses another app's daemon its connection was accepted on, and no other stranger", async () => {
     // `Cua.auto` refuses an older app's daemon, so the one the connection
@@ -175,11 +263,32 @@ describe("the app's supervision", () => {
     let options: SuperviseOptions | undefined;
     const supervisor = new DaemonSupervisor("/x/cua", scratch, () => false, {});
     supervisor.supervise = (o) => ((options = o), () => {});
-    supervise(cua, supervisor, {} as AppModel);
+    const notices: (string | null)[] = [];
+    supervise(cua, supervisor, { setDaemonNotice: (n: string | null) => notices.push(n) } as unknown as AppModel);
     expect(await options!.isUp()).toBe(true);
     expect(await options!.accepted!()).toBe(42);
     pid = 43;
     expect(await options!.isUp()).toBe(false);
+    // Its own daemon, or one it does not yield to: no notice.
+    await vi.waitFor(() => expect(notices).toEqual([null]));
+  });
+
+  it("says once it uses another app's daemon it yields to, and stops saying it on its own daemon", async () => {
+    const cua = { info: async () => ({ daemonPid: 77, daemonVersion: "0.4.0" }) } as unknown as CuaLike;
+    const supervisor = new DaemonSupervisor("/x/cua", scratch, () => false, {});
+    supervisor.supervise = () => () => {};
+    let yields = true;
+    supervisor.yieldsTo = async (pid) => (yields && pid === 77 ? "/Applications/Cua Spaces.app/Contents/MacOS/cua" : null);
+    const notices: (string | null)[] = [];
+    const model = { setDaemonNotice: (n: string | null) => notices.push(n) } as unknown as AppModel;
+    supervise(cua, supervisor, model);
+    await vi.waitFor(() => expect(notices).toHaveLength(1));
+    expect(notices[0]).toBe(yieldNotice("/Applications/Cua Spaces.app/Contents/MacOS/cua", "0.4.0"));
+    // Connected again, to this app's own daemon.
+    yields = false;
+    supervise(cua, supervisor, model);
+    await vi.waitFor(() => expect(notices).toHaveLength(2));
+    expect(notices[1]).toBeNull();
   });
 });
 

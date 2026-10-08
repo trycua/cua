@@ -231,8 +231,19 @@ public enum AppEnvironment {
         // The daemon this connection was made on. `Cua.auto` refuses another
         // app's daemon that is older than this app's cua, so one it accepted
         // (of the same or a newer version) is used as this app's own.
-        let accepted = Task { [cua = live.cua] in
-            (try? await withTimeout(seconds: 5) { try await cua.info() }.get())?.daemonPid
+        let first = Task { [cua = live.cua] in
+            try? await withTimeout(seconds: 5) { try await cua.info() }.get()
+        }
+        let accepted = Task { await first.value?.daemonPid }
+        // Another app's daemon this app replaced once, back again: used, and
+        // said once, for as long as this connection uses it.
+        Task { [weak model] in
+            let info = await first.value
+            let notice = info?.daemonPid.flatMap { supervisor.yieldsTo(pid: $0) }
+                .map { DaemonSupervisor.yieldNotice(executable: $0, version: info?.daemonVersion) }
+            await MainActor.run {
+                if model?.daemonNotice != notice { model?.daemonNotice = notice }
+            }
         }
         daemonSupervision = supervisor.supervise(
             isUp: { [cua = live.cua] in

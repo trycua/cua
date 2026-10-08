@@ -19,7 +19,7 @@ import { PendingAgentSetup, LiveAgentSetup } from "./agents";
 import { AppModel } from "./app-model";
 import { LiveSpacesBackend } from "./backend";
 import { CloudModel } from "./cloud";
-import { cuaHome, DaemonSupervisor, KEYCHAIN_NONINTERACTIVE_ENV } from "./daemon";
+import { cuaHome, DaemonSupervisor, KEYCHAIN_NONINTERACTIVE_ENV, yieldNotice } from "./daemon";
 import { computerName, DevicesModel } from "./devices";
 import { sdkErrorKind, words } from "./errors";
 import { HostModel } from "./host";
@@ -217,15 +217,23 @@ let stopSupervision: (() => void) | null = null;
 
 /**
  * Watches the daemon `cua` talks to (this app's, or another app's of the
- * same or a newer version it was accepted on); when it stops answering it
- * is started again and the app connects again.
+ * same or a newer version it was accepted on, or one this app yields to);
+ * when it stops answering it is started again and the app connects again.
  */
 export function supervise(cua: CuaLike, supervisor: DaemonSupervisor, model: AppModel): void {
   stopSupervision?.();
   // The daemon this connection was made on. `Cua.auto` refuses another
   // app's daemon that is older than this app's cua, so one it accepted (of
   // the same or a newer version) is used as this app's own.
-  const accepted = withTimeout(5, () => cua.info()).then((p) => (p.ok ? p.value.daemonPid : undefined));
+  const first = withTimeout(5, () => cua.info());
+  const accepted = first.then((p) => (p.ok ? p.value.daemonPid : undefined));
+  // Another app's daemon this app replaced once, back again: used, and said
+  // once, for as long as this connection uses it.
+  void first.then(async (p) => {
+    const pid = p.ok ? p.value.daemonPid : undefined;
+    const exe = pid === undefined ? null : await supervisor.yieldsTo(pid);
+    model.setDaemonNotice(exe && p.ok ? yieldNotice(exe, p.value.daemonVersion) : null);
+  });
   stopSupervision = supervisor.supervise({
     isUp: async () => {
       const probe = await withTimeout(5, () => cua.info());

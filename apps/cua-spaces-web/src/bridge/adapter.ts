@@ -32,6 +32,12 @@ export interface DataAdapter {
    * the host says nothing beyond the list (a failed read rejects instead).
    */
   listNotice?(): string | null;
+  /**
+   * The host's standing notice, read with `spaces.list`: null, or a line to
+   * show above every page while it lasts (another app keeps its own daemon
+   * and this app uses it). Undefined: the host has none.
+   */
+  hostNotice?(): string | null;
   /** Releases timers and listeners. */
   dispose?(): void;
 }

@@ -98,7 +98,7 @@ function followModel(ctx: BridgeContext): () => void {
     // The Spaces themselves (their details follow from them; "last used"
     // moves with the clock on every read, and the page reads it again with
     // the next change).
-    "spaces.changed": () => [encode(model.spaces.map(({ lastUsedAt: _, ...s }) => s)), model.selectedSpaceId, model.loaded, model.creates.deleting.map((d) => d.id), model.rosterError],
+    "spaces.changed": () => [encode(model.spaces.map(({ lastUsedAt: _, ...s }) => s)), model.selectedSpaceId, model.loaded, model.creates.deleting.map((d) => d.id), model.rosterError, model.daemonNotice],
     "session.changed": () => sessionState(model),
     "settings.changed": () => [encode(model.settings), model.lumeSource, model.linuxSource],
     "machines.changed": () => [hostStatus(model), model.devices.snapshot === null ? null : encode(model.devices.view)],

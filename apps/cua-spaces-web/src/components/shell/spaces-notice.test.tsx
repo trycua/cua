@@ -44,4 +44,37 @@ describe("<SpacesNotice>", () => {
     await act(() => seen.refresh!());
     expect(document.querySelector("[data-spaces-discovery-error]")).toBeNull();
   });
+
+  it("shows the host's standing notice on every read while it lasts, and drops it when it ends", async () => {
+    const demo = createDemoAdapter({ latencyMs: 1 });
+    let hostNotice: string | null = null;
+    const adapter: DataAdapter = { ...demo, listNotice: () => null, hostNotice: () => hostNotice };
+    const seen: { rows?: number; refresh?: () => Promise<void> } = {};
+    function Rows() {
+      const spaces = useSpaces();
+      seen.rows = spaces.data?.length;
+      seen.refresh = spaces.refresh;
+      return null;
+    }
+    render(
+      <BridgeProvider adapter={adapter} core={noCore}>
+        <Rows />
+        <SpacesNotice />
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(seen.rows).toBeGreaterThan(0));
+    expect(screen.queryByRole("status")).toBeNull();
+
+    hostNotice = "Another Cua Spaces app (/Applications/Cua Spaces.app, cua 0.4.0) is running and keeps starting its own daemon, so this app uses that one.";
+    await act(() => seen.refresh!());
+    expect(screen.getByRole("status").textContent).toBe(hostNotice);
+    // Not an error: it is not drawn as one.
+    expect(document.querySelector("[data-spaces-discovery-error]")).toBeNull();
+    await act(() => seen.refresh!());
+    expect(screen.getByRole("status").textContent).toBe(hostNotice);
+
+    hostNotice = null;
+    await act(() => seen.refresh!());
+    expect(screen.queryByRole("status")).toBeNull();
+  });
 });

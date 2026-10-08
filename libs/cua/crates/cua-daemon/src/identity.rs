@@ -17,9 +17,21 @@
 //! stranger of the same or a newer version from another executable is kept
 //! and used. This app's own executable, rebuilt or updated since its daemon
 //! started, is always replaced.
+//!
+//! An older app that cannot learn this rule (an installed release) starts
+//! its own daemon again whenever it is replaced. So an app replaces another
+//! executable's daemon at most once per session: it then names that
+//! executable in [`KEEP_ENV`], and a daemon of it that comes back is kept
+//! whatever its version ([`Verdict::Yield`]), never replaced in turn.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
+
+/// `CUA_DAEMON_KEEP`: the executables (a path list, as `PATH`) of other
+/// apps' daemons this app already replaced once this session. One of them
+/// running again is kept ([`Verdict::Yield`]): its app restarts it, and
+/// replacing it again would only take turns with that app.
+pub const KEEP_ENV: &str = "CUA_DAEMON_KEEP";
 
 /// A daemon executable's identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +88,10 @@ pub enum Verdict {
     /// Another executable's daemon of the same or a newer version: used as
     /// it is. Says whose.
     Keep(String),
+    /// Another executable's daemon this app replaced once already
+    /// ([`KEEP_ENV`]) and whose app started it again: used as it is,
+    /// whatever its version, so the two apps never take turns. Says whose.
+    Yield(String),
     /// A stranger to replace (older, its version unreadable, or this app's
     /// own executable rebuilt or updated since it started). Says why.
     Replace(String),
@@ -95,7 +111,36 @@ fn reported_version<'a>(version: &'a str, build_id: &'a str) -> &'a str {
 /// (another executable's, not older than [`crate::VERSION`]), or one to
 /// replace.
 pub fn verdict(version: &str, executable: &str, build_id: &str, expected: &Path) -> Verdict {
-    verdict_for(version, executable, build_id, expected, crate::VERSION)
+    let kept = kept_from_env();
+    verdict_for(
+        version,
+        executable,
+        build_id,
+        expected,
+        crate::VERSION,
+        &kept,
+    )
+}
+
+/// The executables in [`KEEP_ENV`].
+pub fn kept_from_env() -> Vec<PathBuf> {
+    std::env::var_os(KEEP_ENV)
+        .map(|v| {
+            std::env::split_paths(&v)
+                .filter(|p| !p.as_os_str().is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether `executable` is one of `kept` (symlinks resolved).
+fn is_kept(executable: &str, kept: &[PathBuf]) -> bool {
+    if executable.is_empty() {
+        return false;
+    }
+    let real = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let exe = real(Path::new(executable));
+    kept.iter().any(|k| real(k) == exe)
 }
 
 fn verdict_for(
@@ -104,6 +149,7 @@ fn verdict_for(
     build_id: &str,
     expected: &Path,
     ours: &str,
+    kept: &[PathBuf],
 ) -> Verdict {
     let Some(why) = stranger(executable, build_id, expected) else {
         return Verdict::Own;
@@ -112,6 +158,12 @@ fn verdict_for(
     // daemon runs a build that is gone.
     let same_file = of(expected).is_some_and(|w| w.executable == executable);
     let theirs = reported_version(version, build_id);
+    if !same_file && is_kept(executable, kept) {
+        return Verdict::Yield(format!(
+            "{executable} (cua {}), whose app started it again after this app replaced it",
+            if theirs.is_empty() { "unknown" } else { theirs }
+        ));
+    }
     match (
         crate::client::version_key(theirs),
         crate::client::version_key(ours),
@@ -138,14 +190,14 @@ fn verdict_for(
 /// For a client inside an app bundle ([`bundled_cua`]): `Err` when the
 /// daemon `info` describes is a stranger to replace ([`verdict`]) that this
 /// client must not use, `Ok` otherwise: its own, another app's of the same
-/// or a newer version, and always outside a bundle, where any daemon is
-/// shared.
+/// or a newer version, one this app yields to ([`Verdict::Yield`]), and
+/// always outside a bundle, where any daemon is shared.
 pub fn check(info: &cua_proto::daemon::v1::GetInfoResponse) -> crate::Result<()> {
     let Some(own) = bundled_cua() else {
         return Ok(());
     };
     match verdict(&info.version, &info.executable, &info.build_id, &own) {
-        Verdict::Own | Verdict::Keep(_) => Ok(()),
+        Verdict::Own | Verdict::Keep(_) | Verdict::Yield(_) => Ok(()),
         Verdict::Replace(why) => Err(stranger_error(info.pid, &why, &own)),
     }
 }
@@ -237,7 +289,7 @@ mod tests {
         for (own, other) in [(&electron, &swift), (&swift, &electron)] {
             let decide = |theirs: &str, ours: &str| {
                 let (exe, build) = id(other, theirs);
-                verdict_for(theirs, &exe, &build, own, ours)
+                verdict_for(theirs, &exe, &build, own, ours, &[])
             };
             // Older: replaced.
             assert!(
@@ -259,14 +311,14 @@ mod tests {
             // Its own daemon.
             let (exe, build) = id(own, crate::VERSION);
             assert_eq!(
-                verdict_for(crate::VERSION, &exe, &build, own, crate::VERSION),
+                verdict_for(crate::VERSION, &exe, &build, own, crate::VERSION, &[]),
                 Verdict::Own
             );
         }
         // The version is read from the build id when the field is empty.
         let (exe, build) = id(&swift, "0.5.0");
         assert!(matches!(
-            verdict_for("", &exe, &build, &electron, "0.4.1"),
+            verdict_for("", &exe, &build, &electron, "0.4.1", &[]),
             Verdict::Keep(_)
         ));
         // This app's own executable rebuilt or updated since its daemon
@@ -274,8 +326,64 @@ mod tests {
         let (exe, build) = id(&electron, "9.9.9");
         std::fs::write(&electron, b"updated").unwrap();
         assert!(
-            matches!(verdict_for("9.9.9", &exe, &build, &electron, "0.4.1"), Verdict::Replace(w) if w.contains("rebuilt or updated"))
+            matches!(verdict_for("9.9.9", &exe, &build, &electron, "0.4.1", std::slice::from_ref(&electron)), Verdict::Replace(w) if w.contains("rebuilt or updated"))
         );
+    }
+
+    /// An older app replaced once comes back (it restarts its own daemon):
+    /// with its executable in the keep list it is kept, whatever its
+    /// version, so the two apps never take turns; another older stranger is
+    /// still replaced.
+    #[cfg(unix)]
+    #[test]
+    fn a_stranger_replaced_once_that_comes_back_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let swift = dir.path().join("Swift/Cua Spaces.app/Contents/MacOS/cua");
+        let other = dir.path().join("Other/Cua Spaces.app/Contents/MacOS/cua");
+        let electron = dir
+            .path()
+            .join("Electron/Cua Spaces.app/Contents/Resources/native/cua");
+        for p in [&swift, &other, &electron] {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b"cua").unwrap();
+        }
+        let id = |p: &std::path::Path| {
+            let i = of(p).unwrap();
+            let build = format!("0.4.0{}", &i.build_id[crate::VERSION.len()..]);
+            (i.executable, build)
+        };
+        let (exe, build) = id(&swift);
+        // Not replaced yet: replaced.
+        assert!(matches!(
+            verdict_for("0.4.0", &exe, &build, &electron, "0.4.1", &[]),
+            Verdict::Replace(_)
+        ));
+        // Replaced once and back (named through a symlink): kept.
+        let link = dir.path().join("swift-cua");
+        std::os::unix::fs::symlink(&swift, &link).unwrap();
+        for kept in [vec![swift.clone()], vec![link]] {
+            assert!(matches!(
+                verdict_for("0.4.0", &exe, &build, &electron, "0.4.1", &kept),
+                Verdict::Yield(w) if w.contains("cua 0.4.0") && w.contains("started it again")
+            ));
+        }
+        // Another older stranger is still replaced.
+        let (exe, build) = id(&other);
+        assert!(matches!(
+            verdict_for(
+                "0.4.0",
+                &exe,
+                &build,
+                &electron,
+                "0.4.1",
+                std::slice::from_ref(&swift)
+            ),
+            Verdict::Replace(_)
+        ));
+        // The list reads as a path list.
+        let joined = std::env::join_paths([&swift, &other]).unwrap();
+        let parsed: Vec<PathBuf> = std::env::split_paths(&joined).collect();
+        assert_eq!(parsed, vec![swift.clone(), other.clone()]);
     }
 
     #[test]

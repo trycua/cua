@@ -239,6 +239,8 @@ export class BridgeStore {
   private registry: Space[] = [];
   /** The host's word on its last registry read (`DataAdapter.listNotice`). */
   private listNoticeText: string | null = null;
+  /** The host's standing notice (`DataAdapter.hostNotice`). */
+  private hostNoticeText: string | null = null;
   private creates: CreatesState = NO_CREATES;
   private machineRows: MachineRow[] = [];
   private settingsSnap: SettingsSnapshot | undefined;
@@ -345,6 +347,11 @@ export class BridgeStore {
     return this.listNoticeText;
   }
 
+  /** The host's standing notice (null: none). */
+  get hostNotice(): string | null {
+    return this.hostNoticeText;
+  }
+
   private set(name: ResourceName, next: Partial<Resource<unknown>>): void {
     this.resources = { ...this.resources, [name]: { ...this.resources[name], ...next } };
     this.notify();
@@ -383,6 +390,7 @@ export class BridgeStore {
         case "spaces": {
           const rows = await this.adapter.call("spaces.list", {});
           this.listNoticeText = this.adapter.listNotice?.() ?? null;
+          this.hostNoticeText = this.adapter.hostNotice?.() ?? null;
           this.applyRows(rows);
           break;
         }

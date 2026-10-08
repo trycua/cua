@@ -79,6 +79,62 @@ pub fn pick_reveal_target(
     best.map(|(index, _)| index)
 }
 
+/// Chromium reports an element scrolled out of view as a 1 pt sliver
+/// clamped to the viewport edge, not at its real position. So when nothing
+/// lies geometrically beyond the edge, the off-screen content is the leaves
+/// clamped to that edge, in document order. Reveal the one about `distance`
+/// away, counting rows at the pitch of the visible leaves. `nodes` are
+/// (frame, is_leaf) in document order. `None` when nothing is clamped there.
+pub fn pick_clamped(
+    viewport: Rect,
+    direction: &str,
+    distance: f64,
+    nodes: &[(Rect, bool)],
+) -> Option<usize> {
+    let [vx, vy, vw, vh] = viewport;
+    let vertical = matches!(direction, "up" | "down");
+    let sliver = |r: &Rect| if vertical { r[3] <= 1.5 } else { r[2] <= 1.5 };
+    let at_edge = |r: &Rect| match direction {
+        "down" => r[1] >= vy + vh - 2.5,
+        "up" => r[1] <= vy + 1.5,
+        "right" => r[0] >= vx + vw - 2.5,
+        "left" => r[0] <= vx + 1.5,
+        _ => false,
+    };
+    let mut clamped: Vec<usize> = nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, (rect, leaf))| *leaf && sliver(rect) && at_edge(rect))
+        .map(|(index, _)| index)
+        .collect();
+    if clamped.is_empty() {
+        return None;
+    }
+    if matches!(direction, "up" | "left") {
+        clamped.reverse();
+    }
+    // Row pitch: the median gap between the visible leaves' starts.
+    let mut starts: Vec<f64> = nodes
+        .iter()
+        .filter(|(rect, leaf)| {
+            *leaf
+                && !sliver(rect)
+                && rect[1] >= vy
+                && rect[1] + rect[3] <= vy + vh
+                && rect[0] >= vx
+                && rect[0] + rect[2] <= vx + vw
+        })
+        .map(|(rect, _)| if vertical { rect[1] } else { rect[0] })
+        .collect();
+    starts.sort_by(f64::total_cmp);
+    starts.dedup_by(|a, b| (*a - *b).abs() < 2.0);
+    let mut gaps: Vec<f64> = starts.windows(2).map(|pair| pair[1] - pair[0]).collect();
+    gaps.sort_by(f64::total_cmp);
+    let pitch = gaps.get(gaps.len() / 2).copied().unwrap_or(40.0).max(8.0);
+    let steps = ((distance / pitch).round() as usize).clamp(1, clamped.len());
+    Some(clamped[steps - 1])
+}
+
 /// Scroll the container under screen point `point` by about `distance`
 /// points in `direction`, by revealing the element just past its edge.
 /// `window` clips the container's visible area. `None` when there is no
@@ -137,12 +193,14 @@ unsafe fn reveal_in(
         Some(window) => intersect(frame, window)?,
         None => frame,
     };
-    // Visit descendants, keeping each element with a frame. Subtrees that
-    // lie wholly on the near side of the viewport cannot hold the target.
+    // Visit descendants in document order, keeping each element with a
+    // frame. Subtrees that lie wholly on the near side of the viewport
+    // cannot hold the target.
     let mut elements: Vec<AXUIElementRef> = Vec::new();
-    let mut rects: Vec<Rect> = Vec::new();
+    let mut nodes: Vec<(Rect, bool)> = Vec::new();
     let mut stack: Vec<(AXUIElementRef, usize)> = copy_children(container)
         .into_iter()
+        .rev()
         .map(|child| (child, 1))
         .collect();
     let mut visited = 0usize;
@@ -156,15 +214,18 @@ unsafe fn reveal_in(
             "left" => x > viewport[0] + viewport[2],
             _ => false,
         });
+        let mut leaf = true;
         if !behind && depth < MAX_DEPTH && visited < MAX_NODES {
-            for child in copy_children(element) {
+            let children = copy_children(element);
+            leaf = children.is_empty();
+            for child in children.into_iter().rev() {
                 stack.push((child, depth + 1));
             }
         }
         match rect {
             Some(rect) if !behind => {
                 elements.push(element);
-                rects.push(rect);
+                nodes.push((rect, leaf));
             }
             _ => CFRelease(element as CFTypeRef),
         }
@@ -176,18 +237,41 @@ unsafe fn reveal_in(
         CFRelease(element as CFTypeRef);
     }
 
-    let outcome = match pick_reveal_target(viewport, direction, distance, &rects) {
+    // Real frames past the edge first; Chromium's clamped slivers otherwise.
+    let real: Vec<Rect> = nodes
+        .iter()
+        .map(|(rect, _)| *rect)
+        .map(|rect| {
+            if rect[2] <= 1.5 || rect[3] <= 1.5 {
+                [0.0, 0.0, 0.0, 0.0]
+            } else {
+                rect
+            }
+        })
+        .collect();
+    let target = pick_reveal_target(viewport, direction, distance, &real)
+        .or_else(|| pick_clamped(viewport, direction, distance, &nodes));
+    // A visible element to measure the movement on.
+    let reference = nodes.iter().position(|(rect, _)| {
+        rect[2] > 1.5
+            && rect[3] > 1.5
+            && rect[1] >= viewport[1]
+            && rect[1] + rect[3] <= viewport[1] + viewport[3]
+    });
+    let outcome = match target {
         None => Some(RevealOutcome {
             container_role: role.to_owned(),
             moved: 0.0,
             at_end: true,
         }),
         Some(index) => {
-            let target = elements[index];
-            let before = rects[index];
-            perform_action(target, "AXScrollToVisible");
-            std::thread::sleep(std::time::Duration::from_millis(120));
-            let after = element_screen_rect(target).unwrap_or(before);
+            let (watch, before) = match reference {
+                Some(at) => (elements[at], nodes[at].0),
+                None => (elements[index], nodes[index].0),
+            };
+            perform_action(elements[index], "AXScrollToVisible");
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            let after = element_screen_rect(watch).unwrap_or(before);
             let moved = match direction {
                 "down" => before[1] - after[1],
                 "up" => after[1] - before[1],
@@ -255,6 +339,38 @@ mod tests {
             pick_reveal_target(VIEWPORT, "sideways", 120.0, &[row(900.0)]),
             None
         );
+    }
+
+    #[test]
+    fn clamped_slivers_count_as_the_content_past_the_edge() {
+        // What Chromium reported live: rows past the viewport bottom (y=890)
+        // as 1 pt slivers at y=889; visible rows every 45 pt.
+        let mut nodes: Vec<(Rect, bool)> = (0..13)
+            .map(|i| ([518.0, 301.0 + 45.0 * i as f64, 600.0, 41.0], true))
+            .collect();
+        nodes.push(([518.0, 300.0, 700.0, 590.0], false)); // the list itself
+        let first_clamped = nodes.len();
+        for _ in 0..100 {
+            nodes.push(([518.0, 889.0, 600.0, 1.0], true));
+        }
+        let viewport = [500.0, 290.0, 800.0, 600.0];
+        // 360 pt at a 45 pt pitch is 8 rows on.
+        assert_eq!(
+            pick_clamped(viewport, "down", 360.0, &nodes),
+            Some(first_clamped + 7)
+        );
+        // A distance past the content picks the last row.
+        assert_eq!(
+            pick_clamped(viewport, "down", 100_000.0, &nodes),
+            Some(first_clamped + 99)
+        );
+        // Nothing clamped at the top edge: at the start already.
+        assert_eq!(pick_clamped(viewport, "up", 360.0, &nodes), None);
+        // Up counts from the nearest sliver above, the last in document order.
+        let mut above: Vec<(Rect, bool)> =
+            (0..5).map(|_| ([518.0, 290.0, 600.0, 1.0], true)).collect();
+        above.extend((0..13).map(|i| ([518.0, 301.0 + 45.0 * i as f64, 600.0, 41.0], true)));
+        assert_eq!(pick_clamped(viewport, "up", 90.0, &above), Some(3));
     }
 
     #[test]

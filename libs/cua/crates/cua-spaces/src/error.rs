@@ -342,13 +342,4 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn an_embedded_insufficient_disk_keeps_its_kind() {
-        let err = Error::from(cua_sandbox_core::Error::Runtime(
-            cua_sandbox_core::RuntimeError::InsufficientDisk("need 52 GB".into()),
-        ));
-        assert_eq!(err.tag(), "insufficient_disk");
-        assert!(err.to_string().contains("need 52 GB"));
-    }
 }

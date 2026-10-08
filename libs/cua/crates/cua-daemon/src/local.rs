@@ -242,7 +242,6 @@ pub async fn resolve_placement_for(
     first
 }
 
-/// Catalog `"gpu": false`, matched by tag or the digest the catalog recorded.
 #[rustfmt::skip]
 fn refuse_gpu(image: &str, gpu: bool, r: &Resolved) -> RuntimeResult<()> {
     let digest = r.image.as_ref().map(|i| i.digest.as_str());

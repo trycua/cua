@@ -3095,7 +3095,6 @@ mod tests {
             Some("Needs a Mac with Apple silicon")
         );
         assert_eq!(v.plan.gpu, None);
-        // macOS 15 cannot use the paravirtual GPU; the host's reason still wins.
         e.gpus = Some(vec![lume_gpu(true)]);
         let sequoia = reduce(
             &initial(&e),

@@ -8,8 +8,6 @@ import Network
 /// Asks once at launch, on every Mac: controllers reach other Macs' Spaces
 /// over the LAN, and providers reach their VMs over vmnet.
 public final class LiveLocalNetworkPermission: @unchecked Sendable {
-    private let lock = NSLock()
-    private var asked = false
     private let queue = DispatchQueue(label: "com.trycua.cua-spaces.local-network")
     /// How long each probe may live.
     let lifetime: TimeInterval
@@ -19,11 +17,6 @@ public final class LiveLocalNetworkPermission: @unchecked Sendable {
     }
 
     public func request() {
-        lock.lock()
-        let first = !asked
-        asked = true
-        lock.unlock()
-        guard first else { return }
         queue.async { [self] in
             for host in Self.targets() { probe(host) }
         }

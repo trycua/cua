@@ -3933,7 +3933,7 @@ impl Tool for ClickTool {
                 crate::window_change::snapshot_pid_windows(pid)
             })
             .await
-            .unwrap_or_default();
+            .ok();
             let result = tokio::task::spawn_blocking({ let admitted = admitted.clone(); move || -> anyhow::Result<BackgroundElementClick> {
                 let _admission = &admitted;
                 let mut failed_calls = Vec::new();
@@ -4079,16 +4079,17 @@ impl Tool for ClickTool {
                         crate::window_change::snapshot_pid_windows(pid)
                     })
                     .await
-                    .unwrap_or_default();
-                    let window_change = crate::window_change::diff_window_ids(
-                        windows_before.iter().copied(),
-                        windows_after,
-                    );
+                    .ok();
+                    // An unavailable observation is not an empty window set:
+                    // never publish a fabricated window_change on snapshot failure.
+                    let window_change = windows_before.zip(windows_after).map(|(before, after)| {
+                        crate::window_change::diff_window_ids(before, after)
+                    });
                     return background_element_click_result(
                         message,
                         transport,
                         failed_calls,
-                        Some(&window_change),
+                        window_change.as_ref(),
                     );
                 }
                 BackgroundElementClick::Inject { x, y, failed_calls } => (x, y, failed_calls, true),

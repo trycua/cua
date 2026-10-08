@@ -1,0 +1,96 @@
+name: "Smoke: Cua Driver live agent loop"
+
+# Builds cua-driver from the checked-out commit and drives a real GUI window on
+# Windows and on Linux (Xvfb): act-by-element_token and display_only previews
+# that must leave the agent's element tokens valid. The checks live in
+# scripts/ci/cua-driver-live-smoke/smoke.py. This is the 0.34 release line's
+# copy of main's smoke (#4769, #4881), cut down to the 0.34 surface.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/smoke-cua-driver-live.yml"
+      - "scripts/ci/cua-driver-live-smoke/**"
+      - "libs/cua-driver/rust/crates/cua-driver-core/src/display_only.rs"
+      - "libs/cua-driver/rust/crates/cua-driver-core/src/element_token.rs"
+      - "libs/cua-driver/rust/crates/cua-driver-core/src/snapshot_store.rs"
+      - "libs/cua-driver/rust/crates/cua-driver-core/src/tool.rs"
+      - "libs/cua-driver/rust/crates/cua-driver-core/src/window_target.rs"
+      - "libs/cua-driver/rust/crates/platform-windows/src/tools/impl_.rs"
+      - "libs/cua-driver/rust/crates/platform-linux/src/tools/impl_.rs"
+      - "libs/cua-driver/rust/crates/platform-linux/src/atspi/**"
+
+permissions:
+  contents: read
+
+env:
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"
+
+concurrency:
+  group: smoke-cua-driver-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: "Linux (Xvfb + GTK3) / live agent loop"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: live-smoke
+      - name: Install GUI and Rust build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb dbus-x11 at-spi2-core openbox python3-gi gir1.2-gtk-3.0 \
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
+            libei-dev libwayland-dev libxkbcommon-dev libx11-dev libxi-dev \
+            libxtst-dev libxext-dev libxdo-dev libssl-dev
+      - name: Build cua-driver
+        run: cargo build --release --locked -p cua-driver --manifest-path libs/cua-driver/rust/Cargo.toml
+      - name: Run live smoke
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            dbus-run-session -- bash -c \
+            "openbox >/tmp/openbox.log 2>&1 & sleep 2; python3 scripts/ci/cua-driver-live-smoke/smoke.py --driver libs/cua-driver/rust/target/release/cua-driver --out artifacts/live-smoke/linux"
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: live-smoke-linux
+          path: artifacts/live-smoke/linux
+          if-no-files-found: ignore
+          retention-days: 14
+
+  windows:
+    name: "Windows (WinForms) / live agent loop"
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: live-smoke
+      - name: Build cua-driver
+        shell: pwsh
+        run: cargo build --release --locked -p cua-driver --manifest-path libs/cua-driver/rust/Cargo.toml
+      - name: Run live smoke
+        shell: pwsh
+        run: python scripts/ci/cua-driver-live-smoke/smoke.py --driver libs/cua-driver/rust/target/release/cua-driver.exe --out artifacts/live-smoke/windows
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: live-smoke-windows
+          path: artifacts/live-smoke/windows
+          if-no-files-found: ignore
+          retention-days: 14

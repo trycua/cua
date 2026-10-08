@@ -162,11 +162,14 @@ async def create_workers(
         ]
 
         try:
+            # Nothing reads the worker's output, so never give it a pipe: uvicorn logs a
+            # line per request and blocks once a pipe buffer fills. Drop the access log
+            # (stdout) and let startup messages and errors (stderr) reach ours.
             process = subprocess.Popen(
                 cmd,
                 env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=None,
                 start_new_session=True,  # Detach from parent
             )
         except Exception as e:

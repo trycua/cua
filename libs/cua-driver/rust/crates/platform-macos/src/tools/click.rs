@@ -1050,6 +1050,21 @@ impl Tool for ClickTool {
                         CFRelease(element as _);
                         return Ok(false);
                     }
+                    // An element that does not advertise AXPress can still
+                    // accept it as a no-op. On a toolkit that drops routed
+                    // mouse events (LibreOffice's Calc cells) that no-op used
+                    // to come back as a pressed click; fall through so the
+                    // pixel route refuses instead.
+                    if !focus_only
+                        && !crate::ax::bindings::copy_action_names(element)
+                            .iter()
+                            .any(|action| action == "AXPress")
+                        && crate::input::pointer_toolkit::detect(pid)
+                            == Some(crate::input::pointer_toolkit::PointerReadingToolkit::Vcl)
+                    {
+                        CFRelease(element as _);
+                        return Ok(false);
+                    }
                     let delivered = if focus_only {
                         crate::input::ax_actions::focus_element(element as usize).is_ok()
                     } else {

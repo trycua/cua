@@ -21,6 +21,7 @@
 import { app, BrowserWindow, dialog } from "electron";
 import { existsSync } from "node:fs";
 import * as path from "node:path";
+import { electronUpdater } from "./electron-updater";
 import type { UpdaterDriving } from "./model/updates";
 import { readSettings, writeSettings } from "./settings";
 
@@ -143,7 +144,7 @@ export class ElectronUpdater implements UpdaterDriving {
 
   private updater(): Promise<AutoUpdater> {
     this.loaded ??= (async () => {
-      const { autoUpdater } = await import("electron-updater");
+      const { autoUpdater } = await electronUpdater();
       const channel = this.channel;
       autoUpdater.channel = feedChannel(channel);
       // Betas read beta*.yml (after the cutover stable releases write it too,

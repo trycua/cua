@@ -65,9 +65,15 @@ impl Tool for MoveCursorTool {
             let result =
                 tokio::task::spawn_blocking(move || crate::input::mouse::move_cursor_desktop(x, y))
                     .await;
+            let note = tokio::task::spawn_blocking(move || inactive_app_under_point(x, y))
+                .await
+                .ok()
+                .flatten()
+                .map(|app| inactive_app_note(&app))
+                .unwrap_or_default();
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
-                    "Moved the real desktop pointer to ({x:.1}, {y:.1})."
+                    "Moved the real desktop pointer to ({x:.1}, {y:.1}).{note}"
                 ))
                 .with_structured(serde_json::json!({
                     "scope": "desktop",
@@ -106,5 +112,41 @@ impl Tool for MoveCursorTool {
         ToolResult::text(format!(
             "Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1})."
         ))
+    }
+}
+
+/// The app that owns the frontmost ordinary window under a desktop point,
+/// when that app is not the active one. The driver's own windows (cursor
+/// overlay) are skipped.
+fn inactive_app_under_point(x: f64, y: f64) -> Option<String> {
+    let own = std::process::id() as i32;
+    let under = crate::windows::visible_windows()
+        .into_iter()
+        .filter(|w| w.layer == 0 && w.is_on_screen && w.pid != own)
+        .filter(|w| {
+            let b = &w.bounds;
+            x >= b.x && x < b.x + b.width && y >= b.y && y < b.y + b.height
+        })
+        .max_by_key(|w| w.z_index)?;
+    (crate::apps::frontmost_pid() != Some(under.pid)).then_some(under.app_name)
+}
+
+/// Hover tracking reaches an inactive app, but AppKit shows native tooltips
+/// only in the active one (VM check: 3/3 with the app active, 0/3 without).
+fn inactive_app_note(app: &str) -> String {
+    format!(
+        " {app} is not the active app: hover effects update, but native tooltips only \
+         appear in the active app. To read a tooltip, bring_to_front its window first, \
+         move the pointer onto the control and wait about a second before looking."
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_inactive_app_note_names_the_route_to_a_tooltip() {
+        let note = super::inactive_app_note("BenchLab");
+        assert!(note.starts_with(" BenchLab is not the active app"));
+        assert!(note.contains("bring_to_front"));
     }
 }

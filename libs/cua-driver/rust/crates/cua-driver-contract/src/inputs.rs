@@ -36,30 +36,21 @@ fn normalize_schema(value: &mut Value) {
                 object.remove("default");
             }
             if let Some(types) = object.get("type").and_then(Value::as_array).cloned() {
-                let kept: Vec<Value> = types
+                let kept: Vec<_> = types
                     .into_iter()
                     .filter(|ty| ty.as_str() != Some("null"))
                     .collect();
-                match kept.as_slice() {
-                    [one] => {
-                        object.insert("type".into(), one.clone());
-                    }
-                    _ => panic!(
-                        "schema type array must leave exactly one non-null type, got {}",
-                        object["type"]
-                    ),
-                }
+                let Ok([one]) = <[Value; 1]>::try_from(kept) else {
+                    panic!("exactly one non-null type, got {}", object["type"]);
+                };
+                object.insert("type".into(), one);
             }
-            if let Some(constant) = object.get("const").cloned() {
+            if let Some(constant) = object.remove("const") {
                 let Some(text) = constant.as_str() else {
                     panic!("schema const must be a string, got {constant}");
                 };
-                object.remove("const");
-                object.insert("type".into(), Value::String("string".into()));
-                object.insert(
-                    "enum".into(),
-                    Value::Array(vec![Value::String(text.to_owned())]),
-                );
+                object.insert("type".into(), serde_json::json!("string"));
+                object.insert("enum".into(), serde_json::json!([text]));
             }
             if object.get("type").and_then(Value::as_str) == Some("object") {
                 object
@@ -478,8 +469,7 @@ pub struct CursorMotionSelection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "cursor_motion_timing_schema")]
     pub timing: Option<crate::CursorMotionTiming>,
-    /// Turn single effects on or off. An omitted effect keeps its current setting;
-    /// `"default"` restores the style's default.
+    /// Turn effects on or off. Omit a field to keep it; `"default"` restores the style default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effects: Option<crate::CursorMotionEffects>,
     /// Arc control-point offset from the start, as a fraction of the distance, for
@@ -538,8 +528,7 @@ pub struct SetAgentCursorMotionInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "cursor_motion_timing_schema")]
     pub timing: Option<crate::CursorMotionTiming>,
-    /// Turn single effects on or off. An omitted effect keeps its current setting;
-    /// `"default"` restores the style's default.
+    /// Turn effects on or off. Omit a field to keep it; `"default"` restores the style default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effects: Option<crate::CursorMotionEffects>,
     /// Arc control-point offset from the start, as a fraction of the distance, for

@@ -228,7 +228,6 @@ impl Tool for RunActionsTool {
                         "description": "Ordered actions. Execution stops at the first failing step. Each step is {tool, args} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
                         "items": {
                             "type": "object",
-                            "description": "Each step is {tool, args} or {<tool>: args}, plus optional wait_for / expect / timeout_ms; a step may also be only a wait_for or expect check.",
                             "properties": {
                                 "tool": { "type": "string", "enum": BATCHABLE_TOOLS, "description": "Action tool to run." },
                                 "args": { "type": "object", "description": "Arguments for that tool, as in a direct call, optionally with role/name/nth/app/window to name the target instead of pid/window_id/element_token." },
@@ -443,11 +442,6 @@ impl Plan {
         let mut raw_steps = raw_steps.as_slice();
         let mut observe_value = match object.get("observe") {
             None | Some(Value::Null) | Some(Value::Bool(false)) => None,
-            // Published schema is an object; bool and the old string form stay accepted.
-            Some(Value::String(text)) if text.eq_ignore_ascii_case("false") => None,
-            Some(Value::String(text)) if text.eq_ignore_ascii_case("true") => {
-                Some(Value::Bool(true))
-            }
             Some(value) => Some(value.clone()),
         };
         let mut trailing_observe: Option<Value> = None;
@@ -1487,10 +1481,6 @@ fn parse_action(
         Some(value @ Value::Object(_)) => value.clone(),
         Some(_) => return Err(PlanError::step(index, "`args` must be an object")),
     };
-    // `target: null` is omit. The target normalizer rejects a null it still sees.
-    if let Some(object) = args.as_object_mut() {
-        object.retain(|_, value| !value.is_null());
-    }
     let name = TOOL_ALIASES
         .iter()
         .find(|(alias, _)| *alias == name)
@@ -1727,13 +1717,7 @@ fn validate_against_schema(
     let schema = crate::tool::advertised_runtime_input_schema(&def.name, &def.input_schema);
     let validator = jsonschema::validator_for(&schema)
         .map_err(|error| format!("input schema is unusable: {error}"))?;
-    // `target: null` is still accepted at runtime; the advertised schema is a
-    // single object type, so drop top-level nulls before the probe.
-    let mut probe = args.clone();
-    if let Some(object) = probe.as_object_mut() {
-        object.retain(|_, value| !value.is_null());
-    }
-    validator.validate(&probe).map_err(|error| {
+    validator.validate(args).map_err(|error| {
         let path = error.instance_path().to_string();
         if path.is_empty() {
             format!("invalid arguments: {error}")

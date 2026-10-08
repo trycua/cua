@@ -260,32 +260,23 @@ pub(crate) fn normalize_argument_aliases(tool_name: &str, args: &mut Value) -> R
     normalize_set_config_args(tool_name, args)
 }
 
-/// `{key, value}` is no longer advertised. Rewrite it onto the direct field
-/// before the closed schema rejects `key`.
+/// `{key, value}` is unadvertised; rewrite it before the closed schema rejects `key`.
 fn normalize_set_config_args(tool_name: &str, args: &mut Value) -> Result<(), String> {
-    if tool_name != "set_config" {
-        return Ok(());
-    }
-    let Some(object) = args.as_object_mut() else {
+    let Some(object) = args.as_object_mut().filter(|_| tool_name == "set_config") else {
         return Ok(());
     };
-    if !object.contains_key("key") && !object.contains_key("value") {
-        return Ok(());
-    }
-    let key = object.get("key").and_then(Value::as_str).map(str::to_owned);
-    let value = object.get("value").cloned();
-    let (Some(key), Some(value)) = (key, value) else {
-        return Err(if object.contains_key("key") {
-            "set_config key requires an exact value"
-        } else {
-            "set_config value requires an exact key"
+    match (object.remove("key"), object.remove("value")) {
+        (None, None) => Ok(()),
+        (Some(Value::String(key)), Some(value))
+            if !key.starts_with('_') && !matches!(key.as_str(), "key" | "value" | "session") =>
+        {
+            object.insert(key, value);
+            Ok(())
         }
-        .into());
-    };
-    object.remove("key");
-    object.remove("value");
-    object.insert(key, value);
-    Ok(())
+        (Some(Value::String(key)), Some(_)) => Err(format!("set_config key '{key}' is reserved")),
+        (Some(_), _) => Err("set_config key requires an exact value".into()),
+        (None, Some(_)) => Err("set_config value requires an exact key".into()),
+    }
 }
 
 /// `invoke_menu` takes `path` as a list of labels. Models also send
@@ -620,8 +611,6 @@ pub(crate) fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -
     if !crate::action_target::supports_typed_target(tool_name) {
         return schema;
     }
-    // Reuse the portable contract's exact tagged-union schema while retaining
-    // the live runtime's broader legacy `scope=window|desktop` decoder.
     if let Some(portable) = cua_driver_contract::tool_contract(tool_name) {
         if let Some(portable_properties) = portable
             .input_schema
@@ -1872,20 +1861,8 @@ impl ToolRegistry {
             );
         }
 
-        // Alias rewrite turns `{key: capture_scope}` into a field this schema
-        // no longer advertises. Refuse it before that looks like an unknown argument.
-        if resolved_name == "set_config"
-            && (args.get("capture_scope").is_some()
-                || args.get("key").and_then(Value::as_str) == Some("capture_scope"))
-        {
-            return ToolResult::error(
-                "config key 'capture_scope' is retired; select a window or desktop target on each action",
-            )
-            .with_structured(serde_json::json!({
-                "code": "config_key_retired",
-                "key": "capture_scope",
-                "replacement": "action.target",
-            }));
+        if resolved_name == "set_config" && args.get("capture_scope").is_some() {
+            return ToolResult::error("config key 'capture_scope' is retired; select a window or desktop target on each action").with_structured(serde_json::json!({"code": "config_key_retired", "key": "capture_scope", "replacement": "action.target"}));
         }
 
         if let Some(detail) = unknown_argument {
@@ -3015,7 +2992,7 @@ impl ToolRegistry {
 
         let mut exact = serde_json::Map::new();
         for (key, value) in object {
-            if matches!(key.as_str(), "session" | "key" | "value") || key.starts_with('_') {
+            if key == "session" || key.starts_with('_') {
                 continue;
             }
             exact.insert(key.clone(), value.clone());
@@ -7159,6 +7136,26 @@ mod argument_shape_tests {
         let mut retired = json!({"key": "capture_scope", "value": "desktop"});
         normalize_argument_aliases("set_config", &mut retired).unwrap();
         assert_eq!(retired, json!({"capture_scope": "desktop"}));
+    }
+
+    #[test]
+    fn set_config_alias_refuses_reserved_keys_before_authorization() {
+        for key in [
+            "_session_id",
+            "_transport_session_id",
+            "_public_session_label",
+            "_other",
+            "key",
+            "value",
+            "session",
+        ] {
+            let mut args = json!({"key": key, "value": "forged", "max_image_dimension": 1});
+            let error = normalize_argument_aliases("set_config", &mut args).unwrap_err();
+            assert_eq!(error, format!("set_config key '{key}' is reserved"));
+            let object = args.as_object().unwrap();
+            assert!(object.keys().all(|name| !name.starts_with('_')), "{args}");
+            assert!(object.get(key).is_none(), "{key} was written: {args}");
+        }
     }
 
     #[test]

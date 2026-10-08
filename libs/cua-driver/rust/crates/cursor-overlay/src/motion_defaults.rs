@@ -84,7 +84,7 @@ fn allowed_styles() -> String {
     MotionStyle::ALL.map(MotionStyle::as_str).join(", ")
 }
 
-pub fn effect_flag(key: &str, value: &Value) -> Result<Option<bool>, String> {
+pub(crate) fn effect_flag(key: &str, value: &Value) -> Result<Option<bool>, String> {
     cua_driver_contract::CursorEffectSetting::from_json(value)
         .map(cua_driver_contract::CursorEffectSetting::override_value)
         .ok_or_else(|| format!("{key} must be on, off or default, got {value}"))
@@ -213,8 +213,7 @@ pub fn config_schema_properties() -> Map<String, Value> {
     properties
 }
 
-/// Apply every cursor motion write in a `set_config` call, accepting both the
-/// `{key, value}` shape and direct dotted fields. Returns the keys written, or
+/// Apply every cursor motion write in a `set_config` call. Returns the keys written, or
 /// the first validation error (later keys are not written after an error).
 pub fn apply_config_args(args: &Value) -> Result<Vec<String>, String> {
     let mut writes: Vec<(String, Value)> = Vec::new();

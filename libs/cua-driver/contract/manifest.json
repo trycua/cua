@@ -4064,7 +4064,7 @@
           },
           "effects": {
             "additionalProperties": false,
-            "description": "Turn single effects on or off. An omitted effect keeps its current setting;\n`\"default\"` restores the style's default.",
+            "description": "Turn effects on or off. Omit a field to keep it; `\"default\"` restores the style default.",
             "properties": {
               "glow": {
                 "description": "Soft glow around the cursor that grows with speed.",
@@ -4643,7 +4643,7 @@
               },
               "effects": {
                 "additionalProperties": false,
-                "description": "Turn single effects on or off. An omitted effect keeps its current setting;\n`\"default\"` restores the style's default.",
+                "description": "Turn effects on or off. Omit a field to keep it; `\"default\"` restores the style default.",
                 "properties": {
                   "glow": {
                     "description": "Soft glow around the cursor that grows with speed.",

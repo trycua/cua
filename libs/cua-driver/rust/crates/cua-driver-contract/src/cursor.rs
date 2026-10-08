@@ -6,7 +6,6 @@
 //! Tool implementations emit these semantics as best-effort visual telemetry.
 //! They never affect authorization, dispatch, input delivery, or tool results.
 
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -268,21 +267,16 @@ impl CursorMotionTiming {
     }
 }
 
-/// One cursor effect: `on`, `off`, or `default` (the style's own setting).
-#[derive(
-    Debug, Clone, Copy, Default, Serialize, schemars::JsonSchema, PartialEq, Eq, uniffi::Enum,
-)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema, PartialEq, Eq, uniffi::Enum)]
 #[serde(rename_all = "lowercase")]
 pub enum CursorEffectSetting {
     On,
     Off,
-    #[default]
     Default,
 }
 
 impl CursorEffectSetting {
-    /// Advertised spellings, plus unadvertised bool / `"true"` / `"false"` / null.
-    /// Null is `Default` here; a typed `Option` still treats JSON null as absent.
+    /// On/off/default, plus bool and null. Null is `Default`; a typed `Option` still treats JSON null as absent.
     pub fn from_json(value: &Value) -> Option<Self> {
         Some(match value {
             Value::Null => Self::Default,
@@ -317,10 +311,6 @@ impl<'de> Deserialize<'de> for CursorEffectSetting {
     }
 }
 
-fn cursor_effect_setting_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    CursorEffectSetting::json_schema(generator)
-}
-
 /// Per-effect overrides for the agent cursor. An omitted field keeps the current setting.
 /// `on` and `off` set it; `default` restores the style default.
 #[derive(
@@ -339,23 +329,23 @@ fn cursor_effect_setting_schema(generator: &mut schemars::SchemaGenerator) -> sc
 pub struct CursorMotionEffects {
     /// Short fading trail behind the cursor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "cursor_effect_setting_schema")]
+    #[schemars(schema_with = "CursorEffectSetting::json_schema")]
     pub trail: Option<CursorEffectSetting>,
     /// Soft glow around the cursor that grows with speed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "cursor_effect_setting_schema")]
+    #[schemars(schema_with = "CursorEffectSetting::json_schema")]
     pub glow: Option<CursorEffectSetting>,
     /// Target glow when the `magnetic` style locks on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "cursor_effect_setting_schema")]
+    #[schemars(schema_with = "CursorEffectSetting::json_schema")]
     pub magnet: Option<CursorEffectSetting>,
     /// Ring that expands from the hotspot on click.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "cursor_effect_setting_schema")]
+    #[schemars(schema_with = "CursorEffectSetting::json_schema")]
     pub ripple: Option<CursorEffectSetting>,
     /// Brief scale-down of the cursor on click.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "cursor_effect_setting_schema")]
+    #[schemars(schema_with = "CursorEffectSetting::json_schema")]
     pub squish: Option<CursorEffectSetting>,
 }
 

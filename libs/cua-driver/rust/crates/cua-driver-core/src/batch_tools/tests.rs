@@ -584,12 +584,13 @@ async fn a_trailing_read_becomes_the_observation_and_a_middle_one_points_to_obse
 }
 
 #[tokio::test]
-async fn click_step_allows_null_target_and_refuses_button_five() {
+async fn click_step_refuses_null_target_and_button_five() {
     let harness = Harness::new();
-    let passed = harness
+    let target = harness
         .run(json!({"steps": [{"click": {"x": 1, "y": 2, "target": null}}]}))
         .await;
-    assert_ne!(passed.is_error, Some(true), "{}", text(&passed));
+    assert_eq!(target.is_error, Some(true));
+    assert!(text(&target).contains("/target"), "{}", text(&target));
     let refused = harness
         .run(json!({"steps": [{"click": {"x": 1, "y": 2, "button": 5}}]}))
         .await;

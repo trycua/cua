@@ -15,24 +15,22 @@ use crate::{
 // ── schema leniency ──────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn observe_sent_as_a_string_is_read_as_the_boolean() {
+async fn observe_sent_as_a_string_is_refused() {
     let harness = Harness::new();
-    // 21 of the 102 failed v036 calls: `"observe": "true"`.
     let result = harness
         .run(json!({"steps": [{"tool": "click", "args": {"pid": 7, "window_id": 3}}], "observe": "true"}))
         .await;
-    assert_ne!(result.is_error, Some(true), "{}", text(&result));
-    assert_eq!(harness.hits("get_window_state"), 1);
+    assert_eq!(result.is_error, Some(true));
+    assert!(text(&result).contains("observe"), "{}", text(&result));
 
-    // `"observe": "false"` with a trailing read: the read is the observation.
     let result = harness
         .run(json!({"steps": [
             {"tool": "click", "args": {"pid": 7, "window_id": 3}},
             {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3, "max_elements": 100}}
         ], "observe": "false"}))
         .await;
-    assert_ne!(result.is_error, Some(true), "{}", text(&result));
-    assert_eq!(harness.last("get_window_state")["max_elements"], 100);
+    assert_eq!(result.is_error, Some(true));
+    assert!(text(&result).contains("observe"), "{}", text(&result));
 }
 
 #[tokio::test]
@@ -60,7 +58,7 @@ async fn batch_level_pid_and_window_id_are_the_default_window() {
         .run(json!({
             "pid": "37641",
             "window_id": "2126",
-            "observe": "false",
+            "observe": false,
             "steps": [
                 {"tool": "set_value", "args": {"element_token": "s0000000a:46", "value": "12:00"}},
                 {"tool": "set_value", "args": {"element_token": "s0000000a:48", "value": "Juniper"}},

@@ -74,6 +74,23 @@ public sealed class WinFormsKeyboardWindow : Form
         };
         var temporaryPath = $"{_statePath}.{Environment.ProcessId}.tmp";
         File.WriteAllText(temporaryPath, JsonSerializer.Serialize(state));
-        File.Move(temporaryPath, _statePath, true);
+        // Windows replacement can race with the Rust state reader. Keep the
+        // complete JSON atomic; retry only the observed access/sharing errors,
+        // and still fail on a persistent error instead of losing the receipt.
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                File.Move(temporaryPath, _statePath, true);
+                return;
+            }
+            catch (Exception ex) when (
+                attempt < 49 &&
+                (ex is IOException || ex is UnauthorizedAccessException) &&
+                (ex.HResult & 0xFFFF) is 5 or 32)
+            {
+                System.Threading.Thread.Sleep(5);
+            }
+        }
     }
 }

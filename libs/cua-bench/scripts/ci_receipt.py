@@ -40,12 +40,18 @@ def verify_receipt(receipt, folder: Path):
     Draft202012Validator(schema).validate(receipt)
     if {r["kind"] for r in receipt["reports"]} != {"core", "full"}:
         raise ValueError("receipt must contain exactly one core and full result")
+    if len({r["path"] for r in receipt["reports"]}) != len(receipt["reports"]):
+        raise ValueError("core and full reports must have distinct file paths")
+    root = folder.resolve(strict=True)
     for item in receipt["reports"]:
         name = item["path"]
         # No paths outside evidence folder or URI-based remote fetches.
         if Path(name).name != name:
             raise ValueError("only local report basenames are allowed")
-        raw = (folder / name).read_bytes()
+        target = (root / name).resolve(strict=True)
+        if target.parent != root:
+            raise ValueError("report escapes evidence directory via symlink")
+        raw = target.read_bytes()
         if hashlib.sha256(raw).hexdigest() != item["sha256"]:
             raise ValueError(f"report checksum mismatch: {name}")
         checked = verify_report(json.loads(raw))

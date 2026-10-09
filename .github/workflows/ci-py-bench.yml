@@ -1,6 +1,14 @@
 name: "CI: cua-bench"
 
 on:
+  push:
+    branches:
+      - fix/cua-bench-validate-parallelism-20261009
+    paths:
+      - "libs/cua-bench/**"
+      - ".github/workflows/ci-py-bench.yml"
+      - ".github/workflows/py-reusable-build.yml"
+  workflow_dispatch:
   pull_request:
     paths:
       - "libs/cua-bench/**"

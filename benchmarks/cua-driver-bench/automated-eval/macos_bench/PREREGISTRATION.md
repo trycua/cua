@@ -644,6 +644,7 @@ Recorded 9 Oct 2026, before the first arc trial.
   * `status` reports version 0.1.1, accessibility true, screen recording true, background input true, and virtual display true.
 * **Control check.** The same server started without the launcher reported accessibility and screen recording false. So the grants belong to the launcher app and to nothing else; Terminal has no Accessibility grant.
 * **Run ids:** the mini-run is `v038-arc-mini` and the full run is `v038-arc`. Their cutoffs are added here when each starts.
+* **`v038-arc-mini`:** `CUTOFF_UTC` 2026-10-09T12:00:00Z; starting seat cswap account 4 (06:23 UTC poll: 5h 14%, 7d 46%); launched about 06:40 UTC with `--park-pointer --arms cc-arc-driver --tasks CDB-S01 CDB-S04 CDB-G02 CDB-G03 CDB-G04 MB-10 MB-11 --phase1-runs 3 --phase2-runs 0`.
 
 ### A9.11 Harness changes for this amendment
 

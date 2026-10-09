@@ -97,11 +97,23 @@ async def observe(
         "window_id": window_id,
         "include_accessibility_tree": True,
         "include_screenshot": True,
+        # The observation needs structured elements, the markdown tree and the
+        # completeness flags of the walk; cua-driver 0.35 returns the lean
+        # markdown-only read unless asked for the full response.
+        "full_output": True,
         **task.scope.window_state_arguments(),
     }
     if timeout_ms is not None:
         arguments["timeout_ms"] = timeout_ms
-    payload = await driver.call("get_window_state", arguments)
+    try:
+        payload = await driver.call("get_window_state", arguments)
+    except DriverToolError as error:
+        # Drivers before 0.35 always return the full response and refuse the
+        # unknown argument.
+        if "unknown argument full_output" not in str(error):
+            raise
+        arguments.pop("full_output")
+        payload = await driver.call("get_window_state", arguments)
     return NativeObservation.from_window_state(
         payload, expected_pid=pid, expected_window_id=window_id
     )

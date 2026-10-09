@@ -32,6 +32,7 @@ CLAUDE_ARMS = (
     "cc-cua-driver-main-skill",
     "cc-cua-driver-script",  # Amendment 6
     "cc-arc-driver",  # Amendment 9 (CUA-1241): arc-driver, the MCP server of arc-cua 0.1.1
+    "cc-claude-cu-helper",  # Amendment 11: Claude Desktop 2.31226.0 computer-use helper via a minimal adapter
 )
 # cc-cua-driver-main: Amendment 3; cc-cua-driver-main-skill: Amendment 4. The default arm set of run_bench.py
 # stays the three arms of Amendment 3, so a run without --arms is unchanged.

@@ -577,6 +577,64 @@ def arc_row_identity(ctx: "Ctx") -> dict[str, Any]:
     }
 
 
+def cu_helper_probe(helper: Path, launcher: Path | None = None, timeout: float = 20.0) -> dict[str, Any]:
+    """Amendment 11: the helper's own ``probe`` (capability flags), asked directly over its JSON-RPC stdin/stdout,
+    started through the same launcher as in a trial (so ``axTrusted`` is the helper's own grant)."""
+    proc = subprocess.run(
+        [str(launcher), str(helper)] if launcher else [str(helper)],
+        input=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "probe", "params": {}}) + "\n",
+        capture_output=True, text=True, timeout=timeout, env={"PATH": "/usr/bin:/bin", "HOME": os.environ.get("HOME", "")},
+    )
+    for line in proc.stdout.splitlines():
+        try:
+            reply = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if reply.get("id") == 1:
+            return reply.get("result") or {"error": reply.get("error")}
+    return {"error": f"no probe reply (rc={proc.returncode}): {proc.stderr[-300:]}"}
+
+
+def cu_helper_live_checks(ctx: "Ctx", arm: str) -> list[tuple[str, str, str]]:
+    """Amendment 11 preflight: the helper's probe reports the pinned required flags, and the adapter, started
+    exactly as in a trial, lists exactly the pinned tools."""
+    out: list[tuple[str, str, str]] = []
+    pins = ca.load_pins().get("claude_cu_helper", {})
+    build = ca.CU_HELPER_BUILDS[arm]
+    try:
+        probe = cu_helper_probe(build.helper, build.launcher)
+    except Exception as error:  # noqa: BLE001
+        probe = {"error": f"{type(error).__name__}: {error}"}
+    ctx.versions.setdefault("claude_cu_helper", {})["probe"] = probe
+    required = pins.get("probe_required") or ["skylight", "axTrusted"]
+    missing = [k for k in required if probe.get(k) is not True]
+    out.append((f"{arm} helper probe: {', '.join(required)}", "pass" if not missing else "fail",
+                json.dumps(probe)[:400] + (f" missing {missing}" if missing else "")))
+    path, _server = ctx.mcp[arm]
+    command, cargs, env = mcp_entry(path)
+    try:
+        tools = sorted(mcp_list_tools(command, cargs, env))
+        want = sorted(pins.get("tools") or [])
+        out.append((f"{arm} adapter lists the pinned tools", "pass" if want and tools == want else "fail",
+                    f"{tools}" + ("" if tools == want else f" pinned {want}")))
+    except Exception as error:  # noqa: BLE001
+        out.append((f"{arm} adapter MCP server", "fail", f"{type(error).__name__}: {error}"))
+    return out
+
+
+def cu_helper_row_identity(ctx: "Ctx") -> dict[str, Any]:
+    pin = ca.load_pins().get("claude_cu_helper", {})
+    seen = ctx.versions.get("claude_cu_helper") or {}
+    return {
+        "label": ca.CU_HELPER_LABEL,
+        "desktop_version": pin.get("desktop_version"),
+        "helper_sha256": seen.get("helper_sha256"),
+        "adapter_sha256": seen.get("adapter_sha256"),
+        "actions": ca.cu_helper_actions(),
+        "probe": {k: v for k, v in (seen.get("probe") or {}).items() if isinstance(v, (bool, str, int))},
+    }
+
+
 def mcp_entry(config_path: Path) -> tuple[str, list[str], dict[str, str]]:
     data = json.loads(config_path.read_text("utf-8"))
     ((name, entry),) = data["mcpServers"].items()
@@ -694,6 +752,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         # Amendment 9: the arc arm's identity, and whether Chrome/Electron got the force-accessibility switch
         "force_accessibility": ca.force_accessibility(arm),
         "arc_driver": arc_row_identity(ctx) if arm in ca.ARC_ARMS else None,
+        # Amendment 11: the helper arm's identity (Desktop version, helper and adapter hashes, offered actions)
+        "claude_cu_helper": cu_helper_row_identity(ctx) if arm in ca.CU_HELPER_ARMS else None,
     }
     sentinel = pilot.Sentinel(
         Path(args.build_dir) / "BenchSentinel.app"
@@ -850,6 +910,10 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         if cdb is not None:
             cdb.stop_apps()
         pilot.sweep_processes(str(trial_dir))
+        if arm in ca.CU_HELPER_ARMS:
+            # the adapter and its helper end with claude's process group; a survivor could post input later
+            row["cu_helper_leftover_killed"] = pilot.sweep_processes(str(ca.CU_HELPER_BUILDS[arm].helper)) + (
+                pilot.sweep_processes(str(ca.CU_HELPER_BUILDS[arm].adapter)))
         if arm in ca.ARC_ARMS:
             # the server ends with claude's process group; a survivor would keep input rights into the next trial
             row["arc_leftover_killed"] = pilot.sweep_processes(str(ca.ARC_BUILDS[arm].python))
@@ -1720,6 +1784,15 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
         if offline:
             continue
         for name, status, detail in arc_live_checks(ctx, arc_arm):
+            add(name, status, detail)
+    for helper_arm in [a for a in ca.CU_HELPER_ARMS if a in ctx.arm_names]:
+        observed = ca.cu_helper_observed(ca.CU_HELPER_BUILDS[helper_arm])
+        ctx.versions.setdefault("claude_cu_helper", {}).update(observed)
+        for name, status, detail in ca.check_cu_helper_pins(pins, observed):
+            add(name, status, detail)
+        if offline:
+            continue
+        for name, status, detail in cu_helper_live_checks(ctx, helper_arm):
             add(name, status, detail)
     cdb_ids =[t for t in ctx.task_ids if task_spec(ctx.tasks[t]).get("kind") == "cdb"]
     if cdb_ids:

@@ -206,3 +206,13 @@ The trials run in a Lume macOS VM on a separate Mac Studio, not on the owner's d
 3. Copy the printed values into `pins.json` `arc_driver`.
 4. Run with `--arms cc-arc-driver`. The preflight starts the server through the launcher, checks its 16 tools, and checks that its `status` tool reports accessibility, screen recording and background input.
 5. Analyse with `tools/analyze_arc.py <arc run> <v038 run> [--no-arm-b]`.
+
+## Claude Desktop computer-use helper arm (Amendment 11)
+
+`cc-claude-cu-helper`, labelled "Claude Desktop 2.31226.0 computer-use helper via a minimal adapter", runs Claude Desktop 2.31226.0's own background-input helper (`Claude.app/Contents/Helpers/app-cu-helper`, Anthropic-signed, used unmodified in place) behind `tools/claude_cu_helper/cu_helper_mcp.py`, an MCP server named `claude-cu-helper`. Its tools are shaped like Claude's own background computer-use tools: `app_list_windows`, `app_screenshot`, `app_click`, `app_type`, `app_key`, `app_scroll`, `app_drag`, `app_hover`. All input goes through the helper's `dispatchRaw`, with the same parameter mapping as Desktop. Window lists come from `winlist` (public CGWindowList API) and screenshots from `/usr/sbin/screencapture -l`. Cua Driver is not used by this arm's tools. No skill. VM only:
+
+1. Clone the stopped `cdb-h2h`, start the clone, delete any `~/.cdb-secrets/claude-token` it carries.
+2. `zsh tools/claude_cu_helper/install_cu_helper.sh`: downloads the pinned Desktop archive, checks its size and sha256, unpacks it once (never launched), checks the helper's sha256 and signature, builds `winlist` and `cu-disclaim`, and prints the pin values.
+3. Grant the helper Accessibility in System Settings (Privacy & Security > Accessibility > +, choose `.../Claude.app/Contents/Helpers/app-cu-helper`). `cu-disclaim` starts the helper as its own responsible process, so the grant belongs to the Anthropic-signed helper and Terminal's grants are not widened.
+4. Run with `--arms cc-claude-cu-helper`. The preflight checks the pins, the helper's `probe` (`skylight`, `axTrusted`) and the adapter's eight tools.
+5. Analyse with `tools/analyze_claude_cu.py <run> <v038 run> --extra <v038-arc> --extra <v038-codex1007>`.

@@ -211,6 +211,77 @@ def force_accessibility(arm: str) -> bool:
     build = ARC_BUILDS.get(arm)
     return bool(build and build.force_accessibility)
 
+# Amendment 11: "Claude Desktop 2.31226.0 computer-use helper via a minimal adapter". The helper binary of Claude
+# Desktop 2.31226.0 (Contents/Helpers/app-cu-helper, Anthropic-signed, used unmodified in place inside the unpacked,
+# never-launched app) does the input; tools/claude_cu_helper/cu_helper_mcp.py exposes it as MCP server
+# "claude-cu-helper" and adds a window list (winlist, CGWindowList) and window screenshots (/usr/sbin/screencapture).
+# VM only (tools/claude_cu_helper/install_cu_helper.sh). Cua Driver is not used by this arm.
+CU_HELPER_DIR = WORK / "claude-cu-helper"
+CU_HELPER_ADAPTER = CU_HELPER_DIR / "cu_helper_mcp.py"
+CU_HELPER_WINLIST = CU_HELPER_DIR / "winlist"
+CU_HELPER_LAUNCHER = CU_HELPER_DIR / "cu-disclaim"  # starts the helper as its own responsible process (A11)
+CU_DESKTOP_DIR = WORK / "claude-desktop-2.31226.0"
+CU_HELPER_BIN = CU_DESKTOP_DIR / "extracted" / "Claude.app" / "Contents" / "Helpers" / "app-cu-helper"
+CU_HELPER_SERVER = "claude-cu-helper"
+CU_HELPER_PYTHON = Path("/opt/homebrew/bin/python3")
+CU_HELPER_LABEL = "Claude Desktop 2.31226.0 computer-use helper via a minimal adapter"
+
+
+@dataclass(frozen=True)
+class CuHelperBuild:
+    arm: str
+    adapter: Path
+    helper: Path
+    winlist: Path
+    launcher: Path
+
+    def argv(self, actions: list[str]) -> list[str]:
+        return [str(CU_HELPER_PYTHON), "-I", "-B", str(self.adapter), "--helper", str(self.helper),
+                "--winlist", str(self.winlist), "--launcher", str(self.launcher), "--actions", ",".join(actions)]
+
+
+CU_HELPER_BUILDS = {
+    "cc-claude-cu-helper": CuHelperBuild(
+        "cc-claude-cu-helper", CU_HELPER_ADAPTER, CU_HELPER_BIN, CU_HELPER_WINLIST, CU_HELPER_LAUNCHER
+    )
+}
+CU_HELPER_ARMS = tuple(CU_HELPER_BUILDS)
+
+
+def cu_helper_env() -> dict[str, str]:
+    """The adapter's environment: closed PATH, real HOME (the helper keeps no state there), nothing else."""
+    return {"HOME": os.environ.get("HOME", "/tmp"), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "DO_NOT_TRACK": "1"}
+
+
+def cu_helper_actions(pins: dict[str, Any] | None = None) -> list[str]:
+    """The input tools the adapter offers: exactly the pinned list from the VM probe (A11)."""
+    pins = pins if pins is not None else load_pins()
+    return list((pins.get("claude_cu_helper") or {}).get("actions") or [])
+
+
+def cu_helper_observed(build: CuHelperBuild | None = None) -> dict[str, Any]:
+    """What is installed for the helper arm right now, keyed like pins.json ``claude_cu_helper``."""
+    build = build or CU_HELPER_BUILDS["cc-claude-cu-helper"]
+    zip_path = CU_DESKTOP_DIR / "Claude-2.31226.0.zip"
+    return {
+        "desktop_zip_sha256": sha256_file(zip_path) if zip_path.is_file() else None,
+        "helper_sha256": sha256_file(build.helper) if build.helper.is_file() else None,
+        "adapter_sha256": sha256_file(build.adapter) if build.adapter.is_file() else None,
+        "winlist_sha256": sha256_file(build.winlist) if build.winlist.is_file() else None,
+        "launcher_sha256": sha256_file(build.launcher) if build.launcher.is_file() else None,
+    }
+
+
+def check_cu_helper_pins(pins: dict[str, Any], observed: dict[str, Any]) -> list[tuple[str, str, str]]:
+    want = pins.get("claude_cu_helper", {})
+    out = []
+    for key in ("desktop_zip_sha256", "helper_sha256", "adapter_sha256", "winlist_sha256", "launcher_sha256"):
+        ok = bool(want.get(key)) and observed.get(key) == want.get(key)
+        out.append((f"pin claude_cu_helper.{key}", "pass" if ok else "fail", str(observed.get(key))
+                    if ok else f"observed {observed.get(key)!r}, pinned {want.get(key)!r}"))
+    return out
+
+
 CODEX_CU_MCP_CANDIDATES = (
     WORK / "codex-access" / "mcp.json",
     WORK / "codex-access" / "mcp_cua_repl_computer.json",
@@ -230,6 +301,7 @@ ARM_DESCRIPTIONS = {
     "cc-cua-driver-script": "The main build in its own app with CUA_DRIVER_EXPERIMENTAL_SCRIPT=1 (run_script on) and the run_script addendum in the system prompt",
     "cc-codex-cu": "Claude Code + Codex computer-use cua_repl MCP (server codex-cu), no skill",
     "cc-codex-cu-1007-browser": "Claude Code + Codex 26.1007.21159 cua_repl MCP (server codex-cu), surfaces browser+computer, no skill (Amendment 10)",
+    "cc-claude-cu-helper": "Claude Code + " + CU_HELPER_LABEL + " (MCP server claude-cu-helper; Amendment 11), no skill",
     "cc-arc-driver": "Claude Code + arc-driver (arc-cua 0.1.1) MCP (server arc) through its own launcher app, no skill; "
     "Chrome and Electron started with --force-renderer-accessibility",
 }
@@ -389,6 +461,14 @@ def mcp_config_for(
         path = run_dir / f"mcp-{arm}.json"
         path.write_text(json.dumps(config, indent=2) + "\n", "utf-8")
         return path, ARC_SERVER
+    if arm in CU_HELPER_BUILDS:
+        build = CU_HELPER_BUILDS[arm]
+        command, *args = build.argv(cu_helper_actions())
+        config = {"mcpServers": {CU_HELPER_SERVER: {"type": "stdio", "command": command, "args": args,
+                                                     "env": cu_helper_env()}}}
+        path = run_dir / f"mcp-{arm}.json"
+        path.write_text(json.dumps(config, indent=2) + "\n", "utf-8")
+        return path, CU_HELPER_SERVER
     if arm in CODEX_ARMS:
         source = (
             resolve_codex_cu_config(codex_cu_config)

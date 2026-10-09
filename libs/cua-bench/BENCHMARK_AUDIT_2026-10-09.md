@@ -46,3 +46,9 @@ Follow with positive real dataset runs on `cua-bench-basic`, a parallelism stres
 - **Independent counterexample:** mock evaluator that raises if called, confirming absence of agent actions never earns score. Commit `6c3e54561474b67572f5598e410f3b008705bf42`.
 - **Verification state:** remote code and tests present. Runtime container has Python and pytest but not full CUA repository sources at the relevant branch, so repository-level pytest and real simulated-provider tests were NOT executed. No Verified Closed.
 - **Next P0:** execute `cd libs/cua-bench && uv run pytest cua_bench/tests/test_run_benchmark.py -q` on this branch; verify no existing legitimate no-agent setup-only callers rely on scoring; run an independent simulated provider case with initial evaluator reward 1.0 but no actions and assert failure.
+
+## Follow-up: worker-output integrity and benchmark denominator (2026-10-09)
+- P0: `run_benchmark` now validates each returned worker result against the scheduled task path and variant ID, requires finite normalized reward, sane step count, coherent success/reward semantics, and zero reward on worker errors. Invalid results become attributable failures with reward 0 rather than polluting success rate. Commits `34772d45bfe89e133fb766c46e6e3c931eb70210`, `4b46ac851ecc0c39aa4e19c6ac0f469ab000e717`.
+- Counterexamples added for forged path, forged variant, NaN reward and contradictory success/reward: commit `fbf83e1aa44660a5bf4b7f2cecb2711dcdf74fec`.
+- Source changes committed; no fresh pytest/CI execution or real sandbox E2E evidenced. Validation requires running `uv run pytest cua_bench/tests/test_run_benchmark.py -q` from `libs/cua-bench`, followed by dataset-level evaluation and independent oracle replay.
+- Horizontal status: Function P, state P, integration B, security P, performance B, maintainability P, observability P, testability P, user value B, external compatibility B. No Verified Closed.

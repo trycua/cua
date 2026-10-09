@@ -985,7 +985,14 @@ pub fn with_foreground_hid_activation(
         unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
         make_exact_window_key(target_pid, target_wid);
     }
-    if !await_window_focused(target_pid, target_wid) {
+    // Finder keeps a sibling window key against the records alone; the exact
+    // AX window raise that `bring_to_front` uses completes that case. Not for
+    // this process's own windows: AppKit would order them off the main thread.
+    if !await_window_focused(target_pid, target_wid)
+        && !(target_pid != std::process::id() as libc::pid_t
+            && crate::tools::bring_to_front::raise_exact_ax_window(target_pid, target_wid)
+            && await_window_focused(target_pid, target_wid))
+    {
         if prev_ok {
             unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
         }

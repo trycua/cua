@@ -513,6 +513,135 @@ These are produced by `tools/analyze_v037.py` (the A7.4 rule, unchanged; written
 
 An arc-cua arm (`cc-arc-driver`, CUA-1241) may later run the same tasks on the same build. It needs its own amendment, written before its trials, and it is reported against this run's arms as a follow-on, not pooled into this run's decision.
 
+## Amendment 9 (9 Oct 2026, before the first trial of the arc arm): arc-driver as a follow-on arm to run v038 (CUA-1241)
+
+Written and committed before the first trial with arm `cc-arc-driver`, at the owner's approval (8 Oct). As A8.7 says, this arm runs the tasks of run v038 after it, on a clone of the same VM. Its results are reported against v038's arms as a follow-on. They are not pooled into v038's decision rule (A8.4), and nothing about v038 or any earlier run changes. Scoping notes: `research/cua-driver-bench/2026-10-08_arc-cua-scoping.md` (owner's notes folder).
+
+### A9.1 Arm
+
+| Label | Runner arm | Tool layer |
+|---|---|---|
+| arc | `cc-arc-driver` | arc-driver, the MCP server of the third-party package arc-cua 0.1.1 (github.com/shhivv/arc-cua, MIT), as MCP server `arc`. No skill: the descriptions in its `tools/list` are its only guidance, as for arm B |
+
+* Everything else is the same as the Claude arms of v038: `claude -p`, Sonnet 5.5 (Claude Code 2.1.289), default effort, the shared system prompt, `--strict-mcp-config`, ToolSearch on, 360 s and 45 turns, the per-task built-in tools (Bash, Edit and Write on the CDB-S tasks only), and `--allowedTools mcp__arc`.
+* Only the arc-cua **driver** is used. Its decision loop (`arc-cua run`, decision models through a third-party API key) is a different product and is not part of this bench.
+* The docs/driver.md-as-skill variant (option b of the scoping notes) is not run.
+
+### A9.2 Pinned package, review and install
+
+* **Pin:** release 0.1.1, tag `v0.1.1`, commit `cd9b5a3bbdeb4682160ad998675723f71dab0804`. It is installed as the PyPI wheel `arc_cua-0.1.1-py3-none-any.whl`, sha256 `5c74f4fc7a11ac9335f86d4be48d847230b5d8757d510dd9563caaf65723670b`. That wheel's `arc_cua` package is byte-identical to the tag's `src/arc_cua` (tree sha256 `846bdc5ad784e6fcec95756e2bcc446d5482272b1eaa256163bc66499eba9143`).
+* **Review:** the source was reviewed at the head of `master` on 8 Oct, `6b353039111c08c2c64c5229083606941e364eaf`. The files on the MCP path are identical between that head and the tag: `cli.py`'s `mcp` command, `mcp_server.py`, `driver.py` and `backends/macos_*`. The review found:
+  * no network call, telemetry, file write or process launch on that path;
+  * only the input-posting, window-moving and capture use of private SkyLight and `CGVirtualDisplay` APIs.
+
+  The review is in the scoping notes.
+* **Dependencies:** taken from the tag's `uv.lock`, with hashes, in `tools/arc_driver/requirements-arc-0.1.1.txt`. They are installed with `--require-hashes --only-binary :all: --no-deps` into a Python 3.12 venv. Nothing is built or resolved at install time, and nothing is fetched at trial time.
+* **Start:** the server runs as `<ArcDriverBench.app launcher> <venv>/bin/python -I -B -m arc_cua mcp`, with an empty `HOME` of its own and `PATH=/usr/bin:/bin`.
+* **Where:** only inside the VM `cdb-arc`, a clone of the stopped `cdb-h2h` made right after run v038 and before anything is installed. `cdb-h2h` itself is not changed, and nothing from arc-cua runs on the host.
+* **Pins:** `pins.json` `arc_driver` holds:
+  * the version;
+  * the `arc_cua` tree;
+  * the whole site-packages tree (without `__pycache__`);
+  * the launcher's sha256;
+  * the venv's Python version.
+
+  The preflight fails if any of them differs. The three values that come from the VM install are filled in before the first trial and listed in A9.10.
+
+### A9.3 Permissions
+
+macOS gives Accessibility and Screen Recording to the responsible process. Under the runner, that process is Terminal.app. arc-driver instead runs under `ArcDriverBench.app`, bundle id `com.trycua.bench.arcdriver`, ad-hoc signed and built in the VM from `tools/arc_driver/arc_launch.c`.
+
+* The launcher starts itself again with responsibility disclaimed. That copy then starts the server as its child. The child stays in claude's process group, so a group kill reaches it.
+* `tools/arc_driver/tcc_grant_arc.sh` grants Accessibility and Screen Recording to that bundle id only. Terminal's grants are not widened.
+
+### A9.4 Differences from the v038 arms (confounds, stated in every report)
+
+1. **Chromium accessibility switch.** In this arm only, Chrome and the Electron apps start with `--force-renderer-accessibility`. This is the switch arc-driver tells the user to relaunch with (`relaunch_for_accessibility`). The agent cannot relaunch apps on the GUI-only tasks, so the runner does what arc's documentation asks of its user.
+   * The pack's Electron apps already turn the switch on themselves (`app.commandLine.appendSwitch`) in every arm, so in practice the difference is Chrome, on CDB-S01, CDB-S04 and CDB-G04.
+   * The Cua Driver arms enable Chromium accessibility themselves while they run.
+   * Each row records `force_accessibility` and the apps that got the switch.
+2. **No skill.** The Cua Driver arms get their skill. arc ships none.
+3. **Known upstream bug at this version.** arc-cua issue #4: `click_at`, `drag` and `scroll_at` land offset by the window origin. It was still open, and present in the code, when this was written. The report counts the trials that used those tools.
+4. **Different time.** The arc arm runs after v038, not interleaved with it. It uses the same VM image (a clone taken after v038), the same apps, task pack, harness, seeds per task and run, and the same model and Claude Code version. Model-side drift between the two runs is not controlled.
+5. **Maturity.** arc-cua is a single-author project, 18 days old at the pin. The result describes 0.1.1 on 8–9 Oct 2026 and is dated.
+
+### A9.5 Preflight and trial lifecycle
+
+* **Preflight**, in addition to every existing check that applies:
+  * the arc pins (A9.2);
+  * the server, started through the launcher exactly as in a trial, lists exactly its 16 tools;
+  * its `status` tool reports `accessibility`, `screen_recording` and `background_input` all true, and the pinned version;
+  * `virtual_display` is recorded but not required.
+* **Trial:**
+  * Claude Code starts the server once per trial.
+  * When claude ends, the server ends with it: standard input closes and the server puts any parked window back. A group SIGTERM does the same, and the final group SIGKILL is a backstop.
+  * After each arc trial the runner kills any server that survived and records the count in `arc_leftover_killed`.
+  * Every app is restarted for every trial, so a parked window or an accessibility setting cannot carry over.
+
+### A9.6 Runs
+
+* **Mini-run `v038-arc-mini`.**
+  * Tasks: CDB-S01, CDB-S04, CDB-G02, CDB-G03, CDB-G04, MB-10 and MB-11, runs 1 to 3: 21 trials. The brief that asked for it said "30 trials"; these seven tasks at three runs make 21.
+  * Its purpose is to check the install and the harness, and to give an early read.
+  * **Gate to the full run.** The preflight passes, and at most 3 of the 21 trials are excluded as infrastructure failures (launcher, permissions, MCP start). arc's success rate is not a gate.
+* **Full run `v038-arc`.**
+  * The ten tasks of v038, in the A3.3 order: CDB-S01, CDB-S04, CDB-G02, CDB-G03, CDB-G04, MB-09, MB-10, MB-11, CDB-S02, CDB-S03.
+  * Runs 1 to 3 (phase 1), then runs 4 and 5 (phase 2): 50 trials, one arm, so there is no rotation.
+  * Only complete task blocks are analysed, as before.
+* **Seats.** As in A8.3:
+  * cswap, with access tokens only;
+  * a seat is left at five-hour or seven-day 0.94, and at seven-day 0.92 for account 6, or on any rejection;
+  * the registered stop at seven-day 0.95 is unchanged.
+* **Cutoffs** are set at launch and listed in A9.10.
+
+### A9.7 Analysis (`tools/analyze_arc.py`, written before the first trial)
+
+All of it is descriptive. The arc rows are read together with v038's rows on the same tasks.
+
+* Per arm: passed trials, mean turns, tokens, wall time and cost.
+* arc against A (`cc-cua-driver-main`), paired by task and run index (same seed): the task-macro success difference and the ratios of turns and tokens, with the A5.4 task-stratified bootstrap.
+* Per task and arm.
+* arc's own signals from its trial streams:
+  * calls per tool and failed calls;
+  * `relaunch_for_accessibility` hints;
+  * `changed` and `stale` refusals;
+  * trials that used the issue-#4 pixel tools.
+* The most common failure classes.
+
+### A9.8 Reporting
+
+* **arc's numbers** may be shared: arc-cua is MIT. Sharing requires all of these:
+  * the pinned version is named;
+  * the confounds of A9.4 are stated;
+  * the owner decides.
+
+  This stream publishes nothing.
+* **Arm B's numbers** stay internal (CUA-1225). `--no-arm-b` drops them.
+
+### A9.9 Token and VM handling
+
+arc-driver runs as the bench user, so it could read `~/.cdb-secrets/claude-token`. Its MCP path does not (A9.2), and an agent that types into Terminal is caught by the side-door flags. On top of that:
+
+* The file only ever holds an access token.
+* After every `cdb-arc` session the token file is deleted, with sync, before a graceful shutdown. The run log notes the seat used and when its access token expires.
+* `cdb-arc` stays stopped afterwards and is never started for any other arm. `cdb-h2h` stays the clean image.
+
+### A9.10 Values filled in before the first trial
+
+(appended below before the mini-run starts: the `pins.json` `arc_driver` values from the VM install, the clone time of `cdb-arc`, and the run ids and cutoffs)
+
+### A9.11 Harness changes for this amendment
+
+* `arms.py`, `claude_arms.py` and `run_bench.py`: the `cc-arc-driver` arm, its MCP config, the pins and status preflight, row fields (`arc_driver`, `force_accessibility`, `force_accessibility_apps`, `arc_leftover_killed`) and the leftover sweep.
+* `cdb_adapter.py`: the switch, applied in this arm only.
+* `claude_events.py`: action classes for arc's tools.
+* `tools/arc_driver/`: the launcher, the install and grant scripts, and the hashed requirements.
+* `tools/analyze_arc.py`.
+* `pins.json` `arc_driver`.
+* `tests/test_arc_arm.py`.
+
+No other arm's behaviour changes.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

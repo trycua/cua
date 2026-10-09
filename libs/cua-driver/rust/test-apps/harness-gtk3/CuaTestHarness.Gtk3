@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# X11 remains the default for the canonical Xvfb lane. A native Wayland lane
+# exports GDK_BACKEND=wayland before launching this repo-owned fixture.
+export GDK_BACKEND="${GDK_BACKEND:-x11}"
+exec python3 "$(dirname "$(readlink -f "$0")")/main.py" "$@"

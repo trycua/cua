@@ -152,6 +152,69 @@ async fn a_step_refused_for_background_delivery_says_how_or_falls_back() {
     assert_eq!(harness.last("click")["delivery_mode"], "foreground");
 }
 
+#[test]
+fn a_failed_batch_keeps_the_step_report_readable() {
+    // v037c: a failed batch returned its step report plus a full read
+    // (~4 100 characters); the client cut it to "1. click ok: ... AXCh",
+    // hiding why step 2 failed.
+    let report =
+        "run_actions: step 2 of 2 failed\n1. click ok\n2. click ERROR (action): why".to_owned();
+    let mut content = vec![
+        crate::protocol::Content::text(report.clone()),
+        crate::protocol::Content::text("x".repeat(6_000)),
+    ];
+    super::super::fit_error_text(&mut content, super::super::ERROR_TEXT_BUDGET);
+    let text: String = content
+        .iter()
+        .filter_map(|part| match part {
+            crate::protocol::Content::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(text.starts_with(&report));
+    assert!(text.chars().count() <= super::super::ERROR_TEXT_BUDGET + 200);
+    assert!(text.contains("call get_window_state for the full window"));
+}
+
+#[tokio::test]
+async fn a_failed_batch_with_a_long_read_stays_within_the_budget() {
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
+            {"tool": "click", "args": {"pid": 7, "window_id": 3, "fail": true}}
+        ], "observe": true}))
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        text(&result).contains("2. click ERROR"),
+        "{}",
+        text(&result)
+    );
+    assert!(text(&result).chars().count() <= super::super::ERROR_TEXT_BUDGET + 200);
+}
+
+#[tokio::test]
+async fn batch_level_delivery_mode_is_the_steps_default() {
+    let harness = Harness::new();
+    // v037c: `delivery_mode` on run_actions itself was refused.
+    let result = harness
+        .run(
+            json!({"pid": 7, "window_id": 3, "delivery_mode": "foreground", "steps": [
+                {"tool": "click", "args": {"x": 1, "y": 2}},
+                {"tool": "click", "args": {"x": 1, "y": 2, "delivery_mode": "background"}}
+            ]}),
+        )
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let calls = harness.calls["click"].lock().unwrap().clone();
+    assert_eq!(calls[0]["delivery_mode"], "foreground");
+    assert_eq!(
+        calls[1]["delivery_mode"], "background",
+        "a step's own mode wins"
+    );
+}
+
 // ── read steps ───────────────────────────────────────────────────────────
 
 #[tokio::test]

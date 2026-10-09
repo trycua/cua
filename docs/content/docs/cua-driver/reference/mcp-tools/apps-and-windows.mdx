@@ -38,7 +38,9 @@ List macOS apps, both currently running and installed-but-not-running, with per-
 - active: is it the system-frontmost app? (implies running)
 - launch_path: filesystem path to the `.app` bundle, when known. Pass this to `launch_app` to start the app cold.
 - kind: `"desktop"` for `.app` bundles on macOS.
-- last_used: RFC3339 timestamp from the bundle's filesystem mtime, when readable; otherwise null.
+- last_used: RFC3339 timestamp from the bundle's filesystem mtime, when readable.
+
+Optional fields (bundle_id, launch_path, kind, last_used) are omitted when unknown, never null.
 
 Standalone running entries include only apps with NSApplicationActivationPolicyRegular: background helpers and system UI agents are filtered out. Installed apps resolve their running/pid state against all live processes by bundle identifier, so an installed app whose process runs as an accessory (LSUIElement / menu-bar apps, e.g. Cua Driver itself) still reports its live pid. Installed apps come from scanning /Applications, /Applications/Utilities, ~/Applications, /System/Applications, and /System/Applications/Utilities.
 

@@ -591,3 +591,54 @@ async def setup(task, session):
             assert task_cfg.description == "Interactive task"
         finally:
             await env.close()
+
+
+class TestFailedTaskStepEvidence:
+    @pytest.mark.asyncio
+    async def test_agent_failure_preserves_completed_steps(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+        import cua_bench.runners as runners
+
+        observed = {"steps": 0, "closed": False}
+
+        class BrokenEnvironment:
+            solve_task_fn = None
+            evaluate_task_fn = object()
+
+            async def reset(self, task_id=0):
+                return b"initial", SimpleNamespace()
+
+            async def step(self, action):
+                observed["steps"] += 1
+                if observed["steps"] == 3:
+                    raise RuntimeError("injected action failure")
+                return b"next"
+
+            async def close(self):
+                observed["closed"] = True
+
+        monkeypatch.setattr(runners, "make", lambda path, split="train": BrokenEnvironment())
+        result = await runners.run_single_task(
+            tmp_path, agent_fn=lambda screenshot, task: object(), max_steps=10
+        )
+        assert result.success is False
+        assert result.steps == 2
+        assert result.reward == 0.0
+        assert "injected action failure" in result.error
+        assert observed["closed"] is True
+
+    @pytest.mark.asyncio
+    async def test_reset_failure_reports_zero_steps(self, tmp_path, monkeypatch):
+        import cua_bench.runners as runners
+
+        class BrokenReset:
+            async def reset(self, task_id=0):
+                raise RuntimeError("reset failed")
+
+            async def close(self):
+                return None
+
+        monkeypatch.setattr(runners, "make", lambda path, split="train": BrokenReset())
+        result = await runners.run_single_task(tmp_path, oracle=True)
+        assert result.steps == 0
+        assert "reset failed" in result.error

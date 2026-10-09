@@ -18,12 +18,16 @@
    "read_only": true
   },
   {
-   "description": "List every top-level window currently known to the window manager. Each record self-contains its owning app identity so the caller never has to join back against list_apps.\n\nUse this — not list_apps — for any window-level reasoning: \"does this app have a visible window right now?\", \"which of this pid's windows is the main one?\".\n\nPer-record fields: window_id (HWND), pid + app_name, title, bounds {x, y, width, height}, layer (always 0), z_index (integer or null; higher values are closer to the front; null means stacking order is unavailable and callers must not infer one), is_on_screen, minimized. To select a frontmost candidate, take the maximum integer z_index; if every value is null, use an explicit fallback instead of relying on array order. The macOS-specific on_current_space / space_ids fields are omitted on Windows; current_space_id is null.\n\nInputs: pid (optional pid filter), on_screen_only (bool, default false).",
+   "description": "List every top-level window currently known to the window manager. Each record self-contains its owning app identity so the caller never has to join back against list_apps.\n\nUse this — not list_apps — for any window-level reasoning: \"does this app have a visible window right now?\", \"which of this pid's windows is the main one?\".\n\nPer-record fields: window_id (HWND), pid + app_name, title, bounds {x, y, width, height}, layer (always 0), z_index (integer or null; higher values are closer to the front; null means stacking order is unavailable and callers must not infer one), is_on_screen, minimized. To select a frontmost candidate, take the maximum integer z_index; if every value is null, use an explicit fallback instead of relying on array order. The macOS-specific on_current_space / space_ids fields are omitted on Windows; current_space_id is null.\n\nInputs: pid (optional pid filter), app (app-name filter), on_screen_only (bool, default false). Filter with app or pid: an unfiltered call lists every window.",
    "destructive": false,
    "idempotent": true,
    "input_schema": {
     "additionalProperties": false,
     "properties": {
+     "app": {
+      "description": "Only windows of apps whose name contains this text (case-insensitive), or whose bundle id equals it. Prefer this or `pid` over an unfiltered call, which returns every window on the host.",
+      "type": "string"
+     },
      "on_screen_only": {
       "description": "When true, drop windows that aren't currently on-screen. Default false.",
       "type": "boolean"

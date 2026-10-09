@@ -946,9 +946,11 @@ impl Tool for ListWindowsTool {
                 explicit fallback instead of relying on array order. The macOS-specific \
                 on_current_space / space_ids fields are \
                 omitted on Windows; current_space_id is null.\n\n\
-                Inputs: pid (optional pid filter), on_screen_only (bool, default false).".into(),
+                Inputs: pid (optional pid filter), app (app-name filter), on_screen_only (bool, \
+                default false). Filter with app or pid: an unfiltered call lists every window.".into(),
             input_schema: json!({"type":"object","properties":{
                 "pid":{"type":"integer","description":"Optional pid filter. When set, only this pid's windows are returned."},
+                "app":{"type":"string","description":cua_driver_core::tool_args::LIST_WINDOWS_APP_FILTER_DESCRIPTION},
                 "on_screen_only":{"type":"boolean","description":"When true, drop windows that aren't currently on-screen. Default false."}
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
@@ -970,6 +972,12 @@ impl Tool for ListWindowsTool {
         .unwrap_or_default();
         if on_screen_only {
             windows.retain(|w| w.is_on_screen);
+        }
+        if let Some(filter) = args.opt_str("app") {
+            windows.retain(|w| {
+                let app_name = pid_to_name.get(&w.pid).map(String::as_str).unwrap_or("");
+                cua_driver_core::tool_args::app_filter_matches(&filter, app_name, None)
+            });
         }
 
         // Swift surfaces a warning when a pid filter matches nothing.

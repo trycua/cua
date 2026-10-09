@@ -382,7 +382,7 @@ fn agent_instructions() -> String {
         r#"cua-driver: background GUI automation. No shell: for non-GUI outcomes use an app API/SDK, CLI or filesystem and read the result back there.
 
 Efficient loop:
-1. `list_windows` or `launch_app` for `pid` and `window_id`.
+1. `list_windows({{app:"Name"}})` or `launch_app` for `pid` and `window_id`. Unfiltered `list_windows`/`list_apps` list the whole host.
 2. Read narrowly: `get_window_state` with `query:"Save"` (or `max_elements`). Re-read with `since:"latest"` for only what changed. For just a picture, `include_accessibility_tree:false` (tokens stay valid).
 3. Act by `element_token` ({tree_kind}): row `[N]` is `<snapshot_id>:N`. Pixel `x,y` only for surfaces missing from the tree.
 4. Act through `run_actions({{steps:[{{tool,args}}],observe:true}})`, even for one step: it stops at the first failure and returns what changed, so no separate re-read.

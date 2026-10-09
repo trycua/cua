@@ -79,6 +79,21 @@ async fn resume_trusted_connection(
     bind_trusted_connection(sdk, record.options, record.transport_session)
 }
 
+/// Drop the results of connection tasks that have already finished.
+///
+/// A `JoinSet` keeps every completed task (and its output) until it is joined,
+/// so a long-lived daemon must reap finished connections or its memory grows
+/// with every connection it has ever served.
+fn reap_finished_connections(connection_tasks: &mut tokio::task::JoinSet<()>) {
+    while let Some(result) = connection_tasks.try_join_next() {
+        if let Err(error) = result {
+            if error.is_panic() {
+                tracing::warn!("service connection task panicked: {error}");
+            }
+        }
+    }
+}
+
 async fn take_trusted_resume_record(
     registry: &TrustedResumeRegistry,
     credential: &str,
@@ -1000,6 +1015,7 @@ pub async fn run_serve(
         tokio::select! {
             result = listener.accept() => {
                 let (stream, _) = result?;
+                reap_finished_connections(&mut connection_tasks);
                 if let Err(error) = authenticate_unix_peer(&stream) {
                     tracing::warn!("service connection rejected before request parsing: {error}");
                     continue;
@@ -2992,6 +3008,43 @@ mod trusted_resume_tests {
             .await
             .expect_err("consumed credential must not replay");
         assert!(replay.contains("unavailable or already used"));
+    }
+}
+
+#[cfg(test)]
+mod connection_reaping_tests {
+    use super::reap_finished_connections;
+
+    #[tokio::test]
+    async fn finished_connection_tasks_are_released() {
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..8 {
+            tasks.spawn(async {});
+        }
+        let live = tokio::sync::Notify::new();
+        let live = std::sync::Arc::new(live);
+        let waiter = live.clone();
+        tasks.spawn(async move { waiter.notified().await });
+        // Let the instantly-finishing tasks complete.
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+
+        reap_finished_connections(&mut tasks);
+
+        assert_eq!(tasks.len(), 1, "only the still-running connection remains");
+        live.notify_one();
+    }
+
+    #[tokio::test]
+    async fn a_panicked_connection_task_is_reaped_without_panicking_the_daemon() {
+        let mut tasks = tokio::task::JoinSet::new();
+        tasks.spawn(async { panic!("connection task panic") });
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        reap_finished_connections(&mut tasks);
+        assert!(tasks.is_empty());
     }
 }
 

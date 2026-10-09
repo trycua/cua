@@ -220,6 +220,40 @@ async def evaluate(task, session):
         assert result.error is not None
 
 
+class TestBenchmarkAggregationIntegrity:
+    @pytest.mark.asyncio
+    async def test_worker_crash_retains_task_identity_and_denominator(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+        import cua_bench.runners as runners
+
+        for name in ("first", "second"):
+            task_dir = tmp_path / name
+            task_dir.mkdir()
+            (task_dir / "main.py").write_text("# discovery placeholder\n")
+
+        monkeypatch.setattr(
+            runners, "make",
+            lambda path, split="train": SimpleNamespace(tasks_config_fn=lambda: [object()]),
+        )
+
+        async def fake_run(path, task_index=0, **kwargs):
+            if path.name == "first":
+                raise RuntimeError("worker exploded")
+            return runners.TaskResult(str(path), task_index, True, 1.0, 1)
+
+        monkeypatch.setattr(runners, "run_single_task", fake_run)
+        result = await runners.run_benchmark(tmp_path, max_parallel=2)
+
+        assert result.total_tasks == 2
+        assert result.success_count == 1
+        assert result.failed_count == 1
+        assert result.avg_reward == 0.5
+        assert result.task_results[0]["task_path"] == str(tmp_path / "first")
+        assert result.task_results[0]["variant_id"] == 0
+        assert "worker exploded" in result.task_results[0]["error"]
+        assert result.task_results[1]["task_path"] == str(tmp_path / "second")
+
+
 class TestBenchmarkScoreIntegrity:
     """Invalid evaluator output must never increase benchmark success."""
 

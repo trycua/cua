@@ -37,13 +37,13 @@ jobs:
       - name: Run CUA benchmark core and oracle regression suite
         working-directory: libs/cua-bench
         run: |
-          xvfb-run -a uv run --extra dev --with 'pytest-json-report>=1.5,<2' --with 'jsonschema>=4.20,<5' pytest --json-report --json-report-file=core-report.json --json-report-omit=streams \
+          xvfb-run -a uv run --extra dev --with 'pytest-json-report>=1.5,<2' --with 'jsonschema>=4.20,<5' --with 'pytest-timeout>=2.3,<3' pytest --timeout=120 --timeout-method=signal --json-report --json-report-file=core-report.json --json-report-omit=streams \
             cua_bench/tests/test_run_benchmark.py \
             cua_bench/tests/test_gym_interface.py \
             cua_bench/tests/test_actions.py -q
       - name: Run full benchmark suite including RL workers
         working-directory: libs/cua-bench
-        run: xvfb-run -a uv run --extra dev --extra rl --extra server --with 'httpx>=0.27,<1' --with 'pytest-json-report>=1.5,<2' --with 'jsonschema>=4.20,<5' pytest --json-report --json-report-file=full-report.json --json-report-omit=streams cua_bench/tests -q
+        run: xvfb-run -a uv run --extra dev --extra rl --extra server --with 'httpx>=0.27,<1' --with 'pytest-json-report>=1.5,<2' --with 'jsonschema>=4.20,<5' --with 'pytest-timeout>=2.3,<3' pytest --timeout=120 --timeout-method=signal --json-report --json-report-file=full-report.json --json-report-omit=streams cua_bench/tests -q
       - name: Independently verify test reports
         working-directory: libs/cua-bench
         run: python3 scripts/verify_pytest_receipt.py core-report.json full-report.json

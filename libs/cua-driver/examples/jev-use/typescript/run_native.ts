@@ -124,6 +124,10 @@ async function observe(
     window_id: windowId,
     include_accessibility_tree: true,
     include_screenshot: true,
+    // The observation needs structured elements, the markdown tree and the
+    // completeness flags; cua-driver 0.35 returns the lean markdown-only
+    // read unless asked for the full response.
+    full_output: true,
     ...windowStateArguments(task.scope),
     ...(timeoutMs !== undefined ? { timeout_ms: timeoutMs } : {}),
   });

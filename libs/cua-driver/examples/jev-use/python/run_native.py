@@ -97,6 +97,10 @@ async def observe(
         "window_id": window_id,
         "include_accessibility_tree": True,
         "include_screenshot": True,
+        # The observation needs structured elements, the markdown tree and the
+        # completeness flags of the walk; cua-driver 0.35 returns the lean
+        # markdown-only read unless asked for the full response.
+        "full_output": True,
         **task.scope.window_state_arguments(),
     }
     if timeout_ms is not None:

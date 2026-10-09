@@ -222,6 +222,17 @@ async def run_benchmark(
             max_parallel=4,
         )
     """
+    if not isinstance(max_parallel, int) or isinstance(max_parallel, bool) or max_parallel < 1:
+        raise ValueError("max_parallel must be a positive integer")
+    if not isinstance(max_steps, int) or isinstance(max_steps, bool) or max_steps < 1:
+        raise ValueError("max_steps must be a positive integer")
+    if max_variants is not None and (
+        not isinstance(max_variants, int)
+        or isinstance(max_variants, bool)
+        or max_variants < 1
+    ):
+        raise ValueError("max_variants must be a positive integer when provided")
+
     start_time = time.time()
 
     # Validate dataset path

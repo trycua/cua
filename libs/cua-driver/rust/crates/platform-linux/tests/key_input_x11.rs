@@ -4,7 +4,9 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
-use platform_linux::input::{send_click, send_key, send_key_at, send_key_xtest, send_type_text};
+use platform_linux::input::{
+    send_click, send_key, send_key_at, send_key_xtest, send_type_text, send_type_text_xtest,
+};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
@@ -111,6 +113,27 @@ fn assert_no_button_events(conn: &RustConnection, label: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn spare_keycodes(conn: &RustConnection) -> Result<Vec<u8>> {
+    let setup = conn.setup();
+    let (min, max) = (setup.min_keycode, setup.max_keycode);
+    let mapping = conn.get_keyboard_mapping(min, max - min + 1)?.reply()?;
+    let per = usize::from(mapping.keysyms_per_keycode);
+    Ok(mapping
+        .keysyms
+        .chunks(per)
+        .enumerate()
+        .filter(|(_, keysyms)| keysyms.iter().all(|&keysym| keysym == 0))
+        .map(|(index, _)| min + index as u8)
+        .collect())
+}
+
+fn focused_input_window(conn: &RustConnection, screen: usize) -> Result<Window> {
+    let window = input_window(conn, conn.setup().roots[screen].root, 0, 0)?;
+    conn.set_input_focus(InputFocus::PARENT, window, x11rb::CURRENT_TIME)?;
+    assert_eq!(conn.get_input_focus()?.reply()?.focus, window);
+    Ok(window)
 }
 
 #[test]
@@ -277,5 +300,22 @@ fn background_keys_deliver_complete_sequences_without_changing_focus() -> Result
         assert_key(&conn, &pair[0].1, keysym)?;
     }
     assert_eq!(conn.get_input_focus()?.reply()?.focus, sentinel);
+    Ok(())
+}
+
+/// Typing a character missing from the keymap borrows a spare keycode; the
+/// keymap must hold the same spare keycodes after the call as before it.
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_restores_the_spare_keycodes_it_borrows() -> Result<()> {
+    let (conn, screen) = connect()?;
+    focused_input_window(&conn, screen)?;
+    let before = spare_keycodes(&conn)?;
+    assert!(!before.is_empty(), "the test display has no spare keycode");
+    for text in ["\u{4f60}", "\u{597d}", "\u{4e16}"] {
+        send_type_text_xtest(text)?;
+        keyboard_events(&conn, 2)?;
+        assert_eq!(spare_keycodes(&conn)?, before, "after typing {text}");
+    }
     Ok(())
 }

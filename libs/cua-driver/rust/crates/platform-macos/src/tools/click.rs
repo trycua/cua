@@ -160,6 +160,72 @@ fn toggle_press_shows(role: &str, before: &str, now: &str) -> bool {
     now != before && (role != "AXRadioButton" || now == "1")
 }
 
+/// Finder's AXOpen on a folder icon navigates the window, destroying the icon,
+/// and returns -25205 although it ran. Count that error only when, before
+/// `timeout`, the element no longer exists and the window title moved away
+/// from `before`; return the new title.
+fn replaced_element_title(
+    err: crate::ax::bindings::AXError,
+    before: &str,
+    mut element_gone: impl FnMut() -> bool,
+    mut window_title: impl FnMut() -> Option<String>,
+    timeout: std::time::Duration,
+    poll: std::time::Duration,
+) -> Option<String> {
+    if err != crate::ax::bindings::kAXErrorAttributeUnsupported {
+        return None;
+    }
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if element_gone() {
+            if let Some(now) = window_title().filter(|now| now != before) {
+                return Some(now);
+            }
+        }
+        std::thread::sleep(poll.min(deadline.saturating_duration_since(std::time::Instant::now())));
+    }
+    None
+}
+
+/// The element's window and its title, read right before an AXOpen.
+/// `element` must be a valid (retained) `AXUIElementRef`.
+pub(super) unsafe fn window_before_open(
+    element: AXUIElementRef,
+) -> Option<(crate::ax::snapshot::RetainedElement, String)> {
+    let window = copy_element_attr(element, "AXWindow")?;
+    let retained = crate::ax::snapshot::RetainedElement::retain(window as usize);
+    // Short reads, here and in the poll after the action.
+    let _ = crate::ax::bindings::AXUIElementSetMessagingTimeout(window, 0.1);
+    let title = copy_string_attr(window, "AXTitle");
+    CFRelease(window as CFTypeRef);
+    Some((retained, title?))
+}
+
+/// After AXOpen on `element` returned `err`: the window's new title when the
+/// open replaced its own element (see `replaced_element_title`).
+pub(super) unsafe fn replaced_by_open(
+    element: AXUIElementRef,
+    err: crate::ax::bindings::AXError,
+    window: &crate::ax::snapshot::RetainedElement,
+    before: &str,
+) -> Option<String> {
+    use crate::ax::bindings::AXUIElementSetMessagingTimeout;
+    let window = window.as_ptr() as AXUIElementRef;
+    // Short reads keep the poll near its 800 ms budget; the element then gets
+    // the walker's bound back.
+    let _ = AXUIElementSetMessagingTimeout(element, 0.1);
+    let now = replaced_element_title(
+        err,
+        before,
+        || crate::ax::bindings::element_destroyed(element),
+        || copy_string_attr(window, "AXTitle"),
+        std::time::Duration::from_millis(800),
+        std::time::Duration::from_millis(50),
+    );
+    let _ = AXUIElementSetMessagingTimeout(element, crate::ax::tree::AX_MESSAGING_TIMEOUT_SECONDS);
+    now
+}
+
 /// The value `read` returns when, before `timeout`, it satisfies `shows` and
 /// a second read `stability` later agrees on it. Some apps (Finder's toolbar
 /// view switcher) apply a press and still return an AX error.
@@ -1514,8 +1580,26 @@ fn perform_ax_click(
     let toggle_before = is_toggle_press(ax_action, &role, &advertised)
         .then(read_value)
         .flatten();
+    let window_before = (ax_action == "AXOpen" && advertised.iter().any(|a| a == "AXOpen"))
+        .then(|| unsafe { window_before_open(element) })
+        .flatten();
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
     if err != crate::ax::bindings::kAXErrorSuccess {
+        if let Some((now, before)) = window_before.as_ref().and_then(|(window, before)| {
+            unsafe { replaced_by_open(element, err, window, before) }.map(|now| (now, before))
+        }) {
+            return Ok((
+                format!(
+                    "✅ Performed AXOpen on [{idx}] {role} \"{title}\"; the element no longer \
+                     exists and the window title is now \"{now}\" (was \"{before}\"), although \
+                     the app returned AX error {err}. Take a fresh snapshot before acting again."
+                ),
+                false,
+                false,
+                false,
+                false,
+            ));
+        }
         // Checked before the row-selection fallback, which writes AXSelected
         // on an ancestor: a toggle whose press landed needs no other write.
         if let Some(before) = toggle_before.filter(|_| press_error_may_have_acted(err)) {
@@ -1736,6 +1820,56 @@ mod tests {
             "a radio turning off was another radio's press"
         );
         assert!(!toggle_press_shows("AXRadioButton", "1", "1"));
+    }
+
+    /// Finder's AXOpen on a folder: -25205, the icon is destroyed and the
+    /// window title moves to the folder. Anything less keeps the error.
+    #[test]
+    fn an_erroring_open_counts_only_when_its_element_is_gone_and_the_window_changed() {
+        use crate::ax::bindings::{
+            kAXErrorAttributeUnsupported, kAXErrorFailure, kAXErrorInvalidUIElement,
+            kAXErrorSuccess,
+        };
+        let ms = std::time::Duration::from_millis;
+        let run = |err, gone_after: usize, after: &str, timeout| {
+            let mut reads = 0;
+            replaced_element_title(
+                err,
+                "findme",
+                || {
+                    reads += 1;
+                    reads > gone_after
+                },
+                || Some(after.to_string()),
+                timeout,
+                ms(1),
+            )
+        };
+        assert_eq!(
+            run(kAXErrorAttributeUnsupported, 3, "old", ms(5_000)),
+            Some("old".to_string())
+        );
+        // The element is still there: a real failure.
+        assert_eq!(
+            run(kAXErrorAttributeUnsupported, usize::MAX, "old", ms(30)),
+            None
+        );
+        // Gone, but the window did not change.
+        assert_eq!(run(kAXErrorAttributeUnsupported, 0, "findme", ms(30)), None);
+        // Other errors, including a stale handle's, are never reinterpreted.
+        for err in [kAXErrorInvalidUIElement, kAXErrorFailure, kAXErrorSuccess] {
+            assert_eq!(
+                replaced_element_title(
+                    err,
+                    "findme",
+                    || panic!("probed after {err}"),
+                    || panic!("probed after {err}"),
+                    ms(30),
+                    ms(1),
+                ),
+                None
+            );
+        }
     }
 
     /// An erroring toggle press counts only when the value shows the press

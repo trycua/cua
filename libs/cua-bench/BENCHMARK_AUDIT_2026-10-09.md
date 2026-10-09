@@ -52,3 +52,11 @@ Follow with positive real dataset runs on `cua-bench-basic`, a parallelism stres
 - Counterexamples added for forged path, forged variant, NaN reward and contradictory success/reward: commit `fbf83e1aa44660a5bf4b7f2cecb2711dcdf74fec`.
 - Source changes committed; no fresh pytest/CI execution or real sandbox E2E evidenced. Validation requires running `uv run pytest cua_bench/tests/test_run_benchmark.py -q` from `libs/cua-bench`, followed by dataset-level evaluation and independent oracle replay.
 - Horizontal status: Function P, state P, integration B, security P, performance B, maintainability P, observability P, testability P, user value B, external compatibility B. No Verified Closed.
+
+## Live CI evidence 2026-10-09
+- GitHub run 37908647343 passed prior build-only workflow, not pytest.
+- Run 37908806518: full-suite collection FAILED (3 errors importing optional `torch` from worker dataloader). No test pass may be inferred from collection failure.
+- Run 37908930187: core suite produced **79 passed, 11 failed**; all 11 browser failures cited missing Chromium/Playwright executables. CI installed browser dependencies subsequently.
+- Run 37909070828: core suite produced **89 passed, 1 failed**; only headed-browser interactive E2E failed because runner lacked X Server. Browser/Oracle noninteractive tests executed. Commit 55203190fe26282224a417dd22960de3c077f23e uses `xvfb-run -a` for headed test, with run 37909217474 queued/in progress when recorded. Do not treat it as passed until reviewed.
+- Local offline CUA contract and Outcome Witness standalone bundles: **27 passed in 0.06s**; unrelated to full `cua_bench/tests` run and not interchangeable evidence.
+- Still OPEN P0: full RL worker suite must run with optional `rl` dependencies and survive real execution; fault injection proving process/resource cleanup in dedicated sandbox; independent Oracle provenance and action/outcome witness against actual scene. No Verified Closed issued.

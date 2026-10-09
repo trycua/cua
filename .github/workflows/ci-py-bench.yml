@@ -37,7 +37,7 @@ jobs:
       - name: Run CUA benchmark core and oracle regression suite
         working-directory: libs/cua-bench
         run: |
-          uv run --extra dev pytest \
+          xvfb-run -a uv run --extra dev pytest \
             cua_bench/tests/test_run_benchmark.py \
             cua_bench/tests/test_gym_interface.py \
             cua_bench/tests/test_actions.py -q

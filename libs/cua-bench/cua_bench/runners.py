@@ -266,8 +266,16 @@ async def run_benchmark(
                 variant_count = len(env.tasks_config_fn())
             else:
                 variant_count = 1
-        except Exception:
-            variant_count = 1
+        except Exception as exc:
+            raise ValueError(
+                f"Failed to load task variants for {task_path} (split={split!r}): {exc}"
+            ) from exc
+
+        if variant_count < 1:
+            raise ValueError(
+                f"Task {task_path} (split={split!r}) has no variants; "
+                "refusing to report an incomplete benchmark"
+            )
 
         if max_variants:
             variant_count = min(variant_count, max_variants)

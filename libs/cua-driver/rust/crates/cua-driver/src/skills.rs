@@ -627,6 +627,11 @@ fn make_dir_symlink(target: &Path, link: &Path) -> Result<()> {
     // unlike `std::os::windows::fs::symlink_dir`. Shell out to cmd's
     // `mklink /J` — the canonical way to create a junction from a
     // standard user token.
+    // Agent paths use portable `/` separators, which mklink parses as
+    // switches. Rebuild the components with native separators; unlike
+    // canonicalize, this also works for the link that does not exist yet.
+    let target: PathBuf = target.components().collect();
+    let link: PathBuf = link.components().collect();
     let status = std::process::Command::new("cmd")
         .args(["/c", "mklink", "/J"])
         .arg(link)
@@ -984,22 +989,29 @@ mod tests {
 
     #[test]
     fn detected_client_links_once_and_rerun_reports_existing_link() {
-        let home = tempdir().unwrap();
-        let parent = home.path().join(".claude/skills");
-        let marker = home.path().join(".claude");
-        let local_skill = home.path().join(".cua-driver/skills/cua-driver");
-        std::fs::create_dir_all(&marker).unwrap();
-        std::fs::create_dir_all(&local_skill).unwrap();
+        let root = tempdir().unwrap();
+        for home_name in ["plain", "skills 用户"] {
+            let home = root.path().join(home_name);
+            let parent = home.join(".claude/skills");
+            let marker = home.join(".claude");
+            let local_skill = home.join(".cua-driver/skills/cua-driver");
+            std::fs::create_dir_all(&marker).unwrap();
+            std::fs::create_dir_all(&local_skill).unwrap();
+            std::fs::write(local_skill.join("SKILL.md"), "test skill").unwrap();
 
-        assert_eq!(
-            link_agent_paths("Claude Code", &parent, Some(&marker), &local_skill).unwrap(),
-            LinkStatus::Created
-        );
-        assert_eq!(
-            link_agent_paths("Claude Code", &parent, Some(&marker), &local_skill).unwrap(),
-            LinkStatus::Existing
-        );
-        assert!(parent.join("cua-driver").exists());
+            assert_eq!(
+                link_agent_paths("Claude Code", &parent, Some(&marker), &local_skill).unwrap(),
+                LinkStatus::Created
+            );
+            assert_eq!(
+                std::fs::read_to_string(parent.join("cua-driver/SKILL.md")).unwrap(),
+                "test skill"
+            );
+            assert_eq!(
+                link_agent_paths("Claude Code", &parent, Some(&marker), &local_skill).unwrap(),
+                LinkStatus::Existing
+            );
+        }
     }
 
     #[test]

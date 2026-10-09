@@ -247,6 +247,44 @@ class TestNoAgentExecutionEvidence:
         assert "not executed" in result.error
 
 
+class TestWorkerResultProvenance:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("fault", ["wrong_path", "wrong_variant", "nan_reward", "contradictory_success"])
+    async def test_forged_worker_result_cannot_inflate_score(self, tmp_path, monkeypatch, fault):
+        from types import SimpleNamespace
+        import cua_bench.runners as runners
+
+        task_dir = tmp_path / "one"
+        task_dir.mkdir()
+        (task_dir / "main.py").write_text("# stub\n")
+        monkeypatch.setattr(
+            runners, "make",
+            lambda path, split="train": SimpleNamespace(tasks_config_fn=lambda: [object()]),
+        )
+
+        async def forged_result(path, task_index=0, **kwargs):
+            result = runners.TaskResult(str(path), task_index, True, 1.0, 1)
+            if fault == "wrong_path":
+                result.task_path = "/other/task"
+            elif fault == "wrong_variant":
+                result.variant_id = 123
+            elif fault == "nan_reward":
+                result.reward = float("nan")
+            else:
+                result.success = False
+            return result
+
+        monkeypatch.setattr(runners, "run_single_task", forged_result)
+        result = await runners.run_benchmark(tmp_path, max_parallel=1)
+        assert result.total_tasks == 1
+        assert result.success_count == 0
+        assert result.failed_count == 1
+        assert result.avg_reward == 0.0
+        assert result.task_results[0]["task_path"] == str(task_dir)
+        assert result.task_results[0]["variant_id"] == 0
+        assert "Invalid or misattributed" in result.task_results[0]["error"]
+
+
 class TestBenchmarkAggregationIntegrity:
     @pytest.mark.asyncio
     async def test_worker_crash_retains_task_identity_and_denominator(self, tmp_path, monkeypatch):

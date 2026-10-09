@@ -259,7 +259,6 @@ pub struct SpacesBuilder {
     operator_display: Option<Arc<dyn OperatorDisplay>>,
     probe_timeout: Option<Duration>,
     download_dir: Option<PathBuf>,
-    #[cfg(feature = "spaces-agents")]
     relay: Option<crate::relay::RelayAccount>,
     #[cfg(feature = "mcp")]
     extensions: Vec<Arc<dyn crate::extension::SpacesExtension>>,
@@ -394,7 +393,6 @@ impl SpacesBuilder {
                 connections: tokio::sync::Mutex::new(HashMap::new()),
                 #[cfg(feature = "spaces-hotspot")]
                 hotspots: tokio::sync::Mutex::new(BTreeMap::new()),
-                #[cfg(feature = "spaces-agents")]
                 relay: std::sync::RwLock::new(self.relay),
                 relay_cache: std::sync::Mutex::new(Vec::new()),
                 relay_read: tokio::sync::Mutex::new(None),
@@ -614,7 +612,6 @@ pub(crate) struct Inner {
     connections: tokio::sync::Mutex<HashMap<String, Space>>,
     #[cfg(feature = "spaces-hotspot")]
     pub(crate) hotspots: tokio::sync::Mutex<BTreeMap<String, crate::hotspot::Hotspot>>,
-    #[cfg(feature = "spaces-agents")]
     relay: std::sync::RwLock<Option<crate::relay::RelayAccount>>,
     /// The last directory listing (so `list` and `resolve` stay sync).
     pub(crate) relay_cache: std::sync::Mutex<Vec<crate::relay::RelayMachine>>,

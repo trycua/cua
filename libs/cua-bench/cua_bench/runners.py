@@ -342,10 +342,39 @@ async def run_benchmark(
             )
             rewards.append(0.0)
         else:
+            # Validate worker provenance against the scheduled task before scoring.
+            invalid = (
+                not isinstance(result, TaskResult)
+                or result.task_path != str(task_path)
+                or result.variant_id != variant_id
+                or type(result.success) is not bool
+                or not isinstance(result.reward, (int, float))
+                or isinstance(result.reward, bool)
+                or not math.isfinite(result.reward)
+                or not 0.0 <= result.reward <= 1.0
+                or not isinstance(result.steps, int)
+                or isinstance(result.steps, bool)
+                or result.steps < 0
+                or (bool(result.error) and result.success)
+                or (not result.error and result.success != (result.reward >= 0.5))
+            )
+            if invalid:
+                task_results.append(
+                    {
+                        "task_path": str(task_path),
+                        "variant_id": variant_id,
+                        "success": False,
+                        "reward": 0.0,
+                        "steps": 0,
+                        "error": "Invalid or misattributed worker result",
+                    }
+                )
+                rewards.append(0.0)
+                continue
             task_results.append(
                 {
-                    "task_path": result.task_path,
-                    "variant_id": result.variant_id,
+                    "task_path": str(task_path),
+                    "variant_id": variant_id,
                     "success": result.success,
                     "reward": result.reward,
                     "steps": result.steps,

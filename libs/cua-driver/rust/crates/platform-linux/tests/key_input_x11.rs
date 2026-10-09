@@ -332,3 +332,31 @@ fn xtest_text_fails_when_no_spare_keycode_is_left() -> Result<()> {
     );
     Ok(())
 }
+
+/// Characters of one text that are missing from the keymap must not share a
+/// borrowed keycode: rebinding it while the client still translates an earlier
+/// key changes what the client reads. A repeated character reuses its own.
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_gives_each_missing_character_its_own_keycode() -> Result<()> {
+    let (conn, screen) = connect()?;
+    focused_input_window(&conn, screen)?;
+    let spare = spare_keycodes(&conn)?;
+    assert!(
+        spare.len() >= 2,
+        "the test display has fewer than 2 spare keycodes"
+    );
+    send_type_text_xtest("\u{4f60}\u{597d}\u{4f60}")?;
+    let presses: Vec<u8> = keyboard_events(&conn, 6)?
+        .into_iter()
+        .filter(|(pressed, _)| *pressed)
+        .map(|(_, event)| event.detail)
+        .collect();
+    assert!(
+        presses.iter().all(|keycode| spare.contains(keycode)),
+        "{presses:?}"
+    );
+    assert_ne!(presses[0], presses[1], "{presses:?}");
+    assert_eq!(presses[0], presses[2], "{presses:?}");
+    Ok(())
+}

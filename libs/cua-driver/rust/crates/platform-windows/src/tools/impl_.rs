@@ -1233,7 +1233,8 @@ impl Tool for GetWindowStateTool {
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."},
                 "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
                 "max_image_dimension":{"type":"integer","minimum":0,"description":"Per-call long-edge limit for the returned screenshot, in pixels (aspect ratio preserved). Explicit values override configured behavior; 0 returns native resolution. Omit to preserve the configured default."},
-                "max_dimension":{"type":"integer","minimum":1,"description":"Legacy optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved). Applied on top of the configured max_image_dimension ceiling when max_image_dimension is omitted; the tighter wins."}
+                "max_dimension":{"type":"integer","minimum":1,"description":"Legacy optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved). Applied on top of the configured max_image_dimension ceiling when max_image_dimension is omitted; the tighter wins."},
+                "display_only": cua_driver_core::display_only::schema()
             },"additionalProperties":false}),
             // Swift annotation: idempotent: false (each call is a fresh snapshot).
             read_only: true, destructive: false, idempotent: false, open_world: false,
@@ -1241,6 +1242,10 @@ impl Tool for GetWindowStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        let display_only = match cua_driver_core::display_only::display_only(&args) {
+            Ok(display_only) => display_only,
+            Err(refusal) => return refusal,
+        };
         // Swift error wording 1:1.
         let pid = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(v) => v as u32,
@@ -1359,10 +1364,13 @@ impl Tool for GetWindowStateTool {
         // `screenshot_out_file` the bytes go to disk and the path is surfaced
         // instead of embedding base64; otherwise the base64 PNG is embedded.
         let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
-        let observation_only = args
-            .get("_observation_only")
-            .and_then(|value| value.as_bool())
-            == Some(true);
+        // `display_only` is the public form of the internal observation-only
+        // read: pixels for a preview, with no snapshot or capture change.
+        let observation_only = display_only
+            || args
+                .get("_observation_only")
+                .and_then(|value| value.as_bool())
+                == Some(true);
         // `include_accessibility_tree` (default true) mirrors include_screenshot:
         // set false to SKIP the UIA walk and return just the screenshot + window
         // metadata (the capture-only / preview path).
@@ -1734,6 +1742,9 @@ impl Tool for GetWindowStateTool {
                         cua_driver_core::window_inspection::BrowserChromeCaptureCoverage::NotObservable,
                     ),
                 );
+                if display_only {
+                    cua_driver_core::display_only::mark_display_only(&mut structured);
+                }
 
                 // The capture-only path (include_accessibility_tree:false) leaves
                 // `content` empty if the screenshot was also unavailable. Return a
@@ -10310,6 +10321,9 @@ mod desktop_scope_tests;
 
 #[cfg(test)]
 mod pid_window_target_tests;
+
+#[cfg(test)]
+mod display_only_tests;
 
 #[cfg(test)]
 mod value_write_readback_tests;

@@ -1101,13 +1101,18 @@ impl Tool for GetWindowStateTool {
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps."},
                 "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
                 "max_dimension":{"type":"integer","minimum":1,"description":"Legacy optional cap on the returned screenshot's long edge. Applied on top of the configured max_image_dimension ceiling when max_image_dimension is omitted."},
-                "max_image_dimension":{"type":"integer","minimum":0,"description":"Per-call long-edge override. This value wins over configured and legacy limits; 0 returns native-resolution PNG bytes. Omit to preserve configured behavior."}
+                "max_image_dimension":{"type":"integer","minimum":0,"description":"Per-call long-edge override. This value wins over configured and legacy limits; 0 returns native-resolution PNG bytes. Omit to preserve configured behavior."},
+                "display_only": cua_driver_core::display_only::schema()
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: false, open_world: false,
         })
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        let display_only = match cua_driver_core::display_only::display_only(&args) {
+            Ok(display_only) => display_only,
+            Err(refusal) => return refusal,
+        };
         use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_u32("pid") {
             Ok(v) => v,
@@ -1288,10 +1293,13 @@ impl Tool for GetWindowStateTool {
                  screenshot_out_file to force a capture.",
             );
         }
-        let observation_only = args
-            .get("_observation_only")
-            .and_then(|value| value.as_bool())
-            == Some(true);
+        // `display_only` is the public form of the internal observation-only
+        // read: pixels for a preview, with no snapshot or capture change.
+        let observation_only = display_only
+            || args
+                .get("_observation_only")
+                .and_then(|value| value.as_bool())
+                == Some(true);
         let state = self.state.clone();
         let state_for_capture = state.clone();
         let query_for_walk = query.clone();
@@ -1337,7 +1345,17 @@ impl Tool for GetWindowStateTool {
                 window_overlays(pid, xid)
             };
             let screenshot = if should_capture {
-                let captured = if overlays.covers_window {
+                // A screenshot-only read with a size cap (a live preview) asks
+                // a GNOME helper with API 10 to downscale in the compositor,
+                // and keeps the window's full size for frame_scale.
+                let preview = if !want_tree && max_dim > 0 && crate::wayland::is_wayland() {
+                    crate::wayland::shell_helper::screenshot_window_preview(xid, pid, max_dim)
+                } else {
+                    None
+                };
+                let captured = if let Some((png, width, height)) = preview {
+                    Ok((png, Some((width, height))))
+                } else if overlays.covers_window {
                     overlays
                         .window_rect
                         .ok_or_else(|| anyhow::anyhow!("window geometry unavailable"))
@@ -1345,12 +1363,16 @@ impl Tool for GetWindowStateTool {
                             crate::capture::screenshot_root_region_png(x, y, w, h)
                         })
                         .or_else(|_| crate::wayland::screenshot_dispatch_with_pid(xid, pid))
+                        .map(|png| (png, None))
                 } else {
-                    crate::wayland::screenshot_dispatch_with_pid(xid, pid)
+                    crate::wayland::screenshot_dispatch_with_pid(xid, pid).map(|png| (png, None))
                 };
                 match captured {
-                    Ok(raw) => {
-                        let (orig_w, orig_h) = crate::capture::png_dimensions_pub(&raw)?;
+                    Ok((raw, original_size)) => {
+                        let (orig_w, orig_h) = match original_size {
+                            Some(size) => size,
+                            None => crate::capture::png_dimensions_pub(&raw)?,
+                        };
                         let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;
                         let (w, h) = crate::capture::png_dimensions_pub(&png)?;
                         // An explicit per-call max_image_dimension (0 = native)
@@ -1734,6 +1756,9 @@ impl Tool for GetWindowStateTool {
                      window_bounds is where it sits on the screen. Pass scope:\"desktop\" only \
                      for get_desktop_state pixels."
                 );
+                if display_only {
+                    cua_driver_core::display_only::mark_display_only(&mut structured);
+                }
 
                 // The capture-only path (include_accessibility_tree:false) leaves
                 // `content` empty when the screenshot was also unavailable — most
@@ -14492,6 +14517,9 @@ mod pid_window_target_tests;
 
 #[cfg(test)]
 mod session_cursor_target_tests;
+
+#[cfg(test)]
+mod display_only_tests;
 
 #[cfg(test)]
 mod window_capture_dimension_tests;

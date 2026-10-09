@@ -134,7 +134,8 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "minimum": 0,
                     "description": "Per-call override for the returned screenshot's long edge in pixels. An explicit value wins over the session/global setting; 0 returns native resolution. Omit to preserve configured behavior."
-                }
+                },
+                "display_only": cua_driver_core::display_only::schema()
             },
             "additionalProperties": false
         }),
@@ -178,6 +179,10 @@ impl Tool for GetWindowStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        let display_only = match cua_driver_core::display_only::display_only(&args) {
+            Ok(display_only) => display_only,
+            Err(refusal) => return refusal,
+        };
         use cua_driver_core::tool_args::ArgsExt;
         let pid = match args.require_i32("pid") {
             Ok(v) => v,
@@ -279,10 +284,13 @@ impl Tool for GetWindowStateTool {
         // Internal direct-tool mode used by verify_state. Registry ingress
         // strips underscore-prefixed arguments before public dispatch; only
         // a trusted direct in-process invocation can enable this mode.
-        let observation_only = args
-            .get("_observation_only")
-            .and_then(|value| value.as_bool())
-            == Some(true);
+        // `display_only` is the public form of the same mode: pixels for a
+        // preview, with no snapshot or capture change.
+        let observation_only = display_only
+            || args
+                .get("_observation_only")
+                .and_then(|value| value.as_bool())
+                == Some(true);
         // Optional caps — when omitted, fall back to the defaults baked into
         // the AX walker (#22865). minimum:1 keyed in the schema, but defend
         // against 0 here as well so a misbehaving client can't disable the
@@ -717,7 +725,9 @@ impl Tool for GetWindowStateTool {
         // background mutation, reported per route so an agent can choose
         // before acting. Every action still revalidates — this is advisory,
         // not a promise. Old consumers ignore the extra field.
-        {
+        // A display-only frame cannot ground input, so skip the input probe:
+        // previews poll several times a second.
+        if !display_only {
             let capture_available = screenshot_dims.is_some();
             let report = tokio::task::spawn_blocking(move || {
                 let facts = crate::ax::exact_target::gather_background_facts(pid, window_id, None);
@@ -779,6 +789,9 @@ impl Tool for GetWindowStateTool {
                 cua_driver_core::window_inspection::BrowserChromeCaptureCoverage::MayBeIncomplete,
             ),
         );
+        if display_only {
+            cua_driver_core::display_only::mark_display_only(&mut structured);
+        }
         ToolResult {
             content,
             is_error: None,
@@ -1216,6 +1229,35 @@ mod tests {
     use super::*;
     use crate::ax::tree::AXNode;
     use serde_json::json;
+
+    // T3 Code feature-detects the preview mode from this schema property.
+    #[test]
+    fn display_only_is_advertised() {
+        let tool = GetWindowStateTool::new(Arc::new(ToolState::new(false, false, None)));
+        assert_eq!(
+            tool.def().input_schema["properties"]["display_only"]["type"],
+            "boolean"
+        );
+    }
+
+    #[tokio::test]
+    async fn display_only_refuses_accessibility_snapshot_requests() {
+        let tool = GetWindowStateTool::new(Arc::new(ToolState::new(false, false, None)));
+        for tree in [None, Some(true)] {
+            let mut args = serde_json::json!({"pid": 42, "window_id": 7, "display_only": true});
+            if let Some(tree) = tree {
+                args["include_accessibility_tree"] = serde_json::json!(tree);
+            }
+            let result = tool.invoke(args).await;
+            assert_eq!(
+                serde_json::to_value(result).unwrap(),
+                serde_json::to_value(cua_driver_core::protocol::ToolResult::error(
+                    "display_only requires include_accessibility_tree:false"
+                ))
+                .unwrap()
+            );
+        }
+    }
 
     fn node(
         idx: Option<usize>,

@@ -189,6 +189,11 @@ TMP_DIR=$(mktemp -d)
 log() { printf '==> %s\n' "$*"; }
 err() { printf 'error: %s\n' "$*" >&2; }
 
+# The integer "version" of a GNOME helper metadata.json, or nothing.
+helper_metadata_version() {
+    sed -n 's/.*"version"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null | head -n 1 || true
+}
+
 # Return the source form of an app's designated code-signing requirement.
 macos_designated_requirement() {
     codesign -d -r- "$1" 2>/dev/null \
@@ -1423,10 +1428,18 @@ else
 
         INSTALLED_WAYLAND_HELPER="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/winrects@cua"
         if [[ -d "$INSTALLED_WAYLAND_HELPER" ]]; then
-            cp "$SRC_WAYLAND_HELPER/winrects@cua/metadata.json" \
-                "$SRC_WAYLAND_HELPER/winrects@cua/extension.js" \
-                "$INSTALLED_WAYLAND_HELPER/"
-            log "updated installed GNOME helper; reload the GNOME session to activate it"
+            # The helper's API is additive and shared with other apps that
+            # bundle it, so never replace a newer installed helper.
+            BUNDLED_HELPER_VERSION=$(helper_metadata_version "$SRC_WAYLAND_HELPER/winrects@cua/metadata.json")
+            INSTALLED_HELPER_VERSION=$(helper_metadata_version "$INSTALLED_WAYLAND_HELPER/metadata.json")
+            if (( ${INSTALLED_HELPER_VERSION:-0} > ${BUNDLED_HELPER_VERSION:-0} )); then
+                log "kept installed GNOME helper v$INSTALLED_HELPER_VERSION (newer than bundled v${BUNDLED_HELPER_VERSION:-?})"
+            else
+                cp "$SRC_WAYLAND_HELPER/winrects@cua/metadata.json" \
+                    "$SRC_WAYLAND_HELPER/winrects@cua/extension.js" \
+                    "$INSTALLED_WAYLAND_HELPER/"
+                log "updated installed GNOME helper; reload the GNOME session to activate it"
+            fi
         fi
     fi
     log "installed $VERSIONED_DIR/$BINARY_NAME (version $VERSION, target $TARGET)"

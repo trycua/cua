@@ -1,0 +1,1392 @@
+{
+  "reference_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
+  "reference_version": "0.1.1",
+  "native_version": "0.34.0",
+  "native_latest_version": "0.34.0",
+  "native_release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
+  "reference_upstream_checked_at": "2026-10-06T13:30:15.222929+00:00",
+  "candidates_checked_at": "2026-10-06T13:30:14Z",
+  "macos": "27.0.1",
+  "python": "3.12.12",
+  "native_release_commit": "b0968e1b12834e485dda68789541a3cc57664a9f",
+  "scope": "literal form subtask: deterministic boundary ablation and real JEV negative control",
+  "results": [
+    {
+      "driver": "bounded-cua",
+      "mode": "stepwise",
+      "rep": 0,
+      "caller_invocations": 3,
+      "decision_provider_calls": 0,
+      "verified_steps": [
+        {
+          "field": "name",
+          "verified": true
+        },
+        {
+          "field": "email",
+          "verified": true
+        },
+        {
+          "field": "subscribe",
+          "verified": true
+        }
+      ],
+      "passed": true,
+      "terminal": "verified_complete",
+      "wall_ms": 4876.3416669971775,
+      "driver_tool_ms": 4873.842877001152,
+      "driver_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 6,
+      "tool_refusals": []
+    },
+    {
+      "driver": "bounded-cua",
+      "mode": "bounded",
+      "rep": 0,
+      "caller_invocations": 1,
+      "decision_provider_calls": 0,
+      "verified_steps": [
+        {
+          "field": "name",
+          "verified": true
+        },
+        {
+          "field": "email",
+          "verified": true
+        },
+        {
+          "field": "subscribe",
+          "verified": true
+        }
+      ],
+      "passed": true,
+      "terminal": "verified_complete",
+      "wall_ms": 4703.319416003069,
+      "driver_tool_ms": 4701.9939580059145,
+      "driver_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 6,
+      "tool_refusals": []
+    },
+    {
+      "case": "native_form",
+      "rep": 0,
+      "requested_model": "jev-latest",
+      "status": "NEEDS_AGENT",
+      "reason": "Reached agent-supplied action budget (10).",
+      "actions": 10,
+      "claimed_complete": false,
+      "verified": false,
+      "passed": false,
+      "false_completion": false,
+      "raw_step_events": [
+        {
+          "step": 1,
+          "terminal_event": false,
+          "operation": "TYPE_TEXT",
+          "target": "ax_1",
+          "decision_ms": 257
+        },
+        {
+          "step": 2,
+          "terminal_event": false,
+          "operation": "TYPE_TEXT",
+          "target": "ax_2",
+          "decision_ms": 142
+        },
+        {
+          "step": 3,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "decision_ms": 176
+        },
+        {
+          "step": 4,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_6",
+          "decision_ms": 151
+        },
+        {
+          "step": 5,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "decision_ms": 147
+        },
+        {
+          "step": 6,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "decision_ms": 184
+        },
+        {
+          "step": 7,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_6",
+          "decision_ms": 156
+        },
+        {
+          "step": 8,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "decision_ms": 173
+        },
+        {
+          "step": 9,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_6",
+          "decision_ms": 164
+        },
+        {
+          "step": 10,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_6",
+          "decision_ms": 158
+        },
+        {
+          "step": 10,
+          "terminal_event": true,
+          "operation": "NEEDS_AGENT",
+          "target": null,
+          "decision_ms": null
+        }
+      ],
+      "wall_ms": 25246.412708002026,
+      "decisions": [
+        {
+          "step": 1,
+          "target_name": "Full name",
+          "state_changed": true,
+          "operation": "TYPE_TEXT",
+          "target": "ax_1",
+          "input_key": "name",
+          "confidence": 0.53,
+          "margin": 0.37999999999999995,
+          "decision_ms": 257,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 3944,
+            "output_tokens": 811
+          }
+        },
+        {
+          "step": 2,
+          "target_name": "Email",
+          "state_changed": true,
+          "operation": "TYPE_TEXT",
+          "target": "ax_2",
+          "input_key": "email",
+          "confidence": 0.73,
+          "margin": 0.6599999999999999,
+          "decision_ms": 142,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 4223,
+            "output_tokens": 819
+          }
+        },
+        {
+          "step": 3,
+          "target_name": "Plan",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "input_key": null,
+          "confidence": 0.38,
+          "margin": 0.12,
+          "decision_ms": 176,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 4483,
+            "output_tokens": 816
+          }
+        },
+        {
+          "step": 4,
+          "target_name": "Basic",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_6",
+          "input_key": null,
+          "confidence": 0.46,
+          "margin": 0.28,
+          "decision_ms": 151,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 4958,
+            "output_tokens": 847
+          }
+        },
+        {
+          "step": 5,
+          "target_name": "Plan",
+          "state_changed": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "input_key": null,
+          "confidence": 0.39,
+          "margin": 0.15000000000000002,
+          "decision_ms": 147,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 4991,
+            "output_tokens": 816
+          }
+        },
+        {
+          "step": 6,
+          "target_name": "Plan",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "input_key": null,
+          "confidence": 0.69,
+          "margin": 0.59,
+          "decision_ms": 184,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 5240,
+            "output_tokens": 816
+          }
+        },
+        {
+          "step": 7,
+          "target_name": "Basic",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_6",
+          "input_key": null,
+          "confidence": 0.23,
+          "margin": 0.0,
+          "decision_ms": 156,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 5715,
+            "output_tokens": 847
+          }
+        },
+        {
+          "step": 8,
+          "target_name": "Plan",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "input_key": null,
+          "confidence": 0.46,
+          "margin": 0.29000000000000004,
+          "decision_ms": 173,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 5748,
+            "output_tokens": 816
+          }
+        },
+        {
+          "step": 9,
+          "target_name": "Basic",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_6",
+          "input_key": null,
+          "confidence": 0.56,
+          "margin": 0.39,
+          "decision_ms": 164,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 6223,
+            "output_tokens": 847
+          }
+        },
+        {
+          "step": 10,
+          "target_name": "Open 0 ms",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_6",
+          "input_key": null,
+          "confidence": 0.4,
+          "margin": 0.13999999999999996,
+          "decision_ms": 158,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 5999,
+            "output_tokens": 816
+          }
+        },
+        {
+          "step": 10,
+          "target_name": null,
+          "state_changed": null,
+          "operation": "NEEDS_AGENT",
+          "target": null,
+          "input_key": null,
+          "confidence": null,
+          "margin": null,
+          "decision_ms": null,
+          "reported_model": null,
+          "usage": null
+        }
+      ],
+      "decision_ms": 1708,
+      "driver": "cua",
+      "provider_requests": [
+        {
+          "ms": 256.88079099927563,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 142.44779100408778,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 176.1407500016503,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 151.14933300355915,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 146.62979199783877,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 183.6611670005368,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 155.7962079969002,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 171.8122919992311,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 163.82491600234061,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 157.7060829877155,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        }
+      ],
+      "provider_request_ms": 1706.0491229931358,
+      "task": {
+        "goal": "Set Full name and Email to the supplied values and enable Subscribe. Do not submit.",
+        "verification": [
+          "Full name is Synthetic Person",
+          "Email is synthetic@example.invalid",
+          "Subscribe is checked"
+        ],
+        "inputs": {
+          "name": "Synthetic Person",
+          "email": "synthetic@example.invalid"
+        },
+        "constraints": [],
+        "metadata": {},
+        "shortcuts": {},
+        "allowed_risks": []
+      },
+      "max_actions": 10,
+      "observed_injection_note": false,
+      "observation_ms": 4345.189212981495,
+      "action_tool_ms": 16757.97871100076,
+      "driver_tool_ms": 21103.167923982255,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": true,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "mode": "jev",
+      "decision_provider_calls": 10,
+      "caller_invocations": 1,
+      "tool_call_count": 61,
+      "tool_refusals": []
+    },
+    {
+      "case": "native_form",
+      "rep": 1,
+      "requested_model": "jev-latest",
+      "status": "NEEDS_AGENT",
+      "reason": "Reached agent-supplied action budget (10).",
+      "actions": 10,
+      "claimed_complete": false,
+      "verified": false,
+      "passed": false,
+      "false_completion": false,
+      "raw_step_events": [
+        {
+          "step": 1,
+          "terminal_event": false,
+          "operation": "TYPE_TEXT",
+          "target": "ax_1",
+          "decision_ms": 142
+        },
+        {
+          "step": 2,
+          "terminal_event": false,
+          "operation": "TYPE_TEXT",
+          "target": "ax_2",
+          "decision_ms": 171
+        },
+        {
+          "step": 3,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "decision_ms": 146
+        },
+        {
+          "step": 4,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_6",
+          "decision_ms": 155
+        },
+        {
+          "step": 5,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "decision_ms": 150
+        },
+        {
+          "step": 6,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_7",
+          "decision_ms": 178
+        },
+        {
+          "step": 7,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "decision_ms": 168
+        },
+        {
+          "step": 8,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "decision_ms": 171
+        },
+        {
+          "step": 9,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "decision_ms": 190
+        },
+        {
+          "step": 10,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_7",
+          "decision_ms": 148
+        },
+        {
+          "step": 10,
+          "terminal_event": true,
+          "operation": "NEEDS_AGENT",
+          "target": null,
+          "decision_ms": null
+        }
+      ],
+      "wall_ms": 24439.925917002256,
+      "decisions": [
+        {
+          "step": 1,
+          "target_name": "Full name",
+          "state_changed": true,
+          "operation": "TYPE_TEXT",
+          "target": "ax_1",
+          "input_key": "name",
+          "confidence": 0.45,
+          "margin": 0.26,
+          "decision_ms": 142,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 3944,
+            "output_tokens": 811
+          }
+        },
+        {
+          "step": 2,
+          "target_name": "Email",
+          "state_changed": true,
+          "operation": "TYPE_TEXT",
+          "target": "ax_2",
+          "input_key": "email",
+          "confidence": 0.71,
+          "margin": 0.63,
+          "decision_ms": 171,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 4223,
+            "output_tokens": 819
+          }
+        },
+        {
+          "step": 3,
+          "target_name": "Plan",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "input_key": null,
+          "confidence": 0.45,
+          "margin": 0.19,
+          "decision_ms": 146,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 4483,
+            "output_tokens": 816
+          }
+        },
+        {
+          "step": 4,
+          "target_name": "Basic",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_6",
+          "input_key": null,
+          "confidence": 0.45,
+          "margin": 0.25,
+          "decision_ms": 155,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 4958,
+            "output_tokens": 847
+          }
+        },
+        {
+          "step": 5,
+          "target_name": "Plan",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "input_key": null,
+          "confidence": 0.41,
+          "margin": 0.19,
+          "decision_ms": 150,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 4991,
+            "output_tokens": 816
+          }
+        },
+        {
+          "step": 6,
+          "target_name": "Pro",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_7",
+          "input_key": null,
+          "confidence": 0.26,
+          "margin": 0.020000000000000018,
+          "decision_ms": 178,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 5466,
+            "output_tokens": 847
+          }
+        },
+        {
+          "step": 7,
+          "target_name": "Plan",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "input_key": null,
+          "confidence": 0.34,
+          "margin": 0.21,
+          "decision_ms": 168,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 5496,
+            "output_tokens": 816
+          }
+        },
+        {
+          "step": 8,
+          "target_name": "Plan",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "input_key": null,
+          "confidence": 0.45,
+          "margin": 0.32,
+          "decision_ms": 171,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 5966,
+            "output_tokens": 847
+          }
+        },
+        {
+          "step": 9,
+          "target_name": "Plan",
+          "state_changed": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "input_key": null,
+          "confidence": 0.38,
+          "margin": 0.11000000000000004,
+          "decision_ms": 190,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 5994,
+            "output_tokens": 816
+          }
+        },
+        {
+          "step": 10,
+          "target_name": "Open 300 ms",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_7",
+          "input_key": null,
+          "confidence": 0.38,
+          "margin": 0.07,
+          "decision_ms": 148,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 5980,
+            "output_tokens": 816
+          }
+        },
+        {
+          "step": 10,
+          "target_name": null,
+          "state_changed": null,
+          "operation": "NEEDS_AGENT",
+          "target": null,
+          "input_key": null,
+          "confidence": null,
+          "margin": null,
+          "decision_ms": null,
+          "reported_model": null,
+          "usage": null
+        }
+      ],
+      "decision_ms": 1619,
+      "driver": "cua",
+      "provider_requests": [
+        {
+          "ms": 141.97441599390004,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 170.9630409895908,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 146.4194169966504,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 155.35570900829043,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 150.1898330025142,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 177.90337500628084,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 167.6813329977449,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 170.78179199597798,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 189.80933299462777,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 147.84854199388064,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        }
+      ],
+      "provider_request_ms": 1618.926790979458,
+      "task": {
+        "goal": "Set Full name and Email to the supplied values and enable Subscribe. Do not submit.",
+        "verification": [
+          "Full name is Synthetic Person",
+          "Email is synthetic@example.invalid",
+          "Subscribe is checked"
+        ],
+        "inputs": {
+          "name": "Synthetic Person",
+          "email": "synthetic@example.invalid"
+        },
+        "constraints": [],
+        "metadata": {},
+        "shortcuts": {},
+        "allowed_risks": []
+      },
+      "max_actions": 10,
+      "observed_injection_note": false,
+      "observation_ms": 3587.522123954841,
+      "action_tool_ms": 16467.077081950265,
+      "driver_tool_ms": 20054.599205905106,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": false,
+        "plan": "Pro",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": true,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "mode": "jev",
+      "decision_provider_calls": 10,
+      "caller_invocations": 1,
+      "tool_call_count": 64,
+      "tool_refusals": []
+    },
+    {
+      "driver": "bounded-cua",
+      "mode": "bounded",
+      "rep": 1,
+      "caller_invocations": 1,
+      "decision_provider_calls": 0,
+      "verified_steps": [
+        {
+          "field": "name",
+          "verified": true
+        },
+        {
+          "field": "email",
+          "verified": true
+        },
+        {
+          "field": "subscribe",
+          "verified": true
+        }
+      ],
+      "passed": true,
+      "terminal": "verified_complete",
+      "wall_ms": 4852.782708985615,
+      "driver_tool_ms": 4851.063292022445,
+      "driver_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 6,
+      "tool_refusals": []
+    },
+    {
+      "driver": "bounded-cua",
+      "mode": "stepwise",
+      "rep": 1,
+      "caller_invocations": 3,
+      "decision_provider_calls": 0,
+      "verified_steps": [
+        {
+          "field": "name",
+          "verified": true
+        },
+        {
+          "field": "email",
+          "verified": true
+        },
+        {
+          "field": "subscribe",
+          "verified": true
+        }
+      ],
+      "passed": true,
+      "terminal": "verified_complete",
+      "wall_ms": 4657.374708011048,
+      "driver_tool_ms": 4655.984540018835,
+      "driver_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 6,
+      "tool_refusals": []
+    },
+    {
+      "driver": "bounded-cua",
+      "mode": "stepwise",
+      "rep": 2,
+      "caller_invocations": 3,
+      "decision_provider_calls": 0,
+      "verified_steps": [
+        {
+          "field": "name",
+          "verified": true
+        },
+        {
+          "field": "email",
+          "verified": true
+        },
+        {
+          "field": "subscribe",
+          "verified": true
+        }
+      ],
+      "passed": true,
+      "terminal": "verified_complete",
+      "wall_ms": 4672.710500002722,
+      "driver_tool_ms": 4670.750125995255,
+      "driver_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 6,
+      "tool_refusals": []
+    },
+    {
+      "driver": "bounded-cua",
+      "mode": "bounded",
+      "rep": 2,
+      "caller_invocations": 1,
+      "decision_provider_calls": 0,
+      "verified_steps": [
+        {
+          "field": "name",
+          "verified": true
+        },
+        {
+          "field": "email",
+          "verified": true
+        },
+        {
+          "field": "subscribe",
+          "verified": true
+        }
+      ],
+      "passed": true,
+      "terminal": "verified_complete",
+      "wall_ms": 4807.663749990752,
+      "driver_tool_ms": 4806.634041990037,
+      "driver_calls": 6,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 6,
+      "tool_refusals": []
+    },
+    {
+      "case": "native_form",
+      "rep": 2,
+      "requested_model": "jev-latest",
+      "status": "NEEDS_AGENT",
+      "reason": "Reached agent-supplied action budget (10).",
+      "actions": 10,
+      "claimed_complete": false,
+      "verified": false,
+      "passed": false,
+      "false_completion": false,
+      "raw_step_events": [
+        {
+          "step": 1,
+          "terminal_event": false,
+          "operation": "TYPE_TEXT",
+          "target": "ax_1",
+          "decision_ms": 237
+        },
+        {
+          "step": 2,
+          "terminal_event": false,
+          "operation": "TYPE_TEXT",
+          "target": "ax_2",
+          "decision_ms": 160
+        },
+        {
+          "step": 3,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "decision_ms": 157
+        },
+        {
+          "step": 5,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_6",
+          "decision_ms": 188
+        },
+        {
+          "step": 6,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "decision_ms": 164
+        },
+        {
+          "step": 7,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "decision_ms": 152
+        },
+        {
+          "step": 8,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_7",
+          "decision_ms": 163
+        },
+        {
+          "step": 9,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "decision_ms": 189
+        },
+        {
+          "step": 10,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "decision_ms": 168
+        },
+        {
+          "step": 11,
+          "terminal_event": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "decision_ms": 172
+        },
+        {
+          "step": 11,
+          "terminal_event": true,
+          "operation": "NEEDS_AGENT",
+          "target": null,
+          "decision_ms": null
+        }
+      ],
+      "wall_ms": 24614.84054099128,
+      "decisions": [
+        {
+          "step": 1,
+          "target_name": "Full name",
+          "state_changed": true,
+          "operation": "TYPE_TEXT",
+          "target": "ax_1",
+          "input_key": "name",
+          "confidence": 0.5,
+          "margin": 0.34,
+          "decision_ms": 237,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 3944,
+            "output_tokens": 811
+          }
+        },
+        {
+          "step": 2,
+          "target_name": "Email",
+          "state_changed": true,
+          "operation": "TYPE_TEXT",
+          "target": "ax_2",
+          "input_key": "email",
+          "confidence": 0.76,
+          "margin": 0.7,
+          "decision_ms": 160,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 4223,
+            "output_tokens": 819
+          }
+        },
+        {
+          "step": 3,
+          "target_name": "Plan",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "input_key": null,
+          "confidence": 0.48,
+          "margin": 0.21000000000000002,
+          "decision_ms": 157,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 4483,
+            "output_tokens": 816
+          }
+        },
+        {
+          "step": 5,
+          "target_name": "Basic",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_6",
+          "input_key": null,
+          "confidence": 0.42,
+          "margin": 0.22999999999999998,
+          "decision_ms": 188,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 4954,
+            "output_tokens": 847
+          }
+        },
+        {
+          "step": 6,
+          "target_name": "Plan",
+          "state_changed": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "input_key": null,
+          "confidence": 0.47,
+          "margin": 0.24000000000000005,
+          "decision_ms": 164,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 4987,
+            "output_tokens": 816
+          }
+        },
+        {
+          "step": 7,
+          "target_name": "Plan",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "input_key": null,
+          "confidence": 0.6,
+          "margin": 0.42000000000000004,
+          "decision_ms": 152,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 5236,
+            "output_tokens": 816
+          }
+        },
+        {
+          "step": 8,
+          "target_name": "Pro",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_7",
+          "input_key": null,
+          "confidence": 0.68,
+          "margin": 0.59,
+          "decision_ms": 163,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 5707,
+            "output_tokens": 847
+          }
+        },
+        {
+          "step": 9,
+          "target_name": "Plan",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "input_key": null,
+          "confidence": 0.46,
+          "margin": 0.28,
+          "decision_ms": 189,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 5733,
+            "output_tokens": 816
+          }
+        },
+        {
+          "step": 10,
+          "target_name": "Plan",
+          "state_changed": true,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "input_key": null,
+          "confidence": 0.44,
+          "margin": 0.32999999999999996,
+          "decision_ms": 168,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 6203,
+            "output_tokens": 847
+          }
+        },
+        {
+          "step": 11,
+          "target_name": "Plan",
+          "state_changed": false,
+          "operation": "CLICK",
+          "target": "ax_4",
+          "input_key": null,
+          "confidence": 0.45,
+          "margin": 0.18000000000000005,
+          "decision_ms": 172,
+          "reported_model": "jev-1.13.0",
+          "usage": {
+            "input_tokens": 5974,
+            "output_tokens": 816
+          }
+        },
+        {
+          "step": 11,
+          "target_name": null,
+          "state_changed": null,
+          "operation": "NEEDS_AGENT",
+          "target": null,
+          "input_key": null,
+          "confidence": null,
+          "margin": null,
+          "decision_ms": null,
+          "reported_model": null,
+          "usage": null
+        }
+      ],
+      "decision_ms": 1750,
+      "driver": "cua",
+      "provider_requests": [
+        {
+          "ms": 236.7221669992432,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 159.83120900637005,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 156.50804199685808,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 214.41504199174233,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 188.0635420093313,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 164.03687500860542,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 151.92670800024644,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 163.27579200151376,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 188.781040997128,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 168.4747499966761,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 171.9351670035394,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        }
+      ],
+      "provider_request_ms": 1963.970335011254,
+      "task": {
+        "goal": "Set Full name and Email to the supplied values and enable Subscribe. Do not submit.",
+        "verification": [
+          "Full name is Synthetic Person",
+          "Email is synthetic@example.invalid",
+          "Subscribe is checked"
+        ],
+        "inputs": {
+          "name": "Synthetic Person",
+          "email": "synthetic@example.invalid"
+        },
+        "constraints": [],
+        "metadata": {},
+        "shortcuts": {},
+        "allowed_risks": []
+      },
+      "max_actions": 10,
+      "observed_injection_note": false,
+      "observation_ms": 3836.37591599836,
+      "action_tool_ms": 16160.289877996547,
+      "driver_tool_ms": 19996.665793994907,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": false,
+        "plan": "Pro",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "mode": "jev",
+      "decision_provider_calls": 11,
+      "caller_invocations": 1,
+      "tool_call_count": 65,
+      "tool_refusals": []
+    }
+  ],
+  "running_servers": {
+    "reference": {
+      "name": "reference",
+      "version": "0.1.1"
+    },
+    "cua": {
+      "name": "cua-driver",
+      "version": "0.34.0"
+    }
+  }
+}

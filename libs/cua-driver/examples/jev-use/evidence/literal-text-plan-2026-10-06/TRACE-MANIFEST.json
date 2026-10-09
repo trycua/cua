@@ -1,0 +1,34 @@
+[
+  {
+    "file": "results.json.gz",
+    "raw_sha256": "3e529c654a90e06ddd223ef64539a57dfe4a80f3c67736fddb6d76b7c2571a48",
+    "gzip_sha256": "880e88f59e3ce7bc55836798548d3258b295e9c82ed6b12b66e66d5a31cdab16",
+    "raw_bytes": 1626809,
+    "gzip_bytes": 35240,
+    "scope": "retained negative broader task or batching control"
+  },
+  {
+    "file": "grounded-imprecise-goal-results.json.gz",
+    "raw_sha256": "2109df177ead1684761941e33921c9d67db921f9734b88ce7395609f2aa46051",
+    "gzip_sha256": "0fd1e06366989b78723bdf81c0d695548f283ea53178ce1a8acad02b35f19765",
+    "raw_bytes": 296855,
+    "gzip_bytes": 8711,
+    "scope": "retained negative broader task or batching control"
+  },
+  {
+    "file": "grounded-results.json.gz",
+    "raw_sha256": "d252052db774b79c8c3f4c93baa36c1baffaebd5c6d337152837529ff10c2727",
+    "gzip_sha256": "59cf7a4c5e6f5c7ecc423ed9520ee96e5cb5a3e6723ea3107cf4ef65381eb1c6",
+    "raw_bytes": 298890,
+    "gzip_bytes": 9081,
+    "scope": "retained negative broader task or batching control"
+  },
+  {
+    "file": "port-results.json.gz",
+    "raw_sha256": "493dcd730bbaf662dd4c715c0b61b214658f3fe50fb6fe75afbfdf708258f5f6",
+    "gzip_sha256": "0dc0282a38fe24088eb48e29c4bb3c6f296a191cfcb378895997fb1d4d94420f",
+    "raw_bytes": 279645,
+    "gzip_bytes": 9404,
+    "scope": "successful matched text-only port"
+  }
+]

@@ -547,3 +547,38 @@ The example was inspired by
 an MIT-licensed early TypeSafe computer-use integration. This implementation
 uses Cua Driver's current typed browser and MCP contracts and does not copy its
 source code.
+
+## Opt-in literal text plans
+
+When the caller has already supplied exact native text-field labels and literal values, [literal_text_plan.py](python/literal_text_plan.py) can execute up to three setters without asking Jev to choose an already-known action. It uses the existing native role/risk policy, fresh observation-local tokens and stable actionable ancestry. The caller supplies a same-record/context guard and independent step and final application oracles. Ambiguity, changed context, risky labels, refusal, timeout or failed proof stops the plan; input is never retried. It does not interpret natural-language goals or change Driver defaults.
+
+```python
+from literal_text_plan import LiteralTextStep, execute_literal_text_plan
+
+# actor is the existing run.Driver wrapper over one supported MCP session.
+# These literals and selectors come from the caller's authorized intent.
+receipt = await execute_literal_text_plan(
+    actor, pid=pid, window_id=window_id, platform="macos",
+    steps=(LiteralTextStep("Full name", supplied_name),
+           LiteralTextStep("Email", supplied_email)),
+    verify_context=still_the_requested_record,
+    verify_step=independent_application_step_check,
+    verify_final=independent_application_final_check,
+)
+```
+
+The oracles must establish actual application state; an input acknowledgement or the same tree used to select the action is insufficient. `verify_context` must reject another record, modal state or owner context even when its controls have the same labels. `DriverLike.call` must match `run.Driver.call` and raise on MCP errors and structured refusals. After interruption or an uncertain input failure, observe the effect before starting another plan. The helper deliberately has no credential or model configuration. An optional `choose` hook exists for comparisons and can return only the sole complete candidate's ID; it cannot change the supplied literal or tool arguments.
+
+In a historical singleton-control comparison with three alternating pairs on one owned macOS fixture, both the recipe and its deliberately redundant real-JEV control passed 3/3 with no false completion. Both made six Driver calls; removing two JEV requests reduced median wall time from 3.963 s to 3.603 s (about 9%). The control used the unchanged Reference `TypeSafeJevPolicy` as an external research hook, not jev-use's usual chooser request schema. This is evidence about the cost of redundant decisions on supplied literals, not a general planning advantage, frontier-model call measurement or Driver-core speedup. No browser, checkbox, Windows or Linux live qualification is claimed. [Evidence, negative controls and reproduction](evidence/literal-text-plan-2026-10-06/README.md).
+
+Run the focused safety checks from the example directory:
+
+```sh
+uv run --frozen python -m unittest discover -s python/tests -p test_literal_text_plan.py
+```
+
+### Validating an ordinary model plan
+
+`validate_literal_text_plan` accepts only an exact transcription of the caller-authorized owner, ordered labels and literal values; it rejects additional actions, reordered steps and changed literals. Execution still requires fresh unique selectors and independent application checks. [Normal-chooser qualification](evidence/agent-normal-chooser-2026-10-06/README.md) compares a one-time frontier plan with the normal Cua JEV request rather than the earlier singleton control. The repeated local qualification passed all 20 tasks with independent proof and zero false completion. The chooser-only baseline was fastest (3.848 s median); frontier-plus-normal took 8.613 s, frontier-plus-literal 8.551 s, and the composite literal path 8.224 s. Removing two JEV decisions saved requests and tokens, but the literal path won only two of five matched time pairs. The composite won three of five against frontier-plus-normal and two of five against literal alone; no consistent stacked speedup was established. The historical singleton result does not establish a normal-chooser gain.
+
+Provider and fixture identifiers were anonymized after measurement; timings are unchanged. Historical hashes identify the original inputs, while publication hashes identify edited copies.

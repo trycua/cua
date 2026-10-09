@@ -1,0 +1,39 @@
+{
+  "measured_source_commit": "d95fa463446750f0dbff122c4c2b1e67af3913cd",
+  "measured_runner_sha256": "820b9f63a63e9c8b22c31f0e386a5f6f77227be0c85ae9e41b57cbe2ee0b0153",
+  "traces": {
+    "results": {
+      "file": "results.json.gz",
+      "raw_bytes": 1345517,
+      "raw_sha256": "8ff260bc05140cb6a9f700b382e3da13e4ca9b502f5227a67930c9b134b86a71",
+      "compressed_bytes": 52137,
+      "compressed_sha256": "55bfabc257b14f57344e091866625b28ecca72092c52850e8b23847fba6ebc4c"
+    },
+    "smoke-results": {
+      "file": "smoke-results.json.gz",
+      "raw_bytes": 270265,
+      "raw_sha256": "b0612baf27edbfba3a7b13831f467eb8f4214ff55f0991690b65d5e1e039934f",
+      "compressed_bytes": 12145,
+      "compressed_sha256": "7ac8d26a9e7288a5a4a5947802392d27c3390fa6b2aa50c37e22dd578721ec13"
+    },
+    "locked-smoke-results": {
+      "file": "locked-smoke-results.json.gz",
+      "raw_bytes": 14272,
+      "raw_sha256": "2c95adb2e9d6f5c8e89b3985f9e170931d7dff62214d3157045332f7ff7759cb",
+      "compressed_bytes": 2187,
+      "compressed_sha256": "bbf2d785326ec7de286a692497318ad92c6620710516872f0b823c3b5ac9c43a"
+    },
+    "readiness-smoke-results": {
+      "file": "readiness-smoke-results.json.gz",
+      "raw_bytes": 763739,
+      "raw_sha256": "bd594f9896312f4fe8208a3d1f9de0e352b7246d0c8da81238b6560dc949998c",
+      "compressed_bytes": 15391,
+      "compressed_sha256": "9cf4d5abbd2bb708a1246ac7a7e018d840bc783ce4008b3558111988e10289c1"
+    }
+  },
+  "publication_source_hashes": {
+    "measured_source_commit": "d95fa463446750f0dbff122c4c2b1e67af3913cd",
+    "measured_runner_sha256": "c9544440af9b005e90107612e697157acc3d3b8358aea3353c829cded592b8a7"
+  },
+  "publication_edits": "Provider and fixture identifiers were anonymized after measurement; timings are unchanged. Historical hashes identify the original inputs, while publication hashes identify edited copies."
+}

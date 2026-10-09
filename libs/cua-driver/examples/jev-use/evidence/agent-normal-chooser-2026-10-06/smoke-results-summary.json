@@ -1,0 +1,259 @@
+{
+  "schema": "cua.literal_normal_qualification_summary_v1",
+  "strict_criterion": "terminal verified_complete AND raw passed AND raw oracle_passed AND independently recomputed fixture oracle",
+  "canonical_count_provenance": "derive exact child_dispatches list from retained operation response; initial raw composite counters were null because runner expected nested telemetry",
+  "groups": {
+    "chooser_only": {
+      "trials": 1,
+      "strict_passes": 1,
+      "oracle_passes": 1,
+      "false_completions": 0,
+      "success_median_wall_ms": 4007.0926250045886,
+      "all_median_wall_ms": 4007.0926250045886,
+      "median_mcp_wall_ms": 3570.230833007372,
+      "median_frontier_ms": 0,
+      "median_jev_ms": 429.09400099597406,
+      "visible_mcp_calls": [
+        7
+      ],
+      "canonical_child_calls": [
+        7
+      ],
+      "frontier_attempts": 0,
+      "frontier_completed_turns": 0,
+      "frontier_input_tokens": 0,
+      "frontier_cached_input_tokens": 0,
+      "frontier_output_tokens": 0,
+      "frontier_reasoning_tokens": 0,
+      "jev_decision_calls": 2,
+      "jev_http_calls": 2,
+      "jev_input_tokens": 2088,
+      "jev_output_tokens": 192
+    },
+    "frontier_normal": {
+      "trials": 1,
+      "strict_passes": 1,
+      "oracle_passes": 1,
+      "false_completions": 0,
+      "success_median_wall_ms": 10168.712709011743,
+      "all_median_wall_ms": 10168.712709011743,
+      "median_mcp_wall_ms": 3633.9409979846096,
+      "median_frontier_ms": 6231.0954999993555,
+      "median_jev_ms": 293.6840000038501,
+      "visible_mcp_calls": [
+        7
+      ],
+      "canonical_child_calls": [
+        7
+      ],
+      "frontier_attempts": 1,
+      "frontier_completed_turns": 1,
+      "frontier_input_tokens": 17384,
+      "frontier_cached_input_tokens": 0,
+      "frontier_output_tokens": 49,
+      "frontier_reasoning_tokens": 0,
+      "jev_decision_calls": 2,
+      "jev_http_calls": 2,
+      "jev_input_tokens": 2088,
+      "jev_output_tokens": 192
+    },
+    "frontier_literal": {
+      "trials": 1,
+      "strict_passes": 1,
+      "oracle_passes": 1,
+      "false_completions": 0,
+      "success_median_wall_ms": 7835.179874993628,
+      "all_median_wall_ms": 7835.179874993628,
+      "median_mcp_wall_ms": 3523.673167001107,
+      "median_frontier_ms": 4304.387041993323,
+      "median_jev_ms": 0,
+      "visible_mcp_calls": [
+        7
+      ],
+      "canonical_child_calls": [
+        7
+      ],
+      "frontier_attempts": 1,
+      "frontier_completed_turns": 1,
+      "frontier_input_tokens": 17384,
+      "frontier_cached_input_tokens": 0,
+      "frontier_output_tokens": 70,
+      "frontier_reasoning_tokens": 19,
+      "jev_decision_calls": 0,
+      "jev_http_calls": 0,
+      "jev_input_tokens": 0,
+      "jev_output_tokens": 0
+    },
+    "frontier_literal_composite": {
+      "trials": 1,
+      "strict_passes": 1,
+      "oracle_passes": 1,
+      "false_completions": 0,
+      "success_median_wall_ms": 10139.92945800419,
+      "all_median_wall_ms": 10139.92945800419,
+      "median_mcp_wall_ms": 4290.885749986046,
+      "median_frontier_ms": 5833.462958995369,
+      "median_jev_ms": 0,
+      "visible_mcp_calls": [
+        7
+      ],
+      "canonical_child_calls": [
+        9
+      ],
+      "frontier_attempts": 1,
+      "frontier_completed_turns": 1,
+      "frontier_input_tokens": 17384,
+      "frontier_cached_input_tokens": 0,
+      "frontier_output_tokens": 49,
+      "frontier_reasoning_tokens": 0,
+      "jev_decision_calls": 0,
+      "jev_http_calls": 0,
+      "jev_input_tokens": 0,
+      "jev_output_tokens": 0
+    }
+  },
+  "pairs": [
+    {
+      "rep": 0,
+      "baseline": "frontier_normal",
+      "candidate": "frontier_literal",
+      "both_strict_pass": true,
+      "candidate_minus_baseline_ms": -2333.532834018115
+    },
+    {
+      "rep": 0,
+      "baseline": "chooser_only",
+      "candidate": "frontier_literal",
+      "both_strict_pass": true,
+      "candidate_minus_baseline_ms": 3828.0872499890393
+    },
+    {
+      "rep": 0,
+      "baseline": "frontier_literal",
+      "candidate": "frontier_literal_composite",
+      "both_strict_pass": true,
+      "candidate_minus_baseline_ms": 2304.7495830105618
+    },
+    {
+      "rep": 0,
+      "baseline": "frontier_normal",
+      "candidate": "frontier_literal_composite",
+      "both_strict_pass": true,
+      "candidate_minus_baseline_ms": -28.78325100755319
+    },
+    {
+      "rep": 0,
+      "baseline": "chooser_only",
+      "candidate": "frontier_literal_composite",
+      "both_strict_pass": true,
+      "candidate_minus_baseline_ms": 6132.836832999601
+    }
+  ],
+  "rows": [
+    {
+      "mode": "chooser_only",
+      "rep": 0,
+      "smoke": true,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "independent_oracle_pass": true,
+      "false_completion": false,
+      "wall_ms": 4007.0926250045886,
+      "mcp_wall_ms": 3570.230833007372,
+      "visible_mcp_calls": 7,
+      "canonical_child_calls": 7,
+      "raw_canonical_child_calls": 7,
+      "frontier_ms": 0,
+      "frontier_attempts": 0,
+      "frontier_completed_turns": 0,
+      "frontier_input_tokens": 0,
+      "frontier_cached_input_tokens": 0,
+      "frontier_output_tokens": 0,
+      "frontier_reasoning_tokens": 0,
+      "jev_decision_calls": 2,
+      "jev_http_calls": 2,
+      "jev_ms": 429.09400099597406,
+      "jev_input_tokens": 2088,
+      "jev_output_tokens": 192
+    },
+    {
+      "mode": "frontier_normal",
+      "rep": 0,
+      "smoke": true,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "independent_oracle_pass": true,
+      "false_completion": false,
+      "wall_ms": 10168.712709011743,
+      "mcp_wall_ms": 3633.9409979846096,
+      "visible_mcp_calls": 7,
+      "canonical_child_calls": 7,
+      "raw_canonical_child_calls": 7,
+      "frontier_ms": 6231.0954999993555,
+      "frontier_attempts": 1,
+      "frontier_completed_turns": 1,
+      "frontier_input_tokens": 17384,
+      "frontier_cached_input_tokens": 0,
+      "frontier_output_tokens": 49,
+      "frontier_reasoning_tokens": 0,
+      "jev_decision_calls": 2,
+      "jev_http_calls": 2,
+      "jev_ms": 293.6840000038501,
+      "jev_input_tokens": 2088,
+      "jev_output_tokens": 192
+    },
+    {
+      "mode": "frontier_literal",
+      "rep": 0,
+      "smoke": true,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "independent_oracle_pass": true,
+      "false_completion": false,
+      "wall_ms": 7835.179874993628,
+      "mcp_wall_ms": 3523.673167001107,
+      "visible_mcp_calls": 7,
+      "canonical_child_calls": 7,
+      "raw_canonical_child_calls": 7,
+      "frontier_ms": 4304.387041993323,
+      "frontier_attempts": 1,
+      "frontier_completed_turns": 1,
+      "frontier_input_tokens": 17384,
+      "frontier_cached_input_tokens": 0,
+      "frontier_output_tokens": 70,
+      "frontier_reasoning_tokens": 19,
+      "jev_decision_calls": 0,
+      "jev_http_calls": 0,
+      "jev_ms": 0,
+      "jev_input_tokens": 0,
+      "jev_output_tokens": 0
+    },
+    {
+      "mode": "frontier_literal_composite",
+      "rep": 0,
+      "smoke": true,
+      "terminal": "verified_complete",
+      "strict_pass": true,
+      "independent_oracle_pass": true,
+      "false_completion": false,
+      "wall_ms": 10139.92945800419,
+      "mcp_wall_ms": 4290.885749986046,
+      "visible_mcp_calls": 7,
+      "canonical_child_calls": 9,
+      "raw_canonical_child_calls": null,
+      "frontier_ms": 5833.462958995369,
+      "frontier_attempts": 1,
+      "frontier_completed_turns": 1,
+      "frontier_input_tokens": 17384,
+      "frontier_cached_input_tokens": 0,
+      "frontier_output_tokens": 49,
+      "frontier_reasoning_tokens": 0,
+      "jev_decision_calls": 0,
+      "jev_http_calls": 0,
+      "jev_ms": 0,
+      "jev_input_tokens": 0,
+      "jev_output_tokens": 0
+    }
+  ],
+  "raw_sha256": "b0612baf27edbfba3a7b13831f467eb8f4214ff55f0991690b65d5e1e039934f"
+}

@@ -1,0 +1,399 @@
+{
+  "reference_commit": "74ffae1108b1cb4b1f6b161084af12646f544ba5",
+  "reference_version": "0.1.1",
+  "native_version": "0.34.0",
+  "native_latest_version": "0.34.0",
+  "native_release": "https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.34.0",
+  "reference_upstream_checked_at": "2026-10-06T13:39:54.440916+00:00",
+  "candidates_checked_at": "2026-10-06T13:39:53Z",
+  "macos": "27.0.1",
+  "python": "3.12.12",
+  "native_release_commit": "b0968e1b12834e485dda68789541a3cc57664a9f",
+  "results": [
+    {
+      "decisions": [
+        {
+          "label": "Full name",
+          "kind": "SET_VALUE",
+          "terminal": null,
+          "target": "ax_1",
+          "input_key": "value",
+          "confidence": 1.0
+        },
+        {
+          "label": "Email",
+          "kind": "SET_VALUE",
+          "terminal": null,
+          "target": "ax_2",
+          "input_key": "value",
+          "confidence": 0.99
+        },
+        {
+          "label": "Subscribe",
+          "kind": null,
+          "terminal": "BLOCKED",
+          "target": null,
+          "input_key": null,
+          "confidence": 0.25
+        }
+      ],
+      "mode": "grounded_jev",
+      "rep": 0,
+      "passed": false,
+      "terminal": "handoff",
+      "error_type": "Handoff",
+      "error": "Chooser did not select the sole authorized action",
+      "wall_ms": 3911.1173749988666,
+      "driver_calls": 7,
+      "driver_tool_ms": 3420.08233400702,
+      "provider_requests": [
+        {
+          "ms": 220.8207920048153,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 130.18462499894667,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 133.45475000096485,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        }
+      ],
+      "decision_provider_calls": 3,
+      "provider_ms": 484.4601670047268,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 7,
+      "tool_refusals": []
+    },
+    {
+      "decisions": [],
+      "mode": "grounded_literal",
+      "rep": 0,
+      "passed": true,
+      "terminal": "verified_complete",
+      "steps": [
+        {
+          "label": "Full name",
+          "verified": true,
+          "decision_kind": null
+        },
+        {
+          "label": "Email",
+          "verified": true,
+          "decision_kind": null
+        },
+        {
+          "label": "Subscribe",
+          "verified": true,
+          "decision_kind": null
+        }
+      ],
+      "wall_ms": 4793.722125003114,
+      "driver_calls": 9,
+      "driver_tool_ms": 4790.331126030651,
+      "provider_requests": [],
+      "decision_provider_calls": 0,
+      "provider_ms": 0,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 9,
+      "tool_refusals": []
+    },
+    {
+      "decisions": [],
+      "mode": "grounded_literal",
+      "rep": 1,
+      "passed": true,
+      "terminal": "verified_complete",
+      "steps": [
+        {
+          "label": "Full name",
+          "verified": true,
+          "decision_kind": null
+        },
+        {
+          "label": "Email",
+          "verified": true,
+          "decision_kind": null
+        },
+        {
+          "label": "Subscribe",
+          "verified": true,
+          "decision_kind": null
+        }
+      ],
+      "wall_ms": 4982.229041997925,
+      "driver_calls": 9,
+      "driver_tool_ms": 4979.828334995545,
+      "provider_requests": [],
+      "decision_provider_calls": 0,
+      "provider_ms": 0,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 9,
+      "tool_refusals": []
+    },
+    {
+      "decisions": [
+        {
+          "label": "Full name",
+          "kind": "SET_VALUE",
+          "terminal": null,
+          "target": "ax_1",
+          "input_key": "value",
+          "confidence": 1.0
+        },
+        {
+          "label": "Email",
+          "kind": "SET_VALUE",
+          "terminal": null,
+          "target": "ax_2",
+          "input_key": "value",
+          "confidence": 1.0
+        },
+        {
+          "label": "Subscribe",
+          "kind": null,
+          "terminal": "BLOCKED",
+          "target": null,
+          "input_key": null,
+          "confidence": 0.23
+        }
+      ],
+      "mode": "grounded_jev",
+      "rep": 1,
+      "passed": false,
+      "terminal": "handoff",
+      "error_type": "Handoff",
+      "error": "Chooser did not select the sole authorized action",
+      "wall_ms": 3808.2120830076747,
+      "driver_calls": 7,
+      "driver_tool_ms": 3254.023581961519,
+      "provider_requests": [
+        {
+          "ms": 247.99337500007823,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 170.9389169991482,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 132.28329199773725,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        }
+      ],
+      "decision_provider_calls": 3,
+      "provider_ms": 551.2155839969637,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 7,
+      "tool_refusals": []
+    },
+    {
+      "decisions": [
+        {
+          "label": "Full name",
+          "kind": "SET_VALUE",
+          "terminal": null,
+          "target": "ax_1",
+          "input_key": "value",
+          "confidence": 1.0
+        },
+        {
+          "label": "Email",
+          "kind": "SET_VALUE",
+          "terminal": null,
+          "target": "ax_2",
+          "input_key": "value",
+          "confidence": 1.0
+        },
+        {
+          "label": "Subscribe",
+          "kind": null,
+          "terminal": "BLOCKED",
+          "target": null,
+          "input_key": null,
+          "confidence": 0.22
+        }
+      ],
+      "mode": "grounded_jev",
+      "rep": 2,
+      "passed": false,
+      "terminal": "handoff",
+      "error_type": "Handoff",
+      "error": "Chooser did not select the sole authorized action",
+      "wall_ms": 3671.5778750076424,
+      "driver_calls": 7,
+      "driver_tool_ms": 3239.774290996138,
+      "provider_requests": [
+        {
+          "ms": 147.9008329915814,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 145.28895801049657,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        },
+        {
+          "ms": 135.73024999641348,
+          "status": 200,
+          "reported_model": "jev-1.13.0"
+        }
+      ],
+      "decision_provider_calls": 3,
+      "provider_ms": 428.92004099849146,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": false,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 7,
+      "tool_refusals": []
+    },
+    {
+      "decisions": [],
+      "mode": "grounded_literal",
+      "rep": 2,
+      "passed": true,
+      "terminal": "verified_complete",
+      "steps": [
+        {
+          "label": "Full name",
+          "verified": true,
+          "decision_kind": null
+        },
+        {
+          "label": "Email",
+          "verified": true,
+          "decision_kind": null
+        },
+        {
+          "label": "Subscribe",
+          "verified": true,
+          "decision_kind": null
+        }
+      ],
+      "wall_ms": 4766.185540996958,
+      "driver_calls": 9,
+      "driver_tool_ms": 4762.772998961736,
+      "provider_requests": [],
+      "decision_provider_calls": 0,
+      "provider_ms": 0,
+      "oracle_state": {
+        "name": "Synthetic Person",
+        "email": "synthetic@example.invalid",
+        "subscribe": true,
+        "plan": "Basic",
+        "submitted": 0,
+        "counter": 0,
+        "dialog": false,
+        "active": false,
+        "minimized": false,
+        "hidden": false,
+        "applied": 0,
+        "record": "Record A",
+        "submitted_record": null,
+        "submit_label": "Submit"
+      },
+      "false_completion": false,
+      "tool_call_count": 9,
+      "tool_refusals": []
+    }
+  ],
+  "running_servers": {
+    "reference": {
+      "name": "reference",
+      "version": "0.1.1"
+    },
+    "cua": {
+      "name": "cua-driver",
+      "version": "0.34.0"
+    }
+  },
+  "resolved_models": [
+    "jev-1.13.0"
+  ]
+}

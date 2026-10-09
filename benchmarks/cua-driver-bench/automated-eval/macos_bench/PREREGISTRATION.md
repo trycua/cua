@@ -913,6 +913,39 @@ No other arm's behaviour changes. The integration commit is 25868bb7e.
 * **Mini-run gate (A11.7): met.** `v038-cuh-mini` ended at 14:14 UTC with `DONE` and 7 of 7 blocks. The preflight passed every check. Of its 21 trials, 0 were excluded as infrastructure failures (at most 3 allowed). The token was deleted with sync after the run. The helper path works in this harness: it delivered input and the agent used every input tool. Success is not part of the gate and is not reported here.
 * **`v038-cuh`:** `CUTOFF_UTC` 2026-10-10T00:00:00Z; starting seat cswap account 4; launched right after this commit with `--park-pointer --arms cc-claude-cu-helper --tasks CDB-S01 CDB-S04 CDB-G02 CDB-G03 CDB-G04 MB-09 MB-10 MB-11 CDB-S02 CDB-S03 --phase1-runs 3 --phase2-runs 2`. Harness, pins and VM are unchanged since the mini-run.
 
+## Amendment 12 (9 Oct 2026, before the first trial of mini-run v038k1): speed and cost mini-runs (Stream K)
+
+Written and committed before the first trial of any Stream K mini-run. It changes nothing about earlier runs. These are screening runs for driver changes that target wall time and tokens per trial. They are never pooled with other runs, and they decide nothing about releases or about Cua Driver against other tool layers.
+
+### A12.1 Protocol
+
+* **Tasks:** CDB-G02, CDB-G03, CDB-G04, MB-10, MB-11, CDB-S01, CDB-S04. Three runs each, one phase (`--phase1-runs 3 --phase2-runs 0`).
+* **Arms:** A (`cc-cua-driver-main`) and AX (`cc-cua-driver-script`, with the v037b addendum: `"timeout_ms": 120000`), built from main at the mini-run's commit exactly as in A6.1 (`tools/vm_main_build/`, the commit's skill as a project skill). No arm B, no A0.
+* **Everything else as in A8:** Sonnet 5.5 (Claude Code 2.1.289), 360 s and 45 turns, the shared system prompt, ToolSearch on, the VM `cdb-h2h` at its post-v038 state, named Electron bundles, occlusion check, pointer parking, the same reset, recorder, sentinel, evaluator isolation and peek scan. Preflight as in A6.1 (run_script listed only in AX; pinned binary hashes; daemons report the commit).
+* **Seats:** cswap, access token only, seat switch at 0.94 (never above 0.95), token deleted with sync before the graceful shutdown.
+* **Run ids:** `v038k1`, `v038k2`, and so on. Before its first trial each gets one line in A12.5.
+
+### A12.2 Baseline
+
+The same arms and tasks in run v038 (main 5a364bbe6, 5 runs per cell, 35 trials per arm). On those tasks v038 A passed 21/35 at 132.0 s wall, 52.9 s tool time, 25.9 turns, 1.36M tokens and $0.548 per trial; AX passed 24/35 at 160.2 s, 91.7 s, 25.8 turns, 1.06M tokens and $0.502. The mini-runs have 3 runs per cell, so per-task differences are not interpreted.
+
+### A12.3 What is reported (`tools/analyze_speedcost.py RUN --baseline v038`, written before the first trial)
+
+Per arm, the mini-run beside the baseline: passes; mean wall time, tool time (agent wall time minus API time) and API time per trial; mean turns; tokens and equivalent cost per trial; per-task passes and wall time; and context tokens per trial split by the tool whose result added them, weighted by the turns that carried them.
+
+### A12.4 Success guard
+
+A change is reported as a speed or cost improvement only together with its success. If an arm's success rate on the mini-run is more than 0.15 below its baseline rate (A 0.600, AX 0.686), the report flags it, and the merged change most likely to cause it is examined before the next mini-run. Fixes stay general; nothing is tuned to a task or its evaluator.
+
+### A12.5 Mini-run log (one line per mini-run, written before its first trial)
+
+| Id | Main commit | A binary sha256 | AX binary sha256 | Skill tree sha256 | Arms | Written (UTC) |
+|---|---|---|---|---|---|---|
+
+### A12.6 Harness changes for this amendment
+
+* `tools/analyze_speedcost.py`.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

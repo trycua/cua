@@ -105,7 +105,15 @@ async def observe(
     }
     if timeout_ms is not None:
         arguments["timeout_ms"] = timeout_ms
-    payload = await driver.call("get_window_state", arguments)
+    try:
+        payload = await driver.call("get_window_state", arguments)
+    except DriverToolError as error:
+        # Drivers before 0.35 always return the full response and refuse the
+        # unknown argument.
+        if "unknown argument full_output" not in str(error):
+            raise
+        arguments.pop("full_output")
+        payload = await driver.call("get_window_state", arguments)
     return NativeObservation.from_window_state(
         payload, expected_pid=pid, expected_window_id=window_id
     )

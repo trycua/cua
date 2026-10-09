@@ -119,18 +119,28 @@ async function observe(
   windowId: number,
   timeoutMs?: number
 ): Promise<NativeObservation> {
-  const payload = await driver.call('get_window_state', {
+  const read = {
     pid,
     window_id: windowId,
     include_accessibility_tree: true,
     include_screenshot: true,
+    ...windowStateArguments(task.scope),
+    ...(timeoutMs !== undefined ? { timeout_ms: timeoutMs } : {}),
+  };
+  let payload;
+  try {
     // The observation needs structured elements, the markdown tree and the
     // completeness flags; cua-driver 0.35 returns the lean markdown-only
     // read unless asked for the full response.
-    full_output: true,
-    ...windowStateArguments(task.scope),
-    ...(timeoutMs !== undefined ? { timeout_ms: timeoutMs } : {}),
-  });
+    payload = await driver.call('get_window_state', { ...read, full_output: true });
+  } catch (error) {
+    // Drivers before 0.35 always return the full response and refuse the
+    // unknown argument.
+    if (!(error instanceof DriverToolError && error.message.includes('unknown argument full_output'))) {
+      throw error;
+    }
+    payload = await driver.call('get_window_state', read);
+  }
   return parseWindowState(payload, pid, windowId);
 }
 

@@ -156,7 +156,9 @@ def test_window_state_falls_back_for_drivers_before_0_35():
                     "driver_tool_refused",
                     "refused",
                     tool=tool,
-                    details={"response": {"error": "get_window_state: unknown argument full_output"}},
+                    details={
+                        "response": {"error": "get_window_state: unknown argument full_output"}
+                    },
                 )
             return {"snapshot_id": "s1", "elements_complete": True, "elements": []}
 

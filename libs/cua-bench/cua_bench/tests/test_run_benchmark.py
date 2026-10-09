@@ -220,6 +220,36 @@ async def evaluate(task, session):
         assert result.error is not None
 
 
+class TestBenchmarkDatasetDiscoveryIntegrity:
+    """Invalid task definitions must not be silently scored as one variant."""
+
+    @pytest.mark.asyncio
+    async def test_broken_task_configuration_aborts_benchmark(self, tmp_path):
+        task_dir = tmp_path / "broken-task"
+        task_dir.mkdir()
+        (task_dir / "main.py").write_text(
+            "import cua_bench as cb\n"
+            "@cb.tasks_config(split='train')\n"
+            "def get_tasks():\n"
+            "    raise RuntimeError('broken fixture')\n"
+        )
+        with pytest.raises(ValueError, match="Failed to load task variants"):
+            await run_benchmark(tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_zero_variants_aborts_instead_of_zero_denominator(self, tmp_path):
+        task_dir = tmp_path / "empty-task"
+        task_dir.mkdir()
+        (task_dir / "main.py").write_text(
+            "import cua_bench as cb\n"
+            "@cb.tasks_config(split='train')\n"
+            "def get_tasks():\n"
+            "    return []\n"
+        )
+        with pytest.raises(ValueError, match="has no variants"):
+            await run_benchmark(tmp_path)
+
+
 class TestBenchmarkParameterValidation:
     """Parameter failures must surface before scheduling asynchronous workers."""
 

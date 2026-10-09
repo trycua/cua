@@ -365,7 +365,21 @@ class CdbTask:
         )
         return done.stdout.strip() or None
 
+    def export_state(self) -> int | None:
+        """Run the descriptor's optional `semantics.export` command (Amendment 12), as the bench user, after the
+        agent and before the evaluator. It writes app state that only the bench user can read (Notes, Reminders,
+        Contacts, system settings) into the workspace, where the evaluator, which may run as another user, reads
+        it. Tasks without the field are unaffected."""
+        command = self.descriptor["semantics"].get("export")
+        if not command:
+            return None
+        done = self._run(command, timeout=240)
+        self.log.append(f"export rc={done.returncode}")
+        (self.artifacts / "cdb-export.stderr").write_text((done.stderr or "")[-4000:], "utf-8")
+        return done.returncode
+
     def evaluate(self, agent_exit_code: int) -> dict[str, Any]:
+        export_rc = self.export_state()
         result = self.artifacts / "cdb-result.json"
         if os.environ.get("CDB_EVAL_SUDO") == "1":
             # The pack's evaluator, oracle and hidden tests live in a home the agent's user cannot read.
@@ -394,7 +408,7 @@ class CdbTask:
             (done.stderr or "")[-4000:], "utf-8"
         )
         if not result.is_file():
-            return {"passed": False, "score": None, "error": "evaluator wrote no result"}
+            return {"passed": False, "score": None, "error": "evaluator wrote no result", "export_rc": export_rc}
         data = json.loads(result.read_text("utf-8"))
         checks_raw = (data.get("detail") or {}).get("checks") or data.get("checks") or {}
         checks = {
@@ -406,7 +420,7 @@ class CdbTask:
             "passed": bool(passed),
             "score": data.get("score"),
             "checks": checks,
-            "diagnostics": {"raw_keys": sorted(data)[:12]},
+            "diagnostics": {"raw_keys": sorted(data)[:12], "export_rc": export_rc},
         }
 
     def stop_apps(self) -> None:

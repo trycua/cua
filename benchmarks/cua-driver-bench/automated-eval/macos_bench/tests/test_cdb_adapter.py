@@ -146,6 +146,36 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual([x["app_name"] for x in above], ["Terminal"])
         self.assertEqual(rb.lab_occluders([terminal]), (None, []))
 
+    def test_export_runs_before_the_evaluator_only_when_declared(self) -> None:
+        root = Path(self.tmp.name) / "tasks" / "shared" / "syn"
+        (root / "evaluator").mkdir()
+        (root / "evaluator" / "evaluate.py").write_text(
+            "import argparse, json, pathlib\n"
+            "p = argparse.ArgumentParser(); p.add_argument('--workspace'); p.add_argument('--result')\n"
+            "a = p.parse_args(); ws = pathlib.Path(a.workspace)\n"
+            "ok = (ws / 'export.json').is_file()\n"
+            "pathlib.Path(a.result).write_text(json.dumps({'passed': ok, 'score': 1.0 if ok else 0.0}))\n"
+        )
+        (root / "export.py").write_text(
+            "import pathlib, sys\npathlib.Path(sys.argv[1], 'export.json').write_text('{}')\n"
+        )
+        artifacts = Path(self.tmp.name) / "art"
+        artifacts.mkdir()
+        old = os.environ.pop("CDB_EVAL_SUDO", None)
+        try:
+            task = cdb_adapter.CdbTask(self.spec, artifacts)
+            task.workspace = Path(self.tmp.name) / "ws"
+            task.workspace.mkdir()
+            self.assertFalse(task.evaluate(0)["passed"])  # no export declared: nothing writes export.json
+            task.descriptor["semantics"]["export"] = ["${python}", "export.py", "${workspace}"]
+            result = task.evaluate(0)
+            self.assertTrue(result["passed"])
+            self.assertEqual(result["diagnostics"]["export_rc"], 0)
+            self.assertIn("export rc=0", task.log)
+        finally:
+            if old is not None:
+                os.environ["CDB_EVAL_SUDO"] = old
+
     def test_kill_only_in_disposable_vm(self) -> None:
         os.environ.pop("CDB_BENCH_DISPOSABLE", None)
         cdb_adapter.clear_leftovers(self.spec)  # must be a no-op, never a pkill on a real desktop

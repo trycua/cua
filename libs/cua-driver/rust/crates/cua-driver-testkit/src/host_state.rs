@@ -18,10 +18,8 @@
 //!   value makes Microsoft Edge unresolvable, `0x80070002`), and the shell
 //!   expands per-user known folders through `%USERPROFILE%`. The driver's
 //!   `USERPROFILE`-derived state goes through its own `CUA_DRIVER_RS_HOME`
-//!   override instead. Known limitation: the Windows Computer History root
-//!   (`%LOCALAPPDATA%\cua-driver\computer-history`) has no separate driver
-//!   override, so a Windows host with History admitted still leaks into test
-//!   daemons.
+//!   override instead. Computer History also honors that override, so its
+//!   admission preference is isolated without moving Windows profile folders.
 //! - Linux pins `XDG_DATA_HOME` to the host data directory so user `.desktop`
 //!   entries remain discoverable after `HOME` moves.
 //!
@@ -52,6 +50,7 @@ const STATE_VARIABLES: &[(&str, &str)] = &[("HOME", ""), ("CUA_DRIVER_RS_HOME", 
 #[cfg(not(target_os = "windows"))]
 const STATE_VARIABLES: &[(&str, &str)] = &[
     ("HOME", ""),
+    ("CUA_DRIVER_RS_HOME", ".cua-driver"),
     ("XDG_CONFIG_HOME", ".config"),
     ("XDG_STATE_HOME", ".local/state"),
 ];
@@ -204,10 +203,18 @@ mod tests {
 
     #[test]
     fn caller_values_override_isolated_defaults() {
-        let root = IsolatedStateRoot::for_env(&[("HOME", "/caller/home")]).expect("root");
+        let env = [
+            ("HOME", "/caller/home"),
+            ("CUA_DRIVER_RS_HOME", "/caller/driver"),
+        ];
+        let root = IsolatedStateRoot::for_env(&env).expect("root");
         let mut command = Command::new("unused");
-        apply_env(&mut command, Some(&root), &[("HOME", "/caller/home")]);
+        apply_env(&mut command, Some(&root), &env);
         assert_eq!(value_of(&command, "HOME").as_deref(), Some("/caller/home"));
+        assert_eq!(
+            value_of(&command, "CUA_DRIVER_RS_HOME").as_deref(),
+            Some("/caller/driver")
+        );
     }
 
     #[test]

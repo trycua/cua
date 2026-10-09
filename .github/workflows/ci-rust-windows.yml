@@ -93,6 +93,15 @@ jobs:
       - name: Run complete desktop-independent core tests
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver-core --lib --test recording_shutdown_errors --locked
+      - name: Run driver state isolation regressions
+        working-directory: libs/cua-driver/rust
+        env:
+          CUA_TEST_REQUIRE_DRIVER_BIN: "1"
+        run: |
+          cargo test -p cua-driver-testkit --locked
+          if ($LASTEXITCODE -ne 0) { throw "testkit tests failed with exit $LASTEXITCODE" }
+          cargo test -p cua-driver --test testkit_host_state_isolation_test --test embedded_host_sdk_mcp_test --locked
+          if ($LASTEXITCODE -ne 0) { throw "driver state isolation tests failed with exit $LASTEXITCODE" }
       - name: Run extension manager security regressions
         working-directory: libs/cua-driver/rust
         run: |
@@ -172,10 +181,8 @@ jobs:
         run: |
           cargo test -p cua-driver-core session_authorization::tests:: --lib --locked
           if ($LASTEXITCODE -ne 0) { throw "session authorization tests failed with exit $LASTEXITCODE" }
-          cargo test -p cua-driver-sdk abi::tests:: --lib --locked
-          if ($LASTEXITCODE -ne 0) { throw "SDK ABI tests failed with exit $LASTEXITCODE" }
-          cargo test -p cua-driver-sdk remote_ --lib --locked
-          if ($LASTEXITCODE -ne 0) { throw "remote SDK tests failed with exit $LASTEXITCODE" }
+          cargo test -p cua-driver-sdk --lib --locked
+          if ($LASTEXITCODE -ne 0) { throw "SDK tests failed with exit $LASTEXITCODE" }
           cargo test -p cua-driver --bin cua-driver named_pipe_authentication_tests:: --locked
           if ($LASTEXITCODE -ne 0) { throw "named-pipe authentication tests failed with exit $LASTEXITCODE" }
           # The production binary embeds uiAccess=true and Windows correctly

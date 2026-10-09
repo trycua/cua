@@ -186,8 +186,8 @@ fn tools_list_schema_shape() {
         "hotkey",
         "scroll",
         "browser_dialog",
-        // Trusted browser input may activate the browser window (Linux
-        // Chromium); foreground accepts that.
+        // Trusted browser input may activate the browser window (Linux or
+        // macOS Chromium); foreground accepts that.
         "browser_click",
         "browser_pointer",
         // The batch's default for its steps' own delivery_mode.
@@ -203,6 +203,31 @@ fn tools_list_schema_shape() {
             "{tool}.delivery_mode should advertise background and foreground: {delivery:?}"
         );
     }
+    for tool in ["browser_click", "browser_pointer"] {
+        let tool = tools
+            .iter()
+            .find(|candidate| candidate["name"] == tool)
+            .unwrap_or_else(|| panic!("{tool} not found in tools/list"));
+        let description = tool["inputSchema"]["properties"]["delivery_mode"]["description"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{tool}.delivery_mode description missing"));
+        assert!(
+            description.contains("including Linux Chromium and macOS Chromium configurations"),
+            "{tool}.delivery_mode should name macOS and Linux: {description}"
+        );
+    }
+    let browser_click = tools
+        .iter()
+        .find(|tool| tool["name"] == "browser_click")
+        .expect("browser_click not found in tools/list");
+    assert!(
+        browser_click["description"]
+            .as_str()
+            .is_some_and(|description| description
+                .contains("including Linux Chromium and macOS Chromium configurations")),
+        "browser_click description should name macOS and Linux: {}",
+        browser_click["description"]
+    );
     let schema_tools: BTreeSet<&str> = tools
         .iter()
         .filter(|tool| tool["inputSchema"]["properties"]["delivery_mode"].is_object())

@@ -23,13 +23,13 @@ Served by `cua-driver mcp`; see [MCP tools](/cua-driver/reference/mcp-tools) for
 
 ## `browser_click`
 
-Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode="foreground" accepts that the browser window may activate (Linux Chromium; for example a browser inside a sandbox). input_route="dom_event" (synthetic el.click(), ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. Refused for heuristic bindings.
+Click a page element (by ref) or viewport coordinates in an exactly-bound tab. Default route is trusted hardware-like input (Input.dispatchMouseEvent), and refuses where that route cannot preserve standalone-browser background posture unless delivery_mode="foreground" accepts that the browser window may activate (including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background; for example a browser inside a sandbox). input_route="dom_event" (synthetic el.click(), ref required) is used only when explicitly requested; it proves dispatch, not control activation, because trust-gated controls may ignore synthetic events. Refused for heuristic bindings.
 
 Effect: mutating. Platforms: macOS, Linux, Windows.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="browser_click--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` | `"background"` | background (default) refuses trusted input where it would activate the browser window (Linux Chromium). foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox). |
+| <span id="browser_click--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` | `"background"` | background (default) refuses trusted input where it would activate the browser window, including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background. foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox). |
 | <span id="browser_click--input_route"></span>`input_route` | `"trusted" \| "dom_event"` |  | "trusted" (default): Input.dispatchMouseEvent. It refuses rather than foregrounding a standalone browser. "dom_event": synthetic full-background DOM click, only when explicitly requested. Dispatch does not prove the control activated; refresh page state and verify the expected postcondition. |
 | <span id="browser_click--ref"></span>`ref` | `string` |  | Page element ref in the p&lt;snapshot&gt;:&lt;index&gt; namespace from get_browser_state. Refs are invalidated by navigation and by newer snapshots of the same tab. |
 | <span id="browser_click--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session. |
@@ -75,7 +75,7 @@ Effect: mutating. Platforms: macOS, Linux, Windows.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | <span id="browser_pointer--action"></span>`action` | `"hover" \| "right_click" \| "double_click" \| "scroll" \| "drag"` | required | Pointer gesture. scroll needs delta_x or delta_y; drag needs destination_ref or to_x/to_y. |
-| <span id="browser_pointer--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` | `"background"` | background (default) refuses trusted input where it would activate the browser window (Linux Chromium). foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox). |
+| <span id="browser_pointer--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` | `"background"` | background (default) refuses trusted input where it would activate the browser window, including Linux Chromium and macOS Chromium configurations whose trusted route cannot stay in the background. foreground accepts that activation, for a browser whose window nobody else is using (for example inside a sandbox). |
 | <span id="browser_pointer--delta_x"></span>`delta_x` | `number` |  | Horizontal scroll delta in CSS pixels. |
 | <span id="browser_pointer--delta_y"></span>`delta_y` | `number` |  | Vertical scroll delta in CSS pixels. |
 | <span id="browser_pointer--destination_ref"></span>`destination_ref` | `string` |  | Drag destination page ref in the exact same frame. |

@@ -2462,6 +2462,9 @@ impl ExtensionStore {
         let inspected = match inspect_archive(&source.archive, entry, &staging_handle) {
             Ok(inspected) => inspected,
             Err(error) => {
+                // Windows refuses to delete a directory while a handle to it
+                // is open (os error 32), so close staging before removing it.
+                drop(staging_handle);
                 remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
                 return Err(error);
             }
@@ -2471,6 +2474,7 @@ impl ExtensionStore {
         {
             Ok(version) => version,
             Err(error) => {
+                drop(staging_handle);
                 remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
                 return Err(error);
             }
@@ -2479,6 +2483,7 @@ impl ExtensionStore {
         if let Some(active) = &active {
             let current = Version::parse(&active.version)?;
             if version < current {
+                drop(staging_handle);
                 remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
                 bail!("update version {version} must be newer than active version {current}");
             }
@@ -2490,6 +2495,7 @@ impl ExtensionStore {
                 verify_cap_directory_permissions_portable(&existing)?;
                 let verified =
                     verify_installed_version_at(&existing, entry, Some(&inspected.manifest_bytes));
+                drop(staging_handle);
                 let cleanup = remove_cap_subdirectory(&staging_parent_handle, staging_name);
                 let manifest = verified?;
                 verify_install_record_at(&existing, entry.id, &manifest.version)?;

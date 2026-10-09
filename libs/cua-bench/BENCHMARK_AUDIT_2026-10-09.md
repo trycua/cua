@@ -31,3 +31,11 @@ Follow with positive real dataset runs on `cua-bench-basic`, a parallelism stres
 - **Counterexamples authored:** `test_run_benchmark.py` creates a task whose config raises `RuntimeError` and another which returns zero tasks; both must now raise ValueError rather than fabricate results. Commit `ff1e8009e61b8d58d943f0bd73381c59b002d566`.
 - **Status:** source committed and remote source verified; no pytest or end-to-end execution result witnessed in this round. Therefore NOT Verified Closed.
 - **HCA:** function P, state P, integration B, security N/A (no new credentials/privileges), scale B, maintainability P, observation P, testability P, user value B, external compatibility N/A (pure benchmark orchestration). To close: run relevant pytest on actual branch, ensure valid dataset cases still pass, inspect run counts before and after, and run actual simulated provider end-to-end.
+
+## Score and aggregation integrity follow-up (2026-10-09)
+
+- **P0 score integrity:** `run_single_task` now rejects unsupported evaluator outputs, nonfinite values and rewards outside the normalized [0,1] contract. Missing evaluators no longer return a nominal score without an explicit error. Commit `24e815587c08a9a52014fa4bc5c5d5219db3493b`.
+- **P0 failure provenance:** `run_benchmark` retains task path and variant ID for gathered worker exceptions, while accounting for failure in total_tasks and mean reward denominator. Commit `24e815587c08a9a52014fa4bc5c5d5219db3493b`.
+- **Adversarial tests added:** malformed evaluator output (NaN, Infinity, negative, >1, nonnumeric), missing evaluator and two-task exception aggregation retaining both run identities and expected 1/2 success fraction. Commits `558d201661f9a7dfcf92838103f8c2e35eea9567`, `edd98cfbadfdb4fc82cb736d23799a2b4691d14b`.
+- **Evidence status:** remote GitHub fetch confirms both code and tests. No local pytest execution or browser/sandbox E2E was witnessed; no User Story may be called Verified Closed.
+- **HCA:** functional P; task/result state P; integration B; security NA (no new trust boundary); performance B; maintainability P; traceability P; testability P; end-user value B; external compatibility B. Challenge the normalized [0,1] reward assumption against each existing dataset/oracle before treating it as ecosystem-compatible. Regression suite and live sandbox tests remain mandatory.

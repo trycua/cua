@@ -910,6 +910,8 @@ No other arm's behaviour changes. The integration commit is 25868bb7e.
 ### A11.10 Values filled in before each run
 
 * **`v038-cuh-mini`:** `CUTOFF_UTC` 2026-10-09T20:00:00Z; starting seat cswap account 4 (13:44 UTC poll: 5h 0%, 7d 48%); launched right after this commit with `--park-pointer --arms cc-claude-cu-helper --tasks CDB-S01 CDB-S04 CDB-G02 CDB-G03 CDB-G04 MB-10 MB-11 --phase1-runs 3 --phase2-runs 0`.
+* **Mini-run gate (A11.7): met.** `v038-cuh-mini` ended at 14:14 UTC with `DONE` and 7 of 7 blocks. The preflight passed every check. Of its 21 trials, 0 were excluded as infrastructure failures (at most 3 allowed). The token was deleted with sync after the run. The helper path works in this harness: it delivered input and the agent used every input tool. Success is not part of the gate and is not reported here.
+* **`v038-cuh`:** `CUTOFF_UTC` 2026-10-10T00:00:00Z; starting seat cswap account 4; launched right after this commit with `--park-pointer --arms cc-claude-cu-helper --tasks CDB-S01 CDB-S04 CDB-G02 CDB-G03 CDB-G04 MB-09 MB-10 MB-11 CDB-S02 CDB-S03 --phase1-runs 3 --phase2-runs 2`. Harness, pins and VM are unchanged since the mini-run.
 
 ## 0. Decisions made before the first trial, and why
 

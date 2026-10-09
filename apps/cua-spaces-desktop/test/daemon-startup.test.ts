@@ -194,7 +194,7 @@ describe.skipIf(!posix)("another app that keeps its own daemon", () => {
     writeFileSync(
       bin,
       `#!/bin/sh\necho "keep=$${DAEMON_KEEP_ENV}" >> '${bin}.log'\nf="$CUA_HOME/daemon.json"\npid=$(sed -n 's/.*"pid":\\([0-9]*\\).*/\\1/p' "$f" 2>/dev/null)\n[ -n "$pid" ] || exit 0\n` +
-        `case ":$${DAEMON_KEEP_ENV}:" in *:/bin/sleep:*) echo "cua daemon already running (pid $pid): using it" ;; *) kill $pid; rm -f "$f"; echo "replacing the running cua daemon (pid $pid)" ;; esac\n`,
+        `case ":$${DAEMON_KEEP_ENV}:" in *:${comparablePath("/bin/sleep")}:*) echo "cua daemon already running (pid $pid): using it" ;; *) kill $pid; rm -f "$f"; echo "replacing the running cua daemon (pid $pid)" ;; esac\n`,
     );
     chmodSync(bin, 0o755);
     return { bin, seen: () => readFileSync(`${bin}.log`, "utf8").trim().split("\n") };
@@ -217,9 +217,10 @@ describe.skipIf(!posix)("another app that keeps its own daemon", () => {
       expect(await s.start()).toBeNull();
       expect(await s.start()).toBeNull();
       expect(gone(back.pid)).toBe(false);
-      expect(cua.seen()).toEqual(["keep=", "keep=/bin/sleep", "keep=/bin/sleep"]);
+      const sleep = comparablePath("/bin/sleep");
+      expect(cua.seen()).toEqual(["keep=", `keep=${sleep}`, `keep=${sleep}`]);
       // And the app says so.
-      expect(await s.yieldsTo(back.pid)).toBe("/bin/sleep");
+      expect(await s.yieldsTo(back.pid)).toBe(sleep);
       expect(await s.yieldsTo(process.pid)).toBeNull();
     } finally {
       back.child.kill();

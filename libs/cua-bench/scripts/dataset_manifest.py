@@ -20,7 +20,7 @@ def scan_dataset(root: Path):
     else:
         entries = sorted(root.iterdir())
         for entry in entries:
-            if entry.is_symlink() and entry.is_dir():
+            if entry.is_symlink() and entry.is_dir() and (entry / "main.py").is_file():
                 raise ValueError(f"symlinked dataset task directory: {entry.name}")
         tasks = [p for p in entries if p.is_dir() and (p / "main.py").is_file()]
     if not tasks:

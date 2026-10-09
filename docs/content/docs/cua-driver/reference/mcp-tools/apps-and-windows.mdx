@@ -42,7 +42,7 @@ List macOS apps, both currently running and installed-but-not-running, with per-
 
 Standalone running entries include only apps with NSApplicationActivationPolicyRegular: background helpers and system UI agents are filtered out. Installed apps resolve their running/pid state against all live processes by bundle identifier, so an installed app whose process runs as an accessory (LSUIElement / menu-bar apps, e.g. Cua Driver itself) still reports its live pid. Installed apps come from scanning /Applications, /Applications/Utilities, ~/Applications, /System/Applications, and /System/Applications/Utilities.
 
-Use this for "is X installed?" as well as "is X running?". For per-window state, on-screen, on-current-Space, minimized, window titles, call list_windows instead. For just opening an app, running or not, call launch_app(&#123;bundle_id: ...&#125;) directly; list_apps is not a prerequisite.
+Use this for "is X installed?" as well as "is X running?"; the list includes every installed app. To get an open app's pid and window_id, call list_windows(&#123;app: "Name"&#125;) instead, which also gives per-window state (on-screen, on-current-Space, minimized, window titles). For just opening an app, running or not, call launch_app(&#123;bundle_id: ...&#125;) directly; list_apps is not a prerequisite.
 
 </Tab>
 <Tab value="Linux">
@@ -94,7 +94,7 @@ Effect: read-only, idempotent. Platforms: macOS, Linux, Windows.
 <Tabs items={['macOS', 'Linux', 'Windows']} groupId="platform" persist>
 <Tab value="macOS">
 
-List layer-0 top-level windows known to WindowServer, including off-screen ones (minimized, other Space, hidden). Use it to find a `window_id` for get_window_state. AppKit-internal helper windows are omitted.
+List layer-0 top-level windows known to WindowServer, including off-screen ones (minimized, other Space, hidden). Use it to find a `pid` and `window_id` for get_window_state; filter with `app` or `pid`, because an unfiltered call lists every window on the host. AppKit-internal helper windows and the driver's own overlay are omitted.
 
 Per record: window_id, pid, app_name, title, bounds, z_index, is_on_screen, space_ids, current_space_id, on_current_space. For the frontmost window take the maximum integer z_index; null means stacking is unavailable, so do not infer it from array order.
 
@@ -108,7 +108,7 @@ Per record: window_id, pid, app_name, title, bounds, z_index, is_on_screen, spac
 </Tab>
 <Tab value="Linux">
 
-List top-level windows. Each record includes z_index (integer or null; higher values are closer to the front; null means stacking order is unavailable and callers must not infer one). To select a frontmost candidate, take the maximum integer z_index; if every value is null, use an explicit fallback instead of relying on array order.
+List top-level windows. Each record includes z_index (integer or null; higher values are closer to the front; null means stacking order is unavailable and callers must not infer one). To select a frontmost candidate, take the maximum integer z_index; if every value is null, use an explicit fallback instead of relying on array order. Filter with `app` or `pid`: an unfiltered call lists every window on the host.
 
 **Linux parameters**
 
@@ -126,7 +126,7 @@ Use this, not list_apps, for any window-level reasoning: "does this app have a v
 
 Per-record fields: window_id (HWND), pid + app_name, title, bounds &#123;x, y, width, height&#125;, layer (always 0), z_index (integer or null; higher values are closer to the front; null means stacking order is unavailable and callers must not infer one), is_on_screen, minimized. To select a frontmost candidate, take the maximum integer z_index; if every value is null, use an explicit fallback instead of relying on array order. The macOS-specific on_current_space / space_ids fields are omitted on Windows; current_space_id is null.
 
-Inputs: pid (optional pid filter), on_screen_only (bool, default false).
+Inputs: pid (optional pid filter), app (app-name filter), on_screen_only (bool, default false). Filter with app or pid: an unfiltered call lists every window.
 
 **Windows parameters**
 
@@ -142,6 +142,7 @@ Inputs: pid (optional pid filter), on_screen_only (bool, default false).
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
+| <span id="list_windows--app"></span>`app` | `string` |  | Only windows of apps whose name contains this text (case-insensitive), or whose bundle id equals it. Prefer this or `pid` over an unfiltered call, which returns every window on the host. |
 | <span id="list_windows--session"></span>`session` | `string` |  | For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. |
 
 ## `launch_app`

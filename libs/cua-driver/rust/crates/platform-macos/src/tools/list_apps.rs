@@ -30,9 +30,11 @@ fn def() -> &'static ToolDef {
             its live pid. Installed apps come from scanning /Applications, \
             /Applications/Utilities, ~/Applications, /System/Applications, and \
             /System/Applications/Utilities.\n\n\
-            Use this for \"is X installed?\" as well as \"is X running?\". For \
-            per-window state — on-screen, on-current-Space, minimized, \
-            window titles — call list_windows instead. For just opening an \
+            Use this for \"is X installed?\" as well as \"is X running?\"; \
+            the list includes every installed app. To get an open app's pid \
+            and window_id, call list_windows({app: \"Name\"}) instead, which \
+            also gives per-window state (on-screen, on-current-Space, \
+            minimized, window titles). For just opening an \
             app — running or not — call launch_app({bundle_id: ...}) directly; \
             list_apps is not a prerequisite."
             .into(),
@@ -61,20 +63,27 @@ impl Tool for ListAppsTool {
         let text = crate::apps::format_app_list(&apps);
         // Single flat array. Each entry is the unified shape — existing
         // fields (`pid`, `name`, `bundle_id`, `running`, `active`) are
-        // unchanged for backwards compatibility; the new fields
-        // (`launch_path`, `kind`, `last_used`, `windows`) are additive.
+        // unchanged for backwards compatibility; `launch_path`, `kind` and
+        // `last_used` are additive and omitted when unknown, as the contract
+        // allows. Every agent reads this payload, so it carries no field that
+        // is always empty.
         let structured = serde_json::json!({
-            "apps": apps.iter().map(|a| serde_json::json!({
-                "pid": a.pid,
-                "name": a.name,
-                "bundle_id": a.bundle_id,
-                "active": a.active,
-                "running": a.running,
-                "launch_path": a.launch_path,
-                "kind": a.kind,
-                "last_used": a.last_used,
-                "windows": Vec::<serde_json::Value>::new(),
-            })).collect::<Vec<_>>()
+            "apps": apps.iter().map(|a| {
+                let mut entry = serde_json::json!({
+                    "pid": a.pid,
+                    "name": a.name,
+                    "bundle_id": a.bundle_id,
+                    "active": a.active,
+                    "running": a.running,
+                    "launch_path": a.launch_path,
+                    "kind": a.kind,
+                    "last_used": a.last_used,
+                });
+                if let Some(entry) = entry.as_object_mut() {
+                    entry.retain(|_, value| !value.is_null());
+                }
+                entry
+            }).collect::<Vec<_>>()
         });
         ToolResult::text(text).with_structured(structured)
     }

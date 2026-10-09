@@ -37,16 +37,19 @@ jobs:
       - name: Run CUA benchmark core and oracle regression suite
         working-directory: libs/cua-bench
         run: |
-          xvfb-run -a uv run --extra dev --with 'pytest-json-report>=1.5,<2' pytest --json-report --json-report-file=core-report.json --json-report-omit=streams \
+          xvfb-run -a uv run --extra dev --with 'pytest-json-report>=1.5,<2' --with 'jsonschema>=4.20,<5' pytest --json-report --json-report-file=core-report.json --json-report-omit=streams \
             cua_bench/tests/test_run_benchmark.py \
             cua_bench/tests/test_gym_interface.py \
             cua_bench/tests/test_actions.py -q
       - name: Run full benchmark suite including RL workers
         working-directory: libs/cua-bench
-        run: xvfb-run -a uv run --extra dev --extra rl --extra server --with 'httpx>=0.27,<1' --with 'pytest-json-report>=1.5,<2' pytest --json-report --json-report-file=full-report.json --json-report-omit=streams cua_bench/tests -q
+        run: xvfb-run -a uv run --extra dev --extra rl --extra server --with 'httpx>=0.27,<1' --with 'pytest-json-report>=1.5,<2' --with 'jsonschema>=4.20,<5' pytest --json-report --json-report-file=full-report.json --json-report-omit=streams cua_bench/tests -q
       - name: Independently verify test reports
         working-directory: libs/cua-bench
         run: python3 scripts/verify_pytest_receipt.py core-report.json full-report.json
+      - name: Build versioned checksum-linked receipt
+        working-directory: libs/cua-bench
+        run: uv run --extra dev --with 'jsonschema>=4.20,<5' python scripts/ci_receipt.py --commit "$GITHUB_SHA"
       - name: Preserve CUA benchmark machine-readable evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -55,5 +58,6 @@ jobs:
           path: |
             libs/cua-bench/core-report.json
             libs/cua-bench/full-report.json
+            libs/cua-bench/ci-receipt-v1.json
           if-no-files-found: warn
           retention-days: 30

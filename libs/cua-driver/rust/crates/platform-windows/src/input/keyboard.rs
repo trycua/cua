@@ -492,14 +492,14 @@ pub fn send_key_synthesized_after_focus(
 /// `type_text`. Symmetric with [`send_key_synthesized`] — briefly fronts the
 /// target, types `text` as SendInput Unicode (`KEYEVENTF_UNICODE`, so every
 /// codepoint lands regardless of keyboard layout), then restores the prior
-/// foreground. Attached delivery paces one UTF-16 unit or line break at a time.
-/// This is only reached on the explicit `delivery_mode:"foreground"`
+/// foreground. This is only reached on the explicit `delivery_mode:"foreground"`
 /// rung (background never fronts); it does NOT silently fall back to
 /// PostMessage: if the foreground swap is rejected
 /// or the input is blocked, it bails with the same diagnostic
 /// `send_key_synthesized` returns, so the caller gets an honest error instead
 /// of a false success. Required for VCL/LibreOffice document grids and other
 /// targets where PostMessage WM_CHAR is silently dropped.
+/// Attached delivery paces one UTF-16 unit or line break at a time.
 pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
     send_text_synthesized_after_focus(hwnd, text, || Ok(()))
 }
@@ -535,12 +535,32 @@ pub fn send_text_synthesized_after_focus(
             for (k, unit) in units.iter().enumerate() {
                 let actual = GetForegroundWindow();
                 if !foreground_matches_target_or_owned_window(ft, actual.0 as usize as u64) {
-                    bail!("foreground_lost: foreground moved to HWND {h:?} after {k} of {n} text units were read; the remaining {remaining} were not sent. Nothing was retried; inspect the target before sending the rest.", h = actual.0, remaining = n - k);
+                    bail!(
+                        "foreground_lost: foreground moved to HWND {h:?} after {k} of {n} \
+                         text units were read; the remaining {remaining} were not sent. \
+                         Nothing was retried; inspect the target before sending the rest.",
+                        h = actual.0,
+                        remaining = n - k,
+                    );
                 }
                 match att.send_and_await_read(&unit_events(unit), Duration::from_secs(2)) {
                     UnitRead::Read => {}
-                    UnitRead::Short(sent) => bail!("SendInput inserted only {sent} of 4 key events for text unit {} of {n} ({k} earlier units were read). Windows blocked the rest: the target runs at a higher integrity level than the Driver (UIPI), or the input desktop is locked or showing a secure prompt. To drive an elevated app, run the Driver elevated (the default autostart daemon is).", k + 1),
-                    UnitRead::Stalled => bail!("text_delivery_stalled: the target did not read text unit {} of {n} within 2000 ms; {k} earlier units were read. Unit {} was inserted and may still appear, possibly in the previously foreground window. Nothing was retried; inspect the target before sending the rest.", k + 1, k + 1),
+                    UnitRead::Short(sent) => bail!(
+                        "SendInput inserted only {sent} of 4 key events for text unit {} of {n} \
+                         ({k} earlier units were read). Windows blocked the rest: the target \
+                         runs at a higher integrity level than the Driver (UIPI), or the input \
+                         desktop is locked or showing a secure prompt. To drive an elevated \
+                         app, run the Driver elevated (the default autostart daemon is).",
+                        k + 1
+                    ),
+                    UnitRead::Stalled => bail!(
+                        "text_delivery_stalled: the target did not read text unit {} of {n} \
+                         within 2000 ms; {k} earlier units were read. Unit {} was inserted \
+                         and may still appear, possibly in the previously foreground window. \
+                         Nothing was retried; inspect the target before sending the rest.",
+                        k + 1,
+                        k + 1
+                    ),
                 }
             }
             return Ok(());
@@ -624,7 +644,7 @@ fn with_confirmed_foreground<T>(
         let deadline = Instant::now() + Duration::from_millis(250);
         let actual = loop {
             let actual = unsafe { GetForegroundWindow() };
-            if crate::win32::foreground_matches_target_or_owned_window(
+            if foreground_matches_target_or_owned_window(
                 foreground_target,
                 actual.0 as usize as u64,
             ) {
@@ -635,10 +655,7 @@ fn with_confirmed_foreground<T>(
             }
             sleep(Duration::from_millis(10));
         };
-        if !crate::win32::foreground_matches_target_or_owned_window(
-            foreground_target,
-            actual.0 as usize as u64,
-        ) {
+        if !foreground_matches_target_or_owned_window(foreground_target, actual.0 as usize as u64) {
             bail!(
                 "foreground_unavailable: exact target HWND {:?} or a verified same-process \
                  owned window was not foreground while preparing {operation} \
@@ -674,7 +691,11 @@ fn with_confirmed_foreground<T>(
 /// produces no character.
 const DRAIN_SENTINEL_VK: VIRTUAL_KEY = VIRTUAL_KEY(0xE8);
 
-#[rustfmt::skip] enum UnitRead { Read, Short(u32), Stalled }
+enum UnitRead {
+    Read,
+    Short(u32),
+    Stalled,
+}
 
 /// The caller's thread attached to the foreground thread's input queue for
 /// the duration of one foreground input transaction; detaches on drop.
@@ -778,7 +799,10 @@ fn sentinel_key_input(up: bool) -> INPUT {
     }
 }
 
-#[rustfmt::skip] enum TextUnit { Packet(u16), Return }
+enum TextUnit {
+    Packet(u16),
+    Return,
+}
 
 /// One readable VK_PACKET, or one Return. A supplementary scalar is two Packets (high, low).
 fn text_units(text: &str) -> Vec<TextUnit> {
@@ -812,8 +836,7 @@ fn unit_events(unit: &TextUnit) -> [INPUT; 4] {
         TextUnit::Packet(c) => (unicode_key_input(*c, false), unicode_key_input(*c, true)),
         TextUnit::Return => (key_input(VK_RETURN, false), key_input(VK_RETURN, true)),
     };
-    let s = sentinel_key_input;
-    [d, u, s(false), s(true)]
+    [d, u, sentinel_key_input(false), sentinel_key_input(true)]
 }
 
 /// Build a single Unicode keyboard INPUT struct for one UTF-16 code unit,
@@ -1000,14 +1023,10 @@ mod extended_key_tests {
 mod text_unit_tests {
     use super::*;
 
-    fn scans(text: &str) -> Vec<TextUnit> {
-        text_units(text)
-    }
-
     #[test]
     fn cjk_issue_fixture_is_three_packets() {
         assert!(matches!(
-            scans("二等座").as_slice(),
+            text_units("二等座").as_slice(),
             [
                 TextUnit::Packet(0x4E8C),
                 TextUnit::Packet(0x7B49),
@@ -1019,7 +1038,7 @@ mod text_unit_tests {
     #[test]
     fn emoji_is_two_surrogate_packets() {
         assert!(matches!(
-            scans("🙂").as_slice(),
+            text_units("🙂").as_slice(),
             [TextUnit::Packet(0xD83D), TextUnit::Packet(0xDE42)]
         ));
     }
@@ -1027,7 +1046,7 @@ mod text_unit_tests {
     #[test]
     fn crlf_and_lone_breaks_are_one_return_each() {
         assert!(matches!(
-            scans("a\r\nb\rc\nd").as_slice(),
+            text_units("a\r\nb\rc\nd").as_slice(),
             [
                 TextUnit::Packet(0x61),
                 TextUnit::Return,
@@ -1043,14 +1062,14 @@ mod text_unit_tests {
     #[test]
     fn newline_then_cr_is_two_returns() {
         assert!(matches!(
-            scans("\n\r").as_slice(),
+            text_units("\n\r").as_slice(),
             [TextUnit::Return, TextUnit::Return]
         ));
     }
 
     #[test]
     fn empty_text_has_no_units() {
-        assert!(scans("").is_empty());
+        assert!(text_units("").is_empty());
     }
 
     #[test]

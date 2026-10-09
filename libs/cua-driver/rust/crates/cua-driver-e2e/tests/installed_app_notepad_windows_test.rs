@@ -8,13 +8,17 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use cua_driver_testkit::{spawn_in_job, Driver, McpDriver};
-use windows::core::BOOL;
-use windows::Win32::Foundation::{HWND, LPARAM, TRUE, WPARAM};
+use cua_driver_testkit::{spawn_in_job, ChildReaper, Driver, McpDriver};
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::UI::Input::Ime::ImmGetDefaultIMEWnd;
+use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
-    SendMessageW,
+    GetWindowThreadProcessId, IsWindowVisible, SendMessageW,
 };
+
+#[path = "support/native_windows.rs"]
+mod native_windows;
+use native_windows::native_windows;
 
 const TRIALS: usize = 5;
 const T1: &str = "CH-RAW-20261006114218790-010444e4 \u{8f66}\u{6b21}1\u{ff1a}G4915 00:34 \u{4e0a}\u{6d77}\u{8679}\u{6865} \u{2192} 01:19 \u{676d}\u{5dde}\u{4e1c} \u{5386}\u{65f6}0\u{65f6}45\u{5206} \u{4e8c}\u{7b49}\u{5ea7}\u{6709}\u{7968}\u{ff08}\u{9875}\u{9762}\u{672a}\u{663e}\u{793a}\u{4ef7}\u{683c}\u{660e}\u{7ec6}\u{ff09}";
@@ -24,16 +28,6 @@ const WINUI3: &str = concat!(
     "\u{8f66}\u{6b21} G7391\r\n\u{4e2d}\u{6587} 12345\nEMPTY-A-17\n\n\nEMPTY-B-29\n",
     "EMOJI-A \u{1f642} 123\r\nEMOJI-B \u{1f680} 456\nCUA-MULTILINE-END\n",
 );
-
-#[link(name = "imm32")]
-unsafe extern "system" {
-    fn ImmGetDefaultIMEWnd(hwnd: HWND) -> HWND;
-}
-
-#[link(name = "user32")]
-unsafe extern "system" {
-    fn GetKeyboardLayout(id_thread: u32) -> *mut core::ffi::c_void;
-}
 
 fn corpus_t2() -> String {
     let piece = format!("{T1}RAW-CUA-FT-CRLF-B-47数字 12345{WINUI3}");
@@ -77,7 +71,8 @@ fn round_trip(driver: &mut McpDriver, trial: usize, label: &str, text: &str) {
     let stem = path.file_name().unwrap().to_string_lossy().into_owned();
     let (pid, hwnd) = wait_for_title(&stem)
         .unwrap_or_else(|| panic!("no Notepad window for {stem}\n{}", note(0)));
-    let _kill = KillPid(pid);
+    let mut kill = ChildReaper::new();
+    kill.track_pid(pid);
     let typed = driver.call(
         "type_text",
         serde_json::json!({
@@ -147,45 +142,16 @@ fn normalize(text: &str) -> String {
 fn wait_for_title(prefix: &str) -> Option<(u32, u64)> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        if let Some(found) = windows()
-            .into_iter()
-            .find(|(_, _, title)| title.starts_with(prefix))
-        {
-            return Some((found.0, found.1));
+        if let Some((pid, hwnd, _)) = native_windows().into_iter().find(|(_, hwnd, title)| {
+            title.starts_with(prefix) && unsafe { IsWindowVisible(HWND(*hwnd as *mut _)) }.as_bool()
+        }) {
+            return Some((pid, hwnd));
         }
         if Instant::now() >= deadline {
             return None;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-}
-
-fn windows() -> Vec<(u32, u64, String)> {
-    unsafe extern "system" fn callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let out = &mut *(lparam.0 as *mut Vec<(u32, u64, String)>);
-        if IsWindowVisible(hwnd).as_bool() {
-            let n = GetWindowTextLengthW(hwnd);
-            if n > 0 {
-                let mut buf = vec![0u16; n as usize + 1];
-                let copied = GetWindowTextW(hwnd, &mut buf);
-                if copied > 0 {
-                    let mut pid = 0u32;
-                    GetWindowThreadProcessId(hwnd, Some(&mut pid));
-                    out.push((
-                        pid,
-                        hwnd.0 as usize as u64,
-                        String::from_utf16_lossy(&buf[..copied as usize]),
-                    ));
-                }
-            }
-        }
-        TRUE
-    }
-    let mut out = Vec::new();
-    unsafe {
-        let _ = EnumWindows(Some(callback), LPARAM(&mut out as *mut _ as isize));
-    }
-    out
 }
 
 fn note(hwnd: u64) -> String {
@@ -213,14 +179,5 @@ fn note(hwnd: u64) -> String {
             )
         };
         format!("{versions} hkl={hkl} ime_open={open}")
-    }
-}
-
-struct KillPid(u32);
-impl Drop for KillPid {
-    fn drop(&mut self) {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &self.0.to_string(), "/T", "/F"])
-            .status();
     }
 }

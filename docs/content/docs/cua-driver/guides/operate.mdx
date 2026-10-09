@@ -214,6 +214,13 @@ they are only affected by item 3.
    a tab moves focus. Remove them from text that should not submit, or write
    the value with `set_value` where the field supports it.
 
+Scripts that read raw `list_apps` JSON on macOS should also treat
+`bundle_id`, `launch_path`, `kind` and `last_used` as optional: since
+[#4916](https://github.com/trycua/cua/pull/4916) they are omitted when unknown
+instead of `null`, and the always-empty `windows: []` is gone. The typed SDKs
+already treat them as optional. For an app's windows, call
+`list_windows({app: "Name"})`.
+
 ### Before updating to token-only element targeting
 
 Releases that include [#3873](https://github.com/trycua/cua/pull/3873) address

@@ -21,3 +21,16 @@ jobs:
     with:
       package_name: "bench"
       package_dir: "libs/cua-bench"
+
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Run CUA benchmark regression suite
+        working-directory: libs/cua-bench
+        run: uv run --extra dev pytest cua_bench/tests/test_run_benchmark.py -q

@@ -70,6 +70,11 @@ fn consent_surface_ids(
         .collect()
 }
 
+/// The Chinese consent prompt title, shared with the browser window matcher in
+/// `platform.rs`, which still identifies the prompt window by its title.
+pub(super) const CHINESE_PROMPT: &str = "要允许远程调试吗？";
+const CHINESE_WARNING: &str = "为进行调试，一款外部应用请求完全控制此 Chrome 会话，包括访问您保存的数据、Cookie 和网站数据，以及前往任意网址。";
+
 fn is_pressable_button(node: &AXNode) -> bool {
     node.role == "AXButton" && node.actions.iter().any(|action| action == "AXPress")
 }
@@ -121,17 +126,53 @@ fn identifier_is_cancel(node: &AXNode) -> bool {
     identifier_terms(node).iter().any(|term| term == "cancel")
 }
 
+/// The captured Chinese sheet's third control links to Settings rather than
+/// answering the prompt. Pressing it would leave the sheet open, so it is never
+/// treated as an allow or cancel decision — including when it happens to carry
+/// an accessibility identifier that reads like one.
+fn is_settings_link(node: &AXNode) -> bool {
+    has_text(node, "在“设置”中关闭")
+}
+
 fn semantic_allow(node: &AXNode) -> bool {
-    if !is_pressable_button(node) {
+    if !is_pressable_button(node) || is_settings_link(node) {
         return false;
     }
     let label = normalized_text(node);
     matches!(label.as_str(), "allow" | "allow remote debugging")
         || identifier_allows_remote_debugging(node)
+        // The captured Chinese labels are compared exactly: they are byte
+        // literals, not case-folded text, and the sheet must already have been
+        // proven to be the consent sheet for this to be consulted.
+        || has_text(node, "允许")
 }
 
 fn semantic_cancel(node: &AXNode) -> bool {
-    is_pressable_button(node) && (normalized_text(node) == "cancel" || identifier_is_cancel(node))
+    if !is_pressable_button(node) || is_settings_link(node) {
+        return false;
+    }
+    let label = normalized_text(node);
+    label == "cancel" || identifier_is_cancel(node) || has_text(node, "取消")
+}
+
+fn has_text(node: &AXNode, expected: &str) -> bool {
+    [
+        node.title.as_deref(),
+        node.value.as_deref(),
+        node.description.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|text| text.trim() == expected)
+}
+
+/// The captured Chinese consent prompt: its title plus the localized warning
+/// that only the real remote-debugging sheet carries.
+fn chinese_sheet(sheet: &[AXNode]) -> bool {
+    has_text(&sheet[0], CHINESE_PROMPT)
+        && sheet[1..]
+            .iter()
+            .any(|node| has_text(node, CHINESE_WARNING))
 }
 
 fn validate_sheet_decisions(sheet: &[AXNode]) -> Result<(), BrowserRefusal> {
@@ -143,6 +184,20 @@ fn validate_sheet_decisions(sheet: &[AXNode]) -> Result<(), BrowserRefusal> {
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "a browser consent action matched both allow and cancel decisions",
         ));
+    }
+    // The captured Chinese sheet needs exactly one allow and one cancel: it is
+    // matched from captured labels rather than English text, so a sheet missing
+    // either side would otherwise silently press nothing and leave the prompt
+    // standing.
+    if chinese_sheet(sheet) {
+        let allows = sheet.iter().filter(|node| semantic_allow(node)).count();
+        let cancels = sheet.iter().filter(|node| semantic_cancel(node)).count();
+        if allows != 1 || cancels != 1 {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "localized browser consent requires unique positive allow and cancel actions",
+            ));
+        }
     }
     Ok(())
 }
@@ -182,6 +237,11 @@ fn sheet_is_consent_prompt(sheet: &[AXNode]) -> bool {
     // every node it considers.
     if sheet.iter().any(|node| node.in_web_content) {
         return false;
+    }
+    // Captured localized path: the Chinese prompt is recognized by its title
+    // together with the warning only the real consent sheet carries.
+    if chinese_sheet(sheet) {
+        return true;
     }
     // Unchanged fast path: the browser UI is running in English.
     if sheet_prompt_is_english(sheet) {
@@ -545,7 +605,6 @@ mod tests {
         ]
     }
 
-<<<<<<< HEAD
     #[tokio::test]
     async fn cancelled_scan_releases_late_blocking_result() {
         use core_foundation::base::{CFGetRetainCount, CFRetain, TCFType};
@@ -872,16 +931,36 @@ mod tests {
     }
 
     #[test]
-    fn localized_purpose_cannot_come_from_identifier_or_title_alone() {
+    fn purpose_cannot_come_from_the_title_alone() {
+        // The title is not consent evidence: a sheet titled like the prompt but
+        // stripped of the warning must not be recognized, whatever the title
+        // says. The warning is removed so the captured Chinese path cannot
+        // answer for the title.
         for title in ["Save changes?", CHINESE_PROMPT] {
             let mut nodes = captured_chinese_sheet();
             nodes[0].title = Some(title.to_owned());
             nodes[1].value = None;
-            nodes[4].identifier = Some("remote-debugging-allow".to_owned());
-            assert!(!remote_debugging_sheet_present(&nodes));
+            assert!(
+                !remote_debugging_sheet_present(&nodes),
+                "{title} must not prove a consent sheet on its own"
+            );
             assert_eq!(exact_allow_button(&nodes).unwrap(), None);
             assert_eq!(exact_cancel_button(&nodes).unwrap(), None);
         }
+    }
+
+    #[test]
+    fn localized_purpose_can_come_from_the_allow_identifier_alone() {
+        // Detection must not depend on the prompt's visible text, so once the
+        // title and warning are stripped a button whose identifier names the
+        // allow decision still identifies the sheet in any language.
+        let mut nodes = captured_chinese_sheet();
+        nodes[0].title = Some("Save changes?".to_owned());
+        nodes[1].value = None;
+        nodes[4].identifier = Some("remote-debugging-allow".to_owned());
+        assert!(remote_debugging_sheet_present(&nodes));
+        assert_eq!(exact_allow_button(&nodes).unwrap(), Some(27));
+        assert_eq!(exact_cancel_button(&nodes).unwrap(), Some(26));
     }
 
     #[test]

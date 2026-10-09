@@ -34,6 +34,11 @@ jobs:
       - name: Install Playwright Chromium for simulated desktop E2E
         working-directory: libs/cua-bench
         run: uv run --extra dev python -m playwright install --with-deps chromium
+      - name: Verify dataset manifest round trip on basic dataset
+        working-directory: libs/cua-bench
+        run: |
+          python3 scripts/dataset_manifest.py datasets/cua-bench-basic --output /tmp/cua-basic-manifest.json
+          python3 scripts/dataset_manifest.py datasets/cua-bench-basic --verify /tmp/cua-basic-manifest.json
       - name: Run CUA benchmark core and oracle regression suite
         working-directory: libs/cua-bench
         run: |

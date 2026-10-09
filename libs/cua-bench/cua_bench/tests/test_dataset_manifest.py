@@ -76,3 +76,12 @@ def test_missing_tasks_refused(tmp_path):
     empty.mkdir()
     with pytest.raises(ValueError, match="no task"):
         module.scan_dataset(empty)
+
+def test_hidden_task_config_must_be_fingerprinted(tmp_path):
+    root = dataset(tmp_path)
+    config = root / "click" / ".env"
+    config.write_text("SCORING_MODE=strict")
+    manifest = module.scan_dataset(root)
+    config.write_text("SCORING_MODE=permissive")
+    with pytest.raises(ValueError, match="dataset differs"):
+        module.verify_dataset(root, manifest)

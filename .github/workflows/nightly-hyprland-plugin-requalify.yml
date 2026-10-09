@@ -1,0 +1,253 @@
+name: "Nightly: Hyprland plugin requalification"
+
+# Rebuilds and requalifies the Cua Hyprland plugin for every Hyprland build
+# Omarchy or Arch can ship (#4909, refs #4216):
+#
+#   detect     the tracked packages (hyprland, aquamarine, hyprutils, hyprlang,
+#              hyprcursor, hyprgraphics, glibc, gcc, libgcc, libstdc++,
+#              libxkbcommon, wayland) by version AND package SHA-256 in Arch
+#              core/extra and in Omarchy edge, rc and stable, plus the latest
+#              upstream Hyprland GitHub release. A same-version Arch rebuild
+#              is a new build. Plugin sources: main, the latest Driver tag,
+#              and the Driver source each Omarchy channel packages.
+#   requalify  per new (Hyprland build, plugin tree): an Arch container on that
+#              channel's mirrors builds the plugin with the production options
+#              against the exact headers, runs CTest, records the Hyprland
+#              binary, header-inventory, compiler and module hashes, then loads
+#              the module into a headless Hyprland on vkms and runs the
+#              window-targeted background input smoke.
+#   report     merges the results into compatibility.json (Hyprland build ->
+#              plugin build -> status) and matrix.md, uploads both as an
+#              artifact, and on scheduled/dispatched main runs commits them to
+#              the hyprland-plugin-compat branch, the stable URL Omarchy reads.
+#              A failure opens or updates one tracking issue.
+#
+# It never publishes a package, kit or release and never touches an Omarchy
+# repository. CI requalification is not native certification.
+
+on:
+  schedule:
+    # Daily 06:41 UTC, after Omarchy edge's usual overnight package builds.
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild every combination, even ones already in the manifest"
+        type: boolean
+        default: false
+      publish_manifest:
+        description: "Commit the manifest to the hyprland-plugin-compat branch"
+        type: boolean
+        default: true
+  pull_request:
+    paths:
+      - "libs/cua-driver/hyprland-plugin/requalify/**"
+      - ".github/workflows/nightly-hyprland-plugin-requalify.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hyprland-plugin-requalify-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  REQUALIFY: libs/cua-driver/hyprland-plugin/requalify
+  COMPAT_BRANCH: hyprland-plugin-compat
+  # The same pinned base as libs/images/omarchy; every run upgrades it from
+  # the channel's own mirrors.
+  ARCH_IMAGE: archlinux:base-20260920.0.596911@sha256:f3691b4dde62ba4c4b6f0ae2c1fbf28e8c0c8c4b9a35c7e06dc1f70e21aa29f6
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      count: ${{ steps.plan.outputs.count }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Previous manifest
+        run: |
+          set -euo pipefail
+          mkdir -p detect
+          if git fetch --quiet origin "$COMPAT_BRANCH" 2>/dev/null; then
+            git show FETCH_HEAD:compatibility.json >detect/previous.json
+          fi
+      - name: Detect Hyprland builds
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 "$REQUALIFY/channels.py" detect --output detect/snapshot.json
+      - name: Plan the matrix
+        id: plan
+        env:
+          FORCE: ${{ github.event_name == 'pull_request' || inputs.force == true }}
+        run: |
+          set -euo pipefail
+          python3 "$REQUALIFY/channels.py" sources --snapshot detect/snapshot.json \
+            --head "$GITHUB_SHA" --output detect/sources.json
+          args=(--snapshot detect/snapshot.json --sources detect/sources.json --output detect/plan.json)
+          [ -f detect/previous.json ] && args+=(--manifest detect/previous.json)
+          [ "$FORCE" = true ] && args+=(--force)
+          python3 "$REQUALIFY/channels.py" plan "${args[@]}"
+          {
+            echo "matrix=$(cat detect/plan.json)"
+            echo "count=$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["include"]))' detect/plan.json)"
+          } >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: requalify-detect
+          path: detect/
+          retention-days: 30
+
+  requalify:
+    needs: detect
+    if: needs.detect.outputs.count != '0'
+    name: ${{ matrix.channel }} hyprland ${{ matrix.hyprland }}, plugin ${{ matrix.ref }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix: ${{ fromJSON(needs.detect.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Plugin source at ${{ matrix.ref }}
+        env:
+          COMMIT: ${{ matrix.commit }}
+          JOB: ${{ toJSON(matrix) }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/source" "$RUNNER_TEMP/out"
+          git archive "$COMMIT" libs/cua-driver/hyprland-plugin | tar -x -C "$RUNNER_TEMP/source"
+          printf '%s' "$JOB" >"$RUNNER_TEMP/job.json"
+      - name: Virtual DRM device (vkms) for the headless session
+        run: |
+          # Without it the build and CTest still run; load and smoke report n/a.
+          if ! sudo modprobe vkms 2>/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)" >/dev/null 2>&1 || true
+            sudo modprobe vkms || echo "::warning::vkms unavailable on this runner"
+          fi
+          ls -l /dev/dri 2>/dev/null || true
+      - name: Build and requalify in an Arch container
+        run: |
+          set -euo pipefail
+          docker run --rm --privileged \
+            -v "$GITHUB_WORKSPACE/libs/cua-driver/hyprland-plugin:/tooling:ro" \
+            -v "$RUNNER_TEMP/source/libs/cua-driver/hyprland-plugin:/source:ro" \
+            -v "$RUNNER_TEMP/job.json:/job.json:ro" \
+            -v "$RUNNER_TEMP/out:/out" \
+            -v /run/udev:/run/udev:ro \
+            "$ARCH_IMAGE" sh -euc '
+              pacman-key --init >/dev/null
+              pacman-key --populate archlinux >/dev/null
+              pacman -Syu --noconfirm --needed python >/dev/null
+              exec python3 /tooling/requalify/qualify.py --job /job.json --source /source --out /out'
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/out"
+          status=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$RUNNER_TEMP/out/result.json")
+          echo "status: $status"
+          [ "$status" != fail ] || { echo "::error::requalification failed; see result.json and the logs"; exit 1; }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: requalify-result-${{ matrix.id }}
+          path: |
+            ${{ runner.temp }}/out/*.log
+            ${{ runner.temp }}/out/result.json
+            ${{ runner.temp }}/out/session/*.json
+            ${{ runner.temp }}/out/session/*.log
+            ${{ runner.temp }}/out/session/*.lua
+          if-no-files-found: warn
+          retention-days: 90
+
+  report:
+    needs: [detect, requalify]
+    if: always() && needs.detect.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: requalify-detect
+          path: detect
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: requalify-result-*
+          path: results
+      - name: Merge the compatibility manifest
+        id: merge
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          args=(--snapshot detect/snapshot.json --results results --out compat
+                --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")
+          [ -f detect/previous.json ] && args+=(--previous detect/previous.json)
+          python3 "$REQUALIFY/manifest.py" "${args[@]}"
+          cat compat/matrix.md >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hyprland-plugin-compat
+          path: compat/
+          retention-days: 90
+      - name: Commit the manifest to the ${{ env.COMPAT_BRANCH }} branch
+        if: >-
+          github.repository == 'trycua/cua' && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'schedule' ||
+           (github.event_name == 'workflow_dispatch' && inputs.publish_manifest))
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch --quiet origin "$COMPAT_BRANCH" 2>/dev/null; then
+            git worktree add --quiet compat-branch FETCH_HEAD
+            git -C compat-branch checkout --quiet -B "$COMPAT_BRANCH"
+          else
+            git worktree add --quiet --detach compat-branch
+            git -C compat-branch checkout --quiet --orphan "$COMPAT_BRANCH"
+            git -C compat-branch rm -rfq .
+          fi
+          # Commit only when something besides the timestamp and run URL changed.
+          same=false
+          if [ -f compat-branch/compatibility.json ]; then
+            jq -S 'del(.generated_at, .run_url)' compat-branch/compatibility.json >old.json
+            jq -S 'del(.generated_at, .run_url)' compat/compatibility.json >new.json
+            cmp -s old.json new.json && same=true
+          fi
+          if [ "$same" = true ]; then
+            echo "Manifest unchanged; nothing to commit."
+            exit 0
+          fi
+          cp compat/compatibility.json compat/matrix.md compat-branch/
+          cp "$REQUALIFY/COMPAT-BRANCH.md" compat-branch/README.md
+          git -C compat-branch add compatibility.json matrix.md README.md
+          git -C compat-branch commit --quiet -m "Hyprland plugin requalification: $(date -u +%Y-%m-%dT%H:%MZ)" \
+            -m "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          git -C compat-branch push --quiet origin "HEAD:refs/heads/$COMPAT_BRANCH"
+      - name: Open or update the tracking issue
+        if: steps.merge.outputs.failed == 'true' || needs.requalify.result == 'failure' || needs.requalify.result == 'cancelled'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Pull requests exercise the reporter without filing anything.
+          DRY_RUN: ${{ github.event_name == 'pull_request' && '1' || '0' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REQUALIFY_RESULT: ${{ needs.requalify.result }}
+        run: |
+          if [ ! -s compat/failures.md ]; then
+            echo "- A requalify job ended $REQUALIFY_RESULT before writing a result; see the run logs." >compat/failures.md
+          fi
+          "$REQUALIFY/report_failure.sh" "$RUN_URL" compat/failures.md compat/matrix.md
+          echo "::error::Hyprland plugin requalification failed; see the matrix in the summary."
+          exit 1

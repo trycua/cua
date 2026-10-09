@@ -720,6 +720,195 @@ On 9 Oct the owner cleared public use of arm B (Codex computer use) numbers; CUA
 * `tools/make_codex_cu_mcp.py --surfaces`.
 * `pins.json` `codex_1007`.
 
+## Amendment 11 (9 Oct 2026, before the first trial of the Claude computer-use arms): Claude Desktop's computer-use helper, and Claude Code's built-in computer use
+
+Written and committed before the first trial of either arm, at the owner's request (9 Oct). It adds two follow-on arms on the tasks, VM image and limits of v038 (Amendment 8), reported beside v038's arms, the arc arm (A9) and the Codex 26.1007 arm (A10). Nothing about earlier runs changes. Owner's notes: `research/cua-driver-bench/2026-10-09_claude-cu-helper-notes.md`.
+
+### A11.1 Arms, in priority order (the owner reordered them on 9 Oct)
+
+| Label (for any later public use) | Runner arm | Tool layer |
+|---|---|---|
+| Claude Desktop computer-use helper 2.31226.0 via a minimal adapter | `cc-claude-cu-helper` | Claude Desktop 2.31226.0's background-input helper `app-cu-helper`, behind `tools/claude_cu_helper/cu_helper_mcp.py` as MCP server `claude-cu-helper` |
+| Claude Code's built-in computer use (v…) | `cc-claude-cu-builtin` | Claude Code's built-in `computer-use` MCP server. **Not run: see A11.8** |
+
+Everything else is the same as for the Claude arms of v038:
+
+* `claude -p` with Sonnet 5.5 (Claude Code 2.1.289) at default effort;
+* the shared system prompt, `--strict-mcp-config` and ToolSearch;
+* 360 s and 45 turns;
+* the per-task built-in tools (Bash, Edit and Write on the CDB-S tasks only);
+* `--allowedTools mcp__claude-cu-helper`.
+
+There is no skill. The tool descriptions are the arm's only guidance, as for arms B and arc.
+
+### A11.2 Why this arm: driver against driver
+
+`app-cu-helper` is the part of Claude Desktop that delivers input to a window in the background: SkyLight event posting with an authentication envelope, focus without raise, and per-window targeting. It is Desktop's closest analogue to Cua Driver's input layer. The arm puts it behind the same Claude Code harness as the other drivers.
+
+### A11.3 Pinned software and how it was obtained
+
+* **Desktop.** Claude Desktop 2.31226.0, released 8 Oct 2026, from `https://downloads.claude.ai/releases/darwin/universal/2.31226.0/Claude-eb794d1033f2a59c2cd89aa29ed1f8b5de12aa73.zip`.
+  * The archive is 383,954,641 bytes, sha256 `bd38f1051a14cabd893c7422e106ad6318e8785f19472c8064eafa64ce235820`.
+  * It was downloaded and unpacked only inside the VM clone `cdb-claudecu` (see A11.6), by `tools/claude_cu_helper/install_cu_helper.sh`.
+  * The app was never launched and never moved to `/Applications`. Nothing was re-signed, no quarantine attribute was changed (curl sets none), and no entitlement was touched.
+* **Helper.** `Claude.app/Contents/Helpers/app-cu-helper`, sha256 `7bd631e8b5ae36941ac551c474055e2eff32163db6684628eac5cfcabcb3dc14`, a universal binary.
+  * `codesign --verify --strict` passes.
+  * It is signed "Developer ID Application: Anthropic PBC (Q6L2SF6YDW)", identifier `app-cu-helper`.
+  * It is run in place, unmodified.
+* **Our parts, built in the VM:**
+  * the adapter `cu_helper_mcp.py`: Python stdlib only, run with `-I -B` by the VM's Python 3.12.14, sha256 `d3f7797bee7bb2d8e91f29511429dced89f7ddd063068f142a0b4b8189bf699d`;
+  * `winlist` (`winlist.swift`, public `CGWindowListCopyWindowInfo` only), sha256 `d150737bd4a3f7995a2abe7a615b951da8189236da7e3cb969e0de670d9614d4`;
+  * `cu-disclaim` (`cu_disclaim.c`, see A11.5), sha256 `c9dd836899692149e0a7d2bf144aa5f1180b359661016fddd267140c77e0057f`.
+
+  The pins are in `pins.json` `claude_cu_helper`, and the preflight fails if any of them differs.
+
+### A11.4 What the helper can do (probed in the VM before any trial) and the adapter's design
+
+**The helper's JSON-RPC surface.** It was established from the helper's own parameter errors and strings, and from how Desktop's `app.asar` calls it. Methods:
+
+* `probe`;
+* `dispatchRaw`;
+* `wakeChromiumCompositor`;
+* `bringWindowToActiveSpace`;
+* `keyWindowSpoof` (phases begin, check and repair).
+
+`dispatchRaw` kinds: `click`, `rclick`, `mclick`, `drag`, `scroll`, `hover`, `key` and `type`. Its fields:
+
+* `pid`, `windowId` and `winLocalPt` (window-local points);
+* `count`, `button` and `modifiers`;
+* `toWinLocalPt` and `viaWinLocalPts`;
+* `dx`, `dy` and `ticks`;
+* `keyName`, `text`, `typeBudgetMs` and `partOfTextWrite`;
+* `focusedTarget`, `hostPid`, `nativeMouseVariant` and `debug`.
+
+**Live results in the VM.** The target app was kept behind Terminal, and Terminal stayed frontmost throughout.
+
+* Delivered in the background: clicks, typing into TextEdit (checked on a screenshot), keys (return, escape, tab, arrows, pageDown and others), scroll, drag and hover.
+* Refused by the helper itself:
+  * right-clicks that open a context menu (`context_menu_rclick_refused`);
+  * cmd+a where select-all is off;
+  * typing when the focused element is not at the point.
+* Unmapped key names (for example `f1`) return `key_not_mapped`.
+* Without an Accessibility grant, every input is refused with `ax_untrusted_cannot_verify`.
+
+**The adapter's MCP tools** are shaped like Claude's own background computer-use tools:
+
+* `app_list_windows`;
+* `app_screenshot`;
+* `app_click` (left or right button, 1 to 3 clicks);
+* `app_type` (at a point, or into the focused element; insert or replace);
+* `app_key` (a combo such as `cmd+a`);
+* `app_scroll`;
+* `app_drag`;
+* `app_hover`.
+
+Each takes an `app` name and an optional `window_id`; coordinates are pixels of the latest screenshot of that window.
+
+**How the input is mapped.** Every input goes through `dispatchRaw` with Desktop 2.31226.0's own mapping, read from its `app.asar` in the VM:
+
+* the same base fields: `focusedTarget`, `hostPid` and `nativeMouseVariant` (false);
+* a click is `click` or `rclick` with `count`;
+* a scroll is `dx`/`dy` = round(−units × 40) with `ticks` 1;
+* key modifiers map cmd/meta to `cmd`, alt to `option`, plus ctrl, shift and fn;
+* typing is capped at 4,000 characters;
+* a replace sends `cmd+a` with `partOfTextWrite` first;
+* `user_actively_typing` is retried 6 times, 400 ms apart.
+
+Refusals go back to the model as tool errors carrying the helper's code and reason. Nothing falls back to another input path.
+
+**Design decisions and their reasons:**
+
+1. **Screenshots.** Desktop captures with its in-process native module (`@ant/claude-swift`, `appScoped.captureWindow`), not with the helper, so Desktop's own capture path is not reachable from the helper.
+   * The adapter uses the stock `/usr/sbin/screencapture -l <window id>` of the target window.
+   * It downscales to Claude Code's own screenshot budget (about 1.22 megapixels, at most 1,568 px on the long edge).
+   * Like Desktop, it first calls the helper's `wakeChromiumCompositor` for the window.
+2. **Window list.** The helper has no window list. `winlist` provides one from public CoreGraphics.
+3. **What the arm lacks.** Desktop's accessibility layer lives in its main process (`@ant/claude-swift`), not in the helper, so the arm does not have it:
+   * element indexes;
+   * `app_ax_find`;
+   * `app_menu`;
+   * AX text entry;
+   * the AX "rung 1" that Desktop tries before raw input.
+
+   This arm measures the helper as a driver, not Desktop's whole computer-use stack.
+4. **Hover is offered.** The helper delivers it, although Desktop's model-facing app tools do not list it. A capability the helper has is not withheld.
+5. **Cua Driver is not used by any tool of this arm.** The harness's own setup and measurement, the same in every arm, is unchanged:
+   * the screen recording;
+   * window placement before the agent starts;
+   * pointer parking.
+
+   All of these run outside the agent's tools, through the harness's recorder daemon.
+
+### A11.5 Permissions (no refusal was bypassed)
+
+* **Accessibility for the helper.** The helper needs it. It was granted in System Settings > Privacy & Security > Accessibility > + by choosing the helper's file.
+  * The VM's UI was driven over VNC from the host. The VM user's password confirmed the change.
+  * No TCC database was edited.
+* **Who the grant belongs to.** In a trial the helper is started through `cu-disclaim`, which spawns it with responsibility disclaimed. Desktop ships its own `disclaimer` helper for the same purpose. Two consequences:
+  * macOS checks the helper's own code identity, so the grant belongs to the Anthropic-signed helper;
+  * Terminal's Accessibility stays off.
+* **Screenshots.** `screencapture` runs under Terminal, which already holds Screen Recording in this image. macOS 26 asked once whether Terminal may bypass the private window picker; that prompt was allowed in the UI.
+* **Automation.** A prompt asking whether Terminal may control System Events, raised by a probe script, was answered "Don't Allow".
+
+### A11.6 VM, seats, token
+
+* **VM.** `cdb-claudecu` is an APFS clone of the stopped `cdb-h2h` (post-v038, unmodified), made 12:38 UTC and started 13:31 UTC in the g17-4 slot that Stream C released. The owner approved a second slot for this stream.
+  * The harness in it was replaced by this branch.
+  * The v038 copy is kept as `src/macos_bench.v038`.
+  * Its token file was deleted first thing (0 files).
+* **Seats.** As in A8.3: cswap seats, access tokens only, switched at five-hour or seven-day 0.94 (account 6 at seven-day 0.92) or on any rejection. The registered stop at seven-day 0.95 is unchanged. The token file is deleted, with sync, before every graceful shutdown.
+
+### A11.7 Runs and analysis
+
+* **Mini-run `v038-cuh-mini`.**
+  * Tasks: CDB-S01, CDB-S04, CDB-G02, CDB-G03, CDB-G04, MB-10 and MB-11, runs 1 to 3: 21 trials.
+  * **Gate to the full run:** the preflight passes, and at most 3 of the 21 trials are infrastructure exclusions. Success is not a gate.
+  * **Stop condition:** if the mini-run shows that the helper path cannot work in this harness (for example, every input refused), the arm is stopped and reported as impractical instead.
+* **Full run `v038-cuh`.** The ten v038 tasks in the A3.3 order (CDB-S01, CDB-S04, CDB-G02, CDB-G03, CDB-G04, MB-09, MB-10, MB-11, CDB-S02, CDB-S03), runs 1 to 3 then 4 and 5: 50 trials. Only complete blocks are analysed.
+* **Analysis** (`tools/analyze_claude_cu.py`, written before the first trial). Everything is descriptive and cross-run:
+  * a standings table of this arm against v038's A, AX, A0 and B, the arc arm and the Codex 26.1007 arm on the same tasks;
+  * this arm against A, paired by task and run, with the A5.4 bootstrap;
+  * per task;
+  * calls per tool and failed calls;
+  * inputs the helper did not deliver;
+  * failure classes.
+* **Confounds, stated in every report:**
+  1. a separate run after v038;
+  2. no skill;
+  3. no accessibility layer (A11.4);
+  4. a neutral capture path instead of Desktop's;
+  5. Desktop's helper is an internal interface, used here outside Desktop, and may change without notice.
+
+### A11.8 Claude Code's built-in computer use: not run
+
+* **Versions checked.** Claude Code 2.1.289 (the bench version, in the VM) and 2.1.295 (the latest on 9 Oct). Both have the same gate.
+* **How it starts.** Claude Code registers the built-in `computer-use` server only in interactive sessions, never with `-p`. Its eligibility check accepts only the subscription types `max` and `pro`. The documentation agrees: "requires a Pro or Max plan. It is not available on Team or Enterprise plans."
+* **Why it cannot run here.** Every seat available to the bench (cswap accounts 1 to 7) is a Team seat (`subscriptionType` "team").
+* **Not worked around.** Declaring another plan through `CLAUDE_CODE_SUBSCRIPTION_TYPE`, or starting the server with `--computer-use-mcp` outside its supported flow, would bypass a gate. Neither is done.
+* **What would unblock it.** The arm needs a Pro or Max claude.ai seat from the owner. With one, it would run as written in the owner's brief, in an amendment of its own:
+  * an interactive session driven through a pseudo-terminal, with the same prompt and limits;
+  * the transcript captured;
+  * the per-app approval answered in the session's own dialog for the task's apps only.
+
+### A11.9 Harness changes for this amendment
+
+* `claude_arms.py`, `arms.py` and `run_bench.py`:
+  * the arm and its MCP config;
+  * the pins check and the live preflight (helper probe `skylight` and `axTrusted`; the adapter lists exactly its eight tools);
+  * the row field `claude_cu_helper`;
+  * the leftover sweep `cu_helper_leftover_killed`.
+* `claude_events.py`: action classes.
+* `tools/claude_cu_helper/`.
+* `tools/analyze_claude_cu.py`.
+* `pins.json` `claude_cu_helper`.
+* `tests/test_claude_cu_helper_arm.py`.
+
+No other arm's behaviour changes. The integration commit is 25868bb7e.
+
+### A11.10 Values filled in before each run
+
+* **`v038-cuh-mini`:** `CUTOFF_UTC` 2026-10-09T20:00:00Z; starting seat cswap account 4 (13:44 UTC poll: 5h 0%, 7d 48%); launched right after this commit with `--park-pointer --arms cc-claude-cu-helper --tasks CDB-S01 CDB-S04 CDB-G02 CDB-G03 CDB-G04 MB-10 MB-11 --phase1-runs 3 --phase2-runs 0`.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

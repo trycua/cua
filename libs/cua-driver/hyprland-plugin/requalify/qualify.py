@@ -146,9 +146,10 @@ def ctest(out):
     log = out / "ctest.log"
     code, output = run(["ctest", "--test-dir", str(out / "build"), "--output-on-failure", "--no-tests=error",
                         "--timeout", "120"], log, check=False)
-    summary = re.search(r"(\d+)% tests passed, (\d+) tests? failed out of (\d+)", output)
+    # CTest omits the failed count when nothing failed: "100% tests passed out of 20".
+    summary = re.search(r"(\d+)% tests passed(?:, (\d+) tests? failed)? out of (\d+)", output)
     total = int(summary[3]) if summary else 0
-    failed = int(summary[2]) if summary else None
+    failed = int(summary[2] or 0) if summary else None
     failures = re.findall(r"^\s*\d+ - (\S+) \(", output, re.MULTILINE)
     return {"status": "pass" if code == 0 and total else "fail", "total": total,
             "failed": failed, "failures": failures, "log": log.name}

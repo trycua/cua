@@ -228,9 +228,9 @@ class PlanTest(unittest.TestCase):
     def test_finished_combinations_are_skipped_unless_forced(self):
         key = self.snapshot["channels"]["arch"]["abi_key"]
         previous = {"entries": [{"abi_key": key, "plugin": {"tree": "a" * 40}, "status": "pass"},
-                                {"abi_key": key, "plugin": {"tree": "b" * 40}, "status": "build-only"}]}
+                                {"abi_key": key, "plugin": {"tree": "b" * 40}, "status": "fail"}]}
         include = channels.plan(self.snapshot, SOURCES, previous)
-        self.assertEqual(len(include), 3)  # build-only is retried.
+        self.assertEqual(len(include), 3)  # A failure is retried.
         self.assertEqual(len(channels.plan(self.snapshot, SOURCES, previous, force=True)), 4)
 
 
@@ -313,6 +313,10 @@ class QualifyTest(unittest.TestCase):
             result = qualify.ctest(Path(directory))
         self.assertEqual((result["status"], result["total"], result["failed"]), ("fail", 20, 1))
         self.assertEqual(result["failures"], ["cua_hyprland_status_test"])
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(qualify, "run", return_value=(0, "100% tests passed out of 20\n")):
+            result = qualify.ctest(Path(directory))
+        self.assertEqual((result["status"], result["total"], result["failed"]), ("pass", 20, 0))
 
     def test_no_drm_device_is_unavailable_not_failure(self):
         with mock.patch.object(qualify, "drm_cards", return_value=[]):

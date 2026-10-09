@@ -213,12 +213,13 @@ def versions(channel_info):
 def plan(snapshot, sources, manifest=None, force=False):
     """Build matrix: one job per (distinct ABI key, distinct plugin tree).
 
-    A combination already in the manifest with a final status is skipped unless
-    forced. Channels sharing an ABI key share one build.
+    A combination that already passed is skipped unless forced. build-only and
+    fail are retried, so a persistent failure is reported on every run and a
+    transient one clears itself. Channels sharing an ABI key share one build.
     """
     done = {}
     for entry in (manifest or {}).get("entries", []):
-        if entry.get("status") in ("pass", "fail"):
+        if entry.get("status") == "pass":
             done[(entry["abi_key"], entry["plugin"]["tree"])] = entry["status"]
     builds = {}
     for channel, info in sorted(snapshot["channels"].items()):

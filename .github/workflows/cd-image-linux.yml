@@ -246,6 +246,9 @@ jobs:
         with:
           workspaces: libs/cua
           key: cli-${{ matrix.arch }}
+          # Only main writes the cache every pull request restores: per-PR
+          # copies would evict it from the 10 GB repository cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the cua CLI
         working-directory: libs/cua
         run: cargo build --release --locked -p cua-cli

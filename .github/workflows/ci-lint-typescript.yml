@@ -14,6 +14,12 @@ env:
 permissions:
   contents: read
 
+# A new push to a pull request supersedes its running checks. Every other
+# event gets its own group (the run id), so it is never queued or cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     name: TypeScript Lint & Format

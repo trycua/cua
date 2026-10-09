@@ -82,6 +82,9 @@ jobs:
         with:
           workspaces: libs/cua
           key: cua-sdk
+          # Only main writes the cache every pull request restores: per-PR
+          # copies would evict it from the 10 GB repository cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt -p cua-sdk -p cua-daemon -p cua-cli -p cua-bindgen -p cua-spacesd-client -p cua-media-protocol -p cua-media-transport -p cua-media-codec -p cua-media-client -p cua-viewer -p cua-logging -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --check
@@ -180,6 +183,9 @@ jobs:
         with:
           workspaces: libs/cua-spacesd/tests/spaces-e2e
           key: cua-spaces-e2e
+          # Only main writes the cache every pull request restores: per-PR
+          # copies would evict it from the 10 GB repository cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt -- --check
@@ -211,6 +217,9 @@ jobs:
         with:
           workspaces: libs/cua
           key: cua-sdk-bindings
+          # Only main writes the cache every pull request restores: per-PR
+          # copies would evict it from the 10 GB repository cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -265,20 +274,37 @@ jobs:
         with:
           workspaces: libs/cua
           key: cua-sdk-python
+          # Only main writes the cache every pull request restores: per-PR
+          # copies would evict it from the 10 GB repository cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       # The wheel ships the MIT `cua`; the suite also runs the daemon of the
       # Cua Spaces build (cua-spaces-cli), a Unix-socket test skipped on Windows.
+      # All debug, like the fixtures and CLIs: one profile, so they share the
+      # dependency builds (a release library compiled every crate twice).
+      # The library is copied aside before anything else builds: the CLIs and
+      # the fixture depend on cua-sdk with other features, and cargo rewrites
+      # target/debug's cua-sdk cdylib with each of those feature sets.
       - name: Build the SDK, fixtures and CLIs
         working-directory: libs/cua
         run: |
-          cargo build --locked --release -p cua-sdk
+          case "$RUNNER_OS" in
+            Linux) library=libcua_sdk.so ;;
+            macOS) library=libcua_sdk.dylib ;;
+            Windows) library=cua_sdk.dll ;;
+          esac
+          cargo build --locked -p cua-sdk
+          mkdir -p "$RUNNER_TEMP/cua-sdk"
+          cp "target/debug/$library" "$RUNNER_TEMP/cua-sdk/$library"
+          echo "CUA_SDK_LIBRARY=$RUNNER_TEMP/cua-sdk/$library" >>"$GITHUB_ENV"
           scripts/build-test-fixtures.sh
           cargo build --locked -p cua-cli
           if [ "$RUNNER_OS" != Windows ]; then cargo build --locked -p cua-spaces-cli; fi
-          node scripts/stage-uniffi-library.mjs --only=python
       - name: Build the platform wheel
         working-directory: libs/cua/python
-        run: uv run --no-project --python 3.12 --with build python build_wheel.py --cli ../target/debug/cua --out-dir dist
+        run: >
+          uv run --no-project --python 3.12 --with build python build_wheel.py
+          --library "$CUA_SDK_LIBRARY" --cli ../target/debug/cua --out-dir dist
       - name: Smoke-test the installed wheel
         working-directory: libs/cua/python
         run: |
@@ -311,18 +337,23 @@ jobs:
         with:
           workspaces: libs/cua
           key: cua-sdk-node
+          # Only main writes the cache every pull request restores: per-PR
+          # copies would evict it from the 10 GB repository cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: libs/cua/typescript/package-lock.json
+      # All debug, as in python smoke: one profile for every crate. Staged
+      # before the CLIs and fixture rebuild cua-sdk with other features.
       - name: Build and stage
         run: |
           npm --prefix typescript ci --ignore-scripts
-          cargo build --locked --release -p cua-sdk
+          cargo build --locked -p cua-sdk
+          node scripts/stage-uniffi-library.mjs --only=node --profile=debug
           scripts/build-test-fixtures.sh
           cargo build --locked -p cua-cli -p cua-spaces-cli
-          node scripts/stage-uniffi-library.mjs --only=node
       - name: Test
         run: npm --prefix typescript test
 
@@ -348,6 +379,9 @@ jobs:
         with:
           workspaces: libs/cua
           key: cua-sdk-browser
+          # Only main writes the cache every pull request restores: per-PR
+          # copies would evict it from the 10 GB repository cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -384,6 +418,9 @@ jobs:
         with:
           workspaces: libs/cua
           key: cua-sdk-swift
+          # Only main writes the cache every pull request restores: per-PR
+          # copies would evict it from the 10 GB repository cache.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Dev dylib
         run: |
           cargo build --locked --release -p cua-sdk

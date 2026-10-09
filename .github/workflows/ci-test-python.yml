@@ -17,6 +17,12 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request supersedes its running checks. Every other
+# event gets its own group (the run id), so it is never queued or cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Test ${{ matrix.package }}
@@ -94,6 +100,8 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       CARGO_BUILD_JOBS: "4"
+      # Line tables keep backtraces useful at a fraction of the debug info.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -116,12 +124,16 @@ jobs:
 
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
 
+      # Debug, like the fixture: one profile, so the fixture reuses the
+      # library's dependency builds (a release library doubled the build).
       - name: Build the cua SDK library and the spacesd MockServer fixture
         working-directory: libs/cua
         run: |
-          cargo build --locked --release -p cua-sdk
+          cargo build --locked -p cua-sdk
+          # Staged before the fixture build, which rebuilds cua-sdk with
+          # other features into the same target directory.
+          node scripts/stage-uniffi-library.mjs --only=python --profile=debug
           scripts/build-test-fixtures.sh
-          node scripts/stage-uniffi-library.mjs --only=python
 
       - name: Install cua-sandbox
         working-directory: libs/python/cua-sandbox

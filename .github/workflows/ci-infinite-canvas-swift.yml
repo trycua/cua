@@ -13,6 +13,9 @@ on:
     paths:
       - "samples/infinite-canvas-swift/**"
       - "libs/cua/**"
+      # Language bindings this build never reads.
+      - "!libs/cua/python/**"
+      - "!libs/cua/kotlin/**"
       - "libs/spaces-sdk-swift/**"
       - "libs/spaces-app-swift/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/assets/**"

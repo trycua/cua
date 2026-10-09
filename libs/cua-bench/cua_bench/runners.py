@@ -6,6 +6,7 @@ interactive environments, using the core gym interface (make, reset, step, evalu
 
 import asyncio
 import fnmatch
+import math
 import time
 import uuid
 from dataclasses import dataclass
@@ -143,6 +144,12 @@ async def run_single_task(
                 reward = float(result[0])
             elif isinstance(result, dict) and "reward" in result:
                 reward = float(result["reward"])
+            else:
+                raise ValueError("Evaluator returned an unsupported reward format")
+            if not math.isfinite(reward) or not 0.0 <= reward <= 1.0:
+                raise ValueError(f"Evaluator reward must be finite and within [0, 1], got {reward!r}")
+        else:
+            raise ValueError("Task has no evaluator; cannot produce a verified score")
 
         return TaskResult(
             task_path=str(env_path),
@@ -310,12 +317,12 @@ async def run_benchmark(
     task_results: List[Dict[str, Any]] = []
     rewards: List[float] = []
 
-    for result in results:
-        if isinstance(result, Exception):
+    for (task_path, variant_id), result in zip(task_variants, results):
+        if isinstance(result, BaseException):
             task_results.append(
                 {
-                    "task_path": "unknown",
-                    "variant_id": -1,
+                    "task_path": str(task_path),
+                    "variant_id": variant_id,
                     "success": False,
                     "reward": 0.0,
                     "steps": 0,

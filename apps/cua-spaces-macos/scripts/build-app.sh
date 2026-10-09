@@ -103,6 +103,9 @@ install_name_tool -add_rpath "@executable_path/../Frameworks" "$app/Contents/Mac
 if [ -x "$cli" ]; then
   cp "$cli" "$app/Contents/MacOS/cua"
   codesign -s - -f -i com.trycua.cua "$app/Contents/MacOS/cua"
+  # Its launchd agent (DaemonSupervisor registers it with SMAppService).
+  mkdir -p "$app/Contents/Library/LaunchAgents"
+  cp "$here/Support/com.trycua.spaces.daemon.plist" "$app/Contents/Library/LaunchAgents/"
 else
   echo "note: no cua CLI at $cli (cargo build --release -p cua-spaces-cli); the app will not install one" >&2
 fi

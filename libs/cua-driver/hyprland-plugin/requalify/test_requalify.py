@@ -260,6 +260,33 @@ class SourcesTest(unittest.TestCase):
         self.assertEqual(found[1]["driver_version"], "0.34.0")
         self.assertTrue(all(len(s["tree"]) == 40 for s in found))
 
+    def test_docs_and_tooling_do_not_change_the_source_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t",
+                       GIT_COMMITTER_EMAIL="t@t")
+
+            def git(*args):
+                return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True,
+                                      env=env, text=True).stdout.strip()
+
+            plugin = repo / channels.PLUGIN_PATH
+            (plugin / "src").mkdir(parents=True)
+            git("init", "-q")
+            (plugin / "src" / "plugin.cpp").write_text("1")
+            git("add", "-A")
+            git("commit", "-qm", "a")
+            first = channels.source_id(repo, git("rev-parse", "HEAD"))
+            for name in ("requalify/x.py", "docs/y.md", "README.md"):
+                (plugin / name).parent.mkdir(parents=True, exist_ok=True)
+                (plugin / name).write_text("doc")
+            git("add", "-A")
+            git("commit", "-qm", "b")
+            self.assertEqual(channels.source_id(repo, git("rev-parse", "HEAD")), first)
+            (plugin / "src" / "plugin.cpp").write_text("2")
+            git("commit", "-qam", "c")
+            self.assertNotEqual(channels.source_id(repo, git("rev-parse", "HEAD")), first)
+
 
 class QualifyTest(unittest.TestCase):
     def test_pacman_conf_keeps_channel_order(self):

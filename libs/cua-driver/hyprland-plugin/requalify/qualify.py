@@ -30,7 +30,8 @@ import channels  # noqa: E402
 
 # The production package's options (packaging/release/profile_verify.py OPTIONS).
 BUILD_OPTIONS = {"CUA_HYPRLAND_INPUT": "ON", "CUA_HYPRLAND_TEST_INPUT": "OFF", "CUA_HYPRLAND_INPUT_TRACE": "OFF"}
-BUILD_PACKAGES = ("hyprland", "gcc", "cmake", "ninja", "pkgconf", "binutils", "python", "openssl",
+# make: the CMake API probe test configures a nested project with the default generator.
+BUILD_PACKAGES = ("hyprland", "gcc", "cmake", "ninja", "make", "pkgconf", "binutils", "python", "openssl",
                   "libxkbcommon", "xkeyboard-config")
 # The headless session's native Wayland clients and font.
 SESSION_PACKAGES = ("foot", "ttf-dejavu", "mesa")
@@ -68,6 +69,10 @@ def pacman_conf(channel, with_omarchy):
 def setup_pacman(job, log):
     with_omarchy = bool(job.get("needs_omarchy_repo"))
     Path("/etc/pacman.conf").write_text(pacman_conf(job["channel"], with_omarchy))
+    # Drop the bootstrap's Arch databases: pacman's If-Modified-Since would keep
+    # a newer Arch database over an older channel mirror's (rc, stable).
+    for database in Path("/var/lib/pacman/sync").glob("*"):
+        database.unlink()
     run(["pacman-key", "--init"], log)
     run(["pacman-key", "--populate", "archlinux"], log)
     if with_omarchy:
@@ -80,7 +85,8 @@ def setup_pacman(job, log):
         run(["pacman", "-U", "--noconfirm", f"{url}/{keyring}"], log)
         run(["pacman-key", "--populate", "omarchy"], log)
     for attempt in range(3):
-        code, _ = run(["pacman", "-Syu", "--noconfirm", "--needed", *BUILD_PACKAGES, *SESSION_PACKAGES],
+        # -yy forces fresh databases; -uu lets an older channel downgrade the bootstrap.
+        code, _ = run(["pacman", "-Syyuu", "--noconfirm", "--needed", *BUILD_PACKAGES, *SESSION_PACKAGES],
                       log, check=False)
         if code == 0:
             return

@@ -260,6 +260,7 @@ def upstream_status(snapshot):
 
 
 PLUGIN_PATH = "libs/cua-driver/hyprland-plugin"
+NON_BUILD = re.compile(r"(requalify|docs)/|[^/]+\.md$")
 DRIVER_TAG = re.compile(r"cua-driver-rs-v([0-9]+\.[0-9]+\.[0-9]+)")
 
 
@@ -288,8 +289,20 @@ def plugin_sources(repo, snapshot, head="HEAD"):
         seen.add(label)
         commit = git(repo, "rev-parse", f"{ref}^{{commit}}")
         sources.append({"ref": label, "commit": commit, "driver_version": version,
-                        "tree": git(repo, "rev-parse", f"{commit}:{PLUGIN_PATH}")})
+                        "tree": source_id(repo, commit)})
     return sources
+
+
+def source_id(repo, commit):
+    """Content ID of the plugin's build inputs at a commit.
+
+    Documentation and this requalification tooling (which lives under the
+    plugin directory) do not change the module, so they do not make a new
+    plugin build.
+    """
+    listing = git(repo, "ls-tree", "-r", commit, "--", PLUGIN_PATH).splitlines()
+    inputs = [line for line in listing if not NON_BUILD.match(line.split("\t", 1)[1][len(PLUGIN_PATH) + 1:])]
+    return hashlib.sha1("\n".join(inputs).encode()).hexdigest()
 
 
 def main():

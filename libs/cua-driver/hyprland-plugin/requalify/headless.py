@@ -10,7 +10,7 @@ Smoke: the window-targeted background input check from the Omarchy validation
 record, reduced to native Wayland clients. A holder window keeps primary focus
 while background-seat KEY input over cua-input-v3 types into a separate target
 window; the target application's own output is the oracle, and primary focus
-must not move. TARGET on the focused holder must refuse (primary_target_busy).
+must not move.
 """
 
 import argparse
@@ -175,13 +175,16 @@ def smoke(session):
     time.sleep(1)  # Let the target's shell reach its read.
     path = Path(os.environ["XDG_RUNTIME_DIR"]) / "hypr" / session.instance / "cua-input-v3.sock"
     lane = InputLane(path)
-    checks = {}
+    checks, observations = {}, {}
     try:
         hello = lane.request("HELLO")
         checks["hello_protocol_3"] = hello.get("ok") is True and hello.get("protocol") == 3
         checks["claim"] = lane.request("CLAIM").get("ok") is True
+        # Informational: the plugin refuses a target whose client holds the primary
+        # seat's keyboard or pointer focus, but a headless seat has no keyboard or
+        # pointer device, so Hyprland's active window need not hold either.
         refused = lane.target(holder)
-        checks["focused_target_refused"] = refused.get("ok") is False and refused.get("code") == "primary_target_busy"
+        observations["focused_holder_target"] = refused
         delivered = []
         for key in KEYS:
             grant = lane.target(target)
@@ -199,7 +202,7 @@ def smoke(session):
     checks["primary_focus_unchanged"] = session.json("activewindow").get("address") == focused["address"]
     return {"target": {k: target[k] for k in ("address", "pid", "class")},
             "holder": {k: holder[k] for k in ("address", "pid", "class")},
-            "typed": text, "checks": checks, "transcript": lane.transcript}
+            "typed": text, "checks": checks, "observations": observations, "transcript": lane.transcript}
 
 
 def tail(path, lines=60):

@@ -15,7 +15,6 @@ import Testing
         var starts = 0
         var probes = 0
         var restarted = 0
-        var startedAt: [Date] = []
 
         func spawn() {
             let p = Process()
@@ -43,9 +42,9 @@ import Testing
         let daemon = Daemon()
         daemon.spawn()
         defer { daemon.stop() }
-        // A probe every minute: only the exit can wake it in time.
+        // A probe every hour: only the exit can wake it in time.
         let task = supervisor.supervise(
-            interval: .seconds(60),
+            interval: .seconds(3600),
             isUp: {
                 daemon.lock.withLock { daemon.probes += 1 }
                 return daemon.pid != nil
@@ -53,7 +52,7 @@ import Testing
             report: { _ in },
             restarted: { daemon.lock.withLock { daemon.restarted += 1 } },
             start: {
-                daemon.lock.withLock { daemon.starts += 1; daemon.startedAt.append(Date()) }
+                daemon.lock.withLock { daemon.starts += 1 }
                 daemon.spawn()
                 return nil
             },
@@ -64,20 +63,16 @@ import Testing
         // Waiting is not polling.
         #expect(daemon.lock.withLock { daemon.probes } == 0)
 
-        let killed = Date()
+        // Started again long before the next probe (an hour): its exit woke
+        // the supervisor. (No tighter bound: a loaded run may be slow.)
         daemon.kill()
-        #expect(await eventually(20) { daemon.lock.withLock { daemon.starts } == 1 })
-        let took = try #require(daemon.lock.withLock { daemon.startedAt.first }).timeIntervalSince(killed)
-        #expect(took < 2, "started again after \(took) s")
-        #expect(await eventually(20) { daemon.lock.withLock { daemon.restarted } == 1 })
+        #expect(await eventually(60) { daemon.lock.withLock { daemon.starts } == 1 })
+        #expect(await eventually(60) { daemon.lock.withLock { daemon.restarted } == 1 })
 
         // The new daemon is watched too.
         try await Task.sleep(for: .milliseconds(200))
-        let again = Date()
         daemon.kill()
-        #expect(await eventually(20) { daemon.lock.withLock { daemon.starts } == 2 })
-        let second = try #require(daemon.lock.withLock { daemon.startedAt.last }).timeIntervalSince(again)
-        #expect(second < 2, "started again after \(second) s")
+        #expect(await eventually(60) { daemon.lock.withLock { daemon.starts } == 2 })
     }
 
     @Test func anExitWatcherFiresForAProcessThatIsAlreadyGone() async {
@@ -93,12 +88,12 @@ import Testing
         watcher.stop()
     }
 
-    @Test func aWakeBeforeTheWaitEndsItAtOnce() async {
+    /// A wait of an hour that a wake before it ends (the time limit fails
+    /// the test otherwise).
+    @Test(.timeLimit(.minutes(2))) func aWakeBeforeTheWaitEndsItAtOnce() async {
         let wake = SupervisorWake()
         wake.fire()
-        let start = Date()
-        await wake.wait(for: .seconds(30))
-        #expect(Date().timeIntervalSince(start) < 2)
+        await wake.wait(for: .seconds(3600))
         // Without a wake, it waits its time.
         let t = Date()
         await wake.wait(for: .milliseconds(150))

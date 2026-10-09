@@ -535,6 +535,9 @@ public final class LiveGate<Value: Sendable>: @unchecked Sendable {
     /// The value, when set.
     public var current: Value? { lock.withLock { value } }
 
+    /// How many calls wait for it now.
+    var waiting: Int { lock.withLock { waiters.count } }
+
     /// Sets it (once; later calls are ignored, answering false) and wakes
     /// every waiter.
     @discardableResult

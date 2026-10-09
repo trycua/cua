@@ -494,6 +494,15 @@ final class CreateListener: SpaceCreateListener {
 
 enum TimeoutError: Error { case timedOut }
 
+/// Calls `fire` once, `seconds` from now.
+typealias DeadlineScheduler = @Sendable (_ seconds: Double, _ fire: @escaping @Sendable () -> Void) -> Void
+
+/// A dispatch timer, not a sleeping task: the deadline holds even when
+/// every cooperative thread is blocked (a synchronous SDK call).
+let dispatchDeadline: DeadlineScheduler = { seconds, fire in
+    DispatchQueue.global().asyncAfter(deadline: .now() + seconds, execute: fire)
+}
+
 /// Runs `body`, giving up after `seconds`.
 ///
 /// The bound holds even when `body` never returns: an SDK call (a UniFFI
@@ -502,18 +511,23 @@ enum TimeoutError: Error { case timedOut }
 /// waited as long as the call did (a Space list that never came back hung
 /// the list poll for good). `body` keeps running after the timeout, and its
 /// result is dropped.
-func withTimeout<T: Sendable>(seconds: Double, _ body: @escaping @Sendable () async throws -> T) async -> Result<T, Error> {
+///
+/// It runs on the caller's actor (`isolation`), so a main-actor caller sets
+/// its deadline at once and is resumed straight on the main actor: neither
+/// needs one of the cooperative threads a blocked SDK call may be holding.
+/// `deadline` is the timer (tests fire it by hand).
+func withTimeout<T: Sendable>(seconds: Double, isolation: isolated (any Actor)? = #isolation,
+                              deadline: DeadlineScheduler = dispatchDeadline,
+                              _ body: @escaping @Sendable () async throws -> T) async -> Result<T, Error> {
     let first = FirstResult<T>()
-    return await withCheckedContinuation { (done: CheckedContinuation<Result<T, Error>, Never>) in
+    return await withCheckedContinuation(isolation: isolation) { (done: CheckedContinuation<Result<T, Error>, Never>) in
         first.set(done)
         let work = Task {
             let r: Result<T, Error>
             do { r = .success(try await body()) } catch { r = .failure(error) }
             first.resume(r)
         }
-        // A dispatch timer, not a sleeping task: the deadline holds even when
-        // every cooperative thread is blocked (a synchronous SDK call).
-        DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
+        deadline(seconds) {
             if first.resume(.failure(TimeoutError.timedOut)) { work.cancel() }
         }
     }

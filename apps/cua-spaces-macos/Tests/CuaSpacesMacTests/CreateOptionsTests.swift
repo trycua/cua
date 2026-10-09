@@ -77,10 +77,10 @@ struct CreateOptionsTests {
         let gate = LiveGate<LiveServices>()
         let (bridge, model) = bridge(PendingSpacesBackend(gate: gate))
         #expect(!model.servicesIn)
-        let start = Date()
         let options = try json(try await bridge.handle("spaces.createOptions", [:]))
-        // Every probe would wait for the services: none ran.
-        #expect(Date().timeIntervalSince(start) < 2)
+        // Every probe would wait for the services (and keep waiting after
+        // its timeout): none ran.
+        #expect(gate.waiting == 0)
         #expect(options["pending"] as? Bool == true)
         #expect(options["macosVmsRunning"] is NSNull)
         let env = try decodedEnv(options)
@@ -97,20 +97,109 @@ struct CreateOptionsTests {
         #expect(liveEnv.storage?.pulled == ["ghcr.io/trycua/linux:24.04"])
     }
 
-    /// A probe that never stops (an SDK call cannot be cancelled; a macOS
-    /// privacy prompt blocks a file read) still gives up on time.
-    @Test func aTimeoutReturnsAtItsDeadline() async {
-        let start = Date()
-        let result = await withTimeout(seconds: 0.2) { () async -> Int in
-            await withUnsafeContinuation { c in
-                DispatchQueue.global().asyncAfter(deadline: .now() + 3) { c.resume(returning: 1) }
+    /// A deadline the test fires by hand, noting where it was set.
+    final class ManualDeadline: @unchecked Sendable {
+        private let lock = NSLock()
+        private var fires: [@Sendable () -> Void] = []
+        private var setAt: [(seconds: Double, onMain: Bool)] = []
+        var schedule: DeadlineScheduler {
+            { [self] seconds, fire in
+                lock.withLock {
+                    setAt.append((seconds, Thread.isMainThread))
+                    fires.append(fire)
+                }
             }
         }
-        #expect(Date().timeIntervalSince(start) < 2.5)
-        guard case .failure(let error) = result else { Issue.record("expected the timeout"); return }
+        /// Each deadline set: its seconds, and whether on the main thread.
+        var set: [(seconds: Double, onMain: Bool)] { lock.withLock { setAt } }
+        var count: Int { lock.withLock { setAt.count } }
+        func fire() { lock.withLock { fires.removeFirst() }() }
+    }
+
+    /// A call that runs until the test lets it go (an SDK call does not
+    /// stop when cancelled; a file read waits behind a privacy prompt).
+    final class StuckCall: @unchecked Sendable {
+        private let lock = NSLock()
+        private var waiting: CheckedContinuation<Void, Never>?
+        private var released = false
+        private var started = false
+        private var finished = false
+        private var cancelled = false
+        func run() async -> Int {
+            lock.withLock { started = true }
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                let now = lock.withLock { () -> Bool in
+                    if released { return true }
+                    waiting = c
+                    return false
+                }
+                if now { c.resume() }
+            }
+            lock.withLock { finished = true; cancelled = Task.isCancelled }
+            return 1
+        }
+        func release() {
+            let c = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                released = true
+                defer { waiting = nil }
+                return waiting
+            }
+            c?.resume()
+        }
+        var isStarted: Bool { lock.withLock { started } }
+        var isFinished: Bool { lock.withLock { finished } }
+        var sawCancel: Bool { lock.withLock { cancelled } }
+    }
+
+    /// Waits for `condition` (at most a minute; the run may be loaded).
+    func eventually(_ condition: () -> Bool) async -> Bool {
+        var tries = 0
+        while !condition(), tries < 6000 {
+            tries += 1
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+
+    /// A probe that never stops still gives up: its deadline decides,
+    /// without waiting for the call. The deadline is fired by hand, so a
+    /// loaded run (other tests holding the main actor) cannot make it look
+    /// late; what is checked is what decides the answer.
+    @Test(.timeLimit(.minutes(2))) func aTimeoutReturnsAtItsDeadline() async throws {
+        let deadline = ManualDeadline()
+        let stuck = StuckCall()
+        final class Answer: @unchecked Sendable { var result: Result<Int, Error>? }
+        let answer = Answer()
+        let call = Task { @MainActor in
+            let r = await withTimeout(seconds: 0.2, deadline: deadline.schedule) { await stuck.run() }
+            answer.result = r
+            return r
+        }
+        #expect(await eventually { deadline.count == 1 && stuck.isStarted })
+        // Set at once on the caller's actor (the main actor here), not on a
+        // shared thread a blocked SDK call may be holding.
+        #expect(deadline.set.map(\.seconds) == [0.2])
+        #expect(deadline.set.map(\.onMain) == [true])
+        // Nothing decided yet: the call is still running.
+        #expect(answer.result == nil)
+
+        deadline.fire()
+        let result = await call.value
+        guard case .failure(let error) = result else { Issue.record("expected the timeout, got \(result)"); return }
         #expect(error is TimeoutError)
-        let quick = await withTimeout(seconds: 5) { 7 }
+        // The answer did not wait for the call, which is told to stop.
+        #expect(!stuck.isFinished)
+        stuck.release()
+        #expect(await eventually { stuck.isFinished })
+        #expect(stuck.sawCancel)
+
+        // A call that answers first wins; its deadline firing later changes nothing.
+        let late = ManualDeadline()
+        let quick = await withTimeout(seconds: 5, deadline: late.schedule) { 7 }
         #expect((try? quick.get()) == 7)
+        late.fire()
+        // The dispatch timer is the default.
+        #expect((try? await withTimeout(seconds: 5) { 7 }.get()) == 7)
     }
 
     @Test func runningMacosVmsCountsLumesRunningMacs() {

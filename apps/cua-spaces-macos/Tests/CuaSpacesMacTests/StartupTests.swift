@@ -372,13 +372,15 @@ import Testing
         let keychain = BundledCuaKeychain(cua: cua, quietTimeout: 5)
         #expect(await keychain.check(prompt: false) == .needsAccess(locked: false))
         #expect(await keychain.forget() == .ready)
-        // A prompt left open: cancel stops it (and its dialog with it).
-        let started = Date()
+        // A prompt left open: cancel stops it (and its dialog with it), long
+        // before its 30 s are up.
         async let prompted = keychain.check(prompt: true)
-        try await Task.sleep(for: .milliseconds(300))
+        var tries = 0
+        while keychain.runningPid == nil, tries < 6000 { tries += 1; try await Task.sleep(for: .milliseconds(10)) }
+        let pid = try #require(keychain.runningPid)
         keychain.cancel()
         #expect(await prompted == .failed("stopped"))
-        #expect(Date().timeIntervalSince(started) < 10)
+        #expect(kill(pid, 0) != 0)
         // A quiet check that hangs is bounded.
         let hung = BundledCuaKeychain(cua: try await fakeCua("exec sleep 30"), quietTimeout: 0.5)
         #expect(await hung.check(prompt: false) == .failed("stopped"))

@@ -87,3 +87,30 @@ Follow with positive real dataset runs on `cua-bench-basic`, a parallelism stres
 
 ### Anti-claims
 No verified external adoption, certification, real VM cleanup receipt or long-term defensibility proven yet. Evidence artifacts and test coverage are not themselves network effects.
+
+## Reassessment against 2026-10-09 upstream and external practice
+
+The official `trycua/cua` project remains active. Its open PRs include #4899 (worker stdout pipe saturation at long run), #4898 (worker lock/timeout deadlock), #4884 (reject action-truth claims inconsistent with E2E oracles), and #4883 (metadata-only runtime conformance witness). **Do not describe those as our novel discoveries or duplicate their patches.** Pursue narrow upstream-compatible changes after base comparison, not a large mixed PR from this feature branch.
+
+External comparison: OSWorld-V2's supported benchmark release defines pinned task/assets/web/provider image versions (https://github.com/xlang-ai/OSWorld-V2/blob/main/benchmark_releases/README.md). This fork's manifest hashes local task files only and currently does not bind runtime/provider assets. OpenTelemetry GenAI agent/tool span conventions are still in Development and are useful for trace interoperability, but spans alone are not proof of correctness (https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-agent-spans.md).
+
+### 10-axis horizontal audit (evidence available at this time)
+
+| Axis | Status | Evidence/gap |
+| --- | --- | --- |
+| Function | Partial | core runner and dataset manifest exist; no product-entry one-click provenance comparison |
+| State | Partial | file hashes and test-result checks; no runtime state diff or replay |
+| Integration | Partial | GitHub CI builds/tests; real VM provider receipt missing |
+| Security/correctness | Partial | worker identity, scoring, path/hidden-file checks; manifests not origin authenticated |
+| Performance | Blocked | no cross-provider latency/throughput/long-run fixture from this branch |
+| Maintainability | Partial | script CLIs and v1 JSON schema; manifest not yet stable library API |
+| Observability | Partial | pytest report SHA; no per-step trace, environment image digest or teardown inventory |
+| Testability | Partial | mock and Chromium E2E tests present; force-kill/recovery independent test absent |
+| User value | Partial | reproducibility helper available; no independent consumer demonstrated |
+| External compatibility | Partial | uses pytest-json-report/jsonschema; OSWorld/provider/OpenTelemetry adapters absent |
+
+### Priority decisions and falsification
+
+P0: finish repeatable end-to-end benchmarks and worker failure recovery; **upstream #4899/#4898** should be reviewed and reused rather than copied. P0: close dataset integrity blind spots (hidden config drift fixed on branch, subject to CI). P1: add release manifest pins for provider/image/environment and independent action/outcome snapshots only after a real provider scenario verifies the need. P1: third-party consumption of a minimal stable verifier API. P2: optional OTEL trace export; adopt current semantic conventions with careful version pinning.
+
+**External standing:** no official PR, merge, maintainer endorsement, external dependency or documented third-party consumption established by this audit. Fork CI success is valuable engineering evidence, not external adoption. 6–12 month credential requires upstream accepted work and/or independent consumer reproduction. 5–10-year defensibility is a hypothesis, not a promise; evaluate by recurring downstream reliance and standards participation. Pivot if two genuine external users decline adoption because an existing upstream tool already meets the same need.

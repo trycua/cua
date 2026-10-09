@@ -2080,14 +2080,7 @@ impl Host {
 
     async fn record(&self, space: &str) -> Result<SpaceInfo> {
         match self {
-            Host::Embedded(s) => {
-                let id = s.resolve(space)?;
-                s.list()?
-                    .into_iter()
-                    .find(|i| i.id == id.to_string())
-                    .map(Into::into)
-                    .ok_or_else(|| CuaError::NotFound(format!("Space {id}")))
-            }
+            Host::Embedded(s) => Ok(s.find(space).await?.into()),
             Host::Daemon(d) => d
                 .spaces()
                 .resolve_space(dpb::ResolveSpaceRequest {

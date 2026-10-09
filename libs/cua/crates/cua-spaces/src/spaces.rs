@@ -397,6 +397,7 @@ impl SpacesBuilder {
                 #[cfg(feature = "spaces-agents")]
                 relay: std::sync::RwLock::new(self.relay),
                 relay_cache: std::sync::Mutex::new(Vec::new()),
+                relay_read: tokio::sync::Mutex::new(None),
                 site_login: std::sync::RwLock::new(None),
             }),
         }
@@ -617,6 +618,8 @@ pub(crate) struct Inner {
     relay: std::sync::RwLock<Option<crate::relay::RelayAccount>>,
     /// The last directory listing (so `list` and `resolve` stay sync).
     pub(crate) relay_cache: std::sync::Mutex<Vec<crate::relay::RelayMachine>>,
+    /// Held across a read so only one directory read runs at a time.
+    relay_read: tokio::sync::Mutex<Option<std::time::Instant>>,
     /// The Keyvault broker `request_site_login` signs in through (the
     /// daemon sets it once its Keyvault is up).
     site_login: std::sync::RwLock<Option<Arc<dyn crate::site_login::SiteLoginBroker>>>,
@@ -751,21 +754,7 @@ impl Spaces {
     /// current directory. [`Self::list`] remains the cached, local read.
     pub async fn list_all(&self) -> Result<Vec<SpaceInfo>> {
         if self.relay_account().is_some() {
-            self.relay_machines().await.map_err(|e| {
-                // Relay errors can contain server bodies and credential-bearing
-                // URLs. Discovery's public error needs only the stable kind.
-                Error::Relay(match e.tag() {
-                    "unauthenticated" => cua_host::Error::Unauthenticated(
-                        "Relay authentication failed. Sign in again to refresh your machines."
-                            .into(),
-                    ),
-                    "permission_denied" => cua_host::Error::PermissionDenied(
-                        "This device could not list relay machines. Check its account access."
-                            .into(),
-                    ),
-                    _ => cua_host::Error::Relay("Could not refresh relay machines.".into()),
-                })
-            })?;
+            self.relay_machines().await?;
         }
         self.list()
     }
@@ -846,15 +835,74 @@ impl Spaces {
     /// The machines of the signed-in account on the relay (owned and shared
     /// with it), each reachable as `relay:<id>`.
     pub async fn relay_machines(&self) -> Result<Vec<crate::relay::RelayMachine>> {
+        self.relay_directory(None).await
+    }
+
+    const RELAY_MAX_AGE: Duration = Duration::from_secs(10);
+
+    pub(crate) async fn relay_directory(
+        &self,
+        want: Option<&str>,
+    ) -> Result<Vec<crate::relay::RelayMachine>> {
         let relay = self.relay()?;
-        let token = relay.tokens.access_token().await?;
-        let client = cua_host::RelayClient::new(&relay.url)?;
-        let machines = match &relay.device {
-            Some(device) => device.machines_for(&client, &token).await?,
-            None => client.machines(&token).await?,
+        let mut read_at = self.inner.relay_read.lock().await;
+        let cached = self.inner.relay_cache.lock().expect("relay cache").clone();
+        let listed = want.is_some_and(|id| cached.iter().any(|m| m.id == id));
+        if listed && read_at.is_some_and(|at| at.elapsed() < Self::RELAY_MAX_AGE) {
+            return Ok(cached);
+        }
+        let read = async {
+            let token = relay.tokens.access_token().await?;
+            let client = cua_host::RelayClient::new(&relay.url)?;
+            Ok::<_, Error>(match &relay.device {
+                Some(d) => d.machines_for(&client, &token).await?,
+                None => client.machines(&token).await?,
+            })
         };
+        let machines = match read.await {
+            Ok(m) => m,
+            Err(_) if listed => return Ok(cached),
+            Err(e) => {
+                return Err(Error::Relay(match e.tag() {
+                    "unauthenticated" => cua_host::Error::Unauthenticated(
+                        "Relay authentication failed. Sign in again to refresh your machines."
+                            .into(),
+                    ),
+                    "permission_denied" => cua_host::Error::PermissionDenied(
+                        "This device could not list relay machines. Check its account access."
+                            .into(),
+                    ),
+                    _ => cua_host::Error::Relay("Could not refresh relay machines.".into()),
+                }));
+            }
+        };
+        *read_at = Some(std::time::Instant::now());
         *self.inner.relay_cache.lock().expect("relay cache") = machines.clone();
         Ok(machines)
+    }
+
+    /// The listed row of `space`. Only a `relay:` id reads the directory.
+    pub async fn find(&self, space: &str) -> Result<SpaceInfo> {
+        let id = self.resolve(space)?;
+        let key = id.to_string();
+        if let SpaceId::Relay { machine_id } = &id
+            && self.relay_account().is_some()
+            && self.inner.registry.get(&key)?.is_none()
+        {
+            self.relay_directory(Some(machine_id)).await?;
+        }
+        self.list()?
+            .into_iter()
+            .find(|i| i.id == key)
+            .ok_or_else(|| Error::NotFound(format!("Space {key}")))
+    }
+
+    pub(crate) fn relay_forget(&self, machine_id: &str) {
+        self.inner
+            .relay_cache
+            .lock()
+            .expect("relay cache")
+            .retain(|m| m.id != machine_id);
     }
 
     /// Resolves any accepted spelling (canonical id, legacy id, URL, display
@@ -2367,7 +2415,9 @@ impl Spaces {
         if let Some(sandbox) = self.cloud_sandbox_of(&id.to_string())? {
             self.inner.sandboxes.delete(&sandbox).await?;
             let _ = self.inner.registry.remove(&id.to_string());
-            let _ = self.relay_machines().await;
+            if let SpaceId::Relay { machine_id } = &id {
+                self.relay_forget(machine_id);
+            }
             return Ok(format!("Deleted {id} (sandbox {sandbox} in your cloud)."));
         }
         let what = match &id {
@@ -2426,14 +2476,14 @@ impl Spaces {
                 if let Some(m) = row.as_ref().filter(|m| crate::cloud::is_cloud_machine(m)) {
                     let message = self.delete_cloud_elsewhere(m).await?;
                     let _ = self.inner.registry.remove(&id.to_string());
-                    let _ = self.relay_machines().await;
+                    self.relay_forget(machine_id);
                     return Ok(message);
                 }
                 match row.as_ref().and_then(|m| m.host.clone().map(|h| (m, h))) {
                     Some((m, host)) => {
                         let message = self.delete_on_host(m, &host).await?;
                         let _ = self.inner.registry.remove(&id.to_string());
-                        let _ = self.relay_machines().await;
+                        self.relay_forget(machine_id);
                         return Ok(message);
                     }
                     // A Space that registered itself as a machine of yours:
@@ -2461,26 +2511,13 @@ impl Spaces {
         Ok(what)
     }
 
-    /// The relay directory row of `machine_id` (cached, else refreshed);
-    /// `None` without a relay account or when the relay does not list it.
+    /// The relay directory row of `machine_id`, or `None` when it is not listed.
     pub(crate) async fn relay_row(&self, machine_id: &str) -> Option<crate::relay::RelayMachine> {
-        self.relay_account()?;
-        let cached = self
-            .inner
-            .relay_cache
-            .lock()
-            .expect("relay cache")
-            .iter()
+        self.relay_directory(Some(machine_id))
+            .await
+            .ok()?
+            .into_iter()
             .find(|m| m.id == machine_id)
-            .cloned();
-        match cached {
-            Some(m) => Some(m),
-            None => self
-                .relay_machines()
-                .await
-                .ok()
-                .and_then(|all| all.into_iter().find(|m| m.id == machine_id)),
-        }
     }
 
     // ---------------------------------------------------------- thumbnails
@@ -2715,7 +2752,6 @@ impl Spaces {
                 self.drop_connection(&id).await;
                 let state = if on {
                     sandboxes.power_on(&sandbox).await?;
-                    let _ = self.relay_machines().await;
                     cua_sandbox_core::PowerState::Running
                 } else {
                     sandboxes.power_off(&sandbox).await?

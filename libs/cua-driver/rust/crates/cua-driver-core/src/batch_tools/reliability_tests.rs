@@ -96,6 +96,125 @@ async fn batch_level_pid_and_window_id_are_the_default_window() {
     );
 }
 
+#[tokio::test]
+async fn an_empty_extra_step_field_is_ignored() {
+    let harness = Harness::new();
+    // v037a: `"args2": {}` next to a complete step.
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 7, "window_id": 3, "x": 1, "y": 2}, "args2": {}},
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}, "note": null}
+        ]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(harness.hits("click"), 2);
+    // One that carries something is still refused.
+    let refused = harness
+        .run(json!({"steps": [{"tool": "click", "args": {"pid": 7}, "args2": {"x": 1}}]}))
+        .await;
+    assert_eq!(refused.is_error, Some(true));
+    assert!(
+        text(&refused).contains("unknown field `args2`"),
+        "{}",
+        text(&refused)
+    );
+}
+
+#[tokio::test]
+async fn a_step_refused_for_background_delivery_says_how_or_falls_back() {
+    let harness = Harness::new();
+    // v037b: LibreOffice ignores background pixel clicks.
+    let refused = "Background pixel click is not available for pid 2261: its libreoffice-vcl toolkit ignores background (PID-routed) mouse events. Retry this action with delivery_mode:\"foreground\"; Cua Driver will activate the window.";
+    let result = harness
+        .run(json!({"pid": 2261, "window_id": 181, "steps": [
+            {"tool": "click", "args": {"x": 217, "y": 779, "fail_message": refused}}
+        ]}))
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        text(&result).contains("\"foreground_fallback\":true"),
+        "{}",
+        text(&result)
+    );
+    assert!(text(&result).contains("from step 1"), "{}", text(&result));
+
+    // With foreground_fallback the step is retried once in the foreground.
+    // (The probe fails on fail_message either way, so check the retry.)
+    let before = harness.hits("click");
+    let _ = harness
+        .run(
+            json!({"pid": 2261, "window_id": 181, "foreground_fallback": true, "steps": [
+                {"tool": "click", "args": {"x": 217, "y": 779, "fail_message": refused}}
+            ]}),
+        )
+        .await;
+    assert_eq!(harness.hits("click"), before + 2);
+    assert_eq!(harness.last("click")["delivery_mode"], "foreground");
+}
+
+#[test]
+fn a_failed_batch_keeps_the_step_report_readable() {
+    // v037c: a failed batch returned its step report plus a full read
+    // (~4 100 characters); the client cut it to "1. click ok: ... AXCh",
+    // hiding why step 2 failed.
+    let report =
+        "run_actions: step 2 of 2 failed\n1. click ok\n2. click ERROR (action): why".to_owned();
+    let mut content = vec![
+        crate::protocol::Content::text(report.clone()),
+        crate::protocol::Content::text("x".repeat(6_000)),
+    ];
+    super::super::fit_error_text(&mut content, super::super::ERROR_TEXT_BUDGET);
+    let text: String = content
+        .iter()
+        .filter_map(|part| match part {
+            crate::protocol::Content::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(text.starts_with(&report));
+    assert!(text.chars().count() <= super::super::ERROR_TEXT_BUDGET + 200);
+    assert!(text.contains("call get_window_state for the full window"));
+}
+
+#[tokio::test]
+async fn a_failed_batch_with_a_long_read_stays_within_the_budget() {
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
+            {"tool": "click", "args": {"pid": 7, "window_id": 3, "fail": true}}
+        ], "observe": true}))
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        text(&result).contains("2. click ERROR"),
+        "{}",
+        text(&result)
+    );
+    assert!(text(&result).chars().count() <= super::super::ERROR_TEXT_BUDGET + 200);
+}
+
+#[tokio::test]
+async fn batch_level_delivery_mode_is_the_steps_default() {
+    let harness = Harness::new();
+    // v037c: `delivery_mode` on run_actions itself was refused.
+    let result = harness
+        .run(
+            json!({"pid": 7, "window_id": 3, "delivery_mode": "foreground", "steps": [
+                {"tool": "click", "args": {"x": 1, "y": 2}},
+                {"tool": "click", "args": {"x": 1, "y": 2, "delivery_mode": "background"}}
+            ]}),
+        )
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    let calls = harness.calls["click"].lock().unwrap().clone();
+    assert_eq!(calls[0]["delivery_mode"], "foreground");
+    assert_eq!(
+        calls[1]["delivery_mode"], "background",
+        "a step's own mode wins"
+    );
+}
+
 // ── read steps ───────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -155,6 +274,18 @@ async fn tool_name_slips_become_the_action_they_mean() {
     assert_eq!(harness.last("type_text")["text"], "*");
     assert_eq!(harness.last("hotkey")["keys"], json!(["ctrl", "pagedown"]));
     assert_eq!(harness.hits("move_cursor"), 1);
+
+    // v037-full: "press" with an element target is a click on it; with a
+    // key it stays a key press.
+    let result = harness
+        .run(json!({"pid": 9, "window_id": 4, "steps": [
+            {"tool": "press", "args": {"element_token": "s00000001:33"}},
+            {"tool": "press", "args": {"key": "tab"}}
+        ]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(harness.last("click")["element_token"], "s00000001:33");
+    assert_eq!(harness.last("press_key")["key"], "tab");
 }
 
 // ── recovery after a failed step ─────────────────────────────────────────
@@ -238,6 +369,36 @@ fn focus_holder_and_row_parsing() {
         super::super::row_role_and_label("- [12] AXStaticText = \"Boreal review\""),
         None,
         "a row without a label cannot be found again safely"
+    );
+}
+
+#[tokio::test]
+async fn a_menu_bar_item_token_runs_as_invoke_menu() {
+    let harness = Harness::new();
+    // v037-full: a click on the LibreOffice menu item "To Next Sheet" by
+    // token is refused as outside the window (menu-bar menus are the app's).
+    crate::window_state_view::remember_for_test(
+        "s0000a0e1",
+        80,
+        90,
+        "- [0] AXWindow \"Doc\"\n- [27] AXMenuBar\n  - [700] AXMenuBarItem \"Sheet\"\n    - [701] AXMenu\n      - [760] AXMenuItem \"Navigate\"\n        - [761] AXMenu\n          - [771] AXMenuItem \"To Next Sheet\"\n",
+    );
+    let refused = "Background input refused (element_outside_target_window): the addressed element could not be proven to belong to window 90";
+    let result = harness
+        .run(json!({"steps": [{"tool": "click", "args": {"pid": 80, "window_id": 90, "element_token": "s0000a0e1:771", "fail_message": refused}}]}))
+        .await;
+    // The probe invoke_menu carries no action record, so only the routing
+    // is checked here; the real tool reports its own outcome.
+    let menu = harness.last("invoke_menu");
+    assert_eq!(menu["path"], json!(["Sheet", "Navigate", "To Next Sheet"]));
+    assert_eq!(
+        (menu["pid"].clone(), menu["window_id"].clone()),
+        (json!(80), json!(90))
+    );
+    assert!(
+        text(&result).contains("ran as invoke_menu Sheet > Navigate > To Next Sheet"),
+        "{}",
+        text(&result)
     );
 }
 

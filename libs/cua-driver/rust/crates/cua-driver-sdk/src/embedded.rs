@@ -860,6 +860,7 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
                 | "PROGRAMDATA"
                 | "DISPLAY"
                 | "WAYLAND_DISPLAY"
+                | "CUA_DRIVER_RS_ENABLE_WAYLAND"
                 | "XDG_RUNTIME_DIR"
                 | "XDG_SESSION_TYPE"
                 | "DBUS_SESSION_BUS_ADDRESS"
@@ -1304,6 +1305,41 @@ mod tests {
         assert!(!values
             .iter()
             .any(|variable| variable.value == "forged-lock"));
+    }
+
+    #[test]
+    fn wayland_backend_opt_in_reaches_embedded_driver() {
+        let name = "CUA_DRIVER_RS_ENABLE_WAYLAND";
+        assert!(allowed_environment_name(name));
+        let inherited = [(name.to_owned(), "1".to_owned())];
+        let values = merge_safe_environment(inherited.clone(), &[]);
+        assert!(values
+            .iter()
+            .any(|variable| variable.name == name && variable.value == "1"));
+
+        // Hosts can opt in without changing their own process environment.
+        let enabled = EmbeddedEnvironmentVariable {
+            name: name.into(),
+            value: "1".into(),
+        };
+        let values = merge_safe_environment(std::iter::empty(), &[enabled]);
+        assert!(values
+            .iter()
+            .any(|variable| variable.name == name && variable.value == "1"));
+
+        // An explicit opt-out still wins over the inherited opt-in.
+        let disabled = EmbeddedEnvironmentVariable {
+            name: name.into(),
+            value: "0".into(),
+        };
+        let values = merge_safe_environment(inherited, &[disabled]);
+        assert!(values
+            .iter()
+            .any(|variable| variable.name == name && variable.value == "0"));
+        assert!(!allowed_environment_name("LD_PRELOAD"));
+        assert!(!allowed_environment_name(
+            "CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS"
+        ));
     }
 
     #[test]

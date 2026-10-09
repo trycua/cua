@@ -6484,8 +6484,16 @@ pub struct AppMainChrome {
     pub settings_shortcut: String,
     /// With no Spaces: the heading.
     pub empty_title: String,
-    /// With no Spaces: the button.
+    /// With no Spaces: the default Linux Space's tile.
     pub empty_action: String,
+    /// Under it: the time and disk.
+    pub empty_linux_detail: String,
+    /// With no Spaces: the line under the heading.
+    pub empty_detail: String,
+    /// With no Spaces: the default macOS Space's tile.
+    pub empty_macos_action: String,
+    /// Under it: the download size.
+    pub empty_macos_detail: String,
     /// The sidebar's Volume page entry ("Volume"); none while the Cua Volume
     /// experiment is off (the page and its route are hidden; a mounted
     /// volume stays mounted).

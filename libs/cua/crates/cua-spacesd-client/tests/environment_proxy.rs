@@ -223,6 +223,11 @@ async fn run_case() {
             .expect("cancelled RPC must not leave an unbounded connection attempt");
     } else {
         let result = SpacesdClient::connect(options).await;
+        if mode == "auto" {
+            // Deterministic here: refused native CONNECT, then the gRPC-Web probe.
+            // hyper-util may open another tunnel once run() races the pool.
+            assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        }
         if matches!(
             mode.as_str(),
             "refused" | "config" | "timeout" | "tls-native" | "tls-web"
@@ -282,7 +287,6 @@ async fn run_case() {
             if mode == "auto" {
                 assert_eq!(mock.state.observed.grpc_requests.load(Ordering::SeqCst), 0);
                 assert!(mock.state.observed.grpc_web_requests.load(Ordering::SeqCst) > 0);
-                assert_eq!(attempts.load(Ordering::SeqCst), 2);
             }
             drop(client);
         }

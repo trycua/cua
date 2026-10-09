@@ -40,7 +40,7 @@ The MCP server instructions carry the same rules, so they apply even when this f
 1. Start with a targeted read: `get_window_state({pid, window_id, query:"Save"})` returns about 2K chars where a full snapshot is about 42K. Bound large trees with `max_elements` / `max_depth`. Widen only if the target is missing.
 2. Act by `element_token`: row `[N]` of a read is `<snapshot_id>:N` (for example `"s0000002a:11"`, not `"11"`). Use pixels only for surfaces missing from the tree.
 3. Act through `run_actions` with `observe:true`, even for a single step. It runs the steps, stops at the first failure, and returns only what changed since your last read, so you do not need a separate read after acting; see [Workflow](WORKFLOW.md#batch-known-actions).
-4. To re-read a window, pass `since:"latest"`: you get the changed rows, not the whole tree. To just look, use `include_accessibility_tree:false` where advertised (on macOS it keeps the current tokens valid). Do not use `max_elements:1` or a junk `query` to get a picture.
+4. To re-read a window, pass `since:"latest"`: you get the changed rows, not the whole tree. To just look, use `include_accessibility_tree:false` where advertised (it keeps the current tokens valid). Do not use `max_elements:1` or a junk `query` to get a picture.
 5. Verify at checkpoints (after a meaningful state change, before finishing), not after every action. One `verify_state` or one targeted `get_window_state` is usually enough.
 
 ## Act

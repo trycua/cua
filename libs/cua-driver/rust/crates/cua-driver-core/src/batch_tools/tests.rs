@@ -49,11 +49,11 @@ impl Harness {
     fn new() -> Self {
         let mut registry = ToolRegistry::new();
         let mut calls = std::collections::HashMap::new();
-        for name in super::BATCHABLE_TOOLS
-            .iter()
-            .copied()
-            .chain(["get_window_state", "zoom"])
-        {
+        for name in super::BATCHABLE_TOOLS.iter().copied().chain([
+            "get_window_state",
+            "zoom",
+            "invoke_menu",
+        ]) {
             let log = Arc::new(Mutex::new(Vec::new()));
             calls.insert(name, log.clone());
             registry.register(Box::new(Probe {
@@ -75,6 +75,8 @@ impl Harness {
                             "modifiers": {"type": "array", "items": {"type": "string"}},
                             "count": {"type": "integer", "minimum": 1},
                             "query": {"type": "string"},
+                            "delivery_mode": {"type": "string"},
+                            "path": {"type": "array", "items": {"type": "string"}},
                             "x1": {"type": "number"}, "y1": {"type": "number"},
                             "x2": {"type": "number"}, "y2": {"type": "number"},
                             "include_screenshot": {"type": "boolean"},

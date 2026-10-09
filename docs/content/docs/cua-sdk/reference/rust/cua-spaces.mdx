@@ -1649,6 +1649,7 @@ impl Spaces {
   fn has_share_consent(&self) -> bool;
   fn set_relay(&self, relay: Option<RelayAccount>);
   async fn relay_machines(&self) -> Result<Vec<RelayMachine>>;
+  async fn find(&self, space: &str) -> Result<SpaceInfo>;
   fn resolve(&self, space: &str) -> Result<SpaceId>;
   async fn add(&self, url: &str, token: Option<String>, name: Option<String>) -> Result<SpaceInfo>;
   async fn add_with_service(&self, url: &str, token: Option<String>, name: Option<String>, service: Option<String>) -> Result<SpaceInfo>;

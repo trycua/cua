@@ -532,7 +532,7 @@ impl Spaces {
             // A bare relay machine id (`space-…`) is known once the
             // directory was listed.
             Err(Error::NotFound(_)) if self.relay_account().is_some() => {
-                let _ = self.relay_machines().await;
+                self.relay_directory(Some(space)).await?;
                 self.resolve(space)?
             }
             other => other?,
@@ -618,11 +618,7 @@ impl Spaces {
         match removed {
             Ok(()) => {
                 self.forget_attached_machine(&machine);
-                self.inner
-                    .relay_cache
-                    .lock()
-                    .expect("relay cache")
-                    .retain(|m| m.id != machine);
+                self.relay_forget(&machine);
                 self.audit_share("detach", canonical, &format!("machine={machine}"));
                 None
             }

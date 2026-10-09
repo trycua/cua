@@ -307,6 +307,7 @@ pub fn walk_tree_budgeted(
     }
 
     let walk = budget.outcome();
+    prune_echo_text_rows(&mut lines);
     let raw_markdown = render_lines(&lines);
     let mut tree_markdown = if let Some(q) = query {
         filter_tree(&raw_markdown, q)
@@ -617,9 +618,23 @@ unsafe fn walk_element(
     // indexed rows are addressable in click(element_index=N)).
     let next_parent = node.element_index.or(parent_index);
 
-    let line = format_node_line(&node);
+    // A closed menu of the menu bar stays collapsed when the caller asked for
+    // it: its items are reachable through invoke_menu or a query, and walking
+    // them cost most of a read (94% of a Chrome window read in a VM check)
+    // and ate the node budget before the window content.
+    let collapse_here = role == "AXMenuBarItem"
+        && MENUS_COLLAPSED.with(std::cell::Cell::get)
+        && copy_bool_attr(element, "AXSelected") != Some(true);
+    let line = if role == "AXMenuBar" && MENUS_COLLAPSED.with(std::cell::Cell::get) {
+        format!("{} {COLLAPSED_MENU_NOTE}", format_node_line(&node))
+    } else {
+        format_node_line(&node)
+    };
     lines.push((depth, line));
     nodes.push(node);
+    if collapse_here {
+        return;
+    }
 
     let children = copy_children(element);
     for child in children {
@@ -681,28 +696,37 @@ fn format_node_line(node: &AXNode) -> String {
         parts.push_str(&format!(" = \"{}\"", v));
     }
     // AXDescription → (description) — critical for Calculator digit buttons
-    // where AXTitle="" but AXDescription="2".
-    if let Some(d) = &node.description {
+    // where AXTitle="" but AXDescription="2". A description that only repeats
+    // the title (Chrome's `"Back" (Back)`) is not shown twice.
+    if let Some(d) = node
+        .description
+        .as_ref()
+        .filter(|d| node.title.as_ref() != Some(*d))
+    {
         parts.push_str(&format!(" ({})", d));
     }
 
     // Bracketed metadata block (identifier, help, actions).
     if node.element_index.is_some() {
         let mut attrs: Vec<String> = Vec::new();
-        if let Some(id) = &node.identifier {
+        if let Some(id) = node
+            .identifier
+            .as_deref()
+            .filter(|id| !id.trim().is_empty())
+        {
             attrs.push(format!("id={}", id));
         }
         if let Some(h) = &node.help {
             attrs.push(format!("help=\"{}\"", h));
         }
-        if !node.actions.is_empty() {
-            let action_str = node
-                .actions
-                .iter()
-                .map(|a| a.strip_prefix("AX").unwrap_or(a).to_lowercase())
-                .collect::<Vec<_>>()
-                .join(",");
-            attrs.push(format!("actions=[{}]", action_str));
+        let shown: Vec<String> = node
+            .actions
+            .iter()
+            .filter(|a| !UNLISTED_ACTIONS.contains(&a.as_str()))
+            .map(|a| a.strip_prefix("AX").unwrap_or(a).to_lowercase())
+            .collect();
+        if !shown.is_empty() {
+            attrs.push(format!("actions=[{}]", shown.join(",")));
         }
         if !attrs.is_empty() {
             parts.push_str(" [");
@@ -712,6 +736,77 @@ fn format_node_line(node: &AXNode) -> String {
     }
 
     parts
+}
+
+thread_local! {
+    static MENUS_COLLAPSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Shown on the menu bar row of a read whose menus were not walked.
+pub(crate) const COLLAPSED_MENU_NOTE: &str =
+    "(menus collapsed: run an item with invoke_menu path, or pass query to search menu items)";
+
+/// Run `walk` with the menu bar's closed menus collapsed (or not) on this
+/// thread. Only `get_window_state` collapses; every other walker keeps the
+/// full menu tree.
+pub fn with_menus_collapsed<T>(collapse: bool, walk: impl FnOnce() -> T) -> T {
+    let previous = MENUS_COLLAPSED.with(|flag| flag.replace(collapse));
+    let result = walk();
+    MENUS_COLLAPSED.with(|flag| flag.set(previous));
+    result
+}
+
+/// Actions every web-content element advertises. Listing them on each row
+/// cost about a third of a web tree's text and told the caller nothing; the
+/// structured `elements` still carry the full list.
+const UNLISTED_ACTIONS: &[&str] = &["AXShowMenu", "AXScrollToVisible"];
+
+/// Drop static-text leaf rows that only repeat text already shown on their
+/// parent row (a web button "Save case" with a child text "Save case"). The
+/// rows keep their element indices; only the rendering omits them, and a
+/// `query` for the text still matches the parent.
+fn prune_echo_text_rows(lines: &mut Vec<(usize, String)>) {
+    let mut keep = vec![true; lines.len()];
+    for i in 0..lines.len() {
+        let (depth, line) = &lines[i];
+        let Some(text) = echo_text_of(line) else {
+            continue;
+        };
+        let is_leaf = lines.get(i + 1).is_none_or(|(next, _)| next <= depth);
+        if !is_leaf || *depth == 0 {
+            continue;
+        }
+        let parent = lines[..i].iter().rev().find(|(d, _)| *d + 1 == *depth);
+        if parent.is_some_and(|(_, parent_line)| quoted_text_contains(parent_line, text)) {
+            keep[i] = false;
+        }
+    }
+    let mut index = 0;
+    lines.retain(|_| {
+        let kept = keep[index];
+        index += 1;
+        kept
+    });
+}
+
+/// The text of a bare static-text row: `- [N] AXStaticText = "text"` with
+/// nothing else on the row.
+fn echo_text_of(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("- ")?;
+    let rest = match rest.strip_prefix('[') {
+        Some(after) => after.split_once("] ")?.1,
+        None => rest,
+    };
+    let text = rest.strip_prefix("AXStaticText = \"")?.strip_suffix('"')?;
+    (!text.is_empty() && !text.contains('"')).then_some(text)
+}
+
+/// Whether one of the double-quoted strings on `line` contains `text`.
+fn quoted_text_contains(line: &str, text: &str) -> bool {
+    line.split('"')
+        .skip(1)
+        .step_by(2)
+        .any(|quoted| quoted.contains(text))
 }
 
 fn render_lines(lines: &[(usize, String)]) -> String {
@@ -834,5 +929,67 @@ mod tests {
         });
         assert_eq!(reads.get(), 1, "actionable nodes must read state once");
         assert_eq!(actionable.enabled, Some(true));
+    }
+}
+
+#[cfg(test)]
+mod lean_row_tests {
+    use super::{echo_text_of, prune_echo_text_rows};
+
+    fn rows(lines: &[(usize, &str)]) -> Vec<(usize, String)> {
+        lines.iter().map(|(d, l)| (*d, l.to_string())).collect()
+    }
+
+    #[test]
+    fn echo_text_rows_under_a_labelled_parent_are_dropped() {
+        let mut lines = rows(&[
+            (0, "- [0] AXWindow \"Mail\" [actions=[raise]]"),
+            (
+                1,
+                "- [8] AXButton \"Atrium plant service CM-199\" [actions=[press]]",
+            ),
+            (2, "- [9] AXStaticText = \"Atrium plant service\""),
+            (2, "- [10] AXStaticText = \"CM-199\""),
+            (1, "- [11] AXHeading \"Messages\""),
+            (2, "- [12] AXStaticText = \"Inbox\""),
+            (1, "- [13] AXStaticText = \"Mail\""),
+        ]);
+        prune_echo_text_rows(&mut lines);
+        let kept: Vec<&str> = lines.iter().map(|(_, l)| l.as_str()).collect();
+        assert_eq!(
+            kept,
+            [
+                "- [0] AXWindow \"Mail\" [actions=[raise]]",
+                "- [8] AXButton \"Atrium plant service CM-199\" [actions=[press]]",
+                "- [11] AXHeading \"Messages\"",
+                "- [12] AXStaticText = \"Inbox\"",
+            ]
+        );
+    }
+
+    #[test]
+    fn menu_collapsing_is_scoped_to_the_wrapped_walk() {
+        use super::{with_menus_collapsed, MENUS_COLLAPSED};
+        assert!(!MENUS_COLLAPSED.with(std::cell::Cell::get));
+        let inside = with_menus_collapsed(true, || {
+            let nested = with_menus_collapsed(false, || MENUS_COLLAPSED.with(std::cell::Cell::get));
+            (MENUS_COLLAPSED.with(std::cell::Cell::get), nested)
+        });
+        assert_eq!(inside, (true, false));
+        assert!(!MENUS_COLLAPSED.with(std::cell::Cell::get));
+    }
+
+    #[test]
+    fn rows_with_children_or_other_fields_are_kept() {
+        let mut lines = rows(&[
+            (0, "- [1] AXLink \"Docs\""),
+            (1, "- [2] AXStaticText = \"Docs\" [actions=[press]]"),
+            (1, "- [3] AXStaticText = \"Docs\""),
+            (2, "- [4] AXStaticText = \"child\""),
+        ]);
+        prune_echo_text_rows(&mut lines);
+        assert_eq!(lines.len(), 4);
+        assert_eq!(echo_text_of("- AXStaticText = \"x\""), Some("x"));
+        assert_eq!(echo_text_of("- [2] AXStaticText = \"\""), None);
     }
 }

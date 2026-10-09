@@ -2247,7 +2247,10 @@ fn run_arch(image: &SandboxImage, placement: Location, host: Option<&str>) -> Op
 }
 
 /// The image's sizes on `arch` (else its first platform).
-fn platform_size<'a>(image: &'a SandboxImage, arch: Option<&str>) -> Option<&'a PlatformSize> {
+pub(crate) fn platform_size<'a>(
+    image: &'a SandboxImage,
+    arch: Option<&str>,
+) -> Option<&'a PlatformSize> {
     let s = image.sizes.as_ref()?;
     arch.and_then(|a| s.platforms.iter().find(|p| p.arch == a))
         .or_else(|| s.platforms.first())

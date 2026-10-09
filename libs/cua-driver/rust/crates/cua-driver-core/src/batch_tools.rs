@@ -43,7 +43,7 @@ pub const BATCHABLE_TOOLS: &[&str] = &[
 ];
 
 /// Most steps one call may carry. Keeps a batch inside client call timeouts.
-pub const MAX_STEPS: usize = 32;
+pub const MAX_STEPS: usize = 64;
 /// Longest pause between two steps.
 pub const MAX_DELAY_MS: u64 = 2_000;
 /// Default `max_elements` for the end-of-batch observation: the same budget as
@@ -182,12 +182,14 @@ impl Tool for RunActionsTool {
                 Returns per-step status (`ok` or the error message) and, when `observe` is \
                 given, ONE bounded get_window_state read after the last executed step (after a \
                 failure caused by a dialog holding focus, that dialog is read, even without \
-                `observe`). That \
+                `observe`). A step refused because its app ignores background input says \
+                how to re-send it; `foreground_fallback:true` retries such steps in the \
+                foreground once (the window is activated). That \
                 read is a `since:\"latest\"` diff by default: only the rows that changed \
                 since your last read of the window, plus a new snapshot_id. Without \
                 `observe` nothing is read. The batch uses one session: steps may \
                 omit `session` or repeat the batch's. `delay_ms` pauses between steps (max \
-                2000). At most 32 steps.\n\n\
+                2000). At most 64 steps; `delivery_mode` on run_actions is the default for its steps.\n\n\
                 TARGET BY NAME (no earlier read needed, so one batch can cross screens): \
                 a step can be written `{\"click\": {...args}}` as well as `{tool, args}`, and \
                 its args may name the target instead of carrying a token: `role` (button, \
@@ -275,6 +277,15 @@ impl Tool for RunActionsTool {
                         "type": "string",
                         "description": "Default window title substring for steps that name no window."
                     },
+                    "delivery_mode": {
+                        "type": "string",
+                        "enum": ["background", "foreground"],
+                        "description": "Default delivery_mode for steps whose tool takes one and that set none."
+                    },
+                    "foreground_fallback": {
+                        "type": "boolean",
+                        "description": "When a step is refused because its target ignores background input (Electron, LibreOffice and other toolkits), retry it once with delivery_mode:\"foreground\": the window is activated and the pointer may move. Default false."
+                    },
                     "observe": {
                         "type": ["object", "boolean"],
                         "description": "Optional end-of-batch observation: `true`, or arguments for ONE get_window_state call. `pid` and `window_id` default to those of the last step that names both. Defaults to since=\"latest\" (only what changed since your last read of that window with the same query/max_elements/max_depth; a full read when there is none), include_screenshot=false and max_elements=250; pass include_screenshot=true to see the window, or since=null for a full read. Omit to read nothing."
@@ -347,6 +358,8 @@ struct Plan {
     tail_reads: Vec<(&'static str, Value)>,
     /// The window steps inherit when they name none.
     default_window: WindowSpec,
+    /// Retry a step refused for background delivery once in the foreground.
+    foreground_fallback: bool,
     session: Option<String>,
 }
 
@@ -450,6 +463,26 @@ impl Plan {
             .map(str::to_owned);
 
         let default_window = batch_window(object)?;
+        let default_delivery = match object.get("delivery_mode") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(mode)) if matches!(mode.as_str(), "background" | "foreground") => {
+                Some(mode.clone())
+            }
+            Some(_) => {
+                return Err(PlanError::batch(
+                    "`delivery_mode` must be \"background\" or \"foreground\"",
+                ))
+            }
+        };
+        let foreground_fallback = match object.get("foreground_fallback") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(flag)) => *flag,
+            Some(_) => {
+                return Err(PlanError::batch(
+                    "`foreground_fallback` must be true or false",
+                ))
+            }
+        };
 
         // Reads the batch ends with are what `observe` is for: a trailing
         // get_window_state (or screenshot) becomes the observation, merged
@@ -520,7 +553,14 @@ impl Plan {
                 });
                 continue;
             }
-            let step = parse_step(registry, index, raw, session.as_deref(), has_window)?;
+            let mut step = parse_step(registry, index, raw, session.as_deref(), has_window)?;
+            if let (Some(mode), Some(action)) = (&default_delivery, step.action.as_mut()) {
+                if accepts(registry, action.tool, "delivery_mode") {
+                    if let Some(object) = action.args.as_object_mut() {
+                        object.entry("delivery_mode").or_insert_with(|| json!(mode));
+                    }
+                }
+            }
             let names_window = step
                 .action
                 .as_ref()
@@ -586,6 +626,7 @@ impl Plan {
             observe,
             tail_reads,
             default_window,
+            foreground_fallback,
             session,
         })
     }
@@ -656,6 +697,7 @@ impl Plan {
                     step,
                     &mut context,
                     &mut last_window,
+                    self.foreground_fallback,
                 )
                 .await
             };
@@ -782,6 +824,9 @@ impl Plan {
         let mut content = vec![Content::text(lines.join("\n"))];
         content.append(&mut observation_content);
         content.append(&mut tail_content);
+        if failed_step.is_some() {
+            fit_error_text(&mut content, ERROR_TEXT_BUDGET);
+        }
         ToolResult {
             content,
             is_error: failed_step.map(|_| true),
@@ -798,6 +843,7 @@ async fn run_step(
     step: Step,
     context: &mut WindowSpec,
     last_window: &mut Option<Window>,
+    foreground_fallback: bool,
 ) -> StepOutcome {
     let label = step.label();
     let step_has_no_action = step.action.is_none();
@@ -870,6 +916,10 @@ async fn run_step(
             window
         };
         if !element.is_empty() {
+            let element = ElementSpec {
+                action: Some(tool),
+                ..element
+            };
             match locator.find(&window_spec, &element, find_timeout).await {
                 Ok(found) => {
                     let object = args.as_object_mut().expect("object");
@@ -929,15 +979,44 @@ async fn run_step(
 
         let mut result = registry.invoke(tool, args.clone()).await;
         let mut refound_note = None;
-        if result.is_error == Some(true) {
+        if result.is_error == Some(true) && tool == "click" {
+            if let Some((menu_args, note)) = menu_bar_route(&args, &result) {
+                report["refound"] = json!(note);
+                result = registry.invoke("invoke_menu", menu_args).await;
+                refound_note = Some(note);
+            }
+        }
+        if result.is_error == Some(true) && refound_note.is_none() {
             if let Some((retry, note)) = refind_stale_target(locator, &args, &result).await {
                 report["refound"] = json!(note);
                 result = registry.invoke(tool, retry).await;
                 refound_note = Some(note);
             }
         }
+        let wants_foreground = result.is_error == Some(true)
+            && wants_foreground(&result)
+            && args.get("delivery_mode").is_none()
+            && accepts(registry, tool, "delivery_mode");
+        let mut foreground_hint = None;
+        if wants_foreground && foreground_fallback {
+            let mut retry = args.clone();
+            retry["delivery_mode"] = json!("foreground");
+            result = registry.invoke(tool, retry).await;
+            notes.push("background delivery was refused, so it ran in the foreground".to_owned());
+            report["delivery_fallback"] = json!("foreground");
+        } else if wants_foreground {
+            foreground_hint = Some(format!(
+                " To run it, send the batch again from step {} with \"delivery_mode\":\"foreground\" \
+                 on this step, or set \"foreground_fallback\":true on run_actions (the window is \
+                 activated and the pointer may move).",
+                index + 1
+            ));
+        }
         let ok = result.is_error != Some(true);
         let mut message = bounded_message(&result);
+        if let (false, Some(hint)) = (ok, &foreground_hint) {
+            message.push_str(hint);
+        }
         if let (false, Some(note)) = (ok, &refound_note) {
             message = format!("{note}, but: {message}");
         }
@@ -1225,6 +1304,67 @@ fn focus_holder(message: &str) -> Option<u64> {
     digits.parse().ok()
 }
 
+/// Most text characters a failed batch returns. MCP clients cut long error
+/// results to their first line or so (Claude Code keeps ~100 characters of
+/// an error over ~4 000), which hid why a step failed behind the read that
+/// followed it. The step report goes first and whole; the read is trimmed.
+const ERROR_TEXT_BUDGET: usize = 3_500;
+
+/// Keep the text of a failed batch within `budget` characters: the first
+/// part (the step report) up to the budget, then later text parts trimmed
+/// to what is left, with a note. Images are kept.
+fn fit_error_text(content: &mut Vec<Content>, budget: usize) {
+    let mut left = budget;
+    let mut trimmed = false;
+    for part in content.iter_mut() {
+        let Content::Text { text, .. } = part else {
+            continue;
+        };
+        let length = text.chars().count();
+        if length <= left {
+            left -= length;
+            continue;
+        }
+        let keep: String = text.chars().take(left).collect();
+        *text = keep;
+        left = 0;
+        trimmed = true;
+    }
+    content.retain(|part| !matches!(part, Content::Text { text, .. } if text.is_empty()));
+    if trimmed {
+        content.push(Content::text(
+            "[the rest of this read was cut so the step report stays readable; call \
+             get_window_state for the full window]",
+        ));
+    }
+}
+
+/// Whether a refusal names foreground delivery as the route that works:
+/// the target ignores background input (Electron, LibreOffice VCL, ...).
+fn wants_foreground(result: &ToolResult) -> bool {
+    let structured = result.structured_content.as_ref();
+    let recommended = structured
+        .and_then(|value| {
+            value
+                .pointer("/escalation/recommended")
+                .or_else(|| value.pointer("/refusal/escalation/recommended"))
+        })
+        .and_then(Value::as_str);
+    if recommended == Some("foreground") {
+        return true;
+    }
+    let text = result
+        .content
+        .iter()
+        .find_map(|content| match content {
+            Content::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .unwrap_or("");
+    text.contains("Retry this action with delivery_mode:\"foreground\"")
+        || text.contains("Retry with delivery_mode:\"foreground\"")
+}
+
 /// Whether an action failed because its element target died: the element
 /// was re-rendered or its snapshot was replaced.
 fn stale_element(result: &ToolResult) -> bool {
@@ -1282,8 +1422,7 @@ async fn refind_stale_target(
     let element = ElementSpec {
         role: Some(role.clone()),
         name: Some(label.clone()),
-        text: None,
-        nth: None,
+        ..Default::default()
     };
     let found = locator.find(&window, &element, REFIND_TIMEOUT).await.ok()?;
     let same_label = found
@@ -1306,6 +1445,37 @@ async fn refind_stale_target(
             found.describe()
         ),
     ))
+}
+
+/// A click on a menu-bar item addressed by token is refused as outside the
+/// window: menu-bar menus are the app's, not the window's. Send it as
+/// invoke_menu with the path read off the item's ancestors instead.
+fn menu_bar_route(args: &Value, result: &ToolResult) -> Option<(Value, String)> {
+    if !stale_element(result) {
+        return None;
+    }
+    let token = args.get("element_token").and_then(Value::as_str)?;
+    let (snapshot_id, row) = token.split_once(':')?;
+    let row: u64 = row.parse().ok()?;
+    let path = crate::window_state_view::snapshot_menu_path(snapshot_id, row)?;
+    let stored = crate::window_state_view::snapshot_row(snapshot_id, row)?;
+    let pid = args
+        .get("pid")
+        .and_then(Value::as_i64)
+        .unwrap_or(stored.pid);
+    let window_id = args
+        .get("window_id")
+        .and_then(Value::as_u64)
+        .unwrap_or(stored.window_id);
+    let mut menu_args = json!({ "pid": pid, "window_id": window_id, "path": path });
+    if let Some(session) = args.get("session") {
+        menu_args["session"] = session.clone();
+    }
+    let note = format!(
+        "{token} is a menu-bar item, so it ran as invoke_menu {}",
+        path.join(" > ")
+    );
+    Some((menu_args, note))
 }
 
 /// Role and label of one tree row: `[14] AXButton "Save"` or
@@ -1353,9 +1523,17 @@ fn parse_step(
         PlanError::step(index, "must be an object: {tool, args} or {<tool>: args}")
     })?;
     // The action: `{tool, args}`, or the shorthand `{<tool>: args}`.
+    // An extra field that is empty (`"args2": {}`, `null`) says nothing; a
+    // step is only refused for fields that carry something.
     let shorthand: Vec<&String> = object
-        .keys()
-        .filter(|key| !STEP_KEYS.contains(&key.as_str()))
+        .iter()
+        .filter(|(key, _)| !STEP_KEYS.contains(&key.as_str()))
+        .filter(|(_, value)| match value {
+            Value::Null => false,
+            Value::Object(fields) => !fields.is_empty() || object.get("tool").is_none(),
+            _ => true,
+        })
+        .map(|(key, _)| key)
         .collect();
     let (name, raw_args) = match (object.get("tool"), shorthand.as_slice()) {
         (Some(_), [extra, ..]) => {
@@ -1485,10 +1663,27 @@ fn parse_action(
         Some(value @ Value::Object(_)) => value.clone(),
         Some(_) => return Err(PlanError::step(index, "`args` must be an object")),
     };
-    let name = TOOL_ALIASES
+    // "press" with a target and no key is an AX press of that element.
+    let pressed_element = name == "press"
+        && args.get("key").is_none()
+        && [
+            "element_token",
+            "element_index",
+            "role",
+            "name",
+            "label",
+            "x",
+        ]
         .iter()
-        .find(|(alias, _)| *alias == name)
-        .map_or(name, |(_, tool)| *tool);
+        .any(|key| args.get(*key).is_some());
+    let name = if pressed_element {
+        "click"
+    } else {
+        TOOL_ALIASES
+            .iter()
+            .find(|(alias, _)| *alias == name)
+            .map_or(name, |(_, tool)| *tool)
+    };
     let name = rewrite_step(name, &mut args);
     let tool = BATCHABLE_TOOLS
         .iter()

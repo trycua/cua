@@ -90,11 +90,56 @@ pub fn schema_properties() -> Value {
         "full_output": {
             "type": "boolean",
             "description": "Default false. Set true to restore the previous full response: both `elements` and `tree_markdown`, all metadata, and the platform's own walk limits unless max_elements / max_depth are passed. Does not combine with `since`."
+        },
+        "display_only": {
+            "type": "boolean",
+            "description": DISPLAY_ONLY_DESCRIPTION
         }
     })
 }
 
-/// Add the shared `tree_format` / `since` / `verbose` / `full_output`
+// `display_only` is a public, side-effect-free capture for live previews
+// (picture-in-picture) that poll a window several times a second. It maps
+// onto each backend's internal observation-only read: no snapshot is
+// published, refreshed or removed, and no action capture is registered, so
+// the agent's element tokens and pixel frame for the window stay valid.
+//
+// Hosts detect it by the property in `get_window_state`'s input schema
+// (T3 Code checks `"display_only" in input_schema.properties`), so the
+// description, refusal and response fields match T3 Code's Linux patch
+// word for word.
+const DISPLAY_ONLY_DESCRIPTION: &str = "Default false. With include_accessibility_tree:false, returns pixels for display without registering an action capture or replacing the agent snapshot. The image cannot ground input actions.";
+
+/// Refusal when `display_only` is asked for together with a tree walk.
+pub const DISPLAY_ONLY_NEEDS_NO_TREE: &str =
+    "display_only requires include_accessibility_tree:false";
+
+/// `frame_note` on a display-only response.
+pub const DISPLAY_ONLY_FRAME_NOTE: &str = "Display-only preview; not registered for input actions. Obtain a normal get_window_state screenshot before acting.";
+
+/// Read `display_only`. A display-only read must skip the tree walk, because
+/// a walk is what produces element rows and tokens.
+pub fn display_only(args: &Value) -> Result<bool, ToolResult> {
+    if args.get("display_only").and_then(Value::as_bool) != Some(true) {
+        return Ok(false);
+    }
+    if args
+        .get("include_accessibility_tree")
+        .and_then(Value::as_bool)
+        != Some(false)
+    {
+        return Err(ToolResult::error(DISPLAY_ONLY_NEEDS_NO_TREE));
+    }
+    Ok(true)
+}
+
+/// Mark a display-only response.
+pub fn mark_display_only(structured: &mut Value) {
+    structured["display_only"] = json!(true);
+    structured["frame_note"] = json!(DISPLAY_ONLY_FRAME_NOTE);
+}
+
+/// Add the shared `tree_format` / `since` / `verbose` / `full_output` / `display_only`
 /// properties to a backend's `get_window_state` input schema.
 pub fn extend_input_schema(mut schema: Value) -> Value {
     if let (Some(props), Some(extra)) = (
@@ -234,6 +279,7 @@ pub fn apply(
         .and_then(Value::as_str)
         .map(str::to_owned)
     else {
+        drop_walk_diagnostics(opts, structured);
         return;
     };
     let snapshot_id = structured
@@ -367,6 +413,26 @@ pub fn apply(
     }
 
     rewrite_tree_block(content, &md, &header_extra, &body);
+    drop_walk_diagnostics(opts, structured);
+}
+
+/// Walk diagnostics cost every read context and no caller acts on them:
+/// `truncated` and the truncation hint (built from them above) already say
+/// when a walk stopped early. `verbose:true` keeps them.
+fn drop_walk_diagnostics(opts: &ViewOptions, structured: &mut Value) {
+    if opts.verbose {
+        return;
+    }
+    if let Some(obj) = structured.as_object_mut() {
+        for key in [
+            "nodes_pending",
+            "nodes_visited",
+            "walk_elapsed_ms",
+            "screenshot_refreshed_snapshot",
+        ] {
+            obj.remove(key);
+        }
+    }
 }
 
 /// `since` value that names the window's most recent read of the same view.
@@ -469,6 +535,7 @@ fn trim_metadata(opts: &ViewOptions, structured: &mut Value) {
         // Linux restates the pixel-coordinate convention on every read; the
         // tool description already carries it.
         obj.remove("frame_note");
+
         if !degraded {
             obj.remove("background_input");
         }
@@ -538,6 +605,11 @@ fn store() -> &'static Mutex<VecDeque<StoredSnapshot>> {
 
 fn remember(snapshot_id: &str, ctx: &ViewContext<'_>, md: &str) {
     let mut guard = store().lock().unwrap_or_else(|e| e.into_inner());
+    // A screenshot-only read keeps its snapshot id and returns no tree. It
+    // must not erase the rows that snapshot's tokens were read from.
+    if md.trim().is_empty() && guard.iter().any(|s| s.snapshot_id == snapshot_id) {
+        return;
+    }
     guard.retain(|s| s.snapshot_id != snapshot_id);
     guard.push_back(StoredSnapshot {
         snapshot_id: snapshot_id.to_owned(),
@@ -592,8 +664,99 @@ pub(crate) fn snapshot_row(snapshot_id: &str, index: u64) -> Option<StoredRow> {
     })
 }
 
+/// The menu path of row `[index]` of the read that produced `snapshot_id`,
+/// when that row is an item in the app's menu bar: the labels of its
+/// AXMenuBarItem and AXMenuItem ancestors, then its own. `None` for any
+/// other row.
+pub(crate) fn snapshot_menu_path(snapshot_id: &str, index: u64) -> Option<Vec<String>> {
+    let markdown = {
+        let guard = store().lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .iter()
+            .find(|s| s.snapshot_id == snapshot_id && s.at.elapsed() <= STORE_TTL)
+            .map(|s| s.markdown.clone())
+    }?;
+    menu_path_in(&markdown, index)
+}
+
+fn menu_path_in(markdown: &str, index: u64) -> Option<Vec<String>> {
+    let lines: Vec<&str> = markdown.lines().collect();
+    let marker = format!("[{index}] ");
+    let at = lines.iter().position(|line| {
+        line.trim_start()
+            .strip_prefix("- ")
+            .is_some_and(|rest| rest.starts_with(&marker))
+    })?;
+    let indent = |line: &str| line.len() - line.trim_start().len();
+    let item = |line: &str| -> Option<(String, String)> {
+        let rest = line.trim_start().strip_prefix("- ")?;
+        let rest = rest
+            .strip_prefix('[')
+            .and_then(|r| r.split_once("] ").map(|(_, r)| r))
+            .unwrap_or(rest);
+        let (role, rest) = rest.split_once(' ').unwrap_or((rest, ""));
+        let label = rest
+            .trim_start()
+            .strip_prefix('"')
+            .and_then(|r| r.split_once('"').map(|(label, _)| label.to_owned()))
+            .unwrap_or_default();
+        Some((role.to_owned(), label))
+    };
+    let (role, label) = item(lines[at])?;
+    if !matches!(role.as_str(), "AXMenuItem" | "AXMenuBarItem") || label.is_empty() {
+        return None;
+    }
+    let mut path = vec![label];
+    let mut level = indent(lines[at]);
+    for line in lines[..at].iter().rev() {
+        if indent(line) >= level {
+            continue;
+        }
+        level = indent(line);
+        let (role, label) = item(line)?;
+        match role.as_str() {
+            "AXMenuBar" => {
+                path.reverse();
+                return Some(path);
+            }
+            "AXMenuItem" | "AXMenuBarItem" if !label.is_empty() => path.push(label),
+            "AXMenu" => {}
+            _ => return None,
+        }
+    }
+    None
+}
+
 /// Remember a read's markdown as `apply` does, for tests elsewhere in the
 /// crate that drive a fake get_window_state.
+#[cfg(test)]
+#[test]
+fn menu_paths_come_from_the_menu_bar_ancestors() {
+    let md = "- [0] AXWindow \"Doc\"\n  - [3] AXButton \"OK\"\n- [27] AXMenuBar\n  - [700] AXMenuBarItem \"Sheet\" [actions=[press]]\n    - [701] AXMenu\n      - [760] AXMenuItem \"Navigate\" [actions=[press]]\n        - [761] AXMenu\n          - [771] AXMenuItem \"To Next Sheet\" [actions=[press]]\n      - [780] AXMenuItem \"Delete Sheet...\"\n";
+    assert_eq!(
+        menu_path_in(md, 771),
+        Some(vec![
+            "Sheet".to_owned(),
+            "Navigate".to_owned(),
+            "To Next Sheet".to_owned()
+        ])
+    );
+    assert_eq!(
+        menu_path_in(md, 780),
+        Some(vec!["Sheet".to_owned(), "Delete Sheet...".to_owned()])
+    );
+    assert_eq!(menu_path_in(md, 3), None, "not a menu item");
+    assert_eq!(menu_path_in(md, 999), None);
+}
+
+#[cfg(test)]
+#[test]
+fn a_screenshot_only_read_keeps_the_remembered_rows() {
+    remember_for_test("s7e570001", 4, 5, "- [9] AXButton \"Send\"\n");
+    remember_for_test("s7e570001", 4, 5, "");
+    assert!(snapshot_row("s7e570001", 9).is_some_and(|row| row.line.contains("Send")));
+}
+
 #[cfg(test)]
 pub(crate) fn remember_for_test(snapshot_id: &str, pid: i64, window_id: u64, markdown: &str) {
     let ctx = ViewContext {
@@ -930,6 +1093,43 @@ mod tests {
 
     fn opts(args: Value) -> ViewOptions {
         ViewOptions::from_args(&args).unwrap()
+    }
+
+    #[test]
+    fn display_only_is_advertised_in_every_backend_schema() {
+        let schema = extend_input_schema(json!({"type": "object", "properties": {}}));
+        assert_eq!(schema["properties"]["display_only"]["type"], "boolean");
+    }
+
+    #[test]
+    fn display_only_requires_a_screenshot_only_read() {
+        assert_eq!(display_only(&json!({})).ok(), Some(false));
+        assert_eq!(
+            display_only(&json!({"display_only": false})).ok(),
+            Some(false)
+        );
+        assert_eq!(
+            display_only(&json!({"display_only": true, "include_accessibility_tree": false})).ok(),
+            Some(true)
+        );
+        for args in [
+            json!({"display_only": true}),
+            json!({"display_only": true, "include_accessibility_tree": true}),
+        ] {
+            let refusal = display_only(&args).unwrap_err();
+            assert_eq!(
+                serde_json::to_value(refusal).unwrap(),
+                serde_json::to_value(ToolResult::error(DISPLAY_ONLY_NEEDS_NO_TREE)).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn display_only_response_carries_the_frame_note() {
+        let mut structured = json!({"screenshot_width": 800});
+        mark_display_only(&mut structured);
+        assert_eq!(structured["display_only"], true);
+        assert_eq!(structured["frame_note"], DISPLAY_ONLY_FRAME_NOTE);
     }
 
     const OLD: &str = "- [0] AXWindow \"Doc\"\n  - [1] AXTextField \"Name\" = \"a\" [id=name]\n  - AXStaticText = \"hello\"\n  - [2] AXButton \"Save\" [id=save actions=[press]]\n  - [3] AXButton \"Cancel\" [id=cancel actions=[press]]";
@@ -1301,6 +1501,25 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("larger max_elements"));
+    }
+
+    #[test]
+    fn walk_diagnostics_are_dropped_unless_verbose() {
+        let (mut content, mut s) = payload("s000000d2", OLD);
+        s["nodes_visited"] = json!(261);
+        s["walk_elapsed_ms"] = json!(149);
+        apply(&opts(json!({})), &ctx(7016), &mut content, &mut s);
+        assert!(s.get("nodes_visited").is_none());
+        assert!(s.get("walk_elapsed_ms").is_none());
+        let (mut content, mut s) = payload("s000000d3", OLD);
+        s["nodes_visited"] = json!(261);
+        apply(
+            &opts(json!({"verbose": true})),
+            &ctx(7017),
+            &mut content,
+            &mut s,
+        );
+        assert_eq!(s["nodes_visited"], 261);
     }
 
     #[test]

@@ -135,6 +135,17 @@ async def run_single_task(
                 step_count += 1
                 done = isinstance(action, DoneAction)
 
+        # A setup-only run must never be counted as successful agent execution.
+        if not oracle and agent_fn is None:
+            return TaskResult(
+                task_path=str(env_path),
+                variant_id=task_index,
+                success=False,
+                reward=0.0,
+                steps=step_count,
+                error="No agent_fn supplied; task was not executed",
+            )
+
         # Evaluate
         if env.evaluate_task_fn is not None:
             result = await env.evaluate()

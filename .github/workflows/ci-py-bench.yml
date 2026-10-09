@@ -43,4 +43,4 @@ jobs:
             cua_bench/tests/test_actions.py -q
       - name: Run full benchmark suite including RL workers
         working-directory: libs/cua-bench
-        run: uv run --extra dev --extra rl --extra server pytest cua_bench/tests -q
+        run: uv run --extra dev --extra rl --extra server --with 'httpx>=0.27,<1' pytest cua_bench/tests -q

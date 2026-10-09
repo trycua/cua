@@ -25,7 +25,7 @@ def scan_dataset(root: Path):
         files = []
         for path in sorted(task.rglob("*")):
             relative = path.relative_to(root)
-            if any(part in IGNORED or part.startswith(".") for part in relative.parts):
+            if any(part in IGNORED for part in relative.parts):
                 continue
             if path.is_symlink():
                 raise ValueError(f"symlink in dataset task: {relative}")

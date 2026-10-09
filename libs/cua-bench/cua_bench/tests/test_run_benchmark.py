@@ -220,6 +220,28 @@ async def evaluate(task, session):
         assert result.error is not None
 
 
+class TestBenchmarkParameterValidation:
+    """Parameter failures must surface before scheduling asynchronous workers."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", [0, -1, True, 1.5, "2"])
+    async def test_reject_invalid_parallelism(self, tmp_path, value):
+        with pytest.raises(ValueError, match="max_parallel"):
+            await run_benchmark(tmp_path, max_parallel=value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", [0, -1, False, 2.5])
+    async def test_reject_invalid_step_limit(self, tmp_path, value):
+        with pytest.raises(ValueError, match="max_steps"):
+            await run_benchmark(tmp_path, max_steps=value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", [0, -1, True, "3"])
+    async def test_reject_invalid_variant_limit(self, tmp_path, value):
+        with pytest.raises(ValueError, match="max_variants"):
+            await run_benchmark(tmp_path, max_variants=value)
+
+
 class TestRunBenchmark:
     """Tests for run_benchmark function."""
 

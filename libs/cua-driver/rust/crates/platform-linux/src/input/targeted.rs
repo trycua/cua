@@ -540,7 +540,7 @@ impl KeyboardMap {
         if let Some((code, shift)) = self.lookup(keysym) {
             return Ok((code, shift, None));
         }
-        let guard = super::remap_spare_keycode(conn, &self.mapping, keysym).map_err(failed)?;
+        let guard = super::remap_spare_keycode(conn, &self.mapping, keysym, &[]).map_err(failed)?;
         Ok((guard.keycode, false, Some(guard)))
     }
 }

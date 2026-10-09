@@ -20,6 +20,10 @@ env -u DISPLAY -u WAYLAND_DISPLAY -u XAUTHORITY -u AT_SPI_BUS_ADDRESS \
   --ignored --nocapture --test-threads=1
 ```
 
+The `CI: Rust Linux unit` workflow installs these fixture dependencies and runs
+this entire ignored test binary with the command above, before ordinary unit
+tests. The tracked E2E inventory test guards the whole-binary CI route.
+
 The retained opt-in environment variable is historical; this fixture needs no
 GTK window or display. A private session/accessibility bus prevents access to
 personal applications. The fixture is killed and reaped when its owner drops;

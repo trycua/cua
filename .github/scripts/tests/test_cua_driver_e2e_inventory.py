@@ -178,6 +178,14 @@ def test_every_ignored_test_is_routed_or_allowlisted() -> None:
     )
 
 
+def test_private_atspi_regressions_run_as_a_whole_binary() -> None:
+    """The private-bus platform suite must not disappear behind `#[ignore]`."""
+    workflow = REPO_ROOT / ".github/workflows/ci-rust-linux.yml"
+    assert runs_whole_binary_ignored(workflow.read_text(encoding="utf-8"), "set_value_fallback"), (
+        "Route all set_value_fallback ignored tests in Linux CI under dbus-run-session"
+    )
+
+
 def test_allowlist_entries_are_live_and_still_manual() -> None:
     texts = runner_texts()
     ignored = ignored_tests()

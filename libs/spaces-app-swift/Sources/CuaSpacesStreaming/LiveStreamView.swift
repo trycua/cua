@@ -42,6 +42,12 @@ public struct LiveStreamView: NSViewRepresentable {
         view.showsCursorOverlay = showsCursorOverlay
         view.surfaceSize = session.surfaceSize
         view.present(session.frame)
+        // The keyboard comes back with the stream after a reconnect.
+        if session.isReconnecting {
+            view.streamDropped()
+        } else if session.frame != nil {
+            view.streamBack()
+        }
         session.presentation.viewDidPresent(pixels: view.layerHasPixels,
                                             contentSize: view.geometry.contentRect.size,
                                             interactive: isInteractive)
@@ -65,6 +71,11 @@ public final class LiveStreamInputView: NSView {
     /// falls back to zero (§18).
     public var onDetach: (() -> Void)?
     public var isInteractive = true
+    /// Whether to take the keyboard back after a reconnect.
+    public let keyboardReturn = KeyboardReturn()
+    /// Where keys go while no viewer has them (a web page's view), so the
+    /// keyboard being there still counts as free; nil: only the window.
+    public weak var keyboardHome: NSResponder?
     public var showsCursorOverlay = true {
         didSet { cursorLayer.isHidden = !showsCursorOverlay || cursorPoint == nil }
     }
@@ -299,6 +310,28 @@ public final class LiveStreamInputView: NSView {
 
     // MARK: - Keyboard
 
+    /// Nobody has taken the keyboard: the window, its home, or this view.
+    public var keyboardIsFree: Bool {
+        guard let window else { return false }
+        let responder = window.firstResponder
+        return responder == nil || responder === window || responder === self
+            || (keyboardHome != nil && responder === keyboardHome)
+    }
+
+    /// The stream dropped: remember whether this view had the keyboard.
+    public func streamDropped() {
+        keyboardReturn.dropped(hadKeyboard: window?.firstResponder === self)
+    }
+
+    /// The stream is back: take the keyboard again if it was ours and is
+    /// free. True when it did.
+    @discardableResult
+    public func streamBack() -> Bool {
+        guard keyboardReturn.back(keyboardIsFree: keyboardIsFree), isInteractive, !isHiddenOrHasHiddenAncestor,
+              let window else { return false }
+        return window.firstResponder === self || window.makeFirstResponder(self)
+    }
+
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil {
@@ -314,9 +347,13 @@ public final class LiveStreamInputView: NSView {
         }
     }
 
-    /// Whether the event was claimed for the Space (``KeyCapture``).
-    func capture(_ event: NSEvent) -> Bool {
-        let focused = isInteractive && window != nil && event.window === window && window?.firstResponder === self
+    /// Whether the event was claimed for the Space (``KeyCapture``); the
+    /// view's key monitor asks for every key-down and modifier change.
+    public func capture(_ event: NSEvent) -> Bool {
+        // A key for another window is not ours; one with no window counts as
+        // this window's, as in the web host's key monitor.
+        let focused = isInteractive && window != nil && (event.window.map { $0 === window } ?? true)
+            && window?.firstResponder === self
         switch keyCapture.route(event.type, flags: event.modifierFlags, focused: focused) {
         case .app:
             return false
@@ -324,7 +361,9 @@ public final class LiveStreamInputView: NSView {
             sendChord(event)
             return true
         case .release:
-            window?.makeFirstResponder(nil)
+            // Back to where keys go while no viewer has them (the page's
+            // view in the web UI), else the window.
+            window?.makeFirstResponder(keyboardHome)
             return false
         }
     }

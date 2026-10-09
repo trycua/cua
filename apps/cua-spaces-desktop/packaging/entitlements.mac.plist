@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Cua Spaces.app (com.trycua.spaces.macos), the main executable, Developer ID
+  with the hardened runtime. Helpers get entitlements.mac.inherit.plist.
+
+  - allow-jit, allow-unsigned-executable-memory: V8.
+  - automation.apple-events: App Teleport reads browser sessions with
+    osascript from this process (the Swift app has the same entitlement and
+    NSAppleEventsUsageDescription, so its TCC grant carries over).
+  - network.client: outside the App Sandbox it changes nothing; kept as
+    Electron's template has it.
+  No keychain access groups: the Keyvault trusts the signing identifier and
+  team (see CuaSpacesMac.entitlements in apps/cua-spaces-macos).
+-->
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+  </dict>
+</plist>

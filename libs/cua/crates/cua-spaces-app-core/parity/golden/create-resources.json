@@ -1770,7 +1770,7 @@
           "spacesd": true
         },
         "creating": "Creating macOS Tahoe 26. It appears in the list when it is ready.",
-        "failed": "Could not create the Space: not enough disk space",
+        "failed": "Could not create the Space: Not enough disk space for this Space. Free up space on this Mac (or run `cua cache prune` in Terminal), then try again.",
         "openDesktop": true,
         "summary": [
           "System: macOS Tahoe 26",

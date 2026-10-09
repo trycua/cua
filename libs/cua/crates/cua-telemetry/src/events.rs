@@ -637,7 +637,38 @@ pub fn onboarding_step(step: &str, outcome: Outcome) -> Option<Event> {
         Event::new(event::ONBOARDING_STEP)
             .s("step", s)
             .s("outcome", outcome.as_str())
+            .s("onboarding_eligible", "unknown")
+            .s("error_kind", "none")
     })
+}
+
+/// `cua_onboarding_step` `signed_in` with outcome `error`: a sign-in that
+/// failed, timed out or was cancelled, as its kind ([`schema::ERROR_KINDS`],
+/// else `other`).
+pub fn sign_in_failed(error_kind: &str) -> Event {
+    Event::new(event::ONBOARDING_STEP)
+        .s("step", "signed_in")
+        .s("outcome", Outcome::Error.as_str())
+        .s("onboarding_eligible", "unknown")
+        .s("error_kind", pick(schema::ERROR_KINDS, error_kind, "other"))
+}
+
+/// `cua_onboarding_step` `app_launched`: the app started, with whether its
+/// first run was still to finish (`yes`, `no`; `unknown` when the app
+/// cannot tell).
+pub fn app_launched(onboarding_eligible: Option<bool>) -> Event {
+    Event::new(event::ONBOARDING_STEP)
+        .s("step", "app_launched")
+        .s("outcome", Outcome::Ok.as_str())
+        .s(
+            "onboarding_eligible",
+            match onboarding_eligible {
+                Some(true) => "yes",
+                Some(false) => "no",
+                None => "unknown",
+            },
+        )
+        .s("error_kind", "none")
 }
 
 /// Where an agent run was started from ([`schema::AGENT_ENTRIES`]), else

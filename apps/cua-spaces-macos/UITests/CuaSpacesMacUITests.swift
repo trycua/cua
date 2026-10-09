@@ -25,7 +25,8 @@ final class CuaSpacesMacUITests: XCTestCase {
 
     func testSidebarListsSpacesByLocation() {
         let app = launch()
-        XCTAssertTrue(app.staticTexts["Aurora"].waitForExistence(timeout: 10))
+        // Names show as typed (the core no longer title-cases them).
+        XCTAssertTrue(app.staticTexts["aurora"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Cua Cloud"].exists)
         XCTAssertTrue(app.staticTexts["Connected"].exists)
         XCTAssertTrue(app.staticTexts["All Items"].exists, "the Keyvault categories are in the sidebar")
@@ -52,8 +53,8 @@ final class CuaSpacesMacUITests: XCTestCase {
 
     func testSpaceDetailShowsFactsAndTheDropWell() {
         let app = launch()
-        XCTAssertTrue(app.staticTexts["Aurora"].waitForExistence(timeout: 10))
-        app.staticTexts["Aurora"].click()
+        XCTAssertTrue(app.staticTexts["aurora"].waitForExistence(timeout: 10))
+        app.staticTexts["aurora"].click()
         XCTAssertTrue(app.staticTexts["Identifier"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Drop a file or window"].exists)
     }

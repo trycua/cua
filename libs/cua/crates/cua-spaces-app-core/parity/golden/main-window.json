@@ -17,14 +17,14 @@
         "emptyText": null,
         "sections": [
           "# Cua Cloud",
-          "<os-linux> Builder | Suspended | Unreachable · timed out (dim)",
+          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
           "# This Mac",
-          "<os-linux> Aurora | Running | This Mac",
+          "<os-linux> aurora | Running | This Mac",
           "# Connected",
           "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
           "# My machines",
-          "<os-linux> Research Box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> Their Box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
         "thisMachine": "<os-macos> This machine | This Mac | Set up for access"
@@ -48,14 +48,14 @@
         "emptyText": null,
         "sections": [
           "# Cua Cloud",
-          "<os-linux> Builder | Suspended | Unreachable · timed out (dim)",
+          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
           "# This Mac",
-          "<os-linux> Aurora | Running | This Mac",
+          "<os-linux> aurora | Running | This Mac",
           "# Connected",
           "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
           "# My machines",
-          "<os-linux> Research Box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> Their Box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
         "thisMachine": "<os-macos> This machine | This Mac | Set up for access"
@@ -87,14 +87,14 @@
         "emptyText": null,
         "sections": [
           "# Cua Cloud",
-          "<os-linux> Builder | Suspended | Unreachable · timed out (dim)",
+          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
           "# This Mac",
-          "<os-linux> Aurora | Running | This Mac",
+          "<os-linux> aurora | Running | This Mac",
           "# Connected",
           "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
           "# My machines",
-          "<os-linux> Research Box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> Their Box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
         "thisMachine": "<os-macos> This machine | This Mac | Sharing · 2 connected"
@@ -123,14 +123,14 @@
         "emptyText": null,
         "sections": [
           "# Cua Cloud",
-          "<os-linux> Builder | Suspended | Unreachable · timed out (dim)",
+          "<os-linux> builder | Suspended | Unreachable · timed out (dim)",
           "# This Mac",
-          "<os-linux> Aurora | Running | This Mac",
+          "<os-linux> aurora | Running | This Mac",
           "# Connected",
           "<os-windows> 10.0.0.5:3211 | Running | 10.0.0.5:3211 (selected)",
           "# My machines",
-          "<os-linux> Research Box @ AWS · us-west-2 | Running | AWS · us-west-2",
-          "<os-linux> Their Box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
+          "<os-linux> research-box @ AWS · us-west-2 | Running | AWS · us-west-2",
+          "<os-linux> their-box @ Google Cloud · us-central1 | Suspended | Unreachable · offline (dim)"
         ],
         "selectedId": "direct:10.0.0.5:3211",
         "thisMachine": "<os-macos> This machine | This Mac | Host service stopped"
@@ -142,7 +142,7 @@
         "emptyText": null,
         "sections": [
           "# This Mac",
-          "<os-linux> Aurora | Running | This Mac"
+          "<os-linux> aurora | Running | This Mac"
         ],
         "selectedId": "this-mac",
         "thisMachine": null
@@ -180,7 +180,7 @@
       "frame": {
         "actions": [],
         "canStream": false,
-        "confirm": "Delete This machine? | Its sandbox is deleted. | Delete Space / Keep",
+        "confirm": "Delete This machine? | Everything inside it, including its files, is deleted and can't be recovered. | Delete Space / Keep",
         "facts": [
           "Status: This Mac",
           "Identifier: this-mac [copy this-mac doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -203,7 +203,7 @@
           "open: Open [-] ?Open the desktop in its own window (primary)"
         ],
         "canStream": true,
-        "confirm": "Delete Research Box? | Delete Permanently deletes it and everything Cua created for it in AWS · us-west-2. Remove from List keeps it running there. | Delete Permanently / Remove from List / Cancel",
+        "confirm": "Delete research-box? | Delete Permanently deletes it and everything Cua created for it in AWS · us-west-2. Remove from List keeps it running there. | Delete Permanently / Remove from List / Cancel",
         "facts": [
           "Status: Running",
           "Location: AWS · us-west-2",
@@ -217,7 +217,7 @@
           "Agents",
           "Teleport"
         ],
-        "title": "Research Box"
+        "title": "research-box"
       }
     },
     {
@@ -231,7 +231,7 @@
           "open: Open [-] ?Open the desktop in its own window (disabled) (primary)"
         ],
         "canStream": false,
-        "confirm": "Delete Their Box? | It runs in Google Cloud · us-central1 and was created on another device. Remove from List keeps it running there. | Delete Permanently (disabled: Created on another device: delete it there, or remove it from this list.) / Remove from List / Cancel",
+        "confirm": "Delete their-box? | It runs in Google Cloud · us-central1 and was created on another device. Remove from List keeps it running there. | Delete Permanently (disabled: Created on another device: delete it there, or remove it from this list.) / Remove from List / Cancel",
         "facts": [
           "Status: offline",
           "Location: Google Cloud · us-central1",
@@ -241,7 +241,7 @@
         "isHost": false,
         "previewText": "Not reachable",
         "sections": [],
-        "title": "Their Box"
+        "title": "their-box"
       }
     },
     {
@@ -255,7 +255,7 @@
           "open: Open [-] ?Open the desktop in its own window (primary)"
         ],
         "canStream": true,
-        "confirm": "Delete Aurora? | Its sandbox is deleted. | Delete Space / Keep",
+        "confirm": "Delete aurora? | Everything inside it, including its files, is deleted and can't be recovered. | Delete Space / Keep",
         "facts": [
           "Status: Running",
           "Identifier: local:aurora [copy local:aurora doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -268,7 +268,7 @@
           "Agents",
           "Teleport"
         ],
-        "title": "Aurora"
+        "title": "aurora"
       }
     },
     {
@@ -282,7 +282,7 @@
           "open: Open [-] ?Open the desktop in its own window (disabled) (primary)"
         ],
         "canStream": false,
-        "confirm": "Delete Builder? | Its sandbox is deleted. | Delete Space / Keep",
+        "confirm": "Delete builder? | Everything inside it, including its files, is deleted and can't be recovered. | Delete Space / Keep",
         "facts": [
           "Status: timed out",
           "Identifier: cloud:builder [copy cloud:builder doc.on.doc Copy / checkmark Copied 1500ms]",
@@ -291,7 +291,7 @@
         "isHost": false,
         "previewText": "Not reachable",
         "sections": [],
-        "title": "Builder"
+        "title": "builder"
       }
     },
     {

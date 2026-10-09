@@ -4,6 +4,8 @@
 import AppKit
 import CuaSDK
 import CuaSpacesFFI
+import CuaSpacesNotchHelper
+import CuaSpacesNotchUI
 import CuaSpacesStreaming
 @testable import CuaSpacesMacKit
 import SwiftUI
@@ -48,7 +50,7 @@ struct SnapshotTests {
         let o = OnboardingModel(statePath: nil, agentSetup: FixtureAgentSetup())
         let size = CGSize(width: 820, height: 560)
         // Every page, the Volume page included (its experiment on).
-        o.send(.experimentsLoaded(experiments: AppExperiments(cuaVolume: true, yourCloud: false, sharing: false)))
+        o.send(.experimentsLoaded(experiments: AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: false)))
         o.send(.start)
         try assertSnapshot(OnboardingView(onboarding: o), "onboarding-signin", size: size)
         o.send(.signinDone)
@@ -347,7 +349,7 @@ struct SnapshotTests {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         m.sendCreate(.start(id: "pending:linux", name: "linux-dev", os: .linux, provider: .local, now: now,
                             image: "ghcr.io/trycua/linux:24.04", kind: .container, hostArch: "arm64",
-                            gpu: false))
+                            gpu: false, host: nil, hostName: nil))
         m.sendCreate(.progress(id: "pending:linux", phase: "preparing", fraction: 0.4, now: now,
                                bytesDone: 192 << 20, bytesTotal: 478 << 20, bytesPerSecond: 24e6))
         let space = try #require(m.spaces.first { $0.id == "pending:linux" })
@@ -515,10 +517,60 @@ struct SnapshotTests {
         let m = try await model()
         setup(m.notch)
         let c = NotchController(model: m.notch)
-        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen, prompt: NotchController.needsRow(m.notch.view)))
+        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen.ffi, prompt: NotchController.needsRow(m.notch.view)))
         let g = c.geometry
-        try assertSnapshot(NotchContentView(model: m.notch, controller: c).background(Color(white: 0.85)),
+        try assertSnapshot(NotchContentView(surface: c).background(Color(white: 0.85)),
                            name, size: g.stage)
+        try assertHelperNotch(m.notch, name)
+    }
+
+    /// The Electron app's notch helper draws the same pixels for the same
+    /// core state: the state goes through the notch protocol as JSON (what
+    /// apps/cua-spaces-desktop/src/notch sends) into the helper's surface,
+    /// and its render is compared with the SwiftUI app's reference.
+    func assertHelperNotch(_ notch: NotchModel, _ name: String) throws {
+        let core = notch.view
+        var view = core.data
+        // Electron fills a ring's estimate (the helper has no core).
+        if var a = view.activity, a.permille == nil {
+            let start = a.startedAt ?? Int64(Date().timeIntervalSince1970 * 1000)
+            a.permille = appNotchEstimatedProgress(elapsedMs: Int64(Date().timeIntervalSince1970 * 1000) - start,
+                                                   estimateMs: a.estimateMs)
+            view.activity = a
+        }
+        let layout = appNotchLayout(screen: NotchGeometry.fallbackScreen.ffi, prompt: NotchController.needsRow(core)).data
+        var icons: [String: NotchData.OsIcon] = [:]
+        for t in view.tiles { icons[t.symbol] = NotchModel.osIcon(t.symbol) }
+        let state = HelperStateLine(view: view, query: notch.state.query, layout: layout, shown: true,
+                                    dragging: notch.state.drag.phase != .idle, icons: icons,
+                                    highlight: notch.highlight.map(Self.raw))
+        let hello = HelperHelloLine(motion: NotchModel.motion.data, radii: NotchModel.radii)
+        let helper = HelperNotch(emit: { _ in })
+        helper.makesPanel = false
+        let encoder = JSONEncoder()
+        #expect(helper.receive(try HostMessage.decode(try encoder.encode(hello))))
+        #expect(helper.receive(try HostMessage.decode(try encoder.encode(state))))
+        for tile in view.tiles {
+            guard let image = notch.thumbnails[tile.id], let tiff = image.tiffRepresentation,
+                  let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { continue }
+            let line = #"{"type":"thumbnail","id":"\#(tile.id)","image":"\#(png.base64EncodedString())"}"#
+            #expect(helper.receive(try HostMessage.decode(Data(line.utf8))))
+        }
+        #expect(helper.view == view)
+        try assertSnapshot(NotchContentView(surface: helper).background(Color(white: 0.85)),
+                           name, size: helper.geometry.stage)
+    }
+
+    /// A forced look as the protocol's `highlight` text.
+    static func raw(_ h: NotchHighlight) -> String {
+        let target: String
+        switch h.control {
+        case .tile(let id): target = "tile=\(id)"
+        case .button(let b): target = b.rawValue
+        case .search: target = "search"
+        case .tab: target = "tab"
+        }
+        return h.pressed ? target + ":pressed" : target
     }
 
     @Test func notchClosed() async throws {
@@ -649,9 +701,10 @@ struct SnapshotTests {
         #expect(places["relay:m1/studio"] == "Mac mini")
         #expect(places["relay:m2/ci"] == "Dillon's Mac Studio in the Back Office Rack 3")
         let c = NotchController(model: m.notch)
-        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen, prompt: NotchController.needsRow(m.notch.view)))
-        try assertSnapshot(NotchContentView(model: m.notch, controller: c).background(Color(white: 0.85)),
+        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen.ffi, prompt: NotchController.needsRow(m.notch.view)))
+        try assertSnapshot(NotchContentView(surface: c).background(Color(white: 0.85)),
                            "notch-tile-locations", size: c.geometry.stage)
+        try assertHelperNotch(m.notch, "notch-tile-locations")
     }
 
     @Test func notchButtonPressed() async throws {
@@ -681,7 +734,7 @@ struct SnapshotTests {
     @Test func onboardingHostForm() async throws {
         let o = OnboardingModel(statePath: nil, host: FixtureHost(), agentSetup: FixtureAgentSetup())
         // The page dots as recorded (the Cua Volume experiment on).
-        o.send(.experimentsLoaded(experiments: AppExperiments(cuaVolume: true, yourCloud: false, sharing: false)))
+        o.send(.experimentsLoaded(experiments: AppExperiments(cuaVolume: true, yourCloud: false, sharing: false, webUi: false)))
         o.send(.start)
         o.send(.signinDone)
         o.finishAgents(skipped: true)
@@ -694,8 +747,11 @@ struct SnapshotTests {
     // MARK: - Harness
 
     func render<V: View>(_ view: V, size: CGSize) -> NSBitmapImageRep {
+        // Looping miniatures on their still: a playing loop's frame would
+        // depend on the clock (tests that want a beat pass `fixedMs`).
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height)
-            .environment(\.colorScheme, .light))
+            .environment(\.colorScheme, .light)
+            .environment(\.onboardingMotionStill, true))
         host.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = host
@@ -758,4 +814,24 @@ struct SnapshotTests {
         }
         return total == 0 ? 0 : Double(differing) / Double(total)
     }
+}
+
+/// The `hello` line Electron sends.
+struct HelperHelloLine: Encodable {
+    var type = "hello"
+    var v = NotchProtocol.version
+    var motion: NotchData.Motion
+    var radii: NotchData.RadiiPair
+}
+
+/// The `state` line Electron sends.
+struct HelperStateLine: Encodable {
+    var type = "state"
+    var view: NotchData.View
+    var query: String
+    var layout: NotchData.Layout
+    var shown: Bool
+    var dragging: Bool
+    var icons: [String: NotchData.OsIcon]
+    var highlight: String?
 }

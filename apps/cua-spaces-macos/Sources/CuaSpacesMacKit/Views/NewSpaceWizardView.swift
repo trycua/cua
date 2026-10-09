@@ -126,7 +126,10 @@ public struct NewSpaceWizardView: View {
                 // chosen showed an empty "Run on".
                 ForEach(Self.groups(v.placements), id: \.self) { group in
                     Section {
-                        ForEach(v.placements.filter { $0.group == group }, id: \.id) { option in
+                        // Keyed by the line too: an item whose words change
+                        // with the system (Linux's container, Windows' QEMU)
+                        // is a new item, so its tooltip follows.
+                        ForEach(v.placements.filter { $0.group == group }, id: \.self) { option in
                             Text(option.label)
                                 .tag(option.id)
                                 .selectionDisabled(!option.enabled)
@@ -136,6 +139,9 @@ public struct NewSpaceWizardView: View {
                 }
             }
             .pickerStyle(.menu)
+            // The closed menu's tooltip is the chosen place's line, for every
+            // system (it showed only macOS's: the menu kept the first item's).
+            .help(Self.runOnHelp(v))
             .accessibilityIdentifier("wizard-run-on")
             if let error = field.error {
                 HStack(alignment: .firstTextBaseline) {
@@ -394,6 +400,12 @@ public struct NewSpaceWizardView: View {
                 }
             }
         }
+    }
+
+    /// "Run on"'s tooltip: what the chosen place runs the Space on
+    /// ("Container on this Mac (gVisor when installed)").
+    static func runOnHelp(_ v: AppWizardView) -> String {
+        v.placements.first { $0.id == v.placementId }?.detail ?? ""
     }
 
     private func osOf(_ id: String) -> AppSpaceOs {

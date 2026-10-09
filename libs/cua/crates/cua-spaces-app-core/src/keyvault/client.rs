@@ -110,7 +110,7 @@ impl SocketTransport {
 #[async_trait::async_trait]
 impl KvTransport for SocketTransport {
     async fn call(&self, req: Request) -> Result<Value, KvFailure> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             use cua_keyvault::client::{ConnectError, KeyvaultClient, ServerCheck};
             let mut client = KeyvaultClient::connect(&self.path, ServerCheck::default_for_build())
@@ -140,7 +140,7 @@ impl KvTransport for SocketTransport {
                 .await
                 .map_err(|e| KvFailure::from_error(&e))
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = req;
             Err(KvFailure {
@@ -154,14 +154,14 @@ impl KvTransport for SocketTransport {
     }
 
     fn server_verified(&self) -> bool {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             matches!(
                 cua_keyvault::client::ServerCheck::default_for_build(),
                 cua_keyvault::client::ServerCheck::Require(_)
             )
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             false
         }
@@ -297,18 +297,28 @@ impl KeyvaultCommands {
                 return out;
             }
         };
-        let unavailable = if !status.initialized {
+        // An app not signed by Cua is told so before anything else: it can
+        // neither see items nor create the Keyvault (the broker refuses its
+        // setup), so it never offers "Set up Keyvault".
+        let unavailable = if !status.caller_first_party {
+            Some((
+                "not_first_party",
+                if status.initialized {
+                    format!(
+                        "The Keyvault only shows items to apps signed by Cua. It sees this app as {}.",
+                        status.caller_display
+                    )
+                } else {
+                    format!(
+                        "Only the Cua Spaces app and the cua it ships can set up the Keyvault. It sees this app as {}.",
+                        status.caller_display
+                    )
+                },
+            ))
+        } else if !status.initialized {
             Some((
                 "no_vault",
                 "It keeps the sessions teleport moves, encrypted on this computer.".to_string(),
-            ))
-        } else if !status.caller_first_party {
-            Some((
-                "not_first_party",
-                format!(
-                    "The Keyvault only shows items to apps signed by Cua. It sees this app as {}.",
-                    status.caller_display
-                ),
             ))
         } else if !status.unlocked {
             Some(("locked", "Unlock it to see and approve items.".to_string()))
@@ -636,7 +646,11 @@ impl KeyvaultCommands {
         Ok(match command {
             KvCommand::Setup => KvOutcome::RecoveryKey {
                 key: self
-                    .setup(cfg!(any(target_os = "macos", target_os = "windows")))
+                    .setup(cfg!(any(
+                        target_os = "macos",
+                        target_os = "windows",
+                        target_os = "linux"
+                    )))
                     .await?,
             },
             KvCommand::Unlock => {

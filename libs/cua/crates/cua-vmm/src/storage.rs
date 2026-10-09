@@ -86,9 +86,9 @@ pub fn lume_default_location(yaml: &str) -> Option<String> {
 
 /// The container engine's data disk, when its free space can be read:
 /// Colima (`df` in its VM, bounded by the host volume under its sparse
-/// disk), Docker Desktop (the disk limit less what `Docker.raw` holds,
-/// bounded by the host volume), OrbStack (its data directory's volume) and
-/// dockerd on Linux (`/var/lib/docker`). `None` for anything else.
+/// disk), Docker Desktop (the volume its `Docker.raw` grows on), OrbStack
+/// (its data directory's volume) and dockerd on Linux (`/var/lib/docker`).
+/// `None` for anything else.
 pub async fn container_volume() -> Option<Volume> {
     let ep = engine::discover()?;
     let home = host::home_dir();
@@ -124,18 +124,12 @@ pub async fn container_volume() -> Option<Volume> {
             };
             Some(tighter(vm, host_vol))
         }
-        EngineKind::DockerDesktop => {
-            let raw = home.join("Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw");
-            let host_vol = host_volume(&raw);
-            let limit = docker_desktop_disk_limit(&home)?;
-            let used = allocated(&raw).unwrap_or(0);
-            let vm = Volume {
-                available: limit.saturating_sub(used),
-                total: limit,
-                name: "Docker Desktop".into(),
-            };
-            Some(tighter(vm, host_vol))
-        }
+        // Docker Desktop's disk limit is in its settings, under
+        // `~/Library/Group Containers/group.com.docker`, which macOS guards:
+        // reading it asks "would like to access data from other apps" and
+        // blocks until someone answers (no timeout can stop a blocked read).
+        // `Docker.raw` grows on this Mac's own volume, so that is the room.
+        EngineKind::DockerDesktop => host_volume(&home),
         EngineKind::OrbStack => host_volume(&home.join(".orbstack")),
         EngineKind::NativeLinux => host_volume(Path::new("/var/lib/docker")),
         _ => None,
@@ -158,41 +152,6 @@ pub fn parse_df(out: &str) -> Option<(u64, u64)> {
         return None;
     }
     Some((cols[3].parse().ok()?, cols[1].parse().ok()?))
-}
-
-/// Docker Desktop's disk limit in bytes (`DiskSizeMiB` in its settings).
-fn docker_desktop_disk_limit(home: &Path) -> Option<u64> {
-    for f in [
-        "Library/Group Containers/group.com.docker/settings-store.json",
-        "Library/Group Containers/group.com.docker/settings.json",
-    ] {
-        if let Some(mib) = std::fs::read_to_string(home.join(f))
-            .ok()
-            .and_then(|t| disk_size_mib(&t))
-        {
-            return Some(mib << 20);
-        }
-    }
-    None
-}
-
-/// `DiskSizeMiB` (or the older `diskSizeMiB`) of a Docker Desktop settings file.
-pub fn disk_size_mib(json: &str) -> Option<u64> {
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    v.get("DiskSizeMiB")
-        .or_else(|| v.get("diskSizeMiB"))
-        .and_then(serde_json::Value::as_u64)
-}
-
-#[cfg(unix)]
-fn allocated(p: &Path) -> Option<u64> {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::metadata(p).ok().map(|m| m.blocks() * 512)
-}
-
-#[cfg(not(unix))]
-fn allocated(p: &Path) -> Option<u64> {
-    std::fs::metadata(p).ok().map(|m| m.len())
 }
 
 /// The name of the volume holding `path`: the volume label on macOS (the
@@ -333,14 +292,11 @@ vmLocations:
     }
 
     #[test]
-    fn df_and_docker_desktop_settings_parse() {
+    fn df_parses() {
         let df = "Filesystem       1-blocks        Used   Available Capacity Mounted on\n\
                   /dev/vdb1  105089261568 57034448896 42668208128      58% /mnt/lima-colima\n";
         assert_eq!(parse_df(df), Some((42668208128, 105089261568)));
         assert_eq!(parse_df("Filesystem\n"), None);
-        assert_eq!(disk_size_mib(r#"{"DiskSizeMiB": 65536}"#), Some(65536));
-        assert_eq!(disk_size_mib(r#"{"diskSizeMiB": 1024}"#), Some(1024));
-        assert_eq!(disk_size_mib("{}"), None);
     }
 
     #[test]

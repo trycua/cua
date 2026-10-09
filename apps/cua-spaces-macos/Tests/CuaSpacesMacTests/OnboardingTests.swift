@@ -175,6 +175,33 @@ struct OnboardingTests {
         o.send(.driveContinue)
     }
 
+    /// Welcome counts the run as it shows once this machine showed the usage
+    /// notice (else only when it is left), and only once per run.
+    @Test func welcomeCountsTheRunWhenShownOnce() {
+        func steps(_ t: FixtureTelemetry) -> [String] {
+            t.recorded.compactMap { if case let .step(step, _) = $0 { return step } else { return nil } }
+        }
+        let seen = FixtureTelemetry()
+        seen.current.noticeShown = true
+        let o = OnboardingModel(statePath: nil)
+        o.telemetry = seen
+        o.shown()
+        #expect(steps(seen) == ["onboarding_shown"])
+        o.send(.start)
+        o.send(.back)
+        o.shown()
+        o.send(.start)
+        #expect(steps(seen) == ["onboarding_shown"])
+
+        let fresh = FixtureTelemetry()
+        let f = OnboardingModel(statePath: nil)
+        f.telemetry = fresh
+        f.shown()
+        #expect(fresh.recorded.isEmpty)
+        f.send(.start)
+        #expect(steps(fresh) == ["onboarding_shown"])
+    }
+
     /// Welcome's usage-data switch: from the machine's setting, locked when
     /// the environment decides, and settled before anything is recorded.
     @Test func welcomesUsageSwitchSettlesBeforeAnythingIsRecorded() {
@@ -197,7 +224,7 @@ struct OnboardingTests {
         #expect(telemetry.recorded.isEmpty)
 
         let locked = FixtureTelemetry()
-        locked.current = AppTelemetryInput(enabled: false, lockedBy: "env DO_NOT_TRACK")
+        locked.current = AppTelemetryInput(enabled: false, lockedBy: "env DO_NOT_TRACK", noticeShown: true)
         let l = OnboardingModel(statePath: nil)
         l.telemetry = locked
         l.shown()

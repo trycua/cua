@@ -595,11 +595,7 @@ fn opt(id: &str, label: &str, active: bool) -> SettingsOption {
 }
 
 pub(crate) fn this_machine(os: SpaceOs) -> &'static str {
-    if os == SpaceOs::Macos {
-        "This Mac"
-    } else {
-        "This computer"
-    }
+    os.this_machine()
 }
 
 /// The mount switch's words: a Finder volume on macOS, a mount on Linux.
@@ -613,14 +609,7 @@ pub fn mount_label(os: SpaceOs) -> &'static str {
 
 /// When the mount cannot be used here and the daemon gave no reason.
 pub fn not_available(os: SpaceOs) -> String {
-    format!(
-        "Not available on {} yet",
-        if os == SpaceOs::Macos {
-            "this Mac"
-        } else {
-            "this computer"
-        }
-    )
+    format!("Not available on {} yet", os.this_machine_lower())
 }
 
 /// A test or save's answer in one line.
@@ -1119,6 +1108,72 @@ mod tests {
             ..Default::default()
         });
         assert!(storage_section(&input, &storage_initial()).rows.is_empty());
+    }
+
+    #[test]
+    fn windows_and_linux_name_this_machine_without_finder() {
+        let storage = DriveStorageInput {
+            backend: "fs".into(),
+            fs_path: "/home/ada/.cua/volume/data".into(),
+            ..Default::default()
+        };
+        let texts = |s: &SettingsSection| {
+            s.rows
+                .iter()
+                .flat_map(|r| {
+                    [Some(r.label.clone()), r.value.clone(), r.button.clone()]
+                        .into_iter()
+                        .flatten()
+                        .chain(r.options.iter().map(|o| o.label.clone()))
+                })
+                .collect::<Vec<_>>()
+        };
+        let linux = StorageInput {
+            os: SpaceOs::Linux,
+            home: Some("/home/ada".into()),
+            storage: Some(storage.clone()),
+            mount: Some(DriveMountInput {
+                enabled: true,
+                state: "mounted".into(),
+                method: "fuse".into(),
+                path: Some("/home/ada/Cua Volume".into()),
+                volume_name: "Cua Volume".into(),
+                ..Default::default()
+            }),
+            cache: None,
+        };
+        let v = storage_section(&linux, &storage_initial());
+        assert_eq!(v.rows[0].options[0].label, "This computer");
+        let t = texts(&v);
+        assert!(t.contains(&"Mounted at".to_string()), "{t:?}");
+        assert!(t.contains(&"~/Cua Volume".to_string()), "{t:?}");
+        assert!(
+            t.iter()
+                .all(|x| !x.contains("Finder") && !x.contains("Mac") && !x.contains("/Volumes")),
+            "{t:?}"
+        );
+        let windows = StorageInput {
+            os: SpaceOs::Windows,
+            storage: Some(storage),
+            mount: Some(DriveMountInput {
+                state: "unsupported".into(),
+                method: "none".into(),
+                ..Default::default()
+            }),
+            ..linux
+        };
+        let v = storage_section(&windows, &storage_initial());
+        assert_eq!(v.rows[0].options[0].label, "This PC");
+        let t = texts(&v);
+        assert!(
+            t.iter()
+                .all(|x| !x.contains("Finder") && !x.contains("Mac") && !x.contains("Mount")),
+            "{t:?}"
+        );
+        assert_eq!(
+            not_available(SpaceOs::Windows),
+            "Not available on this PC yet"
+        );
     }
 
     #[test]

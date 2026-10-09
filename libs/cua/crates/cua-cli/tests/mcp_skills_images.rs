@@ -75,7 +75,10 @@ fn text(r: &Value) -> Value {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcp_serves_sandbox_computer_and_skills_tools() {
     let env = fixtures::start_env(Some("t"), None).await;
-    let h = Home::new();
+    let mut h = Home::new();
+    // No local containers: this machine's own Docker Spaces must not show up
+    // in a "local" listing (the test runs next to real Spaces on dev Macs).
+    h.set("DOCKER_HOST", "unix:///nonexistent/cua-test-no-docker.sock");
     h.run(&[
         "--embedded",
         "sb",

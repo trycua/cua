@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cua Spaces</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --fg: #171717;
+        --muted: #737373;
+        --line: #e5e5e5;
+        --panel: #fafafa;
+        font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0a0a0a;
+          --fg: #e5e5e5;
+          --muted: #8a8a8a;
+          --line: #262626;
+          --panel: #111111;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
+      header {
+        height: var(--titlebar-height, 40px);
+        padding-left: calc(var(--titlebar-left-inset, 0px) + 12px);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border-bottom: 1px solid var(--line);
+        -webkit-app-region: drag;
+        user-select: none;
+      }
+      header * { -webkit-app-region: no-drag; }
+      header strong { font-weight: 600; }
+      header span { color: var(--muted); }
+      main { padding: 24px; display: grid; gap: 16px; max-width: 760px; }
+      h1 { font-size: 15px; margin: 0; font-weight: 600; }
+      p { margin: 0; color: var(--muted); }
+      dl { display: grid; grid-template-columns: 160px 1fr; gap: 6px 12px; margin: 0; }
+      dt { color: var(--muted); }
+      dd { margin: 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+      th { color: var(--muted); font-weight: 500; }
+      section { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 14px 16px; display: grid; gap: 10px; }
+    </style>
+  </head>
+  <body>
+    <header><strong>Cua Spaces</strong><span>desktop shell</span></header>
+    <main>
+      <h1>The shell is running</h1>
+      <p>
+        This placeholder ships with the shell. It is replaced by the web UI from
+        <code>apps/cua-spaces-web</code> once that is built, or by its dev server on port 5174.
+      </p>
+      <section>
+        <dl id="info"></dl>
+      </section>
+      <section>
+        <h1>Spaces <span id="source" style="color: var(--muted); font-weight: 400"></span></h1>
+        <table>
+          <thead><tr><th>Name</th><th>Kind</th><th>OS</th><th>State</th></tr></thead>
+          <tbody id="spaces"></tbody>
+        </table>
+      </section>
+    </main>
+    <script type="module" src="./placeholder.js"></script>
+  </body>
+</html>

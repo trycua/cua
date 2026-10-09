@@ -147,6 +147,25 @@ private func pointerEvents(in text: String) -> [[String: Any]] {
         if case let .key(key, _, _, _) = enter.first { #expect(key == "enter") } else { Issue.record("\(enter)") }
     }
 
+    /// A Linux or Windows guest gets ⌘ chords as Control chords (Command
+    /// would arrive as Super); a macOS or unknown guest keeps ⌘.
+    @Test func commandGoesAsControlToALinuxGuest() {
+        #expect(InputEncoder.commandAsControl(guestOS: "linux"))
+        #expect(InputEncoder.commandAsControl(guestOS: "windows"))
+        #expect(!InputEncoder.commandAsControl(guestOS: "macos"))
+        #expect(!InputEncoder.commandAsControl(guestOS: ""))
+        let mapped = InputEncoder.commandAsControl([
+            .key(key: "c", down: true, modifiers: [.command, .shift], repeatKey: false),
+            .key(key: "v", down: true, modifiers: [.command, .control], repeatKey: false),
+        ])
+        guard case let .key(_, _, copy, _) = mapped[0], case let .key(_, _, paste, _) = mapped[1] else {
+            Issue.record("\(mapped)"); return
+        }
+        #expect(copy == [.control, .shift])
+        #expect(paste == [.control])
+        #expect(OfflineStreamSourceProvider().commandAsControl == false)
+    }
+
     /// The stream view is the hit-test target inside the app's grouped Form
     /// (no SwiftUI container swallows the click) and takes the first mouse,
     /// so a click on an inactive window reaches the Space too.

@@ -277,6 +277,8 @@ pub const ONBOARDING_STEPS: &[&str] = &[
     "first_space_ready",
     "first_agent_run",
 ];
+/// Whether an `app_launched` opens the first run (`unknown` elsewhere).
+pub const ONBOARDING_ELIGIBLE: &[&str] = &["yes", "no", "unknown"];
 /// The Spaces app's first-run pages (`cua-spaces-app-core` `onboarding`).
 pub const ONBOARDING_PAGES: &[&str] = &[
     "welcome",
@@ -811,7 +813,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::ONBOARDING_STEP,
-        version: 2,
+        version: 3,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &[
@@ -830,6 +832,16 @@ pub const EVENTS: &[EventSpec] = &[
                 "The funnel step (first_* steps fire once per install).",
             ),
             OUTCOME,
+            p(
+                "onboarding_eligible",
+                Kind::Enum(ONBOARDING_ELIGIBLE),
+                "app_launched only: the app's first run was still to finish at this launch (yes or no); unknown for every other step and product.",
+            ),
+            p(
+                "error_kind",
+                Kind::Enum(ERROR_KINDS),
+                "A failed signed_in: why, as a fixed kind (timeout, cancelled, permission_denied, transport, unauthenticated, other); none otherwise. Never the message.",
+            ),
         ],
         purpose: "Install and onboarding funnel: where people drop off.",
     },

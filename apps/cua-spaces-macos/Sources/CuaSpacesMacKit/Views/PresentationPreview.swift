@@ -4,6 +4,7 @@
 import AppKit
 import CuaSDK
 import CuaSpacesFFI
+import CuaSpacesNotchUI
 import SwiftUI
 
 /// A "Where should Cua Spaces show up?" card's animated miniature: the
@@ -22,6 +23,7 @@ struct PresentationPreview: View {
     /// Overrides the system's Reduce Motion (tests).
     var stillOverride: Bool?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.onboardingMotionStill) private var motionStill
     @Environment(\.appearsActive) private var appearsActive
     @State private var onScreen = false
     @State private var origin = Date()
@@ -31,7 +33,7 @@ struct PresentationPreview: View {
         Group {
             if let fixedMs {
                 PresentationPreviewCanvas(scene: scene, frame: appPresentationPreviewFrame(menuBar: menuBar, tMs: fixedMs))
-            } else if stillOverride ?? reduceMotion {
+            } else if stillOverride ?? (reduceMotion || motionStill) {
                 PresentationPreviewCanvas(scene: scene, frame: appPresentationPreviewStill(menuBar: menuBar))
             } else {
                 TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !onScreen || !appearsActive)) { context in
@@ -90,6 +92,25 @@ struct PresentationPreviewCanvas: View {
         .clipped()
         .accessibilityHidden(true)
     }
+}
+
+extension EnvironmentValues {
+    /// Holds onboarding's looping miniatures (and Done's prompt ticker) on
+    /// their Reduce Motion still whatever the system setting. Snapshots set
+    /// it: a playing loop's frame depends on the wall clock and on whether
+    /// the offscreen window counts as active, so a page snapshot otherwise
+    /// catches a different beat from run to run.
+    var onboardingMotionStill: Bool {
+        get { self[OnboardingMotionStillKey.self] }
+        set { self[OnboardingMotionStillKey.self] = newValue }
+    }
+}
+
+/// `onboardingMotionStill`'s key, written out rather than with `@Entry`:
+/// that macro's plugin ships with Xcode only, and the package also builds
+/// with just the Command Line Tools (`scripts/test.sh`).
+private struct OnboardingMotionStillKey: EnvironmentKey {
+    static let defaultValue = false
 }
 
 /// The miniature's desktop colours (the Tauri app's `--ob-preview-*`).
@@ -190,7 +211,7 @@ struct NotchMiniature: View {
         return NotchTabShape(ear: ear, corner: 10 * n.scale).fill(.black)
             .frame(width: n.tab.width + tuck, height: n.tab.height)
             .overlay {
-                NotchTabLabel(tab: n.view.tab)
+                NotchTabLabel(tab: n.view.tab.data)
                     .scaleEffect(n.scale)
                     .offset(x: (tuck - ear - 6 * n.scale) / 2)
             }
@@ -235,7 +256,7 @@ struct NotchMiniContent: View {
             HStack(alignment: .top, spacing: 12) {
                 ForEach(n.view.tiles, id: \.id) { tile in
                     // No live thumbnails here: the OS mark stands in.
-                    TileView(tile: tile).overlay(alignment: .top) {
+                    TileView(tile: tile.data).overlay(alignment: .top) {
                         OsIconImage(id: tile.symbol, size: 26)
                             .foregroundStyle(.white.opacity(0.22))
                             .frame(height: 80)
@@ -246,6 +267,7 @@ struct NotchMiniContent: View {
         }
         .padding(.horizontal, n.side)
         .frame(width: n.contentWidth, height: n.contentHeight, alignment: .topLeading)
+        .environment(\.notchOsIcon, NotchModel.osIcon)
     }
 }
 

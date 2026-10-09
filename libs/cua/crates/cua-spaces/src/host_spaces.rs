@@ -1326,10 +1326,33 @@ pub(crate) fn stopped_sharing(name: &str) -> Error {
     )))
 }
 
-/// Whether a failed connection is the relay refusing a machine that
-/// stopped sharing.
+/// Whether a failed connection is a machine that stopped sharing refusing
+/// it: the relay ("the host stopped sharing this machine", its directory
+/// says so) or the machine itself ("relay assertion refused: this machine
+/// stopped sharing", its own policy says so while the relay still lists it
+/// as sharing, as after a set up again).
 pub(crate) fn is_stopped_sharing(reason: &str) -> bool {
-    reason.contains("stopped sharing this machine")
+    reason.contains("stopped sharing")
+}
+
+/// [`HostLimit::resource`] of a host the relay sees connected whose owner
+/// stopped sharing it (it refuses every call). Not a count: `used` and
+/// `limit` are 0 and `reason` is the line to show. It travels with the
+/// limits because those are the one open list [`Spaces::hosts`] hands to
+/// every shell (the daemon, the SDK's bindings, the apps' FFI) without
+/// changing their shapes; the app core's wizard reads it
+/// (`HOST_SHARING_STOPPED`).
+pub const STOPPED_SHARING: &str = "sharing";
+
+/// What a refusal by a machine that stopped sharing said, from the error
+/// a call to it failed with.
+fn stopped_sharing_reason(e: &Error) -> Option<String> {
+    match e {
+        Error::Relay(cua_host::Error::PermissionDenied(m)) if is_stopped_sharing(m) => {
+            Some(m.clone())
+        }
+        _ => None,
+    }
 }
 
 fn now_ms() -> u64 {
@@ -1476,7 +1499,8 @@ const HOST_PROBE: Duration = Duration::from_secs(4);
 /// One limit of a host and how much of it is used (`HostSpacesCapacity`).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct HostLimit {
-    /// `spaces` (every Space it provides) or `macos_vms`.
+    /// `spaces` (every Space it provides), `macos_vms`, or
+    /// [`STOPPED_SHARING`] (not a limit: its owner stopped sharing it).
     pub resource: String,
     /// In use now.
     pub used: u32,
@@ -1497,11 +1521,13 @@ pub struct HostOffer {
     pub name: String,
     /// `relay` or `direct`.
     pub via: String,
-    /// It answered.
+    /// It answered, or the relay sees it connected (as the Machines page
+    /// says it is online).
     pub online: bool,
     /// Its operating system (`macos`, `linux`, `windows`), when it answered.
     pub os: String,
-    /// Its limits, when it answered.
+    /// Its limits, when it answered; a [`STOPPED_SHARING`] entry when it
+    /// refused because its owner stopped sharing it.
     pub limits: Vec<HostLimit>,
 }
 
@@ -1557,6 +1583,53 @@ fn host_offer(
             limits: vec![],
         }),
     }
+}
+
+/// A relay machine as [`Spaces::hosts`] lists it: [`host_offer`], except
+/// that one the relay sees connected (`present`) is listed online, as the
+/// Machines page lists it, whatever its answer:
+///
+/// - one whose answer did not come in time has its limits unknown. The
+///   relay reaches it (`cua spaces ls` lists it), so "Run on" must not call
+///   it offline; a create there says what is wrong if it really is.
+/// - one that refused because its owner stopped sharing it says so, as a
+///   [`STOPPED_SHARING`] entry among its limits: "Run on" lists it as not
+///   sharing, not offline.
+fn relay_offer(
+    id: String,
+    name: String,
+    present: bool,
+    os: &str,
+    answer: Option<Result<pb::GetHostSpacesResponse>>,
+    keep_offline: bool,
+) -> Option<HostOffer> {
+    if present
+        && let Some(Err(e)) = &answer
+        && let Some(reason) = stopped_sharing_reason(e)
+    {
+        return keep_offline.then(|| HostOffer {
+            id,
+            name,
+            via: "relay".into(),
+            online: true,
+            os: os.to_string(),
+            limits: vec![HostLimit {
+                resource: STOPPED_SHARING.into(),
+                used: 0,
+                limit: 0,
+                reason,
+            }],
+        });
+    }
+    let timed_out = present && answer.is_none();
+    let mut offer = host_offer(id, name, "relay", answer, keep_offline)?;
+    if timed_out {
+        offer.online = true;
+        if offer.os.is_empty() {
+            offer.os = os.to_string();
+        }
+    }
+    Some(offer)
 }
 
 impl Spaces {
@@ -1616,7 +1689,8 @@ impl Spaces {
                         .get(cua_host::META_PROVIDES_SPACES)
                         .is_none_or(|v| v != "off");
                     let keep = known.contains(&m.id) || (m.role == "owner" && offers_spaces);
-                    host_offer(m.id.clone(), name, "relay", answer, keep)
+                    let os = m.meta.get(cua_host::META_OS).cloned().unwrap_or_default();
+                    relay_offer(m.id.clone(), name, m.online, &os, answer, keep)
                 }),
         )
         .await;
@@ -2381,6 +2455,113 @@ mod tests {
         let silent = offer(None, true).unwrap();
         assert!(!silent.online && silent.limits.is_empty());
         assert_eq!(offer(None, false), None, "unknown and silent");
+
+        // Connected to the relay but slow to answer: online, limits unknown.
+        let slow = relay_offer("m1".into(), "Mac mini".into(), true, "macos", None, true).unwrap();
+        assert!(slow.online && slow.os == "macos" && slow.limits.is_empty());
+        // Not connected: offline, as before.
+        let gone = relay_offer("m1".into(), "Mac mini".into(), false, "macos", None, true).unwrap();
+        assert!(!gone.online);
+        // Connected, and it said it does not provide Spaces: left out.
+        assert_eq!(
+            relay_offer(
+                "m1".into(),
+                "Mac mini".into(),
+                true,
+                "",
+                Some(Ok(answer(false))),
+                true
+            ),
+            None
+        );
+        // Connected, and the answer failed: offline (it was asked and said why).
+        let failed = relay_offer(
+            "m1".into(),
+            "Mac mini".into(),
+            true,
+            "",
+            Some(Err(Error::Timeout("hello".into()))),
+            true,
+        )
+        .unwrap();
+        assert!(!failed.online);
+    }
+
+    /// The Machines page and "Run on" read the same signal: a machine the
+    /// relay sees connected is online. One that refused because its owner
+    /// stopped sharing it (its relay record or its own policy says so) is
+    /// online and says so, not offline.
+    #[test]
+    fn a_connected_machine_that_stopped_sharing_is_online_and_says_so() {
+        let refused = |keep| {
+            relay_offer(
+                "m1".into(),
+                "gamma-4 Mac Studio".into(),
+                true,
+                "macos",
+                Some(Err(stopped_sharing("gamma-4 Mac Studio"))),
+                keep,
+            )
+        };
+        let offer = refused(true).unwrap();
+        assert!(offer.online, "the relay sees it connected");
+        assert_eq!(offer.os, "macos", "what its setup registered");
+        assert_eq!(
+            offer.limits,
+            vec![HostLimit {
+                resource: STOPPED_SHARING.into(),
+                used: 0,
+                limit: 0,
+                reason: "gamma-4 Mac Studio stopped sharing: ask its owner to Resume sharing \
+                         (or run `cua host start` there)"
+                    .into(),
+            }]
+        );
+        // Listed under the rule an offline machine is: yours, or provided.
+        assert_eq!(refused(false), None);
+        // Not connected: just offline (the relay would not have been asked).
+        let gone = relay_offer(
+            "m1".into(),
+            "gamma-4 Mac Studio".into(),
+            false,
+            "macos",
+            Some(Err(stopped_sharing("gamma-4 Mac Studio"))),
+            true,
+        )
+        .unwrap();
+        assert!(!gone.online && gone.limits.is_empty());
+        // Another refusal stays an offline machine.
+        let denied = relay_offer(
+            "m1".into(),
+            "Mac mini".into(),
+            true,
+            "",
+            Some(Err(Error::Relay(cua_host::Error::PermissionDenied(
+                "not yours".into(),
+            )))),
+            true,
+        )
+        .unwrap();
+        assert!(!denied.online && denied.limits.is_empty());
+    }
+
+    /// Both wordings of "stopped sharing" are recognized: the relay's, and
+    /// the machine's own when its policy says so while the relay still
+    /// lists it as sharing (gamma-4, whose create said
+    /// "cua-spacesd is not available").
+    #[test]
+    fn both_wordings_of_stopped_sharing_are_recognized() {
+        for reason in [
+            "the host stopped sharing this machine",
+            "relay:96fe has no cua-spacesd (gRPC: relay assertion refused: this machine \
+             stopped sharing; gRPC-Web: relay assertion refused: this machine stopped sharing)",
+        ] {
+            assert!(is_stopped_sharing(reason), "{reason}");
+        }
+        assert!(!is_stopped_sharing("the machine is not connected"));
+        assert!(!is_stopped_sharing(
+            "relay assertion refused: not your machine"
+        ));
     }
 
     /// Without a relay account only the hosts added by address are listed;

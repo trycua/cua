@@ -86,6 +86,16 @@ where
         .map_err(|e| CuaError::Internal(format!("SDK task failed: {e}")))?
 }
 
+/// A not-found message as [`CuaError::NotFound`] carries it: its display
+/// says "not found: …" already, so a cua-spaces message that ends with "not
+/// found" ("{what} not found") loses that ending instead of saying it twice.
+pub(crate) fn not_found_message(message: String) -> String {
+    match message.strip_suffix(" not found") {
+        Some(what) if !what.trim().is_empty() => what.to_string(),
+        _ => message,
+    }
+}
+
 impl From<cua_daemon::Error> for CuaError {
     fn from(e: cua_daemon::Error) -> Self {
         use cua_daemon::Error as E;
@@ -93,7 +103,7 @@ impl From<cua_daemon::Error> for CuaError {
         match e {
             E::InvalidArgument(_) => CuaError::InvalidArgument(m),
             E::InvalidPlacement { .. } => CuaError::InvalidPlacement(m),
-            E::NotFound(_) => CuaError::NotFound(m),
+            E::NotFound(_) => CuaError::NotFound(not_found_message(m)),
             E::AmbiguousSandbox { .. } => CuaError::AmbiguousSandbox(m),
             E::ProviderNotConfigured(_) => CuaError::ProviderNotConfigured(m),
             E::Unsupported(_) => CuaError::Unsupported(m),
@@ -235,5 +245,24 @@ pub(crate) mod test_env {
                 }
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "spaces"))]
+mod not_found_tests {
+    use super::*;
+
+    /// "Run on" a device that is no host: the create's error says "not
+    /// found" once, whether it came from the embedded runtime or the daemon.
+    #[test]
+    fn a_missing_machine_says_not_found_once() {
+        let what = "a machine matching \"dev_22\" among your machines (\"gamma-4 Mac Studio\" (host:96fe))";
+        let embedded: CuaError = cua_spaces::Error::NotFound(what.into()).into();
+        assert_eq!(embedded.to_string(), format!("not found: {what}"));
+        let daemon: CuaError = cua_daemon::Error::NotFound(format!("{what} not found")).into();
+        assert_eq!(daemon.to_string(), format!("not found: {what}"));
+        // A message that is only the word stays as it is.
+        assert_eq!(not_found_message(" not found".into()), " not found");
+        assert_eq!(not_found_message("local:box".into()), "local:box");
     }
 }

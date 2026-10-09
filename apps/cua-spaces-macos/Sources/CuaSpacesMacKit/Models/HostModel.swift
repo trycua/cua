@@ -220,11 +220,23 @@ public final class HostModel {
         // Setup that provides Spaces, launch on a Mac that already does, or
         // Spaces turned on: ask now, while someone is at this Mac, not when
         // the first Space boots (see `LocalNetworkPermissionRequesting`).
-        if let state, state.configured, state.provideSpaces, !askedLocalNetwork, let localNetwork {
-            askedLocalNetwork = true
-            localNetwork.request()
+        if let state, state.configured, state.provideSpaces {
+            requestLocalNetwork()
         }
         onChange?()
+    }
+
+    /// Asks for Local Network access once (see
+    /// `LocalNetworkPermissionRequesting`). Not only hosts need it: any Mac
+    /// that runs a macOS Space reaches the VM on vmnet (192.168.64.x), and
+    /// a client Mac that was never asked gets the prompt only when that VM
+    /// boots, often after a long download with nobody watching, and the
+    /// create fails. So the app also asks when onboarding ends and when a
+    /// Space is created on this Mac.
+    public func requestLocalNetwork() {
+        guard !askedLocalNetwork, let localNetwork else { return }
+        askedLocalNetwork = true
+        localNetwork.request()
     }
 
     public func refresh() async {
@@ -259,14 +271,9 @@ public final class HostModel {
     public func submit() async {
         guard let host, let view = formView, view.canSubmit, let request = view.request else { return }
         send(.submit)
-        defer { progress = nil }
         do {
-            let status = request.mode == "relay"
-                ? try await setUpRelay(host, request)
-                : try await host.setupRequest(request: request, accountToken: nil)
+            try await setUp(request, on: host)
             form = nil
-            setupFailure = nil
-            apply(status)
         } catch {
             let raw = LiveSpacesBackend.words(error)
             setupFailure = Self.isUnauthenticated(error)
@@ -274,6 +281,17 @@ public final class HostModel {
                 : HostSetupFailure.presenting(raw)
             send(.failed(error: raw))
         }
+    }
+
+    /// Host setup with a request the core's form built and validated (the
+    /// form's submit, and the web UI's): relay setup with the account token.
+    func setUp(_ request: AppHostSetupRequest, on host: HostRunning) async throws {
+        defer { progress = nil }
+        let status = request.mode == "relay"
+            ? try await setUpRelay(host, request)
+            : try await host.setupRequest(request: request, accountToken: nil)
+        setupFailure = nil
+        apply(status)
     }
 
     /// Relay setup always runs with a valid account token: signed out (or a

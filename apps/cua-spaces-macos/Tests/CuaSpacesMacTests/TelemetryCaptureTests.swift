@@ -35,7 +35,7 @@ struct TelemetryCaptureTests {
         try #require(endpoint.hasPrefix("http://127.0.0.1:"))
 
         // What the app does at launch (before the notice: `app_launched` waits).
-        #expect(appTelemetryStart(version: "0.2.0") == false)
+        #expect(appTelemetryStart(version: "0.2.0", onboardingEligible: true) == false)
         let telemetry = LiveTelemetry()
         let share = env["CUA_TELEMETRY_CAPTURE_SHARE"] != "off"
         let onboarding = OnboardingModel(statePath: nil)

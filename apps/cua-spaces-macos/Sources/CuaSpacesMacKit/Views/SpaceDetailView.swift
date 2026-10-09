@@ -639,6 +639,10 @@ struct SpaceWindowView: View {
     let spaceId: String
     @State private var session: LiveStreamSession?
     @State private var error: String?
+    /// The Space was listed while this window was open: once it is gone
+    /// (deleted), the window closes instead of going blank.
+    @State private var seen = false
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         let space = model.spaces.first { $0.id == spaceId }
@@ -667,10 +671,24 @@ struct SpaceWindowView: View {
                         }
                     }
                 }
+            } else {
+                ZStack {
+                    Rectangle().fill(.quaternary)
+                    Text(seen ? "This Space was deleted." : "This Space isn\u{2019}t listed on this Mac.")
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .frame(minWidth: 640, minHeight: 400)
         .navigationTitle(space?.name ?? spaceId)
+        .onAppear { if space != nil { seen = true } }
+        .onChange(of: space != nil) { _, listed in
+            if listed {
+                seen = true
+            } else if seen {
+                dismiss()
+            }
+        }
         .onChange(of: space?.status == .deleting) { _, deleting in
             // Deleting: the stream stops now.
             guard deleting, let session else { return }

@@ -363,6 +363,21 @@ pub async fn run(
                     ),
                 );
             }
+            for k in &g.kept_bases {
+                line(
+                    out,
+                    format!(
+                        "kept {} {} ({}): {}",
+                        k.kind,
+                        k.name,
+                        format_size(k.bytes),
+                        k.why
+                    ),
+                );
+            }
+            if !g.kept_bases.is_empty() {
+                line(out, "cua cache prune --all removes bases no sandbox uses");
+            }
             Ok(0)
         }
         CacheCmd::Config {

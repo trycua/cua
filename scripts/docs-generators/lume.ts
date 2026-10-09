@@ -80,8 +80,8 @@ export const CLI_GROUPS: CliGroup[] = [
   {
     slug: 'guest',
     title: 'Guest access',
-    summary: 'Prepare unattended setup, open SSH sessions and change SIP in a guest',
-    commands: ['setup', 'ssh', 'sip'],
+    summary: 'Prepare unattended setup, open SSH sessions, copy files and change SIP in a guest',
+    commands: ['setup', 'ssh', 'cp', 'sip'],
   },
   {
     slug: 'server',

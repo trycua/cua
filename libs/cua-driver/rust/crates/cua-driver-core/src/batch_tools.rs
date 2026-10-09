@@ -43,7 +43,7 @@ pub const BATCHABLE_TOOLS: &[&str] = &[
 ];
 
 /// Most steps one call may carry. Keeps a batch inside client call timeouts.
-pub const MAX_STEPS: usize = 32;
+pub const MAX_STEPS: usize = 64;
 /// Longest pause between two steps.
 pub const MAX_DELAY_MS: u64 = 2_000;
 /// Default `max_elements` for the end-of-batch observation: the same budget as
@@ -189,7 +189,7 @@ impl Tool for RunActionsTool {
                 since your last read of the window, plus a new snapshot_id. Without \
                 `observe` nothing is read. The batch uses one session: steps may \
                 omit `session` or repeat the batch's. `delay_ms` pauses between steps (max \
-                2000). At most 32 steps.\n\n\
+                2000). At most 64 steps; `delivery_mode` on run_actions is the default for its steps.\n\n\
                 TARGET BY NAME (no earlier read needed, so one batch can cross screens): \
                 a step can be written `{\"click\": {...args}}` as well as `{tool, args}`, and \
                 its args may name the target instead of carrying a token: `role` (button, \
@@ -261,6 +261,11 @@ impl Tool for RunActionsTool {
                     "window": {
                         "type": "string",
                         "description": "Default window title substring for steps that name no window."
+                    },
+                    "delivery_mode": {
+                        "type": "string",
+                        "enum": ["background", "foreground"],
+                        "description": "Default delivery_mode for steps whose tool takes one and that set none."
                     },
                     "foreground_fallback": {
                         "type": "boolean",
@@ -443,6 +448,17 @@ impl Plan {
             .map(str::to_owned);
 
         let default_window = batch_window(object)?;
+        let default_delivery = match object.get("delivery_mode") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(mode)) if matches!(mode.as_str(), "background" | "foreground") => {
+                Some(mode.clone())
+            }
+            Some(_) => {
+                return Err(PlanError::batch(
+                    "`delivery_mode` must be \"background\" or \"foreground\"",
+                ))
+            }
+        };
         let foreground_fallback = match object.get("foreground_fallback") {
             None | Some(Value::Null) => false,
             Some(Value::Bool(flag)) => *flag,
@@ -522,7 +538,14 @@ impl Plan {
                 });
                 continue;
             }
-            let step = parse_step(registry, index, raw, session.as_deref(), has_window)?;
+            let mut step = parse_step(registry, index, raw, session.as_deref(), has_window)?;
+            if let (Some(mode), Some(action)) = (&default_delivery, step.action.as_mut()) {
+                if accepts(registry, action.tool, "delivery_mode") {
+                    if let Some(object) = action.args.as_object_mut() {
+                        object.entry("delivery_mode").or_insert_with(|| json!(mode));
+                    }
+                }
+            }
             let names_window = step
                 .action
                 .as_ref()
@@ -786,6 +809,9 @@ impl Plan {
         let mut content = vec![Content::text(lines.join("\n"))];
         content.append(&mut observation_content);
         content.append(&mut tail_content);
+        if failed_step.is_some() {
+            fit_error_text(&mut content, ERROR_TEXT_BUDGET);
+        }
         ToolResult {
             content,
             is_error: failed_step.map(|_| true),
@@ -1261,6 +1287,41 @@ fn focus_holder(message: &str) -> Option<u64> {
         .take_while(char::is_ascii_digit)
         .collect();
     digits.parse().ok()
+}
+
+/// Most text characters a failed batch returns. MCP clients cut long error
+/// results to their first line or so (Claude Code keeps ~100 characters of
+/// an error over ~4 000), which hid why a step failed behind the read that
+/// followed it. The step report goes first and whole; the read is trimmed.
+const ERROR_TEXT_BUDGET: usize = 3_500;
+
+/// Keep the text of a failed batch within `budget` characters: the first
+/// part (the step report) up to the budget, then later text parts trimmed
+/// to what is left, with a note. Images are kept.
+fn fit_error_text(content: &mut Vec<Content>, budget: usize) {
+    let mut left = budget;
+    let mut trimmed = false;
+    for part in content.iter_mut() {
+        let Content::Text { text, .. } = part else {
+            continue;
+        };
+        let length = text.chars().count();
+        if length <= left {
+            left -= length;
+            continue;
+        }
+        let keep: String = text.chars().take(left).collect();
+        *text = keep;
+        left = 0;
+        trimmed = true;
+    }
+    content.retain(|part| !matches!(part, Content::Text { text, .. } if text.is_empty()));
+    if trimmed {
+        content.push(Content::text(
+            "[the rest of this read was cut so the step report stays readable; call \
+             get_window_state for the full window]",
+        ));
+    }
 }
 
 /// Whether a refusal names foreground delivery as the route that works:

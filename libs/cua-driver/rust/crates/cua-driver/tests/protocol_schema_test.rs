@@ -194,6 +194,8 @@ fn tools_list_schema_shape() {
         // Chromium); foreground accepts that.
         "browser_click",
         "browser_pointer",
+        // The batch's default for its steps' own delivery_mode.
+        "run_actions",
         // macOS set_value has no delivery ladder.
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         "set_value",

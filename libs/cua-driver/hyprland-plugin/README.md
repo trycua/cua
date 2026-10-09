@@ -116,6 +116,18 @@ Rebuild it against the upgraded Hyprland package instead. The local Arch recipe
 in `packaging/arch/` installs a version-pinned development package without
 changing Hyprland configuration.
 
+### Requalification for each Hyprland build
+
+[`nightly-hyprland-plugin-requalify.yml`](../../../.github/workflows/nightly-hyprland-plugin-requalify.yml)
+runs daily and can also be dispatched by hand. It detects new Hyprland builds
+in Arch and in the Omarchy edge, rc and stable channels, keyed by package
+version and package hash. For each new build it rebuilds this plugin against
+the exact headers in an Arch container, runs CTest, records the header hashes,
+and loads the module into a headless Hyprland for a window-targeted input
+smoke. The results go to the `hyprland-plugin-compat` branch as
+`compatibility.json`. See [`requalify/COMPAT-BRANCH.md`](requalify/COMPAT-BRANCH.md).
+This is CI evidence. It is not a kit or native certification.
+
 ## Load, inspect, and unload
 
 Loading is always an explicit operator action. For a local build, substitute

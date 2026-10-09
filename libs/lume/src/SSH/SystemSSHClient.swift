@@ -354,6 +354,115 @@ public final class SystemSSHClient: Sendable {
         stagingNeedsCleanup = false
     }
 
+    /// Copy a single file or directory between the host and the guest using system scp.
+    ///
+    /// - Parameters:
+    ///   - localPath: Path on the host.
+    ///   - remotePath: Path inside the guest.
+    ///   - upload: `true` to copy host → guest, `false` to copy guest → host.
+    ///   - recursive: Pass `-r` so directories are copied recursively.
+    ///   - timeout: Seconds before the transfer is aborted (`0` for no timeout).
+    public func copyFile(
+        localPath: String,
+        remotePath: String,
+        upload: Bool,
+        recursive: Bool,
+        timeout: TimeInterval = 600
+    ) throws {
+        let remoteEndpoint = remoteScpEndpoint(path: remotePath)
+        let sources: [String]
+        let destination: String
+        if upload {
+            sources = [localPath]
+            destination = remoteEndpoint
+        } else {
+            sources = [remoteEndpoint]
+            destination = localPath
+        }
+
+        let askpassPath = try createAskpassScript()
+        defer { try? FileManager.default.removeItem(atPath: askpassPath) }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
+        process.arguments = fileCopyArguments(
+            sources: sources,
+            destination: destination,
+            recursive: recursive
+        )
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["SSH_ASKPASS"] = askpassPath
+        environment["SSH_ASKPASS_REQUIRE"] = "force"
+        environment["DISPLAY"] = ":0"
+        process.environment = environment
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+
+        let stderrPipe = Pipe()
+        process.standardError = stderrPipe
+
+        try process.run()
+
+        if timeout > 0 {
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                if process.isRunning {
+                    process.terminate()
+                }
+            }
+        }
+
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            let stderr = Self.filteredSSHOutput(stderrData)
+            let message = stderr.isEmpty
+                ? "scp exited with code \(process.terminationStatus)"
+                : stderr
+            throw SSHError.commandFailed(
+                exitCode: process.terminationStatus,
+                message: message
+            )
+        }
+    }
+
+    /// Build the `user@host:path` endpoint for scp, quoting the remote path so
+    /// the guest shell preserves spaces and other special characters.
+    func remoteScpEndpoint(path: String) -> String {
+        "\(user)@\(host):\(Self.shellQuote(path))"
+    }
+
+    /// Build scp arguments for a general host ↔ guest file transfer.
+    func fileCopyArguments(
+        sources: [String],
+        destination: String,
+        recursive: Bool
+    ) -> [String] {
+        var args = [
+            "-q",
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "LogLevel=ERROR",
+            "-o", "ConnectTimeout=10",
+            "-o", "ServerAliveInterval=15",
+            "-o", "ServerAliveCountMax=4",
+        ]
+
+        if recursive {
+            args.append("-r")
+        }
+
+        if port != 22 {
+            args += ["-P", "\(port)"]
+        }
+
+        args.append("--")
+        args.append(contentsOf: sources)
+        args.append(destination)
+        return args
+    }
+
     /// Start an interactive SSH session using system ssh
     public func interactive() throws {
         let askpassPath = try createAskpassScript()

@@ -85,3 +85,13 @@ def test_hidden_task_config_must_be_fingerprinted(tmp_path):
     config.write_text("SCORING_MODE=permissive")
     with pytest.raises(ValueError, match="dataset differs"):
         module.verify_dataset(root, manifest)
+
+
+def test_symlinked_top_level_task_is_not_silently_omitted(tmp_path):
+    root = dataset(tmp_path)
+    foreign = tmp_path / "external-task"
+    foreign.mkdir()
+    (foreign / "main.py").write_text("# imported via symlink")
+    (root / "external").symlink_to(foreign, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlinked dataset task directory"):
+        module.scan_dataset(root)

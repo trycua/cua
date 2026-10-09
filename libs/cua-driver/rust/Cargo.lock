@@ -420,7 +420,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6bf601cccedfffec598ec2db1f9d6745885458bccc0e8916d7023f017c94b3d0"
 dependencies = [
  "atspi-common",
- "atspi-connection",
  "atspi-proxies",
  "zbus",
 ]
@@ -1251,6 +1250,7 @@ dependencies = [
  "ureq",
  "uuid",
  "windows 0.61.3",
+ "zbus",
  "zeroize",
 ]
 
@@ -3528,6 +3528,7 @@ dependencies = [
  "ashpd",
  "async-trait",
  "atspi",
+ "atspi-connection",
  "base64",
  "bitflags 2.11.1",
  "calloop",

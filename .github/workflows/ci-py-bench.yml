@@ -31,6 +31,9 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
+      - name: Install Playwright Chromium for simulated desktop E2E
+        working-directory: libs/cua-bench
+        run: uv run --extra dev python -m playwright install --with-deps chromium
       - name: Run CUA benchmark core and oracle regression suite
         working-directory: libs/cua-bench
         run: |

@@ -628,7 +628,22 @@ arc-driver runs as the bench user, so it could read `~/.cdb-secrets/claude-token
 
 ### A9.10 Values filled in before the first trial
 
-(appended below before the mini-run starts: the `pins.json` `arc_driver` values from the VM install, the clone time of `cdb-arc`, and the run ids and cutoffs)
+Recorded 9 Oct 2026, before the first arc trial.
+
+* **cdb-arc.** Cloned from the stopped `cdb-h2h` at 06:21 UTC, right after v038 ended (Stream C's release at 06:20 UTC). The clone's token file was deleted first thing (0 files left).
+* **Install** (`tools/arc_driver/install_arc_driver.sh`):
+  * The VM has no `uv`, so the venv came from the VM's Python 3.12.14 (`python -m venv`, plus pip 25.0.1 from ensurepip). The wheels were installed with `pip --require-hashes --only-binary :all: --no-deps`.
+  * Over `lume ssh` the grant script ran as root (`sudo zsh tcc_grant_arc.sh ...`). Its rows are `kTCCServiceAccessibility` and `kTCCServiceScreenCapture` for `com.trycua.bench.arcdriver`, and nothing else changed.
+* **`pins.json` `arc_driver`:**
+  * `package_tree_sha256` `846bdc5ad784e6fcec95756e2bcc446d5482272b1eaa256163bc66499eba9143`, the same as computed on the host from the wheel;
+  * `site_packages_tree_sha256` `b4325b96db24d74f9c2b4911ed6ed59c3556c5e6a1f0d920c3149f38c95f10eb`;
+  * `launcher_sha256` `68ae1f6d0e65e11f825d8587a3bd44acb206b428dd1e5cda03bf9761dee4163e`;
+  * `python_version` `3.12.14`.
+* **Live check** of the server started through the launcher:
+  * all 16 tools are listed;
+  * `status` reports version 0.1.1, accessibility true, screen recording true, background input true, and virtual display true.
+* **Control check.** The same server started without the launcher reported accessibility and screen recording false. So the grants belong to the launcher app and to nothing else; Terminal has no Accessibility grant.
+* **Run ids:** the mini-run is `v038-arc-mini` and the full run is `v038-arc`. Their cutoffs are added here when each starts.
 
 ### A9.11 Harness changes for this amendment
 

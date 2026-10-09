@@ -47,9 +47,9 @@
     "wheel": "arc_cua-0.1.1-py3-none-any.whl",
     "wheel_sha256": "5c74f4fc7a11ac9335f86d4be48d847230b5d8757d510dd9563caaf65723670b",
     "package_tree_sha256": "846bdc5ad784e6fcec95756e2bcc446d5482272b1eaa256163bc66499eba9143",
-    "site_packages_tree_sha256": null,
-    "launcher_sha256": null,
-    "python_version": null,
+    "site_packages_tree_sha256": "b4325b96db24d74f9c2b4911ed6ed59c3556c5e6a1f0d920c3149f38c95f10eb",
+    "launcher_sha256": "68ae1f6d0e65e11f825d8587a3bd44acb206b428dd1e5cda03bf9761dee4163e",
+    "python_version": "3.12.14",
     "bundle_id": "com.trycua.bench.arcdriver"
   }
 }

@@ -18,12 +18,18 @@ APP=$D/ArcDriverBench.app
 ID=com.trycua.bench.arcdriver
 REQ=$HERE/requirements-arc-0.1.1.txt
 UV=$(command -v uv || echo $HOME/.local/bin/uv)
-[ -x "$UV" ] || { echo "uv not found" >&2; exit 1; }
+PY312=${ARC_PYTHON312:-/opt/homebrew/bin/python3}  # the bench VM's Python 3.12 (uv-managed, linked there)
 
 mkdir -p $D/home
 rm -rf $D/venv
-$UV venv --quiet --python 3.12 $D/venv
-$UV pip install --quiet --python $D/venv/bin/python --require-hashes --only-binary :all: --no-deps -r $REQ
+if [ -x "$UV" ]; then
+  $UV venv --quiet --python 3.12 $D/venv
+  $UV pip install --quiet --python $D/venv/bin/python --require-hashes --only-binary :all: --no-deps -r $REQ
+else
+  $PY312 -c 'import sys; assert sys.version_info[:2] == (3, 12), sys.version'
+  $PY312 -m venv $D/venv
+  $D/venv/bin/python -m pip install --quiet --disable-pip-version-check --require-hashes --only-binary :all: --no-deps -r $REQ
+fi
 # no bytecode in the pinned tree (the server runs with -B as well)
 find $D/venv -name __pycache__ -type d -prune -exec rm -rf {} +
 
@@ -46,7 +52,11 @@ cat > $APP/Contents/Info.plist <<PL
 PL
 codesign --force --sign - --identifier $ID $APP
 codesign --verify --strict $APP && echo signed-ok
-zsh $HERE/tcc_grant_arc.sh $APP $ID
+if sudo -n true 2>/dev/null; then
+  zsh $HERE/tcc_grant_arc.sh $APP $ID
+else  # over lume ssh the sudo timestamp does not carry over; run the grant as root instead
+  echo "grant not applied: run  sudo zsh $HERE/tcc_grant_arc.sh $APP $ID" >&2
+fi
 
 echo "--- values for pins.json arc_driver (check them against the host-side values in the amendment)"
 cd ${HERE:h:h}

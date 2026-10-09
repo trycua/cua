@@ -31,6 +31,13 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-      - name: Run CUA benchmark regression suite
+      - name: Run CUA benchmark core and oracle regression suite
         working-directory: libs/cua-bench
-        run: uv run --extra dev pytest cua_bench/tests -q
+        run: |
+          uv run --extra dev pytest \
+            cua_bench/tests/test_run_benchmark.py \
+            cua_bench/tests/test_gym_interface.py \
+            cua_bench/tests/test_actions.py -q
+      - name: Run full benchmark suite including RL workers
+        working-directory: libs/cua-bench
+        run: uv run --extra dev --extra rl pytest cua_bench/tests -q

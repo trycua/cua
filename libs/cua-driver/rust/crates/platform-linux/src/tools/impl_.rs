@@ -8254,7 +8254,35 @@ fn type_text_mpx_result(
         );
     }
     text.push_str(&report.delivery_notes());
-    ToolResult::text(text).with_structured(structured)
+    let result = if report.skipped_characters.is_empty() {
+        ToolResult::text(text)
+    } else {
+        ToolResult::error(text)
+    };
+    result.with_structured(structured)
+}
+
+#[cfg(test)]
+#[test]
+fn mpx_type_text_with_skipped_characters_is_an_error() {
+    let report = |skipped_characters: Vec<char>| crate::input::KeyboardDeliveryReport {
+        virtual_focus_held: true,
+        core_focus_unchanged: true,
+        delivery_confirmed: true,
+        key_events: 2,
+        skipped_characters,
+        focus_guard: None,
+        released_stuck: Vec::new(),
+        path: crate::input::MPX_UINPUT_PATH,
+        grab_popup: None,
+    };
+    assert_eq!(type_text_mpx_result(2, report(Vec::new())).is_error, None);
+    let skipped = type_text_mpx_result(2, report(vec!['約']));
+    assert_eq!(skipped.is_error, Some(true));
+    assert_eq!(
+        skipped.structured_content.unwrap()["skipped_characters"],
+        "約"
+    );
 }
 
 // ── press_key ─────────────────────────────────────────────────────────────────

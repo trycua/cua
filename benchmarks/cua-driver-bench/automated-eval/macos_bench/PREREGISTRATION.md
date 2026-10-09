@@ -890,6 +890,8 @@ Refusals go back to the model as tool errors carrying the helper's code and reas
   * the transcript captured;
   * the per-app approval answered in the session's own dialog for the task's apps only.
 
+* **Owner's decision, 9 Oct 2026, 14:00 UTC (during the mini-run; no analysis rule changes):** the built-in arm `cc-claude-cu-builtin` is out of scope. The study needs only Claude's computer-use binary, which is the helper arm. No Pro or Max seat will be sought, and the arm will not be run.
+
 ### A11.9 Harness changes for this amendment
 
 * `claude_arms.py`, `arms.py` and `run_bench.py`:

@@ -342,23 +342,43 @@ where
 #[serde(deny_unknown_fields)]
 pub struct CursorMotionEffects {
     /// Short fading trail behind the cursor.
-    #[serde(default, deserialize_with = "deserialize_present_cursor_effect", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_cursor_effect",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(schema_with = "CursorEffectSetting::json_schema")]
     pub trail: Option<CursorEffectSetting>,
     /// Soft glow around the cursor that grows with speed.
-    #[serde(default, deserialize_with = "deserialize_present_cursor_effect", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_cursor_effect",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(schema_with = "CursorEffectSetting::json_schema")]
     pub glow: Option<CursorEffectSetting>,
     /// Target glow when the `magnetic` style locks on.
-    #[serde(default, deserialize_with = "deserialize_present_cursor_effect", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_cursor_effect",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(schema_with = "CursorEffectSetting::json_schema")]
     pub magnet: Option<CursorEffectSetting>,
     /// Ring that expands from the hotspot on click.
-    #[serde(default, deserialize_with = "deserialize_present_cursor_effect", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_cursor_effect",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(schema_with = "CursorEffectSetting::json_schema")]
     pub ripple: Option<CursorEffectSetting>,
     /// Brief scale-down of the cursor on click.
-    #[serde(default, deserialize_with = "deserialize_present_cursor_effect", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_cursor_effect",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schemars(schema_with = "CursorEffectSetting::json_schema")]
     pub squish: Option<CursorEffectSetting>,
 }

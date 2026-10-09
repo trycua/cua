@@ -69,7 +69,9 @@ fn contract<I: ToolInput, O: ToolOutput>(
 
 #[cfg(test)]
 mod tests {
-    use crate::{CursorEffectSetting, CursorMotionStyle, SetAgentCursorMotionInput, StartSessionInput, ToolInput};
+    use crate::{
+        CursorEffectSetting, CursorMotionStyle, SetAgentCursorMotionInput, StartSessionInput, ToolInput,
+    };
     use serde_json::json;
 
     #[test]

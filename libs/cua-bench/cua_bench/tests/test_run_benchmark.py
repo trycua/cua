@@ -220,6 +220,43 @@ async def evaluate(task, session):
         assert result.error is not None
 
 
+class TestBenchmarkScoreIntegrity:
+    """Invalid evaluator output must never increase benchmark success."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("expression", ["float('nan')", "float('inf')", "-0.25", "1.25", "'not-a-score'"])
+    async def test_reject_invalid_evaluator_result(self, tmp_path, expression):
+        task_dir = tmp_path / "invalid-reward"
+        task_dir.mkdir()
+        (task_dir / "main.py").write_text(
+            "import cua_bench as cb\n"
+            "@cb.tasks_config(split='train')\n"
+            "def get_tasks():\n"
+            "    return [cb.Task(description='score test')]\n"
+            "@cb.evaluate_task(split='train')\n"
+            "async def evaluate(task, session):\n"
+            f"    return {expression}\n"
+        )
+        result = await run_single_task(task_dir)
+        assert result.success is False
+        assert result.reward == 0.0
+        assert result.error is not None
+
+    @pytest.mark.asyncio
+    async def test_missing_evaluator_never_claims_success(self, tmp_path):
+        task_dir = tmp_path / "missing-evaluator"
+        task_dir.mkdir()
+        (task_dir / "main.py").write_text(
+            "import cua_bench as cb\n"
+            "@cb.tasks_config(split='train')\n"
+            "def get_tasks():\n"
+            "    return [cb.Task(description='no evaluator')]\n"
+        )
+        result = await run_single_task(task_dir)
+        assert result.success is False
+        assert result.error is not None
+
+
 class TestBenchmarkDatasetDiscoveryIntegrity:
     """Invalid task definitions must not be silently scored as one variant."""
 

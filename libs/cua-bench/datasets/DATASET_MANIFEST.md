@@ -8,7 +8,7 @@ python3 scripts/dataset_manifest.py datasets/cua-bench-basic --output /tmp/cua-b
 python3 scripts/dataset_manifest.py datasets/cua-bench-basic --verify /tmp/cua-basic-manifest.json
 ```
 
-The manifest format is `cua-dataset-manifest/v1`: deterministic task IDs (directory names), sorted relative file paths, raw-byte SHA-256 and sizes. Verification fails if task files are added, removed or edited, or if task directories are added or removed. Hidden and generated directories are excluded. Symlinked task files are rejected. The scanner never imports `main.py` or runs task code.
+The manifest format is `cua-dataset-manifest/v1`: deterministic task IDs (directory names), sorted relative file paths, raw-byte SHA-256 and sizes. Verification fails if task files are added, removed or edited, or if task directories are added or removed. Generated cache directories are excluded, but task-local hidden files (for example `.env` and `.config`) are included because they may affect execution. Avoid placing actual secrets inside benchmark task directories; manifests expose file names and their hashes. Symlinked task files are rejected. The scanner never imports `main.py` or runs task code.
 
 **Security limits:** SHA-256 validates file integrity against the provided manifest; the manifest itself must be authenticated by a trusted commit, source repository or signed release. This is not an Oracle execution receipt and cannot prove that a GUI action was performed. Pin the task code, data assets and environment separately for comparable results.
 

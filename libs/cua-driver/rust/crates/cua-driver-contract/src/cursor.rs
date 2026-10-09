@@ -326,7 +326,7 @@ where
 }
 
 /// Per-effect overrides for the agent cursor. An omitted field keeps the current setting.
-/// `on` and `off` set it; explicit null or `default` restores the style default.
+/// `on` and `off` set it; `default` restores the style default.
 #[derive(
     Debug,
     Clone,
@@ -643,7 +643,10 @@ mod tests {
         assert_eq!(set.glow, Some(CursorEffectSetting::On));
         assert!(set.magnet.is_none());
         let omitted: CursorMotionEffects = serde_json::from_value(json!({})).unwrap();
-        assert!(omitted.trail.is_none(), "omitted field must not update an override");
+        assert!(
+            omitted.trail.is_none(),
+            "omitted field must not update an override"
+        );
         let reset: CursorMotionEffects = serde_json::from_value(json!({"trail": null})).unwrap();
         assert_eq!(
             reset.trail,

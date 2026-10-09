@@ -183,6 +183,36 @@ class CursorMotionGoldenTests(unittest.TestCase):
             traj = self.n.plan_cursor_spec(self.spec(case["spec"]), self.request(case["request"]))
             self.check(case["name"], traj, case["out"])
 
+    def test_legacy_boolean_effects_reach_native_planner(self) -> None:
+        n, c = self.n, self.c
+        request = self.request(self.golden["cases"][0]["request"])
+        for name in self.effect_names:
+            for legacy, canonical in ((True, c.CursorEffectSetting.ON),
+                                      (False, c.CursorEffectSetting.OFF),
+                                      (None, None),
+                                      (c.CursorEffectSetting.DEFAULT, c.CursorEffectSetting.DEFAULT)):
+                with self.subTest(effect=name, value=legacy):
+                    params = n.default_cursor_motion_params()
+                    fields = dict.fromkeys(self.effect_names)
+                    fields[name] = legacy
+                    params.effects = c.CursorMotionEffects(**fields)
+                    actual = n.plan_cursor_move(params, request).effects()
+                    fields[name] = canonical
+                    params.effects = c.CursorMotionEffects(**fields)
+                    expected = n.plan_cursor_move(params, request).effects()
+                    self.assertEqual(actual, expected)
+                    if type(legacy) is bool:
+                        self.assertEqual(getattr(actual, name), legacy)
+
+    def test_invalid_effect_is_refused_before_native_dispatch(self) -> None:
+        params = self.n.default_cursor_motion_params()
+        request = self.request(self.golden["cases"][0]["request"])
+        for invalid in ("true", "on", 1, 0, [], {}):
+            with self.subTest(value=invalid):
+                params.effects.trail = invalid
+                with self.assertRaises(ValueError):
+                    self.n.plan_cursor_move(params, request)
+
     def test_the_arc_styles_are_specs(self) -> None:
         n, c = self.n, self.c
         params = n.default_cursor_motion_params()

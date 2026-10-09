@@ -2461,6 +2461,8 @@ class _UniffiFfiConverterTypeCursorEffectSetting(_UniffiConverterRustBuffer):
 
     @staticmethod
     def check_lower(value):
+        if type(value) is bool:
+            return
         if value == CursorEffectSetting.ON:
             return
         if value == CursorEffectSetting.OFF:
@@ -2471,6 +2473,8 @@ class _UniffiFfiConverterTypeCursorEffectSetting(_UniffiConverterRustBuffer):
 
     @staticmethod
     def write(value, buf):
+        if type(value) is bool:
+            value = CursorEffectSetting.ON if value else CursorEffectSetting.OFF
         if value == CursorEffectSetting.ON:
             buf.write_i32(1)
         if value == CursorEffectSetting.OFF:
@@ -2511,7 +2515,7 @@ class CursorMotionEffects:
     Per-effect overrides for the agent cursor. An omitted field keeps the current setting.
     `on` and `off` set it; `default` restores the style default.
 """
-    def __init__(self, *, trail:typing.Optional[CursorEffectSetting], glow:typing.Optional[CursorEffectSetting], magnet:typing.Optional[CursorEffectSetting], ripple:typing.Optional[CursorEffectSetting], squish:typing.Optional[CursorEffectSetting]):
+    def __init__(self, *, trail:typing.Optional[typing.Union[CursorEffectSetting, bool]], glow:typing.Optional[typing.Union[CursorEffectSetting, bool]], magnet:typing.Optional[typing.Union[CursorEffectSetting, bool]], ripple:typing.Optional[typing.Union[CursorEffectSetting, bool]], squish:typing.Optional[typing.Union[CursorEffectSetting, bool]]):
         self.trail = trail
         self.glow = glow
         self.magnet = magnet

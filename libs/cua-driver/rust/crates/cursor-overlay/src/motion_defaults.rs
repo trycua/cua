@@ -528,6 +528,48 @@ mod tests {
     }
 
     #[test]
+    fn typed_effect_roundtrip_preserves_reset_and_omission_when_applied() {
+        use cua_driver_contract::{SetAgentCursorMotionInput, StartSessionInput};
+
+        let base = MotionConfig::default()
+            .with_style_args(&json!({"effects": {
+                "trail": false, "glow": false, "magnet": false,
+                "ripple": false, "squish": false
+            }}))
+            .unwrap();
+        for name in EFFECT_NAMES {
+            for value in [Value::Null, json!("default"), json!(true), json!(false)] {
+                let mut effects = Map::new();
+                effects.insert(name.to_owned(), value.clone());
+                let args = json!({"session": "test", "effects": effects});
+                let typed: SetAgentCursorMotionInput =
+                    serde_json::from_value(args.clone()).unwrap();
+                let wire = serde_json::to_value(typed).unwrap();
+                let direct = base.with_style_args(&args).unwrap();
+                let roundtrip = base.with_style_args(&wire).unwrap();
+                assert_eq!(roundtrip.effects, direct.effects, "{name}: {value}");
+                let serialized = serde_json::to_value(roundtrip.effects).unwrap();
+                let expected = if value.is_null() || value == "default" {
+                    Value::Null
+                } else {
+                    value.clone()
+                };
+                assert_eq!(serialized[name], expected, "{name}: reset/set intent");
+                for untouched in EFFECT_NAMES.into_iter().filter(|other| *other != name) {
+                    assert_eq!(serialized[untouched], false, "omitted {untouched}");
+                }
+                let start: StartSessionInput = serde_json::from_value(json!({
+                    "session": "test", "cursor_motion": {"effects": effects}
+                }))
+                .unwrap();
+                let wire = serde_json::to_value(start).unwrap();
+                let started = base.with_motion_args(&wire["cursor_motion"]).unwrap();
+                assert_eq!(started.effects, direct.effects, "nested {name}: {value}");
+            }
+        }
+    }
+
+    #[test]
     fn default_resets_one_effect_and_an_omitted_effect_keeps() {
         let path = temp_path("effects");
         set_key_at(&path, "cursor.motion.effects.trail", &json!("off")).unwrap();

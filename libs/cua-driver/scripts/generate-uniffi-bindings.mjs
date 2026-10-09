@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { normalizePythonCursorEffects, normalizeTypeScriptCursorEffects } from "./uniffi-cursor-compat.mjs"
+
 import { spawnSync } from "node:child_process"
 import {
   existsSync,
@@ -56,7 +58,7 @@ function normalizeWhitespace(source) {
 }
 
 function normalizePython(source) {
-  const output = normalizeWhitespace(source)
+  const output = normalizePythonCursorEffects(normalizeWhitespace(source))
   const unsafe = "eventloop.call_soon(_uniffi_cancel_task, task)"
   const safe = "eventloop.call_soon_threadsafe(_uniffi_cancel_task, task)"
   if (!output.includes("def _uniffi_future_dropped_callback(handle):")) return output
@@ -165,7 +167,7 @@ function normalizePythonRemoteChannels(source) {
 }
 
 function normalizeTypeScript(name, source) {
-  let output = normalizeWhitespace(source)
+  let output = normalizeTypeScriptCursorEffects(normalizeWhitespace(source))
   // NodeNext requires emitted relative ESM imports to carry their .js suffix.
   output = output.replace(
     /(from\s+["']\.\/[A-Za-z0-9_-]+)(["'])/g,

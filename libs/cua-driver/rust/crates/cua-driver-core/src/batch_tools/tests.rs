@@ -603,3 +603,75 @@ async fn click_step_refuses_null_target_and_button_five() {
 #[cfg(test)]
 #[path = "reliability_tests.rs"]
 mod reliability_tests;
+
+// The Linux runtime historically accepts JSON numbers for set_value. The
+// provider-facing string schema must not narrow direct or batched calls.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn numeric_set_value_matches_direct_and_batched_string_arguments() {
+    for value in [
+        json!(0),
+        json!(-12),
+        json!(4.5),
+        json!(18446744073709551615u64),
+    ] {
+        let expected = Value::String(value.to_string());
+        let harness = Harness::new();
+        harness
+            .registry
+            .invoke_with_context(
+                "set_value",
+                json!({"pid": 42, "value": value}),
+                context(None),
+            )
+            .await;
+        assert_eq!(harness.last("set_value")["value"], expected);
+        let result = harness
+            .run(json!({"steps": [{
+                "tool": "set_value", "args": {"pid": 42, "value": value}
+            }]}))
+            .await;
+        assert_ne!(result.is_error, Some(true), "{}", text(&result));
+        assert_eq!(harness.hits("set_value"), 2);
+        assert_eq!(harness.last("set_value")["value"], expected);
+    }
+    // A numeric field with the same name on another tool is not rewritten.
+    let unrelated = Harness::new();
+    unrelated
+        .registry
+        .invoke_with_context("type_text", json!({"value": 4.5}), context(None))
+        .await;
+    assert_eq!(unrelated.last("type_text")["value"], json!(4.5));
+    // Text must remain byte-for-byte unchanged, even when it looks numeric.
+    let harness = Harness::new();
+    let result = harness
+        .run(json!({"steps": [{
+            "tool": "set_value", "args": {"pid": 42, "value": " 004.50 "}
+        }]}))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", text(&result));
+    assert_eq!(harness.last("set_value")["value"], " 004.50 ");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn non_scalar_set_value_is_rejected_before_any_batch_action() {
+    for value in [Value::Null, json!(true), json!([]), json!({})] {
+        let harness = Harness::new();
+        let result = harness
+            .run(json!({"steps": [
+                {"tool": "set_value", "args": {"pid": 42, "value": "valid"}},
+                {"tool": "set_value", "args": {"pid": 42, "value": value}}
+            ]}))
+            .await;
+        let structured = result.structured_content.as_ref().unwrap();
+        assert_eq!(structured["code"], "invalid_batch");
+        assert_eq!(structured["executed"], 0);
+        assert_eq!(structured["failed_step"], 1);
+        assert!(structured["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("set_value: invalid arguments at /value:"));
+        assert_eq!(harness.hits("set_value"), 0);
+    }
+}

@@ -188,3 +188,30 @@ test("the arc styles are specs", { skip }, async () => {
   assert.deepEqual(m.planCursorSpec(spec, req).samples(), m.planCursorMove(params, req).samples())
   assert.equal(m.cursorMotionSpecForStyle(m.CursorMotionStyle.Magnetic, params), undefined)
 })
+
+
+test("legacy boolean effects reach the native planner", { skip }, async () => {
+  const { m, request } = await load()
+  const req = request(golden.cases[0].request)
+  for (const name of EFFECTS) {
+    for (const [legacy, canonical] of [[true, m.CursorEffectSetting.On], [false, m.CursorEffectSetting.Off], [undefined, undefined], [m.CursorEffectSetting.Default, m.CursorEffectSetting.Default]]) {
+      const params = m.defaultCursorMotionParams()
+      params.effects = m.CursorMotionEffects.create({ [name]: legacy })
+      const actual = m.planCursorMove(params, req).effects()
+      params.effects = { [name]: canonical }
+      const expected = m.planCursorMove(params, req).effects()
+      assert.deepEqual(actual, expected, `${name}: ${legacy}`)
+      if (typeof legacy === "boolean") assert.equal(actual[name], legacy)
+    }
+  }
+})
+
+test("invalid effects are refused before native dispatch", { skip }, async () => {
+  const { m, request } = await load()
+  const params = m.defaultCursorMotionParams()
+  const req = request(golden.cases[0].request)
+  for (const invalid of [null, "true", "on", 99, [], {}]) {
+    params.effects = { trail: invalid }
+    assert.throws(() => m.planCursorMove(params, req), /Unexpected.*[Ee]num|enum.*case/i)
+  }
+})

@@ -1327,7 +1327,7 @@ export enum CursorEffectSetting {
 
 const FfiConverterTypeCursorEffectSetting = (() => {
     const ordinalConverter = FfiConverterInt32;
-    type TypeName = CursorEffectSetting;
+    type TypeName = CursorEffectSetting | boolean;
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             switch (ordinalConverter.read(from)) {
@@ -1338,10 +1338,12 @@ const FfiConverterTypeCursorEffectSetting = (() => {
             }
         }
         write(value: TypeName, into: RustBuffer): void {
+            if (typeof value === "boolean") value = value ? CursorEffectSetting.On : CursorEffectSetting.Off;
             switch (value) {
                 case CursorEffectSetting.On: return ordinalConverter.write(1, into);
                 case CursorEffectSetting.Off: return ordinalConverter.write(2, into);
                 case CursorEffectSetting.Default: return ordinalConverter.write(3, into);
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
         allocationSize(value: TypeName): number {
@@ -1359,23 +1361,23 @@ export type CursorMotionEffects = {
     /**
      * Short fading trail behind the cursor.
      */
-    trail?: CursorEffectSetting,
+    trail?: CursorEffectSetting | boolean,
     /**
      * Soft glow around the cursor that grows with speed.
      */
-    glow?: CursorEffectSetting,
+    glow?: CursorEffectSetting | boolean,
     /**
      * Target glow when the `magnetic` style locks on.
      */
-    magnet?: CursorEffectSetting,
+    magnet?: CursorEffectSetting | boolean,
     /**
      * Ring that expands from the hotspot on click.
      */
-    ripple?: CursorEffectSetting,
+    ripple?: CursorEffectSetting | boolean,
     /**
      * Brief scale-down of the cursor on click.
      */
-    squish?: CursorEffectSetting
+    squish?: CursorEffectSetting | boolean
 }
 
 /**

@@ -51,8 +51,21 @@ fn tools_list_schema_shape() {
     //! no `type_text_chars` either — the old Windows mirror asserted it was
     //! exposed, but that had never been run). The advertised schemas must still
     //! carry their expected knobs.
-    let mut d = RawDriver::spawn().expect("spawn source-built driver for schema test");
+    assert_tools_list_schema_shape(
+        RawDriver::spawn().expect("spawn source-built driver for schema test"),
+    );
+}
 
+#[cfg(target_os = "linux")]
+#[test]
+fn explicit_direct_tools_list_schema_shape() {
+    // Supported direct stdio transport. This does not replace the daemon gate.
+    assert_tools_list_schema_shape(
+        RawDriver::spawn_explicit_direct().expect("spawn source-built direct MCP driver"),
+    );
+}
+
+fn assert_tools_list_schema_shape(mut d: RawDriver) {
     d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     d.recv();
 
@@ -61,6 +74,37 @@ fn tools_list_schema_shape() {
     let tools = list_resp["result"]["tools"]
         .as_array()
         .expect("tools array");
+    assert!(!tools.is_empty(), "tools/list must not be empty");
+    assert!(
+        list_resp["result"]["nextCursor"].is_null(),
+        "unread tool page"
+    );
+    let names: BTreeSet<&str> = tools
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names.len(), tools.len(), "duplicate tool name");
+    assert!(
+        names.contains("run_actions"),
+        "runtime-only batch tool missing"
+    );
+    let platform = if cfg!(target_os = "macos") {
+        cua_driver_contract::Platform::Macos
+    } else if cfg!(target_os = "windows") {
+        cua_driver_contract::Platform::Windows
+    } else {
+        cua_driver_contract::Platform::Linux
+    };
+    for tool in cua_driver_contract::manifest().tools {
+        if tool.platforms.contains(&platform) {
+            assert!(
+                names.contains(tool.name.as_str()),
+                "missing portable tool {}",
+                tool.name
+            );
+        }
+    }
+    eprintln!("linted {} live tool input schemas", tools.len());
 
     let properties = |name: &str| {
         &tools

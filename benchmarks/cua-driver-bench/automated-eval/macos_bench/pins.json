@@ -28,14 +28,14 @@
     }
   },
   "cua_main": {
-    "note": "Amendment 6 mini-runs: main at the commit of the latest mini-run (A6.5 lists every one); built in the VM with tools/vm_main_build. Earlier builds: v036 ccaacd8fd (Amendment 5), v035 365f5e3 (Amendment 3); see the history of this file.",
-    "git_sha": "5a364bbe60e1f8a901ceacd889606b6367dc96ab",
+    "note": "Amendment 6 and 12 mini-runs: main at the commit of the latest mini-run (A6.5 and A12.5 list every one); built in the VM with tools/vm_main_build. Earlier builds: v038 5a364bbe6 (Amendment 8), v036 ccaacd8fd (Amendment 5), v035 365f5e3 (Amendment 3); see the history of this file.",
+    "git_sha": "5e638b2113f7105b93e0cccf4477e4080995f717",
     "version": "0.34.0",
     "version_string": "cua-driver 0.34.0",
-    "binary_sha256": "b2a12eca1eca8f258d1da38ff496ca9d259e221190a0f4fd448ac817e223fd62",
-    "skills_tree_sha256": "5f7ee957e347ef743d1f47a2d75e0dcd919c5a480473f92aff2717b3e34588cc",
+    "binary_sha256": "f678df94aaa84215467e6f0ae1c64371495a7e59b5c02fc9fa3944979f002e25",
+    "skills_tree_sha256": "4ca341cbf325261ce3b4e6515646538dac82c92b620f546e91fd3b4340e844f0",
     "skills_source": "libs/cua-driver/rust/Skills/cua-driver at git_sha",
-    "script_binary_sha256": "1e7d4295a3c4826bc1371590f2b85567f32534833f1cfe070afe7a27ceb3ccb7"
+    "script_binary_sha256": "e194cdbf746816b9bfa8d3088616b6a6e1938691d3202b4ae0d4528daecb9f9c"
   },
   "arc_driver": {
     "note": "Amendment 9 (CUA-1241): arc-cua 0.1.1, the PyPI wheel, checked identical to tag v0.1.1. Installed in the VM with tools/arc_driver/install_arc_driver.sh. site_packages_tree_sha256, launcher_sha256 and python_version are filled from that install before the first arc trial (A9.2).",

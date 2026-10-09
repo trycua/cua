@@ -941,6 +941,7 @@ A change is reported as a speed or cost improvement only together with its succe
 
 | Id | Main commit | A binary sha256 | AX binary sha256 | Skill tree sha256 | Arms | Written (UTC) |
 |---|---|---|---|---|---|---|
+| v038k1 | `5e638b2113f7` (#4915 window-watch report window, #4917 1366 px screenshot cap, #4916 list_windows app filter, since v038) | `f678df94aaa8` | `e194cdbf7468` | `4ca341cbf325` | A, AX (AX addendum as in v037b) | 2026-10-09T18:30Z |
 
 ### A12.6 Harness changes for this amendment
 

@@ -317,3 +317,33 @@ fn xtest_text_restores_the_spare_keycodes_it_borrows() -> Result<()> {
     }
     Ok(())
 }
+
+/// With no spare keycode left, a character missing from the keymap cannot be
+/// typed, and type_text must say so instead of reporting success.
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_fails_when_no_spare_keycode_is_left() -> Result<()> {
+    let (conn, screen) = connect()?;
+    focused_input_window(&conn, screen)?;
+    let spare = spare_keycodes(&conn)?;
+    let per = conn
+        .get_keyboard_mapping(spare[0], 1)?
+        .reply()?
+        .keysyms_per_keycode;
+    let bind = |keysym: u32| -> Result<()> {
+        for &keycode in &spare {
+            conn.change_keyboard_mapping(1, keycode, per, &vec![keysym; usize::from(per)])?;
+        }
+        conn.get_input_focus()?.reply()?;
+        Ok(())
+    };
+    bind(0x7e1)?;
+    let result = send_type_text_xtest("\u{4f60}");
+    bind(0)?;
+    let error = result.expect_err("typing without a spare keycode reported success");
+    assert!(
+        error.to_string().starts_with("typed 0 of 1 characters"),
+        "{error:#}"
+    );
+    Ok(())
+}

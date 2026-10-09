@@ -3392,7 +3392,7 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     // in mpx_keyboard::plan_text_with_fallback for the background path.
     let mut remap_guards = Vec::new();
 
-    for ch in text.chars() {
+    for (typed, ch) in text.chars().enumerate() {
         // Resolve the keycode and whether Shift must be held — without it,
         // uppercase and shifted symbols would otherwise type their unshifted
         // form (e.g. "A" arriving as "a").
@@ -3409,7 +3409,12 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
                         remap_guards.extend(guard);
                         (keycode, false)
                     }
-                    Err(_) => continue,
+                    Err(error) => {
+                        bail!(
+                            "typed {typed} of {} characters: {error:#}",
+                            text.chars().count()
+                        )
+                    }
                 },
             };
         let state = if needs_shift {
@@ -3485,7 +3490,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         .unwrap_or(50);
     // Remap guards live until the function returns — see send_type_text_with_delay.
     let mut remap_guards = Vec::new();
-    for ch in text.chars() {
+    for (typed, ch) in text.chars().enumerate() {
         let cp = mpx_keyboard::keysym_for_char(ch);
         let (keycode, needs_shift) = match char_to_keycode_shift(&mapping, cp) {
             Some(found) => found,
@@ -3494,7 +3499,12 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
                     remap_guards.extend(guard);
                     (keycode, false)
                 }
-                Err(_) => continue,
+                Err(error) => {
+                    bail!(
+                        "typed {typed} of {} characters: {error:#}",
+                        text.chars().count()
+                    )
+                }
             },
         };
         if needs_shift {

@@ -355,7 +355,7 @@ async def run_benchmark(
                 or not isinstance(result.steps, int)
                 or isinstance(result.steps, bool)
                 or result.steps < 0
-                or (bool(result.error) and result.success)
+                or (bool(result.error) and (result.success or result.reward != 0.0))
                 or (not result.error and result.success != (result.reward >= 0.5))
             )
             if invalid:

@@ -51,3 +51,45 @@ def test_generated_oracle_rewards_never_inflate_success(reward):
         assert result.success is False
         assert result.reward == 0.0
         assert result.error is not None
+
+
+@settings(max_examples=64, deadline=None)
+@given(
+    st.booleans(),
+    st.sampled_from([0.0, 0.25, 0.5, 0.9, 1.0]),
+)
+def test_cleanup_failure_cannot_produce_success(should_fail_close, reward):
+    closed = {"attempted": False}
+
+    class CleanupEnvironment:
+        evaluate_task_fn = object()
+        solve_task_fn = None
+
+        async def reset(self, task_id=0):
+            return b"initial", SimpleNamespace()
+
+        async def step(self, action):
+            return b"next"
+
+        async def evaluate(self):
+            return reward
+
+        async def close(self):
+            closed["attempted"] = True
+            if should_fail_close:
+                raise RuntimeError("injected teardown failure")
+
+    with patch("cua_bench.runners.make", return_value=CleanupEnvironment()):
+        result = asyncio.run(run_single_task(
+            Path("cleanup-task"), agent_fn=lambda screenshot, task: DoneAction(), max_steps=2
+        ))
+    assert closed["attempted"]
+    assert result.steps == 1
+    if should_fail_close:
+        assert result.success is False
+        assert result.reward == 0.0
+        assert "Environment cleanup failed" in result.error
+    else:
+        assert result.error is None
+        assert result.reward == reward
+        assert result.success is (reward >= 0.5)

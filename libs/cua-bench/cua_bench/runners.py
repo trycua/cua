@@ -101,6 +101,7 @@ async def run_single_task(
         result = await run_single_task(Path("./task"), agent_fn=my_agent)
     """
     env = None
+    step_count = 0
     try:
         # Create environment using gym interface
         env = make(str(env_path), split=split)
@@ -176,7 +177,7 @@ async def run_single_task(
             variant_id=task_index,
             success=False,
             reward=0.0,
-            steps=0,
+            steps=step_count,
             error=str(e),
         )
     finally:

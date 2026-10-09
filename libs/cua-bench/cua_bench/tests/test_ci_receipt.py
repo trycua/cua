@@ -93,3 +93,23 @@ def test_external_consumer_verifies_downloaded_receipt(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "independently verified" in result.stdout
+
+def test_duplicate_report_path_rejected(tmp_path):
+    a, b = setup_reports(tmp_path)
+    receipt = module.build_receipt(a, b, "a" * 40)
+    receipt["reports"][1]["path"] = receipt["reports"][0]["path"]
+    with pytest.raises(ValueError, match="distinct file paths"):
+        module.verify_receipt(receipt, tmp_path)
+
+
+def test_symlink_escape_rejected(tmp_path):
+    root = tmp_path / "artifacts"
+    root.mkdir()
+    a, b = setup_reports(root)
+    receipt = module.build_receipt(a, b, "a" * 40)
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(b.read_bytes())
+    b.unlink()
+    b.symlink_to(outside)
+    with pytest.raises(ValueError, match="symlink"):
+        module.verify_receipt(receipt, root)

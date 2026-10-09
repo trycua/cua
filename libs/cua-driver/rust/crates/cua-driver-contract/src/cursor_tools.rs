@@ -69,7 +69,7 @@ fn contract<I: ToolInput, O: ToolOutput>(
 
 #[cfg(test)]
 mod tests {
-    use crate::{CursorMotionStyle, SetAgentCursorMotionInput, ToolInput};
+    use crate::{CursorEffectSetting, CursorMotionStyle, SetAgentCursorMotionInput, StartSessionInput, ToolInput};
     use serde_json::json;
 
     #[test]
@@ -98,6 +98,33 @@ mod tests {
             json!({"session": "s", "effects": {"sparkle": true}})
         )
         .is_err());
+    }
+
+    #[test]
+    fn explicit_null_effect_reset_survives_typed_tool_inputs() {
+        let set: SetAgentCursorMotionInput = serde_json::from_value(json!({
+            "session": "s",
+            "effects": {"trail": null, "glow": true}
+        }))
+        .unwrap();
+        let effects = set.effects.as_ref().expect("effects object");
+        assert_eq!(effects.trail, Some(CursorEffectSetting::Default));
+        assert_eq!(effects.glow, Some(CursorEffectSetting::On));
+        assert_eq!(effects.magnet, None);
+        assert_eq!(
+            serde_json::to_value(&set).unwrap()["effects"],
+            json!({"trail": "default", "glow": "on"})
+        );
+
+        let started: StartSessionInput = serde_json::from_value(json!({
+            "session": "s",
+            "cursor_motion": {"effects": {"trail": null}}
+        }))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&started).unwrap()["cursor_motion"]["effects"],
+            json!({"trail": "default"})
+        );
     }
 
     #[test]

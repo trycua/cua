@@ -313,8 +313,20 @@ impl<'de> Deserialize<'de> for CursorEffectSetting {
     }
 }
 
+/// Decode a present effect field without collapsing JSON null into omission.
+/// Omitted fields get the Serde default None; explicitly supplied null is the
+/// legacy "restore style default" value, equivalent to "default".
+fn deserialize_present_cursor_effect<'de, D>(
+    deserializer: D,
+) -> Result<Option<CursorEffectSetting>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    CursorEffectSetting::deserialize(deserializer).map(Some)
+}
+
 /// Per-effect overrides for the agent cursor. An omitted field keeps the current setting.
-/// `on` and `off` set it; `default` restores the style default.
+/// `on` and `off` set it; explicit null or `default` restores the style default.
 #[derive(
     Debug,
     Clone,
@@ -330,23 +342,23 @@ impl<'de> Deserialize<'de> for CursorEffectSetting {
 #[serde(deny_unknown_fields)]
 pub struct CursorMotionEffects {
     /// Short fading trail behind the cursor.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "deserialize_present_cursor_effect", skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "CursorEffectSetting::json_schema")]
     pub trail: Option<CursorEffectSetting>,
     /// Soft glow around the cursor that grows with speed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "deserialize_present_cursor_effect", skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "CursorEffectSetting::json_schema")]
     pub glow: Option<CursorEffectSetting>,
     /// Target glow when the `magnetic` style locks on.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "deserialize_present_cursor_effect", skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "CursorEffectSetting::json_schema")]
     pub magnet: Option<CursorEffectSetting>,
     /// Ring that expands from the hotspot on click.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "deserialize_present_cursor_effect", skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "CursorEffectSetting::json_schema")]
     pub ripple: Option<CursorEffectSetting>,
     /// Brief scale-down of the cursor on click.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "deserialize_present_cursor_effect", skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "CursorEffectSetting::json_schema")]
     pub squish: Option<CursorEffectSetting>,
 }
@@ -610,8 +622,19 @@ mod tests {
         assert_eq!(set.ripple, Some(CursorEffectSetting::Default));
         assert_eq!(set.glow, Some(CursorEffectSetting::On));
         assert!(set.magnet.is_none());
-        let kept: CursorMotionEffects = serde_json::from_value(json!({"trail": null})).unwrap();
-        assert!(kept.trail.is_none());
+        let omitted: CursorMotionEffects = serde_json::from_value(json!({})).unwrap();
+        assert!(omitted.trail.is_none(), "omitted field must not update an override");
+        let reset: CursorMotionEffects = serde_json::from_value(json!({"trail": null})).unwrap();
+        assert_eq!(
+            reset.trail,
+            Some(CursorEffectSetting::Default),
+            "explicit null restores the style default, rather than keeping the override"
+        );
+        assert_eq!(
+            serde_json::to_value(&reset).unwrap()["trail"],
+            "default",
+            "typed parse/serialize must retain the reset intent on the wire"
+        );
         assert_eq!(
             serde_json::to_value(CursorMotionEffects {
                 trail: Some(CursorEffectSetting::On),

@@ -220,6 +220,33 @@ async def evaluate(task, session):
         assert result.error is not None
 
 
+class TestNoAgentExecutionEvidence:
+    @pytest.mark.asyncio
+    async def test_pre_satisfied_task_without_agent_cannot_pass(self, tmp_path, monkeypatch):
+        import cua_bench.runners as runners
+
+        class PresatisfiedEnvironment:
+            solve_task_fn = None
+            evaluate_task_fn = object()
+            max_steps = 100
+
+            async def reset(self, task_id=0):
+                return b"screenshot", object()
+
+            async def evaluate(self):
+                raise AssertionError("must not invoke evaluator for unexecuted agent")
+
+            async def close(self):
+                return None
+
+        monkeypatch.setattr(runners, "make", lambda path, split="train": PresatisfiedEnvironment())
+        result = await runners.run_single_task(tmp_path, oracle=False, agent_fn=None)
+        assert result.success is False
+        assert result.reward == 0.0
+        assert result.steps == 0
+        assert "not executed" in result.error
+
+
 class TestBenchmarkAggregationIntegrity:
     @pytest.mark.asyncio
     async def test_worker_crash_retains_task_identity_and_denominator(self, tmp_path, monkeypatch):

@@ -508,6 +508,7 @@ impl SpaceQuery {
 ///
 /// Returns `true` when all SPIs resolved and both posts succeeded.
 pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
+    crate::window_change_detector::end_tail();
     let post_fn = match post_event_record_to_fn() {
         Some(f) => f,
         None => return false,
@@ -764,6 +765,9 @@ impl Drop for ForegroundTurn {
 }
 
 fn foreground_turn() -> ForegroundTurn {
+    // An intentional activation ends the previous action's detached window
+    // watch, whose wildcard lease would otherwise revert it.
+    crate::window_change_detector::end_tail();
     if HOLDS_FOREGROUND_LOCK.with(std::cell::Cell::get) {
         return ForegroundTurn { _guard: None };
     }

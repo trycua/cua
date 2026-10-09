@@ -1504,7 +1504,7 @@
    "read_only": true
   },
   {
-   "description": "Capture the full display in true screen pixels, full size unless `max_image_dimension` caps it. Use its PNG as the coordinate source for actions whose target is {kind:\"desktop\",display_id:\"primary\"}. Returns the true screen size and backing scale factor. Vision-only: no AX tree walk.",
+   "description": "Capture the full display. The long edge is capped at `max_image_dimension` (the configured default unless given); pixels of the returned image map back to the screen through its capture. Use its PNG as the coordinate source for actions whose target is {kind:\"desktop\",display_id:\"primary\"}. Returns the true screen size and backing scale factor. Vision-only: no AX tree walk.",
    "destructive": false,
    "idempotent": false,
    "input_schema": {

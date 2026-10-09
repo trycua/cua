@@ -204,8 +204,13 @@ daemon child.
 
 After an input action, the driver watches the window list for a short time so
 it can report a menu, dialog, or new window that the action opened. On macOS,
-that watch lasts up to 1000 ms for an action that opens nothing, which makes it
-the largest part of a background click's latency. A host that already observes
+the watch lasts up to 1000 ms. The action's result waits for at most the first
+300 ms of it; when nothing has changed by then, the result returns and the rest
+of the watch runs detached, still holding the focus-steal lease. A window that
+opens during that remainder is reported on the next action's result as
+`After the previous action returned, it opened new window(s): …`. The next
+action, or any activation the driver performs, ends the detached remainder
+first. On Linux X11 the result waits for the whole watch. A host that already observes
 its target continuously can shorten it through two variables set at trusted
 launch, in the environment of the `serve --embedded` child (or of the host
 process when you use the same-process runtime). `EmbeddedCuaDriverHost` starts

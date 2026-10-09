@@ -131,6 +131,12 @@ async function clickGuest(page: Page, gx: number, gy: number, dw: number, dh: nu
   await page.mouse.up();
 }
 
+/** A viewer URL with a new ticket (a page load redeems its ticket). */
+async function viewerUrl(): Promise<string> {
+  const minted = await root.system.createViewerTicket({ ttl: { seconds: 900n, nanos: 0 }, clipboard: true, filesRoot: "~", audioUplink: true });
+  return ASSETS ? `${PAGE_ORIGIN}${minted.viewerPath}&base=${encodeURIComponent(`${ORIGIN}/`)}` : `${ORIGIN}${minted.viewerPath}`;
+}
+
 async function lines(path: string): Promise<string[]> {
   return ((await guestText(path)) ?? "").split("\n").filter(Boolean);
 }
@@ -437,6 +443,38 @@ async function testBrowser(name: string, launcher: typeof chromium, ticketUrl: s
       await page.screenshot({ path: `${OUT}/docs-viewer-share-folder.png` });
       await page.getByRole("button", { name: "Cancel" }).click();
     }
+
+    // G. toolbar: a thin tab while streaming and not hovered; dragged to the
+    // bottom edge, it stays there when the viewer opens again.
+    try {
+      const tab = async () => {
+        await page.mouse.move(640, 430);
+        return poll("collapsed toolbar", async () => {
+          const b = await page.locator(".cua-toolbar").boundingBox();
+          return b && b.height <= 8 ? b : null;
+        });
+      };
+      const top = await tab();
+      if (top.y > 1) throw new Error(`collapsed tab at y=${top.y}, not flush with the top edge`);
+      // Press where the tab is: the toolbar expands under the pointer.
+      await page.mouse.move(top.x + top.width / 2, top.y + top.height / 2);
+      const open = await poll("expanded toolbar", async () => {
+        const b = await page.locator(".cua-toolbar").boundingBox();
+        return b && b.height > 30 ? b : null;
+      });
+      await page.mouse.down();
+      await page.mouse.move(640, 800, { steps: 8 });
+      await page.mouse.up();
+      await page.goto(await viewerUrl());
+      await poll("frames after reopening", () => page.evaluate(() => ((window as any).__cuaViewer?.stats?.()?.framesDecoded ?? 0) >= 1), 30_000);
+      const bottom = await tab();
+      const edge = await page.locator(".cua-toolbar").getAttribute("data-edge");
+      if (edge !== "bottom" || bottom.y + bottom.height < 859) throw new Error(`after reopening: edge ${edge}, tab at y=${bottom.y}`);
+      await page.evaluate(() => localStorage.removeItem("cua-viewer-toolbar-edge"));
+      pass("toolbar.collapse_and_dock", `tab ${top.width}x${top.height} at the top, ${Math.round(open.width)}x${Math.round(open.height)} on hover, bottom edge kept on reopening`);
+    } catch (e) {
+      fail("toolbar.collapse_and_dock", e);
+    }
     writeFileSync(`${OUT}/${name}-console.log`, consoleLog.join("\n"));
   } catch (e) {
     fail("launch", e);
@@ -467,9 +505,7 @@ async function main() {
   const results: Result[] = [];
   const launchers: Record<string, typeof chromium> = { chromium, firefox, webkit };
   for (const name of BROWSERS) {
-    const minted = await root.system.createViewerTicket({ ttl: { seconds: 900n, nanos: 0 }, clipboard: true, filesRoot: "~", audioUplink: true });
-    const url = ASSETS ? `${PAGE_ORIGIN}${minted.viewerPath}&base=${encodeURIComponent(`${ORIGIN}/`)}` : `${ORIGIN}${minted.viewerPath}`;
-    const r = await testBrowser(name, launchers[name]!, url);
+    const r = await testBrowser(name, launchers[name]!, await viewerUrl());
     results.push(r);
     const okCount = Object.values(r.checks).filter((c) => c.ok).length;
     console.log(`== ${name} ${r.version}: ${okCount}/${Object.keys(r.checks).length}`);

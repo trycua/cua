@@ -279,7 +279,7 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
     BrowserRefusal::new(code, message)
 }
 
-fn is_chromium(name: &str, bundle_id: &str) -> bool {
+pub(crate) fn is_chromium(name: &str, bundle_id: &str) -> bool {
     let value = format!("{name} {bundle_id}").to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "vivaldi", "opera", "arc", "thorium",

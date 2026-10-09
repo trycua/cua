@@ -50,6 +50,8 @@ use x11rb::rust_connection::RustConnection;
 const CLICK_DELAY_MS: u64 = 35;
 const DOUBLE_CLICK_DELAY_MS: u64 = 50;
 const KEY_DELAY_MS: u64 = 10;
+/// The longest [`sync_client`] waits for a client's `_NET_WM_PING` reply.
+const PING_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug)]
 pub struct VirtualPointerDrag {
@@ -3431,17 +3433,10 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
-    let _guards = type_text_with_preflight(
+    let guards = type_text_with_preflight(
         text,
         &mapping,
-        |ch, mapping| {
-            keycode_for_keysym(
-                &conn,
-                mapping,
-                mpx_keyboard::keysym_for_char(ch),
-                &ch.to_string(),
-            )
-        },
+        |ch, mapping| text_keycode(&conn, mapping, Some(window), ch),
         |keycode, needs_shift| {
             let state = if needs_shift {
                 KeyButMask::SHIFT
@@ -3494,6 +3489,9 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
     )?;
     // Deliver the final release before this short-lived connection closes.
     conn.get_input_focus()?.reply()?;
+    if !guards.is_empty() {
+        sync_client(&conn, Some(window));
+    }
     Ok(())
 }
 
@@ -3516,17 +3514,11 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         .get(..kpm)
         .and_then(|s| s.iter().copied().find(|&k| k != 0))
         .unwrap_or(50);
-    let _guards = type_text_with_preflight(
+    let client = targeted::active_window(&conn, conn.setup().roots[0].root);
+    let guards = type_text_with_preflight(
         text,
         &mapping,
-        |ch, mapping| {
-            keycode_for_keysym(
-                &conn,
-                mapping,
-                mpx_keyboard::keysym_for_char(ch),
-                &ch.to_string(),
-            )
-        },
+        |ch, mapping| text_keycode(&conn, mapping, client, ch),
         |keycode, needs_shift| {
             if needs_shift {
                 conn.xtest_fake_input(KEY_PRESS_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
@@ -3545,6 +3537,9 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
     // this short-lived connection drops (see send_key_xtest — keyboard XTEST
     // events queued on a connection that closes immediately can be lost).
     let _ = conn.get_input_focus()?.reply();
+    if !guards.is_empty() {
+        sync_client(&conn, client);
+    }
     Ok(())
 }
 
@@ -4463,6 +4458,76 @@ fn keycode_for_keysym<'a>(
         format!("Keysym 0x{keysym:X} not in keyboard map for key '{key}' and no spare keycode could be remapped")
     })?;
     Ok((keycode, Some(guard)))
+}
+
+/// Keycode for `ch` while typing a text that `client` reads. A new binding is
+/// used once `client` has seen it: Chrome drops keys on a keycode bound after
+/// the last mapping change it handled.
+fn text_keycode<'a>(
+    conn: &'a RustConnection,
+    mapping: &mut GetKeyboardMappingReply,
+    client: Option<Window>,
+    ch: char,
+) -> Result<(u8, Option<RemappedKeycode<'a>>)> {
+    let keysym = mpx_keyboard::keysym_for_char(ch);
+    let (keycode, guard) = keycode_for_keysym(conn, mapping, keysym, &ch.to_string())?;
+    if guard.is_some() {
+        sync_client(conn, client);
+    }
+    Ok((keycode, guard))
+}
+
+/// Waits until `window`'s client has handled the events sent before this call,
+/// so a borrowed keycode can be restored or rebound without changing keys the
+/// client has not translated yet. Clients answer an EWMH `_NET_WM_PING` in
+/// event order; a client without the protocol is not waited for, and none is
+/// waited for longer than [`PING_TIMEOUT`].
+fn sync_client(conn: &RustConnection, window: Option<Window>) {
+    let atom = |name: &str| {
+        conn.intern_atom(false, name.as_bytes())
+            .ok()?
+            .reply()
+            .ok()
+            .map(|reply| reply.atom)
+    };
+    let (Some(window), Some(protocols), Some(ping)) =
+        (window, atom("WM_PROTOCOLS"), atom("_NET_WM_PING"))
+    else {
+        return;
+    };
+    let supported = conn
+        .get_property(false, window, protocols, AtomEnum::ATOM, 0, 64)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .and_then(|reply| reply.value32().map(|mut atoms| atoms.any(|a| a == ping)))
+        .unwrap_or(false);
+    let root = conn.setup().roots[0].root;
+    let listen = ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY);
+    let event = ClientMessageEvent::new(32, window, protocols, [ping, 0, window, 0, 0]);
+    if !supported
+        || conn.change_window_attributes(root, &listen).is_err()
+        || conn
+            .send_event(false, window, EventMask::NO_EVENT, event)
+            .is_err()
+        || conn.flush().is_err()
+    {
+        return;
+    }
+    let deadline = std::time::Instant::now() + PING_TIMEOUT;
+    while std::time::Instant::now() < deadline {
+        match conn.poll_for_event() {
+            Ok(Some(x11rb::protocol::Event::ClientMessage(pong)))
+                if pong.type_ == protocols
+                    && pong.data.as_data32()[0] == ping
+                    && pong.data.as_data32()[2] == window =>
+            {
+                return;
+            }
+            Ok(Some(_)) => {}
+            Ok(None) => sleep(Duration::from_millis(1)),
+            Err(_) => return,
+        }
+    }
 }
 
 fn modifiers_to_state(modifiers: &[&str]) -> KeyButMask {

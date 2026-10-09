@@ -11,6 +11,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
 
 /// Connects to the test display while one connection stays open for the
 /// whole test binary. An X server started without `-noreset` (plain
@@ -358,5 +359,76 @@ fn xtest_text_gives_each_missing_character_its_own_keycode() -> Result<()> {
     );
     assert_ne!(presses[0], presses[1], "{presses:?}");
     assert_eq!(presses[0], presses[2], "{presses:?}");
+    Ok(())
+}
+
+/// A borrowed keycode is restored only after the focused client answers a
+/// `_NET_WM_PING` sent after its keys, so a client that is slow to read its
+/// events still translates them under the borrowed binding.
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_restores_a_borrowed_keycode_only_after_the_client_answers_a_ping() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let root = conn.setup().roots[screen].root;
+    let window = focused_input_window(&conn, screen)?;
+    let atom = |name: &str| -> Result<Atom> {
+        Ok(conn.intern_atom(false, name.as_bytes())?.reply()?.atom)
+    };
+    let (protocols, ping, active) = (
+        atom("WM_PROTOCOLS")?,
+        atom("_NET_WM_PING")?,
+        atom("_NET_ACTIVE_WINDOW")?,
+    );
+    conn.change_property32(
+        PropMode::REPLACE,
+        window,
+        protocols,
+        AtomEnum::ATOM,
+        &[ping],
+    )?;
+    conn.change_property32(PropMode::REPLACE, root, active, AtomEnum::WINDOW, &[window])?;
+    conn.get_input_focus()?.reply()?;
+    let before = spare_keycodes(&conn)?;
+
+    let typing = std::thread::spawn(|| send_type_text_xtest("\u{4f60}"));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let (mut pings, mut pressed) = (0, None);
+    while !typing.is_finished() && Instant::now() < deadline {
+        match conn.poll_for_event()? {
+            Some(Event::KeyPress(event)) => pressed = Some(event.detail),
+            Some(Event::ClientMessage(event))
+                if event.type_ == protocols && event.data.as_data32()[0] == ping =>
+            {
+                pings += 1;
+                std::thread::sleep(Duration::from_millis(200));
+                if let Some(keycode) = pressed {
+                    let keysyms = conn.get_keyboard_mapping(keycode, 1)?.reply()?.keysyms;
+                    assert!(
+                        keysyms.contains(&0x0100_4f60),
+                        "keycode {keycode} restored before the pong"
+                    );
+                }
+                let pong = ClientMessageEvent::new(32, root, protocols, event.data);
+                conn.send_event(
+                    false,
+                    root,
+                    EventMask::SUBSTRUCTURE_NOTIFY | EventMask::SUBSTRUCTURE_REDIRECT,
+                    pong,
+                )?;
+                conn.flush()?;
+            }
+            Some(Event::Error(error)) => bail!("X11 observer error: {error:?}"),
+            _ => std::thread::sleep(Duration::from_millis(1)),
+        }
+    }
+    let result = typing.join().expect("typing thread panicked");
+    conn.delete_property(root, active)?;
+    result?;
+    assert!(pressed.is_some(), "the key never arrived");
+    assert_eq!(
+        pings, 2,
+        "expected a ping after the binding and one before the restore"
+    );
+    assert_eq!(spare_keycodes(&conn)?, before);
     Ok(())
 }

@@ -775,6 +775,7 @@ impl Tool for ClickTool {
             .await;
 
             // Drop the wildcard lease + detect window/foreground side-effects.
+            let acted_at = std::time::Instant::now();
             let changes = super::finish_window_observation(snapshot).await;
 
             match result {
@@ -790,8 +791,11 @@ impl Tool for ClickTool {
                 ))) => {
                     // For text inputs, wait 800ms for WebKit DOM focus to settle
                     // before returning — matches the Swift reference behaviour.
+                    // The window watch above already used part of it.
                     if needs_webkit_delay {
-                        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                        let settle = std::time::Duration::from_millis(800)
+                            .saturating_sub(acted_at.elapsed());
+                        tokio::time::sleep(settle).await;
                     }
                     msg.push_str(&changes.result_suffix());
                     // AX dispatch went through, but AXPerformAction returning

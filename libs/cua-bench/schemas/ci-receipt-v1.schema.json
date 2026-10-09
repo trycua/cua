@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hippoley/cua/blob/fix/cua-bench-validate-parallelism-20261009/libs/cua-bench/schemas/ci-receipt-v1.schema.json",
+  "title": "CUA Bench CI test receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "commit",
+    "reports"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "cua-bench-ci-receipt/v1"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "reports": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "path",
+          "sha256",
+          "passed",
+          "distinct_tests"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "core",
+              "full"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "passed": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "distinct_tests": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  }
+}

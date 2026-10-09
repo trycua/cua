@@ -259,12 +259,37 @@ fn click_at_xy_desktop_inner(
 }
 
 /// Move the real hardware cursor to a logical desktop point.
+///
+/// A warp alone posts no mouse event. AppKit then only re-evaluates tracking
+/// areas when the pointer crosses into a different window, so a second warp
+/// inside the same window never fires `mouseEntered`/`mouseMoved`, and
+/// hover-revealed controls stay hidden. Follow the warp with a `MouseMoved`
+/// at the same point through the HID tap, as a physical mouse would.
 pub fn move_cursor_desktop(x: f64, y: f64) -> anyhow::Result<()> {
     use core_graphics::display::CGDisplay;
     let point = CGPoint::new(x, y);
     CGDisplay::warp_mouse_cursor_position(point)
         .map_err(|error| anyhow::anyhow!("CGWarpMouseCursorPosition failed: {error:?}"))?;
     unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
+    // Let WindowServer settle the warp first: a move posted in the same
+    // instant was occasionally dropped (1 of 5 in the VM check). A second
+    // move a moment later is harmless when the first one landed.
+    for _ in 0..2 {
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        post_pointer_moved(point)?;
+    }
+    Ok(())
+}
+
+/// Post one `MouseMoved` at `point` through the global HID tap, so AppKit
+/// re-evaluates tracking areas under the (already warped) pointer.
+fn post_pointer_moved(point: CGPoint) -> anyhow::Result<()> {
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    let moved =
+        CGEvent::new_mouse_event(source, CGEventType::MouseMoved, point, CGMouseButton::Left)
+            .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(move) failed"))?;
+    dispatch_mouse_event(PostRoute::Hid, 0, &moved);
     Ok(())
 }
 
@@ -2126,6 +2151,17 @@ mod tests {
                 Posted::new("RightMouseDown", PostRoute::PublicPid, 1),
                 Posted::new("RightMouseUp", PostRoute::PublicPid, 1),
             ]
+        );
+    }
+
+    #[test]
+    fn desktop_pointer_move_posts_one_hid_mouse_moved_at_the_target() {
+        // Only the post half: the warp half would move the host's pointer.
+        let capture = Capture::start(true);
+        post_pointer_moved(CGPoint::new(163.0, 159.0)).unwrap();
+        assert_eq!(
+            capture.posted(),
+            [Posted::new("MouseMoved", PostRoute::Hid, 0)]
         );
     }
 

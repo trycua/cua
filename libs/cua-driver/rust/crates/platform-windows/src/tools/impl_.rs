@@ -1199,7 +1199,9 @@ impl Tool for GetWindowStateTool {
                 INVARIANT: call `get_window_state` once per turn per (pid, window_id) before \
                 any element action against that window. The next snapshot of the same \
                 (pid, window_id) replaces this one, stales its element tokens, and lists the \
-                replaced ids in `invalidated_snapshot_ids`.\n\n\
+                replaced ids in `invalidated_snapshot_ids`. A screenshot-only read \
+                (`include_accessibility_tree:false`) keeps the current snapshot's rows and \
+                tokens valid, and `display_only:true` also leaves its pixel frame alone.\n\n\
                 The UIA tree walked is the window's tree (HWND-scoped); the screenshot and \
                 window bounds reported come from the same `window_id`. This is the source of \
                 truth for which window the caller intends to reason about — the driver never \
@@ -1259,6 +1261,10 @@ impl Tool for GetWindowStateTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        let display_only = match cua_driver_core::window_state_view::display_only(&args) {
+            Ok(display_only) => display_only,
+            Err(refusal) => return refusal,
+        };
         // Swift error wording 1:1.
         let pid = match args.get("pid").and_then(|v| v.as_i64()) {
             Some(v) => v as u32,
@@ -1358,15 +1364,20 @@ impl Tool for GetWindowStateTool {
         let query = args.opt_str("query");
         let session_id = args.opt_str("_session_id");
         let screenshot_out_file = args.opt_str("screenshot_out_file");
+        // `display_only` is the public form of the internal observation-only
+        // read: pixels for a preview, with no snapshot or capture change.
+        let observation_only = display_only
+            || args
+                .get("_observation_only")
+                .and_then(|value| value.as_bool())
+                == Some(true);
         // Optional caps — when omitted, fall back to the walker's built-in
         // defaults (#22865). minimum:1 enforced in the schema, but defend
         // against 0 here too.
         let max_elements = view.max_elements(
             &args,
             crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS,
-            args.get("_observation_only")
-                .and_then(|value| value.as_bool())
-                == Some(true),
+            observation_only,
         );
         let max_depth = args
             .get("max_depth")
@@ -1383,10 +1394,6 @@ impl Tool for GetWindowStateTool {
         // `screenshot_out_file` the bytes go to disk and the path is surfaced
         // instead of embedding base64; otherwise the base64 PNG is embedded.
         let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
-        let observation_only = args
-            .get("_observation_only")
-            .and_then(|value| value.as_bool())
-            == Some(true);
         // `include_accessibility_tree` (default true) mirrors include_screenshot:
         // set false to SKIP the UIA walk and return just the screenshot + window
         // metadata (the capture-only / preview path).
@@ -1638,20 +1645,45 @@ impl Tool for GetWindowStateTool {
                     }
                 }
 
-                if !observation_only && !published_snapshot && screenshot_scale.is_some() {
-                    let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(
-                        &[],
-                        crate::uia::snapshot::SnapshotKind::Uia,
-                    );
-                    if let Some((_, replaced)) = state.snapshots.publish_for_session(
+                // A screenshot-only read adds an image but no element rows: it
+                // refreshes the current snapshot's pixel frame in place and
+                // keeps its tokens valid. Only a window with no element
+                // snapshot yet gets a new, empty one.
+                let mut refreshed = None;
+                if let (false, false, Some(scale)) =
+                    (observation_only, published_snapshot, screenshot_scale)
+                {
+                    refreshed = state.snapshots.refresh_screenshot_for_session(
                         pid as i32,
                         hwnd,
-                        payload,
                         session_id.as_deref(),
-                        screenshot_scale,
-                    ) {
-                        invalidated.extend(replaced);
+                        scale,
+                        None,
+                    );
+                    if refreshed.is_none() {
+                        let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(
+                            &[],
+                            crate::uia::snapshot::SnapshotKind::Uia,
+                        );
+                        if let Some((_, replaced)) = state.snapshots.publish_for_session(
+                            pid as i32,
+                            hwnd,
+                            payload,
+                            session_id.as_deref(),
+                            screenshot_scale,
+                        ) {
+                            invalidated.extend(replaced);
+                        }
                     }
+                }
+                if let Some(id) = refreshed {
+                    let sid = cua_driver_core::element_token::format_snapshot_id(id);
+                    content.push(cua_driver_core::protocol::Content::text(format!(
+                        "Screenshot only: snapshot {sid} keeps its rows, and its element_tokens \
+                         ({sid}:N) stay valid."
+                    )));
+                    structured["snapshot_id"] = json!(sid);
+                    structured["screenshot_refreshed_snapshot"] = json!(true);
                 }
                 if !invalidated.is_empty() {
                     let ids: Vec<String> = invalidated
@@ -1772,6 +1804,9 @@ impl Tool for GetWindowStateTool {
                     .with_structured(structured);
                 }
 
+                if display_only {
+                    cua_driver_core::window_state_view::mark_display_only(&mut structured);
+                }
                 if !observation_only {
                     cua_driver_core::window_state_view::apply(
                         &view,
@@ -8788,8 +8823,7 @@ impl Tool for SetConfigTool {
         if let (Some(key), Some(raw)) =
             (args.get("key").and_then(|v| v.as_str()), args.get("value"))
         {
-            // `value` is advertised as a string (#4798): parse "800" / "true"
-            // into the key's type before the per-key checks below.
+            // Keep key-aware parsing on the wire while retaining old JSON scalars.
             let val = &cua_driver_contract::coerce_set_config_value(key, raw);
             match key {
                 "capture_mode" => match val.as_str() {
@@ -10493,5 +10527,7 @@ mod desktop_scope_tests;
 #[cfg(test)]
 mod pid_window_target_tests;
 
+#[cfg(test)]
+mod display_only_tests;
 #[cfg(test)]
 mod value_write_readback_tests;

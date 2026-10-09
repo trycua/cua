@@ -6,9 +6,13 @@ license.workspace = true
 publish = false
 
 [features]
-default = ["yaml", "rego"]
+default = ["yaml", "rego", "script"]
 yaml = ["dep:regex"]
 rego = ["dep:regorus"]
+# Experimental `run_script` tool: an embedded QuickJS engine (rquickjs and
+# quickjs-ng, both MIT). Compiled in by default; the tool itself is only
+# registered when the operator opts in at runtime.
+script = ["dep:rquickjs"]
 
 [dependencies]
 cua-driver-contract = { path = "../cua-driver-contract" }
@@ -53,6 +57,7 @@ hmac = { workspace = true }
 jsonschema = { version = "0.46", default-features = false }
 # Private per-request working directory for the optional perception worker.
 tempfile = "3"
+rquickjs = { version = "0.14", default-features = false, features = ["std"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

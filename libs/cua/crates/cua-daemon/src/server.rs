@@ -463,10 +463,29 @@ async fn accept_loop<L: Accept>(listener: L, app: BoxedApp, mut shutdown: watch:
 
 fn app(shared: Arc<Shared>, require_token: bool) -> BoxedApp {
     let svc = Svc(shared.clone());
-    let grpc = tonic::service::Routes::new(SandboxServiceServer::new(svc.clone()))
-        .add_service(SpaceServiceServer::new(svc.clone()))
-        .add_service(RuntimeServiceServer::new(svc.clone()))
-        .add_service(DaemonServiceServer::new(svc.clone()));
+    // The clients' limit, not gRPC's 4 MiB default: a tool call can carry
+    // a full-size screenshot or file either way.
+    let limit = cua_spacesd_client::MAX_MESSAGE_BYTES;
+    let grpc = tonic::service::Routes::new(
+        SandboxServiceServer::new(svc.clone())
+            .max_decoding_message_size(limit)
+            .max_encoding_message_size(limit),
+    )
+    .add_service(
+        SpaceServiceServer::new(svc.clone())
+            .max_decoding_message_size(limit)
+            .max_encoding_message_size(limit),
+    )
+    .add_service(
+        RuntimeServiceServer::new(svc.clone())
+            .max_decoding_message_size(limit)
+            .max_encoding_message_size(limit),
+    )
+    .add_service(
+        DaemonServiceServer::new(svc.clone())
+            .max_decoding_message_size(limit)
+            .max_encoding_message_size(limit),
+    );
     #[cfg(feature = "spaces")]
     let grpc = grpc.add_service(
         cua_proto::env::v1::host_spaces_service_server::HostSpacesServiceServer::new(

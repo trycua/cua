@@ -453,6 +453,42 @@ struct ViewModelTests {
         #expect(appDropSentText(files: files) == "notes.txt (1.0 KB) verified in /home/cua/Downloads/notes.txt")
     }
 
+    /// Only This machine: the window stays on the empty home. One click creates
+    /// that system's default Space when this Mac can run it, and opens the
+    /// sheet on the core's refusal when it cannot.
+    @Test func thisMachineAloneOpensTheEmptyHome() async {
+        let backend = FixtureSpacesBackend(rows: [])
+        let model = makeModel(backend, host: FixtureHost())
+        await model.refresh()
+        #expect(model.selection == nil)
+        #expect(model.spaces.contains { $0.id == "this-mac" })
+
+        await model.openNewSpace(quick: .linux)
+        #expect(!model.showingNewSpace)
+        for _ in 0..<50 where backend.created.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(backend.created.first?.image == "ghcr.io/trycua/linux:24.04")
+        #expect(backend.created.first?.on == "local")
+
+        let refused = FixtureSpacesBackend(rows: [])
+        refused.fixtureBackends = ["docker"]
+        let mac = makeModel(refused, host: FixtureHost())
+        await mac.refresh()
+        await mac.openNewSpace(quick: .macos)
+        #expect(mac.showingNewSpace)
+        #expect(mac.wizard.view.placementError == "This Mac cannot run Lume Spaces.")
+        #expect(refused.created.isEmpty)
+
+        let both = FixtureSpacesBackend(rows: [])
+        both.fixtureBackends = ["docker", "lume"]
+        let ready = makeModel(both, host: FixtureHost())
+        await ready.refresh()
+        await ready.openNewSpace(quick: .macos)
+        #expect(!ready.showingNewSpace)
+        for _ in 0..<50 where both.created.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(both.created.first?.image == "ghcr.io/trycua/macos:26")
+        #expect(both.created.first?.on == "local")
+    }
+
     @Test func refreshBuildsTheSidebarFromTheCore() async {
         let model = makeModel()
         await model.refresh()

@@ -109,6 +109,9 @@ pub(crate) struct ElementSpec {
     /// Any row of the tree containing this text, display-only rows included.
     pub text: Option<String>,
     pub nth: Option<usize>,
+    /// The tool that will act on the element, when known. Breaks a tie
+    /// between same-named rows: set_value means the field, not its label.
+    pub action: Option<&'static str>,
 }
 
 impl ElementSpec {
@@ -285,6 +288,7 @@ fn element_spec(object: &Map<String, Value>) -> Result<ElementSpec, String> {
         name,
         text: opt_string(object, "text")?,
         nth,
+        action: None,
     })
 }
 
@@ -943,10 +947,90 @@ pub(crate) fn matches<'r>(read: &'r Read, spec: &ElementSpec) -> Vec<&'r Value> 
     }
 }
 
+/// Lowercase role without the platform prefix: "AXTextField" -> "textfield".
+fn bare_role(role: &str) -> String {
+    let folded: String = role
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    folded
+        .strip_prefix("ax")
+        .map(str::to_owned)
+        .unwrap_or(folded)
+}
+
+/// Narrow several matches to the ones the caller most plausibly meant: those
+/// whose role is exactly the one named ("textfield" over a matching
+/// AXTextArea), then, with no role named, those the acting tool can use (a
+/// field for set_value rather than its label, a control for click rather
+/// than static text). Returns the input unchanged when no rule narrows it.
+fn narrow<'r>(found: Vec<&'r Value>, spec: &ElementSpec) -> Vec<&'r Value> {
+    if found.len() < 2 || spec.nth.is_some() {
+        return found;
+    }
+    let role_of = |element: &Value| {
+        element
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let keep = |found: &Vec<&'r Value>, rule: &dyn Fn(&Value) -> bool| -> Option<Vec<&'r Value>> {
+        let kept: Vec<&Value> = found.iter().copied().filter(|e| rule(e)).collect();
+        (!kept.is_empty() && kept.len() < found.len()).then_some(kept)
+    };
+    let mut found = found;
+    if let Some(role) = &spec.role {
+        let wanted = bare_role(role);
+        if let Some(kept) = keep(&found, &|e| bare_role(&role_of(e)) == wanted) {
+            found = kept;
+        }
+    } else if let Some(action) = spec.action {
+        let usable: &[&str] = match action {
+            "set_value" | "type_text" => &["textfield", "popupbutton", "checkbox", "slider"],
+            _ => &[],
+        };
+        let rule: Box<dyn Fn(&Value) -> bool> = if usable.is_empty() {
+            Box::new(|e: &Value| {
+                !matches!(
+                    role_family(&role_of(e)).as_str(),
+                    "statictext" | "image" | "group"
+                )
+            })
+        } else {
+            Box::new(move |e: &Value| usable.contains(&role_family(&role_of(e)).as_str()))
+        };
+        if let Some(kept) = keep(&found, &*rule) {
+            found = kept;
+        }
+    }
+    found
+}
+
 fn pick(read: &Read, spec: &ElementSpec) -> Result<Found, Miss> {
-    let found = matches(read, spec);
+    let found = narrow(matches(read, spec), spec);
     let chosen = match (found.len(), spec.nth) {
         (0, _) => {
+            // The tree may show the element as a row without an index: it
+            // exposes no AX actions (a LibreOffice sheet tab, for one), so no
+            // name lookup can act on it. Say so instead of offering
+            // look-alikes, so the next call clicks it by pixel.
+            if let Some(row) = display_rows(read, spec).first() {
+                let text = row.get("text").and_then(Value::as_str).unwrap_or_default();
+                return Err(Miss::new(
+                    "not_addressable",
+                    format!(
+                        "{} is in {} as `{}` but has no element index (it exposes no \
+                         accessibility actions), so it cannot be targeted by name or token. \
+                         Click it by pixel x,y read from the window's screenshot; toolkits \
+                         that ignore background clicks also need delivery_mode:\"foreground\"",
+                        spec.describe(),
+                        read.window.describe(),
+                        clip(text, 80)
+                    ),
+                ));
+            }
             return Err(Miss::new(
                 "not_found",
                 format!(
@@ -955,7 +1039,7 @@ fn pick(read: &Read, spec: &ElementSpec) -> Result<Found, Miss> {
                     read.window.describe(),
                     near_misses(read, spec)
                 ),
-            ))
+            ));
         }
         (count, Some(nth)) if nth >= count => {
             return Err(Miss::new(
@@ -1163,6 +1247,57 @@ fn selected_state(element: &Value) -> Option<bool> {
     element.get("selected").and_then(Value::as_bool).or(checked)
 }
 
+/// Display-only rows (static text and other rows without an element index)
+/// that match `spec`, parsed into {role, label, value, text}. Scripts read
+/// values such as "Ticket: 4F2K" from these; they cannot be acted on.
+pub(crate) fn display_rows(read: &Read, spec: &ElementSpec) -> Vec<Value> {
+    if spec.role.is_none() && spec.name.is_none() && spec.text.is_none() {
+        return Vec::new();
+    }
+    read.markdown
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix("- "))
+        .filter(|rest| !rest.starts_with('['))
+        .filter_map(|rest| {
+            let role = rest.split_whitespace().next()?.to_owned();
+            let after = rest[role.len()..].trim_start();
+            let quoted = |text: &str| -> Option<String> {
+                let inner = text.strip_prefix('"')?;
+                inner.find('"').map(|end| inner[..end].to_owned())
+            };
+            let label = quoted(after).or_else(|| {
+                let open = after.rfind('(')?;
+                after[open + 1..].strip_suffix(')').map(str::to_owned)
+            });
+            let value = after.find("= ").and_then(|at| quoted(&after[at + 2..]));
+            let folded = fold(rest);
+            if let Some(role_wanted) = &spec.role {
+                if !role_matches(role_wanted, &role) {
+                    return None;
+                }
+            }
+            if let Some(name) = &spec.name {
+                if !has_word_start(&folded, &fold(name)) {
+                    return None;
+                }
+            }
+            if let Some(text) = &spec.text {
+                if !folded.contains(&fold(text)) {
+                    return None;
+                }
+            }
+            Some(json!({
+                "role": role,
+                "label": label,
+                "value": value,
+                "text": rest,
+                "display_only": true,
+            }))
+        })
+        .collect()
+}
+
 fn row_matches(row: &str, spec: &ElementSpec) -> bool {
     if !row.starts_with("- ") {
         return false;
@@ -1195,29 +1330,61 @@ fn row_matches(row: &str, spec: &ElementSpec) -> bool {
 fn near_misses(read: &Read, spec: &ElementSpec) -> String {
     // Same role, any name: the usual slip is a near-miss label.
     let relaxed = ElementSpec {
-        name: None,
-        text: None,
-        nth: None,
         role: spec.role.clone(),
+        ..Default::default()
     };
     let pool: Vec<&Value> = if spec.role.is_some() {
         matches(read, &relaxed)
-    } else if let Some(name) = &spec.name {
-        let first_word = fold(name.split_whitespace().next().unwrap_or(name));
+    } else if spec.name.is_some() {
+        // Any role: only elements sharing a word with the name (below).
         read.elements
             .iter()
-            .filter(|element| {
-                label_of(element).is_some_and(|label| fold(label).contains(&first_word))
-            })
+            .filter(|element| element.get("display_only").and_then(Value::as_bool) != Some(true))
             .collect()
     } else {
         Vec::new()
     };
-    let named: Vec<String> = pool
+    // Rank by the words a label shares with the wanted name, so "Update
+    // event" is offered for "Create event" ahead of unrelated buttons, and
+    // look across roles too: the element may be a link, not a button.
+    let shared = |element: &Value| -> usize {
+        let Some(name) = &spec.name else {
+            return 0;
+        };
+        let Some(label) = label_of(element) else {
+            return 0;
+        };
+        let label_words = words(label);
+        words(name)
+            .iter()
+            .filter(|word| label_words.contains(word))
+            .count()
+    };
+    let mut ranked: Vec<(usize, &Value)> = pool
         .iter()
+        .copied()
         .filter(|element| label_of(element).is_some())
+        .map(|element| (shared(element), element))
+        .collect();
+    if spec.role.is_some() && spec.name.is_some() {
+        for element in &read.elements {
+            let score = shared(element);
+            if score > 0
+                && element.get("display_only").and_then(Value::as_bool) != Some(true)
+                && !ranked.iter().any(|(_, seen)| std::ptr::eq(*seen, element))
+            {
+                ranked.push((score, element));
+            }
+        }
+    }
+    if spec.role.is_none() {
+        ranked.retain(|(score, _)| *score > 0);
+    }
+    ranked.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+    let named: Vec<String> = ranked
+        .iter()
         .take(CANDIDATES_SHOWN)
-        .map(|element| describe_element(element))
+        .map(|(_, element)| describe_element(element))
         .collect();
     if named.is_empty() {
         if read.elements.is_empty() {
@@ -1254,6 +1421,15 @@ pub(crate) fn describe_element(element: &Value) -> String {
         out.push_str(" selected");
     }
     out
+}
+
+/// Lowercase words of two or more characters.
+fn words(text: &str) -> Vec<String> {
+    fold(text)
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| word.chars().count() >= 2)
+        .map(str::to_owned)
+        .collect()
 }
 
 fn label_of(element: &Value) -> Option<&str> {
@@ -1456,6 +1632,120 @@ mod tests {
             ..spec
         };
         assert_eq!(pick(&read, &second).unwrap().element["element_index"], 9);
+    }
+
+    #[test]
+    fn a_row_without_an_index_says_to_click_it_by_pixel() {
+        // v037b: the LibreOffice sheet tab "Controls" is an AXRadioButton row
+        // with no actions; the miss offered the menu item "Form Controls".
+        let read = read(
+            vec![element(359, "AXMenuItem", "Form Controls")],
+            "- [0] AXWindow \"Doc\"\n  - [99] AXButton \"Add\"\n    - AXRadioButton \"Controls\"\n",
+        );
+        let spec = ElementSpec {
+            role: Some("AXRadioButton".into()),
+            name: Some("Controls".into()),
+            ..Default::default()
+        };
+        let miss = pick(&read, &spec).unwrap_err();
+        assert_eq!(miss.code, "not_addressable");
+        assert!(
+            miss.message.contains("no element index"),
+            "{}",
+            miss.message
+        );
+        assert!(miss.message.contains("by pixel"), "{}", miss.message);
+        assert!(!miss.worth_waiting());
+    }
+
+    #[test]
+    fn a_tie_goes_to_the_exact_role_or_what_the_tool_can_use() {
+        // v037a: set_value name "Reason" matched the label and the field.
+        let reason = read(
+            vec![
+                element(31, "AXStaticText", "Reason"),
+                element(32, "AXTextArea", "Reason"),
+            ],
+            "",
+        );
+        let by_name = |action| ElementSpec {
+            name: Some("Reason".into()),
+            action,
+            ..Default::default()
+        };
+        let set = pick(&reason, &by_name(Some("set_value"))).unwrap();
+        assert_eq!(set.element["element_index"], 32);
+        let click = pick(&reason, &by_name(Some("click"))).unwrap();
+        assert_eq!(click.element["element_index"], 32);
+        // Without a known tool the tie stays a tie.
+        assert_eq!(pick(&reason, &by_name(None)).unwrap_err().code, "ambiguous");
+
+        // v037a: role "textfield" matched AXTextField "A1" and AXTextArea "A1".
+        let cells = read(
+            vec![
+                element(3, "AXTextField", "A1"),
+                element(67, "AXTextArea", "A1"),
+            ],
+            "",
+        );
+        let field = ElementSpec {
+            role: Some("textfield".into()),
+            name: Some("A1".into()),
+            ..Default::default()
+        };
+        assert_eq!(pick(&cells, &field).unwrap().element["element_index"], 3);
+        // Two of the exact role stay ambiguous.
+        let twins = read(
+            vec![element(1, "AXButton", "OK"), element(2, "AXButton", "OK")],
+            "",
+        );
+        let ok = ElementSpec {
+            role: Some("button".into()),
+            name: Some("OK".into()),
+            action: Some("click"),
+            ..Default::default()
+        };
+        assert_eq!(pick(&twins, &ok).unwrap_err().code, "ambiguous");
+    }
+
+    #[test]
+    fn a_miss_lists_labels_sharing_a_word_first_across_roles() {
+        // v036: "Create event" had become "Update event"; the miss listed
+        // the first five buttons instead.
+        let mut elements: Vec<Value> = [
+            "Aster kickoff",
+            "Boreal review",
+            "Cinder decision",
+            "Dune handoff",
+            "Lighthouse lunch",
+            "Update event",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(at, label)| element(at as u64 + 1, "AXButton", label))
+        .collect();
+        elements.push(element(9, "AXLink", "Event history"));
+        let read = read(elements, "");
+        let spec = ElementSpec {
+            role: Some("button".into()),
+            name: Some("Create event".into()),
+            ..Default::default()
+        };
+        let miss = pick(&read, &spec).unwrap_err();
+        let nearest = miss.message.split("nearest: ").nth(1).unwrap();
+        assert!(
+            nearest.starts_with("[6] AXButton \"Update event\"; [9] AXLink \"Event history\""),
+            "{nearest}"
+        );
+
+        // With no role, only labels sharing a word are offered.
+        let any_role = ElementSpec {
+            name: Some("event log".into()),
+            ..Default::default()
+        };
+        let miss = pick(&read, &any_role).unwrap_err();
+        assert!(!miss.message.contains("Aster"), "{}", miss.message);
+        assert!(miss.message.contains("Update event"), "{}", miss.message);
     }
 
     #[test]

@@ -303,6 +303,39 @@ pub(crate) fn background_refusal_result(
 /// Exclusive per-process ownership of one background mutation. Callers must
 /// keep this value alive through actuator dispatch, focus restoration, and
 /// target-bound verification.
+/// The window a pid-only call means: the app's focused window, else its
+/// frontmost on-screen window. Fills `window_id` for tools that need one
+/// when the caller named only the app's pid.
+pub(crate) fn default_window_for_pid(args: &mut serde_json::Value) {
+    let Some(object) = args.as_object_mut() else {
+        return;
+    };
+    if object
+        .get("window_id")
+        .is_some_and(|value| !value.is_null())
+    {
+        return;
+    }
+    let Some(pid) = object
+        .get("pid")
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|pid| i32::try_from(pid).ok())
+    else {
+        return;
+    };
+    let window_id = crate::ax::bindings::focused_window_id_of_pid(pid).or_else(|| {
+        crate::windows::all_windows()
+            .into_iter()
+            .filter(|window| window.pid == pid && window.is_on_screen && window.layer == 0)
+            .filter(|window| window.bounds.width >= 2.0 && window.bounds.height >= 2.0)
+            .max_by_key(|window| window.z_index)
+            .map(|window| window.window_id)
+    });
+    if let Some(window_id) = window_id {
+        object.insert("window_id".into(), serde_json::json!(window_id));
+    }
+}
+
 pub(crate) struct BackgroundMutationLease {
     pid: i32,
     _guard: tokio::sync::OwnedMutexGuard<()>,

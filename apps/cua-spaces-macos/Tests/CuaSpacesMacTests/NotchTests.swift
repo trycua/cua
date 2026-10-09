@@ -81,11 +81,66 @@ struct NotchTests {
         #expect(motion.openResponse > 0.12)
     }
 
+    /// The closed hover area ends at the drawn tab, so the menu bar item
+    /// right of it (a status item, the overflow chevron) keeps its hover
+    /// and clicks; before the tab is measured it is the core's widest tab.
+    @Test func closedHoverEndsAtTheDrawnTab() {
+        let g = NotchGeometry.fallback
+        let tabStart = g.stage.width / 2 + g.notch.width / 2
+        let y = g.tab.height / 2
+        let drawn: CGFloat = 44
+        let hover = g.closedHover(tabWidth: drawn)
+        #expect(hover.contains(CGPoint(x: tabStart + drawn - 1, y: y)))
+        #expect(!hover.contains(CGPoint(x: tabStart + drawn + 1, y: y)))
+        #expect(!hover.contains(CGPoint(x: tabStart + g.tab.width - 1, y: y)))
+        #expect(g.closedHover(tabWidth: nil).contains(CGPoint(x: tabStart + g.tab.width - 1, y: y)))
+        // The notch and its margin stay hoverable.
+        #expect(hover.contains(CGPoint(x: g.stage.width / 2, y: y)))
+        #expect(hover.contains(CGPoint(x: (g.stage.width - g.closedHit.width) / 2 + 1, y: y)))
+    }
+
 
     func spaces() async -> [AppSpace] {
         let m = ViewModelTests().makeModel(FixtureSpacesBackend())
         await m.refresh()
         return m.notch.spaces
+    }
+
+    /// The open panel's search sits inside the panel: its hover fill clears
+    /// the rounded top-left corner by a margin and, on the glass panel (no
+    /// notch), is as far from the top edge as from the side (#4644). Beside
+    /// a notch it clears the concave ear (the top edge is the screen's).
+    @Test func searchFillClearsThePanelCorner() {
+        let r = appNotchRadii()
+        let radii = (closed: r[0], open: r[1])
+        let margin: CGFloat = 4
+        func glass(menuBar: Double) -> NotchGeometry {
+            NotchGeometry(appNotchLayout(screen: AppScreenFacts(
+                frame: AppLogicalRect(x: 0, y: 0, width: 1440, height: 900),
+                visibleFrame: AppLogicalRect(x: 0, y: 0, width: 1440, height: 900 - menuBar),
+                safeAreaTop: 0, auxLeftWidth: nil, auxRightWidth: nil), prompt: false))
+        }
+        let notched = NotchGeometry.fallback
+        #expect(notched.notchStyle)
+        #expect(notched.searchFill(side: notched.side(radii: radii), width: 120).minX >= CGFloat(radii.open.top) + margin)
+
+        for g in [glass(menuBar: 24), glass(menuBar: 0), glass(menuBar: 30)] {
+            #expect(!g.notchStyle)
+            let fill = g.searchFill(side: g.side(radii: radii), width: 120)
+            let outline = NotchSurfaceShape(notchStyle: g.notchStyle, top: radii.open.top, bottom: radii.open.bottom,
+                                             corner: g.glassCorner(open: true))
+                .path(in: CGRect(origin: .zero, size: g.open))
+            // The fill's top-left corner grown by the margin: every point of
+            // it inside the panel's outline.
+            let c = NotchGeometry.searchCorner
+            let center = CGPoint(x: fill.minX + c, y: fill.minY + c)
+            for deg in stride(from: 180.0, through: 270.0, by: 5.0) {
+                let a = deg * .pi / 180
+                let p = CGPoint(x: center.x + (c + margin) * cos(a), y: center.y + (c + margin) * sin(a))
+                #expect(outline.contains(p), "menu bar \(g.notch.height): \(p) outside the panel")
+            }
+            #expect(fill.minY == fill.minX, "as far from the top as from the side (\(fill))")
+        }
     }
 
     // MARK: - Hover timing (the core's dwell and close delay)

@@ -22,6 +22,31 @@ final class SharedVM {
     func removeVM(name: String) {
         runningVMs.removeValue(forKey: name)
     }
+
+    /// Removes the entry for `name` only while it still holds `vm`, so a run
+    /// that ends never drops a later run's entry.
+    func removeVM(name: String, ifSame vm: VM) {
+        if runningVMs[name] === vm {
+            runningVMs.removeValue(forKey: name)
+        }
+    }
+
+    /// The cached VM for `name` while its guest still runs in this process.
+    /// An entry for a guest that already stopped is dropped.
+    func liveVM(name: String) -> VM? {
+        guard let vm = runningVMs[name] else { return nil }
+        guard vm.isRunActive else {
+            runningVMs.removeValue(forKey: name)
+            return nil
+        }
+        return vm
+    }
+
+    /// Drops cached VMs whose guest no longer runs in this process, such as a
+    /// guest that shut itself down.
+    func removeStoppedVMs() {
+        runningVMs = runningVMs.filter { $0.value.isRunActive }
+    }
 }
 
 // MARK: - Pull Progress Tracker
@@ -181,6 +206,15 @@ final class LumeController {
 
     // MARK: - Public VM Management Methods
 
+    /// The VMs whose guests are running, across all storage locations unless
+    /// `storage` names one. Cache entries for guests that already stopped are
+    /// dropped first, so a guest that shut itself down is not counted as running.
+    @MainActor
+    public func runningVMs(storage: String? = nil) throws -> [VMDetails] {
+        SharedVM.shared.removeStoppedVMs()
+        return try list(storage: storage).filter { $0.status == "running" }
+    }
+
     /// Lists all virtual machines in the system
     /// Uses a lightweight path that reads config directly without instantiating full VM objects
     @MainActor
@@ -302,7 +336,7 @@ final class LumeController {
         }
 
         // Check if VM is running via SharedVM cache (same-process fast path)
-        let runningVM = SharedVM.shared.getVM(name: vmName)
+        let runningVM = SharedVM.shared.liveVM(name: vmName)
         var isRunning = runningVM != nil
 
         // Get VNC URL and IP address only if running
@@ -1039,7 +1073,7 @@ final class LumeController {
             }
 
             // Stop VM if it's running
-            if SharedVM.shared.getVM(name: normalizedName) != nil {
+            if SharedVM.shared.liveVM(name: normalizedName) != nil {
                 try await stopVM(name: normalizedName)
             }
 
@@ -1201,7 +1235,7 @@ final class LumeController {
 
             // Try to get VM from cache first
             let vm: VM
-            if let cachedVM = SharedVM.shared.getVM(name: normalizedName) {
+            if let cachedVM = SharedVM.shared.liveVM(name: normalizedName) {
                 vm = cachedVM
             } else {
                 vm = try get(name: normalizedName, storage: actualLocation)
@@ -1378,7 +1412,10 @@ final class LumeController {
                 networkMode: networkMode,
                 clipboard: clipboard,
                 vncPolicy: vncPolicy)
-            Logger.info("VM started successfully", metadata: ["name": normalizedName])
+            // `run` returns once the guest has stopped, including when it shut
+            // itself down, so the VM no longer runs in this process.
+            SharedVM.shared.removeVM(name: normalizedName, ifSame: vm)
+            Logger.info("VM run ended", metadata: ["name": normalizedName])
         } catch {
             SharedVM.shared.removeVM(name: normalizedName)
             Logger.error("Failed to run VM", metadata: ["error": error.localizedDescription])

@@ -3,15 +3,12 @@
 
 //! Interactive input through the cua-driver tools.
 //!
-//! On Hyprland cua-driver has no stateful interactive session: its input
-//! goes through the driver tools (`click`, `drag`, `scroll`, `press_key`,
-//! `type_text`), which route the desktop through the virtual pointer and
-//! keyboard and background window input through the cua-hyprland-plugin
-//! seats. This lease folds each interactive batch into whole gestures with
-//! the shared [`GestureFolder`] and invokes one tool per gesture, so a
-//! streaming viewer's clicks, drags, scrolls and keys reach a Hyprland
-//! desktop or window exactly as the same actions from an agent would. Nothing
-//! here injects input.
+//! Windows and Hyprland interactive batches are folded into whole gestures
+//! with the shared [`GestureFolder`] and passed to the existing cua-driver
+//! tools (`click`, `drag`, `scroll`, `press_key`, `type_text`). Hyprland tools
+//! use virtual pointer/keyboard input and plugin seats for background windows;
+//! Windows tools use their qualified native delivery routes. This adapter
+//! does not inject input itself.
 //!
 //! Addressing follows the one-shot action path: a window gets `pid`,
 //! `window_id` and window-local capture pixels with the session's delivery
@@ -20,23 +17,25 @@
 //! gRPC backend's Linux keyboard rule; the desktop scope only when nothing is
 //! focused). A display has no window to address background input to, so a
 //! background session on one is refused with `WouldRequireActivation`, as on
-//! X11 and macOS; so is a background session on a window the driver's
-//! background route does not reach (the provider checks that when it
-//! resolves the window).
+//! X11 and macOS. A window gesture also preserves an activation-required
+//! refusal from the driver when its background route cannot reach the target.
 //!
-//! What a gesture tool cannot carry is not reported as delivered: hover moves
-//! produce no tool call, and a key's down edge is its whole press.
+//! Windows desktop leases also forward hover (a move while no button is held)
+//! through `move_cursor`. Other hover produces no tool call. A key's down edge
+//! is a whole press; clicks and drags are folded until release rather than
+//! delivered as held edges.
 
-// Used by the Linux (Hyprland) provider; compiled everywhere so its
+// Used by Windows and Linux (Hyprland); compiled everywhere so its
 // behavior is tested on every host.
-#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#![cfg_attr(not(any(target_os = "linux", target_os = "windows")), allow(dead_code))]
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use cua_driver_core::interactive_input::gestures::{Gesture, GestureFolder};
 use cua_driver_core::interactive_input::{
-    validate_batch, InteractiveDeliveryMode, Modifier, PointerButton,
+    validate_batch, InteractiveDeliveryMode, InteractiveInputEvent, Modifier, PointerButton,
+    PointerPhase,
 };
 use cua_media_protocol::InteractiveInputBatch;
 use cua_spacesd_provider_api::{
@@ -118,7 +117,8 @@ pub(crate) fn open(
         target,
         mode,
         tools,
-        folder: Mutex::new(GestureFolder::new()),
+        fold: Mutex::new(Fold::default()),
+        desktop_hover: false,
     })
 }
 
@@ -126,7 +126,45 @@ pub(crate) struct ToolInputLease {
     target: ToolInputTarget,
     mode: InteractiveDeliveryMode,
     tools: Arc<dyn GestureTools>,
-    folder: Mutex<GestureFolder>,
+    fold: Mutex<Fold>,
+    desktop_hover: bool,
+}
+
+/// The gesture fold, and the button a viewer holds for desktop hover.
+#[derive(Default)]
+struct Fold {
+    folder: GestureFolder,
+    held: Option<PointerButton>,
+}
+
+impl Fold {
+    /// The point of a hover move. Viewers send drag samples as button-less
+    /// moves too, so a move is hover only while no button is held; the held
+    /// button is tracked as [`GestureFolder`] tracks its press.
+    fn hover(&mut self, event: &InteractiveInputEvent) -> Option<(f64, f64)> {
+        let InteractiveInputEvent::Pointer {
+            phase,
+            button,
+            x_normalized,
+            y_normalized,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        let pressed = button.unwrap_or(PointerButton::Left);
+        match phase {
+            PointerPhase::Move if button.is_none() && self.held.is_none() => {
+                return Some((*x_normalized, *y_normalized));
+            }
+            PointerPhase::Move => {}
+            PointerPhase::Down => self.held = Some(pressed),
+            PointerPhase::Up if self.held == Some(pressed) => self.held = None,
+            PointerPhase::Up => {}
+            PointerPhase::Cancel => self.held = None,
+        }
+        None
+    }
 }
 
 fn button_name(button: PointerButton) -> &'static str {
@@ -189,6 +227,15 @@ fn desktop_arguments() -> Map<String, Value> {
 }
 
 impl ToolInputLease {
+    /// The Windows driver can move the real desktop pointer. Window scope
+    /// moves only its agent overlay, so never opt that route into hover.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub(crate) fn with_desktop_hover(mut self) -> Self {
+        self.desktop_hover = matches!(self.target, ToolInputTarget::Display { .. })
+            && self.mode == InteractiveDeliveryMode::PersistentForeground;
+        self
+    }
+
     fn extent(&self) -> Result<(u32, u32), ProviderError> {
         let extent = match &self.target {
             ToolInputTarget::Window { extent, .. } => extent(),
@@ -337,15 +384,36 @@ impl InteractiveInputLease for ToolInputLease {
         let batch = driver_batch(batch)?;
         let through = validate_batch(&batch).map_err(interactive_error)?;
         let extent = self.extent()?;
-        let gestures = self
-            .folder
+        let mut fold = self
+            .fold
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .fold(&batch.events, extent);
-        for gesture in gestures {
-            for (tool, arguments) in self.call(gesture, extent) {
-                self.tools.invoke(tool, arguments)?;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut calls = Vec::new();
+        // The events between hover moves fold together, so consecutive
+        // scrolls and text stay one tool call each.
+        let mut run = 0;
+        if self.desktop_hover {
+            for (index, event) in batch.events.iter().enumerate() {
+                let Some((x, y)) = fold.hover(event) else {
+                    continue;
+                };
+                for gesture in fold.folder.fold(&batch.events[run..index], extent) {
+                    calls.extend(self.call(gesture, extent));
+                }
+                let (x, y) = self.point(x, y, extent);
+                let mut arguments = desktop_arguments();
+                arguments.insert("x".into(), x.into());
+                arguments.insert("y".into(), y.into());
+                calls.push(("move_cursor", arguments));
+                run = index + 1;
             }
+        }
+        for gesture in fold.folder.fold(&batch.events[run..], extent) {
+            calls.extend(self.call(gesture, extent));
+        }
+        drop(fold);
+        for (tool, arguments) in calls {
+            self.tools.invoke(tool, arguments)?;
         }
         Ok(InteractiveInputOutcome {
             through_sequence: through,
@@ -357,10 +425,10 @@ impl InteractiveInputLease for ToolInputLease {
     /// Gestures are delivered whole, so nothing is held down; forget a
     /// half-finished press.
     fn release_all(&self) {
-        self.folder
+        *self
+            .fold
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .reset();
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Fold::default();
     }
 }
 
@@ -431,6 +499,29 @@ mod tests {
         }
     }
 
+    /// A button-less move: hover, or a drag sample while a button is held.
+    fn moved(x: f64, y: f64) -> InteractiveInputEvent {
+        InteractiveInputEvent::Pointer {
+            phase: InputPointerPhase::Move,
+            button: None,
+            x_normalized: x,
+            y_normalized: y,
+            modifiers: Vec::new(),
+        }
+    }
+
+    fn wheel(x: f64, y: f64, delta_y: f64) -> InteractiveInputEvent {
+        InteractiveInputEvent::Scroll {
+            x_normalized: x,
+            y_normalized: y,
+            delta_x: 0.0,
+            delta_y,
+            phase: InputGesturePhase::None,
+            momentum_phase: InputGesturePhase::None,
+            precise: false,
+        }
+    }
+
     fn key(name: &str, state: InputKeyState) -> InteractiveInputEvent {
         InteractiveInputEvent::Key {
             key: name.into(),
@@ -438,6 +529,19 @@ mod tests {
             modifiers: Vec::new(),
             repeat: false,
         }
+    }
+
+    fn hover_lease(tools: Arc<Recorded>) -> ToolInputLease {
+        open(
+            &display_target(),
+            InteractiveDeliveryMode::PersistentForeground,
+            unknown_window,
+            |_| Ok(display()),
+            Box::new(|| None),
+            tools,
+        )
+        .unwrap()
+        .with_desktop_hover()
     }
 
     /// The provider's window catalog, which never enumerates a display.
@@ -514,6 +618,136 @@ mod tests {
                 (
                     "scroll".into(),
                     json!({"scope": "desktop", "x": 320.0, "y": 200.0, "direction": "down", "amount": 2})
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn desktop_hover_preserves_gesture_order_and_scaled_monitor_origin() {
+        let tools = Arc::new(Recorded::default());
+        let mut monitor = display();
+        monitor.scale_factor = 1.5;
+        monitor.bounds = (-1600.0 / 1.5, -300.0 / 1.5, 1280.0 / 1.5, 800.0 / 1.5);
+        let lease = open(
+            &display_target(),
+            InteractiveDeliveryMode::PersistentForeground,
+            unknown_window,
+            |_| Ok(monitor),
+            Box::new(|| None),
+            tools.clone(),
+        )
+        .unwrap()
+        .with_desktop_hover();
+        lease
+            .dispatch(&batch(
+                5,
+                vec![
+                    moved(0.25, 0.5),
+                    key("escape", InputKeyState::Down),
+                    pointer(InputPointerPhase::Down, 0.5, 0.5),
+                    pointer(InputPointerPhase::Up, 0.5, 0.5),
+                    moved(1.0, 1.0),
+                ],
+            ))
+            .unwrap();
+        assert_eq!(
+            tools.0.lock().unwrap().clone(),
+            vec![
+                (
+                    "move_cursor".into(),
+                    json!({"scope":"desktop", "x":-1280.0, "y":100.0})
+                ),
+                (
+                    "press_key".into(),
+                    json!({"scope":"desktop", "key":"escape"})
+                ),
+                (
+                    "click".into(),
+                    json!({"scope":"desktop", "x":-960.0, "y":100.0, "button":"left"})
+                ),
+                (
+                    "move_cursor".into(),
+                    json!({"scope":"desktop", "x":-321.0, "y":499.0})
+                ),
+            ]
+        );
+    }
+
+    /// Regression: viewers send drag samples as button-less moves. Moving
+    /// the real pointer for them would sweep it across the desktop with no
+    /// button held, then jump back when the folded drag replays on release.
+    #[test]
+    fn desktop_hover_ignores_drag_samples_across_batches() {
+        let tools = Arc::new(Recorded::default());
+        let lease = hover_lease(tools.clone());
+        for (first_sequence, events) in [
+            (
+                1,
+                vec![
+                    moved(0.25, 0.25),
+                    pointer(InputPointerPhase::Down, 0.25, 0.25),
+                ],
+            ),
+            (3, vec![moved(0.5, 0.5)]),
+            (
+                4,
+                vec![pointer(InputPointerPhase::Up, 0.75, 0.75), moved(1.0, 1.0)],
+            ),
+        ] {
+            lease.dispatch(&batch(first_sequence, events)).unwrap();
+        }
+        assert_eq!(
+            tools.0.lock().unwrap().clone(),
+            vec![
+                (
+                    "move_cursor".into(),
+                    json!({"scope":"desktop", "x":320.0, "y":200.0})
+                ),
+                (
+                    "drag".into(),
+                    json!({
+                        "scope":"desktop", "from_x":320.0, "from_y":200.0,
+                        "to_x":959.0, "to_y":599.0, "button":"left",
+                    })
+                ),
+                (
+                    "move_cursor".into(),
+                    json!({"scope":"desktop", "x":1279.0, "y":799.0})
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn desktop_hover_keeps_consecutive_scrolls_one_tool_call() {
+        let tools = Arc::new(Recorded::default());
+        let lease = hover_lease(tools.clone());
+        lease
+            .dispatch(&batch(
+                1,
+                vec![
+                    wheel(0.25, 0.25, 1.0),
+                    wheel(0.5, 0.5, 2.0),
+                    moved(0.75, 0.75),
+                    wheel(0.75, 0.75, 1.0),
+                ],
+            ))
+            .unwrap();
+        assert_eq!(
+            tools.0.lock().unwrap().clone(),
+            vec![
+                (
+                    "scroll".into(),
+                    json!({"scope":"desktop", "x":640.0, "y":400.0, "direction":"down", "amount":3})
+                ),
+                (
+                    "move_cursor".into(),
+                    json!({"scope":"desktop", "x":959.0, "y":599.0})
+                ),
+                (
+                    "scroll".into(),
+                    json!({"scope":"desktop", "x":959.0, "y":599.0, "direction":"down", "amount":1})
                 ),
             ]
         );

@@ -437,6 +437,7 @@ impl Spaces {
         let id = self.resolve(space)?;
         let canonical = id.to_string();
         let Some(machine) = self.share_machine(&canonical, &id) else {
+            self.info(&id)?;
             return Ok(SpaceShares {
                 space: canonical,
                 ..Default::default()
@@ -531,7 +532,7 @@ impl Spaces {
             // A bare relay machine id (`space-…`) is known once the
             // directory was listed.
             Err(Error::NotFound(_)) if self.relay_account().is_some() => {
-                let _ = self.relay_machines().await;
+                self.relay_directory(Some(space)).await?;
                 self.resolve(space)?
             }
             other => other?,
@@ -617,11 +618,7 @@ impl Spaces {
         match removed {
             Ok(()) => {
                 self.forget_attached_machine(&machine);
-                self.inner
-                    .relay_cache
-                    .lock()
-                    .expect("relay cache")
-                    .retain(|m| m.id != machine);
+                self.relay_forget(&machine);
                 self.audit_share("detach", canonical, &format!("machine={machine}"));
                 None
             }
@@ -641,10 +638,13 @@ impl Spaces {
         let canonical = id.to_string();
         match self.share_machine(&canonical, &id) {
             Some(machine) => self.shares_of(&canonical, &machine).await,
-            None => Ok(SpaceShares {
-                space: canonical,
-                ..Default::default()
-            }),
+            None => {
+                self.info(&id)?;
+                Ok(SpaceShares {
+                    space: canonical,
+                    ..Default::default()
+                })
+            }
         }
     }
 }

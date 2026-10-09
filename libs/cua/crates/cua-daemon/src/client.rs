@@ -178,15 +178,24 @@ impl DaemonClient {
 
     fn runtime(&self) -> RuntimeServiceClient<Chan> {
         RuntimeServiceClient::new(self.channel.clone())
+            .max_decoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
+            .max_encoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
     }
 
     fn daemon(&self) -> DaemonServiceClient<Chan> {
         DaemonServiceClient::new(self.channel.clone())
+            .max_decoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
+            .max_encoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
     }
 
-    /// The raw Spaces client.
+    /// The raw Spaces client. Messages up to
+    /// [`cua_spacesd_client::MAX_MESSAGE_BYTES`], as on the Space's own
+    /// connection: a full-size screenshot (`get_desktop_state` of a 6K
+    /// display) is larger than gRPC's 4 MiB default.
     pub fn spaces(&self) -> SpaceServiceClient<Chan> {
         SpaceServiceClient::new(self.channel.clone())
+            .max_decoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
+            .max_encoding_message_size(cua_spacesd_client::MAX_MESSAGE_BYTES)
     }
 
     fn map(e: tonic::Status) -> Error {

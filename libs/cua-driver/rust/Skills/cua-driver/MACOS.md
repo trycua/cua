@@ -463,6 +463,10 @@ and the refusal says whether any menu window it opened is still on screen. If
 the refusal says the menu may still be open, press `escape` on the window
 before other input.
 
+A `get_window_state` read lists only the menu bar's titles and says
+`menus collapsed`; pass `query` to find an item in any menu, or run it with
+`invoke_menu`. A missed path segment lists the items at that level.
+
 ```bash
 cua-driver invoke_menu \
   '{"pid":844,"window_id":10725,"path":["Window","Move & Resize","Left"]}'
@@ -545,4 +549,4 @@ starting point for new browser workflows.
 
 If the user instead asks to navigate _within_ an already-open Finder
 window, use the menu-bar flow from "Navigating native menu bars"
-above (click Go → pick a menu item → re-snapshot → click it).
+above (`invoke_menu` with a path such as `["Go", "Downloads"]`).

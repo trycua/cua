@@ -43,6 +43,26 @@ struct NotchShape: Shape {
     }
 }
 
+/// What the panel's content is clipped to: the shape the surface draws,
+/// the black notch outline or (without a notch) the glass panel's rounded
+/// rectangle.
+struct NotchSurfaceShape: Shape {
+    var notchStyle: Bool
+    var top: CGFloat
+    var bottom: CGFloat
+    var corner: CGFloat
+
+    var animatableData: AnimatablePair<AnimatablePair<CGFloat, CGFloat>, CGFloat> {
+        get { AnimatablePair(AnimatablePair(top, bottom), corner) }
+        set { top = newValue.first.first; bottom = newValue.first.second; corner = newValue.second }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        notchStyle ? NotchShape(top: top, bottom: bottom).path(in: rect)
+            : RoundedRectangle(cornerRadius: corner, style: .continuous).path(in: rect)
+    }
+}
+
 /// The "N Spaces" tab: square on the left (it tucks under the notch), a
 /// concave ear on the top right and a rounded bottom-right corner, so the
 /// notch and the tab read as one shape.
@@ -100,6 +120,21 @@ struct NotchGeometry: Equatable {
         safeAreaTop: 32, auxLeftWidth: 662, auxRightWidth: 662)
     static let fallback = NotchGeometry(appNotchLayout(screen: fallbackScreen, prompt: false))
 
+    /// How far the tab's square end tucks under the notch.
+    static let tabTuck: CGFloat = 20
+
+    /// The closed notch's hover area: its margin plus the tab as drawn
+    /// (`tabWidth`, outside the notch), else the core's widest `tabFrame`.
+    /// Only the drawn tab: the space past it is the menu bar's, where the
+    /// first status item (or the menu bar's overflow chevron) sits.
+    func closedHover(tabWidth: CGFloat?) -> CGRect {
+        let rect = CGRect(x: (stage.width - closedHit.width) / 2, y: 0,
+                          width: closedHit.width, height: closedHit.height)
+        guard notchStyle else { return rect }
+        return rect.union(CGRect(x: stage.width / 2 + notch.width / 2, y: 0,
+                                 width: tabWidth ?? tab.width, height: tab.height))
+    }
+
     /// The shape's size for a stage shape (the ears sit outside the notch).
     func size(_ shape: NotchStage.Shape, radii: (closed: AppNotchRadii, open: AppNotchRadii)) -> CGSize {
         switch shape {
@@ -109,6 +144,38 @@ struct NotchGeometry: Equatable {
         case .prompt: return prompt
         case .tiles: return open
         }
+    }
+
+    /// The glass panel's corner radius (no notch): open, or the closed
+    /// capsule.
+    static let glassRadius: CGFloat = 20
+    func glassCorner(open: Bool) -> CGFloat { open ? Self.glassRadius : notch.height / 2 }
+
+    /// How far the search's hover fill reaches past its glyph, and the
+    /// fill's corner radius.
+    static let searchReach: CGFloat = 8
+    static let searchCorner: CGFloat = 8
+
+    /// The open panel's side padding: the tiles' (and the search glyph's)
+    /// left edge.
+    func side(radii: (closed: AppNotchRadii, open: AppNotchRadii)) -> CGFloat {
+        CGFloat((notchStyle ? radii.open.top : 0) + 15)
+    }
+
+    /// Space above the open panel's header row. None beside the notch (the
+    /// row sits in the camera housing's band); on the glass panel, enough
+    /// that the search's hover fill is as far from the top edge as from the
+    /// side, clear of the rounded corner.
+    func headerTop(side: CGFloat) -> CGFloat {
+        guard !notchStyle else { return 0 }
+        return max(0, side - Self.searchReach - (notch.height - NotchPress.minHit) / 2)
+    }
+
+    /// The search's hover fill in the open panel's coordinates (its width
+    /// follows the row, so only its leading edge, top and height are fixed).
+    func searchFill(side: CGFloat, width: CGFloat) -> CGRect {
+        CGRect(x: side - Self.searchReach, y: headerTop(side: side) + (notch.height - NotchPress.minHit) / 2,
+               width: width, height: NotchPress.minHit)
     }
 }
 
@@ -125,6 +192,9 @@ struct NotchContentView: View {
     @State private var content: NotchStage.Shape?
     /// The "N Spaces" tab (animated with the shape, not with the core).
     @State private var tabShown: Bool
+    /// The tab as drawn (content-sized, at most the core's `tabFrame`),
+    /// tuck included; nil until measured.
+    @State private var tabDrawnWidth: CGFloat?
     @State private var inside = false
     /// A click opened the panel: the search takes the keyboard (hover never
     /// steals it from the app in front).
@@ -208,7 +278,8 @@ struct NotchContentView: View {
                 }
             }
             .frame(width: size.width, height: size.height, alignment: .top)
-            .clipShape(NotchShape(top: r.top, bottom: r.bottom))
+            .clipShape(NotchSurfaceShape(notchStyle: g.notchStyle, top: r.top, bottom: r.bottom,
+                                         corner: g.glassCorner(open: shape.isOpen)))
         }
         .frame(width: g.stage.width, height: g.stage.height, alignment: .top)
         .environment(\.colorScheme, .dark)
@@ -265,12 +336,12 @@ struct NotchContentView: View {
     private func hover(_ phase: HoverPhase, g: NotchGeometry) {
         var now = false
         if case .active(let p) = phase {
-            let open = stage.shape.isOpen
-            let s = open ? g.size(stage.shape, radii: radii) : g.closedHit
-            var rect = CGRect(x: (g.stage.width - s.width) / 2, y: 0, width: s.width, height: s.height)
-            if !open, g.notchStyle { rect = rect.union(CGRect(x: g.stage.width / 2 + g.notch.width / 2, y: 0,
-                                                              width: g.tab.width, height: g.tab.height)) }
-            now = rect.contains(p)
+            if stage.shape.isOpen {
+                let s = g.size(stage.shape, radii: radii)
+                now = CGRect(x: (g.stage.width - s.width) / 2, y: 0, width: s.width, height: s.height).contains(p)
+            } else {
+                now = g.closedHover(tabWidth: tabDrawnWidth.map { $0 - NotchGeometry.tabTuck }).contains(p)
+            }
         }
         guard now != inside else { return }
         inside = now
@@ -285,9 +356,9 @@ struct NotchContentView: View {
                 .fill(.black)
                 .shadow(color: .black.opacity(shape.isOpen ? 0.45 : 0), radius: 14, y: 6)
         } else {
-            RoundedRectangle(cornerRadius: shape.isOpen ? 20 : g.notch.height / 2, style: .continuous)
+            RoundedRectangle(cornerRadius: g.glassCorner(open: shape.isOpen), style: .continuous)
                 .fill(.clear)
-                .glassEffect(.regular, in: .rect(cornerRadius: shape.isOpen ? 20 : g.notch.height / 2))
+                .glassEffect(.regular, in: .rect(cornerRadius: g.glassCorner(open: shape.isOpen)))
         }
     }
 
@@ -298,7 +369,7 @@ struct NotchContentView: View {
     /// the core's insets (none toward the notch, a hair outside), so it
     /// barely widens the notch.
     private func tab(_ v: AppNotchView, g: NotchGeometry) -> some View {
-        let tuck: CGFloat = 20
+        let tuck = NotchGeometry.tabTuck
         let ear = CGFloat(radii.closed.top)
         return Button { focusOnOpen = true; model.send(.click) } label: { Color.clear }
             .buttonStyle(NotchButtonStyle(forced: model.highlight.state(for: .tab), pressedScale: 1) { _, s in
@@ -312,6 +383,7 @@ struct NotchContentView: View {
                 .background(NotchTabShape(ear: ear, corner: 10).fill(.black))
                 .contentShape(.rect)
             })
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { tabDrawnWidth = $0 }
             .frame(width: g.tab.width + tuck, height: g.tab.height, alignment: .leading)
             .offset(x: g.notch.width / 2 + (g.tab.width + tuck) / 2 - tuck)
             .help(v.countLabel)
@@ -354,7 +426,7 @@ struct NotchContentView: View {
     @ViewBuilder
     private func contentView(_ c: NotchStage.Shape, _ v: AppNotchView, g: NotchGeometry) -> some View {
         let inset = g.notchStyle || v.header != nil ? g.notch.height : 0
-        let side = CGFloat((g.notchStyle ? radii.open.top : 0) + 15)
+        let side = g.side(radii: radii)
         switch c {
         case .prompt:
             VStack(spacing: 0) {
@@ -368,8 +440,9 @@ struct NotchContentView: View {
         default:
             VStack(spacing: 0) {
                 if let h = v.header {
-                    header(h, g: g).frame(height: g.notch.height)
-                    Spacer().frame(height: inset - g.notch.height + 15)
+                    let top = g.headerTop(side: side)
+                    header(h, g: g).frame(height: g.notch.height).padding(.top, top)
+                    Spacer().frame(height: max(0, inset - g.notch.height + 15 - top))
                 } else {
                     Spacer().frame(height: inset + 15)
                 }
@@ -404,7 +477,7 @@ struct NotchContentView: View {
     /// housing, the buttons right of it, nothing under it. Without a notch
     /// it is one full-width row.
     private func header(_ h: AppNotchHeader, g: NotchGeometry) -> some View {
-        let side = CGFloat((g.notchStyle ? radii.open.top : 0) + 15)
+        let side = g.side(radii: radii)
         let gap: CGFloat = 12
         let zone = g.notchStyle ? max(0, (g.open.width - g.notch.width) / 2 - side - gap) : nil
         let query = Binding(get: { model.state.query }, set: { model.search($0) })
@@ -798,14 +871,14 @@ struct NotchSearchZone<Content: View>: View {
     var body: some View {
         let on = hovered || forced?.hovered == true
         HStack(spacing: 6) { content }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, NotchGeometry.searchReach)
             .frame(minHeight: NotchPress.minHit)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .background(RoundedRectangle(cornerRadius: NotchGeometry.searchCorner, style: .continuous)
                 .fill(.white.opacity(on ? 0.08 : 0)))
             .contentShape(.rect)
             // The fill reaches past the glyph; the glyph stays on the tiles'
             // left edge.
-            .padding(.horizontal, -8)
+            .padding(.horizontal, -NotchGeometry.searchReach)
             .onTapGesture(perform: focus)
             .onHover { hovered = $0 }
             .pointerStyle(.horizontalText)

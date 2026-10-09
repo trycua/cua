@@ -356,7 +356,8 @@ pub fn profile_yaml(arch: &str, cpus: u32, memory_gib: u32) -> String {
          network:\n  address: false\n\
          kubernetes:\n  enabled: false\n\
          forceDiskImage: true\n\
-         docker:\n  default-runtime: runsc\n  runtimes:\n    runsc:\n      path: /usr/local/bin/runsc\n"
+         docker:\n  default-runtime: runsc\n  runtimes:\n    runsc:\n      path: /usr/local/bin/runsc\n      \
+         runtimeArgs:\n        - --allow-suid\n"
     )
 }
 
@@ -1168,6 +1169,11 @@ mod tests {
         let y = profile_yaml("aarch64", 4, 4);
         assert!(y.contains("default-runtime: runsc"));
         assert!(y.contains("path: /usr/local/bin/runsc"));
+        // Setuid (`sudo`, `fusermount3`) works for the Space user (#4667).
+        assert!(
+            y.contains("      runtimeArgs:\n        - --allow-suid\n"),
+            "{y}"
+        );
         assert!(y.contains("vmType: vz"));
         assert!(y.contains("autoActivate: false"));
         assert!(y.contains("forceDiskImage: true"));

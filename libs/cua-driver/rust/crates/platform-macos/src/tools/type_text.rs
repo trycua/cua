@@ -288,6 +288,23 @@ impl Tool for TypeTextTool {
             return super::background_refusal_result(pid, wid, &refusal);
         }
 
+        // A Chromium browser's own text fields (the address bar) take an AX
+        // insert as display text only: Return, background or foreground, does
+        // not submit it, and background keystrokes never reach the browser.
+        let chromium_native_field = !delivery_mode.is_foreground()
+            && !used_pixel_focus
+            && is_chromium_identity(&apps::bundle_id_for_pid(pid).unwrap_or_default())
+            && matches!(
+                classify_target_web_area(pid, element_ptr, window_id),
+                WebAreaClassification::NonWebContent
+            );
+        if let Some(refusal) = chromium_native_field_submit_refusal(chromium_native_field, &text) {
+            return match window_id {
+                Some(wid) => super::background_refusal_result(pid, wid, &refusal),
+                None => ToolResult::error(refusal.reason.clone()),
+            };
+        }
+
         if let (Some((element, _)), Some(wid)) = (element_guard.as_ref(), window_id) {
             let center_guard = element.clone();
             if let Ok((Some((screen_x, screen_y)), target_rect)) =
@@ -465,6 +482,11 @@ impl Tool for TypeTextTool {
                       and re-call with delivery_mode:\"foreground\" if it didn't."
                             .to_string(),
                     )
+                };
+                let note = if chromium_native_field && path == PATH_AX {
+                    format!("{note}{CHROMIUM_NATIVE_FIELD_NOTE}")
+                } else {
+                    note
                 };
                 ToolResult::text(format!(
                     "{mark} {char_count} char(s){detail}.{note}{}",
@@ -740,6 +762,31 @@ fn electron_background_ax_refusal(
         reason: "The Electron AX target cannot establish a safe exact background text route on macOS because its ancestry is web content or could not be proven native; use the pixel-targeted type_text form (x,y) or delivery_mode:\"foreground\"."
             .to_owned(),
         advice: Some("px"),
+    })
+}
+
+const CHROMIUM_NATIVE_FIELD_NOTE: &str = " This is a Chromium browser's own field (address \
+     bar): it shows accessibility-inserted text but does not submit it on Return. To \
+     navigate, re-type the URL ending in \\n with delivery_mode:\"foreground\", or open it \
+     with launch_app {bundle_id, urls:[...]}.";
+
+/// Refuse a background AX insert that is meant to submit (it contains a line
+/// break) into a Chromium browser's native field. The insert would land as
+/// display text, the line break would not submit it, and the caller would see
+/// a success for a navigation that never happened (bench CDB-G04: nine
+/// address-bar attempts in one trial, none of which loaded the page).
+fn chromium_native_field_submit_refusal(
+    chromium_native_field: bool,
+    text: &str,
+) -> Option<BackgroundRefusal> {
+    if !chromium_native_field || !text.contains(['\n', '\r']) {
+        return None;
+    }
+    Some(BackgroundRefusal {
+        code: "browser_field_needs_keystrokes",
+        reason: "A Chromium browser's own field (address bar) does not submit accessibility-inserted text, and background keystrokes do not reach the browser, so nothing was typed. Re-send the same type_text with delivery_mode:\"foreground\" (the driver activates the browser, keeps the field focus, types and presses Return), or open a URL with launch_app {bundle_id, urls:[...]}."
+            .to_owned(),
+        advice: Some("foreground"),
     })
 }
 
@@ -1560,6 +1607,19 @@ fn type_text_blocking(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn chromium_native_field_refuses_only_background_submits() {
+        let refusal = super::chromium_native_field_submit_refusal(true, "file:///tmp/report.log\n")
+            .expect("a submit into the address bar is refused");
+        assert_eq!(refusal.code, "browser_field_needs_keystrokes");
+        assert_eq!(refusal.advice, Some("foreground"));
+        assert!(refusal.reason.contains("delivery_mode:\"foreground\""));
+        assert!(super::chromium_native_field_submit_refusal(true, "a\rb").is_some());
+        // Plain text still inserts (with a note); other surfaces are untouched.
+        assert!(super::chromium_native_field_submit_refusal(true, "example.com").is_none());
+        assert!(super::chromium_native_field_submit_refusal(false, "example.com\n").is_none());
+    }
+
     #[test]
     fn browser_identities_take_the_activating_rung() {
         for id in [

@@ -29,6 +29,9 @@ impl Tool for Probe {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         self.calls.lock().unwrap().push(args.clone());
+        if let Some(message) = args["fail_message"].as_str() {
+            return ToolResult::error(message.to_owned());
+        }
         if args["fail"] == true {
             ToolResult::error(format!("{} refused: probe asked to fail", self.def.name))
         } else {
@@ -46,11 +49,11 @@ impl Harness {
     fn new() -> Self {
         let mut registry = ToolRegistry::new();
         let mut calls = std::collections::HashMap::new();
-        for name in super::BATCHABLE_TOOLS
-            .iter()
-            .copied()
-            .chain(["get_window_state"])
-        {
+        for name in super::BATCHABLE_TOOLS.iter().copied().chain([
+            "get_window_state",
+            "zoom",
+            "invoke_menu",
+        ]) {
             let log = Arc::new(Mutex::new(Vec::new()));
             calls.insert(name, log.clone());
             registry.register(Box::new(Probe {
@@ -64,6 +67,18 @@ impl Harness {
                             "window_id": {"type": "integer"},
                             "text": {"type": "string"},
                             "fail": {"type": "boolean"},
+                            "fail_message": {"type": "string"},
+                            "element_token": {"type": "string"},
+                            "value": {"type": "string"},
+                            "key": {"type": "string"},
+                            "keys": {"type": "array", "items": {"type": "string"}, "minItems": 2},
+                            "modifiers": {"type": "array", "items": {"type": "string"}},
+                            "count": {"type": "integer", "minimum": 1},
+                            "query": {"type": "string"},
+                            "delivery_mode": {"type": "string"},
+                            "path": {"type": "array", "items": {"type": "string"}},
+                            "x1": {"type": "number"}, "y1": {"type": "number"},
+                            "x2": {"type": "number"}, "y2": {"type": "number"},
                             "include_screenshot": {"type": "boolean"},
                             "since": {"type": "string"},
                             "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
@@ -75,7 +90,7 @@ impl Harness {
                         },
                         "additionalProperties": false
                     }),
-                    read_only: name == "get_window_state",
+                    read_only: matches!(name, "get_window_state" | "zoom"),
                     destructive: false,
                     idempotent: false,
                     open_world: false,
@@ -205,10 +220,6 @@ async fn stops_at_the_first_failure_and_still_observes() {
 async fn validates_every_step_before_running_any() {
     let harness = Harness::new();
     let cases = [
-        (
-            json!({"tool": "zoom", "args": {}}),
-            "reads state and a batch only acts",
-        ),
         (
             json!({"tool": "run_actions", "args": {}}),
             "cannot run in a batch",
@@ -419,9 +430,9 @@ fn run_actions_advertises_provider_compatible_schema_without_unions() {
     assert_eq!(item["additionalProperties"], true);
     assert_eq!(item["properties"]["expect"]["type"], "array");
     assert_eq!(item["properties"]["expect"]["items"]["type"], "object");
-    assert_eq!(item["properties"]["expect"]["maxItems"], super::MAX_EXPECTS);
+    assert_eq!(item["properties"]["expect"]["maxItems"], json!(super::MAX_EXPECTS));
     assert_eq!(schema["properties"]["observe"]["type"], "object");
-    // The adjacent legacy runtime test still exercises observe:true.
+    // The adjacent regression still covers observe:true on the runtime path.
 }
 
 #[tokio::test]
@@ -534,28 +545,60 @@ async fn a_trailing_read_becomes_the_observation_and_a_middle_one_points_to_obse
     assert_eq!(observed["since"], "latest");
     assert_eq!(harness.hits("click"), 2);
 
-    let refused = harness
+    // v036: a read between actions (act, read, act, read) is skipped with a
+    // note instead of rejecting the whole batch; the last read is `observe`.
+    let skipped = harness
         .run(json!({"steps": [
             {"tool": "click", "args": {"pid": 7, "window_id": 3}},
-            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3}},
+            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3, "query": "AXTextField"}},
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
+            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3, "max_elements": 90}},
+        ]}))
+        .await;
+    assert_ne!(skipped.is_error, Some(true), "{}", text(&skipped));
+    let message = text(&skipped);
+    assert!(message.contains("2. get_window_state skipped"), "{message}");
+    assert_eq!(harness.hits("click"), 4);
+    assert_eq!(harness.hits("get_window_state"), 2, "only the end read ran");
+    assert_eq!(harness.last("get_window_state")["max_elements"], 90);
+
+    // With no read at the end, the last skipped read is the end read.
+    let looked = harness
+        .run(json!({"steps": [
+            {"tool": "click", "args": {"pid": 7, "window_id": 3}},
+            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3, "query": "Wiki"}},
             {"tool": "click", "args": {"pid": 7, "window_id": 3}},
         ]}))
         .await;
-    assert_eq!(refused.is_error, Some(true));
-    let message = text(&refused);
-    assert!(message.contains("step 2 of the batch"), "{message}");
-    assert!(
-        message.contains("Put get_window_state arguments in `observe`"),
-        "{message}"
-    );
+    assert_ne!(looked.is_error, Some(true), "{}", text(&looked));
+    assert_eq!(harness.hits("get_window_state"), 3);
+    assert_eq!(harness.last("get_window_state")["query"], "Wiki");
 
-    // With an explicit observe, a trailing read is not silently dropped.
+    // v036: a trailing read plus an explicit observe merge; observe wins.
     let both = harness
         .run(json!({"steps": [
             {"tool": "click", "args": {"pid": 7, "window_id": 3}},
-            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3}},
-        ], "observe": true}))
+            {"tool": "get_window_state", "args": {"pid": 7, "window_id": 3, "max_elements": 40}},
+        ], "observe": {"include_screenshot": true, "max_elements": 60}}))
         .await;
-    assert_eq!(both.is_error, Some(true));
-    assert_eq!(harness.hits("get_window_state"), 1);
+    assert_ne!(both.is_error, Some(true), "{}", text(&both));
+    assert_eq!(harness.hits("get_window_state"), 4);
+    let observed = harness.last("get_window_state");
+    assert_eq!(observed["max_elements"], 60);
+    assert_eq!(observed["include_screenshot"], true);
+
+    // A batch of reads only still points at the direct call.
+    let refused = harness
+        .run(json!({"steps": [{"tool": "get_window_state", "args": {"pid": 7, "window_id": 3}}]}))
+        .await;
+    assert_eq!(refused.is_error, Some(true));
+    assert!(
+        text(&refused).contains("reads state and a batch only acts"),
+        "{}",
+        text(&refused)
+    );
 }
+
+#[cfg(test)]
+#[path = "reliability_tests.rs"]
+mod reliability_tests;

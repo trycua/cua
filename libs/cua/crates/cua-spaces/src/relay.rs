@@ -197,11 +197,7 @@ impl crate::Spaces {
             machine_id: machine_id.to_string(),
         };
         self.drop_connection(&id).await;
-        self.inner
-            .relay_cache
-            .lock()
-            .expect("relay cache")
-            .retain(|m| m.id != machine_id);
+        self.relay_forget(machine_id);
         let _ = self.inner.registry.remove(&id.to_string());
         self.inner.thumbnails.remove(&id.to_string());
         #[cfg(feature = "spaces-agents")]

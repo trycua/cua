@@ -93,6 +93,81 @@ fn menu_title_key(title: &str) -> String {
     title.trim().replace("...", "\u{2026}")
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TitleMatch {
+    One(usize),
+    Ambiguous,
+    None,
+}
+
+/// Find a path segment among the titles of one menu level: an exact title
+/// first, then a title that differs only in letter case. Anything looser
+/// (word overlap, prefixes) is left to the caller, who sees the titles in
+/// the error, because a wrong guess would run a different command.
+fn pick_title(titles: &[String], segment: &str) -> TitleMatch {
+    let wanted = menu_title_key(segment);
+    let pick = |same: &dyn Fn(&str) -> bool| {
+        let mut hits = titles
+            .iter()
+            .enumerate()
+            .filter(|(_, title)| same(&menu_title_key(title)))
+            .map(|(index, _)| index);
+        match (hits.next(), hits.next()) {
+            (Some(index), None) => TitleMatch::One(index),
+            (Some(_), Some(_)) => TitleMatch::Ambiguous,
+            _ => TitleMatch::None,
+        }
+    };
+    match pick(&|title| title == wanted) {
+        TitleMatch::None => {
+            let wanted = wanted.to_lowercase();
+            pick(&|title| title.to_lowercase() == wanted)
+        }
+        found => found,
+    }
+}
+
+/// Most items a missed segment lists, so a long menu cannot flood the reply.
+const MAX_LISTED_TITLES: usize = 40;
+
+/// A missed segment names what was asked for, where, and the items that are
+/// there, so the next call can use the real title instead of a full tree
+/// read (LibreOffice calls it "To Next Sheet", not "Next Sheet").
+fn missing_segment_error(depth: usize, prefix: &[String], titles: &[String]) -> String {
+    let wanted = &prefix[depth];
+    let location = if depth == 0 {
+        "in the menu bar".to_owned()
+    } else {
+        format!("under \"{}\"", prefix[..depth].join(" > "))
+    };
+    let mut items: Vec<&str> = titles
+        .iter()
+        .map(|title| title.trim())
+        .filter(|title| !title.is_empty())
+        .collect();
+    items.dedup();
+    if items.is_empty() {
+        return format!(
+            "invoke_menu: path segment {depth} \"{wanted}\" was not found {location}, which lists no titled items (the app may fill this menu only while it is open)"
+        );
+    }
+    let more = items.len().saturating_sub(MAX_LISTED_TITLES);
+    let listed = items
+        .iter()
+        .take(MAX_LISTED_TITLES)
+        .map(|title| format!("\"{title}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    format!(
+        "invoke_menu: path segment {depth} \"{wanted}\" was not found {location}. Items there: {listed}{more}"
+    )
+}
+
 unsafe fn resolve_exact_prefix(
     menu_bar: AXUIElementRef,
     prefix: &[String],
@@ -106,29 +181,27 @@ unsafe fn resolve_exact_prefix(
             CFRelease(current as CFTypeRef);
         }
 
-        let wanted = menu_title_key(segment);
-        let mut matches = Vec::new();
-        for child in children {
-            let title = copy_string_attr(child, "AXTitle").unwrap_or_default();
-            if menu_title_key(&title) == wanted {
-                matches.push(child);
+        let titles: Vec<String> = children
+            .iter()
+            .map(|&child| copy_string_attr(child, "AXTitle").unwrap_or_default())
+            .collect();
+        let picked = pick_title(&titles, segment);
+        let mut chosen = None;
+        for (index, child) in children.into_iter().enumerate() {
+            if matches!(picked, TitleMatch::One(i) if i == index) {
+                chosen = Some(child);
             } else {
                 CFRelease(child as CFTypeRef);
             }
         }
 
-        if matches.len() != 1 {
-            let match_count = matches.len();
-            for candidate in matches {
-                CFRelease(candidate as CFTypeRef);
+        match (picked, chosen) {
+            (TitleMatch::One(_), Some(child)) => current = child,
+            (TitleMatch::Ambiguous, _) => {
+                return Err(format!("invoke_menu: path segment {depth} is ambiguous"));
             }
-            return Err(if match_count == 0 {
-                format!("invoke_menu: path segment {depth} was not found")
-            } else {
-                format!("invoke_menu: path segment {depth} is ambiguous")
-            });
+            _ => return Err(missing_segment_error(depth, prefix, &titles)),
         }
-        current = matches.pop().expect("one exact match");
         owns_current = true;
     }
 
@@ -475,6 +548,10 @@ impl Tool for InvokeMenuTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        // The menu bar belongs to the app: with only a pid, use its focused
+        // window.
+        let mut args = args;
+        super::default_window_for_pid(&mut args);
         let input: InvokeMenuInput =
             match cua_driver_core::tool_args::parse_typed_input("invoke_menu", args) {
                 Ok(input) => input,
@@ -583,6 +660,38 @@ mod tests {
             assert!(failure_after_press(error(), "File", unconfirmed)
                 .ends_with("The File menu this call opened may still be open: press escape on the window before other input."));
         }
+    }
+
+    #[test]
+    fn segments_match_exactly_then_ignoring_case() {
+        let titles: Vec<String> = ["To Next Sheet", "To Previous Sheet", "", "Go to Sheet..."]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(pick_title(&titles, "To Next Sheet"), TitleMatch::One(0));
+        assert_eq!(pick_title(&titles, "to next sheet"), TitleMatch::One(0));
+        assert_eq!(pick_title(&titles, "Go to Sheet…"), TitleMatch::One(3));
+        assert_eq!(pick_title(&titles, "Next Sheet"), TitleMatch::None);
+        let twins: Vec<String> = ["Copy", "copy"].map(String::from).to_vec();
+        assert_eq!(pick_title(&twins, "Copy"), TitleMatch::One(0));
+        assert_eq!(pick_title(&twins, "COPY"), TitleMatch::Ambiguous);
+    }
+
+    #[test]
+    fn a_missed_segment_lists_the_items_at_its_level() {
+        let path: Vec<String> = ["Sheet", "Navigate", "Next Sheet"]
+            .map(String::from)
+            .to_vec();
+        let titles: Vec<String> = ["To Next Sheet", "", "To Previous Sheet"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(
+            missing_segment_error(2, &path, &titles),
+            "invoke_menu: path segment 2 \"Next Sheet\" was not found under \"Sheet > Navigate\". Items there: \"To Next Sheet\", \"To Previous Sheet\""
+        );
+        assert!(missing_segment_error(0, &path, &["File".into()]).contains("in the menu bar"));
+        assert!(missing_segment_error(1, &path, &[]).contains("lists no titled items"));
+        let many: Vec<String> = (0..45).map(|i| format!("Item {i}")).collect();
+        assert!(missing_segment_error(1, &path, &many).ends_with("and 5 more"));
     }
 
     #[test]

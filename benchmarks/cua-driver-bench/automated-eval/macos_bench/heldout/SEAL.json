@@ -1,0 +1,26 @@
+{
+  "budget": {
+    "max_turns": 45,
+    "timeout_s": 360
+  },
+  "common": "8fdbffa82e1d21529ba270332702ca47d566b2582c24532db0a30afb5b31f328",
+  "pack": "1478e554f194d25a3d33b14f8bfba5ea87dda13f19b486f9a142eca788ab7761",
+  "private_revision": "268874ac5dd2db99b26399f7e9f5c7782e0bb3a9",
+  "private_tree_clean": true,
+  "scheme": "sha256 tree digest, cdb_adapter.tree_sha256",
+  "task_specs": "2b5c4e22ca486f2c07c80471fd4606ea81896ea49628010970ac1542403461ad",
+  "tasks": {
+    "HO-01": "835a0bcf3db67526a51d25335d6f2260a401f2f738ea13ad420ec00fce9c6c73",
+    "HO-02": "af76bc5a0d5809b9eb23c711fdbaa83d5bbffad2ed2ab1e9e3451199a9e4d49e",
+    "HO-03": "e0157268d06e6e388bd89f7bd0055575c035b250b67c16c0d67df646c6a6f4bd",
+    "HO-04": "6b77797a69c0b610c571e7d9c6cb8e1198755fa70c8bfcce758c6774c777c03d",
+    "HO-05": "333678cf1996ca8a90c5d04f8a608b1d7251cb258d302c89842f761a45c4e8a2",
+    "HO-06": "6b4561543ab20bfcbe96367eab64820ba3b312a26ed2470dfc16b6f6549c2f91",
+    "HO-07": "04c43419ef651bc256f7a3d9218419ba40d32528795bb5ef7add0046eaafc343",
+    "HO-08": "da7c55469c2717d448e89d819daa47ef9558cde3c24692a0eb344bf97dc89c38",
+    "HO-09": "f40a14f13d7b4566e222aa8d3f501883bc321d89630d7072f4ee9a43877bc325",
+    "HO-10": "7c32795fe25c7217456678d01d1ed2b8ffa64fc6da70cc8d22bff1e86d3c6f98",
+    "HO-11": "b166ccc4a1a44569085a51deffe6ab2ee935a17731df2f23249eddcd8a9e6296",
+    "HO-12": "45c8c088399e4219df0a25dd4f35c00d46bbc57eb9157322f692b1e74d7dc266"
+  }
+}

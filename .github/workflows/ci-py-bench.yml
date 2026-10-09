@@ -33,4 +33,4 @@ jobs:
           python-version: "3.12"
       - name: Run CUA benchmark regression suite
         working-directory: libs/cua-bench
-        run: uv run --extra dev pytest cua_bench/tests/test_run_benchmark.py -q
+        run: uv run --extra dev pytest cua_bench/tests -q

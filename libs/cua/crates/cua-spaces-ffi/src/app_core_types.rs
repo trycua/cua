@@ -8787,6 +8787,10 @@ pub enum AppTelemetrySignal {
         elapsed_ms: u64,
         /// GPU acceleration was turned on.
         gpu: bool,
+        /// Why it failed (`insufficient_disk`, `unsupported`, `timeout`,
+        /// `transport`, ...); `none` when it succeeded or was cancelled.
+        /// The phase it failed in stays `failed_phase`.
+        error_kind: String,
     },
     /// A Space create started (`cua_space_create_started`).
     SpaceCreateStarted {

@@ -1842,7 +1842,11 @@ pub fn gpu_row(
     else {
         return (None, None);
     };
-    let on = state.gpu && choice.supported;
+    // macOS guests before 26 refuse GPU acceleration. The row stays, disabled,
+    // so the reason is visible and Create does not pass `gpu`.
+    let guest_refusal = macos_gpu_refusal(image);
+    let enabled = choice.supported && guest_refusal.is_none();
+    let on = state.gpu && enabled;
     let row = GpuRow {
         label: if choice.experimental {
             format!("{} (Experimental)", choice.label)
@@ -1850,14 +1854,44 @@ pub fn gpu_row(
             choice.label.clone()
         },
         on,
-        enabled: choice.supported,
-        reason: (!choice.supported)
-            .then(|| choice.reason.clone().filter(|r| !r.is_empty()))
-            .flatten(),
+        enabled,
+        reason: guest_refusal.or_else(|| {
+            (!choice.supported)
+                .then(|| choice.reason.clone().filter(|r| !r.is_empty()))
+                .flatten()
+        }),
         learn_more_label: "Learn more".into(),
         learn_more_url: choice.learn_more.clone(),
     };
     (Some(row), on.then(|| choice.id.clone()))
+}
+
+/// Why this macOS guest refuses GPU acceleration, when it does. The tag's
+/// leading number is the major (`macos:15`, `macos:26-slim`). A ref with
+/// no numeric major is not refused.
+fn macos_gpu_refusal(image: &SandboxImage) -> Option<String> {
+    if image.os != SpaceOs::Macos {
+        return None;
+    }
+    let major = macos_guest_major(&image.image_ref)?;
+    (major < MACOS_GPU_MIN).then(|| {
+        format!(
+            "macOS {major} guests do not support GPU acceleration (it needs macOS {MACOS_GPU_MIN})"
+        )
+    })
+}
+
+fn macos_guest_major(reference: &str) -> Option<u32> {
+    let digits: String = split_ref(reference)
+        .1?
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse().ok()
+    }
 }
 
 /// The address form as drawn.
@@ -2212,6 +2246,11 @@ fn fields(
 
 /// One GiB: disks and memory are sized in binary units, labeled GB.
 const GIB: u64 = 1 << 30;
+/// What pulling a Lume macOS base is assumed to write when the catalog
+/// has no measured size. Matches `cua_vmm::disk::LUME_PULL_ESTIMATE`.
+const LUME_PULL_FLOOR: u64 = 30 * GIB;
+/// First macOS guest major GPU acceleration was tested on (Tahoe).
+const MACOS_GPU_MIN: u32 = 26;
 /// The disk slider's ceiling, GB.
 pub const MAX_DISK_GB: u32 = 1024;
 /// The symbol a warning fact shows (SF Symbols; the web app maps it).
@@ -2385,9 +2424,16 @@ fn disk_view(state: &WizardState, image: &SandboxImage, env: &WizardEnv) -> Disk
             format!("{} on {}", size_text(v.available_bytes), v.name),
         ));
         let reserve = env.storage.as_ref().map_or(0, |s| s.reserve_bytes);
-        let need = size
+        let measured = size
             .filter(|_| pulled == Some(false))
             .map_or(0, |s| s.download.saturating_add(s.unpacked));
+        // An uncached Lume image still needs the pull floor when its size
+        // was never measured (`macos:15`). A cached base needs nothing new.
+        let need = if image.local == Some(LocalEngine::Lume) && pulled != Some(true) {
+            measured.max(LUME_PULL_FLOOR)
+        } else {
+            measured
+        };
         if need > 0 && v.available_bytes < need.saturating_add(reserve) {
             error = Some(format!(
                 "Not enough space on {}: needs {}, {} available.",
@@ -3094,6 +3140,49 @@ mod tests {
         assert_eq!(v.plan.gpu, None);
     }
 
+    #[test]
+    fn macos_before_26_does_not_offer_gpu_acceleration() {
+        let mut e = env();
+        e.local_backends = Some(vec!["lume".into()]);
+        e.gpus = Some(vec![lume_gpu(true)]);
+        let older = reduce(
+            &initial(&e),
+            &WizardAction::ChooseImage {
+                image_ref: "ghcr.io/trycua/macos:15".into(),
+            },
+            &e,
+        );
+        let older = reduce(&older, &WizardAction::SetGpu { on: true }, &e);
+        let v = view(&older, &e);
+        let row = v.gpu.expect("the row stays so the reason shows");
+        assert!(!row.enabled && !row.on);
+        assert_eq!(
+            row.reason.as_deref(),
+            Some("macOS 15 guests do not support GPU acceleration (it needs macOS 26)")
+        );
+        assert_eq!(v.plan.gpu, None);
+        let tahoe = reduce(
+            &initial(&e),
+            &WizardAction::ChooseImage {
+                image_ref: "ghcr.io/trycua/macos:26".into(),
+            },
+            &e,
+        );
+        let tahoe = reduce(&tahoe, &WizardAction::SetGpu { on: true }, &e);
+        let v = view(&tahoe, &e);
+        assert!(v.gpu.as_ref().unwrap().enabled && v.gpu.as_ref().unwrap().on);
+        assert_eq!(v.plan.gpu.as_deref(), Some("paravirtual"));
+        let slim = reduce(
+            &initial(&e),
+            &WizardAction::ChooseImage {
+                image_ref: "ghcr.io/trycua/macos:26-slim".into(),
+            },
+            &e,
+        );
+        let slim = reduce(&slim, &WizardAction::SetGpu { on: true }, &e);
+        assert_eq!(view(&slim, &e).plan.gpu.as_deref(), Some("paravirtual"));
+    }
+
     fn vol(gb: u64, name: &str) -> StorageVolume {
         StorageVolume {
             available_bytes: gb * GIB,
@@ -3257,6 +3346,31 @@ mod tests {
         assert_eq!(reduce(&s, &WizardAction::Next, &e).step, 1);
         // Pulled, it needs nothing new.
         e.storage.as_mut().unwrap().pulled = vec!["ghcr.io/trycua/linux:24.04".into()];
+        assert!(view(&s, &e).can_continue);
+    }
+
+    #[test]
+    fn an_uncached_lume_image_needs_thirty_gigabytes_before_create() {
+        let mut e = storage_env();
+        e.storage.as_mut().unwrap().lume = Some(vol(20, "Macintosh HD"));
+        let s = on("ghcr.io/trycua/macos:15", &e);
+        let v = view(&s, &e);
+        assert_eq!(
+            v.resources_error.as_deref(),
+            Some("Not enough space on Macintosh HD: needs 35 GB, 20 GB available.")
+        );
+        assert!(!v.can_continue);
+        assert_eq!(reduce(&s, &WizardAction::Next, &e).step, 1);
+        // 30 GiB to pull plus the 5 GiB reserve fits in 40 GB.
+        e.storage.as_mut().unwrap().lume = Some(vol(40, "Macintosh HD"));
+        assert!(
+            view(&s, &e).can_continue,
+            "{:?}",
+            view(&s, &e).resources_error
+        );
+        // A base already on this Mac is not pulled again.
+        e.storage.as_mut().unwrap().lume = Some(vol(20, "Macintosh HD"));
+        e.storage.as_mut().unwrap().pulled = vec!["ghcr.io/trycua/macos:15".into()];
         assert!(view(&s, &e).can_continue);
     }
 

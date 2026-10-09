@@ -37,11 +37,13 @@ struct LocalNetworkPermissionTests {
         #expect(fake.requests == 1)
     }
 
-    @Test func desktopOnlySetupDoesNotAsk() async {
+    @Test func desktopOrControllerSetupAsksOnce() async {
         let (m, fake) = await setUp(profile: "desktop")
         #expect(m.state?.configured == true)
         #expect(m.state?.provideSpaces == false)
-        #expect(fake.requests == 0)
+        #expect(fake.requests == 1)
+        await m.refresh()
+        #expect(fake.requests == 1)
     }
 
     @Test func failedSetupDoesNotAsk() async {

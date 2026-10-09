@@ -844,6 +844,9 @@ pub struct SpaceCreate<'a> {
     pub stalled: bool,
     /// GPU acceleration was turned on.
     pub gpu: bool,
+    /// Failure cause (`insufficient_disk`, `timeout`, ...); empty is
+    /// `other` on an error and ignored unless the outcome is an error.
+    pub error_kind: &'a str,
 }
 
 /// `cua_space_create`.
@@ -860,12 +863,28 @@ pub fn space_create(s: &SpaceCreate<'_>, outcome: Outcome, elapsed: Duration) ->
             p => p,
         },
     };
+    let error_kind = match outcome {
+        Outcome::Error => {
+            let classified = error_kind(s.error_kind);
+            if s.stalled
+                && (s.error_kind.trim().is_empty() || classified == "other" || classified == "none")
+            {
+                "timeout"
+            } else if classified == "none" {
+                "other"
+            } else {
+                classified
+            }
+        }
+        _ => "none",
+    };
     Event::new(event::SPACE_CREATE)
         .s("location", location(s.on))
         .s("guest_os", guest_os(s.guest_os))
         .s("kind", sandbox_kind(s.kind))
         .s("outcome", outcome.as_str())
         .s("failed_phase", failed_phase)
+        .s("error_kind", error_kind)
         .b("stalled", s.stalled && outcome == Outcome::Error)
         .s("time_bucket", create_time_bucket(elapsed))
         .b("gpu", s.gpu)

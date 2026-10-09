@@ -2109,10 +2109,10 @@ struct ParityTests {
         case let .onboardingPage(page, action, choice):
             return ["type": "onboarding-page", "page": page, "action": action, "choice": choice]
         case let .spaceWizard(action): return ["type": "space-wizard", "action": action]
-        case let .spaceCreate(location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu):
+        case let .spaceCreate(location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu, errorKind):
             return ["type": "space-create", "location": location, "guestOs": guestOs, "kind": kind,
                     "outcome": outcome, "failedPhase": failedPhase, "stalled": stalled, "elapsedMs": Int(elapsedMs),
-                    "gpu": gpu]
+                    "gpu": gpu, "errorKind": errorKind]
         case let .spaceCreateStarted(location, guestOs, kind, gpu):
             return ["type": "space-create-started", "location": location, "guestOs": guestOs, "kind": kind, "gpu": gpu]
         case let .volumeSetup(surface, storage, addToFinder, mountMethod, outcome):

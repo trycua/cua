@@ -111,6 +111,33 @@ async fn a_gpu_vm_turns_the_preference_on_before_it_boots_and_off_when_deleted()
 }
 
 #[tokio::test]
+async fn an_older_macos_guest_refuses_gpu_before_lume_is_asked() {
+    temp_home();
+    let (rt, state, pref) = fake().await;
+    let mut s = spec("gpu-15");
+    s.image = ImageSource::Oci {
+        reference: "ghcr.io/trycua/macos:15".into(),
+    };
+    s.gpu = Some("on".into());
+    let err = rt.start(&s).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("macOS 15") && msg.to_ascii_lowercase().contains("gpu"),
+        "{msg}"
+    );
+    assert!(
+        state.lock().unwrap().calls.is_empty(),
+        "refused before lume serve or clone: {:?}",
+        state.lock().unwrap().calls
+    );
+    assert!(!*pref.on.lock().unwrap());
+    s.gpu = Some(cua_vmm::gpu::PARAVIRTUAL.into());
+    let err = rt.start(&s).await.unwrap_err();
+    assert!(err.to_string().contains("macOS 15"), "{err}");
+    assert!(state.lock().unwrap().calls.is_empty());
+}
+
+#[tokio::test]
 async fn gpu_acceleration_is_for_macos_guests_only() {
     temp_home();
     let (rt, _state, pref) = fake().await;

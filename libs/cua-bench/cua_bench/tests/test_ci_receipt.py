@@ -74,3 +74,22 @@ def test_failed_underlying_test_is_rejected(tmp_path):
     b.write_text(json.dumps(bad))
     with pytest.raises(ValueError, match="not all test outcomes passed"):
         module.build_receipt(a, b, "a" * 40)
+
+def test_external_consumer_verifies_downloaded_receipt(tmp_path):
+    import subprocess
+    import sys
+    a, b = setup_reports(tmp_path)
+    receipt = module.build_receipt(a, b, "b" * 40)
+    path = tmp_path / "ci-receipt-v1.json"
+    path.write_text(json.dumps(receipt))
+    result = subprocess.run(
+        [
+            sys.executable, str(scripts / "ci_receipt.py"),
+            "--verify", str(path), "--evidence-dir", str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "independently verified" in result.stdout

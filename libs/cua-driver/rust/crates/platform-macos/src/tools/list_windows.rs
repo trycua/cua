@@ -62,13 +62,34 @@ impl Tool for ListWindowsTool {
 
         let windows_json: Vec<Value> = windows.iter().map(window_record_json).collect();
 
-        ToolResult::text(format!("Found {} window(s).", windows_json.len())).with_structured(
+        ToolResult::text(format_window_list(&windows)).with_structured(
             serde_json::json!({
                 "windows": windows_json,
                 "current_space_id": current_space_id
             }),
         )
     }
+}
+
+/// One compact line per window after the count header, so text-only MCP
+/// clients can discover `window_id`s without reading `structuredContent`.
+/// Same row shape as the Windows tool (`- app (pid) "title" [window_id]`,
+/// `(no title)` fallback, ` [off-screen]` tag); the header line is unchanged.
+pub(super) fn format_window_list(windows: &[crate::windows::WindowInfo]) -> String {
+    let mut lines = vec![format!("Found {} window(s).", windows.len())];
+    for w in windows {
+        let title = if w.title.is_empty() {
+            "(no title)".to_owned()
+        } else {
+            format!("\"{}\"", w.title)
+        };
+        let tag = if w.is_on_screen { "" } else { " [off-screen]" };
+        lines.push(format!(
+            "- {} (pid {}) {} [window_id: {}]{tag}",
+            w.app_name, w.pid, title, w.window_id
+        ));
+    }
+    lines.join("\n")
 }
 
 pub(super) fn window_record_json(w: &crate::windows::WindowInfo) -> Value {
@@ -125,6 +146,52 @@ mod tests {
         assert_eq!(
             window_record_json(&window)["on_current_space"],
             serde_json::json!(true)
+        );
+    }
+
+    fn window(
+        window_id: u32,
+        pid: i32,
+        app: &str,
+        title: &str,
+        on_screen: bool,
+    ) -> crate::windows::WindowInfo {
+        crate::windows::WindowInfo {
+            window_id,
+            pid,
+            app_name: app.into(),
+            title: title.into(),
+            bounds: crate::windows::WindowBounds {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 100.0,
+            },
+            layer: 0,
+            z_index: 1,
+            is_on_screen: on_screen,
+            current_space_id: Some(1),
+            on_current_space: Some(true),
+            space_ids: Some(vec![1]),
+        }
+    }
+
+    #[test]
+    fn empty_list_keeps_the_count_only_header() {
+        assert_eq!(format_window_list(&[]), "Found 0 window(s).");
+    }
+
+    #[test]
+    fn text_lists_one_row_per_window_with_ids_and_screen_state() {
+        let text = format_window_list(&[
+            window(10700, 65305, "Calculator", "Calculator", true),
+            window(10701, 65305, "Calculator", "", false),
+        ]);
+        assert_eq!(
+            text,
+            "Found 2 window(s).\n\
+             - Calculator (pid 65305) \"Calculator\" [window_id: 10700]\n\
+             - Calculator (pid 65305) (no title) [window_id: 10701] [off-screen]"
         );
     }
 }

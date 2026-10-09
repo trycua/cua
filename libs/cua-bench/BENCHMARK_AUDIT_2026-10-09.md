@@ -24,3 +24,10 @@ cd libs/cua-bench
 uv run pytest cua_bench/tests/test_run_benchmark.py -q
 ```
 Follow with positive real dataset runs on `cua-bench-basic`, a parallelism stress run, and evidence of termination and cleanup. Run from the branch `fix/cua-bench-validate-parallelism-20261009`.
+
+## Continuation: dataset discovery integrity
+- **P0 failure mechanism:** `run_benchmark` previously swallowed all task-config exceptions and replaced the true variant count with `1`; an empty `tasks_config_fn()` produced zero runs and misleading empty metrics. Both violate truthful dataset denominators.
+- **Code fix:** `runners.py` raises an informative ValueError containing task path and split on configuration errors and rejects zero variants, before scheduling any workers. Commit `55999795483d944a9f14635f59d3afaad5c3554a`.
+- **Counterexamples authored:** `test_run_benchmark.py` creates a task whose config raises `RuntimeError` and another which returns zero tasks; both must now raise ValueError rather than fabricate results. Commit `ff1e8009e61b8d58d943f0bd73381c59b002d566`.
+- **Status:** source committed and remote source verified; no pytest or end-to-end execution result witnessed in this round. Therefore NOT Verified Closed.
+- **HCA:** function P, state P, integration B, security N/A (no new credentials/privileges), scale B, maintainability P, observation P, testability P, user value B, external compatibility N/A (pure benchmark orchestration). To close: run relevant pytest on actual branch, ensure valid dataset cases still pass, inspect run counts before and after, and run actual simulated provider end-to-end.

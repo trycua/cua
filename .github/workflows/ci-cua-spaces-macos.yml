@@ -102,9 +102,11 @@ jobs:
       # BridgeContractTests (above) checked every answer against
       # apps/cua-spaces-web/src/bridge/contracts/bridge-shapes.json; its
       # answers then go through the web UI's webkit adapter.
+      # pnpm from the Electron shell's packageManager (pnpm@11.20.0); the
+      # root package.json pins pnpm 9 for the rest of the repo.
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          version: 11.20.0
+          package_json_file: apps/cua-spaces-desktop/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 22

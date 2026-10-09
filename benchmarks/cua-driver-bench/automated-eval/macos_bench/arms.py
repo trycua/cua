@@ -27,6 +27,7 @@ ARMS = ("cua-driver-mcp", "codex-native-cu")  # the Codex-CLI pilot arms (run_pi
 CLAUDE_ARMS = (
     "cc-cua-driver",
     "cc-codex-cu",
+    "cc-codex-cu-1007-browser",  # Amendment 10
     "cc-cua-driver-main",
     "cc-cua-driver-main-skill",
     "cc-cua-driver-script",  # Amendment 6

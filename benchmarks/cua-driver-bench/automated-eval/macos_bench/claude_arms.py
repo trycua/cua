@@ -215,6 +215,12 @@ CODEX_CU_MCP_CANDIDATES = (
     WORK / "codex-access" / "mcp.json",
     WORK / "codex-access" / "mcp_cua_repl_computer.json",
 )
+# Amendment 10: arm B on the Codex app 26.1007.21159 with the browser surface on. Its MCP config is written by
+# tools/make_codex_cu_mcp.py --surfaces browser,computer from that app's plugin entry.
+CODEX_ARMS = {
+    "cc-codex-cu": WORK / "codex-access" / "mcp.json",
+    "cc-codex-cu-1007-browser": WORK / "codex-access" / "mcp-1007-browser.json",
+}
 CWD_ROOT = Path("/tmp/cdb-bench-cwd/work")  # outside every git checkout, same path for both arms
 
 ARM_DESCRIPTIONS = {
@@ -223,6 +229,7 @@ ARM_DESCRIPTIONS = {
     "cc-cua-driver-main-skill": "The same as cc-cua-driver-main, with the skill's SKILL.md appended to the system prompt",
     "cc-cua-driver-script": "The main build in its own app with CUA_DRIVER_EXPERIMENTAL_SCRIPT=1 (run_script on) and the run_script addendum in the system prompt",
     "cc-codex-cu": "Claude Code + Codex computer-use cua_repl MCP (server codex-cu), no skill",
+    "cc-codex-cu-1007-browser": "Claude Code + Codex 26.1007.21159 cua_repl MCP (server codex-cu), surfaces browser+computer, no skill (Amendment 10)",
     "cc-arc-driver": "Claude Code + arc-driver (arc-cua 0.1.1) MCP (server arc) through its own launcher app, no skill; "
     "Chrome and Electron started with --force-renderer-accessibility",
 }
@@ -382,17 +389,21 @@ def mcp_config_for(
         path = run_dir / f"mcp-{arm}.json"
         path.write_text(json.dumps(config, indent=2) + "\n", "utf-8")
         return path, ARC_SERVER
-    if arm == "cc-codex-cu":
-        source = resolve_codex_cu_config(codex_cu_config)
+    if arm in CODEX_ARMS:
+        source = (
+            resolve_codex_cu_config(codex_cu_config)
+            if arm == "cc-codex-cu"
+            else (CODEX_ARMS[arm] if CODEX_ARMS[arm].is_file() else None)
+        )
         if source is None:
             raise FileNotFoundError(
-                "Codex computer-use MCP config not found (WORK/codex-access/mcp.json); arm cc-codex-cu is disabled"
+                f"Codex computer-use MCP config not found for arm {arm}; the arm is disabled"
             )
         data = json.loads(source.read_text("utf-8"))
         servers = list((data.get("mcpServers") or {}))
         if len(servers) != 1:
             raise ValueError(f"{source}: expected exactly one MCP server, found {servers}")
-        path = run_dir / "mcp-cc-codex-cu.json"
+        path = run_dir / f"mcp-{arm}.json"
         shutil.copyfile(source, path)  # unmodified copy; the run keeps its own record
         return path, servers[0]
     raise ValueError(f"not a Claude arm: {arm}")

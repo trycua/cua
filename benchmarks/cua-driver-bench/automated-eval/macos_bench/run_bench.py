@@ -459,8 +459,10 @@ def ensure_agent_daemon(ctx: Ctx, arm: str = "cc-cua-driver") -> None:
 def check_pins(pins: dict[str, Any], arm_names: list[str]) -> list[tuple[str, str, str]]:
     """Compare every pinned version and hash with what is installed now. Any difference fails."""
     observed = ca.observed_pins(
-        include_codex="cc-codex-cu" in arm_names, include_cua="cc-cua-driver" in arm_names
+        include_codex=any(a in ca.CODEX_ARMS for a in arm_names), include_cua="cc-cua-driver" in arm_names
     )
+    if "cc-codex-cu-1007-browser" in arm_names:  # Amendment 10: that arm's app, plugin and service pins
+        pins = {**pins, **{k: v for k, v in pins.get("codex_1007", {}).items() if not k.startswith("_")}}
     out: list[tuple[str, str, str]] = []
     for key, want, got, ok in core.compare_pins(pins, observed):
         if key not in observed:
@@ -1698,9 +1700,9 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             )
         except Exception as error:  # noqa: BLE001
             add(f"{cua_arm} daemon/MCP", "fail", f"{type(error).__name__}: {error}")
-    if "cc-codex-cu" in ctx.arm_names and not offline:
+    for codex_arm in [a for a in ctx.arm_names if a in ca.CODEX_ARMS and not offline]:
         try:
-            path, server = ctx.mcp["cc-codex-cu"]
+            path, server = ctx.mcp[codex_arm]
             command, cargs, env = mcp_entry(path)
             tools = mcp_list_tools(command, cargs, env)
             add(
@@ -1997,7 +1999,7 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
 def setup_arms(ctx: Ctx) -> None:
     pins = ca.load_pins()
     observed = ca.observed_pins(
-        include_codex="cc-codex-cu" in ctx.arm_names, include_cua="cc-cua-driver" in ctx.arm_names
+        include_codex=any(a in ca.CODEX_ARMS for a in ctx.arm_names), include_cua="cc-cua-driver" in ctx.arm_names
     )
     ctx.versions.update(
         pins_expected=pins,
@@ -2042,8 +2044,9 @@ def setup_arms(ctx: Ctx) -> None:
             if exes:
                 apps[name] = ca.sha256_file(exes[0])
         ctx.versions["bench_apps_exe_sha256"] = apps
-    if "cc-codex-cu" in ctx.mcp:
-        ctx.versions["codex_cu_mcp_sha256"] = ca.sha256_file(ctx.mcp["cc-codex-cu"][0])
+    for codex_arm in [a for a in ctx.mcp if a in ca.CODEX_ARMS]:
+        key = "codex_cu_mcp_sha256" if codex_arm == "cc-codex-cu" else f"{codex_arm}_mcp_sha256"
+        ctx.versions[key] = ca.sha256_file(ctx.mcp[codex_arm][0])
 
 
 def start_recorder(ctx: Ctx) -> None:

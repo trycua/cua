@@ -660,6 +660,66 @@ Recorded 9 Oct 2026, before the first arc trial.
 
 No other arm's behaviour changes.
 
+## Amendment 10 (9 Oct 2026, before the first trial of run v038-codex1007): arm B on the latest Codex app, browser surface on
+
+Written and committed before the first trial of run `v038-codex1007`, at the owner's request (9 Oct). It adds one arm, run on the same tasks, build and limits as v038 (Amendment 8), so that it can be set beside v038's A, AX and A0 and the arc arm (Amendment 9). It changes nothing about earlier runs.
+
+### A10.1 Public use of arm B numbers
+
+On 9 Oct the owner cleared public use of arm B (Codex computer use) numbers; CUA-1225 is closed. This supersedes the internal-only rule for arm B in A3.6, A4.5, A5.6, A6.3, A7.5 and A8.5, for this run and the earlier ones.
+
+### A10.2 The arm
+
+| Runner arm | Tool layer |
+|---|---|
+| `cc-codex-cu-1007-browser` | OpenAI's `cua_repl` launcher from the ChatGPT/Codex app **26.1007.21159** (build 20052, published 8 Oct 2026), registered in Claude Code as MCP server `codex-cu`, with `CUA_REPL_ENABLED_SURFACES=browser,computer` |
+
+* **Source.** The app came from the public appcast (https://persistent.oaistatic.com/codex-app-prod/appcast.xml, `ChatGPT-darwin-arm64-26.1007.21159.zip`, sha256 `7a12eecaba6e0119e347517c499df006a501a7cc20402fba02b03de407142918`). It was downloaded and installed only inside a clone of the v038 VM (`cdb-codex1007`, cloned from `cdb-h2h` after v038), never on the host. It is signed and notarized as "Developer ID Application: OpenAI OpCo, LLC (2DC432GLL2)" and was never launched, because the app updates itself when it starts.
+* **The launcher entry** is built the same way as for 26.930: the plugin's own `cua_repl` command, arguments and environment, with the version string updated. Only the surfaces setting differs (`tools/make_codex_cu_mcp.py --surfaces browser,computer`).
+* **Versions and sha256:**
+
+| Item | Version | sha256 |
+|---|---|---|
+| App executable | 26.1007.21159 | `78ea6475fc65222a54d627d637d25e372c755011b8997eb269de7a6c2f2fe544` |
+| `unified-computer-use` plugin (`plugin.json`) | 26.1007.21159 | `ad7df426996e2628655ea2efb7789491feb9e6e3ac8d6ab1c7bbcd0eec9d398d` |
+| `@oai/cua-repl` | 0.1.0 | tree `17a99308fb982988e106d4f39acfd2e578075a369b43c3e1c369cd41f07ec1a0` |
+| `@oai/browser-desktop` | — | tree `310a213b0013aaccbadf0f0c89d01c830fe5250b035a91be44560a7852b926e1` |
+| Bundled node | — | `ee2d88fda15173431807447aa2b1949f1db4e822efc4a3f4ba2c9a2b83f592f8` |
+| Computer Use service (`com.openai.sky.CUAService`) | 26.929.1001365 | executable `fa5b5d685f550af82902cff1a345db558a1da3eb526cf78cd4659fa0dcde01a5` |
+
+  These are recorded in `pins.json` `codex_1007`, and the preflight checks the versions.
+* **The service did not change.** The Computer Use service is not inside the 26.1007 app bundle; the app installs it at run time through its "Codex Computer Use Installer". Installing it that way would mean launching the app, so it stays at the copy every earlier arm-B run used.
+* **What the browser surface gives, checked live in the VM before any trial:**
+  * The browser part of the API is present in the tool's documentation: `listBrowsers`, `getBrowser`, `createBrowserTab`, `getTab` and `listTabs`.
+  * Every browser call fails with `Missing required Codex turn metadata: session_id, turn_id`. `@oai/browser-desktop` reads that metadata from the MCP request's `x-codex-turn-metadata` field, which only the Codex app as MCP host sends.
+  * Claude Code does not send it, and the harness does not forge it (no spoofing, as in section 10).
+  * The Codex Chrome extension ("ChatGPT for Chrome") was not installed. It pairs with a Codex session through that same metadata, so it could not have worked here, and installing it from the Chrome Web Store is interactive.
+  * **Result: browsing is available in name only. The computer surface works as before, and the documentation the model reads now also describes browser tabs.** The rows record the arm id, and every failed browser call is counted.
+* **Skill.** The `unified-computer-use` plugin that provides `cua_repl` ships no skill. Its usage instructions come back from the server itself, the "## Computer Use" text in every `js` result, as they did for 26.930.
+  * The separate `computer-use` plugin's SKILL.md describes a different interface (`node_repl` with `@oai/sky`), so giving it to this arm would be wrong.
+  * The `chrome` and `browser` plugins' skills cover the extension and the in-app browser, neither of which is available here.
+  * Skill delivered: **none**, as for arm B before.
+
+### A10.3 Tasks, runs, seats
+
+* **Tasks and runs:** run id `v038-codex1007`, the ten v036 tasks in the A3.3 order, 3 + 2 runs, 360 s and 45 turns, Sonnet 5.5, and everything else as in v038 (Amendment 8), including the named Electron bundles, the occlusion check and pointer parking.
+* **VM:** `cdb-codex1007` is a clone of `cdb-h2h` taken after v038, so the macOS image, task pack, Cua Driver builds and harness match v038. The only change is the Codex app, plus the old 26.930 app moved out of `/Applications`.
+* **Seats:** as in A8.3, access tokens only.
+
+### A10.4 Analysis
+
+* Per task: successes, turns, tokens and cost of this arm.
+* Set beside v038's A, AX, A0 and B (26.930, computer surface only) and the arc arm, with the per-task change from the old arm B.
+* All are separate runs, so the comparisons are descriptive. The decision rule of A7.4 is also applied with this arm as arm B and reported, labelled as a cross-run comparison.
+
+### A10.5 Harness changes for this amendment
+
+* `claude_arms.CODEX_ARMS` and the arm `cc-codex-cu-1007-browser`.
+* `arms.py`.
+* `run_bench.py`: Codex preflight per Codex arm, and the `codex_1007` pins for that arm.
+* `tools/make_codex_cu_mcp.py --surfaces`.
+* `pins.json` `codex_1007`.
+
 ## 0. Decisions made before the first trial, and why
 
 These were fixed before any analysed trial. Several came from the owner during the build phase.

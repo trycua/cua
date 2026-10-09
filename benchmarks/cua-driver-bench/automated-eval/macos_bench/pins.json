@@ -51,5 +51,21 @@
     "launcher_sha256": "68ae1f6d0e65e11f825d8587a3bd44acb206b428dd1e5cda03bf9761dee4163e",
     "python_version": "3.12.14",
     "bundle_id": "com.trycua.bench.arcdriver"
+  },
+  "codex_1007": {
+    "_note": "Amendment 10: arm cc-codex-cu-1007-browser. The ChatGPT/Codex app 26.1007.21159 (build 20052) from the public appcast, installed in the VM clone cdb-codex1007 only, never launched. The Computer Use service is not in the app bundle (the app installs it at run time), so it stays 26.929.1001365.",
+    "chatgpt_app_version": "26.1007.21159",
+    "unified_computer_use_plugin_version": "26.1007.21159",
+    "cua_repl_package_version": "0.1.0",
+    "codex_computer_use_service_version": "26.929.1001365",
+    "_zip_url": "https://persistent.oaistatic.com/codex-app-prod/ChatGPT-darwin-arm64-26.1007.21159.zip",
+    "_zip_sha256": "7a12eecaba6e0119e347517c499df006a501a7cc20402fba02b03de407142918",
+    "_app_executable_sha256": "78ea6475fc65222a54d627d637d25e372c755011b8997eb269de7a6c2f2fe544",
+    "_unified_cu_plugin_json_sha256": "ad7df426996e2628655ea2efb7789491feb9e6e3ac8d6ab1c7bbcd0eec9d398d",
+    "_cua_repl_tree_sha256": "17a99308fb982988e106d4f39acfd2e578075a369b43c3e1c369cd41f07ec1a0",
+    "_browser_desktop_tree_sha256": "310a213b0013aaccbadf0f0c89d01c830fe5250b035a91be44560a7852b926e1",
+    "_cua_node_sha256": "ee2d88fda15173431807447aa2b1949f1db4e822efc4a3f4ba2c9a2b83f592f8",
+    "_service_executable_sha256": "fa5b5d685f550af82902cff1a345db558a1da3eb526cf78cd4659fa0dcde01a5",
+    "_signature": "Developer ID Application: OpenAI OpCo, LLC (2DC432GLL2), notarized"
   }
 }

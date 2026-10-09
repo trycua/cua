@@ -33,11 +33,11 @@ def newest_plugin_dir(root: Path) -> Path:
     return max(candidates, key=version_key)
 
 
-def build_config(plugin_dir: Path) -> dict:
+def build_config(plugin_dir: Path, surfaces: str = "computer") -> dict:
     shipped = json.loads((plugin_dir / ".mcp.json").read_text("utf-8"))
     entry = shipped["mcpServers"]["cua_repl"]
     env = dict(entry.get("env", {}))
-    env["CUA_REPL_ENABLED_SURFACES"] = "computer"
+    env["CUA_REPL_ENABLED_SURFACES"] = surfaces  # "computer" for arm B; "browser,computer" from Amendment 10
     return {
         "mcpServers": {
             "codex-cu": {
@@ -56,9 +56,10 @@ def main() -> int:
     )
     ap.add_argument("out", type=Path)
     ap.add_argument("--plugin-root", type=Path, default=DEFAULT_ROOT)
+    ap.add_argument("--surfaces", default="computer", help='"computer" (arm B) or "browser,computer" (Amendment 10)')
     args = ap.parse_args()
     plugin_dir = newest_plugin_dir(args.plugin_root.expanduser())
-    cfg = build_config(plugin_dir)
+    cfg = build_config(plugin_dir, args.surfaces)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(cfg, indent=1) + "\n", "utf-8")
     print(f"wrote {args.out} from plugin {plugin_dir.name}", file=sys.stderr)

@@ -398,7 +398,7 @@ async fn the_batch_is_advertised_with_its_schema() {
         .get_def(super::RUN_ACTIONS_TOOL)
         .expect("registered");
     assert_eq!(def.input_schema["required"], json!(["steps"]));
-    let listed: Vec<_> = def.input_schema["properties"]["steps"]["items"]["anyOf"][0]["properties"]
+    let listed: Vec<_> = def.input_schema["properties"]["steps"]["items"]["properties"]
         ["tool"]["enum"]
         .as_array()
         .unwrap()
@@ -406,6 +406,22 @@ async fn the_batch_is_advertised_with_its_schema() {
         .map(|value| value.as_str().unwrap())
         .collect();
     assert_eq!(listed, super::BATCHABLE_TOOLS);
+}
+
+#[test]
+fn run_actions_advertises_provider_compatible_schema_without_unions() {
+    let harness = Harness::new();
+    let schema = &harness.registry.get_def(super::RUN_ACTIONS_TOOL).unwrap().input_schema;
+    let item = &schema["properties"]["steps"]["items"];
+    assert_eq!(item["type"], "object");
+    assert!(item.get("anyOf").is_none());
+    assert!(item.get("oneOf").is_none());
+    assert_eq!(item["additionalProperties"], true);
+    assert_eq!(item["properties"]["expect"]["type"], "array");
+    assert_eq!(item["properties"]["expect"]["items"]["type"], "object");
+    assert_eq!(item["properties"]["expect"]["maxItems"], super::MAX_EXPECTS);
+    assert_eq!(schema["properties"]["observe"]["type"], "object");
+    // The adjacent legacy runtime test still exercises observe:true.
 }
 
 #[tokio::test]

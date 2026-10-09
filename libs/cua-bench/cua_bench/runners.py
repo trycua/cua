@@ -102,6 +102,13 @@ async def run_single_task(
     """
     env = None
     step_count = 0
+    outcome = None
+
+    def finish(**kwargs):
+        nonlocal outcome
+        outcome = TaskResult(**kwargs)
+        return outcome
+
     try:
         # Create environment using gym interface
         env = make(str(env_path), split=split)
@@ -119,7 +126,7 @@ async def run_single_task(
                 await env.solve()
                 step_count = env.step_count
             else:
-                return TaskResult(
+                return finish(
                     task_path=str(env_path),
                     variant_id=task_index,
                     success=False,
@@ -138,7 +145,7 @@ async def run_single_task(
 
         # A setup-only run must never be counted as successful agent execution.
         if not oracle and agent_fn is None:
-            return TaskResult(
+            return finish(
                 task_path=str(env_path),
                 variant_id=task_index,
                 success=False,
@@ -163,7 +170,7 @@ async def run_single_task(
         else:
             raise ValueError("Task has no evaluator; cannot produce a verified score")
 
-        return TaskResult(
+        return finish(
             task_path=str(env_path),
             variant_id=task_index,
             success=reward >= 0.5,  # Common threshold
@@ -172,7 +179,7 @@ async def run_single_task(
         )
 
     except Exception as e:
-        return TaskResult(
+        return finish(
             task_path=str(env_path),
             variant_id=task_index,
             success=False,
@@ -184,8 +191,14 @@ async def run_single_task(
         if env is not None:
             try:
                 await env.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                # A task cannot be reported as successful if its environment was
+                # not cleanly released; preserve its completed execution steps.
+                if outcome is not None:
+                    outcome.success = False
+                    outcome.reward = 0.0
+                    detail = f"Environment cleanup failed: {close_error}"
+                    outcome.error = f"{outcome.error}; {detail}" if outcome.error else detail
 
 
 async def run_benchmark(

@@ -436,6 +436,11 @@ impl Server {
         // raises a password dialog nobody can answer.
         #[cfg(target_os = "macos")]
         spawn_keychain_keeper(self.ctx.shutdown_token());
+        // Opt-in safety net for any prompt that still gets raised: answer
+        // SecurityAgent / keychain dialogs with the guest password (Apple
+        // Virtual Machines only; `CUA_SPACESD_PROMPT_WATCHER=1` turns it on).
+        #[cfg(target_os = "macos")]
+        spawn_prompt_watcher(self.ctx.shutdown_token());
         let shutdown = self.ctx.shutdown_token();
         let grace = self.ctx.config().shutdown_grace;
         let keepalive = self.ctx.config().keepalive_interval;
@@ -544,6 +549,51 @@ pub async fn spawn_local(server: Server) -> std::io::Result<SocketAddr> {
         }
     });
     Ok(addr)
+}
+
+/// Runs the security-prompt watcher (`cua-spacesd-prompts`) on its own
+/// thread until shutdown. Opt-in: `CUA_SPACESD_PROMPT_WATCHER=1` (or `true`,
+/// `on`, `yes`) turns it on. Even then it refuses to start anywhere but an
+/// Apple Virtual Machine with a provisioned guest password, and says why in
+/// the log. `CUA_SPACESD_PROMPT_CLASSES=keychain,authorization` widens it
+/// (default: `keychain` only, so admin authorization panels stay a
+/// deliberate choice).
+#[cfg(target_os = "macos")]
+fn spawn_prompt_watcher(shutdown: tokio_util::sync::CancellationToken) {
+    let on = std::env::var("CUA_SPACESD_PROMPT_WATCHER")
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "on" | "yes"
+            )
+        })
+        .unwrap_or(false);
+    if !on {
+        return;
+    }
+    let mut config = cua_spacesd_prompts::WatcherConfig::default();
+    if let Ok(classes) = std::env::var("CUA_SPACESD_PROMPT_CLASSES") {
+        let classes: Vec<String> = classes
+            .split(',')
+            .map(|c| c.trim().to_ascii_lowercase())
+            .filter(|c| matches!(c.as_str(), "keychain" | "authorization"))
+            .collect();
+        if !classes.is_empty() {
+            config.classes = classes;
+        }
+    }
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = stop.clone();
+    tokio::spawn(async move {
+        shutdown.cancelled().await;
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
+    if let Err(error) = std::thread::Builder::new()
+        .name("security-prompts".into())
+        .spawn(move || cua_spacesd_prompts::run_watcher(config, &stop))
+    {
+        tracing::warn!(%error, "security prompt watcher thread did not start");
+    }
 }
 
 /// Unlocks the `cua` keychain now and keeps it unlocked (after a reboot, a

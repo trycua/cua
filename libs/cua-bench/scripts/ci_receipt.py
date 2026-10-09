@@ -56,11 +56,18 @@ def verify_receipt(receipt, folder: Path):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--verify", type=Path, help="verify an existing receipt without regenerating it")
+    parser.add_argument("--evidence-dir", type=Path, default=Path("."), help="folder containing the archived reports")
     parser.add_argument("--core", type=Path, default=Path("core-report.json"))
     parser.add_argument("--full", type=Path, default=Path("full-report.json"))
     parser.add_argument("--commit", default=os.environ.get("GITHUB_SHA"))
     parser.add_argument("--output", type=Path, default=Path("ci-receipt-v1.json"))
     args = parser.parse_args()
+    if args.verify is not None:
+        receipt = json.loads(args.verify.read_text())
+        verify_receipt(receipt, args.evidence_dir)
+        print(f"CUA CI receipt independently verified: {args.verify}")
+        return
     if not args.commit:
         parser.error("a real 40-character git commit is required")
     receipt = build_receipt(args.core, args.full, args.commit)

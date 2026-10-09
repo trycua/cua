@@ -573,12 +573,14 @@ async fn signed_out_lists_this_machines_spaces() {
         "the account's machines are dropped"
     );
 
-    // `NoAccount` is signed out too.
+    // A configured account with nothing to present (`NoAccount`) knows of
+    // no sign-out: it is refused like a revoked token, not an empty list.
     let none = Spaces::builder()
         .home(home.path())
         .relay(RelayAccount::new(&relay.url, Arc::new(cua_host::NoAccount)))
         .build();
-    assert_eq!(none.list_all().await.unwrap()[0].id, local.id);
+    let err = none.list_all().await.unwrap_err();
+    assert_eq!(err.tag(), "unauthenticated", "{err}");
 
     // Signed in again: the machines come back.
     *tokens.token.lock().unwrap() = Some("owner".into());

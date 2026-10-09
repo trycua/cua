@@ -49,8 +49,10 @@ pub trait AccountTokens: Send + Sync {
     /// Whether an account is signed in at all (no network). False tells a
     /// refused token apart from no sign-in, which is the normal state of
     /// many hosts: a Spaces listing then skips the account's machines
-    /// instead of failing. A store that cannot be read right now is not a
-    /// sign-out.
+    /// instead of failing. Only a provider that reads a sign-in store (the
+    /// `cua auth login` session, in a file or the OS vault) can say false;
+    /// the default keeps every refusal an error. A store that cannot be
+    /// read right now is not a sign-out.
     async fn signed_in(&self) -> bool {
         true
     }
@@ -76,7 +78,11 @@ impl AccountTokens for StaticToken {
     }
 }
 
-/// No account (direct mode, or not signed in).
+/// No account token (direct mode, where no relay is asked). It knows of no
+/// sign-in store, so it never reads as signed out: a relay account
+/// configured with it is refused like a revoked token, not listed as an
+/// empty directory. A host that is signed out has a session provider whose
+/// store is empty instead.
 pub struct NoAccount;
 
 #[async_trait::async_trait]
@@ -85,10 +91,6 @@ impl AccountTokens for NoAccount {
         Err(Error::Unauthenticated(
             "not signed in to cua.ai (run `cua auth login` or sign in from the app)".into(),
         ))
-    }
-
-    async fn signed_in(&self) -> bool {
-        false
     }
 }
 

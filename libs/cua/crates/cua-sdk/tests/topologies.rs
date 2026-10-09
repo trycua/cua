@@ -951,15 +951,37 @@ async fn discovery_refusal_daemon_loopback() {
     discovery_refusal(Topology::DaemonLoopback).await;
 }
 
-/// Signed out, the list is this machine's Spaces (no relay error): the apps
-/// show local Spaces before anyone signs in.
+/// A `cua auth login` session as relay account tokens, as the daemon and
+/// the apps configure it (`SessionTokens`).
+struct Session(cua_auth::Session);
+
+#[async_trait::async_trait]
+impl cua_host::AccountTokens for Session {
+    async fn access_token(&self) -> cua_host::Result<String> {
+        self.0
+            .access_token(false)
+            .await
+            .map_err(|e| cua_host::Error::Unauthenticated(e.to_string()))
+    }
+    async fn signed_in(&self) -> bool {
+        !matches!(self.0.credentials(), Ok(None))
+    }
+}
+
+/// Signed out (an empty session store), the list is this machine's Spaces
+/// (no relay error): the apps show local Spaces before anyone signs in.
 async fn signed_out_lists(t: Topology) {
     let relay = cua_host::testing::FakeRelay::start().await;
+    let store = tempfile::tempdir().unwrap();
+    let session = cua_auth::Session::new(
+        cua_auth::Oidc::from_env(),
+        cua_auth::Store::File(store.path().join("credentials.json")),
+    );
     let (_world, cua) = world_with_relay(
         t,
         Some(cua_spaces::RelayAccount::new(
             &relay.url,
-            Arc::new(cua_host::NoAccount),
+            Arc::new(Session(session)),
         )),
     )
     .await;

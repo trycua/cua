@@ -213,6 +213,13 @@ def main():
     )
     add_common_run_args(run_dataset_parser)
 
+    # cb run manifest <dataset> --output manifest.json
+    manifest_parser = run_subparsers.add_parser(
+        "manifest", help="Generate a pinned dataset manifest before launching a run"
+    )
+    manifest_parser.add_argument("dataset_path", help="Local dataset directory")
+    manifest_parser.add_argument("--output", required=True, help="JSON manifest output path")
+
     # cb run list
     run_list_parser = run_subparsers.add_parser("list", help="List all runs with status")
     run_list_parser.add_argument(

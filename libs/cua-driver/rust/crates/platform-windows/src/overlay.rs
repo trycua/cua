@@ -34,6 +34,8 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
+use cua_driver_core::cursor_hook::{self, CursorHookEvent};
+
 #[cfg(target_os = "windows")]
 use cursor_overlay::SurfaceFit;
 use cursor_overlay::{
@@ -139,12 +141,98 @@ type RenderMap = cursor_overlay::RenderMap<RenderState, WinScreen>;
 /// Drain one message into the shared map, releasing a removed session's
 /// arrival waiter. Returns the commanded key (also recorded as the map's
 /// `last_active`).
-fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
+fn apply_msg(
+    map: &mut RenderMap,
+    msg: OverlayMsg,
+    events: &mut Vec<CursorHookEvent>,
+) -> Option<CursorKey> {
+    let before = match &msg {
+        OverlayMsg::Cmd(command) if cursor_hook::cursor_hook_enabled() => {
+            map.cursors.get(&command.key).and_then(cursor_sample)
+        }
+        _ => None,
+    };
+    let press = matches!(
+        &msg,
+        OverlayMsg::Cmd(KeyedOverlayCommand {
+            cmd: OverlayCommand::ClickPulse { .. },
+            ..
+        })
+    );
     let outcome = map.apply_msg(msg);
     if let MsgOutcome::Removed { key, .. } = &outcome {
         arrival_cancel(key);
+        events.retain(|event| &event.cursor_id != key);
+    }
+    if let Some(key) = outcome.applied_key() {
+        queue_cursor_event(key, &map.cursors[key], before, press, events);
     }
     outcome.applied_key().cloned()
+}
+
+/// Observe the hotspot from the applied render state, never a move's target.
+fn cursor_sample(state: &RenderState) -> Option<(f64, f64, bool)> {
+    if !cursor_overlay::render_state::is_placed(state.core.pos) {
+        return None;
+    }
+    let (x, y) =
+        cursor_overlay::pointer_for_anchor(state.core.pos.0, state.core.pos.1, state.core.heading);
+    (x.is_finite() && y.is_finite()).then_some((
+        x,
+        y,
+        state.core.pressed || state.core.click_t.is_some(),
+    ))
+}
+
+fn queue_cursor_event(
+    key: &str,
+    state: &RenderState,
+    before: Option<(f64, f64, bool)>,
+    press: bool,
+    events: &mut Vec<CursorHookEvent>,
+) {
+    if !cursor_hook::cursor_hook_enabled()
+        || !draws_cursor(key)
+        || cua_driver_core::session::is_session_ended(key)
+    {
+        return;
+    }
+    if let Some((x, y, pressed)) = cursor_sample(state) {
+        // Consecutive click pulses remain separate press events, even at rest.
+        if press || before != Some((x, y, pressed)) {
+            events.push(CursorHookEvent {
+                cursor_id: key.to_owned(),
+                x,
+                y,
+                pressed,
+            });
+        }
+    }
+}
+
+fn tick_cursor(
+    key: &str,
+    state: &mut RenderState,
+    dt: f64,
+    events: &mut Vec<CursorHookEvent>,
+) -> bool {
+    let before = cursor_hook::cursor_hook_enabled()
+        .then(|| cursor_sample(state))
+        .flatten();
+    let arrived = state.tick(dt);
+    queue_cursor_event(key, state, before, false, events);
+    arrived
+}
+
+/// Call embedders after releasing RENDER so a hook may inspect cursor state.
+fn publish_cursor_events(events: Vec<CursorHookEvent>) {
+    for event in events {
+        if draws_cursor(&event.cursor_id)
+            && !cua_driver_core::session::is_session_ended(&event.cursor_id)
+        {
+            cursor_hook::push_cursor_event(event);
+        }
+    }
 }
 
 pub fn init(cfg: CursorConfig) {
@@ -638,6 +726,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let _ = Z_ORDER.set(WinZOrderEnforcer {
         hwnd_isize: hwnd.0 as isize,
     });
+    cursor_hook::declare_cursor_hook_emitter();
 
     // Standard Win32 message loop.
     let mut msg = MSG::default();
@@ -1198,6 +1287,7 @@ unsafe extern "system" fn wnd_proc(
             // the slow IDLE cadence below.
             let was_active =
                 TIMER_PERIOD_MS.load(std::sync::atomic::Ordering::Relaxed) == TIMER_MS_ACTIVE;
+            let mut cursor_events = Vec::new();
             let (upload, arrived, pinned_wid, needs_tick, needs_hover_poll) = {
                 let mut guard = RENDER.lock().unwrap();
                 if let Some(map) = guard.as_mut() {
@@ -1208,7 +1298,7 @@ unsafe extern "system" fn wnd_proc(
                         if let Some(ref rx) = *rx_guard {
                             while let Ok(m) = rx.try_recv() {
                                 had_msg = true;
-                                apply_msg(map, m);
+                                apply_msg(map, m, &mut cursor_events);
                             }
                         }
                     }
@@ -1238,7 +1328,7 @@ unsafe extern "system" fn wnd_proc(
                     // Tick every cursor; record the ones that just arrived.
                     let mut arrived: Vec<CursorKey> = Vec::new();
                     for (k, rs) in map.cursors.iter_mut() {
-                        if rs.tick(dt) {
+                        if tick_cursor(k, rs, dt, &mut cursor_events) {
                             arrived.push(k.clone());
                         }
                         // Idle-countdown wall-clock catch-up (render-gate fix):
@@ -1349,6 +1439,8 @@ unsafe extern "system" fn wnd_proc(
                     }
                 }
             }
+
+            publish_cursor_events(cursor_events);
 
             // Fire arrival oneshots for cursors whose path just ended — unblocks
             // each session's `animate_cursor_to(...).await` so the click action
@@ -1700,6 +1792,157 @@ mod tests {
     }
 
     #[test]
+    fn cursor_hook_observes_applied_motion_press_edges_and_session_boundaries() {
+        use cua_driver_core::agent_cursor::{set_input_origin, InputOrigin};
+        use std::sync::Arc;
+
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&received);
+        assert!(cursor_hook::set_cursor_hook_fn(move |event| {
+            // The observer may inspect the overlay; publication must not hold RENDER.
+            assert!(RENDER.try_lock().is_ok());
+            sink.lock().unwrap().push(event);
+        }));
+        let mut map = empty_map();
+        let mut events = Vec::new();
+        let key = "windows-cursor-hook-agent";
+        let command = |key: &str, cmd| {
+            OverlayMsg::Cmd(KeyedOverlayCommand {
+                key: key.to_owned(),
+                cmd,
+            })
+        };
+
+        // Seed near the first target. MoveTo plans a path; it does not report
+        // the endpoint until the real render state reaches that endpoint.
+        map.seed_start_if_sentinel(key, 80.0, 70.0, map.platform.frame());
+        let state = map.cursors.get_mut(key).unwrap();
+        state.core.visual.reduced_motion = cursor_overlay::ReducedMotion::Off;
+        state.core.motion.glide_duration_ms = 500.0;
+        apply_msg(&mut map, move_msg(key, 80.0, 70.0), &mut events);
+        let start = cursor_sample(&map.cursors[key]).unwrap();
+        assert_ne!((start.0, start.1), (80.0, 70.0));
+        tick_cursor(key, map.cursors.get_mut(key).unwrap(), 0.016, &mut events);
+        let moved = events.last().unwrap();
+        let rendered = cursor_sample(&map.cursors[key]).unwrap();
+        assert_eq!((moved.x, moved.y, moved.pressed), rendered);
+        assert_ne!((moved.x, moved.y), (start.0, start.1));
+        assert_ne!((moved.x, moved.y), (80.0, 70.0));
+
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::ClickPulse { x: 80.0, y: 70.0 }),
+            &mut events,
+        );
+        assert!(events.last().unwrap().pressed);
+        let presses = events.iter().filter(|event| event.pressed).count();
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::ClickPulse { x: 80.0, y: 70.0 }),
+            &mut events,
+        );
+        assert_eq!(
+            events.iter().filter(|event| event.pressed).count(),
+            presses + 1
+        );
+        for _ in 0..200 {
+            tick_cursor(key, map.cursors.get_mut(key).unwrap(), 0.016, &mut events);
+        }
+        assert!(!events.last().unwrap().pressed, "click pulse releases");
+
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::SetPressed(true)),
+            &mut events,
+        );
+        assert!(events.last().unwrap().pressed);
+        apply_msg(
+            &mut map,
+            command(
+                key,
+                OverlayCommand::SnapTo {
+                    x: -900.0,
+                    y: 200.0,
+                    heading_radians: Some(0.0),
+                },
+            ),
+            &mut events,
+        );
+        assert!(events.last().unwrap().pressed, "drag motion keeps the hold");
+        let hotspot = cursor_overlay::pointer_for_anchor(-900.0, 200.0, 0.0);
+        assert_eq!(
+            (events.last().unwrap().x, events.last().unwrap().y),
+            hotspot
+        );
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::SetPressed(false)),
+            &mut events,
+        );
+        assert!(!events.last().unwrap().pressed);
+        publish_cursor_events(std::mem::take(&mut events));
+        assert!(!received.lock().unwrap().is_empty());
+
+        let human = "windows-cursor-hook-human";
+        set_input_origin(human, InputOrigin::Human);
+        apply_msg(
+            &mut map,
+            command(human, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        apply_msg(
+            &mut map,
+            command("", OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert!(events.is_empty());
+        set_input_origin(human, InputOrigin::Agent);
+
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert!(!events.is_empty());
+        apply_msg(&mut map, OverlayMsg::Remove(key.to_owned()), &mut events);
+        assert!(
+            events.is_empty(),
+            "removal discards this frame's queued samples"
+        );
+        apply_msg(
+            &mut map,
+            command(key, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert!(
+            events.is_empty(),
+            "late commands cannot resurrect a removed cursor"
+        );
+
+        let ending = "windows-cursor-hook-ending";
+        apply_msg(
+            &mut map,
+            command(ending, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert_eq!(events.len(), 1);
+        cua_driver_core::session::fire_session_end(ending);
+        let count = received.lock().unwrap().len();
+        publish_cursor_events(std::mem::take(&mut events));
+        assert_eq!(
+            received.lock().unwrap().len(),
+            count,
+            "session end wins before publication"
+        );
+        apply_msg(
+            &mut map,
+            command(ending, OverlayCommand::ClickPulse { x: 4.0, y: 5.0 }),
+            &mut events,
+        );
+        assert!(events.is_empty());
+    }
+
+    #[test]
     fn default_dirty_envelope_covers_edge_clamped_session_badges() {
         assert!(
             CURSOR_PAD as f32 >= cursor_overlay::session_badge::BADGE_MAX_WIDTH + 8.0,
@@ -1776,12 +2019,17 @@ mod tests {
     #[test]
     fn removal_through_the_adapter_resolves_no_pin_key() {
         let mut map = empty_map();
+        let mut events = Vec::new();
         assert_eq!(
-            apply_msg(&mut map, move_msg("sessA", 10.0, 10.0)).as_deref(),
+            apply_msg(&mut map, move_msg("sessA", 10.0, 10.0), &mut events).as_deref(),
             Some("sessA")
         );
         assert_eq!(
-            apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned())),
+            apply_msg(
+                &mut map,
+                OverlayMsg::Remove("sessA".to_owned()),
+                &mut events
+            ),
             None
         );
         assert_eq!(map.last_active, None);
@@ -1793,7 +2041,7 @@ mod tests {
     fn resting_cursor_keeps_the_active_cadence_for_its_bob() {
         let mut map = empty_map();
         map.seed_start_if_sentinel("sessA", 60.0, 60.0, map.platform.frame());
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0), &mut Vec::new());
         settle(&mut map);
         let rs = &map.cursors["sessA"];
         assert!(rs.core.trajectory.is_none());
@@ -1812,7 +2060,7 @@ mod tests {
             .core
             .visual
             .reduced_motion = cursor_overlay::ReducedMotion::On;
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0), &mut Vec::new());
         for _ in 0..2000 {
             map.tick_all(0.016);
             if !map.needs_frame_tick() {

@@ -423,6 +423,18 @@ pub struct DriverOptions {
     /// Preserve the temporary reduced screenshot surface used by older Claude
     /// Code integrations. New applications should leave this false.
     pub claude_code_compatibility: bool,
+    /// Start the process-wide native agent cursor overlay. The default does
+    /// not start an overlay or stop one another runtime has already started.
+    /// This host option grants no input authority.
+    #[uniffi(default = false)]
+    pub agent_cursor_enabled: bool,
+}
+
+fn driver_options_json(options: &DriverOptions) -> Value {
+    serde_json::json!({
+        "claude_code_compatibility": options.claude_code_compatibility,
+        "agent_cursor_enabled": options.agent_cursor_enabled,
+    })
 }
 
 /// Permission mode chosen by trusted host code for a runtime or session.
@@ -808,8 +820,8 @@ impl CuaDriver {
         })?;
         let options = options.unwrap_or_default();
         Ok(Arc::new(Self {
-            backend: DriverBackend::Embedded(Arc::new(NativeAbiDriver::create(
-                options.claude_code_compatibility,
+            backend: DriverBackend::Embedded(Arc::new(NativeAbiDriver::create_configured(
+                driver_options_json(&options),
             )?)),
             client_kind: DaemonClientKind::Unknown,
         }))

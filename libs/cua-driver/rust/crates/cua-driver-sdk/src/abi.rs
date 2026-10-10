@@ -170,6 +170,7 @@ impl AbiFailure {
 #[serde(default, deny_unknown_fields)]
 struct AbiDriverOptions {
     claude_code_compatibility: bool,
+    agent_cursor_enabled: bool,
     authorization: Option<AbiRuntimeAuthorizationOptions>,
 }
 
@@ -312,7 +313,8 @@ fn validate_explicit_authorization_sources(
 }
 
 fn runtime_options_from_abi(options: AbiDriverOptions) -> Result<RuntimeOptions, AbiFailure> {
-    match options.authorization {
+    let agent_cursor_enabled = options.agent_cursor_enabled;
+    let mut runtime = match options.authorization {
         Some(authorization) => {
             validate_explicit_authorization_sources(&authorization)?;
             let ceiling = SessionModeCeiling::for_trusted_sessions(
@@ -329,15 +331,17 @@ fn runtime_options_from_abi(options: AbiDriverOptions) -> Result<RuntimeOptions,
                 .transpose()
                 .map_err(|error| AbiFailure::new(CuaDriverStatus::InvalidArgument, error))?
                 .map(Arc::new);
-            Ok(RuntimeOptions::embedded_with_ceiling(
+            RuntimeOptions::embedded_with_ceiling(
                 options.claude_code_compatibility,
                 ceiling,
                 authorization.compatibility_mode,
                 manifest,
-            ))
+            )
         }
-        None => Ok(RuntimeOptions::embedded(options.claude_code_compatibility)),
-    }
+        None => RuntimeOptions::embedded(options.claude_code_compatibility),
+    };
+    runtime.cursor.enabled = agent_cursor_enabled;
+    Ok(runtime)
 }
 
 fn environment_flag(name: &str) -> bool {
@@ -590,8 +594,9 @@ pub unsafe extern "C" fn cua_driver_buffer_free_v1(buffer: *mut CuaDriverBuffer)
 
 #[no_mangle]
 /// Create an in-process driver. `options_json` is empty or a UTF-8 JSON object.
-/// It accepts `claude_code_compatibility` and an optional immutable
-/// `authorization` ceiling. Unknown fields fail closed.
+/// It accepts `claude_code_compatibility`, the default-false host option
+/// `agent_cursor_enabled`, and an optional immutable `authorization` ceiling.
+/// Unknown fields fail closed. Cursor display grants no input authority.
 pub unsafe extern "C" fn cua_driver_create_v1(
     options_json: *const u8,
     options_len: usize,
@@ -1193,12 +1198,6 @@ unsafe impl Send for NativeAbiDriver {}
 unsafe impl Sync for NativeAbiDriver {}
 
 impl NativeAbiDriver {
-    pub(crate) fn create(claude_code_compatibility: bool) -> Result<Self, DriverError> {
-        Self::create_configured(serde_json::json!({
-            "claude_code_compatibility": claude_code_compatibility,
-        }))
-    }
-
     pub(crate) fn create_configured(options: Value) -> Result<Self, DriverError> {
         let options = options.to_string();
         let mut handle = ptr::null_mut();
@@ -1610,6 +1609,39 @@ fn map_runtime_create_error(error: RuntimeCreateError) -> DriverError {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn agent_cursor_requires_a_constructor_opt_in_without_changing_authorization() {
+        for options in [
+            serde_json::json!({}),
+            serde_json::json!({"claude_code_compatibility": true}),
+            serde_json::json!({"agent_cursor_enabled": false}),
+            crate::driver_options_json(&crate::DriverOptions::default()),
+        ] {
+            let options: AbiDriverOptions = serde_json::from_value(options).unwrap();
+            let runtime = runtime_options_from_abi(options).unwrap();
+            assert!(!runtime.cursor.enabled);
+            assert!(runtime.authorization_ceiling.is_none());
+            assert!(runtime.compatibility_authorization.is_none());
+        }
+        let options: AbiDriverOptions =
+            serde_json::from_value(crate::driver_options_json(&crate::DriverOptions {
+                claude_code_compatibility: true,
+                agent_cursor_enabled: true,
+            }))
+            .unwrap();
+        let runtime = runtime_options_from_abi(options).unwrap();
+        assert!(runtime.cursor.enabled);
+        assert!(runtime.compatibility_mode);
+        assert!(runtime.authorization_ceiling.is_none());
+        assert!(runtime.compatibility_authorization.is_none());
+        assert!(
+            serde_json::from_value::<AbiDriverOptions>(serde_json::json!({
+                "agent_cursor_enabled": "true",
+            }))
+            .is_err()
+        );
+    }
 
     #[test]
     fn abi_layout_and_status_values_are_stable() {

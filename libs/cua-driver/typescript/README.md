@@ -81,8 +81,22 @@ implicit session for this SDK transport and reuses it until shutdown, explicit
 end, or five minutes of inactivity. Use a named session when application code
 needs to configure or inspect that run explicitly.
 
-The agent cursor is session-owned and initializes on the first cursor-bearing
-action, including `moveCursor`. Its default theme and custom dotLottie
+Embedding hosts can enable the native cursor overlay at runtime creation:
+
+```ts
+const driver = CuaDriver.create({
+  claudeCodeCompatibility: false,
+  agentCursorEnabled: true,
+})
+```
+
+`agentCursorEnabled` defaults to false. The option starts a process-wide overlay;
+another runtime with the option disabled does not stop an existing overlay.
+The option grants no input authority. Upgrade the generated bindings and native
+library together when using this option.
+
+With the overlay enabled, the agent cursor is session-owned and initializes on
+the first cursor-bearing action, including `moveCursor`. Its default theme and custom dotLottie
 authoring workflow are documented in
 [`docs/cursor-themes.md`](../docs/cursor-themes.md). Custom source is compiled
 and installed with the local CLI; SDK and MCP tools select only an installed

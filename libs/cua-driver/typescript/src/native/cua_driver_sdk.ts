@@ -2457,7 +2457,13 @@ export type DriverOptions = {
      * Preserve the temporary reduced screenshot surface used by older Claude
      * Code integrations. New applications should leave this false.
      */
-    claudeCodeCompatibility: boolean
+    claudeCodeCompatibility: boolean,
+    /**
+     * Start the process-wide native agent cursor overlay. The default does
+     * not start an overlay or stop one another runtime has already started.
+     * This host option grants no input authority.
+     */
+    agentCursorEnabled: boolean
 }
 
 /**
@@ -2465,6 +2471,7 @@ export type DriverOptions = {
  */
 export const DriverOptions = (() => {
     const defaults = () => ({
+        agentCursorEnabled: false
     });
     const create = (() => {
         return uniffiCreateRecord<DriverOptions, ReturnType<typeof defaults>>(defaults);
@@ -2481,14 +2488,17 @@ const FfiConverterTypeDriverOptions = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                claudeCodeCompatibility: FfiConverterBool.read(from)
+                claudeCodeCompatibility: FfiConverterBool.read(from),
+                agentCursorEnabled: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterBool.write(value.claudeCodeCompatibility, into);
+            FfiConverterBool.write(value.agentCursorEnabled, into);
         }
         allocationSize(value: TypeName): number {
-            return FfiConverterBool.allocationSize(value.claudeCodeCompatibility);
+            return FfiConverterBool.allocationSize(value.claudeCodeCompatibility) +
+             FfiConverterBool.allocationSize(value.agentCursorEnabled);
 
         }
     };

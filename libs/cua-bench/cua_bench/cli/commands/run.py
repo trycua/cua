@@ -1745,6 +1745,11 @@ async def _cmd_run_dataset_async(args) -> int:
                 "task": task_path.name,
                 "variant_id": variant_id,
                 "success": passed,
+                "verified_action_count": (
+                    getattr(outcome, "verified_action_count", None)
+                    if outcome is not None and not isinstance(outcome, BaseException)
+                    else None
+                ),
                 "oracle_result": (
                     getattr(outcome, "oracle_result", None)
                     if outcome is not None and not isinstance(outcome, BaseException)

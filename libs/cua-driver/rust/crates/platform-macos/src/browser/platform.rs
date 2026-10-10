@@ -648,6 +648,30 @@ async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     )))
 }
 
+/// macOS 27 and later answer EPERM when an app without Full Disk Access reads
+/// a protected browser profile folder, root and LaunchAgents included.
+pub(super) const PROFILE_PROTECTION_HINT: &str = "macOS 27 and later let only apps with Full Disk Access read this browser's profile folder; grant Full Disk Access to CuaDriver.app and restart the daemon, or attach from `cua-driver mcp --direct` in an app that has it";
+
+pub(super) fn is_profile_protection_denial(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(libc::EPERM)
+}
+
+fn devtools_active_port_read_refusal(error: &std::io::Error) -> BrowserRefusal {
+    let message = format!("could not read the browser's DevToolsActivePort file: {error}");
+    if !is_profile_protection_denial(error) {
+        return refusal(BrowserRefusalCode::BrowserRouteUnavailable, message);
+    }
+    refusal(
+        BrowserRefusalCode::BrowserRouteUnavailable,
+        format!("{message}; {PROFILE_PROTECTION_HINT}"),
+    )
+    .with_detail(serde_json::json!({
+        "resource": "browser_profile",
+        "os_error": libc::EPERM,
+        "hint": PROFILE_PROTECTION_HINT,
+    }))
+}
+
 async fn active_port_endpoint(
     pid: i64,
     product: BrowserProduct,
@@ -671,12 +695,7 @@ async fn active_port_endpoint_with_relative_fallback(
     let text = match tokio::fs::read_to_string(user_data_dir.join("DevToolsActivePort")).await {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not read the browser's DevToolsActivePort file: {error}"),
-            ))
-        }
+        Err(error) => return Err(devtools_active_port_read_refusal(&error)),
     };
     let Some((port, path)) = parse_devtools_active_port(&text) else {
         return Err(refusal(
@@ -1673,6 +1692,31 @@ mod tests {
             state.position.is_none(),
             "an inactive tab must not animate or move its visible cursor"
         );
+    }
+
+    #[test]
+    fn devtools_active_port_read_refusal_names_the_macos_profile_protection() {
+        let protected =
+            devtools_active_port_read_refusal(&std::io::Error::from_raw_os_error(libc::EPERM));
+        assert_eq!(protected.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        assert!(protected
+            .message
+            .starts_with("could not read the browser's DevToolsActivePort file: "));
+        assert!(
+            protected.message.contains("Full Disk Access"),
+            "{}",
+            protected.message
+        );
+        let detail = protected.detail.expect("an EPERM denial carries detail");
+        assert_eq!(detail["resource"], "browser_profile");
+        assert_eq!(detail["os_error"], libc::EPERM);
+        assert_eq!(detail["hint"], PROFILE_PROTECTION_HINT);
+
+        let mode_bits =
+            devtools_active_port_read_refusal(&std::io::Error::from_raw_os_error(libc::EACCES));
+        assert_eq!(mode_bits.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        assert!(!mode_bits.message.contains("Full Disk Access"));
+        assert!(mode_bits.detail.is_none());
     }
 
     #[test]

@@ -2779,6 +2779,20 @@ fn key_to_evdev(key: &str) -> Option<u32> {
         "end" => 107,                    // KEY_END
         "pageup" | "page_up" => 104,     // KEY_PAGEUP
         "pagedown" | "page_down" => 109, // KEY_PAGEDOWN
+        // Raw evdev shortcuts need physical punctuation keys too (e.g. Ctrl+,).
+        // Shifted symbols require an explicit Shift modifier; mapping them to
+        // an unshifted key here would silently emit a different shortcut.
+        "-" | "minus" | "dash" => 12,            // KEY_MINUS
+        "=" | "equal" | "equals" => 13,          // KEY_EQUAL
+        "[" | "bracketleft" => 26,               // KEY_LEFTBRACE
+        "]" | "bracketright" => 27,              // KEY_RIGHTBRACE
+        ";" | "semicolon" => 39,                 // KEY_SEMICOLON
+        "'" | "apostrophe" | "quoteright" => 40, // KEY_APOSTROPHE
+        "`" | "grave" | "quoteleft" => 41,       // KEY_GRAVE
+        "\\" | "backslash" => 43,                // KEY_BACKSLASH
+        "," | "comma" => 51,                     // KEY_COMMA
+        "." | "period" | "dot" => 52,            // KEY_DOT
+        "/" | "slash" => 53,                     // KEY_SLASH
         // Letters a-z. evdev codes follow the QWERTY scancode layout, not the
         // alphabet, so each is listed explicitly (linux/input-event-codes.h).
         "a" => 30, // KEY_A
@@ -3865,6 +3879,29 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn punctuation_shortcuts_preserve_modifiers_without_implicit_shift() {
+        for (keys, expected_mods, physical_key) in [
+            (vec!["Ctrl", ","], vec!["ctrl"], evdev::Key::KEY_COMMA),
+            (vec!["Ctrl", "Comma"], vec!["ctrl"], evdev::Key::KEY_COMMA),
+            (vec!["Ctrl", "/"], vec!["ctrl"], evdev::Key::KEY_SLASH),
+            (
+                vec!["Ctrl", "Shift", "/"],
+                vec!["ctrl", "shift"],
+                evdev::Key::KEY_SLASH,
+            ),
+        ] {
+            let keys = keys.into_iter().map(String::from).collect::<Vec<_>>();
+            let (mods, key) = partition_modifiers(&keys).unwrap();
+            assert_eq!(mods, expected_mods);
+            assert_eq!(key_to_evdev(&key), Some(u32::from(physical_key.code())));
+        }
+
+        for shifted in ["?", ":", "+"] {
+            assert_eq!(key_to_evdev(shifted), None);
+        }
+    }
 
     fn window(xid: u64, pid: Option<u32>, title: &str) -> WindowInfo {
         WindowInfo {

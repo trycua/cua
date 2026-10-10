@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 
-import { normalizePythonCursorEffects, normalizeTypeScriptCursorEffects } from "./uniffi-cursor-compat.mjs"
-
 import { spawnSync } from "node:child_process"
 import {
   existsSync,
@@ -57,8 +55,31 @@ function normalizeWhitespace(source) {
   return output.endsWith("\n") ? output : `${output}\n`
 }
 
+function replaceExact(text, before, after, count = 1) {
+  if (text.split(before).length - 1 !== count) {
+    throw new Error(`unexpected UniFFI template: ${before}`)
+  }
+  return text.replaceAll(before, after)
+}
+
+function normalizePythonCursorEffects(source) {
+  const output = replaceExact(source, ":typing.Optional[CursorEffectSetting]",
+    ":typing.Optional[typing.Union[CursorEffectSetting, bool]]", 5)
+  return replaceExact(output, "        if value == CursorEffectSetting.ON:\n",
+    "        if type(value) is bool:\n            value = CursorEffectSetting.ON if value else CursorEffectSetting.OFF\n        if value == CursorEffectSetting.ON:\n", 2)
+}
+
+function normalizeTypeScriptCursorEffects(source) {
+  let output = replaceExact(source, "?: CursorEffectSetting", "?: CursorEffectSetting | boolean", 5)
+  output = replaceExact(output, "type TypeName = CursorEffectSetting;", "type TypeName = CursorEffectSetting | boolean;")
+  output = replaceExact(output, "            switch (value) {\n                case CursorEffectSetting.On:",
+    "            if (typeof value === \"boolean\") value = value ? CursorEffectSetting.On : CursorEffectSetting.Off;\n            switch (value) {\n                case CursorEffectSetting.On:")
+  return replaceExact(output, "                case CursorEffectSetting.Default: return ordinalConverter.write(3, into);\n",
+    "                case CursorEffectSetting.Default: return ordinalConverter.write(3, into);\n                default: throw new UniffiInternalError.UnexpectedEnumCase();\n")
+}
+
 function normalizePython(source) {
-  const output = normalizePythonCursorEffects(normalizeWhitespace(source))
+  const output = normalizeWhitespace(source)
   const unsafe = "eventloop.call_soon(_uniffi_cancel_task, task)"
   const safe = "eventloop.call_soon_threadsafe(_uniffi_cancel_task, task)"
   if (!output.includes("def _uniffi_future_dropped_callback(handle):")) return output
@@ -108,12 +129,6 @@ function normalizePythonRemoteChannels(source) {
       throw new Error("unexpected normalized UniFFI remote callback template")
     }
     return source
-  }
-  const replaceExact = (text, before, after, count = 1) => {
-    if (text.split(before).length - 1 !== count) {
-      throw new Error(`unexpected UniFFI Python remote callback template: ${before}`)
-    }
-    return text.replaceAll(before, after)
   }
   // Each foreign carrier belongs to the loop on which it enters Rust. Rust
   // lifecycle threads must not depend on the process-global callback loop.
@@ -167,7 +182,7 @@ function normalizePythonRemoteChannels(source) {
 }
 
 function normalizeTypeScript(name, source) {
-  let output = normalizeTypeScriptCursorEffects(normalizeWhitespace(source))
+  let output = normalizeWhitespace(source)
   // NodeNext requires emitted relative ESM imports to carry their .js suffix.
   output = output.replace(
     /(from\s+["']\.\/[A-Za-z0-9_-]+)(["'])/g,
@@ -181,6 +196,7 @@ function normalizeTypeScript(name, source) {
     }
     output = output.replace(needle, 'import lib from "./node-runtime.js";')
   }
+  if (name === "cua_driver_contract.ts") output = normalizeTypeScriptCursorEffects(output)
   if (name === "cua_driver_contract-ffi.ts") {
     const needle = 'crateName: "cua_driver_contract"'
     const matches = output.split(needle).length - 1
@@ -320,9 +336,9 @@ try {
     "src/cua_driver/_native.py": normalizePython(
       readFileSync(join(pythonOutput, "cua_driver_sdk.py"), "utf8"),
     ),
-    "src/cua_driver/_native_contract.py": normalizePython(
+    "src/cua_driver/_native_contract.py": normalizePythonCursorEffects(normalizePython(
       readFileSync(join(pythonOutput, "cua_driver_contract.py"), "utf8"),
-    ),
+    )),
   })
 
   const typescriptFiles = {}

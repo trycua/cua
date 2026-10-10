@@ -2462,7 +2462,7 @@ class _UniffiFfiConverterTypeCursorEffectSetting(_UniffiConverterRustBuffer):
     @staticmethod
     def check_lower(value):
         if type(value) is bool:
-            return
+            value = CursorEffectSetting.ON if value else CursorEffectSetting.OFF
         if value == CursorEffectSetting.ON:
             return
         if value == CursorEffectSetting.OFF:

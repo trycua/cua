@@ -6,6 +6,8 @@ interactive environments, using the core gym interface (make, reset, step, evalu
 
 import asyncio
 import fnmatch
+import hashlib
+import json
 import math
 import time
 import uuid
@@ -62,6 +64,7 @@ class TaskResult:
     reward: float
     steps: int
     error: Optional[str] = None
+    action_trace_digest: Optional[str] = None
 
 
 async def run_single_task(
@@ -102,11 +105,15 @@ async def run_single_task(
     """
     env = None
     step_count = 0
+    action_trace = []
     outcome = None
 
     def finish(**kwargs):
         nonlocal outcome
         outcome = TaskResult(**kwargs)
+        if action_trace:
+            serialized = json.dumps(action_trace, sort_keys=True, separators=(",", ":"))
+            outcome.action_trace_digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
         return outcome
 
     try:
@@ -141,6 +148,9 @@ async def run_single_task(
                 action = agent_fn(screenshot, task_cfg)
                 screenshot = await env.step(action)
                 step_count += 1
+                # Privacy-minimal event chain: never persist screenshots, action
+                # arguments, typed text, passwords or arbitrary agent payloads.
+                action_trace.append({"step": step_count, "action_type": type(action).__name__})
                 done = isinstance(action, DoneAction)
 
         # A setup-only run must never be counted as successful agent execution.

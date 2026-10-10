@@ -114,6 +114,7 @@ public enum AppEnvironment {
                              loginItem: fixtures ? fixtureLoginItem(env["CUA_SPACES_LOGIN_ITEM"]) : MainAppLoginItem(),
                              startup: startup)
         if !fixtures {
+            LiveLocalNetworkPermission().request()
             // Signed out is nil (setup signs in first); anything else (no
             // network, the credential vault) is the error itself, never a
             // silent nil that reads as "not signed in".
@@ -196,12 +197,6 @@ public enum AppEnvironment {
     static func attach(_ services: LiveServices, to model: AppModel, supervisor: DaemonSupervisor?,
                        refresh: UpdateRefresh?) {
         if let live = services.live {
-            // Ask for Local Network access while someone is at this Mac
-            // (the first run's setup, and launch on a Mac that provides
-            // Spaces); one request shared by both.
-            let localNetwork = LiveLocalNetworkPermission()
-            model.host.localNetwork = localNetwork
-            model.onboarding.host.localNetwork = localNetwork
             if let supervisor {
                 if live.cua.mode() == .daemon {
                     supervise(live, supervisor: supervisor, model: model)

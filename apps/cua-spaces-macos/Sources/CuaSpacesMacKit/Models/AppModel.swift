@@ -795,10 +795,6 @@ public final class AppModel {
 
     /// The pending row (selected when `open`).
     private func startCreate(_ args: AppCreateSpaceArgs, os: AppSpaceOs, pendingId: String, select open: Bool) {
-        // A Space on this Mac is reached over the local network (a macOS
-        // VM on vmnet): ask now, while the person who pressed Create is
-        // here, not when the VM boots after the download.
-        if args.on == "local" { host.requestLocalNetwork() }
         // A create on one of your machines (`host:<machine>`) says which, so
         // that machine's own record of the Space it is creating is not a
         // second row next to this one, and a failure names the machine.
@@ -865,7 +861,8 @@ public final class AppModel {
             sendCreate(.cancelDone(id: pendingId))
             throw error
         } catch {
-            sendCreate(.fail(id: pendingId, error: LiveSpacesBackend.words(error)))
+            sendCreate(.fail(id: pendingId, error: LiveSpacesBackend.words(error),
+                             errorVariant: (error as? CuaError).flatMap { Mirror(reflecting: $0).children.first?.label } ?? ""))
             throw error
         }
     }

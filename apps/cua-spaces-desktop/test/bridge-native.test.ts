@@ -298,7 +298,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       signals: [
         { type: "feature", feature: "space_open" },
         { type: "feature", feature: "Not A Word" },
-        { type: "space-create", location: "local", guestOs: "linux", kind: "container", outcome: "ready", failedPhase: "none", stalled: false, elapsedMs: 1200, gpu: false },
+        { type: "space-create", location: "local", guestOs: "linux", kind: "container", outcome: "ready", failedPhase: "none", stalled: false, elapsedMs: 1200, gpu: false, errorVariant: "" },
       ],
     });
     const after = telemetry.recorded.slice(-2);
@@ -309,6 +309,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(telemetry.recorded.length).toBe(before);
     expect(await code("telemetry.track", {})).toBe("bad_args");
     expect(telemetrySignal(native, { type: "experiments-on", experiments: ["cua_volume", "BAD"] })).toBeNull();
+    expect(telemetrySignal(native, { type: "space-create", location: "local", guestOs: "linux", kind: "container", outcome: "ready", failedPhase: "none", stalled: false, elapsedMs: 1200, gpu: false })).toBeNull();
     expect(telemetrySignal(native, { type: "launched", onboardingEligible: null })).not.toBeNull();
   });
 

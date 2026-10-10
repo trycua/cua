@@ -600,6 +600,8 @@ pub enum AppCreateAction {
         id: String,
         /// Why, one line.
         error: String,
+        /// The error enum's case name, when the shell has one.
+        error_variant: String,
     },
     /// Remove a failed row.
     Dismiss {
@@ -2956,6 +2958,8 @@ pub struct AppSandboxImage {
     pub arch: Vec<String>,
     /// How big it is per platform, when measured.
     pub sizes: Option<AppImageSizes>,
+    /// `false`: its guest cannot use GPU acceleration.
+    pub gpu: bool,
 }
 
 /// A titled group of images.
@@ -8949,6 +8953,8 @@ pub enum AppTelemetrySignal {
         elapsed_ms: u64,
         /// GPU acceleration was turned on.
         gpu: bool,
+        /// The error enum's case name, when the shell sent one.
+        error_variant: String,
     },
     /// A Space create started (`cua_space_create_started`).
     SpaceCreateStarted {

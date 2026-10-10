@@ -352,6 +352,11 @@ extension WebUIBridge {
                   n.doubleValue == n.doubleValue.rounded() else { return nil }
             return n.uint64Value
         }
+        func variant(_ k: String) -> String? {
+            guard let v = s[k] as? String, v.count <= 64,
+                  v.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }) else { return nil }
+            return v
+        }
         switch type {
         case "feature":
             guard let f = word("feature") else { return nil }
@@ -375,9 +380,9 @@ extension WebUIBridge {
         case "space-create":
             guard let location = word("location"), let os = word("guestOs"), let kind = word("kind"),
                   let outcome = word("outcome"), let phase = word("failedPhase"), let stalled = flag("stalled"),
-                  let elapsed = ms("elapsedMs"), let gpu = flag("gpu") else { return nil }
+                  let elapsed = ms("elapsedMs"), let gpu = flag("gpu"), let errorVariant = variant("errorVariant") else { return nil }
             return .spaceCreate(location: location, guestOs: os, kind: kind, outcome: outcome, failedPhase: phase,
-                                stalled: stalled, elapsedMs: elapsed, gpu: gpu)
+                                stalled: stalled, elapsedMs: elapsed, gpu: gpu, errorVariant: errorVariant)
         case "space-create-started":
             guard let location = word("location"), let os = word("guestOs"), let kind = word("kind"),
                   let gpu = flag("gpu") else { return nil }

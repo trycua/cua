@@ -42,7 +42,7 @@ Returned by [`app_creates_reduce`](#app_creates_reduce), [`app_creates_settle`](
 .cancelFail(id: String, error: String)
 .tick(now: Int64)
 .finish(id: String, spaceId: String)
-.fail(id: String, error: String)
+.fail(id: String, error: String, errorVariant: String)
 .dismiss(id: String)
 .deleteStart(id: String, now: Int64)
 .deleteFail(id: String)
@@ -63,7 +63,7 @@ AppCreateAction::CancelDone { id: String }
 AppCreateAction::CancelFail { id: String, error: String }
 AppCreateAction::Tick { now: i64 }
 AppCreateAction::Finish { id: String, space_id: String }
-AppCreateAction::Fail { id: String, error: String }
+AppCreateAction::Fail { id: String, error: String, error_variant: String }
 AppCreateAction::Dismiss { id: String }
 AppCreateAction::DeleteStart { id: String, now: i64 }
 AppCreateAction::DeleteFail { id: String }
@@ -85,7 +85,7 @@ AppCreateAction::PowerFail { id: String, error: String }
 | `CancelFail` | The cancel itself failed: the row shows why. Fields: `id: String`, `error: String` |
 | `Tick` | Time passed (a shell's timer, a few times a second while a create is pending): progress within a phase that reports no fraction advances with the time the phase usually takes. Fields: `now: i64` |
 | `Finish` | The create returned the Space. Fields: `id: String`, `space_id: String` |
-| `Fail` | The create failed. Fields: `id: String`, `error: String` |
+| `Fail` | The create failed. Fields: `id: String`, `error: String`, `error_variant: String` |
 | `Dismiss` | Remove a failed row. Fields: `id: String` |
 | `DeleteStart` | The user confirmed Delete: the row shows Deleting now. A second start for a Space already deleting does nothing. Fields: `id: String`, `now: i64` |
 | `DeleteFail` | The delete failed: the row is back as the registry lists it. Fields: `id: String` |

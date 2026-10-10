@@ -198,10 +198,6 @@ public final class HostModel {
         "Sign in to Cua in your browser to continue. Setup finishes on its own after that."
     /// Called whenever the state changes (the roster's entry follows it).
     public var onChange: (() -> Void)?
-    /// Asks macOS for Local Network access once this Mac provides Spaces
-    /// (see `LocalNetworkPermissionRequesting`); nil in fixtures and tests.
-    public var localNetwork: LocalNetworkPermissionRequesting?
-    private var askedLocalNetwork = false
 
     public init(host: HostRunning?) {
         self.host = host
@@ -217,26 +213,7 @@ public final class HostModel {
         next.account = account
         state = next
         machineId = status.machineId
-        // Setup that provides Spaces, launch on a Mac that already does, or
-        // Spaces turned on: ask now, while someone is at this Mac, not when
-        // the first Space boots (see `LocalNetworkPermissionRequesting`).
-        if let state, state.configured, state.provideSpaces {
-            requestLocalNetwork()
-        }
         onChange?()
-    }
-
-    /// Asks for Local Network access once (see
-    /// `LocalNetworkPermissionRequesting`). Not only hosts need it: any Mac
-    /// that runs a macOS Space reaches the VM on vmnet (192.168.64.x), and
-    /// a client Mac that was never asked gets the prompt only when that VM
-    /// boots, often after a long download with nobody watching, and the
-    /// create fails. So the app also asks when onboarding ends and when a
-    /// Space is created on this Mac.
-    public func requestLocalNetwork() {
-        guard !askedLocalNetwork, let localNetwork else { return }
-        askedLocalNetwork = true
-        localNetwork.request()
     }
 
     public func refresh() async {

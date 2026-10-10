@@ -345,7 +345,9 @@ struct WebUIHostTests {
         let signals: [Any] = [["type": "feature", "feature": "space_open"],
                               ["type": "feature", "feature": "/Users/ada"],
                               ["type": "step", "step": "signed_in", "ok": "yes"],
-                              ["type": "nope"]]
+                              ["type": "nope"],
+                              ["type": "space-create", "location": "local", "guestOs": "linux", "kind": "vm",
+                               "outcome": "ready", "failedPhase": "none", "stalled": false, "elapsedMs": 10, "gpu": false]]
         _ = try await bridge.handle("telemetry.track", ["signals": signals])
         #expect(Array(telemetry.recorded.dropFirst(before)) == [.feature(feature: "space_open")])
         _ = try telemetry.setEnabled(false)

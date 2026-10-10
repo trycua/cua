@@ -140,6 +140,9 @@ pub struct SandboxImage {
     /// How big it is per platform, when measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sizes: Option<ImageSizes>,
+    /// `false`: its guest cannot use GPU acceleration.
+    #[serde(default = "offered")]
+    pub gpu: bool,
 }
 
 /// The guest distribution a catalog image names: its id picks the OS icon
@@ -1502,6 +1505,7 @@ fn image_of(state: &WizardState) -> SandboxImage {
             distro: None,
             arch: vec![],
             sizes: None,
+            gpu: true,
             ..base
         },
         None => base,
@@ -1940,7 +1944,8 @@ pub fn gpu_row(
     else {
         return (None, None);
     };
-    let on = state.gpu && choice.supported;
+    let supported = choice.supported && image.gpu;
+    let on = state.gpu && supported;
     let row = GpuRow {
         label: if choice.experimental {
             format!("{} (Experimental)", choice.label)
@@ -1948,10 +1953,11 @@ pub fn gpu_row(
             choice.label.clone()
         },
         on,
-        enabled: choice.supported,
+        enabled: supported,
         reason: (!choice.supported)
             .then(|| choice.reason.clone().filter(|r| !r.is_empty()))
-            .flatten(),
+            .flatten()
+            .or_else(|| (!image.gpu).then(|| format!("Not available for {}", image.name))),
         learn_more_label: "Learn more".into(),
         learn_more_url: choice.learn_more.clone(),
     };
@@ -3260,6 +3266,46 @@ mod tests {
             Some("Needs a Mac with Apple silicon")
         );
         assert_eq!(v.plan.gpu, None);
+        e.gpus = Some(vec![lume_gpu(true)]);
+        let sequoia = reduce(
+            &initial(&e),
+            &WizardAction::ChooseImage {
+                image_ref: "ghcr.io/trycua/macos:15".into(),
+            },
+            &e,
+        );
+        let row = view(&sequoia, &e).gpu.expect("sequoia still shows the row");
+        assert!(!row.enabled && !row.on);
+        assert_eq!(
+            row.reason.as_deref(),
+            Some("Not available for macOS Sequoia 15")
+        );
+        let switched = reduce(&sequoia, &WizardAction::SetGpu { on: true }, &e);
+        assert_eq!(view(&switched, &e).plan.gpu, None);
+        let tahoe = reduce(
+            &sequoia,
+            &WizardAction::ChooseImage {
+                image_ref: "ghcr.io/trycua/macos:26".into(),
+            },
+            &e,
+        );
+        assert!(view(&tahoe, &e).gpu.unwrap().enabled);
+        e.gpus = Some(vec![lume_gpu(false)]);
+        let row = view(&sequoia, &e).gpu.unwrap();
+        assert_eq!(
+            row.reason.as_deref(),
+            Some("Needs a Mac with Apple silicon")
+        );
+        e.gpus = Some(vec![lume_gpu(true)]);
+        let custom = reduce(
+            &sequoia,
+            &WizardAction::SetImageText {
+                text: "ghcr.io/me/macos:15".into(),
+            },
+            &e,
+        );
+        let row = view(&custom, &e).gpu.unwrap();
+        assert!(row.enabled && row.reason.is_none());
     }
 
     fn vol(gb: u64, name: &str) -> StorageVolume {
@@ -3362,10 +3408,7 @@ mod tests {
 
     #[test]
     fn every_offered_image_has_sizes() {
-        for i in picker_images()
-            .into_iter()
-            .filter(|i| i.image_ref != "ghcr.io/trycua/macos:15")
-        {
+        for i in picker_images() {
             let s = i
                 .sizes
                 .as_ref()
@@ -3426,6 +3469,24 @@ mod tests {
         // Pulled, it needs nothing new.
         e.storage.as_mut().unwrap().pulled = vec!["ghcr.io/trycua/linux:24.04".into()];
         assert!(view(&s, &e).can_continue);
+        let mut mac = storage_env();
+        mac.storage.as_mut().unwrap().lume = Some(vol(20, "Macintosh HD"));
+        let sequoia = on("ghcr.io/trycua/macos:15", &mac);
+        let v = view(&sequoia, &mac);
+        let p = sizes("ghcr.io/trycua/macos:15", "arm64");
+        assert_eq!(
+            v.resources_error,
+            Some(format!(
+                "Not enough space on Macintosh HD: needs {}, 20 GB available.",
+                size_text(p.download + p.unpacked + 5 * GIB)
+            ))
+        );
+        assert!(!v.can_continue);
+        mac.storage.as_mut().unwrap().lume = Some(vol(60, "Macintosh HD"));
+        assert!(view(&sequoia, &mac).can_continue);
+        mac.storage.as_mut().unwrap().lume = Some(vol(20, "Macintosh HD"));
+        mac.storage.as_mut().unwrap().pulled = vec!["ghcr.io/trycua/macos:15".into()];
+        assert!(view(&sequoia, &mac).can_continue);
     }
 
     #[test]

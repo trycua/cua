@@ -11,6 +11,7 @@ import type { BridgeContext } from "./context";
 import { Failure, type Handlers } from "./host";
 
 const WORD = /^[a-z0-9_]{1,64}$/;
+const VARIANT = /^[A-Za-z0-9_]{0,64}$/;
 
 /** One page signal as the core's, or null when any part is not a fixed word, flag or duration. */
 export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySignal | null {
@@ -50,8 +51,9 @@ export function telemetrySignal(native: Native, raw: unknown): AppTelemetrySigna
     case "space-create": {
       const [location, guestOs, kind, outcome, failedPhase] = [word("location"), word("guestOs"), word("kind"), word("outcome"), word("failedPhase")];
       const [stalled, gpu, elapsedMs] = [flag("stalled"), flag("gpu"), ms("elapsedMs")];
-      if (!location || !guestOs || !kind || !outcome || !failedPhase || stalled === null || gpu === null || elapsedMs === null) return null;
-      return new S.SpaceCreate({ location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu });
+      const errorVariant = typeof s.errorVariant === "string" && VARIANT.test(s.errorVariant) ? s.errorVariant : null;
+      if (!location || !guestOs || !kind || !outcome || !failedPhase || stalled === null || gpu === null || elapsedMs === null || errorVariant === null) return null;
+      return new S.SpaceCreate({ location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu, errorVariant });
     }
     case "space-create-started": {
       const [location, guestOs, kind, gpu] = [word("location"), word("guestOs"), word("kind"), flag("gpu")];

@@ -95,6 +95,9 @@ pub enum TelemetrySignal {
         /// GPU acceleration was turned on.
         #[serde(default)]
         gpu: bool,
+        /// The error enum's case name, when the shell sent one.
+        #[serde(default)]
+        error_variant: String,
     },
     /// A Space create started (`cua_space_create_started`).
     SpaceCreateStarted {
@@ -421,7 +424,8 @@ fn kind_word(k: Option<SpaceKind>) -> &'static str {
     }
 }
 
-fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, now_ms: i64) -> TelemetrySignal {
+#[rustfmt::skip]
+fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, error_variant: &str, now_ms: i64) -> TelemetrySignal {
     TelemetrySignal::SpaceCreate {
         location: p.provider.as_str().into(),
         guest_os: p.os.as_str().into(),
@@ -435,6 +439,7 @@ fn create_event(p: &PendingCreate, outcome: &str, stalled: bool, now_ms: i64) ->
         stalled: outcome == "error" && stalled,
         elapsed_ms: (now_ms - p.started_at).max(0) as u64,
         gpu: p.gpu,
+        error_variant: error_variant.into(),
     }
 }
 
@@ -478,29 +483,31 @@ pub fn creates(before: &CreatesState, action: &CreateAction, now_ms: i64) -> Vec
         }
         CreateAction::Finish { id, .. } => match find(id) {
             Some(p) if p.space_id.is_none() => vec![
-                create_event(p, "ok", false, now_ms),
+                create_event(p, "ok", false, "", now_ms),
                 step("first_space_ready", true),
             ],
             _ => vec![],
         },
-        CreateAction::Fail { id, .. } => match find(id) {
+        CreateAction::Fail {
+            id, error_variant, ..
+        } => match find(id) {
             Some(p) if p.space_id.is_none() && p.cancelling => {
-                vec![create_event(p, "cancelled", false, now_ms)]
+                vec![create_event(p, "cancelled", false, "", now_ms)]
             }
             Some(p) if p.space_id.is_none() && (p.error.is_none() || stalled(p)) => {
-                vec![create_event(p, "error", stalled(p), now_ms)]
+                vec![create_event(p, "error", stalled(p), error_variant, now_ms)]
             }
             _ => vec![],
         },
         CreateAction::CancelDone { id } => match find(id) {
             Some(p) if p.space_id.is_none() && p.cancelling => {
-                vec![create_event(p, "cancelled", false, now_ms)]
+                vec![create_event(p, "cancelled", false, "", now_ms)]
             }
             _ => vec![],
         },
         CreateAction::Dismiss { id } => match find(id) {
             Some(p) if p.space_id.is_none() && stalled(p) => {
-                vec![create_event(p, "error", true, now_ms)]
+                vec![create_event(p, "error", true, "", now_ms)]
             }
             _ => vec![],
         },
@@ -704,6 +711,7 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                 stalled,
                 elapsed_ms,
                 gpu,
+                error_variant,
             } => Some(t.capture(events::space_create(
                 &events::SpaceCreate {
                     on: location,
@@ -712,6 +720,7 @@ pub fn record(t: &cua_telemetry::Telemetry, signals: &[TelemetrySignal]) -> usiz
                     last_phase: failed_phase,
                     stalled: *stalled,
                     gpu: *gpu,
+                    error_variant,
                 },
                 Outcome::from_word(outcome),
                 Duration::from_millis(*elapsed_ms),
@@ -1080,7 +1089,7 @@ mod tests {
         ] {
             let mut p = pending("pending:os", "booting", None);
             p.os = os;
-            let finished = create_event(&p, "ok", false, 2_000);
+            let finished = create_event(&p, "ok", false, "", 2_000);
             let finished = serde_json::to_value(finished).unwrap();
             let started = creates(
                 &CreatesState::default(),
@@ -1136,6 +1145,7 @@ mod tests {
                 stalled: false,
                 elapsed_ms: 47_000,
                 gpu: false,
+                error_variant: String::new(),
             }
         );
         assert_eq!(ready[1], step("first_space_ready", true));
@@ -1144,13 +1154,14 @@ mod tests {
             &CreateAction::Fail {
                 id: "pending:a".into(),
                 error: "boom at /Users/alice".into(),
+                error_variant: "InsufficientDisk".into(),
             },
             5_000,
         );
         assert!(matches!(
             &failed[0],
-            TelemetrySignal::SpaceCreate { failed_phase, stalled: false, outcome, .. }
-                if failed_phase == "booting" && outcome == "error"
+            TelemetrySignal::SpaceCreate { failed_phase, stalled: false, outcome, error_variant, .. }
+                if failed_phase == "booting" && outcome == "error" && error_variant == "InsufficientDisk"
         ));
         // A stalled row is counted when dismissed, not when it stalls.
         let stall = crate::spaces::creating::stall_error("pulling", 900.0);
@@ -1169,7 +1180,27 @@ mod tests {
         );
         assert!(matches!(
             &gone[0],
-            TelemetrySignal::SpaceCreate { stalled: true, failed_phase, .. } if failed_phase == "pulling"
+            TelemetrySignal::SpaceCreate { stalled: true, failed_phase, error_variant, .. }
+                if failed_phase == "pulling" && error_variant.is_empty()
+        ));
+        let mut cancelling = pending("pending:d", "pulling", None);
+        cancelling.cancelling = true;
+        let st = CreatesState {
+            pending: vec![cancelling],
+            deleting: vec![],
+            powering: vec![],
+        };
+        let cancelled = creates(
+            &st,
+            &CreateAction::CancelDone {
+                id: "pending:d".into(),
+            },
+            9_000,
+        );
+        assert!(matches!(
+            &cancelled[0],
+            TelemetrySignal::SpaceCreate { outcome, error_variant, .. }
+                if outcome == "cancelled" && error_variant.is_empty()
         ));
         // A failed (not stalled) row dismissed was already counted.
         let st = CreatesState {

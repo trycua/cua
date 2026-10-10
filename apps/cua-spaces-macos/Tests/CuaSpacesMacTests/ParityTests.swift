@@ -332,7 +332,8 @@ struct ParityTests {
                              bytesPerSecond: (a["bytesPerSecond"] as? NSNumber)?.doubleValue)
         case "tick": return .tick(now: Int64(a["now"] as! Int))
         case "finish": return .finish(id: id, spaceId: a["spaceId"] as! String)
-        case "fail": return .fail(id: id, error: a["error"] as! String)
+        case "fail": return .fail(id: id, error: a["error"] as! String,
+                                  errorVariant: a["errorVariant"] as? String ?? "")
         case "dismiss": return .dismiss(id: id)
         case "delete-start": return .deleteStart(id: id, now: Int64(a["now"] as! Int))
         case "delete-fail": return .deleteFail(id: id)
@@ -2114,10 +2115,10 @@ struct ParityTests {
         case let .onboardingPage(page, action, choice):
             return ["type": "onboarding-page", "page": page, "action": action, "choice": choice]
         case let .spaceWizard(action): return ["type": "space-wizard", "action": action]
-        case let .spaceCreate(location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu):
+        case let .spaceCreate(location, guestOs, kind, outcome, failedPhase, stalled, elapsedMs, gpu, errorVariant):
             return ["type": "space-create", "location": location, "guestOs": guestOs, "kind": kind,
                     "outcome": outcome, "failedPhase": failedPhase, "stalled": stalled, "elapsedMs": Int(elapsedMs),
-                    "gpu": gpu]
+                    "gpu": gpu, "errorVariant": errorVariant]
         case let .spaceCreateStarted(location, guestOs, kind, gpu):
             return ["type": "space-create-started", "location": location, "guestOs": guestOs, "kind": kind, "gpu": gpu]
         case let .volumeSetup(surface, storage, addToFinder, mountMethod, outcome):

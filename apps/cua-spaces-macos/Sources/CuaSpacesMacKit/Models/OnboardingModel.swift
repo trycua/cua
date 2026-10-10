@@ -348,9 +348,6 @@ public final class OnboardingModel {
     public func finish() {
         telemetry?.record(appTelemetryOnboardingFinished(state: state))
         completed = true
-        // Every Mac, host or not: its own macOS Spaces live on the local
-        // network (vmnet), so ask while someone is here.
-        host.requestLocalNetwork()
         onLaunchAtLogin?(state.launchAtLogin)
         guard let statePath else { return }
         let mode = state.mode == .host ? "host" : "client"
